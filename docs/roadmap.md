@@ -58,7 +58,8 @@ Success criteria:
 
 ## Phase 5 — Asset pipeline
 
-- Inventory image formats, palettes, dimensions, and transparency.
+- [x] Prove read-only native MPQ access and decode the observed IFF PBM corpus in a Rust/SDL3 viewer spike.
+- Inventory image formats, palettes, dimensions, and game-specific transparency conventions.
 - Build lossless extract/convert/repack tests.
 - Evaluate AI upscaling on portraits and interface art.
 - Compare Lanczos runtime scaling against remastered source assets.
@@ -77,3 +78,7 @@ After the toolchain and one vertical slice are proven, select a product directio
 ## AI-assisted workflow
 
 AI can accelerate schema discovery, documentation, transformation scripts, consistency checks, dialogue drafts, asset processing, and test design. All generated changes should remain reviewable as diffs and should be validated in game. Balance decisions require human playtesting and should not be accepted solely from model output.
+
+## Parallel preservation-engine investigation
+
+A native 64-bit reimplementation is a separate, gated track rather than a prerequisite for modding. The [candidate plan](native-engine-plan.md) begins with reusable archive/asset tools, then uses a GameScript VM spike to decide whether a faithful engine is economically reasonable. The successful [asset-viewer spike](../spikes/asset-viewer/README.md) is evidence for the first stage only.

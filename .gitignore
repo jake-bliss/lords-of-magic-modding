@@ -1,4 +1,5 @@
 .build/
+target/
 artifacts/
 reports/**/*.csv
 __pycache__/

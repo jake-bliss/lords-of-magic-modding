@@ -5,7 +5,7 @@
 | Component | Observed contents | Likely modding uses | Difficulty |
 | --- | --- | --- | --- |
 | `gs.mpq` | Gameplay scripts and definitions | Units, spells, artifacts, buildings, encounters, balance, UI text, scripted behavior | Low–medium after extraction |
-| `pic.mpq` | Images and interface resources | Portraits, icons, panels, menus | Medium |
+| `pic.mpq` | Primarily paletted IFF PBM images plus a small number of BMP/unknown resources | Portraits, icons, panels, menus | Low–medium for inspection; repacking semantics remain unknown |
 | `imp.mpq` | Core game data | Engine-facing resources; exact scope not yet catalogued | Medium–high |
 | `sndfx.mpq` | Sound effects | Replacement and remastering | Medium |
 | `special.mpq` | Special Edition data | Expansion-specific resources; exact scope not yet catalogued | Medium–high |
@@ -27,6 +27,8 @@ This demonstrates that the script/data layer is broad enough for a substantial e
 The first local extraction confirms that `.gs` files use a PostScript-like, stack-oriented language. The entry script loads other files with string-plus-`run` expressions, definitions use `/name ... def`, braces delimit executable blocks, and semicolons begin line comments. Original Steam scripts are often minified into a single line; community versions are usually formatted and commented.
 
 See [MPQ inventory](mpq-inventory.md) for the measured archive contents and exact 3.02 change surface.
+
+The first native [asset-viewer spike](../spikes/asset-viewer/README.md) found 1,377 IFF `FORM PBM` members in GS5R3 `pic.mpq` and decoded all of them. They use indexed palettes and are either uncompressed or ByteRun1-compressed. At least one UI atlas visibly uses bright green as a likely engine-level chroma key while declaring no standard PBM mask, so format decoding and game compositing must remain separate concerns.
 
 ## Known executable imports and runtime dependencies
 
@@ -66,7 +68,7 @@ A safe asset workflow should:
 - Complete internal file lists for `imp.mpq`, `sndfx.mpq`, and `special.mpq`; some `pic.mpq` entries also lack catalogued names.
 - Full script grammar, built-in vocabulary, type behavior, and execution model inside `gs.mpq`.
 - Which AI, pathfinding, diplomacy, and auto-combat behaviors are scripted versus hard-coded.
-- File formats used for sprites, animations, palettes, and interface layouts.
+- File formats and composition rules used for sprites, animations, interface layouts, and chroma-key transparency beyond the now-identified PBM pictures.
 - Hard limits on units, artifacts, spells, maps, IDs, and string tables.
 - Save-file compatibility rules after data changes.
 - Multiplayer determinism requirements and checksum/version checks.
