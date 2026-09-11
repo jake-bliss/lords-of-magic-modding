@@ -61,7 +61,8 @@ Success criteria:
 - [x] Prove read-only native MPQ access and decode the observed IFF PBM corpus in a Rust/SDL3 viewer spike.
 - [x] Inventory core-archive image/audio formats, palettes, dimensions, and candidate transparency metadata.
 - [x] Parse all IMP sprite containers structurally and cross-check the common variants against generated headers.
-- Resolve uncommon IMP variants and decode/display animation frames.
+- [x] Decode both observed IMP pixel-storage variants and display individual/animated frames.
+- Resolve uncommon IMP metadata variants and verify chroma keys, origins, hotspots, and timing against the game.
 - Build lossless extract/convert/repack tests.
 - Evaluate AI upscaling on portraits and interface art.
 - Compare Lanczos runtime scaling against remastered source assets.

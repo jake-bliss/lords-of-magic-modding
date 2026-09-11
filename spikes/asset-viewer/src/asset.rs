@@ -137,17 +137,16 @@ fn probe_imp_sprite(bytes: &[u8]) -> Result<AssetInfo, String> {
         .iter()
         .position(|color| color[0..3] == [0, 255, 0])
         .map_or_else(|| "none".to_owned(), |index| index.to_string());
-    let stored_pixel_bytes = sprite
-        .stored_pixel_bytes
-        .map_or_else(|| "unknown".to_owned(), |bytes| bytes.to_string());
     Ok(AssetInfo::new(
         AssetKind::ImpSprite,
         format!(
-            "max-width={};max-height={};file-flags=0x{:02x};record-variant={};sequences={};cycles={};frames={};duplicate-frames={};hotspots={};hotspot-bytes={};raw-bytes={};stored-pixel-bytes={stored_pixel_bytes};green-key-index={green_key}",
+            "max-width={};max-height={};file-flags=0x{:02x};record-variant={};compressed={};bits-per-pixel={};sequences={};cycles={};frames={};duplicate-frames={};hotspots={};hotspot-bytes={};raw-bytes={};stored-pixel-bytes={};green-key-index={green_key}",
             sprite.maximum_width,
             sprite.maximum_height,
             sprite.file_flags,
             sprite.record_variant,
+            sprite.compressed,
+            sprite.bits_per_pixel,
             sprite.sequence_count,
             sprite.cycle_count,
             sprite.frame_count,
@@ -155,6 +154,7 @@ fn probe_imp_sprite(bytes: &[u8]) -> Result<AssetInfo, String> {
             sprite.hotspot_count,
             sprite.hotspot_bytes,
             sprite.raw_pixel_bytes,
+            sprite.stored_pixel_bytes,
         ),
     ))
 }

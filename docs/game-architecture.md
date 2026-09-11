@@ -28,7 +28,7 @@ The first local extraction confirms that `.gs` files use a PostScript-like, stac
 
 See [MPQ inventory](mpq-inventory.md) for the measured archive contents and exact 3.02 change surface.
 
-The native [asset tool](../spikes/asset-viewer/README.md) found 1,377 IFF `FORM PBM` members in GS5R3 `pic.mpq` and decoded all of them. It also classifies all 9,804 members in the five core archives and structurally parses all 1,800 IMP sprite binaries. They use indexed palettes, animation tables, hotspots, and multiple shared-frame/storage conventions. At least one UI atlas visibly uses bright green as a likely engine-level chroma key while declaring no standard PBM mask, so format decoding and game compositing must remain separate concerns. See the [Stage 1 record](native-asset-stage.md) for current coverage.
+The native [asset tool](../spikes/asset-viewer/README.md) found 1,377 IFF `FORM PBM` members in GS5R3 `pic.mpq` and decoded all of them. It also classifies all 9,804 members in the five core archives and pixel-decodes all 1,800 IMP sprite binaries. IMP uses indexed palettes, a custom packet RLE, 8/4/2/1-bit packed pixels, animation tables, hotspots, and multiple shared-frame conventions. Representative unit art renders recognizably. Bright green in PBM UI art and flat red/green IMP backgrounds suggest engine-level chroma-key or mask rules; the IMP viewer provisionally keys the top-left pixel color, keeping this display hypothesis separate from lossless format decoding. See the [Stage 1 record](native-asset-stage.md) for current coverage.
 
 ## Known executable imports and runtime dependencies
 
@@ -68,7 +68,7 @@ A safe asset workflow should:
 - Purpose-level names for some generic or mismatched public-listfile entries, including four orphan IMP header/binary names.
 - Full script grammar, built-in vocabulary, type behavior, and execution model inside `gs.mpq`.
 - Which AI, pathfinding, diplomacy, and auto-combat behaviors are scripted versus hard-coded.
-- IMP pixel compression, uncommon shared-frame variants, and composition rules for hotspots, pivots, palettes, and chroma-key transparency.
+- Uncommon IMP shared-frame metadata variants and composition rules for hotspots, pivots, palettes, chroma-key transparency, and sequence timing.
 - Hard limits on units, artifacts, spells, maps, IDs, and string tables.
 - Save-file compatibility rules after data changes.
 - Multiplayer determinism requirements and checksum/version checks.

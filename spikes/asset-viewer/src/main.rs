@@ -5,7 +5,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use lom_asset_viewer::asset::{AssetKind, probe};
 use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
@@ -14,7 +14,7 @@ use lom_asset_viewer::pbm::PbmImage;
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::pixels::{Color, PixelFormat};
-use sdl3::render::{Canvas, FRect, ScaleMode};
+use sdl3::render::{BlendMode, Canvas, FRect, ScaleMode};
 use sdl3::video::Window;
 
 const WINDOW_WIDTH: u32 = 1100;
@@ -34,6 +34,11 @@ enum Command {
     },
     Scan(Source),
     ValidateImp(Source),
+    ViewImp {
+        source: Source,
+        member: String,
+        frame: usize,
+    },
     View {
         source: Source,
         member: Option<String>,
@@ -70,6 +75,11 @@ fn run() -> Result<(), String> {
         Command::Inspect { source, member } => inspect_archive(&source, member.as_deref()),
         Command::Scan(source) => scan_archive(&source),
         Command::ValidateImp(source) => validate_imp_archive(&source),
+        Command::ViewImp {
+            source,
+            member,
+            frame,
+        } => view_imp_archive(&source, &member, frame),
         Command::View { source, member } => view_archive(&source, member.as_deref()),
     }
 }
@@ -111,6 +121,25 @@ fn parse_args() -> Result<Command, String> {
         "--validate-imp" => {
             require_len(&args, 2)?;
             Ok(Command::ValidateImp(source(&args[1], listfile)))
+        }
+        "--view-imp" => {
+            if !(3..=4).contains(&args.len()) {
+                return Err(usage());
+            }
+            let frame = args
+                .get(3)
+                .map(|value| {
+                    value.parse().map_err(|_| {
+                        format!("IMP frame index must be a nonnegative integer: {value}")
+                    })
+                })
+                .transpose()?
+                .unwrap_or(0);
+            Ok(Command::ViewImp {
+                source: source(&args[1], listfile),
+                member: args[2].clone(),
+                frame,
+            })
         }
         "--help" | "-h" => Err(usage()),
         _ => {
@@ -160,7 +189,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -377,6 +406,131 @@ fn clean_field(value: &str) -> String {
     value.replace(['\t', '\r', '\n'], " ")
 }
 
+fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name.eq_ignore_ascii_case(member))
+        .ok_or_else(|| format!("archive has no member named {member}"))?;
+    let bytes = archive
+        .read(&entry.name)
+        .map_err(|error| error.to_string())?;
+    let sprite = ImpSprite::parse(&bytes).map_err(|error| error.to_string())?;
+    if requested_frame >= sprite.frames.len() {
+        return Err(format!(
+            "IMP frame {requested_frame} is out of range; {} frames are available",
+            sprite.frames.len()
+        ));
+    }
+    let mut frame_index = find_imp_frame(&sprite, requested_frame, 1, true)?;
+    let mut playing = false;
+    let mut last_advance = Instant::now();
+
+    let sdl = sdl3::init().map_err(|error| error.to_string())?;
+    let video = sdl.video().map_err(|error| error.to_string())?;
+    let window = video
+        .window("Lords of Magic IMP viewer", WINDOW_WIDTH, WINDOW_HEIGHT)
+        .position_centered()
+        .resizable()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut canvas = window.into_canvas();
+    let mut event_pump = sdl.event_pump().map_err(|error| error.to_string())?;
+
+    'running: loop {
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => break 'running,
+                Event::KeyDown {
+                    keycode: Some(Keycode::Right | Keycode::Down),
+                    repeat: false,
+                    ..
+                } => {
+                    frame_index = find_imp_frame(&sprite, frame_index, 1, false)?;
+                    last_advance = Instant::now();
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::Left | Keycode::Up),
+                    repeat: false,
+                    ..
+                } => {
+                    frame_index = find_imp_frame(&sprite, frame_index, -1, false)?;
+                    last_advance = Instant::now();
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::Space),
+                    repeat: false,
+                    ..
+                } => {
+                    playing = !playing;
+                    last_advance = Instant::now();
+                }
+                _ => {}
+            }
+        }
+        if playing && last_advance.elapsed() >= Duration::from_millis(100) {
+            frame_index = find_imp_frame(&sprite, frame_index, 1, false)?;
+            last_advance = Instant::now();
+        }
+
+        let frame = sprite
+            .resolved_frame(frame_index)
+            .map_err(|error| error.to_string())?;
+        let title = format!(
+            "Lords of Magic IMP viewer — {} — frame {}/{} ({}×{}, {} bpp{})",
+            entry.name,
+            frame_index + 1,
+            sprite.frames.len(),
+            frame.width,
+            frame.height,
+            sprite.bits_per_pixel,
+            if playing { ", playing" } else { "" }
+        );
+        canvas
+            .window_mut()
+            .set_title(&title)
+            .map_err(|error| error.to_string())?;
+        let display_rgba = imp_display_rgba(&frame.rgba);
+        draw_rgba_in_bounds(
+            &mut canvas,
+            frame.width,
+            frame.height,
+            sprite.maximum_width,
+            sprite.maximum_height,
+            &display_rgba,
+        )?;
+        thread::sleep(Duration::from_millis(16));
+    }
+    Ok(())
+}
+
+fn find_imp_frame(
+    sprite: &ImpSprite,
+    current: usize,
+    direction: isize,
+    include_current: bool,
+) -> Result<usize, String> {
+    if sprite.frames.is_empty() {
+        return Err("IMP sprite contains no frames".to_owned());
+    }
+    let first_distance = usize::from(!include_current);
+    for distance in first_distance..first_distance + sprite.frames.len() {
+        let index = (current as isize + direction * distance as isize)
+            .rem_euclid(sprite.frames.len() as isize) as usize;
+        let frame = sprite
+            .resolved_frame(index)
+            .map_err(|error| error.to_string())?;
+        if frame.width > 0 && frame.height > 0 && !frame.rgba.is_empty() {
+            return Ok(index);
+        }
+    }
+    Err("IMP sprite contains no visible frames".to_owned())
+}
+
 fn view_archive(source: &Source, requested: Option<&str>) -> Result<(), String> {
     let (archive, entries) = open_archive(source)?;
     let mut selected = select_image(&archive, &entries, requested)?;
@@ -500,24 +654,55 @@ fn set_title(canvas: &mut Canvas<Window>, selected: &SelectedImage) -> Result<()
 }
 
 fn draw(canvas: &mut Canvas<Window>, image: &PbmImage) -> Result<(), String> {
+    draw_rgba(canvas, image.width, image.height, &image.rgba)
+}
+
+fn draw_rgba(
+    canvas: &mut Canvas<Window>,
+    width: u16,
+    height: u16,
+    rgba: &[u8],
+) -> Result<(), String> {
+    draw_rgba_in_bounds(canvas, width, height, width, height, rgba)
+}
+
+fn imp_display_rgba(source: &[u8]) -> Vec<u8> {
+    let chroma_key = source.get(0..3);
+    source
+        .chunks_exact(4)
+        .flat_map(|rgba| {
+            let mut pixel: [u8; 4] = rgba.try_into().expect("RGBA chunks have four bytes");
+            if chroma_key.is_some_and(|key| pixel[0..3] == *key) {
+                pixel[3] = 0;
+            }
+            pixel
+        })
+        .collect()
+}
+
+fn draw_rgba_in_bounds(
+    canvas: &mut Canvas<Window>,
+    width: u16,
+    height: u16,
+    bounds_width: u16,
+    bounds_height: u16,
+    rgba: &[u8],
+) -> Result<(), String> {
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator
-        .create_texture_streaming(
-            PixelFormat::RGBA32,
-            u32::from(image.width),
-            u32::from(image.height),
-        )
+        .create_texture_streaming(PixelFormat::RGBA32, u32::from(width), u32::from(height))
         .map_err(|error| error.to_string())?;
     texture.set_scale_mode(ScaleMode::Nearest);
+    texture.set_blend_mode(BlendMode::Blend);
     texture
-        .update(None, &image.rgba, usize::from(image.width) * 4)
+        .update(None, rgba, usize::from(width) * 4)
         .map_err(|error| error.to_string())?;
 
     let (output_width, output_height) = canvas.output_size().map_err(|error| error.to_string())?;
-    let scale = (output_width as f32 / f32::from(image.width))
-        .min(output_height as f32 / f32::from(image.height));
-    let destination_width = f32::from(image.width) * scale;
-    let destination_height = f32::from(image.height) * scale;
+    let scale = (output_width as f32 / f32::from(bounds_width))
+        .min(output_height as f32 / f32::from(bounds_height));
+    let destination_width = f32::from(width) * scale;
+    let destination_height = f32::from(height) * scale;
     let destination = FRect::new(
         (output_width as f32 - destination_width) / 2.0,
         (output_height as f32 - destination_height) / 2.0,
@@ -532,4 +717,19 @@ fn draw(canvas: &mut Canvas<Window>, image: &PbmImage) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     canvas.present();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::imp_display_rgba;
+
+    #[test]
+    fn applies_top_left_imp_chroma_key_only_for_display() {
+        let source = [255, 0, 0, 255, 0, 255, 0, 255, 1, 2, 3, 255, 255, 0, 0, 128];
+
+        assert_eq!(
+            imp_display_rgba(&source),
+            [255, 0, 0, 0, 0, 255, 0, 255, 1, 2, 3, 255, 255, 0, 0, 0,]
+        );
+    }
 }

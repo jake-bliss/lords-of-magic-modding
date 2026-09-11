@@ -2,9 +2,9 @@
 
 ## Status
 
-**In progress; archive discovery and structural inventory milestone complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and parse the table structure of all 1,800 IMP sprite binaries.
+**In progress; archive inventory and IMP pixel-decoding milestone complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels and frame references of all 1,800 IMP sprite binaries.
 
-This is useful tooling now, but it is not yet the lossless asset layer promised by Stage 1. Sprite pixels, maps, scenarios, transparency semantics, export, and cross-platform packaging remain open.
+This is useful tooling now, but it is not yet the lossless asset layer promised by Stage 1. Maps, scenarios, verified transparency/origin semantics, export, and cross-platform packaging remain open.
 
 ## Component boundaries
 
@@ -56,24 +56,37 @@ The paired generated `.h` files provide unusually valuable ground truth. The cur
 - maximum dimensions, sequences, cycles, logical frames, and frame dimensions;
 - six-byte hotspot records padded per frame to an eight-byte boundary;
 - direct duplicate-frame references and a compact repeated-cycle representation;
-- two observed frame-record variants, one with explicit stored sizes and one whose exact payload length requires decoding.
+- two observed frame-record variants, one with explicit stored sizes and one whose payload length is implicit;
+- a custom packet RLE in which controls below `0x80` repeat the following byte `control + 3` times and controls at or above `0x80` copy `256 - control` literal bytes;
+- 8-, 4-, 2-, and 1-bit indexed pixels selected by file-flag bits `0x30`, with both tightly packed and row-padded layouts;
+- most-significant-bit-first packing for sub-byte pixels, which produces recognizable output across representative sprites;
+- complete pixel expansion and frame-reference resolution for all 1,800 observed binaries.
 
 The validator pairs generated headers with binaries and compares independently recorded sequence, frame, duplicate, raw-pixel, hotspot, and stored-pixel statistics where applicable:
 
 | IMP validation check | Result |
 | --- | ---: |
 | Same-stem header/binary pairs | 1,798 |
-| Exact structural matches | 1,783 (99.2%) |
-| Bounded mismatches | 15 |
+| Exact structural matches | 1,784 (99.2%) |
+| Bounded metadata mismatches | 14 |
 | Orphan catalog entries | 4 |
 
-The mismatches cluster around additional shared-frame conventions, unusual pixel depth/layout, and one differing logical-frame count. They remain failing validation cases until understood. We do not treat successful bounds-checking of all 1,800 binaries as proof that their pixel encoding is decoded.
+All stored-pixel byte totals now agree with the generated headers. The remaining paired mismatches concern duplicate-frame counts, raw logical-pixel totals, and one logical-frame count; they remain failing validation cases until understood. Four public-catalog stems have only one member of the expected `.imp`/`.h` pair.
+
+| Remaining disagreement | Count |
+| --- | ---: |
+| Generated duplicate-frame count | 9 |
+| Generated raw logical-pixel total | 4 |
+| Generated logical-frame count | 1 |
+| Missing expected `.imp`/`.h` counterpart | 4 |
+
+The native viewer displays individual frames, follows duplicate/repeated references, and can autoplay them at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. The viewer provisionally treats the top-left pixel color of each frame as its chroma key; this preserves two-color mask sprites that use both bright red and bright green. Exact chroma-key selection, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves the source palette colors unchanged.
 
 ## Test strategy and gates
 
 The implementation uses three layers of evidence:
 
-1. Tiny synthetic unit fixtures cover endianness, chunk bounds, ByteRun1 scanline behavior, IMP tables, hotspots, duplicate references, repeated cycles, BMP metadata, and WAVE chunks.
+1. Tiny synthetic unit fixtures cover endianness, chunk bounds, ByteRun1 scanline behavior, IMP tables, RLE packets, all four packed pixel depths, hotspots, duplicate references, repeated cycles, BMP metadata, and WAVE chunks.
 2. User-local corpus tests scan all five archives, require every member to be readable/classifiable, and cross-check IMP binaries against their generated headers. No copyrighted fixture enters Git.
 3. Visual comparison checks representative UI, portrait, map, and animation output against the original executable before renderer behavior is considered faithful.
 
@@ -88,12 +101,13 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [x] Lossless decode of all 1,377 observed PBM images.
 - [x] Metadata probes for BMP and WAVE.
 - [x] Bounds-checked structural parser for all 1,800 IMP binaries.
+- [x] Pixel decoding for both IMP record variants and all observed packed depths.
+- [x] Individual-frame viewer with duplicate resolution and animation controls.
 - [x] Generated-header parser and corpus cross-validator.
 
 ## Remaining before Stage 1 is complete
 
-- [ ] Decode both IMP pixel-storage variants and display individual animation frames.
-- [ ] Resolve the 15 known IMP structural mismatches and four catalog-name orphans.
+- [ ] Resolve the 14 known IMP metadata mismatches and four catalog-name orphans.
 - [ ] Establish palette, chroma-key, hotspot, pivot, and compositing semantics.
 - [ ] Parse representative `.scn`, `.smp`, and `.lgd` map/scenario data.
 - [ ] Inventory loose WAVE/Smacker resources outside the core archives.
@@ -101,4 +115,4 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [ ] Add searchable browsing, cached textures, animation controls, and export to the GUI.
 - [ ] Make native-library discovery and packaging portable across macOS, Windows, and Linux.
 
-The next implementation slice is IMP pixel decoding plus a single-frame/animation viewer. It directly attacks the largest remaining image-format uncertainty while preserving value as a standalone modding tool.
+The next implementation slice should validate IMP chroma keys, origins, hotspots, and sequence timing against the original executable, then add lossless frame export. That will turn the current recognizable rendering into a defensible sprite-format specification.
