@@ -56,6 +56,31 @@ struct SelectedImage {
     image: PbmImage,
 }
 
+#[derive(Clone, Copy)]
+enum ImpDisplayMode {
+    Preview,
+    Mask,
+    Raw,
+}
+
+impl ImpDisplayMode {
+    fn next(self) -> Self {
+        match self {
+            Self::Preview => Self::Mask,
+            Self::Mask => Self::Raw,
+            Self::Raw => Self::Preview,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Preview => "preview",
+            Self::Mask => "mask",
+            Self::Raw => "raw",
+        }
+    }
+}
+
 fn main() {
     if let Err(message) = run() {
         eprintln!("error: {message}");
@@ -424,6 +449,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
     }
     let mut frame_index = find_imp_frame(&sprite, requested_frame, 1, true)?;
     let mut playing = false;
+    let mut display_mode = ImpDisplayMode::Preview;
     let mut last_advance = Instant::now();
 
     let sdl = sdl3::init().map_err(|error| error.to_string())?;
@@ -469,6 +495,11 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     playing = !playing;
                     last_advance = Instant::now();
                 }
+                Event::KeyDown {
+                    keycode: Some(Keycode::C),
+                    repeat: false,
+                    ..
+                } => display_mode = display_mode.next(),
                 _ => {}
             }
         }
@@ -481,20 +512,21 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             .resolved_frame(frame_index)
             .map_err(|error| error.to_string())?;
         let title = format!(
-            "Lords of Magic IMP viewer — {} — frame {}/{} ({}×{}, {} bpp{})",
+            "Lords of Magic IMP viewer — {} — frame {}/{} ({}×{}, {} bpp, {}{})",
             entry.name,
             frame_index + 1,
             sprite.frames.len(),
             frame.width,
             frame.height,
             sprite.bits_per_pixel,
+            display_mode.label(),
             if playing { ", playing" } else { "" }
         );
         canvas
             .window_mut()
             .set_title(&title)
             .map_err(|error| error.to_string())?;
-        let display_rgba = imp_display_rgba(&frame.rgba);
+        let display_rgba = imp_display_rgba(&frame.rgba, display_mode);
         draw_rgba_in_bounds(
             &mut canvas,
             frame.width,
@@ -666,13 +698,17 @@ fn draw_rgba(
     draw_rgba_in_bounds(canvas, width, height, width, height, rgba)
 }
 
-fn imp_display_rgba(source: &[u8]) -> Vec<u8> {
+fn imp_display_rgba(source: &[u8], mode: ImpDisplayMode) -> Vec<u8> {
     let chroma_key = source.get(0..3);
     source
         .chunks_exact(4)
         .flat_map(|rgba| {
             let mut pixel: [u8; 4] = rgba.try_into().expect("RGBA chunks have four bytes");
-            if chroma_key.is_some_and(|key| pixel[0..3] == *key) {
+            let background = chroma_key.is_some_and(|key| pixel[0..3] == *key);
+            let red_mask = pixel[0..3] == [255, 0, 0];
+            if !matches!(mode, ImpDisplayMode::Raw)
+                && (background || matches!(mode, ImpDisplayMode::Preview) && red_mask)
+            {
                 pixel[3] = 0;
             }
             pixel
@@ -721,15 +757,20 @@ fn draw_rgba_in_bounds(
 
 #[cfg(test)]
 mod tests {
-    use super::imp_display_rgba;
+    use super::{ImpDisplayMode, imp_display_rgba};
 
     #[test]
-    fn applies_top_left_imp_chroma_key_only_for_display() {
-        let source = [255, 0, 0, 255, 0, 255, 0, 255, 1, 2, 3, 255, 255, 0, 0, 128];
+    fn imp_display_modes_preserve_decoder_pixels() {
+        let source = [0, 255, 0, 255, 255, 0, 0, 255, 1, 2, 3, 255, 0, 255, 0, 128];
 
         assert_eq!(
-            imp_display_rgba(&source),
-            [255, 0, 0, 0, 0, 255, 0, 255, 1, 2, 3, 255, 255, 0, 0, 0,]
+            imp_display_rgba(&source, ImpDisplayMode::Preview),
+            [0, 255, 0, 0, 255, 0, 0, 0, 1, 2, 3, 255, 0, 255, 0, 0,]
         );
+        assert_eq!(
+            imp_display_rgba(&source, ImpDisplayMode::Mask),
+            [0, 255, 0, 0, 255, 0, 0, 255, 1, 2, 3, 255, 0, 255, 0, 0,]
+        );
+        assert_eq!(imp_display_rgba(&source, ImpDisplayMode::Raw), source);
     }
 }

@@ -80,7 +80,7 @@ All stored-pixel byte totals now agree with the generated headers. The remaining
 | Generated logical-frame count | 1 |
 | Missing expected `.imp`/`.h` counterpart | 4 |
 
-The native viewer displays individual frames, follows duplicate/repeated references, and can autoplay them at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. The viewer provisionally treats the top-left pixel color of each frame as its chroma key; this preserves two-color mask sprites that use both bright red and bright green. Exact chroma-key selection, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves the source palette colors unchanged.
+The native viewer displays individual frames, follows duplicate/repeated references, and can autoplay them at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, green index 0 fills the background while a distinct pure-red index forms a 1,651-pixel silhouette beneath the creature; 1-bit aura assets similarly use green and red as their only two colors. This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes. Exact mask meaning, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves all source palette indices and colors unchanged.
 
 ## Test strategy and gates
 

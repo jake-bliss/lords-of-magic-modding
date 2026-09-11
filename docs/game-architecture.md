@@ -28,7 +28,7 @@ The first local extraction confirms that `.gs` files use a PostScript-like, stac
 
 See [MPQ inventory](mpq-inventory.md) for the measured archive contents and exact 3.02 change surface.
 
-The native [asset tool](../spikes/asset-viewer/README.md) found 1,377 IFF `FORM PBM` members in GS5R3 `pic.mpq` and decoded all of them. It also classifies all 9,804 members in the five core archives and pixel-decodes all 1,800 IMP sprite binaries. IMP uses indexed palettes, a custom packet RLE, 8/4/2/1-bit packed pixels, animation tables, hotspots, and multiple shared-frame conventions. Representative unit art renders recognizably. Bright green in PBM UI art and flat red/green IMP backgrounds suggest engine-level chroma-key or mask rules; the IMP viewer provisionally keys the top-left pixel color, keeping this display hypothesis separate from lossless format decoding. See the [Stage 1 record](native-asset-stage.md) for current coverage.
+The native [asset tool](../spikes/asset-viewer/README.md) found 1,377 IFF `FORM PBM` members in GS5R3 `pic.mpq` and decoded all of them. It also classifies all 9,804 members in the five core archives and pixel-decodes all 1,800 IMP sprite binaries. IMP uses indexed palettes, a custom packet RLE, 8/4/2/1-bit packed pixels, animation tables, hotspots, and multiple shared-frame conventions. Representative unit art renders recognizably. Green IMP backgrounds and separate pure-red silhouettes indicate at least two engine-level background/mask channels; the viewer exposes clean-preview, mask, and raw modes while keeping these display hypotheses separate from lossless decoding. See the [Stage 1 record](native-asset-stage.md) for current coverage.
 
 ## Known executable imports and runtime dependencies
 
