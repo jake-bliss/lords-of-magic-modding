@@ -24,6 +24,10 @@ GS5R3 likewise replaces `gs.mpq`; its required PIC5R3 package replaces `pic.mpq`
 
 This demonstrates that the script/data layer is broad enough for a substantial expansion without executable patching.
 
+The first local extraction confirms that `.gs` files use a PostScript-like, stack-oriented language. The entry script loads other files with string-plus-`run` expressions, definitions use `/name ... def`, braces delimit executable blocks, and semicolons begin line comments. Original Steam scripts are often minified into a single line; community versions are usually formatted and commented.
+
+See [MPQ inventory](mpq-inventory.md) for the measured archive contents and exact 3.02 change surface.
+
 ## Known executable imports and runtime dependencies
 
 The 32-bit `lomse.exe` imports legacy Windows APIs and libraries including:
@@ -59,8 +63,8 @@ A safe asset workflow should:
 
 ## Unknowns to resolve
 
-- Complete internal file lists for all five MPQ archives.
-- Script grammar and execution model inside `gs.mpq`.
+- Complete internal file lists for `imp.mpq`, `sndfx.mpq`, and `special.mpq`; some `pic.mpq` entries also lack catalogued names.
+- Full script grammar, built-in vocabulary, type behavior, and execution model inside `gs.mpq`.
 - Which AI, pathfinding, diplomacy, and auto-combat behaviors are scripted versus hard-coded.
 - File formats used for sprites, animations, palettes, and interface layouts.
 - Hard limits on units, artifacts, spells, maps, IDs, and string tables.

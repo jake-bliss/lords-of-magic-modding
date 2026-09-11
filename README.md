@@ -20,6 +20,7 @@ All three are stored in `/Users/jakebliss/Applications/`. The modded apps are AP
 
 - [macOS runbook](docs/macos-runbook.md) — launch, configuration, recovery, and troubleshooting
 - [Game and data architecture](docs/game-architecture.md) — known modding surfaces and hard engine boundaries
+- [MPQ inventory](docs/mpq-inventory.md) — reproducible extraction and baseline/3.02/GS5R3 findings
 - [Mod ecosystem](docs/mod-ecosystem.md) — 3.02, GS5R3, optional packages, and compatibility
 - [Research log](docs/research-log.md) — evidence and conclusions from the working installation
 - [Roadmap](docs/roadmap.md) — proposed mod SDK and first experiments
@@ -36,4 +37,4 @@ All three are stored in `/Users/jakebliss/Applications/`. The modded apps are AP
 
 ## Immediate opportunity
 
-We already have three useful data points: the Steam baseline, community 3.02, and GS5R3. Extracting and diffing their `gs.mpq` archives should reveal much of the undocumented gameplay schema and scripting vocabulary. That comparison is the best starting point for our own tooling and documentation.
+The first archive comparison is complete. It isolates the focused 3.02 changes, confirms that GS5R3 is a broad script-and-art fork, and recovers hundreds of filenames that were anonymous in the original archives. The next useful step is a searchable symbol index for `.gs` definitions and references, starting with the thirteen scripts changed by 3.02.

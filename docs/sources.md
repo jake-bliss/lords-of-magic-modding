@@ -32,6 +32,7 @@
 ## Modding tools and guides
 
 - [Steam Guide to Simple Modding](https://steamcommunity.com/sharedfiles/filedetails/?id=2839540731)
+- [StormLib official repository](https://github.com/ladislav-zezula/StormLib)
 - [Frost cross-platform MPQ editor](https://github.com/zach-cloud/Frost)
 
 ## Source quality notes

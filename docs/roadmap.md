@@ -4,16 +4,18 @@
 
 Create a reproducible, source-controlled modding toolkit that lets us inspect, change, validate, package, and test Lords of Magic data without editing a playable installation by hand.
 
-## Phase 1 — Archive inventory
+## Phase 1 — Archive inventory (initial pass complete)
 
-- Select and validate a cross-platform MPQ extraction/repacking implementation.
-- Extract `gs.mpq` from baseline, 3.02, and GS5R3.
-- Preserve archive paths, case, timestamps, and listfiles where available.
-- Produce machine-readable manifests containing path, size, hash, and detected format.
-- Diff the three extracted trees.
-- Classify each file as code/script, structured data, text, image, audio, map, or unknown.
+- [x] Select and validate StormLib for read-only cross-platform MPQ extraction.
+- [x] Extract `gs.mpq` and `pic.mpq` from baseline, 3.02, and GS5R3.
+- [x] Preserve archive paths and listfile names where available.
+- [x] Produce machine-readable manifests containing path, size, compressed size, flags, locale, and content hashes.
+- [x] Diff all three extracted trees and distinguish formatting/comment-only changes from token-level script changes.
+- [ ] Identify and name uncatalogued archive slots where practical.
+- [ ] Classify every non-script file by detected format and purpose.
+- [ ] Validate a deterministic repacking implementation before any development-profile install.
 
-Deliverable: `docs/generated/archive-inventory.md` plus reproducible extraction commands.
+Delivered: [MPQ inventory](mpq-inventory.md), tracked comparison summaries, and reproducible extraction commands.
 
 ## Phase 2 — Script documentation
 
