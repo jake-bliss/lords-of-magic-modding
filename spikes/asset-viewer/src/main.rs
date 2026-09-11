@@ -1,8 +1,14 @@
+use std::collections::BTreeMap;
 use std::env;
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
+use lom_asset_viewer::asset::{AssetKind, probe};
+use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::pbm::PbmImage;
 use sdl3::event::Event;
@@ -15,20 +21,28 @@ const WINDOW_WIDTH: u32 = 1100;
 const WINDOW_HEIGHT: u32 = 800;
 
 enum Command {
-    List {
-        archive: PathBuf,
+    Catalog(Source),
+    Extract {
+        source: Source,
+        member: String,
+        output: PathBuf,
     },
+    List(Source),
     Inspect {
-        archive: PathBuf,
+        source: Source,
         member: Option<String>,
     },
-    Scan {
-        archive: PathBuf,
-    },
+    Scan(Source),
+    ValidateImp(Source),
     View {
-        archive: PathBuf,
+        source: Source,
         member: Option<String>,
     },
+}
+
+struct Source {
+    archive: PathBuf,
+    listfile: Option<PathBuf>,
 }
 
 struct SelectedImage {
@@ -46,72 +60,124 @@ fn main() {
 
 fn run() -> Result<(), String> {
     match parse_args()? {
-        Command::List { archive } => list_archive(&archive),
-        Command::Inspect { archive, member } => inspect_archive(&archive, member.as_deref()),
-        Command::Scan { archive } => scan_archive(&archive),
-        Command::View { archive, member } => view_archive(&archive, member.as_deref()),
+        Command::Catalog(source) => catalog_archive(&source),
+        Command::Extract {
+            source,
+            member,
+            output,
+        } => extract_member(&source, &member, &output),
+        Command::List(source) => list_archive(&source),
+        Command::Inspect { source, member } => inspect_archive(&source, member.as_deref()),
+        Command::Scan(source) => scan_archive(&source),
+        Command::ValidateImp(source) => validate_imp_archive(&source),
+        Command::View { source, member } => view_archive(&source, member.as_deref()),
     }
 }
 
 fn parse_args() -> Result<Command, String> {
-    let mut args = env::args().skip(1);
-    let first = args.next().ok_or_else(usage)?;
-    match first.as_str() {
-        "--list" => {
-            let archive = args.next().ok_or_else(usage)?;
-            reject_extra_args(args)?;
-            Ok(Command::List {
-                archive: archive.into(),
+    let mut args: Vec<String> = env::args().skip(1).collect();
+    let listfile = take_option(&mut args, "--listfile")?.map(PathBuf::from);
+    let first = args.first().ok_or_else(usage)?.as_str();
+    match first {
+        "--catalog" => {
+            require_len(&args, 2)?;
+            Ok(Command::Catalog(source(&args[1], listfile)))
+        }
+        "--extract" => {
+            require_len(&args, 4)?;
+            Ok(Command::Extract {
+                source: source(&args[1], listfile),
+                member: args[2].clone(),
+                output: args[3].clone().into(),
             })
         }
+        "--list" => {
+            require_len(&args, 2)?;
+            Ok(Command::List(source(&args[1], listfile)))
+        }
         "--inspect" => {
-            let archive = args.next().ok_or_else(usage)?;
-            let member = args.next();
-            reject_extra_args(args)?;
+            if !(2..=3).contains(&args.len()) {
+                return Err(usage());
+            }
             Ok(Command::Inspect {
-                archive: archive.into(),
-                member,
+                source: source(&args[1], listfile),
+                member: args.get(2).cloned(),
             })
         }
         "--scan" => {
-            let archive = args.next().ok_or_else(usage)?;
-            reject_extra_args(args)?;
-            Ok(Command::Scan {
-                archive: archive.into(),
-            })
+            require_len(&args, 2)?;
+            Ok(Command::Scan(source(&args[1], listfile)))
+        }
+        "--validate-imp" => {
+            require_len(&args, 2)?;
+            Ok(Command::ValidateImp(source(&args[1], listfile)))
         }
         "--help" | "-h" => Err(usage()),
         _ => {
-            let member = args.next();
-            reject_extra_args(args)?;
+            if !(1..=2).contains(&args.len()) {
+                return Err(usage());
+            }
             Ok(Command::View {
-                archive: first.into(),
-                member,
+                source: source(&args[0], listfile),
+                member: args.get(1).cloned(),
             })
         }
     }
 }
 
-fn reject_extra_args(mut args: impl Iterator<Item = String>) -> Result<(), String> {
-    if args.next().is_some() {
-        Err(usage())
-    } else {
+fn source(archive: &str, listfile: Option<PathBuf>) -> Source {
+    Source {
+        archive: archive.into(),
+        listfile,
+    }
+}
+
+fn take_option(args: &mut Vec<String>, option: &str) -> Result<Option<String>, String> {
+    let Some(position) = args.iter().position(|argument| argument == option) else {
+        return Ok(None);
+    };
+    if args
+        .iter()
+        .skip(position + 1)
+        .any(|argument| argument == option)
+    {
+        return Err(format!("{option} may only be supplied once"));
+    }
+    if position + 1 >= args.len() {
+        return Err(format!("{option} requires a path"));
+    }
+    let value = args.remove(position + 1);
+    args.remove(position);
+    Ok(Some(value))
+}
+
+fn require_len(args: &[String], expected: usize) -> Result<(), String> {
+    if args.len() == expected {
         Ok(())
+    } else {
+        Err(usage())
     }
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq\n  lom-asset-viewer --scan ARCHIVE.mpq\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
-fn open_archive(path: &Path) -> Result<(Archive, Vec<Entry>), String> {
-    let archive = Archive::open(path).map_err(|error| error.to_string())?;
+fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
+    let archive = Archive::open(&source.archive).map_err(|error| error.to_string())?;
+    if let Some(path) = &source.listfile {
+        let contents = fs::read(path)
+            .map_err(|error| format!("could not read listfile {}: {error}", path.display()))?;
+        archive
+            .add_listfile_contents(&contents)
+            .map_err(|error| error.to_string())?;
+    }
     let entries = archive.entries().map_err(|error| error.to_string())?;
     Ok((archive, entries))
 }
 
-fn list_archive(path: &Path) -> Result<(), String> {
-    let (_archive, entries) = open_archive(path)?;
+fn list_archive(source: &Source) -> Result<(), String> {
+    let (_archive, entries) = open_archive(source)?;
     println!("size\tcompressed\tlocale\tflags\tname");
     for entry in &entries {
         println!(
@@ -123,56 +189,196 @@ fn list_archive(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn inspect_archive(path: &Path, requested: Option<&str>) -> Result<(), String> {
-    let (archive, entries) = open_archive(path)?;
-    let selected = select_image(&archive, &entries, requested)?;
-    println!("name\t{}", selected.name);
-    println!(
-        "dimensions\t{}x{}",
-        selected.image.width, selected.image.height
-    );
-    println!("palette_entries\t{}", selected.image.palette_entries);
-    println!("compression\t{}", selected.image.compression);
-    println!("masking\t{}", selected.image.masking);
-    println!("rgba_bytes\t{}", selected.image.rgba.len());
+fn extract_member(source: &Source, member: &str, output: &PathBuf) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name.eq_ignore_ascii_case(member))
+        .ok_or_else(|| format!("archive has no member named {member}"))?;
+    let bytes = archive
+        .read(&entry.name)
+        .map_err(|error| error.to_string())?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    file.write_all(&bytes)
+        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+    println!("wrote\t{}\t{}", output.display(), bytes.len());
     Ok(())
 }
 
-fn scan_archive(path: &Path) -> Result<(), String> {
-    let (archive, entries) = open_archive(path)?;
+fn catalog_archive(source: &Source) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    println!("name\tsize\tkind\tdetails");
+    for entry in &entries {
+        match archive.read(&entry.name) {
+            Ok(bytes) => match probe(&entry.name, &bytes) {
+                Ok(info) => println!(
+                    "{}\t{}\t{}\t{}",
+                    clean_field(&entry.name),
+                    entry.size,
+                    info.kind,
+                    clean_field(&info.details)
+                ),
+                Err(error) => println!(
+                    "{}\t{}\tinvalid\t{}",
+                    clean_field(&entry.name),
+                    entry.size,
+                    clean_field(&error)
+                ),
+            },
+            Err(error) => println!(
+                "{}\t{}\tunreadable\t{}",
+                clean_field(&entry.name),
+                entry.size,
+                clean_field(&error.to_string())
+            ),
+        }
+    }
+    Ok(())
+}
+
+fn inspect_archive(source: &Source, requested: Option<&str>) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let entry = match requested {
+        Some(name) => entries
+            .iter()
+            .find(|entry| entry.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("archive has no member named {name}"))?,
+        None => entries
+            .first()
+            .ok_or_else(|| "archive is empty".to_owned())?,
+    };
+    let bytes = archive
+        .read(&entry.name)
+        .map_err(|error| error.to_string())?;
+    let info = probe(&entry.name, &bytes)?;
+    println!("name\t{}", entry.name);
+    println!("size\t{}", entry.size);
+    println!("kind\t{}", info.kind);
+    println!("details\t{}", info.details);
+    Ok(())
+}
+
+fn scan_archive(source: &Source) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
     let mut readable = 0_usize;
-    let mut pbm_files = 0_usize;
-    let mut decoded = 0_usize;
-    let mut decode_failures = Vec::new();
+    let mut kinds = BTreeMap::<AssetKind, usize>::new();
+    let mut failures = Vec::new();
 
     for entry in &entries {
-        let Ok(bytes) = archive.read(&entry.name) else {
-            continue;
+        let bytes = match archive.read(&entry.name) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                failures.push((entry.name.clone(), error.to_string()));
+                continue;
+            }
         };
         readable += 1;
-        if bytes.len() < 12 || &bytes[0..4] != b"FORM" || &bytes[8..12] != b"PBM " {
-            continue;
-        }
-        pbm_files += 1;
-        match PbmImage::decode(&bytes) {
-            Ok(_) => decoded += 1,
-            Err(error) => decode_failures.push((entry.name.clone(), error.to_string())),
+        match probe(&entry.name, &bytes) {
+            Ok(info) => *kinds.entry(info.kind).or_default() += 1,
+            Err(error) => failures.push((entry.name.clone(), error)),
         }
     }
 
     println!("archive_entries\t{}", entries.len());
     println!("readable_entries\t{readable}");
-    println!("pbm_files\t{pbm_files}");
-    println!("decoded_pbm_files\t{decoded}");
-    println!("decode_failures\t{}", decode_failures.len());
-    for (name, error) in decode_failures {
+    for (kind, count) in kinds {
+        println!("kind\t{kind}\t{count}");
+    }
+    let failure_count = failures.len();
+    println!("failures\t{failure_count}");
+    for (name, error) in failures {
         println!("failure\t{name}\t{error}");
     }
-    Ok(())
+    if failure_count == 0 {
+        Ok(())
+    } else {
+        Err(format!("{failure_count} archive members failed probing"))
+    }
 }
 
-fn view_archive(path: &Path, requested: Option<&str>) -> Result<(), String> {
-    let (archive, entries) = open_archive(path)?;
+#[derive(Default)]
+struct ImpPair {
+    header: Option<String>,
+    sprite: Option<String>,
+}
+
+fn validate_imp_archive(source: &Source) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let mut pairs = BTreeMap::<String, ImpPair>::new();
+
+    for entry in &entries {
+        let lower_name = entry.name.to_ascii_lowercase();
+        if let Some(stem) = lower_name.strip_suffix(".h") {
+            pairs.entry(stem.to_owned()).or_default().header = Some(entry.name.clone());
+        } else if let Some(stem) = lower_name.strip_suffix(".imp") {
+            pairs.entry(stem.to_owned()).or_default().sprite = Some(entry.name.clone());
+        }
+    }
+
+    let mut validated = 0_usize;
+    let mut matched_pairs = 0_usize;
+    let mut orphan_entries = 0_usize;
+    let mut validation_failures = 0_usize;
+    let mut failures = Vec::new();
+    for (stem, pair) in &pairs {
+        let (Some(header_name), Some(sprite_name)) = (&pair.header, &pair.sprite) else {
+            let missing = if pair.header.is_none() { ".h" } else { ".imp" };
+            failures.push(format!("{stem}: missing {missing} counterpart"));
+            orphan_entries += 1;
+            continue;
+        };
+        matched_pairs += 1;
+        let result = (|| {
+            let header_bytes = archive
+                .read(header_name)
+                .map_err(|error| error.to_string())?;
+            let sprite_bytes = archive
+                .read(sprite_name)
+                .map_err(|error| error.to_string())?;
+            let stats = ImpHeaderStats::parse(&header_bytes).map_err(|error| error.to_string())?;
+            let sprite = ImpSprite::parse(&sprite_bytes).map_err(|error| error.to_string())?;
+            sprite
+                .validate_against(&stats)
+                .map_err(|error| error.to_string())
+        })();
+        match result {
+            Ok(()) => validated += 1,
+            Err(error) => {
+                validation_failures += 1;
+                failures.push(format!("{stem}: {error}"));
+            }
+        }
+    }
+
+    println!("candidate_stems\t{}", pairs.len());
+    println!("matched_pairs\t{matched_pairs}");
+    println!("validated\t{validated}");
+    println!("validation_failures\t{validation_failures}");
+    println!("orphan_entries\t{orphan_entries}");
+    println!("failures\t{}", failures.len());
+    for failure in &failures {
+        println!("failure\t{}", clean_field(failure));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} IMP validations or catalog pairings failed",
+            failures.len()
+        ))
+    }
+}
+
+fn clean_field(value: &str) -> String {
+    value.replace(['\t', '\r', '\n'], " ")
+}
+
+fn view_archive(source: &Source, requested: Option<&str>) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
     let mut selected = select_image(&archive, &entries, requested)?;
 
     let sdl = sdl3::init().map_err(|error| error.to_string())?;

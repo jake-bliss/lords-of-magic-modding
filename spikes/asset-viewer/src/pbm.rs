@@ -5,9 +5,11 @@ pub struct PbmImage {
     pub width: u16,
     pub height: u16,
     pub rgba: Vec<u8>,
+    pub palette: Vec<[u8; 3]>,
     pub palette_entries: usize,
     pub compression: u8,
     pub masking: u8,
+    pub transparent_color: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +84,10 @@ impl PbmImage {
             return Err(PbmError::new("PBM palette is empty"));
         }
         let palette_entries = palette.len() / 3;
+        let palette_colors: Vec<[u8; 3]> = palette
+            .chunks_exact(3)
+            .map(|color| [color[0], color[1], color[2]])
+            .collect();
         let body = body.ok_or_else(|| PbmError::new("PBM has no BODY chunk"))?;
         let row_bytes = (usize::from(width) + 1) & !1;
         let decoded_size = row_bytes
@@ -134,9 +140,11 @@ impl PbmImage {
             width,
             height,
             rgba,
+            palette: palette_colors,
             palette_entries,
             compression,
             masking,
+            transparent_color,
         })
     }
 }

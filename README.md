@@ -21,6 +21,7 @@ All three are stored in `/Users/jakebliss/Applications/`. The modded apps are AP
 - [macOS runbook](docs/macos-runbook.md) — launch, configuration, recovery, and troubleshooting
 - [Game and data architecture](docs/game-architecture.md) — known modding surfaces and hard engine boundaries
 - [Native preservation engine plan](docs/native-engine-plan.md) — staged Rust/SDL3 candidate with explicit stop/go gates
+- [Native asset layer](docs/native-asset-stage.md) — live Stage 1 evidence, validation gates, and remaining work
 - [MPQ inventory](docs/mpq-inventory.md) — reproducible extraction and baseline/3.02/GS5R3 findings
 - [Mod ecosystem](docs/mod-ecosystem.md) — 3.02, GS5R3, optional packages, and compatibility
 - [Research log](docs/research-log.md) — evidence and conclusions from the working installation
@@ -38,4 +39,4 @@ All three are stored in `/Users/jakebliss/Applications/`. The modded apps are AP
 
 ## Immediate opportunity
 
-The first archive comparison is complete. It isolates the focused 3.02 changes, confirms that GS5R3 is a broad script-and-art fork, and recovers hundreds of filenames that were anonymous in the original archives. A [native Rust asset-viewer spike](spikes/asset-viewer/README.md) now also decodes every detected PBM image in the GS5R3 picture archive. The next modding step is a searchable `.gs` symbol index; the next native-engine decision point is a narrowly scoped GameScript VM spike.
+The first archive comparison is complete. It isolates the focused 3.02 changes, confirms that GS5R3 is a broad script-and-art fork, and recovers hundreds of filenames that were anonymous in the original archives. The [native Rust asset tool](spikes/asset-viewer/README.md) now classifies all 9,804 core-archive members, decodes every detected PBM image, and structurally parses all 1,800 IMP sprite binaries. See the [Stage 1 record](docs/native-asset-stage.md) for the measured coverage and known exceptions. The next native slice is IMP pixel decoding and animation display.

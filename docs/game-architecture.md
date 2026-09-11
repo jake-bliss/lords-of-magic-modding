@@ -6,9 +6,9 @@
 | --- | --- | --- | --- |
 | `gs.mpq` | Gameplay scripts and definitions | Units, spells, artifacts, buildings, encounters, balance, UI text, scripted behavior | Low–medium after extraction |
 | `pic.mpq` | Primarily paletted IFF PBM images plus a small number of BMP/unknown resources | Portraits, icons, panels, menus | Low–medium for inspection; repacking semantics remain unknown |
-| `imp.mpq` | Core game data | Engine-facing resources; exact scope not yet catalogued | Medium–high |
-| `sndfx.mpq` | Sound effects | Replacement and remastering | Medium |
-| `special.mpq` | Special Edition data | Expansion-specific resources; exact scope not yet catalogued | Medium–high |
+| `imp.mpq` | 1,800 IMP sprite/animation binaries paired with 1,800 generated C headers in GS5R3 | Units, buildings, effects, missiles, interface sprites, palettes, animation metadata | Medium–high |
+| `sndfx.mpq` | 1,880 WAVE members in GS5R3 | Sound-effect replacement and remastering | Medium |
+| `special.mpq` | 1,218 WAVE members in GS5R3 | Special Edition voice/audio replacement and remastering | Medium |
 | `map/*.scn` | Custom worlds | Terrain, factions, starts, structures, encounters | Low–medium |
 | `map/*.lgd` | Legends of Urak scenarios | Scripted campaign content | Medium |
 | `map/*.smp` | Map/sprite components | Locations and encounter scenes | Medium |
@@ -28,7 +28,7 @@ The first local extraction confirms that `.gs` files use a PostScript-like, stac
 
 See [MPQ inventory](mpq-inventory.md) for the measured archive contents and exact 3.02 change surface.
 
-The first native [asset-viewer spike](../spikes/asset-viewer/README.md) found 1,377 IFF `FORM PBM` members in GS5R3 `pic.mpq` and decoded all of them. They use indexed palettes and are either uncompressed or ByteRun1-compressed. At least one UI atlas visibly uses bright green as a likely engine-level chroma key while declaring no standard PBM mask, so format decoding and game compositing must remain separate concerns.
+The native [asset tool](../spikes/asset-viewer/README.md) found 1,377 IFF `FORM PBM` members in GS5R3 `pic.mpq` and decoded all of them. It also classifies all 9,804 members in the five core archives and structurally parses all 1,800 IMP sprite binaries. They use indexed palettes, animation tables, hotspots, and multiple shared-frame/storage conventions. At least one UI atlas visibly uses bright green as a likely engine-level chroma key while declaring no standard PBM mask, so format decoding and game compositing must remain separate concerns. See the [Stage 1 record](native-asset-stage.md) for current coverage.
 
 ## Known executable imports and runtime dependencies
 
@@ -65,10 +65,10 @@ A safe asset workflow should:
 
 ## Unknowns to resolve
 
-- Complete internal file lists for `imp.mpq`, `sndfx.mpq`, and `special.mpq`; some `pic.mpq` entries also lack catalogued names.
+- Purpose-level names for some generic or mismatched public-listfile entries, including four orphan IMP header/binary names.
 - Full script grammar, built-in vocabulary, type behavior, and execution model inside `gs.mpq`.
 - Which AI, pathfinding, diplomacy, and auto-combat behaviors are scripted versus hard-coded.
-- File formats and composition rules used for sprites, animations, interface layouts, and chroma-key transparency beyond the now-identified PBM pictures.
+- IMP pixel compression, uncommon shared-frame variants, and composition rules for hotspots, pivots, palettes, and chroma-key transparency.
 - Hard limits on units, artifacts, spells, maps, IDs, and string tables.
 - Save-file compatibility rules after data changes.
 - Multiplayer determinism requirements and checksum/version checks.

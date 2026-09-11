@@ -7,6 +7,9 @@ const MAX_PATH: usize = 260;
 const MPQ_OPEN_READ_ONLY: u32 = 0x0000_0100;
 const SFILE_OPEN_FROM_MPQ: u32 = 0;
 const SFILE_INVALID_SIZE: u32 = u32::MAX;
+const SFILE_INFO_FILE_SIZE: u32 = 51;
+const SFILE_INFO_COMPRESSED_SIZE: u32 = 52;
+const SFILE_INFO_FLAGS: u32 = 53;
 
 type Handle = *mut c_void;
 
@@ -48,6 +51,13 @@ unsafe extern "C" {
         overlapped: *mut c_void,
     ) -> bool;
     fn SFileCloseFile(file: Handle) -> bool;
+    fn SFileGetFileInfo(
+        file: Handle,
+        info_class: u32,
+        file_info: *mut c_void,
+        file_info_size: u32,
+        length_needed: *mut u32,
+    ) -> bool;
     fn SFileAddListFileEntries(
         archive: Handle,
         entries: *const *const c_char,
@@ -126,7 +136,9 @@ impl Archive {
 
         let mut entries = Vec::new();
         loop {
-            entries.push(entry_from_find_data(&data)?);
+            let mut entry = entry_from_find_data(&data)?;
+            self.enrich_entry(&mut entry);
+            entries.push(entry);
             // SAFETY: The search handle and output storage are valid until closed below.
             if !unsafe { SFileFindNextFile(search, &mut data) } {
                 break;
@@ -181,11 +193,7 @@ impl Archive {
         Ok(bytes)
     }
 
-    fn load_internal_listfile(&self) -> Result<(), MpqError> {
-        let Ok(contents) = self.read("(listfile)") else {
-            return Ok(());
-        };
-
+    pub fn add_listfile_contents(&self, contents: &[u8]) -> Result<usize, MpqError> {
         let names: Vec<CString> = contents
             .split(|byte| *byte == b'\n')
             .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
@@ -194,7 +202,7 @@ impl Archive {
             .collect();
         let pointers: Vec<*const c_char> = names.iter().map(|name| name.as_ptr()).collect();
         if pointers.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
         // SAFETY: Every pointer references a live CString for the duration of the call.
@@ -202,9 +210,37 @@ impl Archive {
             SFileAddListFileEntries(self.handle, pointers.as_ptr(), pointers.len() as u32)
         };
         if result != 0 {
-            return Err(MpqError::new("StormLib rejected the internal listfile"));
+            return Err(MpqError::new("StormLib rejected the listfile entries"));
         }
+        Ok(pointers.len())
+    }
+
+    fn load_internal_listfile(&self) -> Result<(), MpqError> {
+        let Ok(contents) = self.read("(listfile)") else {
+            return Ok(());
+        };
+        self.add_listfile_contents(&contents)?;
         Ok(())
+    }
+
+    fn enrich_entry(&self, entry: &mut Entry) {
+        let Ok(name) = CString::new(entry.name.as_str()) else {
+            return;
+        };
+        let mut file = ptr::null_mut();
+        // SAFETY: The archive is open, filename is NUL-terminated, and file is an out pointer.
+        if !unsafe { SFileOpenFileEx(self.handle, name.as_ptr(), SFILE_OPEN_FROM_MPQ, &mut file) }
+            || file.is_null()
+        {
+            return;
+        }
+
+        entry.size = file_info_u32(file, SFILE_INFO_FILE_SIZE).unwrap_or(entry.size);
+        entry.compressed_size =
+            file_info_u32(file, SFILE_INFO_COMPRESSED_SIZE).unwrap_or(entry.compressed_size);
+        entry.flags = file_info_u32(file, SFILE_INFO_FLAGS).unwrap_or(entry.flags);
+        // SAFETY: file is live and is closed exactly once.
+        unsafe { SFileCloseFile(file) };
     }
 }
 
@@ -243,4 +279,23 @@ fn entry_from_find_data(data: &SFileFindData) -> Result<Entry, MpqError> {
         flags: data.file_flags,
         locale: data.locale,
     })
+}
+
+fn file_info_u32(file: Handle, info_class: u32) -> Option<u32> {
+    let mut value = 0_u32;
+    let mut needed = 0_u32;
+    // SAFETY: file is open and value points to writable storage of the declared size.
+    if unsafe {
+        SFileGetFileInfo(
+            file,
+            info_class,
+            (&mut value as *mut u32).cast(),
+            std::mem::size_of::<u32>() as u32,
+            &mut needed,
+        )
+    } {
+        Some(value)
+    } else {
+        None
+    }
 }

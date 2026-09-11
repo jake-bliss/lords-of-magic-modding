@@ -34,6 +34,8 @@
 - [Steam Guide to Simple Modding](https://steamcommunity.com/sharedfiles/filedetails/?id=2839540731)
 - [StormLib official repository](https://github.com/ladislav-zezula/StormLib)
 - [Frost cross-platform MPQ editor](https://github.com/zach-cloud/Frost)
+- [Ladislav Zezula's MPQ name-breaking/listfile index](http://www.zezula.net/en/mpq/namebreak.html)
+- [Public game listfile bundle](http://www.zezula.net/download/listfiles.zip)
 
 ## Native preservation research
 
@@ -48,4 +50,5 @@
 - SteamDB and the original manual are used for distribution metadata and documented game behavior.
 - The `cnc-ddraw` repository is the authoritative source for its configuration and capabilities.
 - Patch/mod behavior is primarily documented by the authors' included readmes and surviving community posts.
+- The public Lords of Magic listfile is used only to resolve archive member names; the reproducibility script pins both its bundle and extracted-file SHA-256 hashes.
 - Community claims should be verified against extracted data or controlled in-game tests before becoming implementation assumptions.

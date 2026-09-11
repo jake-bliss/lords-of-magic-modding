@@ -11,8 +11,8 @@ Create a reproducible, source-controlled modding toolkit that lets us inspect, c
 - [x] Preserve archive paths and listfile names where available.
 - [x] Produce machine-readable manifests containing path, size, compressed size, flags, locale, and content hashes.
 - [x] Diff all three extracted trees and distinguish formatting/comment-only changes from token-level script changes.
-- [ ] Identify and name uncatalogued archive slots where practical.
-- [ ] Classify every non-script file by detected format and purpose.
+- [x] Recover the public Lords of Magic filename catalog and apply it without modifying archives.
+- [x] Classify every member in the five core GS5R3 archives by detected format.
 - [ ] Validate a deterministic repacking implementation before any development-profile install.
 
 Delivered: [MPQ inventory](mpq-inventory.md), tracked comparison summaries, and reproducible extraction commands.
@@ -59,7 +59,9 @@ Success criteria:
 ## Phase 5 — Asset pipeline
 
 - [x] Prove read-only native MPQ access and decode the observed IFF PBM corpus in a Rust/SDL3 viewer spike.
-- Inventory image formats, palettes, dimensions, and game-specific transparency conventions.
+- [x] Inventory core-archive image/audio formats, palettes, dimensions, and candidate transparency metadata.
+- [x] Parse all IMP sprite containers structurally and cross-check the common variants against generated headers.
+- Resolve uncommon IMP variants and decode/display animation frames.
 - Build lossless extract/convert/repack tests.
 - Evaluate AI upscaling on portraits and interface art.
 - Compare Lanczos runtime scaling against remastered source assets.
