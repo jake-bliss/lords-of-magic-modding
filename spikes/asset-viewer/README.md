@@ -44,9 +44,13 @@ target/release/lom-asset-viewer --scan "$PIC_MPQ"
 target/release/lom-asset-viewer --inspect "$PIC_MPQ" 'LBM\ACTIONS5.lbm'
 target/release/lom-asset-viewer --extract "$PIC_MPQ" 'LBM\ACTIONS5.lbm' /tmp/actions5.lbm
 target/release/lom-asset-viewer --validate-imp "$IMP_MPQ" --listfile "$LISTFILE"
+target/release/lom-asset-viewer --describe-imp "$IMP_MPQ" 'units\imp\chcr5a.imp' --listfile "$LISTFILE"
 target/release/lom-asset-viewer --view-imp "$IMP_MPQ" 'units\imp\chcr5a.imp' --listfile "$LISTFILE"
 target/release/lom-asset-viewer --export-imp-frame "$IMP_MPQ" 'units\imp\chcr5a.imp' 155 /tmp/chcr5a-frame-155.png --listfile "$LISTFILE"
 target/release/lom-asset-viewer "$PIC_MPQ" 'LBM\ACTIONS5.lbm'
+target/release/lom-asset-viewer --scan-map-dir '/path/to/Lords of Magic Special Edition/English/map'
+target/release/lom-asset-viewer --inspect-file '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
+target/release/lom-asset-viewer --view-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
 ```
 
 `--extract` and `--export-imp-frame` use create-new semantics and refuse to overwrite an existing output. IMP frame export writes an 8-bit indexed PNG with the source palette indices and RGB palette intact; it does not yet reimport PNGs into the game format. Add `--listfile "$LISTFILE"` to any command when public names are needed. To inventory all five archives in one pass, use [`scripts/inventory-native-assets.sh`](../../scripts/inventory-native-assets.sh).
@@ -68,6 +72,8 @@ In the IMP frame viewer:
 
 When a paired generated `.h` member is available, the window title shows its recovered action name. Cycle direction and the provisional frame interval still require confirmation against the original executable.
 
+The IMP title and `--describe-imp` report raw sequence/cycle metadata plus candidate origin or hotspot values. In the diagnostic map viewer, `C` switches between candidate elevation and stable colors derived from opaque cell tags. Map modes are structural diagnostics, not a recreation of original terrain rendering.
+
 Member matching is case-insensitive because the archive catalog and Windows game paths do not have reliable case consistency.
 
 ## Measured result
@@ -83,13 +89,14 @@ Tested against the installed GS5R3 profile on 2026-09-11:
 | Core archive members classified | 9,804 / 9,804 |
 | IMP binaries structurally parsed | 1,800 / 1,800 |
 | IMP binaries pixel-expanded without decoder errors | 1,800 / 1,800 |
-| Same-name IMP pairs matching known statistics | 1,784 / 1,798 |
+| Same-name IMP pairs matching known statistics | 1,788 / 1,798 |
+| Loose `.scn`/`.smp`/`.lgd` grids parsed | 365 / 365 |
 | Release-mode archive enumeration | ~0.20 s |
 | Release-mode full PBM scan/decode | ~1.0 s |
 
 The viewer displayed `lbm\ACTIONS5.lbm` as a 612×120 image with 256 palette entries and ByteRun1 compression. The full scan found one image whose final compressed packet crosses a scanline boundary; matching the format's scanline semantics resolved it and is covered by a regression test.
 
-The IMP decoder handles both observed frame-record variants, the custom packet RLE, 8/4/2/1-bit indexed pixels, row padding, direct duplicates, repeated cycles, and explicit sequence/cycle/frame ranges. Generated headers provide 4,649 names for 4,666 declared action sequences. The unresolved cases are reported as failures by `--validate-imp`; they cover 14 metadata/statistical mismatches and four orphan public-catalog names. See the [Stage 1 record](../../docs/native-asset-stage.md) for the exact scope and remaining gates.
+The IMP decoder handles both observed frame-record variants, the custom packet RLE, 8/4/2/1-bit indexed pixels, row padding, direct duplicates, shared-pixel records, repeated cycles, typed placement candidates, and explicit sequence/cycle/frame ranges. The unresolved cases are reported as failures by `--validate-imp`; they now cover ten metadata/statistical mismatches and four orphan public-catalog names. See the [Stage 1 record](../../docs/native-asset-stage.md) for the exact scope and remaining gates.
 
 ## What the tool proves
 
@@ -103,7 +110,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 
 - The rendering is not yet behaviorally equivalent to the game. A visible bright-green color in the atlas suggests an engine-level chroma-key rule that is not represented by the PBM header's masking field.
 - IMP rendering is not yet behaviorally equivalent to the game. The clean preview hides palette indices 0 and 1 as the inferred background and secondary-mask channels; the other viewer modes expose them. Their exact compositing semantics, origins, hotspots, and sequence timing still need reference comparisons.
-- BMP/WAVE currently have metadata probes; maps, scenarios, fonts, and video are not decoded.
+- BMP/WAVE currently have metadata probes. Map/scenario/component grids are decoded only through their common cell prefix; trailing objects, fonts, and video are not decoded.
 - The viewer recreates its streaming texture while drawing; caching is a production optimization, not a spike requirement.
 - There is no thumbnail grid, search UI, batch/GUI export, editing, IMP reimport, or MPQ writing.
 - A successful asset decoder does not reduce the much larger uncertainty in the GameScript host, simulation, AI, saves, or multiplayer.
@@ -113,6 +120,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/mpq.rs` — manual StormLib FFI and read-only archive/member ownership.
 - `src/pbm.rs` — bounded IFF chunk parsing, palette conversion, PBM row handling, and ByteRun1 decoding.
 - `src/imp.rs` — bounds-checked IMP tables, palette, RLE and packed-pixel decoding, hotspot and duplicate/repeated-frame structures, and generated-header validation.
+- `src/map.rs` — bounded common header/cell-grid parsing and candidate trailing-layout detection for SCN/SMP/LGD files.
 - `src/png_export.rs` — lossless indexed-PNG output for resolved IMP frames.
 - `src/asset.rs` — content-first classification and typed format metadata.
 - `src/main.rs` — CLI inventory, extraction, validation, and SDL3 viewer.
@@ -120,4 +128,4 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 
 ## Sensible next slice
 
-Compare representative IMP frames and animations with the original executable to establish chroma-key, origin, hotspot, cycle-direction, and timing semantics. Then probe representative map/scenario members while keeping game-specific rendering rules above the format decoder.
+Correlate map cell tags with original terrain art, then decode the dominant 49-byte trailing-record family. Original-engine comparisons for IMP placement, compositing, direction, and timing are retained as explicit [GitHub issues](https://github.com/jake-bliss/lords-of-magic-modding/issues) rather than being encoded as assumptions.

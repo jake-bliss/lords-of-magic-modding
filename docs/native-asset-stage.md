@@ -2,9 +2,9 @@
 
 ## Status
 
-**In progress; archive inventory and the first IMP inspection/export milestone are complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels, frame references, sequences, and cycles of all 1,800 IMP sprite binaries. It can navigate named actions and cycles and export individual frames as indexed PNGs.
+**In progress; archive inventory, the first IMP inspection/export milestone, and the initial map-grid probe are complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels, frame references, sequences, cycles, origins, and hotspot records of all 1,800 IMP sprite binaries. It can also bound and visualize the common grid prefix of all 365 installed `.scn`, `.smp`, and `.lgd` files.
 
-This is useful tooling now, but it is not yet the lossless asset layer promised by Stage 1. Maps, scenarios, verified compositing/origin semantics, reimport/repacking, and cross-platform packaging remain open.
+This is useful tooling now, but it is not yet the lossless asset layer promised by Stage 1. Full map/scenario semantics, verified compositing/origin behavior, reimport/repacking, and cross-platform packaging remain open.
 
 ## Component boundaries
 
@@ -55,14 +55,17 @@ The paired generated `.h` files provide unusually valuable ground truth. The cur
 - a 256-entry BGRA palette;
 - maximum dimensions, sequences, cycles, logical frames, and frame dimensions;
 - explicit sequence-to-cycle and cycle-to-frame ranges, retained with their still-unknown raw metadata fields;
-- action names recovered from generated-header `#define` values for 4,649 of 4,666 declared sequences; 1,799 of 1,800 headers provide at least one name;
+- action labels recovered from generated-header `#define` values cover 4,649 of 4,666 declared sequence slots; aliases are retained, and 1,799 of 1,800 headers provide at least one label;
 - six-byte hotspot records padded per frame to an eight-byte boundary;
 - direct duplicate-frame references and a compact repeated-cycle representation;
+- shared-pixel flag `0x04`, including records that occur inside rather than only at the start of a repeated cycle;
 - two observed frame-record variants, one with explicit stored sizes and one whose payload length is implicit;
 - a custom packet RLE in which controls below `0x80` repeat the following byte `control + 3` times and controls at or above `0x80` copy `256 - control` literal bytes;
 - 8-, 4-, 2-, and 1-bit indexed pixels selected by file-flag bits `0x30`, with both tightly packed and row-padded layouts;
 - most-significant-bit-first packing for sub-byte pixels, which produces recognizable output across representative sprites;
 - complete pixel expansion, frame-reference resolution, and sequence/cycle traversal for all 1,800 observed binaries.
+
+The shared-pixel correction removed 27 false origin records, bounded the remaining origin ranges to X `-66..70` and Y `-207..77`, and improved exact generated-header matches. Across the corpus, 15,725 logical frames carry signed origins and 28,771 carry 64,432 six-byte hotspot records. The hotspot bytes consistently decode as a candidate unsigned ID followed by signed X/Y offsets, with observed coordinate ranges X `-115..123` and Y `-232..86`. Exact coordinate and ID behavior remains a reference-comparison task in [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1).
 
 For example, `units\imp\chcr5a.imp` contains seven named actions (`MOVE`, `STAND`, `DEFEND`, `GET_HIT`, `DIE`, `CORPSE`, and `MELEE_ATTACK`), five cycles per action, and 170 logical frames. The five cycles are likely directional views, but that interpretation and the remaining sequence/cycle metadata have not yet been confirmed against the original executable.
 
@@ -71,15 +74,15 @@ The validator pairs generated headers with binaries and compares independently r
 | IMP validation check | Result |
 | --- | ---: |
 | Same-stem header/binary pairs | 1,798 |
-| Exact structural matches | 1,784 (99.2%) |
-| Bounded metadata mismatches | 14 |
+| Exact structural matches | 1,788 (99.4%) |
+| Bounded metadata mismatches | 10 |
 | Orphan catalog entries | 4 |
 
 All stored-pixel byte totals now agree with the generated headers. The remaining paired mismatches concern duplicate-frame counts, raw logical-pixel totals, and one logical-frame count; they remain failing validation cases until understood. Four public-catalog stems have only one member of the expected `.imp`/`.h` pair.
 
 | Remaining disagreement | Count |
 | --- | ---: |
-| Generated duplicate-frame count | 9 |
+| Generated duplicate-frame count | 5 |
 | Generated raw logical-pixel total | 4 |
 | Generated logical-frame count | 1 |
 | Missing expected `.imp`/`.h` counterpart | 4 |
@@ -94,17 +97,22 @@ The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synth
 - **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, palette index 0 is the background channel, palette index 1 is a secondary engine mask, and common five-cycle action groups represent directions. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
 - **Unknown:** how red masks are blended or recolored, how origins and hotspots affect placement, what the sequence/cycle metadata fields mean, how timing is selected, and whether exceptional metadata cases use additional sharing rules.
 
+## Map/scenario findings
+
+The loose installed map corpus contains 20 `.scn`, 337 `.smp`, and eight `.lgd` files. All 365 pass the new bounded prefix/grid parser. Each file declares width, height, an observed depth of 8, and exactly one eight-byte record per cell. Treating the second cell word as little-endian `f32` yields finite values from 0 to 20 and a coherent grayscale relief map. The first cell word and multiple trailing record families remain opaque. See the [map-format record](map-format.md) and [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
+
 ## Latest verification
 
 Verified on 2026-09-12:
 
-- 18 Rust library tests and two viewer tests pass;
+- 23 Rust library tests and three viewer tests pass;
 - strict Clippy (`-D warnings`) passes for all targets;
 - all three repository Python tests pass;
 - a fresh read-only scan classifies all five GS5R3 core archives with zero probe failures;
 - all 1,800 IMP payloads decode with bounded sequence/cycle ranges;
-- indexed-PNG export preserves synthetic palette indices and palette bytes, succeeds on a real 165×127 frame, and refuses overwrite;
-- the 14 known metadata disagreements and four orphan names remain intentionally reported by validation.
+- exact IMP/header validation matches 1,788 of 1,798 pairs; the ten remaining paired disagreements and four orphan names remain intentionally reported;
+- all 365 loose map/scenario/component files pass the bounded grid parser and diagnostic elevation rendering produces coherent relief;
+- indexed-PNG export preserves synthetic palette indices and palette bytes, succeeds on a real 165×127 frame, and refuses overwrite.
 
 ## Test strategy and gates
 
@@ -130,15 +138,18 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [x] Named action and cycle navigation with cycle-scoped playback.
 - [x] Non-overwriting, indexed-PNG export for individual logical frames.
 - [x] Generated-header parser and corpus cross-validator.
+- [x] Typed IMP origin/hotspot candidates and shared-pixel records inside cycles.
+- [x] Bounded header/cell-grid parser and diagnostic elevation viewer for all 365 loose map files.
 
 ## Remaining before Stage 1 is complete
 
-- [ ] Resolve the 14 known IMP metadata mismatches and four catalog-name orphans.
-- [ ] Establish palette, chroma-key, hotspot, pivot, and compositing semantics.
-- [ ] Parse representative `.scn`, `.smp`, and `.lgd` map/scenario data.
+- [ ] Resolve the ten known IMP metadata mismatches and four catalog-name orphans ([issue #3](https://github.com/jake-bliss/lords-of-magic-modding/issues/3)).
+- [ ] Establish palette, chroma-key, hotspot, pivot, and compositing semantics ([issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1)).
+- [ ] Verify IMP direction and timing metadata ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)).
+- [ ] Decode map cell tags and trailing object records ([issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4)).
 - [ ] Inventory loose WAVE/Smacker resources outside the core archives.
 - [ ] Add batch export, IMP reimport, and deterministic game-format round-trip tests.
 - [ ] Add searchable browsing, cached textures, animation controls, and export to the GUI.
 - [ ] Make native-library discovery and packaging portable across macOS, Windows, and Linux.
 
-The next implementation slice should validate IMP chroma keys, origins, hotspots, cycle direction, and sequence timing against the original executable, then begin a representative map/scenario probe. That will turn the current recognizable rendering into a defensible sprite-format specification and reduce the next major Stage 1 format risk.
+The next implementation slice should correlate map cell tags with original terrain art and decode the dominant 49-byte trailing record family. Original-engine-only IMP placement, compositing, direction, and timing work is now explicitly tracked in issues #1 and #2 rather than being encoded as assumptions.

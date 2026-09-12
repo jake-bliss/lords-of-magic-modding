@@ -21,7 +21,7 @@ All three are stored in `/Users/jakebliss/Applications/`. The modded apps are AP
 | Stage | Status | Evidence |
 | --- | --- | --- |
 | 0. Evidence baseline | Initial pass complete | Reproducible archive/profile inventories and patch/mod comparisons |
-| 1. Native asset layer | In progress; image and first sprite export milestone complete | 9,804 members classified, 1,377 PBMs decoded, 1,800 IMPs pixel-expanded with action/cycle ranges, and indexed frame export working |
+| 1. Native asset layer | In progress; image, sprite-export, and map-grid milestones complete | 9,804 members classified, 1,800 IMPs decoded, indexed frame export working, and all 365 loose map files bounded and height-visualized |
 | 2. GameScript VM probe | Not started | Planned after the next Stage 1 format/semantics checkpoint |
 | 3–5. Native game/runtime | Not started | Contingent on the GameScript VM stop/go result |
 
@@ -33,6 +33,7 @@ The current deliverable is a useful native asset and reverse-engineering tool, n
 - [Game and data architecture](docs/game-architecture.md) — known modding surfaces and hard engine boundaries
 - [Native preservation engine plan](docs/native-engine-plan.md) — staged Rust/SDL3 candidate with explicit stop/go gates
 - [Native asset layer](docs/native-asset-stage.md) — live Stage 1 evidence, validation gates, and remaining work
+- [Map and scenario format](docs/map-format.md) — bounded common grid, corpus measurements, and diagnostic height view
 - [MPQ inventory](docs/mpq-inventory.md) — reproducible extraction and baseline/3.02/GS5R3 findings
 - [Mod ecosystem](docs/mod-ecosystem.md) — 3.02, GS5R3, optional packages, and compatibility
 - [Research log](docs/research-log.md) — evidence and conclusions from the working installation
@@ -50,4 +51,4 @@ The current deliverable is a useful native asset and reverse-engineering tool, n
 
 ## Immediate opportunity
 
-The first archive comparison is complete. It isolates the focused 3.02 changes, confirms that GS5R3 is a broad script-and-art fork, and recovers hundreds of filenames that were anonymous in the original archives. The [native Rust asset tool](spikes/asset-viewer/README.md) now classifies all 9,804 core-archive members, decodes every detected PBM image, and expands every observed IMP sprite without decoder errors. Its native viewer displays masks and navigable action/cycle animations, and the CLI exports lossless indexed PNG frames. See the [Stage 1 record](docs/native-asset-stage.md) for measured coverage, provisional compositing rules, and known exceptions.
+The first archive comparison is complete. It isolates the focused 3.02 changes, confirms that GS5R3 is a broad script-and-art fork, and recovers hundreds of filenames that were anonymous in the original archives. The [native Rust asset tool](spikes/asset-viewer/README.md) now classifies all 9,804 core-archive members, decodes every detected PBM image, expands every observed IMP sprite without decoder errors, and parses the common grid prefix of all 365 installed map/scenario/component files. Its native viewers display masks, navigable action/cycle animations, and diagnostic elevation relief; the CLI exports lossless indexed PNG frames. See the [Stage 1 record](docs/native-asset-stage.md) for measured coverage, provisional semantics, and known exceptions.

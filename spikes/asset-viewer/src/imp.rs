@@ -9,21 +9,30 @@ const HOTSPOT_RECORD_SIZE: usize = 6;
 const HOTSPOT_ALIGNMENT: usize = 8;
 const PALETTE_COLORS: usize = 256;
 const PALETTE_BYTES: usize = PALETTE_COLORS * 4;
-const FRAME_FLAG_REPEATED_CYCLE: u8 = 0x04;
+const FRAME_FLAG_SHARED_PIXELS: u8 = 0x04;
 const FRAME_FLAG_DUPLICATE: u8 = 0x08;
 const FILE_FLAG_RLE: u8 = 0x01;
 const FILE_FLAG_DEPTH: u8 = 0x30;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImpFrame {
+    pub flags: u8,
     pub width: u16,
     pub height: u16,
     pub origin_x: Option<i16>,
     pub origin_y: Option<i16>,
-    pub hotspots: Vec<[u8; HOTSPOT_RECORD_SIZE]>,
+    pub hotspots: Vec<ImpHotspot>,
     pub palette_indices: Vec<u8>,
     pub rgba: Vec<u8>,
     pub source_frame: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImpHotspot {
+    pub id: u16,
+    pub x: i16,
+    pub y: i16,
+    pub raw: [u8; HOTSPOT_RECORD_SIZE],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,7 +76,7 @@ pub struct ImpSprite {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImpHeaderStats {
     pub sequence_name: String,
-    pub sequence_labels: Vec<Option<String>>,
+    pub sequence_labels: Vec<Vec<String>>,
     pub sequence_count: usize,
     pub frame_count: usize,
     pub duplicate_frame_count: usize,
@@ -182,7 +191,7 @@ impl ImpSprite {
                     FRAME_RECORD_SIZE,
                     "frame table",
                 )?;
-                let repeated_cycle = source[frame_table_offset] & FRAME_FLAG_REPEATED_CYCLE != 0;
+                let repeated_cycle = source[frame_table_offset] & FRAME_FLAG_SHARED_PIXELS != 0;
                 if !repeated_cycle {
                     require_range(
                         source,
@@ -223,19 +232,17 @@ impl ImpSprite {
                         hotspot_bytes = hotspot_bytes
                             .checked_add(frame_hotspot_bytes as u64)
                             .ok_or_else(|| ImpError::new("IMP hotspot byte count overflow"))?;
-                        source[auxiliary..auxiliary + frame_hotspots * HOTSPOT_RECORD_SIZE]
-                            .chunks_exact(HOTSPOT_RECORD_SIZE)
-                            .map(|bytes| bytes.try_into().expect("hotspot chunk size was checked"))
-                            .collect()
+                        parse_hotspots(source, auxiliary, frame_hotspots)?
                     } else {
                         Vec::new()
                     };
                     hotspot_count = hotspot_count
                         .checked_add(frame_hotspots)
                         .ok_or_else(|| ImpError::new("IMP hotspot count overflow"))?;
-                    let duplicate_frame = repeated_cycle || frame_flags & FRAME_FLAG_DUPLICATE != 0;
+                    let shared_pixels = frame_flags & FRAME_FLAG_SHARED_PIXELS != 0;
+                    let duplicate_frame = shared_pixels || frame_flags & FRAME_FLAG_DUPLICATE != 0;
                     if duplicate_frame {
-                        let source_frame = if repeated_cycle {
+                        let source_frame = if shared_pixels {
                             pixel_sources.get(&pixels_offset).copied().ok_or_else(|| {
                                 ImpError::new(format!(
                                     "IMP repeated cycle references unknown pixel offset {pixels_offset}"
@@ -253,6 +260,7 @@ impl ImpSprite {
                             .checked_add(1)
                             .ok_or_else(|| ImpError::new("IMP duplicate frame count overflow"))?;
                         frames.push(ImpFrame {
+                            flags: frame_flags,
                             width: 0,
                             height: 0,
                             origin_x: None,
@@ -320,6 +328,7 @@ impl ImpSprite {
                         .checked_add(consumed as u64)
                         .ok_or_else(|| ImpError::new("IMP stored pixel size overflow"))?;
                     frames.push(ImpFrame {
+                        flags: frame_flags,
                         width,
                         height,
                         origin_x: (frame_hotspots == 0)
@@ -449,6 +458,26 @@ where
     }
 }
 
+fn parse_hotspots(source: &[u8], offset: usize, count: usize) -> Result<Vec<ImpHotspot>, ImpError> {
+    let byte_count = count
+        .checked_mul(HOTSPOT_RECORD_SIZE)
+        .ok_or_else(|| ImpError::new("IMP hotspot byte count overflow"))?;
+    require_range(source, offset, 1, byte_count, "frame hotspots")?;
+    Ok(source[offset..offset + byte_count]
+        .chunks_exact(HOTSPOT_RECORD_SIZE)
+        .map(|bytes| {
+            let raw: [u8; HOTSPOT_RECORD_SIZE] =
+                bytes.try_into().expect("hotspot chunk size was checked");
+            ImpHotspot {
+                id: u16::from_le_bytes([raw[0], raw[1]]),
+                x: i16::from_le_bytes([raw[2], raw[3]]),
+                y: i16::from_le_bytes([raw[4], raw[5]]),
+                raw,
+            }
+        })
+        .collect())
+}
+
 impl ImpHeaderStats {
     pub fn parse(source: &[u8]) -> Result<Self, ImpError> {
         let text = std::str::from_utf8(source)
@@ -484,9 +513,9 @@ impl ImpHeaderStats {
     }
 }
 
-fn parse_sequence_labels(text: &str, root_name: &str, count: usize) -> Vec<Option<String>> {
+fn parse_sequence_labels(text: &str, root_name: &str, count: usize) -> Vec<Vec<String>> {
     let prefix = format!("{}_", root_name.to_ascii_uppercase());
-    let mut labels = vec![None; count];
+    let mut labels = vec![Vec::new(); count];
     for line in text.lines() {
         let mut fields = line.split_whitespace();
         if fields.next() != Some("#define") {
@@ -502,7 +531,7 @@ fn parse_sequence_labels(text: &str, root_name: &str, count: usize) -> Vec<Optio
             continue;
         };
         if value < labels.len() && !label.is_empty() {
-            labels[value] = Some(label.to_owned());
+            labels[value].push(label.to_owned());
         }
     }
     labels
@@ -828,6 +857,26 @@ mod tests {
     }
 
     #[test]
+    fn shared_pixel_records_resolve_by_payload_offset_inside_a_cycle() {
+        let mut source = synthetic_imp();
+        source.splice(72..72, [0_u8; FRAME_RECORD_SIZE]);
+        source[8..12].copy_from_slice(&88_u32.to_le_bytes());
+        source[48 + 2..48 + 4].copy_from_slice(&2_u16.to_le_bytes());
+        source[56 + 12..56 + 16].copy_from_slice(&1112_u32.to_le_bytes());
+        source[72] = FRAME_FLAG_SHARED_PIXELS;
+        source[72 + 12..72 + 16].copy_from_slice(&1112_u32.to_le_bytes());
+
+        let sprite = ImpSprite::parse(&source).unwrap();
+        assert_eq!(sprite.frame_count, 2);
+        assert_eq!(sprite.duplicate_frame_count, 1);
+        assert_eq!(sprite.frames[1].source_frame, Some(0));
+        assert_eq!(
+            sprite.resolved_frame(1).unwrap().palette_indices,
+            [0xaa, 0xbb]
+        );
+    }
+
+    #[test]
     fn repeated_cycle_record_represents_each_logical_frame() {
         let mut source = synthetic_imp();
         source.splice(56..56, [0_u8; CYCLE_RECORD_SIZE + FRAME_RECORD_SIZE]);
@@ -836,7 +885,7 @@ mod tests {
         source[48 + 4..48 + 8].copy_from_slice(&80_u32.to_le_bytes());
         source[56 + 2..56 + 4].copy_from_slice(&5_u16.to_le_bytes());
         source[56 + 4..56 + 8].copy_from_slice(&64_u32.to_le_bytes());
-        source[64] = FRAME_FLAG_REPEATED_CYCLE;
+        source[64] = FRAME_FLAG_SHARED_PIXELS;
         source[64 + 12..64 + 16].copy_from_slice(&1120_u32.to_le_bytes());
         source[80 + 12..80 + 16].copy_from_slice(&1120_u32.to_le_bytes());
 
@@ -878,11 +927,23 @@ mod tests {
     }
 
     #[test]
+    fn decodes_hotspot_id_and_signed_offsets_without_discarding_raw_bytes() {
+        let source = [0x07, 0x00, 0xfc, 0xff, 0xe0, 0xff];
+        let hotspots = parse_hotspots(&source, 0, 1).unwrap();
+
+        assert_eq!(hotspots[0].id, 7);
+        assert_eq!(hotspots[0].x, -4);
+        assert_eq!(hotspots[0].y, -32);
+        assert_eq!(hotspots[0].raw, source);
+    }
+
+    #[test]
     fn parses_generated_header_statistics() {
         let header = b"// Sprite headers for sequence dragon\r\n\
 //Cycle-name defines\r\n\
 #define DRAGON_MOVE 0\r\n\
 #define DRAGON_STAND 1\r\n\
+#define DRAGON_IDLE 1\r\n\
 // Total number of 'Sequences': 2\r\n\
 // Total number of 'Frames': 45\r\n\
 // Duplicate bitmaps found : 3\r\n\
@@ -893,7 +954,10 @@ mod tests {
         assert_eq!(stats.sequence_name, "dragon");
         assert_eq!(
             stats.sequence_labels,
-            [Some("MOVE".to_owned()), Some("STAND".to_owned())]
+            [
+                vec!["MOVE".to_owned()],
+                vec!["STAND".to_owned(), "IDLE".to_owned()]
+            ]
         );
         assert_eq!(stats.sequence_count, 2);
         assert_eq!(stats.frame_count, 45);

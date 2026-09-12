@@ -1,6 +1,8 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::imp::{ImpHeaderStats, ImpSprite};
+use crate::map::MapAsset;
 use crate::pbm::PbmImage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -109,11 +111,16 @@ pub fn probe(name: &str, bytes: &[u8]) -> Result<AssetInfo, String> {
     if extension == "imp" {
         return probe_imp_sprite(bytes);
     }
+    if let Some(kind) = match extension {
+        "lgd" => Some(AssetKind::LegendScenario),
+        "scn" => Some(AssetKind::MapScenario),
+        "smp" => Some(AssetKind::MapComponent),
+        _ => None,
+    } {
+        return probe_map(kind, bytes);
+    }
     let mut kind = match extension {
         "gs" => AssetKind::GameScript,
-        "lgd" => AssetKind::LegendScenario,
-        "scn" => AssetKind::MapScenario,
-        "smp" => AssetKind::MapComponent,
         "txt" => AssetKind::Text,
         "url" => AssetKind::UrlShortcut,
         _ => AssetKind::Unknown,
@@ -130,8 +137,94 @@ pub fn probe(name: &str, bytes: &[u8]) -> Result<AssetInfo, String> {
     Ok(AssetInfo::new(kind, details))
 }
 
+fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
+    let map = MapAsset::parse(bytes).map_err(|error| error.to_string())?;
+    let distinct_tags: BTreeSet<u32> = map.cells.iter().map(|cell| cell.tag).collect();
+    let mut finite_min = f32::INFINITY;
+    let mut finite_max = f32::NEG_INFINITY;
+    let mut nonfinite_values = 0_usize;
+    for cell in &map.cells {
+        if cell.value.is_finite() {
+            finite_min = finite_min.min(cell.value);
+            finite_max = finite_max.max(cell.value);
+        } else {
+            nonfinite_values += 1;
+        }
+    }
+    let value_range = if finite_min.is_infinite() {
+        "none".to_owned()
+    } else {
+        format!("{finite_min}..{finite_max}")
+    };
+    let trailing_head = map
+        .trailing_head_u32
+        .map_or_else(|| "none".to_owned(), |count| count.to_string());
+    let tail_layouts = map
+        .candidate_tail_layouts()
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let tail_layouts = if tail_layouts.is_empty() {
+        "unknown".to_owned()
+    } else {
+        tail_layouts
+    };
+    Ok(AssetInfo::new(
+        kind,
+        format!(
+            "metadata={};width={};height={};bits-per-pixel={};cells={};distinct-cell-tags={};candidate-value-range={value_range};nonfinite-values={nonfinite_values};trailing-bytes={};trailing-head-u32={trailing_head};tail-layout-candidates={tail_layouts}",
+            map.metadata,
+            map.width,
+            map.height,
+            map.bits_per_pixel,
+            map.cells.len(),
+            distinct_tags.len(),
+            map.trailing_bytes,
+        ),
+    ))
+}
+
 fn probe_imp_sprite(bytes: &[u8]) -> Result<AssetInfo, String> {
     let sprite = ImpSprite::parse(bytes).map_err(|error| error.to_string())?;
+    let origin_frames = sprite
+        .frames
+        .iter()
+        .filter(|frame| frame.origin_x.is_some() && frame.origin_y.is_some())
+        .count();
+    let hotspot_frames = sprite
+        .frames
+        .iter()
+        .filter(|frame| !frame.hotspots.is_empty())
+        .count();
+    let mut hotspot_ids = BTreeMap::<u16, usize>::new();
+    for hotspot in sprite.frames.iter().flat_map(|frame| frame.hotspots.iter()) {
+        *hotspot_ids.entry(hotspot.id).or_default() += 1;
+    }
+    let hotspot_id_values = hotspot_ids
+        .keys()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let hotspot_id_counts = hotspot_ids
+        .iter()
+        .map(|(id, count)| format!("{id}:{count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let origin_x_range = i16_range(sprite.frames.iter().filter_map(|frame| frame.origin_x));
+    let origin_y_range = i16_range(sprite.frames.iter().filter_map(|frame| frame.origin_y));
+    let hotspot_x_range = i16_range(
+        sprite
+            .frames
+            .iter()
+            .flat_map(|frame| frame.hotspots.iter().map(|hotspot| hotspot.x)),
+    );
+    let hotspot_y_range = i16_range(
+        sprite
+            .frames
+            .iter()
+            .flat_map(|frame| frame.hotspots.iter().map(|hotspot| hotspot.y)),
+    );
     let green_key = sprite
         .palette
         .iter()
@@ -140,7 +233,7 @@ fn probe_imp_sprite(bytes: &[u8]) -> Result<AssetInfo, String> {
     Ok(AssetInfo::new(
         AssetKind::ImpSprite,
         format!(
-            "max-width={};max-height={};file-flags=0x{:02x};record-variant={};compressed={};bits-per-pixel={};sequences={};cycles={};frames={};duplicate-frames={};hotspots={};hotspot-bytes={};raw-bytes={};stored-pixel-bytes={};green-key-index={green_key}",
+            "max-width={};max-height={};file-flags=0x{:02x};record-variant={};compressed={};bits-per-pixel={};sequences={};cycles={};frames={};duplicate-frames={};origin-frames={origin_frames};origin-x-range={origin_x_range};origin-y-range={origin_y_range};hotspot-frames={hotspot_frames};hotspots={};hotspot-ids={};hotspot-id-values={hotspot_id_values};hotspot-id-counts={hotspot_id_counts};hotspot-x-range={hotspot_x_range};hotspot-y-range={hotspot_y_range};hotspot-bytes={};raw-bytes={};stored-pixel-bytes={};green-key-index={green_key}",
             sprite.maximum_width,
             sprite.maximum_height,
             sprite.file_flags,
@@ -152,6 +245,7 @@ fn probe_imp_sprite(bytes: &[u8]) -> Result<AssetInfo, String> {
             sprite.frame_count,
             sprite.duplicate_frame_count,
             sprite.hotspot_count,
+            hotspot_ids.len(),
             sprite.hotspot_bytes,
             sprite.raw_pixel_bytes,
             sprite.stored_pixel_bytes,
@@ -159,9 +253,26 @@ fn probe_imp_sprite(bytes: &[u8]) -> Result<AssetInfo, String> {
     ))
 }
 
+fn i16_range(values: impl Iterator<Item = i16>) -> String {
+    let mut minimum = None::<i16>;
+    let mut maximum = None::<i16>;
+    for value in values {
+        minimum = Some(minimum.map_or(value, |current| current.min(value)));
+        maximum = Some(maximum.map_or(value, |current| current.max(value)));
+    }
+    match (minimum, maximum) {
+        (Some(minimum), Some(maximum)) => format!("{minimum}..{maximum}"),
+        _ => "none".to_owned(),
+    }
+}
+
 fn probe_imp_header(bytes: &[u8]) -> Result<AssetInfo, String> {
     let stats = ImpHeaderStats::parse(bytes).map_err(|error| error.to_string())?;
-    let named_sequences = stats.sequence_labels.iter().flatten().count();
+    let named_sequences = stats
+        .sequence_labels
+        .iter()
+        .filter(|labels| !labels.is_empty())
+        .count();
     let compression = stats
         .compressed_pixel_bytes
         .map_or_else(|| "none".to_owned(), |bytes| format!("rle:{bytes}"));
@@ -393,10 +504,20 @@ mod tests {
 
     #[test]
     fn classifies_proprietary_formats_by_recovered_name() {
-        assert_eq!(
-            probe("map\\urak.scn", &[1]).unwrap().kind,
-            AssetKind::MapScenario
-        );
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&108_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&8_u32.to_le_bytes());
+        bytes.extend_from_slice(&413_u32.to_le_bytes());
+        bytes.extend_from_slice(&6.0_f32.to_bits().to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+
+        let info = probe("map\\urak.scn", &bytes).unwrap();
+        assert_eq!(info.kind, AssetKind::MapScenario);
+        assert!(info.details.contains("metadata=108;width=1;height=1"));
+        assert!(info.details.contains("candidate-value-range=6..6"));
+        assert!(info.details.contains("trailing-head-u32=0"));
     }
 
     #[test]

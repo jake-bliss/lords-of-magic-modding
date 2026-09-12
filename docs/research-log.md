@@ -90,13 +90,24 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 ## 2026-09-12 — IMP actions, cycles, export, and FFI safety
 
 - **Observed:** all 1,800 IMP binaries expose bounded sequence-to-cycle and cycle-to-frame ranges under the current parser.
-- **Observed:** generated C headers provide 4,649 names for 4,666 declared action sequences; 1,799 of 1,800 headers provide at least one name.
+- **Observed:** generated C-header labels cover 4,649 of 4,666 declared sequence slots; aliases are retained, and 1,799 of 1,800 headers provide at least one label.
 - **Observed:** `units\imp\chcr5a.imp` contains seven named actions, five cycles per action, and 170 logical frames. The action names are `MOVE`, `STAND`, `DEFEND`, `GET_HIT`, `DIE`, `CORPSE`, and `MELEE_ATTACK`.
 - **Inferred:** the five cycles in each inspected creature action are directional views. Raw sequence and cycle metadata remain preserved but uninterpreted.
 - **Implemented:** the viewer navigates frames within a cycle, cycles within an action, and named actions; autoplay wraps within the selected cycle.
 - **Implemented:** the CLI exports a resolved logical frame as an 8-bit indexed PNG while preserving palette indices and RGB palette entries. Synthetic decode-back verifies exact bytes, and output creation refuses overwrite.
 - **Corrected:** the manual StormLib binding used Windows' 260-byte `MAX_PATH` inside `SFILE_FIND_DATA`, but StormLib's macOS portability header uses 1,024 bytes. Enumeration consequently overwrote adjacent stack memory. The binding now selects the platform ABI, a layout regression test matches the installed C header's 1,064-byte structure, and the full five-archive scan still succeeds.
 - **Observed:** after the ABI correction, a real frame-155 export reports the requested index and is independently identified as a 165×127, 8-bit indexed PNG.
+
+## 2026-09-12 — IMP placement records and native map grid
+
+- **Corrected:** frame flag `0x04` is a shared-pixel reference even when it occurs after the first record in a cycle. Applying it consistently removed 27 false origin records and increased exact generated-header matches from 1,784 to 1,788 of 1,798 pairs.
+- **Observed:** the remaining IMP corpus contains 15,725 logical origin records and 64,432 six-byte hotspots across 28,771 frames. Origin ranges are X `-66..70`, Y `-207..77`; hotspot ranges are X `-115..123`, Y `-232..86`.
+- **Inferred:** hotspot records are `u16 id, i16 x, i16 y`. All six bytes remain preserved while original-engine placement behavior is tracked in issue #1.
+- **Corrected:** generated-header action aliases can share a sequence number (`MOVE` and `STAND` in `aicr2a.h`), so the parser now retains every alias instead of overwriting the earlier name.
+- **Observed:** the installed profile contains 20 `.scn`, 337 `.smp`, and eight `.lgd` files; all 365 share a bounded 16-byte header and `width × height × 8` cell grid.
+- **Observed:** every candidate second cell word is a finite little-endian float from 0 to 20. Its grayscale view produces coherent geographic relief for `URAK.scn`.
+- **Inferred:** the second cell word is elevation. The first word is likely a terrain tile identifier plus possible flags.
+- **Observed:** trailing data falls into candidate 49-, 52-, and 53-byte record families, with 18 unknown layouts. Field decoding is parked in issue #4.
 
 ## Evidence labels for future entries
 

@@ -16,6 +16,8 @@
 | `smk/` | Smacker cinematics | Replacement cinematics | Medium–high |
 | `lomse.exe` | Closed-source engine | Rendering, input, pathfinding, hard-coded limits and mechanics | High–very high |
 
+The shared native prefix and cell grid for all three map families is documented in the [initial map-format probe](map-format.md). Terrain tags and trailing object records remain deliberately untyped.
+
 ## Evidence for script-level moddability
 
 The community 3.02 patch replaces `gs.mpq` and configuration data without replacing `lomse.exe`. Its notes attribute bug fixes, new hotkeys, expanded options, interface changes, and removal of CD checks to that data layer.

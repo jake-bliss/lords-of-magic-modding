@@ -1,14 +1,15 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use lom_asset_viewer::asset::{AssetKind, probe};
 use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
+use lom_asset_viewer::map::MapAsset;
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::pbm::PbmImage;
 use lom_asset_viewer::png_export::write_imp_frame_png;
@@ -23,6 +24,10 @@ const WINDOW_HEIGHT: u32 = 800;
 
 enum Command {
     Catalog(Source),
+    DescribeImp {
+        source: Source,
+        member: String,
+    },
     ExportImpFrame {
         source: Source,
         member: String,
@@ -39,13 +44,16 @@ enum Command {
         source: Source,
         member: Option<String>,
     },
+    InspectFile(PathBuf),
     Scan(Source),
+    ScanMapDirectory(PathBuf),
     ValidateImp(Source),
     ViewImp {
         source: Source,
         member: String,
         frame: usize,
     },
+    ViewMap(PathBuf),
     View {
         source: Source,
         member: Option<String>,
@@ -88,6 +96,28 @@ impl ImpDisplayMode {
     }
 }
 
+#[derive(Clone, Copy)]
+enum MapDisplayMode {
+    CellTags,
+    CandidateElevation,
+}
+
+impl MapDisplayMode {
+    fn next(self) -> Self {
+        match self {
+            Self::CellTags => Self::CandidateElevation,
+            Self::CandidateElevation => Self::CellTags,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::CellTags => "diagnostic cell tags",
+            Self::CandidateElevation => "candidate elevation",
+        }
+    }
+}
+
 fn main() {
     if let Err(message) = run() {
         eprintln!("error: {message}");
@@ -98,6 +128,7 @@ fn main() {
 fn run() -> Result<(), String> {
     match parse_args()? {
         Command::Catalog(source) => catalog_archive(&source),
+        Command::DescribeImp { source, member } => describe_imp(&source, &member),
         Command::ExportImpFrame {
             source,
             member,
@@ -111,13 +142,16 @@ fn run() -> Result<(), String> {
         } => extract_member(&source, &member, &output),
         Command::List(source) => list_archive(&source),
         Command::Inspect { source, member } => inspect_archive(&source, member.as_deref()),
+        Command::InspectFile(path) => inspect_file(&path),
         Command::Scan(source) => scan_archive(&source),
+        Command::ScanMapDirectory(path) => scan_map_directory(&path),
         Command::ValidateImp(source) => validate_imp_archive(&source),
         Command::ViewImp {
             source,
             member,
             frame,
         } => view_imp_archive(&source, &member, frame),
+        Command::ViewMap(path) => view_map_file(&path),
         Command::View { source, member } => view_archive(&source, member.as_deref()),
     }
 }
@@ -130,6 +164,13 @@ fn parse_args() -> Result<Command, String> {
         "--catalog" => {
             require_len(&args, 2)?;
             Ok(Command::Catalog(source(&args[1], listfile)))
+        }
+        "--describe-imp" => {
+            require_len(&args, 3)?;
+            Ok(Command::DescribeImp {
+                source: source(&args[1], listfile),
+                member: args[2].clone(),
+            })
         }
         "--extract" => {
             require_len(&args, 4)?;
@@ -161,9 +202,17 @@ fn parse_args() -> Result<Command, String> {
                 member: args.get(2).cloned(),
             })
         }
+        "--inspect-file" => {
+            require_len(&args, 2)?;
+            Ok(Command::InspectFile(args[1].clone().into()))
+        }
         "--scan" => {
             require_len(&args, 2)?;
             Ok(Command::Scan(source(&args[1], listfile)))
+        }
+        "--scan-map-dir" => {
+            require_len(&args, 2)?;
+            Ok(Command::ScanMapDirectory(args[1].clone().into()))
         }
         "--validate-imp" => {
             require_len(&args, 2)?;
@@ -183,6 +232,10 @@ fn parse_args() -> Result<Command, String> {
                 member: args[2].clone(),
                 frame,
             })
+        }
+        "--view-map" => {
+            require_len(&args, 2)?;
+            Ok(Command::ViewMap(args[1].clone().into()))
         }
         "--help" | "-h" => Err(usage()),
         _ => {
@@ -238,7 +291,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -325,6 +378,84 @@ fn export_imp_frame(
     Ok(())
 }
 
+fn describe_imp(source: &Source, member: &str) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name.eq_ignore_ascii_case(member))
+        .ok_or_else(|| format!("archive has no member named {member}"))?;
+    let bytes = archive
+        .read(&entry.name)
+        .map_err(|error| error.to_string())?;
+    let sprite = ImpSprite::parse(&bytes).map_err(|error| error.to_string())?;
+    let sequence_labels = load_imp_sequence_labels(&archive, &entries, &entry.name);
+
+    println!("record\tindex\towner\tlabels-or-flags\tmetadata-or-size\tfirst\tcount\tplacement");
+    for (sequence_index, sequence) in sprite.sequences.iter().enumerate() {
+        let labels = sequence_labels
+            .get(sequence_index)
+            .filter(|labels| !labels.is_empty())
+            .map(|labels| labels.join("|"))
+            .unwrap_or_else(|| "unnamed".to_owned());
+        println!(
+            "sequence\t{sequence_index}\t-\t{}\t{}\tcycle:{};frame:{}\tcycle:{};frame:{}\t-",
+            clean_field(&labels),
+            hex_bytes(&sequence.metadata),
+            sequence.first_cycle,
+            sequence.first_frame,
+            sequence.cycle_count,
+            sequence.frame_count,
+        );
+        for cycle_index in sequence.first_cycle..sequence.first_cycle + sequence.cycle_count {
+            let cycle = &sprite.cycles[cycle_index];
+            println!(
+                "cycle\t{cycle_index}\tsequence:{sequence_index}\t-\t0x{:04x}\tframe:{}\tframe:{}\t-",
+                cycle.metadata, cycle.first_frame, cycle.frame_count,
+            );
+        }
+    }
+    for (frame_index, frame) in sprite.frames.iter().enumerate() {
+        let (sequence_index, cycle_index, frame_in_cycle) = sprite
+            .frame_location(frame_index)
+            .map_err(|error| error.to_string())?;
+        let resolved = sprite
+            .resolved_frame(frame_index)
+            .map_err(|error| error.to_string())?;
+        let placement = if !frame.hotspots.is_empty() {
+            frame
+                .hotspots
+                .iter()
+                .map(|hotspot| format!("{}:{}:{}", hotspot.id, hotspot.x, hotspot.y))
+                .collect::<Vec<_>>()
+                .join("|")
+        } else if let (Some(x), Some(y)) = (frame.origin_x, frame.origin_y) {
+            format!("origin:{x}:{y}")
+        } else {
+            "inherited-or-empty".to_owned()
+        };
+        let source_frame = frame
+            .source_frame
+            .map_or_else(|| "direct".to_owned(), |index| format!("source:{index}"));
+        println!(
+            "frame\t{frame_index}\tsequence:{sequence_index};cycle:{cycle_index};offset:{frame_in_cycle}\t0x{:02x};{source_frame}\t{}x{}\t-\t{}\t{}",
+            frame.flags,
+            resolved.width,
+            resolved.height,
+            frame.hotspots.len(),
+            clean_field(&placement),
+        );
+    }
+    Ok(())
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
 fn catalog_archive(source: &Source) -> Result<(), String> {
     let (archive, entries) = open_archive(source)?;
     println!("name\tsize\tkind\tdetails");
@@ -376,6 +507,167 @@ fn inspect_archive(source: &Source, requested: Option<&str>) -> Result<(), Strin
     println!("kind\t{}", info.kind);
     println!("details\t{}", info.details);
     Ok(())
+}
+
+fn inspect_file(path: &Path) -> Result<(), String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("file name is not valid UTF-8: {}", path.display()))?;
+    let info = probe(name, &bytes)?;
+    println!("path\tsize\tkind\tdetails");
+    println!(
+        "{}\t{}\t{}\t{}",
+        clean_field(&path.display().to_string()),
+        bytes.len(),
+        info.kind,
+        clean_field(&info.details)
+    );
+    Ok(())
+}
+
+fn scan_map_directory(directory: &Path) -> Result<(), String> {
+    if !directory.is_dir() {
+        return Err(format!(
+            "map directory does not exist: {}",
+            directory.display()
+        ));
+    }
+    let mut paths = Vec::new();
+    collect_map_paths(directory, &mut paths)?;
+    paths.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
+
+    let mut kind_counts = BTreeMap::<AssetKind, usize>::new();
+    let mut dimension_counts = BTreeMap::<(AssetKind, u32, u32), usize>::new();
+    let mut metadata_values = BTreeMap::<AssetKind, BTreeSet<u32>>::new();
+    let mut cell_tags = BTreeSet::<u32>::new();
+    let mut finite_min = f32::INFINITY;
+    let mut finite_max = f32::NEG_INFINITY;
+    let mut nonfinite_values = 0_usize;
+    let mut trailing_ranges = BTreeMap::<AssetKind, (usize, usize)>::new();
+    let mut tail_layout_counts = BTreeMap::<(AssetKind, String), usize>::new();
+    let mut parsed = 0_usize;
+    let mut failures = Vec::new();
+
+    for path in &paths {
+        let Some(kind) = map_kind(path) else {
+            continue;
+        };
+        let result = fs::read(path)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))
+            .and_then(|bytes| MapAsset::parse(&bytes).map_err(|error| error.to_string()));
+        let map = match result {
+            Ok(map) => map,
+            Err(error) => {
+                failures.push(format!("{}: {error}", path.display()));
+                continue;
+            }
+        };
+        parsed += 1;
+        *kind_counts.entry(kind).or_default() += 1;
+        *dimension_counts
+            .entry((kind, map.width, map.height))
+            .or_default() += 1;
+        metadata_values
+            .entry(kind)
+            .or_default()
+            .insert(map.metadata);
+        let range = trailing_ranges
+            .entry(kind)
+            .or_insert((map.trailing_bytes, map.trailing_bytes));
+        range.0 = range.0.min(map.trailing_bytes);
+        range.1 = range.1.max(map.trailing_bytes);
+        let layouts = map.candidate_tail_layouts();
+        let layout = match layouts.as_slice() {
+            [] => "unknown".to_owned(),
+            [layout] => layout.to_string(),
+            layouts => format!(
+                "ambiguous:{}",
+                layouts
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("|")
+            ),
+        };
+        *tail_layout_counts.entry((kind, layout)).or_default() += 1;
+        for cell in &map.cells {
+            cell_tags.insert(cell.tag);
+            if cell.value.is_finite() {
+                finite_min = finite_min.min(cell.value);
+                finite_max = finite_max.max(cell.value);
+            } else {
+                nonfinite_values += 1;
+            }
+        }
+    }
+
+    println!("map_files\t{}", paths.len());
+    println!("parsed\t{parsed}");
+    for (kind, count) in &kind_counts {
+        println!("kind\t{kind}\t{count}");
+    }
+    for ((kind, width, height), count) in &dimension_counts {
+        println!("dimensions\t{kind}\t{width}x{height}\t{count}");
+    }
+    for (kind, values) in &metadata_values {
+        println!("distinct-header-metadata\t{kind}\t{}", values.len());
+    }
+    for (kind, (minimum, maximum)) in &trailing_ranges {
+        println!("trailing-bytes\t{kind}\t{minimum}..{maximum}");
+    }
+    for ((kind, layout), count) in &tail_layout_counts {
+        println!("tail-layout-candidate\t{kind}\t{layout}\t{count}");
+    }
+    println!("distinct-cell-tags\t{}", cell_tags.len());
+    if finite_min.is_finite() {
+        println!("candidate-value-range\t{finite_min}..{finite_max}");
+    } else {
+        println!("candidate-value-range\tnone");
+    }
+    println!("nonfinite-values\t{nonfinite_values}");
+    println!("failures\t{}", failures.len());
+    for failure in &failures {
+        println!("failure\t{}", clean_field(failure));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{} map files failed to parse", failures.len()))
+    }
+}
+
+fn collect_map_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = fs::read_dir(directory)
+        .map_err(|error| format!("could not read directory {}: {error}", directory.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "could not read directory entry in {}: {error}",
+                directory.display()
+            )
+        })?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("could not inspect {}: {error}", entry.path().display()))?;
+        if file_type.is_dir() {
+            collect_map_paths(&entry.path(), paths)?;
+        } else if file_type.is_file() && map_kind(&entry.path()).is_some() {
+            paths.push(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn map_kind(path: &Path) -> Option<AssetKind> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "lgd" => Some(AssetKind::LegendScenario),
+        "scn" => Some(AssetKind::MapScenario),
+        "smp" => Some(AssetKind::MapComponent),
+        _ => None,
+    }
 }
 
 fn scan_archive(source: &Source) -> Result<(), String> {
@@ -606,6 +898,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
         let frame = sprite
             .resolved_frame(frame_index)
             .map_err(|error| error.to_string())?;
+        let logical_frame = &sprite.frames[frame_index];
         let (sequence_index, cycle_index, frame_in_cycle) = sprite
             .frame_location(frame_index)
             .map_err(|error| error.to_string())?;
@@ -613,10 +906,23 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
         let cycle = &sprite.cycles[cycle_index];
         let sequence_label = sequence_labels
             .get(sequence_index)
-            .and_then(Option::as_deref)
-            .unwrap_or("unnamed");
+            .filter(|labels| !labels.is_empty())
+            .map(|labels| labels.join("/"))
+            .unwrap_or_else(|| "unnamed".to_owned());
+        let placement = if !logical_frame.hotspots.is_empty() {
+            logical_frame
+                .hotspots
+                .iter()
+                .map(|hotspot| format!("{}:({},{})", hotspot.id, hotspot.x, hotspot.y))
+                .collect::<Vec<_>>()
+                .join("|")
+        } else if let (Some(x), Some(y)) = (logical_frame.origin_x, logical_frame.origin_y) {
+            format!("origin=({x},{y})")
+        } else {
+            "placement=inherited".to_owned()
+        };
         let title = format!(
-            "Lords of Magic IMP viewer — {} — {} {}/{} — direction {}/{} — frame {}/{} (global {}/{}, {}×{}, {} bpp, {}{})",
+            "Lords of Magic IMP viewer — {} — {} {}/{} — cycle {}/{} — frame {}/{} (global {}/{}, {}×{}, {} bpp, {}, {}, seq={}, cycle=0x{:04x}{})",
             entry.name,
             sequence_label,
             sequence_index + 1,
@@ -631,6 +937,9 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             frame.height,
             sprite.bits_per_pixel,
             display_mode.label(),
+            placement,
+            hex_bytes(&sequence.metadata),
+            cycle.metadata,
             if playing { ", playing" } else { "" }
         );
         canvas
@@ -655,7 +964,7 @@ fn load_imp_sequence_labels(
     archive: &Archive,
     entries: &[Entry],
     sprite_name: &str,
-) -> Vec<Option<String>> {
+) -> Vec<Vec<String>> {
     let Some(stem) = sprite_name.strip_suffix(".imp").or_else(|| {
         sprite_name
             .to_ascii_lowercase()
@@ -776,6 +1085,106 @@ fn find_visible_in_cycle(
         }
     }
     Err("IMP cycle contains no visible frames".to_owned())
+}
+
+fn view_map_file(path: &Path) -> Result<(), String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let map = MapAsset::parse(&bytes).map_err(|error| error.to_string())?;
+    let width = u16::try_from(map.width)
+        .map_err(|_| format!("map width {} exceeds viewer limits", map.width))?;
+    let height = u16::try_from(map.height)
+        .map_err(|_| format!("map height {} exceeds viewer limits", map.height))?;
+    let mut display_mode = MapDisplayMode::CandidateElevation;
+
+    let sdl = sdl3::init().map_err(|error| error.to_string())?;
+    let video = sdl.video().map_err(|error| error.to_string())?;
+    let window = video
+        .window(
+            "Lords of Magic diagnostic map viewer",
+            WINDOW_WIDTH,
+            WINDOW_HEIGHT,
+        )
+        .position_centered()
+        .resizable()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut canvas = window.into_canvas();
+    let mut event_pump = sdl.event_pump().map_err(|error| error.to_string())?;
+
+    'running: loop {
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => break 'running,
+                Event::KeyDown {
+                    keycode: Some(Keycode::C),
+                    repeat: false,
+                    ..
+                } => display_mode = display_mode.next(),
+                _ => {}
+            }
+        }
+        let title = format!(
+            "Lords of Magic diagnostic map viewer — {} — {}×{} — {} — C changes mode",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("unnamed map"),
+            map.width,
+            map.height,
+            display_mode.label(),
+        );
+        canvas
+            .window_mut()
+            .set_title(&title)
+            .map_err(|error| error.to_string())?;
+        let rgba = map_display_rgba(&map, display_mode);
+        draw_rgba_in_bounds(&mut canvas, width, height, width, height, &rgba)?;
+        thread::sleep(Duration::from_millis(16));
+    }
+    Ok(())
+}
+
+fn map_display_rgba(map: &MapAsset, mode: MapDisplayMode) -> Vec<u8> {
+    let (minimum, maximum) = map
+        .cells
+        .iter()
+        .filter_map(|cell| cell.value.is_finite().then_some(cell.value))
+        .fold(
+            (f32::INFINITY, f32::NEG_INFINITY),
+            |(minimum, maximum), value| (minimum.min(value), maximum.max(value)),
+        );
+    map.cells
+        .iter()
+        .flat_map(|cell| {
+            let rgb = match mode {
+                MapDisplayMode::CellTags => diagnostic_tag_color(cell.tag),
+                MapDisplayMode::CandidateElevation => {
+                    let normalized = if maximum > minimum && cell.value.is_finite() {
+                        (cell.value - minimum) / (maximum - minimum)
+                    } else {
+                        0.0
+                    };
+                    let intensity = (normalized.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    [intensity, intensity, intensity]
+                }
+            };
+            [rgb[0], rgb[1], rgb[2], 255]
+        })
+        .collect()
+}
+
+fn diagnostic_tag_color(tag: u32) -> [u8; 3] {
+    let mut mixed = tag.wrapping_mul(0x9e37_79b1);
+    mixed ^= mixed >> 16;
+    [
+        48 + ((mixed >> 16) as u8 % 192),
+        48 + ((mixed >> 8) as u8 % 192),
+        48 + (mixed as u8 % 192),
+    ]
 }
 
 fn view_archive(source: &Source, requested: Option<&str>) -> Result<(), String> {
@@ -975,9 +1384,11 @@ fn draw_rgba_in_bounds(
 #[cfg(test)]
 mod tests {
     use lom_asset_viewer::imp::{ImpCycle, ImpFrame, ImpSequence, ImpSprite};
+    use lom_asset_viewer::map::{MapAsset, MapCell};
 
     use super::{
-        ImpDisplayMode, imp_display_rgba, step_imp_cycle, step_imp_frame, step_imp_sequence,
+        ImpDisplayMode, MapDisplayMode, imp_display_rgba, map_display_rgba, step_imp_cycle,
+        step_imp_frame, step_imp_sequence,
     };
 
     #[test]
@@ -1011,9 +1422,43 @@ mod tests {
         assert_eq!(step_imp_sequence(&sprite, 4, -1).unwrap(), 0);
     }
 
+    #[test]
+    fn map_display_modes_preserve_cell_count_and_order_elevation() {
+        let map = MapAsset {
+            metadata: 1,
+            width: 2,
+            height: 1,
+            bits_per_pixel: 8,
+            cells: vec![
+                MapCell {
+                    tag: 4,
+                    value_bits: 0.0_f32.to_bits(),
+                    value: 0.0,
+                },
+                MapCell {
+                    tag: 5,
+                    value_bits: 20.0_f32.to_bits(),
+                    value: 20.0,
+                },
+            ],
+            trailing_offset: 32,
+            trailing_bytes: 0,
+            trailing_head_u32: None,
+        };
+
+        let tags = map_display_rgba(&map, MapDisplayMode::CellTags);
+        let elevation = map_display_rgba(&map, MapDisplayMode::CandidateElevation);
+
+        assert_eq!(tags.len(), 8);
+        assert_ne!(&tags[0..3], &tags[4..7]);
+        assert_eq!(&elevation[0..4], &[0, 0, 0, 255]);
+        assert_eq!(&elevation[4..8], &[255, 255, 255, 255]);
+    }
+
     fn navigation_sprite() -> ImpSprite {
         let frames = (0..6)
             .map(|_| ImpFrame {
+                flags: 0,
                 width: 1,
                 height: 1,
                 origin_x: None,
