@@ -2,9 +2,9 @@
 
 ## Status
 
-**In progress; archive inventory and IMP pixel-decoding milestone complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels and frame references of all 1,800 IMP sprite binaries.
+**In progress; archive inventory and the first IMP inspection/export milestone are complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels, frame references, sequences, and cycles of all 1,800 IMP sprite binaries. It can navigate named actions and cycles and export individual frames as indexed PNGs.
 
-This is useful tooling now, but it is not yet the lossless asset layer promised by Stage 1. Maps, scenarios, verified transparency/origin semantics, export, and cross-platform packaging remain open.
+This is useful tooling now, but it is not yet the lossless asset layer promised by Stage 1. Maps, scenarios, verified compositing/origin semantics, reimport/repacking, and cross-platform packaging remain open.
 
 ## Component boundaries
 
@@ -13,7 +13,7 @@ This is useful tooling now, but it is not yet the lossless asset layer promised 
 | MPQ adapter | Read-only archive open, enumeration, external listfile loading, member reads | Asset interpretation or archive writes |
 | Format decoders | Bounds-checked parsing of PBM, IMP, BMP, and WAVE structures | Game-specific compositing or simulation |
 | Asset probe | Content-first classification and typed metadata | Rendering state |
-| CLI | Inventory, catalog, inspect, extract, validation, and viewer entry points | Format parsing logic |
+| CLI | Inventory, catalog, inspect, extract, indexed-frame export, validation, and viewer entry points | Format parsing logic |
 | SDL viewer | Native presentation of decoded pixels | Archive or decoder policy |
 
 StormLib remains behind a small unsafe FFI boundary. The rest of the crate consumes safe Rust-owned names and byte buffers.
@@ -54,13 +54,17 @@ The paired generated `.h` files provide unusually valuable ground truth. The cur
 - 16-byte sequence, 8-byte cycle, and 16-byte frame records;
 - a 256-entry BGRA palette;
 - maximum dimensions, sequences, cycles, logical frames, and frame dimensions;
+- explicit sequence-to-cycle and cycle-to-frame ranges, retained with their still-unknown raw metadata fields;
+- action names recovered from generated-header `#define` values for 4,649 of 4,666 declared sequences; 1,799 of 1,800 headers provide at least one name;
 - six-byte hotspot records padded per frame to an eight-byte boundary;
 - direct duplicate-frame references and a compact repeated-cycle representation;
 - two observed frame-record variants, one with explicit stored sizes and one whose payload length is implicit;
 - a custom packet RLE in which controls below `0x80` repeat the following byte `control + 3` times and controls at or above `0x80` copy `256 - control` literal bytes;
 - 8-, 4-, 2-, and 1-bit indexed pixels selected by file-flag bits `0x30`, with both tightly packed and row-padded layouts;
 - most-significant-bit-first packing for sub-byte pixels, which produces recognizable output across representative sprites;
-- complete pixel expansion and frame-reference resolution for all 1,800 observed binaries.
+- complete pixel expansion, frame-reference resolution, and sequence/cycle traversal for all 1,800 observed binaries.
+
+For example, `units\imp\chcr5a.imp` contains seven named actions (`MOVE`, `STAND`, `DEFEND`, `GET_HIT`, `DIE`, `CORPSE`, and `MELEE_ATTACK`), five cycles per action, and 170 logical frames. The five cycles are likely directional views, but that interpretation and the remaining sequence/cycle metadata have not yet been confirmed against the original executable.
 
 The validator pairs generated headers with binaries and compares independently recorded sequence, frame, duplicate, raw-pixel, hotspot, and stored-pixel statistics where applicable:
 
@@ -80,29 +84,33 @@ All stored-pixel byte totals now agree with the generated headers. The remaining
 | Generated logical-frame count | 1 |
 | Missing expected `.imp`/`.h` counterpart | 4 |
 
-The native viewer displays individual frames, follows duplicate/repeated references, and can autoplay them at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, green index 0 fills the background while a distinct pure-red index forms a 1,651-pixel silhouette beneath the creature; an inspected 1-bit aura asset similarly uses green and red as its only two colors. This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes. Exact mask meaning, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves all source palette indices and colors unchanged.
+The native viewer displays individual frames, follows duplicate/repeated references, navigates within a cycle or between cycles and actions, and can autoplay the current cycle at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, green index 0 fills the background while a distinct pure-red index forms a 1,651-pixel silhouette beneath the creature; an inspected 1-bit aura asset similarly uses green and red as its only two colors. This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes. Exact mask meaning, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves all source palette indices and colors unchanged.
+
+The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synthetic decode-back test verifies exact palette bytes and palette-index pixels, and a real GS5R3 export was independently identified as a 165×127 indexed PNG. Export uses create-new semantics so it cannot silently replace an existing file. This is a lossless inspection format, not yet a game-compatible IMP reimport or archive-writing pipeline.
 
 ## Evidence and confidence
 
-- **Observed:** all 9,804 core members are readable and classified; all 1,377 PBMs and 1,800 IMP binaries pass their bounded decoders; representative 8-bit IMP frames are visually recognizable; red and green occupy distinct palette indices/masks in inspected sprites.
-- **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, palette index 0 is the background channel, and palette index 1 is a secondary engine mask. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
-- **Unknown:** how red masks are blended or recolored, how origins and hotspots affect placement, how sequence timing is selected, and whether exceptional metadata cases use additional sharing rules.
+- **Observed:** all 9,804 core members are readable and classified; all 1,377 PBMs and 1,800 IMP binaries pass their bounded decoders; every IMP exposes bounded sequence/cycle/frame ranges; representative 8-bit IMP frames are visually recognizable; red and green occupy distinct palette indices/masks in inspected sprites.
+- **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, palette index 0 is the background channel, palette index 1 is a secondary engine mask, and common five-cycle action groups represent directions. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
+- **Unknown:** how red masks are blended or recolored, how origins and hotspots affect placement, what the sequence/cycle metadata fields mean, how timing is selected, and whether exceptional metadata cases use additional sharing rules.
 
 ## Latest verification
 
 Verified on 2026-09-12:
 
-- 16 Rust library tests and one viewer test pass;
+- 18 Rust library tests and two viewer tests pass;
 - strict Clippy (`-D warnings`) passes for all targets;
 - all three repository Python tests pass;
 - a fresh read-only scan classifies all five GS5R3 core archives with zero probe failures;
-- all 1,800 IMP payloads decode, while the 14 known metadata disagreements and four orphan names remain intentionally reported by validation.
+- all 1,800 IMP payloads decode with bounded sequence/cycle ranges;
+- indexed-PNG export preserves synthetic palette indices and palette bytes, succeeds on a real 165×127 frame, and refuses overwrite;
+- the 14 known metadata disagreements and four orphan names remain intentionally reported by validation.
 
 ## Test strategy and gates
 
 The implementation uses three layers of evidence:
 
-1. Tiny synthetic unit fixtures cover endianness, chunk bounds, ByteRun1 scanline behavior, IMP tables, RLE packets, all four packed pixel depths, hotspots, duplicate references, repeated cycles, BMP metadata, and WAVE chunks.
+1. Tiny synthetic unit fixtures cover endianness, chunk bounds, ByteRun1 scanline behavior, IMP tables, sequence/cycle ranges, navigation boundaries, RLE packets, all four packed pixel depths, hotspots, duplicate references, repeated cycles, indexed-PNG preservation, BMP metadata, WAVE chunks, and the platform-dependent StormLib enumeration ABI.
 2. User-local corpus tests scan all five archives, require every member to be readable/classifiable, and cross-check IMP binaries against their generated headers. No copyrighted fixture enters Git.
 3. Visual comparison checks representative UI, portrait, map, and animation output against the original executable before renderer behavior is considered faithful.
 
@@ -119,6 +127,8 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [x] Bounds-checked structural parser for all 1,800 IMP binaries.
 - [x] Pixel decoding for both IMP record variants and all observed packed depths.
 - [x] Individual-frame viewer with duplicate resolution and animation controls.
+- [x] Named action and cycle navigation with cycle-scoped playback.
+- [x] Non-overwriting, indexed-PNG export for individual logical frames.
 - [x] Generated-header parser and corpus cross-validator.
 
 ## Remaining before Stage 1 is complete
@@ -127,8 +137,8 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [ ] Establish palette, chroma-key, hotspot, pivot, and compositing semantics.
 - [ ] Parse representative `.scn`, `.smp`, and `.lgd` map/scenario data.
 - [ ] Inventory loose WAVE/Smacker resources outside the core archives.
-- [ ] Add lossless export and deterministic round-trip tests.
+- [ ] Add batch export, IMP reimport, and deterministic game-format round-trip tests.
 - [ ] Add searchable browsing, cached textures, animation controls, and export to the GUI.
 - [ ] Make native-library discovery and packaging portable across macOS, Windows, and Linux.
 
-The next implementation slice should validate IMP chroma keys, origins, hotspots, and sequence timing against the original executable, then add lossless frame export. That will turn the current recognizable rendering into a defensible sprite-format specification.
+The next implementation slice should validate IMP chroma keys, origins, hotspots, cycle direction, and sequence timing against the original executable, then begin a representative map/scenario probe. That will turn the current recognizable rendering into a defensible sprite-format specification and reduce the next major Stage 1 format risk.

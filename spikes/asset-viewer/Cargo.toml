@@ -5,4 +5,5 @@ edition = "2024"
 publish = false
 
 [dependencies]
+png = "0.18.1"
 sdl3 = "0.20.0"

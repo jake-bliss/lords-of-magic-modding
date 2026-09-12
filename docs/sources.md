@@ -41,6 +41,7 @@
 
 - [SDL3 documentation](https://wiki.libsdl.org/SDL3/FrontPage)
 - [Rust SDL3 bindings](https://docs.rs/sdl3/latest/sdl3/)
+- [Rust `png` crate documentation](https://docs.rs/png/latest/png/)
 - [EA IFF 85 specification](https://1fish2.github.io/IFF/IFF%20docs%20with%20Commodore%20revisions/EA%20IFF%2085.pdf)
 - [ILBM/PBM specification](https://1fish2.github.io/IFF/IFF%20docs%20with%20Commodore%20revisions/ILBM.pdf)
 - [FFmpeg IFF decoder reference](https://github.com/FFmpeg/FFmpeg/blob/master/libavcodec/iff.c)

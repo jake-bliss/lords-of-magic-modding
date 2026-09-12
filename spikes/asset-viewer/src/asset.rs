@@ -161,13 +161,14 @@ fn probe_imp_sprite(bytes: &[u8]) -> Result<AssetInfo, String> {
 
 fn probe_imp_header(bytes: &[u8]) -> Result<AssetInfo, String> {
     let stats = ImpHeaderStats::parse(bytes).map_err(|error| error.to_string())?;
+    let named_sequences = stats.sequence_labels.iter().flatten().count();
     let compression = stats
         .compressed_pixel_bytes
         .map_or_else(|| "none".to_owned(), |bytes| format!("rle:{bytes}"));
     Ok(AssetInfo::new(
         AssetKind::ImpHeader,
         format!(
-            "sequence={};sequences={};frames={};duplicate-frames={};raw-bytes={};compression={compression};hotspot-bytes={}",
+            "sequence={};sequences={};named-sequences={named_sequences};frames={};duplicate-frames={};raw-bytes={};compression={compression};hotspot-bytes={}",
             stats.sequence_name,
             stats.sequence_count,
             stats.frame_count,
@@ -410,7 +411,10 @@ mod tests {
         let info = probe("units\\dragon.h", header).unwrap();
         assert_eq!(info.kind, AssetKind::ImpHeader);
         assert!(info.details.contains("sequence=dragon"));
-        assert!(info.details.contains("sequences=2;frames=45"));
+        assert!(
+            info.details
+                .contains("sequences=2;named-sequences=0;frames=45")
+        );
         assert!(
             info.details
                 .contains("raw-bytes=144878;compression=rle:60875")

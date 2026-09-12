@@ -27,6 +27,22 @@ pub struct ImpFrame {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImpCycle {
+    pub metadata: u16,
+    pub first_frame: usize,
+    pub frame_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImpSequence {
+    pub metadata: [u8; 11],
+    pub first_cycle: usize,
+    pub cycle_count: usize,
+    pub first_frame: usize,
+    pub frame_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImpSprite {
     pub file_flags: u8,
     pub record_variant: u8,
@@ -43,12 +59,15 @@ pub struct ImpSprite {
     pub raw_pixel_bytes: u64,
     pub stored_pixel_bytes: u64,
     pub palette: Vec<[u8; 4]>,
+    pub sequences: Vec<ImpSequence>,
+    pub cycles: Vec<ImpCycle>,
     pub frames: Vec<ImpFrame>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImpHeaderStats {
     pub sequence_name: String,
+    pub sequence_labels: Vec<Option<String>>,
     pub sequence_count: usize,
     pub frame_count: usize,
     pub duplicate_frame_count: usize,
@@ -121,11 +140,16 @@ impl ImpSprite {
         let mut duplicate_frame_count = 0_usize;
         let mut raw_pixel_bytes = 0_u64;
         let mut stored_pixel_bytes = 0_u64;
+        let mut sequences = Vec::with_capacity(sequence_count);
+        let mut cycles = Vec::new();
         let mut frames = Vec::new();
         let mut pixel_sources = BTreeMap::<usize, usize>::new();
 
         for sequence_index in 0..sequence_count {
             let sequence_offset = sequence_table_offset + sequence_index * SEQUENCE_RECORD_SIZE;
+            let sequence_metadata = source[sequence_offset..sequence_offset + 11]
+                .try_into()
+                .expect("sequence metadata range was checked");
             let sequence_cycles = usize::from(source[sequence_offset + 11]);
             let cycle_table_offset = read_u32(source, sequence_offset + 12)? as usize;
             if sequence_cycles == 0 {
@@ -143,9 +167,12 @@ impl ImpSprite {
             cycle_count = cycle_count
                 .checked_add(sequence_cycles)
                 .ok_or_else(|| ImpError::new("IMP cycle count overflow"))?;
+            let sequence_first_cycle = cycles.len();
+            let sequence_first_frame = frames.len();
 
             for cycle_index in 0..sequence_cycles {
                 let cycle_offset = cycle_table_offset + cycle_index * CYCLE_RECORD_SIZE;
+                let cycle_metadata = read_u16(source, cycle_offset)?;
                 let cycle_frames = usize::from(read_u16(source, cycle_offset + 2)?);
                 let frame_table_offset = read_u32(source, cycle_offset + 4)? as usize;
                 require_range(
@@ -165,6 +192,7 @@ impl ImpSprite {
                         "frame table",
                     )?;
                 }
+                let cycle_first_frame = frames.len();
                 for frame_index in 0..cycle_frames {
                     let frame_offset = if repeated_cycle {
                         frame_table_offset
@@ -309,7 +337,19 @@ impl ImpSprite {
                 frame_count = frame_count
                     .checked_add(cycle_frames)
                     .ok_or_else(|| ImpError::new("IMP frame count overflow"))?;
+                cycles.push(ImpCycle {
+                    metadata: cycle_metadata,
+                    first_frame: cycle_first_frame,
+                    frame_count: cycle_frames,
+                });
             }
+            sequences.push(ImpSequence {
+                metadata: sequence_metadata,
+                first_cycle: sequence_first_cycle,
+                cycle_count: sequence_cycles,
+                first_frame: sequence_first_frame,
+                frame_count: frames.len() - sequence_first_frame,
+            });
         }
 
         Ok(Self {
@@ -328,6 +368,8 @@ impl ImpSprite {
             raw_pixel_bytes,
             stored_pixel_bytes,
             palette,
+            sequences,
+            cycles,
             frames,
         })
     }
@@ -367,6 +409,31 @@ impl ImpSprite {
             "IMP duplicate-frame references contain a cycle",
         ))
     }
+
+    pub fn frame_location(&self, frame_index: usize) -> Result<(usize, usize, usize), ImpError> {
+        if frame_index >= self.frames.len() {
+            return Err(ImpError::new(format!(
+                "IMP frame index {frame_index} is out of range"
+            )));
+        }
+        for (sequence_index, sequence) in self.sequences.iter().enumerate() {
+            if !(sequence.first_frame..sequence.first_frame + sequence.frame_count)
+                .contains(&frame_index)
+            {
+                continue;
+            }
+            for cycle_index in sequence.first_cycle..sequence.first_cycle + sequence.cycle_count {
+                let cycle = &self.cycles[cycle_index];
+                if (cycle.first_frame..cycle.first_frame + cycle.frame_count).contains(&frame_index)
+                {
+                    return Ok((sequence_index, cycle_index, frame_index - cycle.first_frame));
+                }
+            }
+        }
+        Err(ImpError::new(format!(
+            "IMP frame index {frame_index} is not owned by a cycle"
+        )))
+    }
 }
 
 fn check_equal<T>(label: &str, actual: T, expected: T) -> Result<(), ImpError>
@@ -403,9 +470,11 @@ impl ImpHeaderStats {
             ));
         }
 
+        let sequence_count = required_stat(text, "Total number of 'Sequences'")? as usize;
         Ok(Self {
+            sequence_labels: parse_sequence_labels(text, &sequence_name, sequence_count),
             sequence_name,
-            sequence_count: required_stat(text, "Total number of 'Sequences'")? as usize,
+            sequence_count,
             frame_count: required_stat(text, "Total number of 'Frames'")? as usize,
             duplicate_frame_count: required_stat(text, "Duplicate bitmaps found")? as usize,
             raw_pixel_bytes: required_stat(text, "Bitmap raw memory usage")?,
@@ -413,6 +482,30 @@ impl ImpHeaderStats {
             compressed_pixel_bytes,
         })
     }
+}
+
+fn parse_sequence_labels(text: &str, root_name: &str, count: usize) -> Vec<Option<String>> {
+    let prefix = format!("{}_", root_name.to_ascii_uppercase());
+    let mut labels = vec![None; count];
+    for line in text.lines() {
+        let mut fields = line.split_whitespace();
+        if fields.next() != Some("#define") {
+            continue;
+        }
+        let Some(symbol) = fields.next() else {
+            continue;
+        };
+        let Some(value) = fields.next().and_then(|value| value.parse::<usize>().ok()) else {
+            continue;
+        };
+        let Some(label) = symbol.strip_prefix(&prefix) else {
+            continue;
+        };
+        if value < labels.len() && !label.is_empty() {
+            labels[value] = Some(label.to_owned());
+        }
+    }
+    labels
 }
 
 fn required_stat(text: &str, label: &str) -> Result<u64, ImpError> {
@@ -665,8 +758,10 @@ mod tests {
         source[8..12].copy_from_slice(&(palette_offset as u32).to_le_bytes());
         source[26..28].copy_from_slice(&1_u16.to_le_bytes());
         source[28..32].copy_from_slice(&32_u32.to_le_bytes());
+        source[32..43].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
         source[32 + 11] = 1;
         source[32 + 12..32 + 16].copy_from_slice(&48_u32.to_le_bytes());
+        source[48..50].copy_from_slice(&7_u16.to_le_bytes());
         source[48 + 2..48 + 4].copy_from_slice(&1_u16.to_le_bytes());
         source[48 + 4..48 + 8].copy_from_slice(&56_u32.to_le_bytes());
         source[56 + 2..56 + 4].copy_from_slice(&2_u16.to_le_bytes());
@@ -687,6 +782,16 @@ mod tests {
         assert_eq!(sprite.sequence_count, 1);
         assert_eq!(sprite.cycle_count, 1);
         assert_eq!(sprite.frame_count, 1);
+        assert_eq!(
+            sprite.sequences[0].metadata,
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        );
+        assert_eq!(sprite.sequences[0].first_cycle, 0);
+        assert_eq!(sprite.sequences[0].frame_count, 1);
+        assert_eq!(sprite.cycles[0].metadata, 7);
+        assert_eq!(sprite.cycles[0].first_frame, 0);
+        assert_eq!(sprite.cycles[0].frame_count, 1);
+        assert_eq!(sprite.frame_location(0).unwrap(), (0, 0, 0));
         assert_eq!(sprite.raw_pixel_bytes, 2);
         assert_eq!(sprite.stored_pixel_bytes, 2);
         assert_eq!(sprite.palette[0], [1, 2, 3, 255]);
@@ -738,6 +843,11 @@ mod tests {
         let sprite = ImpSprite::parse(&source).unwrap();
         assert_eq!(sprite.frame_count, 6);
         assert_eq!(sprite.duplicate_frame_count, 5);
+        assert_eq!(sprite.sequences[0].cycle_count, 2);
+        assert_eq!(sprite.sequences[0].frame_count, 6);
+        assert_eq!(sprite.cycles[1].first_frame, 1);
+        assert_eq!(sprite.cycles[1].frame_count, 5);
+        assert_eq!(sprite.frame_location(5).unwrap(), (0, 1, 4));
         assert_eq!(sprite.raw_pixel_bytes, 2);
         assert_eq!(sprite.stored_pixel_bytes, 2);
         assert_eq!(
@@ -770,6 +880,9 @@ mod tests {
     #[test]
     fn parses_generated_header_statistics() {
         let header = b"// Sprite headers for sequence dragon\r\n\
+//Cycle-name defines\r\n\
+#define DRAGON_MOVE 0\r\n\
+#define DRAGON_STAND 1\r\n\
 // Total number of 'Sequences': 2\r\n\
 // Total number of 'Frames': 45\r\n\
 // Duplicate bitmaps found : 3\r\n\
@@ -778,6 +891,10 @@ mod tests {
 // Bitmap RLE memory usage : 60875\r\n";
         let stats = ImpHeaderStats::parse(header).unwrap();
         assert_eq!(stats.sequence_name, "dragon");
+        assert_eq!(
+            stats.sequence_labels,
+            [Some("MOVE".to_owned()), Some("STAND".to_owned())]
+        );
         assert_eq!(stats.sequence_count, 2);
         assert_eq!(stats.frame_count, 45);
         assert_eq!(stats.duplicate_frame_count, 3);

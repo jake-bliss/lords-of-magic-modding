@@ -45,10 +45,11 @@ target/release/lom-asset-viewer --inspect "$PIC_MPQ" 'LBM\ACTIONS5.lbm'
 target/release/lom-asset-viewer --extract "$PIC_MPQ" 'LBM\ACTIONS5.lbm' /tmp/actions5.lbm
 target/release/lom-asset-viewer --validate-imp "$IMP_MPQ" --listfile "$LISTFILE"
 target/release/lom-asset-viewer --view-imp "$IMP_MPQ" 'units\imp\chcr5a.imp' --listfile "$LISTFILE"
+target/release/lom-asset-viewer --export-imp-frame "$IMP_MPQ" 'units\imp\chcr5a.imp' 155 /tmp/chcr5a-frame-155.png --listfile "$LISTFILE"
 target/release/lom-asset-viewer "$PIC_MPQ" 'LBM\ACTIONS5.lbm'
 ```
 
-`--extract` uses create-new semantics and refuses to overwrite an existing output. Add `--listfile "$LISTFILE"` to any command when public names are needed. To inventory all five archives in one pass, use [`scripts/inventory-native-assets.sh`](../../scripts/inventory-native-assets.sh).
+`--extract` and `--export-imp-frame` use create-new semantics and refuse to overwrite an existing output. IMP frame export writes an 8-bit indexed PNG with the source palette indices and RGB palette intact; it does not yet reimport PNGs into the game format. Add `--listfile "$LISTFILE"` to any command when public names are needed. To inventory all five archives in one pass, use [`scripts/inventory-native-assets.sh`](../../scripts/inventory-native-assets.sh).
 
 In the PBM archive viewer:
 
@@ -58,11 +59,14 @@ In the PBM archive viewer:
 
 In the IMP frame viewer:
 
-- Right or Down selects the next visible logical frame.
-- Left or Up selects the previous visible logical frame.
-- Space toggles animation at the current provisional 100 ms frame interval.
+- Right or Left selects the next or previous visible logical frame within the current cycle.
+- Down or Up selects the next or previous cycle within the current action.
+- Page Down or Page Up selects the next or previous action sequence.
+- Space toggles cycle-scoped animation at the current provisional 100 ms frame interval.
 - C cycles between clean preview, visible mask, and raw-palette modes.
 - Escape or closing the window exits.
+
+When a paired generated `.h` member is available, the window title shows its recovered action name. Cycle direction and the provisional frame interval still require confirmation against the original executable.
 
 Member matching is case-insensitive because the archive catalog and Windows game paths do not have reliable case consistency.
 
@@ -85,7 +89,7 @@ Tested against the installed GS5R3 profile on 2026-09-11:
 
 The viewer displayed `lbm\ACTIONS5.lbm` as a 612×120 image with 256 palette entries and ByteRun1 compression. The full scan found one image whose final compressed packet crosses a scanline boundary; matching the format's scanline semantics resolved it and is covered by a regression test.
 
-The IMP decoder handles both observed frame-record variants, the custom packet RLE, 8/4/2/1-bit indexed pixels, row padding, direct duplicates, and repeated cycles. The unresolved cases are reported as failures by `--validate-imp`; they cover 14 metadata/statistical mismatches and four orphan public-catalog names. See the [Stage 1 record](../../docs/native-asset-stage.md) for the exact scope and remaining gates.
+The IMP decoder handles both observed frame-record variants, the custom packet RLE, 8/4/2/1-bit indexed pixels, row padding, direct duplicates, repeated cycles, and explicit sequence/cycle/frame ranges. Generated headers provide 4,649 names for 4,666 declared action sequences. The unresolved cases are reported as failures by `--validate-imp`; they cover 14 metadata/statistical mismatches and four orphan public-catalog names. See the [Stage 1 record](../../docs/native-asset-stage.md) for the exact scope and remaining gates.
 
 ## What the tool proves
 
@@ -101,7 +105,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - IMP rendering is not yet behaviorally equivalent to the game. The clean preview hides palette indices 0 and 1 as the inferred background and secondary-mask channels; the other viewer modes expose them. Their exact compositing semantics, origins, hotspots, and sequence timing still need reference comparisons.
 - BMP/WAVE currently have metadata probes; maps, scenarios, fonts, and video are not decoded.
 - The viewer recreates its streaming texture while drawing; caching is a production optimization, not a spike requirement.
-- There is no thumbnail grid, search UI, export, editing, or MPQ writing.
+- There is no thumbnail grid, search UI, batch/GUI export, editing, IMP reimport, or MPQ writing.
 - A successful asset decoder does not reduce the much larger uncertainty in the GameScript host, simulation, AI, saves, or multiplayer.
 
 ## Code map
@@ -109,10 +113,11 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/mpq.rs` — manual StormLib FFI and read-only archive/member ownership.
 - `src/pbm.rs` — bounded IFF chunk parsing, palette conversion, PBM row handling, and ByteRun1 decoding.
 - `src/imp.rs` — bounds-checked IMP tables, palette, RLE and packed-pixel decoding, hotspot and duplicate/repeated-frame structures, and generated-header validation.
+- `src/png_export.rs` — lossless indexed-PNG output for resolved IMP frames.
 - `src/asset.rs` — content-first classification and typed format metadata.
 - `src/main.rs` — CLI inventory, extraction, validation, and SDL3 viewer.
 - `build.rs` — local native-library search and runtime paths for the Apple Silicon spike.
 
 ## Sensible next slice
 
-Compare representative IMP frames and animations with the original executable to establish chroma-key, origin, hotspot, and timing semantics. Then add lossless frame export while keeping game-specific compositing rules above the format decoder.
+Compare representative IMP frames and animations with the original executable to establish chroma-key, origin, hotspot, cycle-direction, and timing semantics. Then probe representative map/scenario members while keeping game-specific rendering rules above the format decoder.

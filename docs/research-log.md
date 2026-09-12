@@ -87,6 +87,17 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 - **Corrected:** sampling the top-left pixel as a chroma key failed when frame 156 of `chcr5a.imp` touched that corner and removed gold artwork. Viewer channels are now selected by palette index 0 (background) and index 1 (secondary mask), preserving the same colors when they occur at other indices.
 - **Unknown:** the original engine's exact mask blend, origins, hotspot behavior, sequence boundaries, and timing still require controlled comparison.
 
+## 2026-09-12 — IMP actions, cycles, export, and FFI safety
+
+- **Observed:** all 1,800 IMP binaries expose bounded sequence-to-cycle and cycle-to-frame ranges under the current parser.
+- **Observed:** generated C headers provide 4,649 names for 4,666 declared action sequences; 1,799 of 1,800 headers provide at least one name.
+- **Observed:** `units\imp\chcr5a.imp` contains seven named actions, five cycles per action, and 170 logical frames. The action names are `MOVE`, `STAND`, `DEFEND`, `GET_HIT`, `DIE`, `CORPSE`, and `MELEE_ATTACK`.
+- **Inferred:** the five cycles in each inspected creature action are directional views. Raw sequence and cycle metadata remain preserved but uninterpreted.
+- **Implemented:** the viewer navigates frames within a cycle, cycles within an action, and named actions; autoplay wraps within the selected cycle.
+- **Implemented:** the CLI exports a resolved logical frame as an 8-bit indexed PNG while preserving palette indices and RGB palette entries. Synthetic decode-back verifies exact bytes, and output creation refuses overwrite.
+- **Corrected:** the manual StormLib binding used Windows' 260-byte `MAX_PATH` inside `SFILE_FIND_DATA`, but StormLib's macOS portability header uses 1,024 bytes. Enumeration consequently overwrote adjacent stack memory. The binding now selects the platform ABI, a layout regression test matches the installed C header's 1,064-byte structure, and the full five-archive scan still succeeds.
+- **Observed:** after the ABI correction, a real frame-155 export reports the requested index and is independently identified as a 165×127, 8-bit indexed PNG.
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:

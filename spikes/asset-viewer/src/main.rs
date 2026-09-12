@@ -11,6 +11,7 @@ use lom_asset_viewer::asset::{AssetKind, probe};
 use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::pbm::PbmImage;
+use lom_asset_viewer::png_export::write_imp_frame_png;
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::pixels::{Color, PixelFormat};
@@ -22,6 +23,12 @@ const WINDOW_HEIGHT: u32 = 800;
 
 enum Command {
     Catalog(Source),
+    ExportImpFrame {
+        source: Source,
+        member: String,
+        frame: usize,
+        output: PathBuf,
+    },
     Extract {
         source: Source,
         member: String,
@@ -91,6 +98,12 @@ fn main() {
 fn run() -> Result<(), String> {
     match parse_args()? {
         Command::Catalog(source) => catalog_archive(&source),
+        Command::ExportImpFrame {
+            source,
+            member,
+            frame,
+            output,
+        } => export_imp_frame(&source, &member, frame, &output),
         Command::Extract {
             source,
             member,
@@ -126,6 +139,15 @@ fn parse_args() -> Result<Command, String> {
                 output: args[3].clone().into(),
             })
         }
+        "--export-imp-frame" => {
+            require_len(&args, 5)?;
+            Ok(Command::ExportImpFrame {
+                source: source(&args[1], listfile),
+                member: args[2].clone(),
+                frame: parse_frame_index(&args[3])?,
+                output: args[4].clone().into(),
+            })
+        }
         "--list" => {
             require_len(&args, 2)?;
             Ok(Command::List(source(&args[1], listfile)))
@@ -153,11 +175,7 @@ fn parse_args() -> Result<Command, String> {
             }
             let frame = args
                 .get(3)
-                .map(|value| {
-                    value.parse().map_err(|_| {
-                        format!("IMP frame index must be a nonnegative integer: {value}")
-                    })
-                })
+                .map(|value| parse_frame_index(value))
                 .transpose()?
                 .unwrap_or(0);
             Ok(Command::ViewImp {
@@ -177,6 +195,12 @@ fn parse_args() -> Result<Command, String> {
             })
         }
     }
+}
+
+fn parse_frame_index(value: &str) -> Result<usize, String> {
+    value
+        .parse()
+        .map_err(|_| format!("IMP frame index must be a nonnegative integer: {value}"))
 }
 
 fn source(archive: &str, listfile: Option<PathBuf>) -> Source {
@@ -214,7 +238,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -260,6 +284,44 @@ fn extract_member(source: &Source, member: &str, output: &PathBuf) -> Result<(),
     file.write_all(&bytes)
         .map_err(|error| format!("could not write {}: {error}", output.display()))?;
     println!("wrote\t{}\t{}", output.display(), bytes.len());
+    Ok(())
+}
+
+fn export_imp_frame(
+    source: &Source,
+    member: &str,
+    frame_index: usize,
+    output: &PathBuf,
+) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name.eq_ignore_ascii_case(member))
+        .ok_or_else(|| format!("archive has no member named {member}"))?;
+    let bytes = archive
+        .read(&entry.name)
+        .map_err(|error| error.to_string())?;
+    let sprite = ImpSprite::parse(&bytes).map_err(|error| error.to_string())?;
+    let frame = sprite
+        .resolved_frame(frame_index)
+        .map_err(|error| error.to_string())?;
+    let mut encoded = Vec::new();
+    write_imp_frame_png(&mut encoded, &sprite, frame_index)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    file.write_all(&encoded)
+        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+    println!(
+        "wrote\t{}\t{}\t{}x{}\tframe={}",
+        output.display(),
+        encoded.len(),
+        frame.width,
+        frame.height,
+        frame_index
+    );
     Ok(())
 }
 
@@ -441,6 +503,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
         .read(&entry.name)
         .map_err(|error| error.to_string())?;
     let sprite = ImpSprite::parse(&bytes).map_err(|error| error.to_string())?;
+    let sequence_labels = load_imp_sequence_labels(&archive, &entries, &entry.name);
     if requested_frame >= sprite.frames.len() {
         return Err(format!(
             "IMP frame {requested_frame} is out of range; {} frames are available",
@@ -472,19 +535,51 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     ..
                 } => break 'running,
                 Event::KeyDown {
-                    keycode: Some(Keycode::Right | Keycode::Down),
+                    keycode: Some(Keycode::Right),
                     repeat: false,
                     ..
                 } => {
-                    frame_index = find_imp_frame(&sprite, frame_index, 1, false)?;
+                    frame_index = step_imp_frame(&sprite, frame_index, 1)?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
-                    keycode: Some(Keycode::Left | Keycode::Up),
+                    keycode: Some(Keycode::Left),
                     repeat: false,
                     ..
                 } => {
-                    frame_index = find_imp_frame(&sprite, frame_index, -1, false)?;
+                    frame_index = step_imp_frame(&sprite, frame_index, -1)?;
+                    last_advance = Instant::now();
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::Down),
+                    repeat: false,
+                    ..
+                } => {
+                    frame_index = step_imp_cycle(&sprite, frame_index, 1)?;
+                    last_advance = Instant::now();
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::Up),
+                    repeat: false,
+                    ..
+                } => {
+                    frame_index = step_imp_cycle(&sprite, frame_index, -1)?;
+                    last_advance = Instant::now();
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::PageDown),
+                    repeat: false,
+                    ..
+                } => {
+                    frame_index = step_imp_sequence(&sprite, frame_index, 1)?;
+                    last_advance = Instant::now();
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::PageUp),
+                    repeat: false,
+                    ..
+                } => {
+                    frame_index = step_imp_sequence(&sprite, frame_index, -1)?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
@@ -504,16 +599,32 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             }
         }
         if playing && last_advance.elapsed() >= Duration::from_millis(100) {
-            frame_index = find_imp_frame(&sprite, frame_index, 1, false)?;
+            frame_index = step_imp_frame(&sprite, frame_index, 1)?;
             last_advance = Instant::now();
         }
 
         let frame = sprite
             .resolved_frame(frame_index)
             .map_err(|error| error.to_string())?;
+        let (sequence_index, cycle_index, frame_in_cycle) = sprite
+            .frame_location(frame_index)
+            .map_err(|error| error.to_string())?;
+        let sequence = &sprite.sequences[sequence_index];
+        let cycle = &sprite.cycles[cycle_index];
+        let sequence_label = sequence_labels
+            .get(sequence_index)
+            .and_then(Option::as_deref)
+            .unwrap_or("unnamed");
         let title = format!(
-            "Lords of Magic IMP viewer — {} — frame {}/{} ({}×{}, {} bpp, {}{})",
+            "Lords of Magic IMP viewer — {} — {} {}/{} — direction {}/{} — frame {}/{} (global {}/{}, {}×{}, {} bpp, {}{})",
             entry.name,
+            sequence_label,
+            sequence_index + 1,
+            sprite.sequences.len(),
+            cycle_index - sequence.first_cycle + 1,
+            sequence.cycle_count,
+            frame_in_cycle + 1,
+            cycle.frame_count,
             frame_index + 1,
             sprite.frames.len(),
             frame.width,
@@ -540,6 +651,34 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
     Ok(())
 }
 
+fn load_imp_sequence_labels(
+    archive: &Archive,
+    entries: &[Entry],
+    sprite_name: &str,
+) -> Vec<Option<String>> {
+    let Some(stem) = sprite_name.strip_suffix(".imp").or_else(|| {
+        sprite_name
+            .to_ascii_lowercase()
+            .strip_suffix(".imp")
+            .map(|_| &sprite_name[..sprite_name.len() - 4])
+    }) else {
+        return Vec::new();
+    };
+    let header_name = format!("{stem}.h");
+    let Some(entry) = entries
+        .iter()
+        .find(|entry| entry.name.eq_ignore_ascii_case(&header_name))
+    else {
+        return Vec::new();
+    };
+    archive
+        .read(&entry.name)
+        .ok()
+        .and_then(|bytes| ImpHeaderStats::parse(&bytes).ok())
+        .map(|stats| stats.sequence_labels)
+        .unwrap_or_default()
+}
+
 fn find_imp_frame(
     sprite: &ImpSprite,
     current: usize,
@@ -561,6 +700,82 @@ fn find_imp_frame(
         }
     }
     Err("IMP sprite contains no visible frames".to_owned())
+}
+
+fn step_imp_frame(sprite: &ImpSprite, current: usize, direction: isize) -> Result<usize, String> {
+    let (_, cycle_index, frame_in_cycle) = sprite
+        .frame_location(current)
+        .map_err(|error| error.to_string())?;
+    find_visible_in_cycle(sprite, cycle_index, frame_in_cycle, direction, false)
+}
+
+fn step_imp_cycle(sprite: &ImpSprite, current: usize, direction: isize) -> Result<usize, String> {
+    let (sequence_index, cycle_index, _) = sprite
+        .frame_location(current)
+        .map_err(|error| error.to_string())?;
+    let sequence = &sprite.sequences[sequence_index];
+    let relative_cycle = cycle_index - sequence.first_cycle;
+    for distance in 1..=sequence.cycle_count {
+        let relative = (relative_cycle as isize + direction * distance as isize)
+            .rem_euclid(sequence.cycle_count as isize) as usize;
+        let candidate = sequence.first_cycle + relative;
+        if let Ok(frame) = find_visible_in_cycle(sprite, candidate, 0, 1, true) {
+            return Ok(frame);
+        }
+    }
+    Err("IMP sequence contains no visible cycles".to_owned())
+}
+
+fn step_imp_sequence(
+    sprite: &ImpSprite,
+    current: usize,
+    direction: isize,
+) -> Result<usize, String> {
+    let (sequence_index, _, _) = sprite
+        .frame_location(current)
+        .map_err(|error| error.to_string())?;
+    for distance in 1..=sprite.sequences.len() {
+        let candidate = (sequence_index as isize + direction * distance as isize)
+            .rem_euclid(sprite.sequences.len() as isize) as usize;
+        let sequence = &sprite.sequences[candidate];
+        for relative_cycle in 0..sequence.cycle_count {
+            if let Ok(frame) =
+                find_visible_in_cycle(sprite, sequence.first_cycle + relative_cycle, 0, 1, true)
+            {
+                return Ok(frame);
+            }
+        }
+    }
+    Err("IMP sprite contains no visible sequences".to_owned())
+}
+
+fn find_visible_in_cycle(
+    sprite: &ImpSprite,
+    cycle_index: usize,
+    current_offset: usize,
+    direction: isize,
+    include_current: bool,
+) -> Result<usize, String> {
+    let cycle = sprite
+        .cycles
+        .get(cycle_index)
+        .ok_or_else(|| format!("IMP cycle index {cycle_index} is out of range"))?;
+    if cycle.frame_count == 0 {
+        return Err("IMP cycle contains no frames".to_owned());
+    }
+    let first_distance = usize::from(!include_current);
+    for distance in first_distance..first_distance + cycle.frame_count {
+        let offset = (current_offset as isize + direction * distance as isize)
+            .rem_euclid(cycle.frame_count as isize) as usize;
+        let index = cycle.first_frame + offset;
+        let frame = sprite
+            .resolved_frame(index)
+            .map_err(|error| error.to_string())?;
+        if frame.width > 0 && frame.height > 0 && !frame.rgba.is_empty() {
+            return Ok(index);
+        }
+    }
+    Err("IMP cycle contains no visible frames".to_owned())
 }
 
 fn view_archive(source: &Source, requested: Option<&str>) -> Result<(), String> {
@@ -759,7 +974,11 @@ fn draw_rgba_in_bounds(
 
 #[cfg(test)]
 mod tests {
-    use super::{ImpDisplayMode, imp_display_rgba};
+    use lom_asset_viewer::imp::{ImpCycle, ImpFrame, ImpSequence, ImpSprite};
+
+    use super::{
+        ImpDisplayMode, imp_display_rgba, step_imp_cycle, step_imp_frame, step_imp_sequence,
+    };
 
     #[test]
     fn imp_display_modes_preserve_decoder_pixels() {
@@ -778,5 +997,83 @@ mod tests {
             imp_display_rgba(&indices, &source, ImpDisplayMode::Raw),
             source
         );
+    }
+
+    #[test]
+    fn imp_navigation_respects_cycle_and_sequence_boundaries() {
+        let sprite = navigation_sprite();
+
+        assert_eq!(step_imp_frame(&sprite, 1, 1).unwrap(), 0);
+        assert_eq!(step_imp_frame(&sprite, 0, -1).unwrap(), 1);
+        assert_eq!(step_imp_cycle(&sprite, 0, 1).unwrap(), 2);
+        assert_eq!(step_imp_cycle(&sprite, 2, -1).unwrap(), 0);
+        assert_eq!(step_imp_sequence(&sprite, 2, 1).unwrap(), 4);
+        assert_eq!(step_imp_sequence(&sprite, 4, -1).unwrap(), 0);
+    }
+
+    fn navigation_sprite() -> ImpSprite {
+        let frames = (0..6)
+            .map(|_| ImpFrame {
+                width: 1,
+                height: 1,
+                origin_x: None,
+                origin_y: None,
+                hotspots: Vec::new(),
+                palette_indices: vec![2],
+                rgba: vec![1, 2, 3, 255],
+                source_frame: None,
+            })
+            .collect();
+        ImpSprite {
+            file_flags: 0,
+            record_variant: 1,
+            compressed: false,
+            bits_per_pixel: 8,
+            maximum_width: 1,
+            maximum_height: 1,
+            sequence_count: 2,
+            cycle_count: 3,
+            frame_count: 6,
+            duplicate_frame_count: 0,
+            hotspot_count: 0,
+            hotspot_bytes: 0,
+            raw_pixel_bytes: 6,
+            stored_pixel_bytes: 6,
+            palette: vec![[0, 0, 0, 255]; 256],
+            sequences: vec![
+                ImpSequence {
+                    metadata: [0; 11],
+                    first_cycle: 0,
+                    cycle_count: 2,
+                    first_frame: 0,
+                    frame_count: 4,
+                },
+                ImpSequence {
+                    metadata: [0; 11],
+                    first_cycle: 2,
+                    cycle_count: 1,
+                    first_frame: 4,
+                    frame_count: 2,
+                },
+            ],
+            cycles: vec![
+                ImpCycle {
+                    metadata: 0,
+                    first_frame: 0,
+                    frame_count: 2,
+                },
+                ImpCycle {
+                    metadata: 0,
+                    first_frame: 2,
+                    frame_count: 2,
+                },
+                ImpCycle {
+                    metadata: 0,
+                    first_frame: 4,
+                    frame_count: 2,
+                },
+            ],
+            frames,
+        }
     }
 }
