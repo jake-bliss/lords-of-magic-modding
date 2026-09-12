@@ -98,7 +98,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 ## What it does not prove
 
 - The rendering is not yet behaviorally equivalent to the game. A visible bright-green color in the atlas suggests an engine-level chroma-key rule that is not represented by the PBM header's masking field.
-- IMP rendering is not yet behaviorally equivalent to the game. The clean preview removes the top-left background color and pure-red mask pixels; the other viewer modes expose those channels. Their exact compositing semantics, origins, hotspots, and sequence timing still need reference comparisons.
+- IMP rendering is not yet behaviorally equivalent to the game. The clean preview hides palette indices 0 and 1 as the inferred background and secondary-mask channels; the other viewer modes expose them. Their exact compositing semantics, origins, hotspots, and sequence timing still need reference comparisons.
 - BMP/WAVE currently have metadata probes; maps, scenarios, fonts, and video are not decoded.
 - The viewer recreates its streaming texture while drawing; caching is a production optimization, not a spike requirement.
 - There is no thumbnail grid, search UI, export, editing, or MPQ writing.

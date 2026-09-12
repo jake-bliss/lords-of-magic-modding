@@ -84,6 +84,7 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 - **Observed:** an inspected 1-bit aura asset uses bright green and red as its two palette colors, confirming that blindly deleting both colors destroys meaningful mask data.
 - **Inferred:** green is a background channel in the inspected frames, while red is a separate shadow, translucency, recoloring, or other compositor input.
 - **Implemented:** the viewer defaults to a clean preview while `C` cycles through visible-mask and untouched raw-palette modes. The decoder itself preserves every source index and palette color.
+- **Corrected:** sampling the top-left pixel as a chroma key failed when frame 156 of `chcr5a.imp` touched that corner and removed gold artwork. Viewer channels are now selected by palette index 0 (background) and index 1 (secondary mask), preserving the same colors when they occur at other indices.
 - **Unknown:** the original engine's exact mask blend, origins, hotspot behavior, sequence boundaries, and timing still require controlled comparison.
 
 ## Evidence labels for future entries

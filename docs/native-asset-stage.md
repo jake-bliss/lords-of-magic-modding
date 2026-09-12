@@ -85,7 +85,7 @@ The native viewer displays individual frames, follows duplicate/repeated referen
 ## Evidence and confidence
 
 - **Observed:** all 9,804 core members are readable and classified; all 1,377 PBMs and 1,800 IMP binaries pass their bounded decoders; representative 8-bit IMP frames are visually recognizable; red and green occupy distinct palette indices/masks in inspected sprites.
-- **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, the top-left color is the background key, and pure red is a secondary engine mask. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
+- **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, palette index 0 is the background channel, and palette index 1 is a secondary engine mask. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
 - **Unknown:** how red masks are blended or recolored, how origins and hotspots affect placement, how sequence timing is selected, and whether exceptional metadata cases use additional sharing rules.
 
 ## Latest verification

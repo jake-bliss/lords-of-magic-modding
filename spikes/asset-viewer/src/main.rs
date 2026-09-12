@@ -526,7 +526,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             .window_mut()
             .set_title(&title)
             .map_err(|error| error.to_string())?;
-        let display_rgba = imp_display_rgba(&frame.rgba, display_mode);
+        let display_rgba = imp_display_rgba(&frame.palette_indices, &frame.rgba, display_mode);
         draw_rgba_in_bounds(
             &mut canvas,
             frame.width,
@@ -698,17 +698,19 @@ fn draw_rgba(
     draw_rgba_in_bounds(canvas, width, height, width, height, rgba)
 }
 
-fn imp_display_rgba(source: &[u8], mode: ImpDisplayMode) -> Vec<u8> {
-    let chroma_key = source.get(0..3);
+fn imp_display_rgba(palette_indices: &[u8], source: &[u8], mode: ImpDisplayMode) -> Vec<u8> {
+    debug_assert_eq!(palette_indices.len() * 4, source.len());
+    if matches!(mode, ImpDisplayMode::Raw) {
+        return source.to_vec();
+    }
     source
         .chunks_exact(4)
-        .flat_map(|rgba| {
+        .zip(palette_indices)
+        .flat_map(|(rgba, palette_index)| {
             let mut pixel: [u8; 4] = rgba.try_into().expect("RGBA chunks have four bytes");
-            let background = chroma_key.is_some_and(|key| pixel[0..3] == *key);
-            let red_mask = pixel[0..3] == [255, 0, 0];
-            if !matches!(mode, ImpDisplayMode::Raw)
-                && (background || matches!(mode, ImpDisplayMode::Preview) && red_mask)
-            {
+            let background = *palette_index == 0;
+            let secondary_mask = *palette_index == 1;
+            if background || matches!(mode, ImpDisplayMode::Preview) && secondary_mask {
                 pixel[3] = 0;
             }
             pixel
@@ -761,16 +763,20 @@ mod tests {
 
     #[test]
     fn imp_display_modes_preserve_decoder_pixels() {
+        let indices = [0, 1, 42, 0];
         let source = [0, 255, 0, 255, 255, 0, 0, 255, 1, 2, 3, 255, 0, 255, 0, 128];
 
         assert_eq!(
-            imp_display_rgba(&source, ImpDisplayMode::Preview),
+            imp_display_rgba(&indices, &source, ImpDisplayMode::Preview),
             [0, 255, 0, 0, 255, 0, 0, 0, 1, 2, 3, 255, 0, 255, 0, 0,]
         );
         assert_eq!(
-            imp_display_rgba(&source, ImpDisplayMode::Mask),
+            imp_display_rgba(&indices, &source, ImpDisplayMode::Mask),
             [0, 255, 0, 0, 255, 0, 0, 255, 1, 2, 3, 255, 0, 255, 0, 0,]
         );
-        assert_eq!(imp_display_rgba(&source, ImpDisplayMode::Raw), source);
+        assert_eq!(
+            imp_display_rgba(&indices, &source, ImpDisplayMode::Raw),
+            source
+        );
     }
 }
