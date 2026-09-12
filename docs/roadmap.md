@@ -19,8 +19,9 @@ Delivered: [MPQ inventory](mpq-inventory.md), tracked comparison summaries, and 
 
 ## Phase 2 — Script documentation
 
-- Infer grammar from repeated constructs.
-- Build a symbol/index database for units, spells, artifacts, buildings, factions, and encounters.
+- [x] Infer and implement the first corpus-wide lexical model.
+- [x] Inventory executable names, literal definitions, and static `run` references across all three profiles.
+- [ ] Build a semantic symbol/index database for units, spells, artifacts, buildings, factions, and encounters.
 - Compare vanilla behavior with 3.02 fixes and GS5R3 changes.
 - Document identifiers, references, ranges, defaults, and likely hard limits.
 - Mark uncertain interpretations and attach evidence examples.

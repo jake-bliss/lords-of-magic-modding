@@ -114,9 +114,9 @@ This evidence reinforces the profile policy: do not stack 3.02 and GS5R3. Treat 
 - Extraction rejects absolute paths and `..` components.
 - Extraction requires a new or empty destination and warns when an archive contains duplicate case-insensitive paths.
 - Uncatalogued entries can be extracted and hashed, but their placeholder names are archive-slot labels only.
-- The `.gs` lexical normalizer ignores whitespace and semicolon comments while preserving quoted strings and delimiters. It is suitable for change triage, not yet a complete parser or proof of behavioral equivalence.
+- The earlier `.gs` lexical normalizer remains suitable for change triage. The newer bounded lexer tokenizes every named script across all three profiles and inventories definitions, calls, and static loads; it is still not a complete parser or proof of behavioral equivalence. See the [GameScript probe](gamescript-format.md).
 - Repacking is deliberately not implemented yet. We should validate archive creation and round-trip behavior in a disposable development profile before writing any game archive.
 
 ## Next investigation
 
-Build a symbol index over the named `.gs` files, then annotate the 3.02 change set first. That small, evidence-rich corpus should reveal definitions, call patterns, UI construction, configuration variables, and safe edit boundaries before we tackle GS5R3's much larger fork.
+Classify the new executable/binary vocabulary into language primitives, script definitions, native host calls, constants, and false positives. Expand the new bounded stack/dictionary interpreter only as required for representative utilities, then use the focused 3.02 change set as the first annotated semantic corpus.

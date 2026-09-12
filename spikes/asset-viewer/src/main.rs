@@ -8,6 +8,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use lom_asset_viewer::asset::{AssetKind, probe};
+use lom_asset_viewer::gamescript::GameScriptDocument;
+use lom_asset_viewer::gamescript_vm::GameScriptVm;
 use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::map::MapAsset;
 use lom_asset_viewer::mpq::{Archive, Entry};
@@ -55,6 +57,15 @@ enum Command {
     },
     InspectFile(PathBuf),
     Scan(Source),
+    ScanGameScript {
+        source: Source,
+        executable: Option<PathBuf>,
+    },
+    ProbeGameScript {
+        source: Source,
+        member: String,
+        expression: Option<String>,
+    },
     ScanMapDirectory(PathBuf),
     ValidateImp(Source),
     ViewImp {
@@ -174,6 +185,14 @@ fn run() -> Result<(), String> {
         Command::Inspect { source, member } => inspect_archive(&source, member.as_deref()),
         Command::InspectFile(path) => inspect_file(&path),
         Command::Scan(source) => scan_archive(&source),
+        Command::ScanGameScript { source, executable } => {
+            scan_gamescript_archive(&source, executable.as_deref())
+        }
+        Command::ProbeGameScript {
+            source,
+            member,
+            expression,
+        } => probe_gamescript_member(&source, &member, expression.as_deref()),
         Command::ScanMapDirectory(path) => scan_map_directory(&path),
         Command::ValidateImp(source) => validate_imp_archive(&source),
         Command::ViewImp {
@@ -189,6 +208,8 @@ fn run() -> Result<(), String> {
 fn parse_args() -> Result<Command, String> {
     let mut args: Vec<String> = env::args().skip(1).collect();
     let listfile = take_option(&mut args, "--listfile")?.map(PathBuf::from);
+    let executable = take_option(&mut args, "--exe")?.map(PathBuf::from);
+    let expression = take_option(&mut args, "--eval")?;
     let first = args.first().ok_or_else(usage)?.as_str();
     match first {
         "--catalog" => {
@@ -252,6 +273,21 @@ fn parse_args() -> Result<Command, String> {
         "--scan" => {
             require_len(&args, 2)?;
             Ok(Command::Scan(source(&args[1], listfile)))
+        }
+        "--scan-gamescript" => {
+            require_len(&args, 2)?;
+            Ok(Command::ScanGameScript {
+                source: source(&args[1], listfile),
+                executable,
+            })
+        }
+        "--probe-gamescript" => {
+            require_len(&args, 3)?;
+            Ok(Command::ProbeGameScript {
+                source: source(&args[1], listfile),
+                member: args[2].clone(),
+                expression,
+            })
         }
         "--scan-map-dir" => {
             require_len(&args, 2)?;
@@ -340,7 +376,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE]\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -855,6 +891,249 @@ fn scan_archive(source: &Source) -> Result<(), String> {
     } else {
         Err(format!("{failure_count} archive members failed probing"))
     }
+}
+
+fn probe_gamescript_member(
+    source: &Source,
+    member: &str,
+    expression: Option<&str>,
+) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name.eq_ignore_ascii_case(member))
+        .ok_or_else(|| format!("archive has no member named {member}"))?;
+    let bytes = archive
+        .read(&entry.name)
+        .map_err(|error| error.to_string())?;
+    let document = GameScriptDocument::parse(&bytes).map_err(|error| error.to_string())?;
+    let token_count = document.tokens.len();
+    let anomaly_count = document.procedure_anomalies.len();
+    let mut vm = GameScriptVm::new(1_000_000);
+    vm.execute_document(&document)
+        .map_err(|error| error.to_string())?;
+    let expression_tokens = expression
+        .map(|source| {
+            let expression =
+                GameScriptDocument::parse(source.as_bytes()).map_err(|error| error.to_string())?;
+            let tokens = expression.tokens.len();
+            vm.execute_document(&expression)
+                .map_err(|error| error.to_string())?;
+            Ok::<usize, String>(tokens)
+        })
+        .transpose()?;
+    let defined_names = vm.defined_names();
+    let mut stack_kinds = BTreeMap::<&str, usize>::new();
+    for value in vm.operand_stack() {
+        *stack_kinds.entry(value.kind()).or_default() += 1;
+    }
+
+    println!("member\t{}", clean_field(&entry.name));
+    println!("source-bytes\t{}", bytes.len());
+    println!("tokens\t{token_count}");
+    println!("procedure-anomalies\t{anomaly_count}");
+    if let Some(tokens) = expression_tokens {
+        println!("eval-tokens\t{tokens}");
+    }
+    println!("vm-steps\t{}", vm.steps());
+    println!("operand-stack-depth\t{}", vm.operand_stack().len());
+    for (kind, count) in stack_kinds {
+        println!("operand-stack-kind\t{kind}\t{count}");
+    }
+    for (index, value) in vm.operand_stack().iter().enumerate() {
+        if let Some(summary) = value.scalar_summary() {
+            println!("operand-stack-scalar\t{index}\t{summary}");
+        }
+    }
+    println!("defined-names\t{}", defined_names.len());
+    for name in defined_names.iter().take(50) {
+        println!("defined-name\t{}", clean_field(name));
+    }
+    Ok(())
+}
+
+fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let archive_names: BTreeSet<String> = entries
+        .iter()
+        .map(|entry| normalize_member_name(&entry.name))
+        .collect();
+    let script_names: BTreeSet<String> = entries
+        .iter()
+        .filter(|entry| entry.name.to_ascii_lowercase().ends_with(".gs"))
+        .map(|entry| normalize_member_name(&entry.name))
+        .collect();
+    let mut script_files = 0_usize;
+    let mut source_bytes = 0_usize;
+    let mut tokens = 0_usize;
+    let mut comments = 0_usize;
+    let mut strings = 0_usize;
+    let mut numbers = 0_usize;
+    let mut maximum_procedure_depth = 0_usize;
+    let mut empty_files = 0_usize;
+    let mut procedure_anomalies = Vec::<(String, String, usize, usize, usize)>::new();
+    let mut executable_names = BTreeMap::<String, usize>::new();
+    let mut literal_names = BTreeMap::<String, usize>::new();
+    let mut dependency_edges = BTreeSet::<(String, String)>::new();
+    let mut failures = Vec::new();
+
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.name.to_ascii_lowercase().ends_with(".gs"))
+    {
+        let bytes = match archive.read(&entry.name) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                failures.push(format!("{}: {error}", entry.name));
+                continue;
+            }
+        };
+        let document = match GameScriptDocument::parse(&bytes) {
+            Ok(document) => document,
+            Err(error) => {
+                failures.push(format!("{}: {error}", entry.name));
+                continue;
+            }
+        };
+        let analysis = document.analyze();
+        script_files += 1;
+        source_bytes += bytes.len();
+        if bytes.is_empty() {
+            empty_files += 1;
+        }
+        tokens += analysis.token_count;
+        comments += analysis.comment_count;
+        strings += analysis.string_count;
+        numbers += analysis.number_count;
+        maximum_procedure_depth = maximum_procedure_depth.max(analysis.maximum_procedure_depth);
+        for anomaly in document.procedure_anomalies {
+            procedure_anomalies.push((
+                entry.name.clone(),
+                anomaly.message,
+                anomaly.offset,
+                anomaly.line,
+                anomaly.column,
+            ));
+        }
+        merge_name_counts(&mut executable_names, &analysis.executable_names);
+        merge_name_counts(&mut literal_names, &analysis.literal_names);
+        for dependency in analysis.static_run_dependencies {
+            dependency_edges.insert((entry.name.clone(), dependency));
+        }
+    }
+
+    let resolved_dependencies = dependency_edges
+        .iter()
+        .filter(|(_, dependency)| archive_names.contains(&normalize_member_name(dependency)))
+        .count();
+    let missing_dependencies: Vec<_> = dependency_edges
+        .iter()
+        .filter(|(_, dependency)| !archive_names.contains(&normalize_member_name(dependency)))
+        .collect();
+    let likely_engine_names = executable
+        .map(|path| likely_engine_names(path, &executable_names, &literal_names))
+        .transpose()?;
+
+    println!("archive-entries\t{}", entries.len());
+    println!("gamescript-files\t{}", script_names.len());
+    println!("parsed-files\t{script_files}");
+    println!("empty-files\t{empty_files}");
+    println!("source-bytes\t{source_bytes}");
+    println!("tokens\t{tokens}");
+    println!("comments\t{comments}");
+    println!("strings\t{strings}");
+    println!("numbers\t{numbers}");
+    println!("maximum-procedure-depth\t{maximum_procedure_depth}");
+    println!("procedure-anomalies\t{}", procedure_anomalies.len());
+    println!("distinct-executable-names\t{}", executable_names.len());
+    println!("distinct-literal-names\t{}", literal_names.len());
+    println!("static-run-reference-edges\t{}", dependency_edges.len());
+    println!("resolved-static-run-references\t{resolved_dependencies}");
+    println!(
+        "unresolved-static-run-references\t{}",
+        missing_dependencies.len()
+    );
+    if let Some(names) = &likely_engine_names {
+        println!("likely-hardcoded-engine-names\t{}", names.len());
+        for (name, count) in names.iter().take(50) {
+            println!("engine-name-candidate\t{name}\t{count}");
+        }
+    }
+    for (owner, message, offset, line, column) in procedure_anomalies {
+        println!(
+            "procedure-anomaly\t{}\t{} at byte {}, line {}, column {}",
+            clean_field(&owner),
+            clean_field(&message),
+            offset,
+            line,
+            column
+        );
+    }
+    for (owner, dependency) in missing_dependencies {
+        println!(
+            "unresolved-run-reference\t{}\t{}",
+            clean_field(owner),
+            clean_field(dependency)
+        );
+    }
+    println!("failures\t{}", failures.len());
+    for failure in &failures {
+        println!("failure\t{}", clean_field(failure));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} GameScript files failed to parse",
+            failures.len()
+        ))
+    }
+}
+
+fn merge_name_counts(target: &mut BTreeMap<String, usize>, source: &BTreeMap<String, usize>) {
+    for (name, count) in source {
+        *target.entry(name.clone()).or_default() += count;
+    }
+}
+
+fn normalize_member_name(name: &str) -> String {
+    name.replace('\\', "/").to_ascii_lowercase()
+}
+
+fn likely_engine_names(
+    path: &Path,
+    executable_names: &BTreeMap<String, usize>,
+    literal_names: &BTreeMap<String, usize>,
+) -> Result<Vec<(String, usize)>, String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("could not read executable {}: {error}", path.display()))?;
+    let binary_strings = ascii_strings(&bytes);
+    let literal_names: BTreeSet<String> = literal_names
+        .keys()
+        .map(|name| name.to_ascii_lowercase())
+        .collect();
+    let mut candidates: Vec<_> = executable_names
+        .iter()
+        .filter(|(name, _)| {
+            let lower = name.to_ascii_lowercase();
+            !literal_names.contains(&lower) && binary_strings.contains(&lower)
+        })
+        .map(|(name, count)| (name.clone(), *count))
+        .collect();
+    candidates.sort_by(|(left_name, left_count), (right_name, right_count)| {
+        right_count
+            .cmp(left_count)
+            .then_with(|| left_name.cmp(right_name))
+    });
+    Ok(candidates)
+}
+
+fn ascii_strings(source: &[u8]) -> BTreeSet<String> {
+    source
+        .split(|byte| !(0x20..=0x7e).contains(byte))
+        .filter(|bytes| bytes.len() >= 2)
+        .map(|bytes| String::from_utf8_lossy(bytes).to_ascii_lowercase())
+        .collect()
 }
 
 #[derive(Default)]

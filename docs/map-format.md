@@ -85,6 +85,8 @@ The footer values observed are `0`, `1`, and `3`. Their meaning is unknown. Reco
 
 The 52-/53-byte families, 18 unknown layouts and one ambiguous file, header-to-tileset selection, attribute nibble, footer, and exact sprite/procedure semantics remain tracked in [GitHub issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
 
+A controlled-save attempt reached the cloned Wine profile and launched the Map Editor integration, but macOS accessibility controls prevented reliable programmatic interaction with its Wine window. No map file was changed. The save-diff experiment remains parked rather than substituting guessed field meanings.
+
 ## Commands
 
 ```sh

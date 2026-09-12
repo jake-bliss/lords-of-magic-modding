@@ -32,6 +32,8 @@ Set paths to local archives without copying them into the repository:
 ```sh
 PIC_MPQ='/path/to/Lords of Magic Special Edition/English/pic.mpq'
 IMP_MPQ='/path/to/Lords of Magic Special Edition/English/imp.mpq'
+GS_MPQ='/path/to/Lords of Magic Special Edition/English/gs.mpq'
+LOMSE_EXE='/path/to/Lords of Magic Special Edition/English/lomse.exe'
 
 cd ../..
 scripts/fetch-lom-listfile.sh
@@ -41,6 +43,8 @@ cd spikes/asset-viewer
 target/release/lom-asset-viewer --list "$PIC_MPQ"
 target/release/lom-asset-viewer --catalog "$PIC_MPQ"
 target/release/lom-asset-viewer --scan "$PIC_MPQ"
+target/release/lom-asset-viewer --scan-gamescript "$GS_MPQ" --listfile "$LISTFILE" --exe "$LOMSE_EXE"
+target/release/lom-asset-viewer --probe-gamescript "$GS_MPQ" 'gs\standard.gs' --listfile "$LISTFILE" --eval '3 5 min 3 5 max'
 target/release/lom-asset-viewer --inspect "$PIC_MPQ" 'LBM\ACTIONS5.lbm'
 target/release/lom-asset-viewer --extract "$PIC_MPQ" 'LBM\ACTIONS5.lbm' /tmp/actions5.lbm
 target/release/lom-asset-viewer --validate-imp "$IMP_MPQ" --listfile "$LISTFILE"
@@ -127,6 +131,8 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/imp.rs` — bounds-checked IMP tables, palette, RLE and packed-pixel decoding, hotspot and duplicate/repeated-frame structures, and generated-header validation.
 - `src/map.rs` — bounded common header/cell-grid parsing, X-major coordinates, terrain tags, and 49-byte placed-sprite records for SCN/SMP/LGD files.
 - `src/tile.rs` — parser for `.til` atlas geometry, terrain types, and tile relationships.
+- `src/gamescript.rs` — bounded GameScript lexer, procedure diagnostics, name inventory, and static `run` references.
+- `src/gamescript_vm.rs` — experimental bounded value stack, dictionaries, procedures, core operators, and structured execution failures.
 - `src/png_export.rs` — lossless indexed IMP-frame PNG and RGBA map-preview output.
 - `src/asset.rs` — content-first classification and typed format metadata.
 - `src/main.rs` — CLI inventory, extraction, validation, and SDL3 viewer.
@@ -134,4 +140,4 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 
 ## Sensible next slice
 
-Use controlled Map Editor save diffs to prove the candidate placed-sprite attribute, type, procedure, and footer semantics, or begin the planned GameScript VM vocabulary/bytecode probe. Remaining record variants and original-engine comparisons are retained as explicit [GitHub issues](https://github.com/jake-bliss/lords-of-magic-modding/issues) rather than being encoded as assumptions.
+Expand the experimental GameScript VM only far enough to classify and run additional engine-light utilities, then add read-only module loading with structured unknown-name traces. The controlled Map Editor save diff remains parked because macOS accessibility controls prevented reliable automation of Wine's editor window; remaining map variants and original-engine comparisons stay in explicit [GitHub issues](https://github.com/jake-bliss/lords-of-magic-modding/issues) rather than being encoded as assumptions.

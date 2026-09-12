@@ -39,6 +39,7 @@
 
 ## Native preservation research
 
+- [SierraVault Lords of Magic technical history](https://sierravault.net/games/lords-of-magic/1998-lords-of-magic-special-edition)
 - [SDL3 documentation](https://wiki.libsdl.org/SDL3/FrontPage)
 - [Rust SDL3 bindings](https://docs.rs/sdl3/latest/sdl3/)
 - [Rust `png` crate documentation](https://docs.rs/png/latest/png/)
@@ -54,3 +55,4 @@
 - The public Lords of Magic listfile is used only to resolve archive member names; the reproducibility script pins both its bundle and extracted-file SHA-256 hashes.
 - Proprietary IMP format findings come from bounded comparison of user-owned binaries with their generated C headers and visible output. No public IMP specification has been identified, so compositing interpretations remain labeled as inference.
 - Community claims should be verified against extracted data or controlled in-game tests before becoming implementation assumptions.
+- SierraVault's GameScript history is secondary context, not a language specification or a substitute for local corpus and runtime evidence.

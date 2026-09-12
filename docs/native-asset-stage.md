@@ -158,4 +158,4 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [ ] Add searchable browsing, cached textures, animation controls, and export to the GUI.
 - [ ] Make native-library discovery and packaging portable across macOS, Windows, and Linux.
 
-The next implementation slice should either use controlled Map Editor save diffs to prove the 49-byte sprite/procedure/attribute fields or begin the GameScript VM vocabulary/bytecode probe. The remaining 52-/53-byte tails and original-engine-only IMP presentation work stay parked in issues #1–#4 rather than being encoded as assumptions.
+The controlled Map Editor save diff remains parked in issue #4 after macOS accessibility controls prevented reliable Wine-window automation. The parallel GameScript track now has a complete lexical/vocabulary scan and a first stack/dictionary interpreter checkpoint; its next bounded slice is read-only module loading and host-call classification. The remaining 52-/53-byte tails and original-engine-only IMP presentation work stay parked in issues #1–#4 rather than being encoded as assumptions.

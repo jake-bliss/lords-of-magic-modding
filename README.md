@@ -22,7 +22,7 @@ All three are stored in `/Users/jakebliss/Applications/`. The modded apps are AP
 | --- | --- | --- |
 | 0. Evidence baseline | Initial pass complete | Reproducible archive/profile inventories and patch/mod comparisons |
 | 1. Native asset layer | In progress; image, sprite-export, terrain, and dominant map-record milestones complete | 9,804 members classified, 1,800 IMPs decoded, all 365 maps bounded, original terrain rendered, and 16,628 placed-sprite records decoded structurally |
-| 2. GameScript VM probe | Not started | Planned after the next Stage 1 format/semantics checkpoint |
+| 2. GameScript VM probe | Started; lexical/vocabulary and first interpreter checkpoints complete | All 4,692 `.gs` members tokenize; 3.02 `standard.gs` loads in the experimental VM and its `min`/`max` utilities execute correctly |
 | 3–5. Native game/runtime | Not started | Contingent on the GameScript VM stop/go result |
 
 The current deliverable is a useful native asset and reverse-engineering tool, not yet a native replacement game. See the [candidate plan](docs/native-engine-plan.md) for scope and estimates.
@@ -34,6 +34,7 @@ The current deliverable is a useful native asset and reverse-engineering tool, n
 - [Native preservation engine plan](docs/native-engine-plan.md) — staged Rust/SDL3 candidate with explicit stop/go gates
 - [Native asset layer](docs/native-asset-stage.md) — live Stage 1 evidence, validation gates, and remaining work
 - [Map and scenario format](docs/map-format.md) — cell/terrain lookup, placed-sprite records, corpus measurements, and open variants
+- [GameScript language and runtime probe](docs/gamescript-format.md) — corpus-derived lexical model, vocabulary measurements, and the next VM gate
 - [MPQ inventory](docs/mpq-inventory.md) — reproducible extraction and baseline/3.02/GS5R3 findings
 - [Mod ecosystem](docs/mod-ecosystem.md) — 3.02, GS5R3, optional packages, and compatibility
 - [Research log](docs/research-log.md) — evidence and conclusions from the working installation
