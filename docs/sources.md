@@ -51,4 +51,5 @@
 - The `cnc-ddraw` repository is the authoritative source for its configuration and capabilities.
 - Patch/mod behavior is primarily documented by the authors' included readmes and surviving community posts.
 - The public Lords of Magic listfile is used only to resolve archive member names; the reproducibility script pins both its bundle and extracted-file SHA-256 hashes.
+- Proprietary IMP format findings come from bounded comparison of user-owned binaries with their generated C headers and visible output. No public IMP specification has been identified, so compositing interpretations remain labeled as inference.
 - Community claims should be verified against extracted data or controlled in-game tests before becoming implementation assumptions.

@@ -40,6 +40,24 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 - The process used approximately one CPU core continuously.
 - The renderer was capped at 60 FPS; GPU performance was not a bottleneck.
 
+## 2026-09-11 — Native archive and asset layer
+
+### Archive inventory
+
+- **Observed:** a native 64-bit Rust tool opened the five GS5R3 core MPQs read-only through a narrow StormLib wrapper.
+- **Observed:** all 9,804 members were readable and content-classified with no probe failures.
+- **Observed:** the corpus contains 1,377 IFF `FORM PBM` images, 1,800 IMP sprite binaries paired with 1,800 generated C headers, and 3,098 WAVE members.
+- **Observed:** all 1,377 PBMs decode, including a ByteRun1 packet that crosses a scanline boundary.
+
+### IMP format findings
+
+- **Observed:** all 1,800 IMP binaries pass bounded table, palette, frame-reference, and packed-pixel decoding, including RLE expansion where applicable.
+- **Observed:** the format contains 32-byte file headers, animation sequences/cycles/frames, 256-entry BGRA palettes, six-byte padded hotspots, direct duplicate frames, and repeated cycles.
+- **Observed:** the custom RLE uses controls below `0x80` for repeated runs and controls at or above `0x80` for literal runs.
+- **Inferred:** file-flag bits `0x30` select 8-, 1-, 2-, or 4-bit indexed storage, and sub-byte indices are packed most-significant-bit first.
+- **Observed:** generated-header comparison matches 1,784 of 1,798 paired stems exactly. Fourteen bounded metadata disagreements and four orphan names remain explicit validation failures.
+- **Unknown:** the remaining disagreements may represent additional frame-sharing rules or differences between generated statistics and runtime structures.
+
 ## 2026-09-11 — Community profiles
 
 ### 3.02
@@ -58,6 +76,15 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 - Installed GS5R3 and PIC5R3 into a second dedicated APFS clone.
 - Copied all twelve supplied custom maps into the game's `map/` directory.
 - Launch-tested successfully.
+
+## 2026-09-12 — IMP presentation channels
+
+- **Observed:** native SDL3 presentation produces recognizable 8-bit unit art and stable frame scaling.
+- **Observed:** one inspected creature frame uses green palette index 0 for 8,576 background pixels and a separate pure-red index for a 1,651-pixel silhouette beneath the creature.
+- **Observed:** an inspected 1-bit aura asset uses bright green and red as its two palette colors, confirming that blindly deleting both colors destroys meaningful mask data.
+- **Inferred:** green is a background channel in the inspected frames, while red is a separate shadow, translucency, recoloring, or other compositor input.
+- **Implemented:** the viewer defaults to a clean preview while `C` cycles through visible-mask and untouched raw-palette modes. The decoder itself preserves every source index and palette color.
+- **Unknown:** the original engine's exact mask blend, origins, hotspot behavior, sequence boundaries, and timing still require controlled comparison.
 
 ## Evidence labels for future entries
 

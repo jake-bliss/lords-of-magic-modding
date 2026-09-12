@@ -78,7 +78,7 @@ Tested against the installed GS5R3 profile on 2026-09-11:
 | Successfully decoded PBMs | 1,377 |
 | Core archive members classified | 9,804 / 9,804 |
 | IMP binaries structurally parsed | 1,800 / 1,800 |
-| IMP binaries fully pixel-decoded | 1,800 / 1,800 |
+| IMP binaries pixel-expanded without decoder errors | 1,800 / 1,800 |
 | Same-name IMP pairs matching known statistics | 1,784 / 1,798 |
 | Release-mode archive enumeration | ~0.20 s |
 | Release-mode full PBM scan/decode | ~1.0 s |

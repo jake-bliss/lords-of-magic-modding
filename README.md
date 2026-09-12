@@ -6,7 +6,7 @@ AI is being used as a development assistant for research, scripting, asset work,
 
 ## Current state
 
-Last verified: **2026-09-11** on an **M4 Max Mac running macOS 26.5.2**.
+Game runtime last verified: **2026-09-11** on an **M4 Max Mac running macOS 26.5.2**. Native asset tooling last verified: **2026-09-12**.
 
 | Profile | Purpose | Status |
 | --- | --- | --- |
@@ -15,6 +15,17 @@ Last verified: **2026-09-11** on an **M4 Max Mac running macOS 26.5.2**.
 | `Lords of Magic GS5R3.app` | ManTerA balance overhaul | Installed and launch-tested |
 
 All three are stored in `/Users/jakebliss/Applications/`. The modded apps are APFS copy-on-write clones with independent Wine prefixes, game files, registry state, and save directories.
+
+### Preservation-engine track
+
+| Stage | Status | Evidence |
+| --- | --- | --- |
+| 0. Evidence baseline | Initial pass complete | Reproducible archive/profile inventories and patch/mod comparisons |
+| 1. Native asset layer | In progress; image and sprite milestone complete | 9,804 members classified, 1,377 PBMs decoded, and 1,800 IMPs pixel-expanded |
+| 2. GameScript VM probe | Not started | Planned after the next Stage 1 format/semantics checkpoint |
+| 3–5. Native game/runtime | Not started | Contingent on the GameScript VM stop/go result |
+
+The current deliverable is a useful native asset and reverse-engineering tool, not yet a native replacement game. See the [candidate plan](docs/native-engine-plan.md) for scope and estimates.
 
 ## Start here
 
@@ -39,4 +50,4 @@ All three are stored in `/Users/jakebliss/Applications/`. The modded apps are AP
 
 ## Immediate opportunity
 
-The first archive comparison is complete. It isolates the focused 3.02 changes, confirms that GS5R3 is a broad script-and-art fork, and recovers hundreds of filenames that were anonymous in the original archives. The [native Rust asset tool](spikes/asset-viewer/README.md) now classifies all 9,804 core-archive members, decodes every detected PBM image, and fully pixel-decodes all 1,800 IMP sprite binaries. Its native viewer displays individual sprite frames and animations. See the [Stage 1 record](docs/native-asset-stage.md) for measured coverage, provisional compositing rules, and known exceptions.
+The first archive comparison is complete. It isolates the focused 3.02 changes, confirms that GS5R3 is a broad script-and-art fork, and recovers hundreds of filenames that were anonymous in the original archives. The [native Rust asset tool](spikes/asset-viewer/README.md) now classifies all 9,804 core-archive members, decodes every detected PBM image, and expands every observed IMP sprite without decoder errors. Its native viewer displays individual sprite frames, masks, and animations. See the [Stage 1 record](docs/native-asset-stage.md) for measured coverage, provisional compositing rules, and known exceptions.

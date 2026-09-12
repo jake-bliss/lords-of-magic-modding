@@ -80,7 +80,23 @@ All stored-pixel byte totals now agree with the generated headers. The remaining
 | Generated logical-frame count | 1 |
 | Missing expected `.imp`/`.h` counterpart | 4 |
 
-The native viewer displays individual frames, follows duplicate/repeated references, and can autoplay them at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, green index 0 fills the background while a distinct pure-red index forms a 1,651-pixel silhouette beneath the creature; 1-bit aura assets similarly use green and red as their only two colors. This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes. Exact mask meaning, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves all source palette indices and colors unchanged.
+The native viewer displays individual frames, follows duplicate/repeated references, and can autoplay them at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, green index 0 fills the background while a distinct pure-red index forms a 1,651-pixel silhouette beneath the creature; an inspected 1-bit aura asset similarly uses green and red as its only two colors. This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes. Exact mask meaning, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves all source palette indices and colors unchanged.
+
+## Evidence and confidence
+
+- **Observed:** all 9,804 core members are readable and classified; all 1,377 PBMs and 1,800 IMP binaries pass their bounded decoders; representative 8-bit IMP frames are visually recognizable; red and green occupy distinct palette indices/masks in inspected sprites.
+- **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, the top-left color is the background key, and pure red is a secondary engine mask. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
+- **Unknown:** how red masks are blended or recolored, how origins and hotspots affect placement, how sequence timing is selected, and whether exceptional metadata cases use additional sharing rules.
+
+## Latest verification
+
+Verified on 2026-09-12:
+
+- 16 Rust library tests and one viewer test pass;
+- strict Clippy (`-D warnings`) passes for all targets;
+- all three repository Python tests pass;
+- a fresh read-only scan classifies all five GS5R3 core archives with zero probe failures;
+- all 1,800 IMP payloads decode, while the 14 known metadata disagreements and four orphan names remain intentionally reported by validation.
 
 ## Test strategy and gates
 
