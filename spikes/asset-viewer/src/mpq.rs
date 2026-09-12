@@ -3,7 +3,13 @@ use std::fmt;
 use std::path::Path;
 use std::ptr;
 
-const MAX_PATH: usize = 260;
+// StormLib's portability layer defines MAX_PATH as 1024 on macOS and other
+// non-Windows platforms, while the Windows API definition is 260. This value
+// is part of SFILE_FIND_DATA's C ABI and must match the linked library exactly.
+#[cfg(windows)]
+const STORMLIB_MAX_PATH: usize = 260;
+#[cfg(not(windows))]
+const STORMLIB_MAX_PATH: usize = 1024;
 const MPQ_OPEN_READ_ONLY: u32 = 0x0000_0100;
 const SFILE_OPEN_FROM_MPQ: u32 = 0;
 const SFILE_INVALID_SIZE: u32 = u32::MAX;
@@ -16,7 +22,7 @@ type Handle = *mut c_void;
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct SFileFindData {
-    file_name: [c_char; MAX_PATH],
+    file_name: [c_char; STORMLIB_MAX_PATH],
     plain_name: *mut c_char,
     hash_index: u32,
     block_index: u32,
@@ -253,7 +259,7 @@ impl Drop for Archive {
 
 fn empty_find_data() -> SFileFindData {
     SFileFindData {
-        file_name: [0; MAX_PATH],
+        file_name: [0; STORMLIB_MAX_PATH],
         plain_name: ptr::null_mut(),
         hash_index: 0,
         block_index: 0,
@@ -297,5 +303,21 @@ fn file_info_u32(file: Handle, info_class: u32) -> Option<u32> {
         Some(value)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::mem::{offset_of, size_of};
+
+    use super::SFileFindData;
+
+    #[cfg(all(target_pointer_width = "64", not(windows)))]
+    #[test]
+    fn find_data_layout_matches_stormlib_portability_header() {
+        assert_eq!(offset_of!(SFileFindData, plain_name), 1024);
+        assert_eq!(offset_of!(SFileFindData, hash_index), 1032);
+        assert_eq!(offset_of!(SFileFindData, locale), 1060);
+        assert_eq!(size_of::<SFileFindData>(), 1064);
     }
 }
