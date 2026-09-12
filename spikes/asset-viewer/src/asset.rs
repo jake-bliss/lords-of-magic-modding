@@ -4,6 +4,7 @@ use std::fmt;
 use crate::imp::{ImpHeaderStats, ImpSprite};
 use crate::map::MapAsset;
 use crate::pbm::PbmImage;
+use crate::tile::TileSetDefinition;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AssetKind {
@@ -22,6 +23,7 @@ pub enum AssetKind {
     PortableExecutable,
     SmackerVideo,
     Text,
+    TileSetDefinition,
     Unknown,
     UrlShortcut,
     WaveAudio,
@@ -45,6 +47,7 @@ impl fmt::Display for AssetKind {
             Self::PortableExecutable => "portable-executable",
             Self::SmackerVideo => "smacker-video",
             Self::Text => "text",
+            Self::TileSetDefinition => "tile-set-definition",
             Self::Unknown => "unknown",
             Self::UrlShortcut => "url-shortcut",
             Self::WaveAudio => "wave-audio",
@@ -111,6 +114,9 @@ pub fn probe(name: &str, bytes: &[u8]) -> Result<AssetInfo, String> {
     if extension == "imp" {
         return probe_imp_sprite(bytes);
     }
+    if extension == "til" {
+        return probe_tile_set(bytes);
+    }
     if let Some(kind) = match extension {
         "lgd" => Some(AssetKind::LegendScenario),
         "scn" => Some(AssetKind::MapScenario),
@@ -137,9 +143,37 @@ pub fn probe(name: &str, bytes: &[u8]) -> Result<AssetInfo, String> {
     Ok(AssetInfo::new(kind, details))
 }
 
+fn probe_tile_set(bytes: &[u8]) -> Result<AssetInfo, String> {
+    let tile_set = TileSetDefinition::parse(bytes).map_err(|error| error.to_string())?;
+    Ok(AssetInfo::new(
+        AssetKind::TileSetDefinition,
+        format!(
+            "atlas={};columns={};rows={};tile-width={};tile-height={};capacity={};defined-tiles={};terrain-types={}",
+            tile_set.atlas_member,
+            tile_set.columns,
+            tile_set.rows,
+            tile_set.tile_width,
+            tile_set.tile_height,
+            tile_set.atlas_capacity(),
+            tile_set.tiles.len(),
+            tile_set.terrain_types.len(),
+        ),
+    ))
+}
+
 fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
     let map = MapAsset::parse(bytes).map_err(|error| error.to_string())?;
     let distinct_tags: BTreeSet<u32> = map.cells.iter().map(|cell| cell.tag).collect();
+    let distinct_tile_indexes: BTreeSet<u32> = map
+        .cells
+        .iter()
+        .map(|cell| cell.tile_index_candidate())
+        .collect();
+    let forced_texture_cells = map
+        .cells
+        .iter()
+        .filter(|cell| cell.forced_texture_candidate())
+        .count();
     let mut finite_min = f32::INFINITY;
     let mut finite_max = f32::NEG_INFINITY;
     let mut nonfinite_values = 0_usize;
@@ -170,16 +204,34 @@ fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
     } else {
         tail_layouts
     };
+    let (placed_sprite_count, placed_sprite_types, placed_sprite_footer) = map
+        .placed_sprites_49
+        .as_ref()
+        .map(|section| {
+            let types = section
+                .records
+                .iter()
+                .map(|record| record.sprite_type_candidate)
+                .collect::<BTreeSet<_>>()
+                .len();
+            (
+                section.records.len().to_string(),
+                types.to_string(),
+                section.footer.to_string(),
+            )
+        })
+        .unwrap_or_else(|| ("none".to_owned(), "none".to_owned(), "none".to_owned()));
     Ok(AssetInfo::new(
         kind,
         format!(
-            "metadata={};width={};height={};bits-per-pixel={};cells={};distinct-cell-tags={};candidate-value-range={value_range};nonfinite-values={nonfinite_values};trailing-bytes={};trailing-head-u32={trailing_head};tail-layout-candidates={tail_layouts}",
+            "metadata={};width={};height={};bits-per-pixel={};cells={};distinct-cell-tags={};distinct-tile-indexes={};forced-texture-cells={forced_texture_cells};candidate-value-range={value_range};nonfinite-values={nonfinite_values};trailing-bytes={};trailing-head-u32={trailing_head};tail-layout-candidates={tail_layouts};placed-sprites-49={placed_sprite_count};placed-sprite-types={placed_sprite_types};placed-sprite-footer={placed_sprite_footer}",
             map.metadata,
             map.width,
             map.height,
             map.bits_per_pixel,
             map.cells.len(),
             distinct_tags.len(),
+            distinct_tile_indexes.len(),
             map.trailing_bytes,
         ),
     ))
@@ -518,6 +570,19 @@ mod tests {
         assert!(info.details.contains("metadata=108;width=1;height=1"));
         assert!(info.details.contains("candidate-value-range=6..6"));
         assert!(info.details.contains("trailing-head-u32=0"));
+    }
+
+    #[test]
+    fn probes_tile_set_definitions() {
+        let bytes = b"LBM=tilesb01.lbm\nTILES=16,39\nTILESIZE=32,32\nTERRAINTYPE=6,125,\"plains\"\nTILE=0,6\n";
+
+        let info = probe("til\\tilesb01.til", bytes).unwrap();
+
+        assert_eq!(info.kind, AssetKind::TileSetDefinition);
+        assert_eq!(
+            info.details,
+            "atlas=tilesb01.lbm;columns=16;rows=39;tile-width=32;tile-height=32;capacity=624;defined-tiles=1;terrain-types=1"
+        );
     }
 
     #[test]

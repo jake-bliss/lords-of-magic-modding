@@ -2,7 +2,7 @@
 
 ## Outcome
 
-The initial spike succeeded and is now evolving into the Stage 1 native asset layer. A native 64-bit Rust program opens the installed game's MPQs through a narrow read-only StormLib wrapper, loads an external filename catalog, classifies and inspects members, decodes IFF `FORM PBM` images and IMP sprite frames, probes BMP/WAVE metadata, and displays images and animations through SDL3.
+The initial spike succeeded and is now evolving into the Stage 1 native asset layer. A native 64-bit Rust program opens the installed game's MPQs through a narrow read-only StormLib wrapper, loads an external filename catalog, classifies and inspects members, decodes IFF `FORM PBM` images, IMP sprite frames, tile-set definitions, and map records, probes BMP/WAVE metadata, and displays images, animations, and terrain through SDL3.
 
 The repository contains no game assets. Commands below require a local, legally obtained installation.
 
@@ -50,10 +50,13 @@ target/release/lom-asset-viewer --export-imp-frame "$IMP_MPQ" 'units\imp\chcr5a.
 target/release/lom-asset-viewer "$PIC_MPQ" 'LBM\ACTIONS5.lbm'
 target/release/lom-asset-viewer --scan-map-dir '/path/to/Lords of Magic Special Edition/English/map'
 target/release/lom-asset-viewer --inspect-file '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
+target/release/lom-asset-viewer --describe-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
 target/release/lom-asset-viewer --view-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
+target/release/lom-asset-viewer --view-map MAP.scn tilesb01.til tilesb01.lbm
+target/release/lom-asset-viewer --export-map-preview MAP.scn tilesb01.til tilesb01.lbm /tmp/map-preview.png
 ```
 
-`--extract` and `--export-imp-frame` use create-new semantics and refuse to overwrite an existing output. IMP frame export writes an 8-bit indexed PNG with the source palette indices and RGB palette intact; it does not yet reimport PNGs into the game format. Add `--listfile "$LISTFILE"` to any command when public names are needed. To inventory all five archives in one pass, use [`scripts/inventory-native-assets.sh`](../../scripts/inventory-native-assets.sh).
+`--extract`, `--export-imp-frame`, and `--export-map-preview` use create-new semantics and refuse to overwrite an existing output. IMP frame export writes an 8-bit indexed PNG with the source palette indices and RGB palette intact. Map preview export writes an RGBA overview using the original terrain atlas at 8×8 output pixels per map cell. Neither path reimports PNGs into the game format. Add `--listfile "$LISTFILE"` to any command when public names are needed. To inventory all five archives in one pass, use [`scripts/inventory-native-assets.sh`](../../scripts/inventory-native-assets.sh).
 
 In the PBM archive viewer:
 
@@ -72,7 +75,7 @@ In the IMP frame viewer:
 
 When a paired generated `.h` member is available, the window title shows its recovered action name. Cycle direction and the provisional frame interval still require confirmation against the original executable.
 
-The IMP title and `--describe-imp` report raw sequence/cycle metadata plus candidate origin or hotspot values. In the diagnostic map viewer, `C` switches between candidate elevation and stable colors derived from opaque cell tags. Map modes are structural diagnostics, not a recreation of original terrain rendering.
+The IMP title and `--describe-imp` report raw sequence/cycle metadata plus candidate origin or hotspot values. In the map viewer, `C` switches among original terrain artwork (when `.til` and atlas paths are supplied), candidate elevation, and stable diagnostic tag colors. The terrain mode proves atlas selection and orientation, but its overview is not yet a recreation of the original renderer's full-size terrain composition.
 
 Member matching is case-insensitive because the archive catalog and Windows game paths do not have reliable case consistency.
 
@@ -91,6 +94,8 @@ Tested against the installed GS5R3 profile on 2026-09-11:
 | IMP binaries pixel-expanded without decoder errors | 1,800 / 1,800 |
 | Same-name IMP pairs matching known statistics | 1,788 / 1,798 |
 | Loose `.scn`/`.smp`/`.lgd` grids parsed | 365 / 365 |
+| Tile-set definitions parsed | 26 / 26 |
+| Dominant 49-byte map records decoded | 16,628 in 196 files |
 | Release-mode archive enumeration | ~0.20 s |
 | Release-mode full PBM scan/decode | ~1.0 s |
 
@@ -110,7 +115,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 
 - The rendering is not yet behaviorally equivalent to the game. A visible bright-green color in the atlas suggests an engine-level chroma-key rule that is not represented by the PBM header's masking field.
 - IMP rendering is not yet behaviorally equivalent to the game. The clean preview hides palette indices 0 and 1 as the inferred background and secondary-mask channels; the other viewer modes expose them. Their exact compositing semantics, origins, hotspots, and sequence timing still need reference comparisons.
-- BMP/WAVE currently have metadata probes. Map/scenario/component grids are decoded only through their common cell prefix; trailing objects, fonts, and video are not decoded.
+- BMP/WAVE currently have metadata probes. Map/scenario/component grids, standard terrain lookup, and the dominant 49-byte trailing family are decoded; 52-/53-byte map records, fonts, and video are not decoded.
 - The viewer recreates its streaming texture while drawing; caching is a production optimization, not a spike requirement.
 - There is no thumbnail grid, search UI, batch/GUI export, editing, IMP reimport, or MPQ writing.
 - A successful asset decoder does not reduce the much larger uncertainty in the GameScript host, simulation, AI, saves, or multiplayer.
@@ -120,12 +125,13 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/mpq.rs` — manual StormLib FFI and read-only archive/member ownership.
 - `src/pbm.rs` — bounded IFF chunk parsing, palette conversion, PBM row handling, and ByteRun1 decoding.
 - `src/imp.rs` — bounds-checked IMP tables, palette, RLE and packed-pixel decoding, hotspot and duplicate/repeated-frame structures, and generated-header validation.
-- `src/map.rs` — bounded common header/cell-grid parsing and candidate trailing-layout detection for SCN/SMP/LGD files.
-- `src/png_export.rs` — lossless indexed-PNG output for resolved IMP frames.
+- `src/map.rs` — bounded common header/cell-grid parsing, X-major coordinates, terrain tags, and 49-byte placed-sprite records for SCN/SMP/LGD files.
+- `src/tile.rs` — parser for `.til` atlas geometry, terrain types, and tile relationships.
+- `src/png_export.rs` — lossless indexed IMP-frame PNG and RGBA map-preview output.
 - `src/asset.rs` — content-first classification and typed format metadata.
 - `src/main.rs` — CLI inventory, extraction, validation, and SDL3 viewer.
 - `build.rs` — local native-library search and runtime paths for the Apple Silicon spike.
 
 ## Sensible next slice
 
-Correlate map cell tags with original terrain art, then decode the dominant 49-byte trailing-record family. Original-engine comparisons for IMP placement, compositing, direction, and timing are retained as explicit [GitHub issues](https://github.com/jake-bliss/lords-of-magic-modding/issues) rather than being encoded as assumptions.
+Use controlled Map Editor save diffs to prove the candidate placed-sprite attribute, type, procedure, and footer semantics, or begin the planned GameScript VM vocabulary/bytecode probe. Remaining record variants and original-engine comparisons are retained as explicit [GitHub issues](https://github.com/jake-bliss/lords-of-magic-modding/issues) rather than being encoded as assumptions.

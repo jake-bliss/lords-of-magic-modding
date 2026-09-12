@@ -64,8 +64,10 @@ Success criteria:
 - [x] Decode both observed IMP pixel-storage variants and display individual/animated frames.
 - [x] Recover action/cycle ranges and generated action names, navigate them, and export indexed PNG frames losslessly.
 - [x] Parse the common header and cell grid of all installed `.scn`, `.smp`, and `.lgd` files and visualize candidate elevation.
+- [x] Resolve standard map tags through `.til` definitions and original terrain atlases; export correctly oriented map previews.
+- [x] Structurally decode and corpus-validate the dominant 49-byte placed-sprite record family.
 - Resolve uncommon IMP metadata variants and verify chroma keys, origins, hotspots, and timing against the game ([issues #1–#3](https://github.com/jake-bliss/lords-of-magic-modding/issues)).
-- Decode map terrain tags and trailing object-record variants ([issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4)).
+- Decode the remaining map-tail variants and prove candidate placed-sprite field behavior ([issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4)).
 - Build batch conversion, IMP reimport, and lossless repack tests.
 - Evaluate AI upscaling on portraits and interface art.
 - Compare Lanczos runtime scaling against remastered source assets.

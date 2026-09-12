@@ -19,6 +19,37 @@ pub fn write_imp_frame_png<W: Write>(
     )
 }
 
+pub fn write_rgba_png<W: Write>(
+    writer: W,
+    width: u16,
+    height: u16,
+    rgba: &[u8],
+) -> Result<(), String> {
+    if width == 0 || height == 0 {
+        return Err("cannot export an empty RGBA image".to_owned());
+    }
+    let expected_bytes = usize::from(width)
+        .checked_mul(usize::from(height))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "RGBA image dimensions overflow".to_owned())?;
+    if rgba.len() != expected_bytes {
+        return Err(format!(
+            "RGBA image has {} bytes; expected {expected_bytes}",
+            rgba.len()
+        ));
+    }
+
+    let mut encoder = png::Encoder::new(writer, u32::from(width), u32::from(height));
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut png_writer = encoder
+        .write_header()
+        .map_err(|error| format!("could not write PNG header: {error}"))?;
+    png_writer
+        .write_image_data(rgba)
+        .map_err(|error| format!("could not write PNG pixels: {error}"))
+}
+
 fn write_indexed_png<W: Write>(
     writer: W,
     width: u16,
@@ -71,7 +102,7 @@ fn write_indexed_png<W: Write>(
 mod tests {
     use std::io::Cursor;
 
-    use super::write_indexed_png;
+    use super::{write_indexed_png, write_rgba_png};
 
     #[test]
     fn exports_indexed_pixels_and_palette_losslessly() {
@@ -96,6 +127,22 @@ mod tests {
             reader.info().palette.as_deref(),
             Some(&palette_bytes(&palette)[..])
         );
+    }
+
+    #[test]
+    fn exports_rgba_pixels_losslessly() {
+        let rgba = [1, 2, 3, 255, 10, 20, 30, 40];
+        let mut encoded = Vec::new();
+
+        write_rgba_png(&mut encoded, 2, 1, &rgba).unwrap();
+
+        let decoder = png::Decoder::new(Cursor::new(encoded));
+        let mut reader = decoder.read_info().unwrap();
+        let mut decoded = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut decoded).unwrap();
+        assert_eq!((info.width, info.height), (2, 1));
+        assert_eq!(info.color_type, png::ColorType::Rgba);
+        assert_eq!(&decoded[..info.buffer_size()], rgba);
     }
 
     fn palette_bytes(palette: &[[u8; 4]]) -> Vec<u8> {

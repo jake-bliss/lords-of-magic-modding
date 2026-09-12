@@ -16,7 +16,7 @@
 | `smk/` | Smacker cinematics | Replacement cinematics | Medium–high |
 | `lomse.exe` | Closed-source engine | Rendering, input, pathfinding, hard-coded limits and mechanics | High–very high |
 
-The shared native prefix and cell grid for all three map families is documented in the [initial map-format probe](map-format.md). Terrain tags and trailing object records remain deliberately untyped.
+The shared native prefix and cell grid for all three map families is documented in the [map-format probe](map-format.md). Standard terrain tags now resolve through the original tile atlas, and the dominant 49-byte placed-sprite family is structurally typed while unproven fields retain candidate names.
 
 ## Evidence for script-level moddability
 
@@ -30,7 +30,7 @@ The first local extraction confirms that `.gs` files use a PostScript-like, stac
 
 See [MPQ inventory](mpq-inventory.md) for the measured archive contents and exact 3.02 change surface.
 
-The native [asset tool](../spikes/asset-viewer/README.md) found 1,377 IFF `FORM PBM` members in GS5R3 `pic.mpq` and decoded all of them. It also classifies all 9,804 members in the five core archives and pixel-decodes all 1,800 IMP sprite binaries. IMP uses indexed palettes, a custom packet RLE, 8/4/2/1-bit packed pixels, animation tables, hotspots, and multiple shared-frame conventions. Representative unit art renders recognizably. Green IMP backgrounds and separate pure-red silhouettes indicate at least two engine-level background/mask channels; the viewer exposes clean-preview, mask, and raw modes while keeping these display hypotheses separate from lossless decoding. See the [Stage 1 record](native-asset-stage.md) for current coverage.
+The native [asset tool](../spikes/asset-viewer/README.md) found 1,377 IFF `FORM PBM` members and 26 tile-set definitions in GS5R3 `pic.mpq` and decoded all of them. It also classifies all 9,804 members in the five core archives and pixel-decodes all 1,800 IMP sprite binaries. IMP uses indexed palettes, a custom packet RLE, 8/4/2/1-bit packed pixels, animation tables, hotspots, and multiple shared-frame conventions. Representative unit art renders recognizably. Green IMP backgrounds and separate pure-red silhouettes indicate at least two engine-level background/mask channels; the viewer exposes clean-preview, mask, and raw modes while keeping these display hypotheses separate from lossless decoding. See the [Stage 1 record](native-asset-stage.md) for current coverage.
 
 ## Known executable imports and runtime dependencies
 
@@ -47,7 +47,7 @@ It also imports registry and drive APIs such as `RegOpenKeyExA`, `RegQueryValueE
 
 ## Built-in creation tools
 
-The game includes Map Editor and Lord Editor entry points. The original manual states that custom `.SCN` worlds are stored in the `LOM/MAP` folder and can define terrain, encounters, capitals, temples, and starting positions.
+The game includes Map Editor and Lord Editor entry points. The original manual states that custom `.SCN` worlds are stored in the `LOM/MAP` folder; its terrain mode edits topography, while sprite mode places structures, objects, and encounters. Extracted editor scripts independently expose `setterrain`, `forcetexture`, `addterrainsprite`, and `setterrainspriteprocid`, providing vocabulary for the decoded map fields without yet proving every binary representation.
 
 The editors provide a useful test surface, but they do not replace the need to understand `gs.mpq` scripts for new mechanics or richer scenario behavior.
 

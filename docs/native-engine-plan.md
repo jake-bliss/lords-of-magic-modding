@@ -4,7 +4,7 @@
 
 **Candidate, not a commitment.** The goal would be a clean-room, 64-bit native engine that loads a user's legally obtained Lords of Magic: Special Edition data. The existing Windows executable remains the behavioral reference while we replace bounded capabilities behind testable interfaces.
 
-The evolving asset tool removes one early uncertainty: native Rust code can open all five core MPQ archives, classify their contents, decode the primary picture and sprite formats, and render PBM images and IMP animations through SDL3. It does not yet establish that the simulation or GameScript runtime can be reproduced economically. Current Stage 1 evidence and gaps are tracked in the [native asset layer record](native-asset-stage.md).
+The evolving asset tool removes one early uncertainty: native Rust code can open all five core MPQ archives, classify their contents, decode the primary picture and sprite formats, render PBM images and IMP animations, and resolve map cells through original terrain art. It does not yet establish that the simulation or GameScript runtime can be reproduced economically. Current Stage 1 evidence and gaps are tracked in the [native asset layer record](native-asset-stage.md).
 
 ## Goals
 
@@ -83,7 +83,7 @@ One portrait exposed a valid scanline-boundary edge case in ByteRun1 compression
 
 This is a **go** result for continued archive and image tooling. It says little about the hardest risk: reimplementing the script host and simulation built-ins.
 
-The next Stage 1 milestones expanded the scan to all five GS5R3 core archives: 9,804 of 9,804 members are readable and classified with no probe failures. They identified 3,098 WAVE files and paired 1,800 IMP sprite binaries with 1,800 generated headers. All 1,800 IMP binaries now pixel-decode, including both observed record variants and 8/4/2/1-bit indexed storage; representative unit frames render recognizably in an SDL viewer. The model exactly matches 1,788 of 1,798 same-name pairs, while ten metadata mismatches and four orphan names remain explicit failing research cases. A separate bounded parser now reads the common grid prefix of all 365 installed map/scenario/component files and renders their candidate elevation values as coherent relief. This strengthens the **go** decision for asset tooling but does not justify shortening later simulation estimates.
+The next Stage 1 milestones expanded the scan to all five GS5R3 core archives: 9,804 of 9,804 members are readable and classified with no probe failures. They identified 3,098 WAVE files and paired 1,800 IMP sprite binaries with 1,800 generated headers. All 1,800 IMP binaries now pixel-decode, including both observed record variants and 8/4/2/1-bit indexed storage; representative unit frames render recognizably in an SDL viewer. The model exactly matches 1,788 of 1,798 same-name pairs, while ten metadata mismatches and four orphan names remain explicit failing research cases. A separate bounded parser reads all 365 installed map/scenario/component files, parses all 26 tile-set definitions, renders the standard world through original terrain art, and structurally decodes 16,628 placed-sprite records in the dominant 49-byte family. This strengthens the **go** decision for asset tooling but does not justify shortening later simulation estimates.
 
 ## Verification strategy
 

@@ -12,7 +12,8 @@ use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::map::MapAsset;
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::pbm::PbmImage;
-use lom_asset_viewer::png_export::write_imp_frame_png;
+use lom_asset_viewer::png_export::{write_imp_frame_png, write_rgba_png};
+use lom_asset_viewer::tile::TileSetDefinition;
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::pixels::{Color, PixelFormat};
@@ -21,9 +22,11 @@ use sdl3::video::Window;
 
 const WINDOW_WIDTH: u32 = 1100;
 const WINDOW_HEIGHT: u32 = 800;
+const TERRAIN_PREVIEW_TILE_SIZE: u32 = 8;
 
 enum Command {
     Catalog(Source),
+    DescribeMap(PathBuf),
     DescribeImp {
         source: Source,
         member: String,
@@ -32,6 +35,12 @@ enum Command {
         source: Source,
         member: String,
         frame: usize,
+        output: PathBuf,
+    },
+    ExportMapPreview {
+        map: PathBuf,
+        tile_set: PathBuf,
+        atlas: PathBuf,
         output: PathBuf,
     },
     Extract {
@@ -53,7 +62,10 @@ enum Command {
         member: String,
         frame: usize,
     },
-    ViewMap(PathBuf),
+    ViewMap {
+        path: PathBuf,
+        tile_set: Option<(PathBuf, PathBuf)>,
+    },
     View {
         source: Source,
         member: Option<String>,
@@ -69,6 +81,13 @@ struct SelectedImage {
     index: usize,
     name: String,
     image: PbmImage,
+}
+
+struct TerrainPreview {
+    width: u16,
+    height: u16,
+    rgba: Vec<u8>,
+    atlas_name: String,
 }
 
 #[derive(Clone, Copy)]
@@ -100,13 +119,16 @@ impl ImpDisplayMode {
 enum MapDisplayMode {
     CellTags,
     CandidateElevation,
+    TerrainArtwork,
 }
 
 impl MapDisplayMode {
-    fn next(self) -> Self {
-        match self {
-            Self::CellTags => Self::CandidateElevation,
-            Self::CandidateElevation => Self::CellTags,
+    fn next(self, has_terrain_artwork: bool) -> Self {
+        match (self, has_terrain_artwork) {
+            (Self::CandidateElevation, true) => Self::TerrainArtwork,
+            (Self::TerrainArtwork, _) => Self::CellTags,
+            (Self::CellTags, _) => Self::CandidateElevation,
+            (Self::CandidateElevation, false) => Self::CellTags,
         }
     }
 
@@ -114,6 +136,7 @@ impl MapDisplayMode {
         match self {
             Self::CellTags => "diagnostic cell tags",
             Self::CandidateElevation => "candidate elevation",
+            Self::TerrainArtwork => "terrain artwork",
         }
     }
 }
@@ -128,6 +151,7 @@ fn main() {
 fn run() -> Result<(), String> {
     match parse_args()? {
         Command::Catalog(source) => catalog_archive(&source),
+        Command::DescribeMap(path) => describe_map(&path),
         Command::DescribeImp { source, member } => describe_imp(&source, &member),
         Command::ExportImpFrame {
             source,
@@ -135,6 +159,12 @@ fn run() -> Result<(), String> {
             frame,
             output,
         } => export_imp_frame(&source, &member, frame, &output),
+        Command::ExportMapPreview {
+            map,
+            tile_set,
+            atlas,
+            output,
+        } => export_map_preview(&map, &tile_set, &atlas, &output),
         Command::Extract {
             source,
             member,
@@ -151,7 +181,7 @@ fn run() -> Result<(), String> {
             member,
             frame,
         } => view_imp_archive(&source, &member, frame),
-        Command::ViewMap(path) => view_map_file(&path),
+        Command::ViewMap { path, tile_set } => view_map_file(&path, tile_set.as_ref()),
         Command::View { source, member } => view_archive(&source, member.as_deref()),
     }
 }
@@ -164,6 +194,10 @@ fn parse_args() -> Result<Command, String> {
         "--catalog" => {
             require_len(&args, 2)?;
             Ok(Command::Catalog(source(&args[1], listfile)))
+        }
+        "--describe-map" => {
+            require_len(&args, 2)?;
+            Ok(Command::DescribeMap(args[1].clone().into()))
         }
         "--describe-imp" => {
             require_len(&args, 3)?;
@@ -186,6 +220,15 @@ fn parse_args() -> Result<Command, String> {
                 source: source(&args[1], listfile),
                 member: args[2].clone(),
                 frame: parse_frame_index(&args[3])?,
+                output: args[4].clone().into(),
+            })
+        }
+        "--export-map-preview" => {
+            require_len(&args, 5)?;
+            Ok(Command::ExportMapPreview {
+                map: args[1].clone().into(),
+                tile_set: args[2].clone().into(),
+                atlas: args[3].clone().into(),
                 output: args[4].clone().into(),
             })
         }
@@ -234,8 +277,14 @@ fn parse_args() -> Result<Command, String> {
             })
         }
         "--view-map" => {
-            require_len(&args, 2)?;
-            Ok(Command::ViewMap(args[1].clone().into()))
+            if args.len() != 2 && args.len() != 4 {
+                return Err(usage());
+            }
+            Ok(Command::ViewMap {
+                path: args[1].clone().into(),
+                tile_set: (args.len() == 4)
+                    .then(|| (args[2].clone().into(), args[3].clone().into())),
+            })
         }
         "--help" | "-h" => Err(usage()),
         _ => {
@@ -291,7 +340,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -374,6 +423,36 @@ fn export_imp_frame(
         frame.width,
         frame.height,
         frame_index
+    );
+    Ok(())
+}
+
+fn export_map_preview(
+    map_path: &Path,
+    definition_path: &Path,
+    atlas_path: &Path,
+    output: &Path,
+) -> Result<(), String> {
+    let bytes = fs::read(map_path)
+        .map_err(|error| format!("could not read {}: {error}", map_path.display()))?;
+    let map = MapAsset::parse(&bytes).map_err(|error| error.to_string())?;
+    let preview = load_terrain_preview(&map, definition_path, atlas_path)?;
+    let mut encoded = Vec::new();
+    write_rgba_png(&mut encoded, preview.width, preview.height, &preview.rgba)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    file.write_all(&encoded)
+        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+    println!(
+        "wrote\t{}\t{}\t{}x{}\tatlas={}",
+        output.display(),
+        encoded.len(),
+        preview.width,
+        preview.height,
+        preview.atlas_name,
     );
     Ok(())
 }
@@ -528,6 +607,44 @@ fn inspect_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn describe_map(path: &Path) -> Result<(), String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let map = MapAsset::parse(&bytes).map_err(|error| error.to_string())?;
+    let section = map.placed_sprites_49.as_ref().ok_or_else(|| {
+        format!(
+            "{} does not use the decoded 49-byte placed-sprite record family",
+            path.display()
+        )
+    })?;
+
+    println!(
+        "map\t{}\t{}x{}\trecords:{}\tfooter:{}",
+        clean_field(&path.display().to_string()),
+        map.width,
+        map.height,
+        section.records.len(),
+        section.footer,
+    );
+    println!(
+        "record\tcell-index\tx\ty\tinstance-id\tattribute-bits\tattribute-code\tsprite-type-candidate\tprocedure-id-candidate\traw"
+    );
+    for (index, record) in section.records.iter().enumerate() {
+        let (x, y) = record.coordinates(map.height);
+        println!(
+            "{index}\t{}\t{x}\t{y}\t{}\t0x{:08x}\t{}\t{}\t{}\t{}",
+            record.cell_index,
+            record.instance_id,
+            record.attribute_bits,
+            record.attribute_code_candidate(),
+            record.sprite_type_candidate,
+            record.procedure_id_candidate,
+            hex_bytes(&record.raw),
+        );
+    }
+    Ok(())
+}
+
 fn scan_map_directory(directory: &Path) -> Result<(), String> {
     if !directory.is_dir() {
         return Err(format!(
@@ -543,6 +660,12 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
     let mut dimension_counts = BTreeMap::<(AssetKind, u32, u32), usize>::new();
     let mut metadata_values = BTreeMap::<AssetKind, BTreeSet<u32>>::new();
     let mut cell_tags = BTreeSet::<u32>::new();
+    let mut tile_indexes = BTreeSet::<u32>::new();
+    let mut forced_texture_cells = 0_usize;
+    let mut placed_sprite_49_files = 0_usize;
+    let mut placed_sprite_49_records = 0_usize;
+    let mut placed_sprite_types = BTreeSet::<u32>::new();
+    let mut placed_sprite_attribute_codes = BTreeSet::<u8>::new();
     let mut finite_min = f32::INFINITY;
     let mut finite_max = f32::NEG_INFINITY;
     let mut nonfinite_values = 0_usize;
@@ -593,8 +716,18 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
             ),
         };
         *tail_layout_counts.entry((kind, layout)).or_default() += 1;
+        if let Some(section) = &map.placed_sprites_49 {
+            placed_sprite_49_files += 1;
+            placed_sprite_49_records += section.records.len();
+            for record in &section.records {
+                placed_sprite_types.insert(record.sprite_type_candidate);
+                placed_sprite_attribute_codes.insert(record.attribute_code_candidate());
+            }
+        }
         for cell in &map.cells {
             cell_tags.insert(cell.tag);
+            tile_indexes.insert(cell.tile_index_candidate());
+            forced_texture_cells += usize::from(cell.forced_texture_candidate());
             if cell.value.is_finite() {
                 finite_min = finite_min.min(cell.value);
                 finite_max = finite_max.max(cell.value);
@@ -622,6 +755,22 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
         println!("tail-layout-candidate\t{kind}\t{layout}\t{count}");
     }
     println!("distinct-cell-tags\t{}", cell_tags.len());
+    println!("distinct-tile-indexes\t{}", tile_indexes.len());
+    if let (Some(minimum), Some(maximum)) = (tile_indexes.first(), tile_indexes.last()) {
+        println!("tile-index-range\t{minimum}..{maximum}");
+    }
+    println!("forced-texture-cells\t{forced_texture_cells}");
+    println!("placed-sprite-49-files\t{placed_sprite_49_files}");
+    println!("placed-sprite-49-records\t{placed_sprite_49_records}");
+    println!("placed-sprite-types\t{}", placed_sprite_types.len());
+    println!(
+        "placed-sprite-attribute-codes\t{}",
+        placed_sprite_attribute_codes
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    );
     if finite_min.is_finite() {
         println!("candidate-value-range\t{finite_min}..{finite_max}");
     } else {
@@ -1087,15 +1236,22 @@ fn find_visible_in_cycle(
     Err("IMP cycle contains no visible frames".to_owned())
 }
 
-fn view_map_file(path: &Path) -> Result<(), String> {
+fn view_map_file(path: &Path, tile_set_paths: Option<&(PathBuf, PathBuf)>) -> Result<(), String> {
     let bytes =
         fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let map = MapAsset::parse(&bytes).map_err(|error| error.to_string())?;
-    let width = u16::try_from(map.width)
+    let map_width = u16::try_from(map.width)
         .map_err(|_| format!("map width {} exceeds viewer limits", map.width))?;
-    let height = u16::try_from(map.height)
+    let map_height = u16::try_from(map.height)
         .map_err(|_| format!("map height {} exceeds viewer limits", map.height))?;
-    let mut display_mode = MapDisplayMode::CandidateElevation;
+    let terrain_preview = tile_set_paths
+        .map(|(definition, atlas)| load_terrain_preview(&map, definition, atlas))
+        .transpose()?;
+    let mut display_mode = if terrain_preview.is_some() {
+        MapDisplayMode::TerrainArtwork
+    } else {
+        MapDisplayMode::CandidateElevation
+    };
 
     let sdl = sdl3::init().map_err(|error| error.to_string())?;
     let video = sdl.video().map_err(|error| error.to_string())?;
@@ -1124,28 +1280,183 @@ fn view_map_file(path: &Path) -> Result<(), String> {
                     keycode: Some(Keycode::C),
                     repeat: false,
                     ..
-                } => display_mode = display_mode.next(),
+                } => display_mode = display_mode.next(terrain_preview.is_some()),
                 _ => {}
             }
         }
+        let atlas_suffix = match (display_mode, terrain_preview.as_ref()) {
+            (MapDisplayMode::TerrainArtwork, Some(preview)) => {
+                format!(" — atlas {}", preview.atlas_name)
+            }
+            _ => String::new(),
+        };
         let title = format!(
-            "Lords of Magic diagnostic map viewer — {} — {}×{} — {} — C changes mode",
+            "Lords of Magic map viewer — {} — {}×{} — {}{} — C changes mode",
             path.file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("unnamed map"),
             map.width,
             map.height,
             display_mode.label(),
+            atlas_suffix,
         );
         canvas
             .window_mut()
             .set_title(&title)
             .map_err(|error| error.to_string())?;
-        let rgba = map_display_rgba(&map, display_mode);
-        draw_rgba_in_bounds(&mut canvas, width, height, width, height, &rgba)?;
+        match (display_mode, terrain_preview.as_ref()) {
+            (MapDisplayMode::TerrainArtwork, Some(preview)) => draw_rgba_in_bounds(
+                &mut canvas,
+                preview.width,
+                preview.height,
+                preview.width,
+                preview.height,
+                &preview.rgba,
+            )?,
+            _ => {
+                let rgba = map_display_rgba(&map, display_mode);
+                draw_rgba_in_bounds(
+                    &mut canvas,
+                    map_width,
+                    map_height,
+                    map_width,
+                    map_height,
+                    &rgba,
+                )?;
+            }
+        }
         thread::sleep(Duration::from_millis(16));
     }
     Ok(())
+}
+
+fn load_terrain_preview(
+    map: &MapAsset,
+    definition_path: &Path,
+    atlas_path: &Path,
+) -> Result<TerrainPreview, String> {
+    let definition_bytes = fs::read(definition_path).map_err(|error| {
+        format!(
+            "could not read tile definition {}: {error}",
+            definition_path.display()
+        )
+    })?;
+    let tile_set = TileSetDefinition::parse(&definition_bytes).map_err(|error| {
+        format!(
+            "could not parse tile definition {}: {error}",
+            definition_path.display()
+        )
+    })?;
+    let atlas_bytes = fs::read(atlas_path).map_err(|error| {
+        format!(
+            "could not read tile atlas {}: {error}",
+            atlas_path.display()
+        )
+    })?;
+    let atlas = PbmImage::decode(&atlas_bytes).map_err(|error| {
+        format!(
+            "could not decode tile atlas {}: {error}",
+            atlas_path.display()
+        )
+    })?;
+
+    let expected_width = tile_set
+        .columns
+        .checked_mul(tile_set.tile_width)
+        .ok_or_else(|| "tile atlas width overflow".to_owned())?;
+    let expected_height = tile_set
+        .rows
+        .checked_mul(tile_set.tile_height)
+        .ok_or_else(|| "tile atlas height overflow".to_owned())?;
+    if u32::from(atlas.width) != expected_width || u32::from(atlas.height) != expected_height {
+        return Err(format!(
+            "tile atlas {} is {}x{}, but {} declares {}x{}",
+            atlas_path.display(),
+            atlas.width,
+            atlas.height,
+            definition_path.display(),
+            expected_width,
+            expected_height,
+        ));
+    }
+
+    let width = map
+        .width
+        .checked_mul(TERRAIN_PREVIEW_TILE_SIZE)
+        .and_then(|width| u16::try_from(width).ok())
+        .ok_or_else(|| "terrain preview width exceeds viewer limits".to_owned())?;
+    let height = map
+        .height
+        .checked_mul(TERRAIN_PREVIEW_TILE_SIZE)
+        .and_then(|height| u16::try_from(height).ok())
+        .ok_or_else(|| "terrain preview height exceeds viewer limits".to_owned())?;
+    let rgba = terrain_preview_rgba(map, &tile_set, &atlas)?;
+    Ok(TerrainPreview {
+        width,
+        height,
+        rgba,
+        atlas_name: tile_set.atlas_member,
+    })
+}
+
+fn terrain_preview_rgba(
+    map: &MapAsset,
+    tile_set: &TileSetDefinition,
+    atlas: &PbmImage,
+) -> Result<Vec<u8>, String> {
+    let preview_width = usize::try_from(map.width)
+        .ok()
+        .and_then(|width| width.checked_mul(TERRAIN_PREVIEW_TILE_SIZE as usize))
+        .ok_or_else(|| "terrain preview width overflow".to_owned())?;
+    let preview_height = usize::try_from(map.height)
+        .ok()
+        .and_then(|height| height.checked_mul(TERRAIN_PREVIEW_TILE_SIZE as usize))
+        .ok_or_else(|| "terrain preview height overflow".to_owned())?;
+    let output_bytes = preview_width
+        .checked_mul(preview_height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "terrain preview byte count overflow".to_owned())?;
+    let atlas_width = usize::from(atlas.width);
+    let sample_dimension = TERRAIN_PREVIEW_TILE_SIZE as usize;
+    let mut rgba = vec![0; output_bytes];
+
+    for y in 0..map.height {
+        for x in 0..map.width {
+            let cell = map
+                .cell(x, y)
+                .ok_or_else(|| format!("map has no cell at ({x}, {y})"))?;
+            let tile_index = cell.tile_index_candidate();
+            if tile_index >= tile_set.atlas_capacity() {
+                return Err(format!(
+                    "map cell ({x}, {y}) references tile {tile_index}, outside atlas capacity {}",
+                    tile_set.atlas_capacity()
+                ));
+            }
+            if !tile_set.tiles.contains_key(&tile_index) {
+                return Err(format!(
+                    "map cell ({x}, {y}) references undefined tile {tile_index}"
+                ));
+            }
+            let tile_x = tile_index % tile_set.columns;
+            let tile_y = tile_index / tile_set.columns;
+            for sample_y in 0..sample_dimension {
+                let atlas_y = usize::try_from(tile_y * tile_set.tile_height).unwrap()
+                    + ((sample_y * 2 + 1) * tile_set.tile_height as usize) / (sample_dimension * 2);
+                let output_y = y as usize * sample_dimension + sample_y;
+                for sample_x in 0..sample_dimension {
+                    let atlas_x = usize::try_from(tile_x * tile_set.tile_width).unwrap()
+                        + ((sample_x * 2 + 1) * tile_set.tile_width as usize)
+                            / (sample_dimension * 2);
+                    let output_x = x as usize * sample_dimension + sample_x;
+                    let source_offset = (atlas_y * atlas_width + atlas_x) * 4;
+                    let output_offset = (output_y * preview_width + output_x) * 4;
+                    rgba[output_offset..output_offset + 4]
+                        .copy_from_slice(&atlas.rgba[source_offset..source_offset + 4]);
+                }
+            }
+        }
+    }
+    Ok(rgba)
 }
 
 fn map_display_rgba(map: &MapAsset, mode: MapDisplayMode) -> Vec<u8> {
@@ -1157,8 +1468,8 @@ fn map_display_rgba(map: &MapAsset, mode: MapDisplayMode) -> Vec<u8> {
             (f32::INFINITY, f32::NEG_INFINITY),
             |(minimum, maximum), value| (minimum.min(value), maximum.max(value)),
         );
-    map.cells
-        .iter()
+    (0..map.height)
+        .flat_map(|y| (0..map.width).map(move |x| map.cell(x, y).expect("bounded map cell")))
         .flat_map(|cell| {
             let rgb = match mode {
                 MapDisplayMode::CellTags => diagnostic_tag_color(cell.tag),
@@ -1171,6 +1482,7 @@ fn map_display_rgba(map: &MapAsset, mode: MapDisplayMode) -> Vec<u8> {
                     let intensity = (normalized.clamp(0.0, 1.0) * 255.0).round() as u8;
                     [intensity, intensity, intensity]
                 }
+                MapDisplayMode::TerrainArtwork => unreachable!("terrain artwork is pre-rendered"),
             };
             [rgb[0], rgb[1], rgb[2], 255]
         })
@@ -1383,12 +1695,16 @@ fn draw_rgba_in_bounds(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use lom_asset_viewer::imp::{ImpCycle, ImpFrame, ImpSequence, ImpSprite};
     use lom_asset_viewer::map::{MapAsset, MapCell};
+    use lom_asset_viewer::pbm::PbmImage;
+    use lom_asset_viewer::tile::{TileDefinition, TileSetDefinition};
 
     use super::{
         ImpDisplayMode, MapDisplayMode, imp_display_rgba, map_display_rgba, step_imp_cycle,
-        step_imp_frame, step_imp_sequence,
+        step_imp_frame, step_imp_sequence, terrain_preview_rgba,
     };
 
     #[test]
@@ -1423,11 +1739,11 @@ mod tests {
     }
 
     #[test]
-    fn map_display_modes_preserve_cell_count_and_order_elevation() {
+    fn map_display_modes_convert_x_major_cells_to_display_rows() {
         let map = MapAsset {
             metadata: 1,
             width: 2,
-            height: 1,
+            height: 2,
             bits_per_pixel: 8,
             cells: vec![
                 MapCell {
@@ -1437,22 +1753,101 @@ mod tests {
                 },
                 MapCell {
                     tag: 5,
+                    value_bits: 10.0_f32.to_bits(),
+                    value: 10.0,
+                },
+                MapCell {
+                    tag: 6,
                     value_bits: 20.0_f32.to_bits(),
                     value: 20.0,
                 },
+                MapCell {
+                    tag: 7,
+                    value_bits: 30.0_f32.to_bits(),
+                    value: 30.0,
+                },
             ],
-            trailing_offset: 32,
+            trailing_offset: 48,
             trailing_bytes: 0,
             trailing_head_u32: None,
+            placed_sprites_49: None,
         };
 
         let tags = map_display_rgba(&map, MapDisplayMode::CellTags);
         let elevation = map_display_rgba(&map, MapDisplayMode::CandidateElevation);
 
-        assert_eq!(tags.len(), 8);
+        assert_eq!(tags.len(), 16);
         assert_ne!(&tags[0..3], &tags[4..7]);
         assert_eq!(&elevation[0..4], &[0, 0, 0, 255]);
-        assert_eq!(&elevation[4..8], &[255, 255, 255, 255]);
+        assert_eq!(&elevation[4..8], &[170, 170, 170, 255]);
+        assert_eq!(&elevation[8..12], &[85, 85, 85, 255]);
+        assert_eq!(&elevation[12..16], &[255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn terrain_preview_resolves_map_tile_indexes_through_the_atlas() {
+        let map = MapAsset {
+            metadata: 0,
+            width: 2,
+            height: 1,
+            bits_per_pixel: 8,
+            cells: vec![
+                MapCell {
+                    tag: 1,
+                    value_bits: 0,
+                    value: 0.0,
+                },
+                MapCell {
+                    tag: 0,
+                    value_bits: 0,
+                    value: 0.0,
+                },
+            ],
+            trailing_offset: 32,
+            trailing_bytes: 0,
+            trailing_head_u32: None,
+            placed_sprites_49: None,
+        };
+        let tile_set = TileSetDefinition {
+            atlas_member: "test.lbm".to_owned(),
+            columns: 2,
+            rows: 1,
+            tile_width: 1,
+            tile_height: 1,
+            terrain_types: BTreeMap::new(),
+            tiles: BTreeMap::from([
+                (
+                    0,
+                    TileDefinition {
+                        index: 0,
+                        terrain_type: 0,
+                    },
+                ),
+                (
+                    1,
+                    TileDefinition {
+                        index: 1,
+                        terrain_type: 0,
+                    },
+                ),
+            ]),
+        };
+        let atlas = PbmImage {
+            width: 2,
+            height: 1,
+            rgba: vec![10, 20, 30, 255, 200, 210, 220, 255],
+            palette: Vec::new(),
+            palette_entries: 0,
+            compression: 0,
+            masking: 0,
+            transparent_color: 0,
+        };
+
+        let preview = terrain_preview_rgba(&map, &tile_set, &atlas).unwrap();
+
+        assert_eq!(&preview[0..4], &[200, 210, 220, 255]);
+        assert_eq!(&preview[7 * 4..8 * 4], &[200, 210, 220, 255]);
+        assert_eq!(&preview[8 * 4..9 * 4], &[10, 20, 30, 255]);
     }
 
     fn navigation_sprite() -> ImpSprite {

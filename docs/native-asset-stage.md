@@ -2,7 +2,7 @@
 
 ## Status
 
-**In progress; archive inventory, the first IMP inspection/export milestone, and the initial map-grid probe are complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels, frame references, sequences, cycles, origins, and hotspot records of all 1,800 IMP sprite binaries. It can also bound and visualize the common grid prefix of all 365 installed `.scn`, `.smp`, and `.lgd` files.
+**In progress; archive inventory, IMP inspection/export, terrain-atlas rendering, and the dominant map-object record milestone are complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels, frame references, sequences, cycles, origins, and hotspot records of all 1,800 IMP sprite binaries. It also bounds all 365 installed `.scn`, `.smp`, and `.lgd` files, resolves standard map cells through original terrain art, and structurally decodes 16,628 placed-sprite records.
 
 This is useful tooling now, but it is not yet the lossless asset layer promised by Stage 1. Full map/scenario semantics, verified compositing/origin behavior, reimport/repacking, and cross-platform packaging remain open.
 
@@ -37,7 +37,7 @@ Measured on the preserved local GS5R3 profile on 2026-09-11:
 
 | Archive | Entries | Classified contents | Probe failures |
 | --- | ---: | --- | ---: |
-| `pic.mpq` | 1,406 | 1,377 PBM, 2 BMP, 26 text, 1 listfile | 0 |
+| `pic.mpq` | 1,406 | 1,377 PBM, 2 BMP, 26 tile-set definitions, 1 listfile | 0 |
 | `special.mpq` | 1,218 | 1,218 WAVE | 0 |
 | `gs.mpq` | 1,700 | 1,689 GameScript, 7 empty, 2 text, 1 URL, 1 listfile | 0 |
 | `imp.mpq` | 3,600 | 1,800 IMP binaries, 1,800 generated C headers | 0 |
@@ -99,19 +99,22 @@ The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synth
 
 ## Map/scenario findings
 
-The loose installed map corpus contains 20 `.scn`, 337 `.smp`, and eight `.lgd` files. All 365 pass the new bounded prefix/grid parser. Each file declares width, height, an observed depth of 8, and exactly one eight-byte record per cell. Treating the second cell word as little-endian `f32` yields finite values from 0 to 20 and a coherent grayscale relief map. The first cell word and multiple trailing record families remain opaque. See the [map-format record](map-format.md) and [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
+The loose installed map corpus contains 20 `.scn`, 337 `.smp`, and eight `.lgd` files. All 365 pass the bounded parser. Each file declares width, height, an observed depth of 8, and one eight-byte record per cell in X-major order. Treating the second word as little-endian `f32` yields finite values from 0 to 20 and coherent relief. The first word resolves to an original tile-atlas index plus an observed `0x00800000` forced-texture flag; `URAK.scn` now renders as a coherent, correctly oriented world through `tilesb01.til` and `tilesb01.lbm`.
+
+All 26 recovered `.til` definitions parse and explicitly bind atlas geometry, 32×32 tile dimensions, terrain types, and tile indices. The dominant trailing family is also decoded structurally: 196 files contain 16,628 exact 49-byte placed-sprite records. Cell indices are bounded and unique per file, and candidate instance, sprite-type, and procedure fields are exposed without discarding raw bytes. The 52-/53-byte families and exact object-field behavior remain open. See the [map-format record](map-format.md) and [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
 
 ## Latest verification
 
 Verified on 2026-09-12:
 
-- 23 Rust library tests and three viewer tests pass;
+- 29 Rust library tests and four viewer tests pass;
 - strict Clippy (`-D warnings`) passes for all targets;
 - all three repository Python tests pass;
 - a fresh read-only scan classifies all five GS5R3 core archives with zero probe failures;
 - all 1,800 IMP payloads decode with bounded sequence/cycle ranges;
 - exact IMP/header validation matches 1,788 of 1,798 pairs; the ten remaining paired disagreements and four orphan names remain intentionally reported;
-- all 365 loose map/scenario/component files pass the bounded grid parser and diagnostic elevation rendering produces coherent relief;
+- all 365 loose map/scenario/component files pass; all 196 exact 49-byte-family files decode 16,628 bounded records;
+- all 26 tile-set definitions parse, and a real `URAK.scn` terrain preview exports as a correctly oriented 1024×1024 RGBA PNG;
 - indexed-PNG export preserves synthetic palette indices and palette bytes, succeeds on a real 165×127 frame, and refuses overwrite.
 
 ## Test strategy and gates
@@ -140,16 +143,19 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [x] Generated-header parser and corpus cross-validator.
 - [x] Typed IMP origin/hotspot candidates and shared-pixel records inside cycles.
 - [x] Bounded header/cell-grid parser and diagnostic elevation viewer for all 365 loose map files.
+- [x] Decode X-major map coordinates, standard tile-atlas indices, and the forced-texture tag candidate.
+- [x] Parse all 26 recovered `.til` definitions and render/export original-art terrain overviews.
+- [x] Structurally decode and validate all 16,628 records in the dominant 49-byte placed-sprite family.
 
 ## Remaining before Stage 1 is complete
 
 - [ ] Resolve the ten known IMP metadata mismatches and four catalog-name orphans ([issue #3](https://github.com/jake-bliss/lords-of-magic-modding/issues/3)).
 - [ ] Establish palette, chroma-key, hotspot, pivot, and compositing semantics ([issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1)).
 - [ ] Verify IMP direction and timing metadata ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)).
-- [ ] Decode map cell tags and trailing object records ([issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4)).
+- [ ] Decode the remaining 52-/53-byte and unknown map tails; prove the candidate 49-byte object-field semantics ([issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4)).
 - [ ] Inventory loose WAVE/Smacker resources outside the core archives.
 - [ ] Add batch export, IMP reimport, and deterministic game-format round-trip tests.
 - [ ] Add searchable browsing, cached textures, animation controls, and export to the GUI.
 - [ ] Make native-library discovery and packaging portable across macOS, Windows, and Linux.
 
-The next implementation slice should correlate map cell tags with original terrain art and decode the dominant 49-byte trailing record family. Original-engine-only IMP placement, compositing, direction, and timing work is now explicitly tracked in issues #1 and #2 rather than being encoded as assumptions.
+The next implementation slice should either use controlled Map Editor save diffs to prove the 49-byte sprite/procedure/attribute fields or begin the GameScript VM vocabulary/bytecode probe. The remaining 52-/53-byte tails and original-engine-only IMP presentation work stay parked in issues #1–#4 rather than being encoded as assumptions.
