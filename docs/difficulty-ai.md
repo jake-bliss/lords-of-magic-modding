@@ -73,8 +73,8 @@ native. GS5R3 adds a script-side `/INSANE_LEVEL 3 def`, implying the native valu
 
 The original executable may have native AI logic that these scripts do not expose. We have not instrumented an identical-seed, identical-Faith game on all three settings, so we cannot yet quantify how often the script gates change observed decisions. GS5R3's replacement scripts are a mod-specific finding and should not be attributed to vanilla or 3.02.
 
-The community's own claims about difficulty are weak evidence and one was wrong about the author's
-own code; see [community research](community-research.md). Do not substitute a changelog for the
-shipped scripts.
+Community claims about difficulty are weak evidence on their own, and at least one described code
+that never shipped rather than the installed build; see [community research](community-research.md).
+Do not substitute a changelog or a forum post for the shipped scripts.
 
 For the next agent, a useful bounded follow-up is [issue #6](https://github.com/jake-bliss/lords-of-magic-modding/issues/6): trace the GS5R3 call paths, record difficulty constants, then run a controlled vanilla/3.02 test around turns 100 and 150 while holding Faith, map, opponent, and resources constant. Keep proprietary scripts and saves out of the repository; commit only analysis and derived test observations.
