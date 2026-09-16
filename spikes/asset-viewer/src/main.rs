@@ -2201,6 +2201,8 @@ fn scan_native_table(executable: &Path, source: Option<&Source>) -> Result<(), S
                             effect.pushes,
                             if effect.is_well_formed() {
                                 "well-formed"
+                            } else if effect.indirect_branches > 0 {
+                                "indirect-branch"
                             } else if effect.truncated {
                                 "truncated"
                             } else {

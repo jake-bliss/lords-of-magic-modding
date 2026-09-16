@@ -195,23 +195,38 @@ Three complications had to be handled, each found by a prediction disagreeing wi
   pushes once. A body-only walk reported `add` and `sub` as pushing nothing. Calls are followed one
   level, and each distinct callee contributes once however many sites reach it.
 
-#### Measured accuracy
+#### Measured accuracy, and what the confidence column really means
 
 Checked against 24 operators whose arity follows from PostScript semantics, plus
-`getdifficultylevel`, which we had already established independently:
+`getdifficultylevel`, which we had already established independently: **23 of 24 agree.**
 
-**23 of 24 agree.** The single disagreement is `mul`, reported as pushing twice.
+The single disagreement is `mul`, reported as pushing twice. It has two push sites on mutually
+exclusive type paths — the shared helper at `0x004cae73` for one operand type and an inline commit
+at `0x004cae98` for the other. Each path pushes one result; a static count sees both. **So the
+numbers are site counts, and they equal arity only when every commit lies on one path.**
 
-That disagreement is the method's real limitation, and it is worth stating precisely rather than
-rounding away. `mul` has two push sites on mutually exclusive type paths — the shared helper at
-`0x004cae73` for one operand type and an inline commit at `0x004cae98` for the other. Each path
-pushes one result; a static count sees both. **So the numbers are site counts, and they equal arity
-only when every commit lies on one path.** They are a sound upper bound otherwise.
+Completeness is a separate question from correctness, and the two must not be conflated:
 
-Across all 1,908 records: 1,875 walks are well formed, 28 contain a store the idiom did not explain,
-and 3 hit the instruction budget. The confidence column carries that distinction, and it earns its
-place — before the `lea` form was recognised, five of the six wrong predictions were already flagged
-`unclassified-store`.
+| Confidence | Operators | Meaning |
+| --- | ---: | --- |
+| `well-formed` | 118 | the walk reached every instruction and explained every store |
+| `indirect-branch` | 1,781 | the walk met a computed jump it cannot follow |
+| `unclassified-store` | 7 | a store to the index that the idiom does not explain |
+
+Most operators dispatch on operand type through a jump table — `jmp [table + eax*4]` — whose arms are
+unreachable to a static walk, so stack traffic behind them is invisible. `getarmydata` is the
+concrete case: it pops two operands and pushes its result from inside a helper that dispatches that
+way, so the walk reports **0 pushes** for an operator that plainly returns a value.
+
+**All 24 validation operators are flagged `indirect-branch`, and 23 of them are still right.** The
+flag is conservative: it marks *possible* incompleteness, not probable error, and should be read as
+"do not trust this without checking" rather than "this is wrong".
+
+An earlier version of this analysis reported 1,875 walks as well formed. That was wrong. It treated
+an unfollowable computed jump as an ordinary end of block, so walks that had silently given up were
+counted as complete, and `getarmydata` was reported `well-formed` with a missing push. Detecting
+indirect branches, and inheriting them from followed callees, is what turned that silent wrong
+answer into a flagged one.
 
 ### Unused engine surface
 

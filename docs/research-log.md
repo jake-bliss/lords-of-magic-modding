@@ -279,8 +279,15 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 - **Observed:** `0x0041d1d0` is the shared push-one-operand helper, taking `(tag, value)` with the
   context in `ecx`. Most operators push their result through it rather than inline.
 - **Implemented:** `--scan-natives` walks each operator from its entry point with `iced-x86` and
-  reports `pops`, `pushes` and a confidence column. 1,875 of 1,908 walks are well formed, 28 contain
-  an unexplained store, 3 hit the instruction budget.
+  reports `pops`, `pushes` and a confidence column.
+- **Corrected:** the first version of that walk reported 1,875 of 1,908 walks as well formed. It
+  treated an unfollowable computed jump as an ordinary end of block, so walks that had silently
+  given up counted as complete. `getarmydata` was reported `well-formed` with a missing push. With
+  indirect branches detected and inherited from followed callees, the real figures are **118 well
+  formed, 1,781 stopped at a computed jump, 7 with an unexplained store**. Most operators dispatch
+  on operand type through a jump table, so the low figure is the honest one.
+- **Observed:** the completeness flag is conservative, not a predictor of error. All 24 validation
+  operators are flagged `indirect-branch` and 23 of them are still correct.
 - **Observed:** measured against 24 operators whose arity follows from PostScript semantics,
   **23 agree**.
 - **Corrected, three times, each by a known answer disagreeing:** the adjustment is not adjacent to
