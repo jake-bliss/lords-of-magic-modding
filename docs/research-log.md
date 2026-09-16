@@ -858,3 +858,72 @@ The Claude reviewer ran a debug build and got `attempt to subtract with overflow
 both ways. A boundary probe against an optimised build is not a boundary probe.
 
 Tests after the fixes: **83 library and 11 CLI**, clippy clean.
+
+## 2026-09-16 — Hotspot record 0 is reserved: the engine hides it from GameScript
+
+**Evidence class: observed in a local binary, plus corpus measurement.** No game launch. This is the
+first real progress on the open question from the placement writer — how the engine places the 28,771
+frames that carry hotspot records instead of an origin pair.
+
+### Both hotspot natives skip record 0
+
+`getimphotspot` is at `0x0049BF90` and `enumimphotspots` at `0x0049C1D0`. Each walks the frame's
+hotspot array, and **each starts at record index 1**:
+
+```asm
+; getimphotspot, 0x0049C13A
+mov  cx,[edx]          ; frame record's first u16
+shr  ecx,8             ; record count, from record byte +1
+cmp  ecx,eax           ; eax = 1
+jle  <fail>            ; count <= 1 means nothing to search
+mov  ebx,[edx+8]       ; hotspot array pointer, the overloaded dword
+lea  edx,[ebx+6]       ; *** start at record 1, not record 0 ***
+cmp  di,[edx]          ; compare requested type
+```
+
+`enumimphotspots` does the same at `0x0049C35A`: loop counter initialised to `1`, byte cursor
+initialised to `6`, and the same `count <= 1` bail-out.
+
+So **no GameScript can read or enumerate record 0 by any means.** It is engine-internal.
+
+This also confirms two format details directly from the code rather than by inference: record byte
+`+1` really is a count (`shr ecx,8` of the first u16), and the dword at `+8` really is the array
+pointer.
+
+While reading it: **`getimphotspot` pops five operands**, not the one the arity walk reports. That is
+the third operator whose real signature came from disassembly after `drawimpframe` and `map2screen`.
+The walk finds candidates; it is not evidence about a contract.
+
+### The corpus agrees that record 0 is special
+
+Across GS5R3's 28,771 hotspot-bearing frames:
+
+| Measurement | Result |
+| --- | --- |
+| record 0 has type 0 | 28,661 (99.62%) |
+| type 0 appearing in any slot **other** than 0 | **0** |
+| frames with only record 0 | 0 (minimum count is 2) |
+| record-count histogram | 2:24,412  3:2,621  4:1,287  5:190  6:212  7:27  8:12  9:10 |
+
+Type 0 and slot 0 are the same thing: type 0 never occurs anywhere else, and slot 0 is almost always
+type 0. The engine's `count <= 1` bail-out is exactly what a reserved slot 0 plus optional typed
+attach points would need.
+
+### It also localises the out-of-vocabulary anomaly
+
+All **110** frames whose record 0 is not type 0 are in one file, `units\imp\eacr5a.imp`, and all carry
+type **136**. That is one of the two files already flagged as carrying hotspot types outside the
+engine's 19-name vocabulary, and it is now pinned to the reserved slot rather than to an attach point.
+This is directly relevant to the open question on board thread 2176.
+
+### Where this leaves the custom-unit problem
+
+The reading is that **record 0 plays the role for unit frames that the origin pair plays for terrain
+frames** — the draw placement — while records 1 and up are the typed attach points the vocabulary
+names. That is consistent with every measurement above, but it is still **inference**: nothing here
+observes the draw code consuming record 0.
+
+It is now a sharp, cheap hypothesis to test, and the test needs no frame identification at all:
+**perturb record 0 of a unit sprite by a large known amount, inject, and look.** If record 0 is the
+draw placement, every frame of that unit shifts by the perturbation. If it is not, nothing moves.
+A single keypress settles it.
