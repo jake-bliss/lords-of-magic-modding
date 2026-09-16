@@ -60,6 +60,39 @@ target/release/lom-asset-viewer --view-map MAP.scn tilesb01.til tilesb01.lbm
 target/release/lom-asset-viewer --export-map-preview MAP.scn tilesb01.til tilesb01.lbm /tmp/map-preview.png
 ```
 
+## Writing sprite placement
+
+The engine draws a frame as `top_left = anchor + placement - (width >> 1, height >> 1)`, measured in
+the running engine on 2026-09-16. The placement pair is the vector from the anchor to the **centre**
+of the frame, in screen pixels with `+y` down, and it is added.
+
+Solve for the value a re-cropped frame needs — here `palm1b.imp` frame 0, 53x53 at `(9, -20)`, padded
+by 4 pixels on every side:
+
+```sh
+target/release/lom-asset-viewer --imp-placement-for 61 61 320 180 303 134
+# placement	13	-16
+```
+
+Each axis shifts by half the added pixels, because the convention is centre-relative.
+
+Write it back into a loose IMP:
+
+```sh
+target/release/lom-asset-viewer --set-imp-placement in.imp 0 13 -16 out.imp
+target/release/lom-asset-viewer --set-imp-placement in.imp 0 5 -40 out.imp --hotspot 0
+```
+
+Frame record bytes `+8..+12` are overloaded: a frame carries **either** an origin pair **or** a
+pointer to hotspot records, never both. Use `--hotspot TYPE` for the second form; `--describe-imp`
+shows which a frame has. The writer keeps the file length identical, re-parses before writing,
+refuses a placement it cannot read back, and warns when repeated facings or shared-pixel runs make
+several frames share one record.
+
+**Scope.** The rule above was measured against frames carrying the *origin pair*. Which hotspot type
+the engine uses as the draw anchor for record-bearing frames is **not yet established** — see the
+research log. `examples/imp_placement_survey.rs` reports the corpus split.
+
 `--extract`, `--export-imp-frame`, and `--export-map-preview` use create-new semantics and refuse to overwrite an existing output. IMP frame export writes an 8-bit indexed PNG with the source palette indices and RGB palette intact. Map preview export writes an RGBA overview using the original terrain atlas at 8×8 output pixels per map cell. Neither path reimports PNGs into the game format. Add `--listfile "$LISTFILE"` to any command when public names are needed. To inventory all five archives in one pass, use [`scripts/inventory-native-assets.sh`](../../scripts/inventory-native-assets.sh).
 
 In the PBM archive viewer:

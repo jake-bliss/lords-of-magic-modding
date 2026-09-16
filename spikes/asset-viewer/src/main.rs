@@ -12,6 +12,7 @@ use lom_asset_viewer::gamescript::GameScriptDocument;
 use lom_asset_viewer::gamescript_vm::{
     GameScriptVm, GameScriptVmError, Value as GameScriptValue,
 };
+use lom_asset_viewer::imp;
 use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::map::MapAsset;
 use lom_asset_viewer::mpq::{Archive, Entry};
@@ -41,6 +42,20 @@ enum Command {
         source: Source,
         member: String,
         frame: usize,
+        output: PathBuf,
+    },
+    ImpPlacementFor {
+        width: u16,
+        height: u16,
+        anchor: (i32, i32),
+        top_left: (i32, i32),
+    },
+    SetImpPlacement {
+        input: PathBuf,
+        frame: usize,
+        x: i16,
+        y: i16,
+        hotspot: Option<u16>,
         output: PathBuf,
     },
     ExportMapPreview {
@@ -185,6 +200,20 @@ fn run() -> Result<(), String> {
             frame,
             output,
         } => export_imp_frame(&source, &member, frame, &output),
+        Command::ImpPlacementFor {
+            width,
+            height,
+            anchor,
+            top_left,
+        } => imp_placement_for(width, height, anchor, top_left),
+        Command::SetImpPlacement {
+            input,
+            frame,
+            x,
+            y,
+            hotspot,
+            output,
+        } => set_imp_placement(&input, frame, x, y, hotspot, &output),
         Command::ExportMapPreview {
             map,
             tile_set,
@@ -241,6 +270,13 @@ fn parse_args() -> Result<Command, String> {
     let listfile = take_option(&mut args, "--listfile")?.map(PathBuf::from);
     let executable = take_option(&mut args, "--exe")?.map(PathBuf::from);
     let expression = take_option(&mut args, "--eval")?;
+    let hotspot = take_option(&mut args, "--hotspot")?
+        .map(|value| {
+            value
+                .parse::<u16>()
+                .map_err(|_| format!("hotspot type must be a nonnegative integer: {value}"))
+        })
+        .transpose()?;
     let stubs = take_repeated_option(&mut args, "--stub")
         .iter()
         .map(|specification| parse_native_stub(specification))
@@ -277,6 +313,26 @@ fn parse_args() -> Result<Command, String> {
                 member: args[2].clone(),
                 frame: parse_frame_index(&args[3])?,
                 output: args[4].clone().into(),
+            })
+        }
+        "--imp-placement-for" => {
+            require_len(&args, 7)?;
+            Ok(Command::ImpPlacementFor {
+                width: parse_dimension(&args[1])?,
+                height: parse_dimension(&args[2])?,
+                anchor: (parse_coordinate(&args[3])?, parse_coordinate(&args[4])?),
+                top_left: (parse_coordinate(&args[5])?, parse_coordinate(&args[6])?),
+            })
+        }
+        "--set-imp-placement" => {
+            require_len(&args, 6)?;
+            Ok(Command::SetImpPlacement {
+                input: args[1].clone().into(),
+                frame: parse_frame_index(&args[2])?,
+                x: parse_offset(&args[3])?,
+                y: parse_offset(&args[4])?,
+                hotspot,
+                output: args[5].clone().into(),
             })
         }
         "--export-map-preview" => {
@@ -389,6 +445,24 @@ fn parse_args() -> Result<Command, String> {
     }
 }
 
+fn parse_offset(value: &str) -> Result<i16, String> {
+    value
+        .parse()
+        .map_err(|_| format!("placement offset must fit in a signed 16-bit integer: {value}"))
+}
+
+fn parse_dimension(value: &str) -> Result<u16, String> {
+    value
+        .parse()
+        .map_err(|_| format!("frame dimension must be a nonnegative 16-bit integer: {value}"))
+}
+
+fn parse_coordinate(value: &str) -> Result<i32, String> {
+    value
+        .parse()
+        .map_err(|_| format!("screen coordinate must be an integer: {value}"))
+}
+
 fn parse_frame_index(value: &str) -> Result<usize, String> {
     value
         .parse()
@@ -463,7 +537,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -607,6 +681,87 @@ fn export_map_preview(
         preview.height,
         preview.atlas_name,
     );
+    Ok(())
+}
+
+/// Solve for the placement pair that keeps a frame where it is after its size changed.
+///
+/// This is the calculation a re-cropping tool needs. It is pure arithmetic over the rule in
+/// [`lom_asset_viewer::imp::frame_top_left`], so it takes no file.
+fn imp_placement_for(
+    width: u16,
+    height: u16,
+    anchor: (i32, i32),
+    top_left: (i32, i32),
+) -> Result<(), String> {
+    let (x, y) = imp::placement_for_top_left(anchor, top_left, width, height)
+        .map_err(|error| error.to_string())?;
+    println!("placement\t{x}\t{y}");
+    println!(
+        "check\ttop-left {:?} for a {width}x{height} frame drawn at {anchor:?}",
+        imp::frame_top_left(anchor, (x, y), width, height)
+    );
+    Ok(())
+}
+
+/// Rewrite one frame's placement in a loose IMP file.
+///
+/// Works on a file rather than an archive member because the workflow it serves is repairing a
+/// sprite a third-party tool emitted, before it is packed back into an MPQ.
+fn set_imp_placement(
+    input: &Path,
+    frame: usize,
+    x: i16,
+    y: i16,
+    hotspot: Option<u16>,
+    output: &Path,
+) -> Result<(), String> {
+    let source = fs::read(input)
+        .map_err(|error| format!("could not read {}: {error}", input.display()))?;
+    let sprite = ImpSprite::parse(&source).map_err(|error| error.to_string())?;
+
+    let shared = sprite
+        .frames_sharing_record(frame)
+        .map_err(|error| error.to_string())?;
+    if shared.len() > 1 {
+        eprintln!(
+            "note: frames {shared:?} share one record, so this writes all of them"
+        );
+    }
+
+    let patched = match hotspot {
+        Some(id) => imp::write_frame_hotspot(&source, frame, id, x, y),
+        None => imp::write_frame_origin(&source, frame, x, y),
+    }
+    .map_err(|error| error.to_string())?;
+
+    // Re-parse before writing: a file we cannot read back is a file we must not emit.
+    let reparsed = ImpSprite::parse(&patched).map_err(|error| {
+        format!("refusing to write: the patched sprite no longer parses: {error}")
+    })?;
+    let written = &reparsed.frames[frame];
+    let observed = match hotspot {
+        Some(id) => written
+            .hotspots
+            .iter()
+            .find(|spot| spot.id == id)
+            .map(|spot| (spot.x, spot.y)),
+        None => written.origin_x.zip(written.origin_y),
+    };
+    if observed != Some((x, y)) {
+        return Err(format!(
+            "refusing to write: expected placement ({x}, {y}) but read back {observed:?}"
+        ));
+    }
+
+    fs::write(output, &patched)
+        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+    let changed = source
+        .iter()
+        .zip(&patched)
+        .filter(|(before, after)| before != after)
+        .count();
+    println!("wrote\t{}\t{changed} bytes changed", output.display());
     Ok(())
 }
 
@@ -2555,6 +2710,8 @@ mod tests {
                 palette_indices: vec![2],
                 rgba: vec![1, 2, 3, 255],
                 source_frame: None,
+                record_offset: 0,
+                hotspot_offset: None,
             })
             .collect();
         ImpSprite {
