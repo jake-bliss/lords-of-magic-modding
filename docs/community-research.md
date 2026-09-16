@@ -26,6 +26,7 @@ No proprietary text, script source, or binary from these sources is stored in Gi
 | GSZ updates | `https://impz.proboards.com/thread/1948/gsz-updates-reports` | GSZ changelog |
 | MPQ repack ruleset | `https://impz.proboards.com/thread/2102/error-when-mpq-edditing` | Compression settings for `.gs` members |
 | 2026 tool suite | `https://impz.proboards.com/thread/2590/lords-magic-utility-suite-open` | eyesodilated's MPQ/IMP/map toolchain |
+| Sprite hotspot thread | `https://impz.proboards.com/thread/2176/great-masters-necropian-abyss-summon` | 115 posts, 2014-07 to 2026-06; the hotspot and mirroring mechanism |
 
 The site is HTTP-only with no TLS listener, so any fetcher that force-upgrades to HTTPS fails with
 `ECONNREFUSED` on port 443. Use plain HTTP. The forum redirects to HTTPS and rate-limits automated
@@ -101,9 +102,11 @@ two record variants, one with explicit stored sizes and one whose payload length
 to a hotspot struct. That is structurally identical to our reading, which treats the byte as a
 hotspot count and the dword as either two `i16` origins when the count is 0 or a pointer to that many
 6-byte records otherwise. Two independent derivations converged on the same layout from opposite
-directions. The remaining question is only whether the byte is a type tag or a count; our reading is
-the one that explains the generated-header hotspot byte totals for all 1,798 pairs, so it stands
-until something contradicts it.
+directions.
+
+The open question in that paragraph — *"whether the byte is a type tag or a count"* — is now
+**settled as a count**, by ozz in thread 2176 and independently by measurement here. See
+[the hotspot mechanism](#the-hotspot-mechanism-thread-2176) below.
 
 **Palette index 1 is the shadow.** This resolves our open "secondary mask" question. Our own
 observation of *"a separate pure-red index for a 1,651-pixel silhouette beneath the creature"*
@@ -215,6 +218,116 @@ gap is the two categories it does not attempt:
 strong mutual corroboration. Our coverage is strictly larger: every one of the 1,800 members parses
 and expands here, including 188 files and 3,388 frames no public tool decodes. Their advantage
 remains write-back, editing, and map repair, which we do not attempt at all.
+
+## The hotspot mechanism, thread 2176
+
+Thread 2176 is 115 posts spanning 2014-07-30 to 2026-06-13 — eyesodilated, Boaster, orzie and **ozz**
+— and it is the origin of the "512x512 hotspot" problem recorded in issue #1. It matters for two
+reasons: it states the mechanism precisely, and the statement is testable against our corpus.
+
+### The nine-year workaround ladder, and why it never closed
+
+eyesodilated tried to add new unit sprites and found each newly compiled unit selectable across a
+512x512 region of the battlefield. The fixes he found each broke the previous one:
+
+| Fix | Consequence |
+| --- | --- |
+| Crop frames to their minimum extent | frames wobble between animations |
+| Re-centre each frame on the original (256,256) | hotspot region grows back |
+| Pad the frame bottom so the unit sorts in front of scenery | health bar floats far above the unit |
+| Lower `/health_bar_y` to `-35` in the unit's `.gs` | works, but per-unit and manual |
+
+This ladder is the reason the problem looks like a sizing problem. It is not.
+
+### The actual mechanism, per ozz, 2023
+
+**`lomut` never writes hotspot data at all.** Recompiled IMPs come back with `HSType = 0`, so the
+engine reads a packed XY displacement from a field that instead holds a stale pointer. Cropping
+frames only shrinks the damage; it never restores the missing records. Every downstream symptom —
+wobble, health-bar placement, depth sorting — follows from the absent hotspot array, which is why
+fixing any one of them by hand re-broke another.
+
+ozz's reading of the frame record, which matches ours field for field:
+
+- `+1` `HSType` — the **number** of hotspot records for this frame, not a type tag.
+- `+8` `HSpot` — a packed XY displacement when `HSType` is 0, otherwise a **file offset** to that
+  many records, stored near end of file and padded to an 8-byte boundary.
+- Each record is a `(type, x, y)` trio of signed 2-byte values.
+
+He also notes that **snv's `imp.c` hotspot struct is wrong**: it hardcodes two hotspot sets when the
+count is variable. That defect is inherited by every tool ported from it.
+
+### Verified here
+
+Measured across all 1,800 IMP members of the GS5R3 `imp.mpq`, then spot-checked by an independent
+hex parse that does not share code with the Rust decoder:
+
+**Hotspot record layout — confirmed.** `liwiza.imp` frame 0, the file ozz hex-dumped, holds
+`00 00 00 00 e8 ff 07 00 00 00 dd ff` at its `HSpot` target: types 0 and 7 with `i16` displacements,
+exactly as described. Our 6-byte `(u16 id, i16 x, i16 y)` record reads it correctly.
+
+**Record count per frame reaches 9**, not the 2 that `imp.c` assumes, nor the 5 that ozz had
+observed:
+
+| Records per frame | Frames |
+| ---: | ---: |
+| 2 | 24,412 |
+| 3 | 2,621 |
+| 4 | 1,287 |
+| 5 | 190 |
+| 6 | 212 |
+| 7 | 27 |
+| 8 | 12 |
+| 9 | 10 |
+
+**Types 0 and 7 are near-universal** — 28,661 and 28,183 occurrences — corroborating ozz's "present
+in all units". Types 1 through 6, 8 and 9 appear in the hundreds to low thousands, and types 10 and
+16 also occur.
+
+**`lomse.exe` defines 19 hotspot constants, not 10.** ozz's list came from a code comment; the
+binary's string table is authoritative:
+
+```
+NO_HOTSPOT              CURSOR_HOTSPOT          MISSILE_ORIGIN_HOTSPOT
+MISSILE_HOTSPOT         MISSILE_TARGET_HOTSPOT  FLAP_OFFSET_HOTSPOT
+SPELL_ORIGIN1_HOTSPOT   SPELL_ORIGIN2_HOTSPOT   SPELL_ORIGIN3_HOTSPOT
+SPELL_ORIGIN4_HOTSPOT   SPELL_TARGET_HOTSPOT    STREAMER_HOTSPOT
+BOLT_HOTSPOT_D0..D3     BOLT_HOTSPOT_S0..S3
+```
+
+The extra names cover the observed types 10 and 16 that the ten-name list cannot explain. The engine
+also exports the natives **`getimphotspot`** and **`enumimphotspots`**, so hotspots are reachable
+from GameScript directly — relevant to issue #5.
+
+**ozz asked whether the hotspot comment block is in the original `aura.gs`. It is not, but the names
+are real.** Shipped `aura.gs` is a single line with no `;` comments anywhere. The identifiers are
+live in it: `NO_HOTSPOT`, `SPELL_TARGET_HOTSPOT`, `SPELL_ORIGIN1_HOTSPOT` and
+`SPELL_ORIGIN2_HOTSPOT` are all passed to `addauratype`. So his list is genuine engine vocabulary,
+just incomplete and sourced from a comment that the shipped scripts do not carry.
+
+**Mirroring — confirmed.** ozz: byte 1 of the sequence record is the mirror flag, and any value
+`>= 128` mirrors. Across 4,629 sequences:
+
+- **No unmirrored sequence has more than 2 facings.** Unmirrored sequences are overwhelmingly
+  single-facing (1,230 of 1,286).
+- **All 28 of the 33-facing sequences are flagged mirrored**, matching his account of arrows storing
+  33 facings and mirroring to 64 directions.
+- Unit sequences with 5 facings are mirrored in all 2,234 cases.
+- Byte 3 is `0x01` in 4,623 of 4,629 sequences; byte 4 is `0xff` in all 4,629. ozz's "4th byte is
+  always 1" holds to 99.87%.
+
+### Open: two files carry hotspot types outside the engine's vocabulary
+
+`units\imp\eacr5a.imp` uses types 106, 136, 138 and 143 on all 110 frames and carries **neither type
+0 nor type 7**, which every other unit has on every frame. `units\imp\aiwm1b.imp` uses type 190 on 25
+frames alongside a normal type 0.
+
+This is **not** a decoder defect. An independent hex parse confirms the bytes: `eacr5a` frame 0 holds
+`88 00 fe ff 07 00 6a 00 ff ff ea ff 8a 00 fe ff ea ff` at its `HSpot` target, and the pattern
+repeats regularly across all 110 frames rather than degrading as corruption would. Both files also
+pass `--validate-imp` against their generated headers, so frame counts and pixel-byte totals agree.
+The bytes are real and we read them faithfully; what the values *mean* is unexplained. Worth putting
+to ozz, who has spent the most time in this structure.
 
 ## Prior art we did not know about
 
