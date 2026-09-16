@@ -3,7 +3,7 @@ use std::fmt;
 
 const FILE_HEADER_SIZE: usize = 32;
 const SEQUENCE_RECORD_SIZE: usize = 16;
-const CYCLE_RECORD_SIZE: usize = 8;
+const FACING_RECORD_SIZE: usize = 8;
 const FRAME_RECORD_SIZE: usize = 16;
 const HOTSPOT_RECORD_SIZE: usize = 6;
 const HOTSPOT_ALIGNMENT: usize = 8;
@@ -36,7 +36,7 @@ pub struct ImpHotspot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImpCycle {
+pub struct ImpFacing {
     pub metadata: u16,
     pub first_frame: usize,
     pub frame_count: usize,
@@ -45,8 +45,8 @@ pub struct ImpCycle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImpSequence {
     pub metadata: [u8; 11],
-    pub first_cycle: usize,
-    pub cycle_count: usize,
+    pub first_facing: usize,
+    pub facing_count: usize,
     pub first_frame: usize,
     pub frame_count: usize,
 }
@@ -62,7 +62,7 @@ pub struct ImpSprite {
     /// Palette index treated as transparent, read from header byte 3.
     pub color_key: u8,
     pub sequence_count: usize,
-    pub cycle_count: usize,
+    pub facing_count: usize,
     pub frame_count: usize,
     pub duplicate_frame_count: usize,
     /// Frames carrying only `FRAME_FLAG_DUPLICATE` (0x08), i.e. true back-references
@@ -79,7 +79,7 @@ pub struct ImpSprite {
     pub stored_pixel_bytes: u64,
     pub palette: Vec<[u8; 4]>,
     pub sequences: Vec<ImpSequence>,
-    pub cycles: Vec<ImpCycle>,
+    pub facings: Vec<ImpFacing>,
     pub frames: Vec<ImpFrame>,
 }
 
@@ -157,7 +157,7 @@ impl ImpSprite {
             .chunks_exact(4)
             .map(|bgra| [bgra[2], bgra[1], bgra[0], 255])
             .collect();
-        let mut cycle_count = 0_usize;
+        let mut facing_count = 0_usize;
         let mut frame_count = 0_usize;
         let mut hotspot_count = 0_usize;
         let mut hotspot_bytes = 0_u64;
@@ -166,7 +166,7 @@ impl ImpSprite {
         let mut raw_pixel_bytes = 0_u64;
         let mut stored_pixel_bytes = 0_u64;
         let mut sequences = Vec::with_capacity(sequence_count);
-        let mut cycles = Vec::new();
+        let mut facings = Vec::new();
         let mut frames = Vec::new();
         let mut pixel_sources = BTreeMap::<usize, usize>::new();
 
@@ -175,31 +175,31 @@ impl ImpSprite {
             let sequence_metadata = source[sequence_offset..sequence_offset + 11]
                 .try_into()
                 .expect("sequence metadata range was checked");
-            let sequence_cycles = usize::from(source[sequence_offset + 11]);
-            let cycle_table_offset = read_u32(source, sequence_offset + 12)? as usize;
-            if sequence_cycles == 0 {
+            let sequence_facings = usize::from(source[sequence_offset + 11]);
+            let facing_table_offset = read_u32(source, sequence_offset + 12)? as usize;
+            if sequence_facings == 0 {
                 return Err(ImpError::new(format!(
-                    "IMP sequence {sequence_index} has no cycles"
+                    "IMP sequence {sequence_index} has no facings"
                 )));
             }
             require_range(
                 source,
-                cycle_table_offset,
-                sequence_cycles,
-                CYCLE_RECORD_SIZE,
-                "cycle table",
+                facing_table_offset,
+                sequence_facings,
+                FACING_RECORD_SIZE,
+                "facing table",
             )?;
-            cycle_count = cycle_count
-                .checked_add(sequence_cycles)
-                .ok_or_else(|| ImpError::new("IMP cycle count overflow"))?;
-            let sequence_first_cycle = cycles.len();
+            facing_count = facing_count
+                .checked_add(sequence_facings)
+                .ok_or_else(|| ImpError::new("IMP facing count overflow"))?;
+            let sequence_first_facing = facings.len();
             let sequence_first_frame = frames.len();
 
-            for cycle_index in 0..sequence_cycles {
-                let cycle_offset = cycle_table_offset + cycle_index * CYCLE_RECORD_SIZE;
-                let cycle_metadata = read_u16(source, cycle_offset)?;
-                let cycle_frames = usize::from(read_u16(source, cycle_offset + 2)?);
-                let frame_table_offset = read_u32(source, cycle_offset + 4)? as usize;
+            for facing_index in 0..sequence_facings {
+                let facing_offset = facing_table_offset + facing_index * FACING_RECORD_SIZE;
+                let facing_metadata = read_u16(source, facing_offset)?;
+                let facing_frames = usize::from(read_u16(source, facing_offset + 2)?);
+                let frame_table_offset = read_u32(source, facing_offset + 4)? as usize;
                 require_range(
                     source,
                     frame_table_offset,
@@ -207,19 +207,19 @@ impl ImpSprite {
                     FRAME_RECORD_SIZE,
                     "frame table",
                 )?;
-                let repeated_cycle = source[frame_table_offset] & FRAME_FLAG_SHARED_PIXELS != 0;
-                if !repeated_cycle {
+                let repeated_facing = source[frame_table_offset] & FRAME_FLAG_SHARED_PIXELS != 0;
+                if !repeated_facing {
                     require_range(
                         source,
                         frame_table_offset,
-                        cycle_frames,
+                        facing_frames,
                         FRAME_RECORD_SIZE,
                         "frame table",
                     )?;
                 }
-                let cycle_first_frame = frames.len();
-                for frame_index in 0..cycle_frames {
-                    let frame_offset = if repeated_cycle {
+                let facing_first_frame = frames.len();
+                for frame_index in 0..facing_frames {
+                    let frame_offset = if repeated_facing {
                         frame_table_offset
                     } else {
                         frame_table_offset + frame_index * FRAME_RECORD_SIZE
@@ -234,12 +234,12 @@ impl ImpSprite {
                     let empty_frame = width == 0 && height == 0;
                     if !empty_frame && (width == 0 || height == 0) {
                         return Err(ImpError::new(format!(
-                            "IMP frame {frame_index} in cycle {cycle_index} has partial zero dimensions"
+                            "IMP frame {frame_index} in facing {facing_index} has partial zero dimensions"
                         )));
                     }
                     if width > maximum_width || height > maximum_height {
                         return Err(ImpError::new(format!(
-                            "IMP frame {frame_index} in cycle {cycle_index} exceeds maximum dimensions"
+                            "IMP frame {frame_index} in facing {facing_index} exceeds maximum dimensions"
                         )));
                     }
                     let hotspots = if frame_hotspots > 0 {
@@ -261,7 +261,7 @@ impl ImpSprite {
                         let source_frame = if shared_pixels {
                             pixel_sources.get(&pixels_offset).copied().ok_or_else(|| {
                                 ImpError::new(format!(
-                                    "IMP repeated cycle references unknown pixel offset {pixels_offset}"
+                                    "IMP repeated facing references unknown pixel offset {pixels_offset}"
                                 ))
                             })?
                         } else {
@@ -367,18 +367,18 @@ impl ImpSprite {
                     });
                 }
                 frame_count = frame_count
-                    .checked_add(cycle_frames)
+                    .checked_add(facing_frames)
                     .ok_or_else(|| ImpError::new("IMP frame count overflow"))?;
-                cycles.push(ImpCycle {
-                    metadata: cycle_metadata,
-                    first_frame: cycle_first_frame,
-                    frame_count: cycle_frames,
+                facings.push(ImpFacing {
+                    metadata: facing_metadata,
+                    first_frame: facing_first_frame,
+                    frame_count: facing_frames,
                 });
             }
             sequences.push(ImpSequence {
                 metadata: sequence_metadata,
-                first_cycle: sequence_first_cycle,
-                cycle_count: sequence_cycles,
+                first_facing: sequence_first_facing,
+                facing_count: sequence_facings,
                 first_frame: sequence_first_frame,
                 frame_count: frames.len() - sequence_first_frame,
             });
@@ -393,7 +393,7 @@ impl ImpSprite {
             maximum_height,
             color_key,
             sequence_count,
-            cycle_count,
+            facing_count,
             frame_count,
             duplicate_frame_count,
             back_reference_frame_count,
@@ -403,7 +403,7 @@ impl ImpSprite {
             stored_pixel_bytes,
             palette,
             sequences,
-            cycles,
+            facings,
             frames,
         })
     }
@@ -440,7 +440,7 @@ impl ImpSprite {
             }
         }
         Err(ImpError::new(
-            "IMP duplicate-frame references contain a cycle",
+            "IMP duplicate-frame references contain a facing",
         ))
     }
 
@@ -456,16 +456,16 @@ impl ImpSprite {
             {
                 continue;
             }
-            for cycle_index in sequence.first_cycle..sequence.first_cycle + sequence.cycle_count {
-                let cycle = &self.cycles[cycle_index];
-                if (cycle.first_frame..cycle.first_frame + cycle.frame_count).contains(&frame_index)
+            for facing_index in sequence.first_facing..sequence.first_facing + sequence.facing_count {
+                let facing = &self.facings[facing_index];
+                if (facing.first_frame..facing.first_frame + facing.frame_count).contains(&frame_index)
                 {
-                    return Ok((sequence_index, cycle_index, frame_index - cycle.first_frame));
+                    return Ok((sequence_index, facing_index, frame_index - facing.first_frame));
                 }
             }
         }
         Err(ImpError::new(format!(
-            "IMP frame index {frame_index} is not owned by a cycle"
+            "IMP frame index {frame_index} is not owned by a facing"
         )))
     }
 }
@@ -834,17 +834,17 @@ mod tests {
         let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
         assert_eq!((sprite.maximum_width, sprite.maximum_height), (2, 1));
         assert_eq!(sprite.sequence_count, 1);
-        assert_eq!(sprite.cycle_count, 1);
+        assert_eq!(sprite.facing_count, 1);
         assert_eq!(sprite.frame_count, 1);
         assert_eq!(
             sprite.sequences[0].metadata,
             [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
         );
-        assert_eq!(sprite.sequences[0].first_cycle, 0);
+        assert_eq!(sprite.sequences[0].first_facing, 0);
         assert_eq!(sprite.sequences[0].frame_count, 1);
-        assert_eq!(sprite.cycles[0].metadata, 7);
-        assert_eq!(sprite.cycles[0].first_frame, 0);
-        assert_eq!(sprite.cycles[0].frame_count, 1);
+        assert_eq!(sprite.facings[0].metadata, 7);
+        assert_eq!(sprite.facings[0].first_frame, 0);
+        assert_eq!(sprite.facings[0].frame_count, 1);
         assert_eq!(sprite.frame_location(0).unwrap(), (0, 0, 0));
         assert_eq!(sprite.raw_pixel_bytes, 2);
         assert_eq!(sprite.stored_pixel_bytes, 2);
@@ -882,7 +882,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_pixel_records_resolve_by_payload_offset_inside_a_cycle() {
+    fn shared_pixel_records_resolve_by_payload_offset_inside_a_facing() {
         let mut source = synthetic_imp();
         source.splice(72..72, [0_u8; FRAME_RECORD_SIZE]);
         source[8..12].copy_from_slice(&88_u32.to_le_bytes());
@@ -902,9 +902,9 @@ mod tests {
     }
 
     #[test]
-    fn repeated_cycle_record_represents_each_logical_frame() {
+    fn repeated_facing_record_represents_each_logical_frame() {
         let mut source = synthetic_imp();
-        source.splice(56..56, [0_u8; CYCLE_RECORD_SIZE + FRAME_RECORD_SIZE]);
+        source.splice(56..56, [0_u8; FACING_RECORD_SIZE + FRAME_RECORD_SIZE]);
         source[8..12].copy_from_slice(&96_u32.to_le_bytes());
         source[32 + 11] = 2;
         source[48 + 4..48 + 8].copy_from_slice(&80_u32.to_le_bytes());
@@ -917,10 +917,10 @@ mod tests {
         let sprite = ImpSprite::parse(&source).unwrap();
         assert_eq!(sprite.frame_count, 6);
         assert_eq!(sprite.duplicate_frame_count, 5);
-        assert_eq!(sprite.sequences[0].cycle_count, 2);
+        assert_eq!(sprite.sequences[0].facing_count, 2);
         assert_eq!(sprite.sequences[0].frame_count, 6);
-        assert_eq!(sprite.cycles[1].first_frame, 1);
-        assert_eq!(sprite.cycles[1].frame_count, 5);
+        assert_eq!(sprite.facings[1].first_frame, 1);
+        assert_eq!(sprite.facings[1].frame_count, 5);
         assert_eq!(sprite.frame_location(5).unwrap(), (0, 1, 4));
         assert_eq!(sprite.raw_pixel_bytes, 2);
         assert_eq!(sprite.stored_pixel_bytes, 2);
@@ -965,7 +965,7 @@ mod tests {
     #[test]
     fn parses_generated_header_statistics() {
         let header = b"// Sprite headers for sequence dragon\r\n\
-//Cycle-name defines\r\n\
+//Facing-name defines\r\n\
 #define DRAGON_MOVE 0\r\n\
 #define DRAGON_STAND 1\r\n\
 #define DRAGON_IDLE 1\r\n\

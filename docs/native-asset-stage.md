@@ -2,7 +2,7 @@
 
 ## Status
 
-**In progress; archive inventory, IMP inspection/export, terrain-atlas rendering, and the dominant map-object record milestone are complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels, frame references, sequences, cycles, origins, and hotspot records of all 1,800 IMP sprite binaries. It also bounds all 365 installed `.scn`, `.smp`, and `.lgd` files, resolves standard map cells through original terrain art, and structurally decodes 16,628 placed-sprite records.
+**In progress; archive inventory, IMP inspection/export, terrain-atlas rendering, and the dominant map-object record milestone are complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels, frame references, sequences, facings, origins, and hotspot records of all 1,800 IMP sprite binaries. It also bounds all 365 installed `.scn`, `.smp`, and `.lgd` files, resolves standard map cells through original terrain art, and structurally decodes 16,628 placed-sprite records.
 
 This is useful tooling now, but it is not yet the lossless asset layer promised by Stage 1. Full map/scenario semantics, verified compositing/origin behavior, reimport/repacking, and cross-platform packaging remain open.
 
@@ -51,23 +51,23 @@ The 3,098 WAVE members are probed for RIFF chunks, encoding, channels, sample ra
 The paired generated `.h` files provide unusually valuable ground truth. The current parser has established:
 
 - a 32-byte file header with palette and sequence-table offsets;
-- 16-byte sequence, 8-byte cycle, and 16-byte frame records;
+- 16-byte sequence, 8-byte facing, and 16-byte frame records;
 - a 256-entry BGRA palette;
-- maximum dimensions, sequences, cycles, logical frames, and frame dimensions;
-- explicit sequence-to-cycle and cycle-to-frame ranges, retained with their still-unknown raw metadata fields;
+- maximum dimensions, sequences, facings, logical frames, and frame dimensions;
+- explicit sequence-to-facing and facing-to-frame ranges, retained with their still-unknown raw metadata fields;
 - action labels recovered from generated-header `#define` values cover 4,649 of 4,666 declared sequence slots; aliases are retained, and 1,799 of 1,800 headers provide at least one label;
 - six-byte hotspot records padded per frame to an eight-byte boundary;
-- direct duplicate-frame references and a compact repeated-cycle representation;
-- shared-pixel flag `0x04`, including records that occur inside rather than only at the start of a repeated cycle;
+- direct duplicate-frame references and a compact repeated-facing representation;
+- shared-pixel flag `0x04`, including records that occur inside rather than only at the start of a repeated facing;
 - two observed frame-record variants, one with explicit stored sizes and one whose payload length is implicit;
 - a custom packet RLE in which controls below `0x80` repeat the following byte `control + 3` times and controls at or above `0x80` copy `256 - control` literal bytes;
 - 8-, 4-, 2-, and 1-bit indexed pixels selected by file-flag bits `0x30`, with both tightly packed and row-padded layouts;
 - most-significant-bit-first packing for sub-byte pixels, which produces recognizable output across representative sprites;
-- complete pixel expansion, frame-reference resolution, and sequence/cycle traversal for all 1,800 observed binaries.
+- complete pixel expansion, frame-reference resolution, and sequence/facing traversal for all 1,800 observed binaries.
 
 The shared-pixel correction removed 27 false origin records, bounded the remaining origin ranges to X `-66..70` and Y `-207..77`, and improved exact generated-header matches. Across the corpus, 15,725 logical frames carry signed origins and 28,771 carry 64,432 six-byte hotspot records. The hotspot bytes consistently decode as a candidate unsigned ID followed by signed X/Y offsets, with observed coordinate ranges X `-115..123` and Y `-232..86`. Exact coordinate and ID behavior remains a reference-comparison task in [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1).
 
-For example, `units\imp\chcr5a.imp` contains seven named actions (`MOVE`, `STAND`, `DEFEND`, `GET_HIT`, `DIE`, `CORPSE`, and `MELEE_ATTACK`), five cycles per action, and 170 logical frames. The five cycles are likely directional views, but that interpretation and the remaining sequence/cycle metadata have not yet been confirmed against the original executable.
+For example, `units\imp\chcr5a.imp` contains seven named actions (`MOVE`, `STAND`, `DEFEND`, `GET_HIT`, `DIE`, `CORPSE`, and `MELEE_ATTACK`), five facings per action, and 170 logical frames. The five facings are likely directional views, but that interpretation and the remaining sequence/facing metadata have not yet been confirmed against the original executable.
 
 The validator pairs generated headers with binaries and compares independently recorded sequence, frame, duplicate, raw-pixel, hotspot, and stored-pixel statistics where applicable:
 
@@ -93,10 +93,10 @@ community specification defines only frame types `0x00` and `0x08`, while we add
 "Duplicate bitmaps found" statistic counts only true `0x08` back-references. Validating against a
 `0x08`-only count raises corpus failures from 10 to **112**. That statistic therefore counts both
 flags and our existing conflation is correct. `ImpSprite::back_reference_frame_count` retains the
-separate `0x08` tally for analysis. The five disagreements have another cause; the repeated-cycle
+separate `0x08` tally for analysis. The five disagreements have another cause; the repeated-facing
 heuristic remains the leading suspect for the logical-frame and raw-pixel cases.
 
-The native viewer displays individual frames, follows duplicate/repeated references, navigates within a cycle or between cycles and actions, and can autoplay the current cycle at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, green index 0 fills the background while a distinct pure-red index forms a 1,651-pixel silhouette beneath the creature; an inspected 1-bit aura asset similarly uses green and red as its only two colors. This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes.
+The native viewer displays individual frames, follows duplicate/repeated references, navigates within a facing or between facings and actions, and can autoplay the current facing at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, green index 0 fills the background while a distinct pure-red index forms a 1,651-pixel silhouette beneath the creature; an inspected 1-bit aura asset similarly uses green and red as its only two colors. This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes.
 
 A community specification located on 2026-09-16 states the rule directly: **the transparency index is
 a header field and palette index 1 is the shadow**, keyed by index rather than by colour.
@@ -111,20 +111,21 @@ unchanged, because this affects presentation rather than structural decoding. Ou
 observation of a pure-red silhouette *beneath* a creature independently corroborates "shadow". The
 green and red RGB values in those slots are incidental art-tool choices, which is why colour-keying
 never generalised. `secondary_mask` is renamed `shadow` in the viewer accordingly. The same source
-names our "cycle" a **facing**, ordered clockwise; the clockwise claim is untested, but the naming is
-better than ours and the code rename is deferred as a separate mechanical change. See
-[community research](community-research.md). Exact mask meaning, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves all source palette indices and colors unchanged.
+names what this project originally called a "cycle" a **facing**, ordered clockwise. The clockwise
+claim is untested, but the naming is better than ours and has been adopted throughout the code, the
+docs, and the `--describe-imp` output, where sequence rows now cross-reference `facing:N` rather than
+`cycle:N`. See [community research](community-research.md). Exact mask meaning, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves all source palette indices and colors unchanged.
 
 The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synthetic decode-back test verifies exact palette bytes and palette-index pixels, and a real GS5R3 export was independently identified as a 165×127 indexed PNG. Exports now carry a `tRNS` chunk marking the header's colour-key index transparent; before 2026-09-16 every exported frame was fully opaque, silently losing the transparency key. Export uses create-new semantics so it cannot silently replace an existing file. This is a lossless inspection format, not yet a game-compatible IMP reimport or archive-writing pipeline.
 
 ## Evidence and confidence
 
-- **Observed:** all 9,804 core members are readable and classified; all 1,377 PBMs and 1,800 IMP binaries pass their bounded decoders; every IMP exposes bounded sequence/cycle/frame ranges; representative 8-bit IMP frames are visually recognizable; red and green occupy distinct palette indices/masks in inspected sprites.
-- **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, common five-cycle action groups represent directions, which a community tool attributes to five stored facings plus engine mirroring. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
+- **Observed:** all 9,804 core members are readable and classified; all 1,377 PBMs and 1,800 IMP binaries pass their bounded decoders; every IMP exposes bounded sequence/facing/frame ranges; representative 8-bit IMP frames are visually recognizable; red and green occupy distinct palette indices/masks in inspected sprites.
+- **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, common five-facing action groups represent directions, which a community tool attributes to five stored facings plus engine mirroring. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
 - **Observed:** header byte 3 is a transparency colour key, nonzero in 94 of 300 sampled files; on those files palette index 0 is absent from the pixel data entirely.
 - **Observed:** across the full 1,800-member corpus the file types are 9 (8-bit RLE, 957), 8 (8-bit raw, 606), 57 (4-bit RLE, 188), 25 (1-bit RLE, 27), 10 unclassified, and 12 that crash the community parser. An independent community decoder reaches 100% of non-duplicate frames on types 8, 9, and 25 — exact agreement with ours — but 0% on type 57 and on the 12 crash cases, for 91.6% overall against our 100%. Type 57 alone is 188 files and 3,388 frames that no public tool decodes.
-- **Documented:** a community specification agrees with our header offsets, record sizes, and RLE algorithm exactly, including the `control + 3` bias; it confirms the palette is stored BGRA and swapped to RGB, which resolves our open channel-order question in favour of the current implementation; it names palette index 1 the shadow and our cycles facings. Its guesses at a per-frame delay byte and a checksum dword are refuted by our hotspot decoding, which matches generated-header ground truth for all 1,798 pairs.
-- **Unknown:** how the shadow index is blended or recolored, how origins and hotspots affect placement, what the sequence/cycle metadata fields mean, and whether exceptional metadata cases use additional sharing rules. Animation timing appears to be carried solely by duplicate-frame repetition, since no delay field survives scrutiny on either side.
+- **Documented:** a community specification agrees with our header offsets, record sizes, and RLE algorithm exactly, including the `control + 3` bias; it confirms the palette is stored BGRA and swapped to RGB, which resolves our open channel-order question in favour of the current implementation; it names palette index 1 the shadow and our facings facings. Its guesses at a per-frame delay byte and a checksum dword are refuted by our hotspot decoding, which matches generated-header ground truth for all 1,798 pairs.
+- **Unknown:** how the shadow index is blended or recolored, how origins and hotspots affect placement, what the sequence/facing metadata fields mean, and whether exceptional metadata cases use additional sharing rules. Animation timing appears to be carried solely by duplicate-frame repetition, since no delay field survives scrutiny on either side.
 
 ## Map/scenario findings
 
@@ -140,7 +141,7 @@ Verified on 2026-09-12:
 - strict Clippy (`-D warnings`) passes for all targets;
 - all three repository Python tests pass;
 - a fresh read-only scan classifies all five GS5R3 core archives with zero probe failures;
-- all 1,800 IMP payloads decode with bounded sequence/cycle ranges;
+- all 1,800 IMP payloads decode with bounded sequence/facing ranges;
 - exact IMP/header validation matches 1,788 of 1,798 pairs; the ten remaining paired disagreements and four orphan names remain intentionally reported;
 - all 365 loose map/scenario/component files pass; all 196 exact 49-byte-family files decode 16,628 bounded records;
 - all 26 tile-set definitions parse, and a real `URAK.scn` terrain preview exports as a correctly oriented 1024×1024 RGBA PNG;
@@ -150,7 +151,7 @@ Verified on 2026-09-12:
 
 The implementation uses three layers of evidence:
 
-1. Tiny synthetic unit fixtures cover endianness, chunk bounds, ByteRun1 scanline behavior, IMP tables, sequence/cycle ranges, navigation boundaries, RLE packets, all four packed pixel depths, hotspots, duplicate references, repeated cycles, indexed-PNG preservation, BMP metadata, WAVE chunks, and the platform-dependent StormLib enumeration ABI.
+1. Tiny synthetic unit fixtures cover endianness, chunk bounds, ByteRun1 scanline behavior, IMP tables, sequence/facing ranges, navigation boundaries, RLE packets, all four packed pixel depths, hotspots, duplicate references, repeated facings, indexed-PNG preservation, BMP metadata, WAVE chunks, and the platform-dependent StormLib enumeration ABI.
 2. User-local corpus tests scan all five archives, require every member to be readable/classifiable, and cross-check IMP binaries against their generated headers. No copyrighted fixture enters Git.
 3. Visual comparison checks representative UI, portrait, map, and animation output against the original executable before renderer behavior is considered faithful.
 
@@ -167,10 +168,10 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [x] Bounds-checked structural parser for all 1,800 IMP binaries.
 - [x] Pixel decoding for both IMP record variants and all observed packed depths.
 - [x] Individual-frame viewer with duplicate resolution and animation controls.
-- [x] Named action and cycle navigation with cycle-scoped playback.
+- [x] Named action and facing navigation with facing-scoped playback.
 - [x] Non-overwriting, indexed-PNG export for individual logical frames.
 - [x] Generated-header parser and corpus cross-validator.
-- [x] Typed IMP origin/hotspot candidates and shared-pixel records inside cycles.
+- [x] Typed IMP origin/hotspot candidates and shared-pixel records inside facings.
 - [x] Bounded header/cell-grid parser and diagnostic elevation viewer for all 365 loose map files.
 - [x] Decode X-major map coordinates, standard tile-atlas indices, and the forced-texture tag candidate.
 - [x] Parse all 26 recovered `.til` definitions and render/export original-art terrain overviews.

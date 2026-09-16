@@ -247,9 +247,8 @@ their author has solved at least one problem we have open.
   was tested and refuted; the counter is retained for analysis and the finding recorded in the field
   doc comment.
 
-Deferred: renaming `ImpCycle` to `ImpFacing` touches over 100 sites across two modules and is a
-mechanical change better done on its own. The equivalence is documented in
-[native asset stage](native-asset-stage.md).
+`ImpCycle` has since been renamed `ImpFacing` throughout the code, docs, and CLI output; sequence
+rows in `--describe-imp` now cross-reference `facing:N` rather than `cycle:N`.
 
 ## How to use this document
 

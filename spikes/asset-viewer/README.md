@@ -70,16 +70,16 @@ In the PBM archive viewer:
 
 In the IMP frame viewer:
 
-- Right or Left selects the next or previous visible logical frame within the current cycle.
-- Down or Up selects the next or previous cycle within the current action.
+- Right or Left selects the next or previous visible logical frame within the current facing.
+- Down or Up selects the next or previous facing within the current action.
 - Page Down or Page Up selects the next or previous action sequence.
-- Space toggles cycle-scoped animation at the current provisional 100 ms frame interval.
-- C cycles between clean preview, visible mask, and raw-palette modes.
+- Space toggles facing-scoped animation at the current provisional 100 ms frame interval.
+- C facings between clean preview, visible mask, and raw-palette modes.
 - Escape or closing the window exits.
 
-When a paired generated `.h` member is available, the window title shows its recovered action name. Cycle direction and the provisional frame interval still require confirmation against the original executable.
+When a paired generated `.h` member is available, the window title shows its recovered action name. Facing direction and the provisional frame interval still require confirmation against the original executable.
 
-The IMP title and `--describe-imp` report raw sequence/cycle metadata plus candidate origin or hotspot values. In the map viewer, `C` switches among original terrain artwork (when `.til` and atlas paths are supplied), candidate elevation, and stable diagnostic tag colors. The terrain mode proves atlas selection and orientation, but its overview is not yet a recreation of the original renderer's full-size terrain composition.
+The IMP title and `--describe-imp` report raw sequence/facing metadata plus candidate origin or hotspot values. In the map viewer, `C` switches among original terrain artwork (when `.til` and atlas paths are supplied), candidate elevation, and stable diagnostic tag colors. The terrain mode proves atlas selection and orientation, but its overview is not yet a recreation of the original renderer's full-size terrain composition.
 
 Member matching is case-insensitive because the archive catalog and Windows game paths do not have reliable case consistency.
 
@@ -105,7 +105,7 @@ Tested against the installed GS5R3 profile on 2026-09-11:
 
 The viewer displayed `lbm\ACTIONS5.lbm` as a 612×120 image with 256 palette entries and ByteRun1 compression. The full scan found one image whose final compressed packet crosses a scanline boundary; matching the format's scanline semantics resolved it and is covered by a regression test.
 
-The IMP decoder handles both observed frame-record variants, the custom packet RLE, 8/4/2/1-bit indexed pixels, row padding, direct duplicates, shared-pixel records, repeated cycles, typed placement candidates, and explicit sequence/cycle/frame ranges. The unresolved cases are reported as failures by `--validate-imp`; they now cover ten metadata/statistical mismatches and four orphan public-catalog names. See the [Stage 1 record](../../docs/native-asset-stage.md) for the exact scope and remaining gates.
+The IMP decoder handles both observed frame-record variants, the custom packet RLE, 8/4/2/1-bit indexed pixels, row padding, direct duplicates, shared-pixel records, repeated facings, typed placement candidates, and explicit sequence/facing/frame ranges. The unresolved cases are reported as failures by `--validate-imp`; they now cover ten metadata/statistical mismatches and four orphan public-catalog names. See the [Stage 1 record](../../docs/native-asset-stage.md) for the exact scope and remaining gates.
 
 ## What the tool proves
 

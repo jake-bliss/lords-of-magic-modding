@@ -513,24 +513,24 @@ fn describe_imp(source: &Source, member: &str) -> Result<(), String> {
             .map(|labels| labels.join("|"))
             .unwrap_or_else(|| "unnamed".to_owned());
         println!(
-            "sequence\t{sequence_index}\t-\t{}\t{}\tcycle:{};frame:{}\tcycle:{};frame:{}\t-",
+            "sequence\t{sequence_index}\t-\t{}\t{}\tfacing:{};frame:{}\tfacing:{};frame:{}\t-",
             clean_field(&labels),
             hex_bytes(&sequence.metadata),
-            sequence.first_cycle,
+            sequence.first_facing,
             sequence.first_frame,
-            sequence.cycle_count,
+            sequence.facing_count,
             sequence.frame_count,
         );
-        for cycle_index in sequence.first_cycle..sequence.first_cycle + sequence.cycle_count {
-            let cycle = &sprite.cycles[cycle_index];
+        for facing_index in sequence.first_facing..sequence.first_facing + sequence.facing_count {
+            let facing = &sprite.facings[facing_index];
             println!(
-                "cycle\t{cycle_index}\tsequence:{sequence_index}\t-\t0x{:04x}\tframe:{}\tframe:{}\t-",
-                cycle.metadata, cycle.first_frame, cycle.frame_count,
+                "facing\t{facing_index}\tsequence:{sequence_index}\t-\t0x{:04x}\tframe:{}\tframe:{}\t-",
+                facing.metadata, facing.first_frame, facing.frame_count,
             );
         }
     }
     for (frame_index, frame) in sprite.frames.iter().enumerate() {
-        let (sequence_index, cycle_index, frame_in_cycle) = sprite
+        let (sequence_index, facing_index, frame_in_facing) = sprite
             .frame_location(frame_index)
             .map_err(|error| error.to_string())?;
         let resolved = sprite
@@ -552,7 +552,7 @@ fn describe_imp(source: &Source, member: &str) -> Result<(), String> {
             .source_frame
             .map_or_else(|| "direct".to_owned(), |index| format!("source:{index}"));
         println!(
-            "frame\t{frame_index}\tsequence:{sequence_index};cycle:{cycle_index};offset:{frame_in_cycle}\t0x{:02x};{source_frame}\t{}x{}\t-\t{}\t{}",
+            "frame\t{frame_index}\tsequence:{sequence_index};facing:{facing_index};offset:{frame_in_facing}\t0x{:02x};{source_frame}\t{}x{}\t-\t{}\t{}",
             frame.flags,
             resolved.width,
             resolved.height,
@@ -1275,7 +1275,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     repeat: false,
                     ..
                 } => {
-                    frame_index = step_imp_cycle(&sprite, frame_index, 1)?;
+                    frame_index = step_imp_facing(&sprite, frame_index, 1)?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
@@ -1283,7 +1283,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     repeat: false,
                     ..
                 } => {
-                    frame_index = step_imp_cycle(&sprite, frame_index, -1)?;
+                    frame_index = step_imp_facing(&sprite, frame_index, -1)?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
@@ -1327,11 +1327,11 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             .resolved_frame(frame_index)
             .map_err(|error| error.to_string())?;
         let logical_frame = &sprite.frames[frame_index];
-        let (sequence_index, cycle_index, frame_in_cycle) = sprite
+        let (sequence_index, facing_index, frame_in_facing) = sprite
             .frame_location(frame_index)
             .map_err(|error| error.to_string())?;
         let sequence = &sprite.sequences[sequence_index];
-        let cycle = &sprite.cycles[cycle_index];
+        let facing = &sprite.facings[facing_index];
         let sequence_label = sequence_labels
             .get(sequence_index)
             .filter(|labels| !labels.is_empty())
@@ -1350,15 +1350,15 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             "placement=inherited".to_owned()
         };
         let title = format!(
-            "Lords of Magic IMP viewer — {} — {} {}/{} — cycle {}/{} — frame {}/{} (global {}/{}, {}×{}, {} bpp, {}, {}, seq={}, cycle=0x{:04x}{})",
+            "Lords of Magic IMP viewer — {} — {} {}/{} — facing {}/{} — frame {}/{} (global {}/{}, {}×{}, {} bpp, {}, {}, seq={}, facing=0x{:04x}{})",
             entry.name,
             sequence_label,
             sequence_index + 1,
             sprite.sequences.len(),
-            cycle_index - sequence.first_cycle + 1,
-            sequence.cycle_count,
-            frame_in_cycle + 1,
-            cycle.frame_count,
+            facing_index - sequence.first_facing + 1,
+            sequence.facing_count,
+            frame_in_facing + 1,
+            facing.frame_count,
             frame_index + 1,
             sprite.frames.len(),
             frame.width,
@@ -1367,7 +1367,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             display_mode.label(),
             placement,
             hex_bytes(&sequence.metadata),
-            cycle.metadata,
+            facing.metadata,
             if playing { ", playing" } else { "" }
         );
         canvas
@@ -1445,27 +1445,27 @@ fn find_imp_frame(
 }
 
 fn step_imp_frame(sprite: &ImpSprite, current: usize, direction: isize) -> Result<usize, String> {
-    let (_, cycle_index, frame_in_cycle) = sprite
+    let (_, facing_index, frame_in_facing) = sprite
         .frame_location(current)
         .map_err(|error| error.to_string())?;
-    find_visible_in_cycle(sprite, cycle_index, frame_in_cycle, direction, false)
+    find_visible_in_facing(sprite, facing_index, frame_in_facing, direction, false)
 }
 
-fn step_imp_cycle(sprite: &ImpSprite, current: usize, direction: isize) -> Result<usize, String> {
-    let (sequence_index, cycle_index, _) = sprite
+fn step_imp_facing(sprite: &ImpSprite, current: usize, direction: isize) -> Result<usize, String> {
+    let (sequence_index, facing_index, _) = sprite
         .frame_location(current)
         .map_err(|error| error.to_string())?;
     let sequence = &sprite.sequences[sequence_index];
-    let relative_cycle = cycle_index - sequence.first_cycle;
-    for distance in 1..=sequence.cycle_count {
-        let relative = (relative_cycle as isize + direction * distance as isize)
-            .rem_euclid(sequence.cycle_count as isize) as usize;
-        let candidate = sequence.first_cycle + relative;
-        if let Ok(frame) = find_visible_in_cycle(sprite, candidate, 0, 1, true) {
+    let relative_facing = facing_index - sequence.first_facing;
+    for distance in 1..=sequence.facing_count {
+        let relative = (relative_facing as isize + direction * distance as isize)
+            .rem_euclid(sequence.facing_count as isize) as usize;
+        let candidate = sequence.first_facing + relative;
+        if let Ok(frame) = find_visible_in_facing(sprite, candidate, 0, 1, true) {
             return Ok(frame);
         }
     }
-    Err("IMP sequence contains no visible cycles".to_owned())
+    Err("IMP sequence contains no visible facings".to_owned())
 }
 
 fn step_imp_sequence(
@@ -1480,9 +1480,9 @@ fn step_imp_sequence(
         let candidate = (sequence_index as isize + direction * distance as isize)
             .rem_euclid(sprite.sequences.len() as isize) as usize;
         let sequence = &sprite.sequences[candidate];
-        for relative_cycle in 0..sequence.cycle_count {
+        for relative_facing in 0..sequence.facing_count {
             if let Ok(frame) =
-                find_visible_in_cycle(sprite, sequence.first_cycle + relative_cycle, 0, 1, true)
+                find_visible_in_facing(sprite, sequence.first_facing + relative_facing, 0, 1, true)
             {
                 return Ok(frame);
             }
@@ -1491,25 +1491,25 @@ fn step_imp_sequence(
     Err("IMP sprite contains no visible sequences".to_owned())
 }
 
-fn find_visible_in_cycle(
+fn find_visible_in_facing(
     sprite: &ImpSprite,
-    cycle_index: usize,
+    facing_index: usize,
     current_offset: usize,
     direction: isize,
     include_current: bool,
 ) -> Result<usize, String> {
-    let cycle = sprite
-        .cycles
-        .get(cycle_index)
-        .ok_or_else(|| format!("IMP cycle index {cycle_index} is out of range"))?;
-    if cycle.frame_count == 0 {
-        return Err("IMP cycle contains no frames".to_owned());
+    let facing = sprite
+        .facings
+        .get(facing_index)
+        .ok_or_else(|| format!("IMP facing index {facing_index} is out of range"))?;
+    if facing.frame_count == 0 {
+        return Err("IMP facing contains no frames".to_owned());
     }
     let first_distance = usize::from(!include_current);
-    for distance in first_distance..first_distance + cycle.frame_count {
+    for distance in first_distance..first_distance + facing.frame_count {
         let offset = (current_offset as isize + direction * distance as isize)
-            .rem_euclid(cycle.frame_count as isize) as usize;
-        let index = cycle.first_frame + offset;
+            .rem_euclid(facing.frame_count as isize) as usize;
+        let index = facing.first_frame + offset;
         let frame = sprite
             .resolved_frame(index)
             .map_err(|error| error.to_string())?;
@@ -1517,7 +1517,7 @@ fn find_visible_in_cycle(
             return Ok(index);
         }
     }
-    Err("IMP cycle contains no visible frames".to_owned())
+    Err("IMP facing contains no visible frames".to_owned())
 }
 
 fn view_map_file(path: &Path, tile_set_paths: Option<&(PathBuf, PathBuf)>) -> Result<(), String> {
@@ -1989,13 +1989,13 @@ fn draw_rgba_in_bounds(
 mod tests {
     use std::collections::BTreeMap;
 
-    use lom_asset_viewer::imp::{ImpCycle, ImpFrame, ImpSequence, ImpSprite};
+    use lom_asset_viewer::imp::{ImpFacing, ImpFrame, ImpSequence, ImpSprite};
     use lom_asset_viewer::map::{MapAsset, MapCell};
     use lom_asset_viewer::pbm::PbmImage;
     use lom_asset_viewer::tile::{TileDefinition, TileSetDefinition};
 
     use super::{
-        ImpDisplayMode, MapDisplayMode, imp_display_rgba, map_display_rgba, step_imp_cycle,
+        ImpDisplayMode, MapDisplayMode, imp_display_rgba, map_display_rgba, step_imp_facing,
         step_imp_frame, step_imp_sequence, terrain_preview_rgba,
     };
 
@@ -2019,13 +2019,13 @@ mod tests {
     }
 
     #[test]
-    fn imp_navigation_respects_cycle_and_sequence_boundaries() {
+    fn imp_navigation_respects_facing_and_sequence_boundaries() {
         let sprite = navigation_sprite();
 
         assert_eq!(step_imp_frame(&sprite, 1, 1).unwrap(), 0);
         assert_eq!(step_imp_frame(&sprite, 0, -1).unwrap(), 1);
-        assert_eq!(step_imp_cycle(&sprite, 0, 1).unwrap(), 2);
-        assert_eq!(step_imp_cycle(&sprite, 2, -1).unwrap(), 0);
+        assert_eq!(step_imp_facing(&sprite, 0, 1).unwrap(), 2);
+        assert_eq!(step_imp_facing(&sprite, 2, -1).unwrap(), 0);
         assert_eq!(step_imp_sequence(&sprite, 2, 1).unwrap(), 4);
         assert_eq!(step_imp_sequence(&sprite, 4, -1).unwrap(), 0);
     }
@@ -2164,7 +2164,7 @@ mod tests {
             maximum_width: 1,
             maximum_height: 1,
             sequence_count: 2,
-            cycle_count: 3,
+            facing_count: 3,
             frame_count: 6,
             color_key: 0,
             duplicate_frame_count: 0,
@@ -2177,31 +2177,31 @@ mod tests {
             sequences: vec![
                 ImpSequence {
                     metadata: [0; 11],
-                    first_cycle: 0,
-                    cycle_count: 2,
+                    first_facing: 0,
+                    facing_count: 2,
                     first_frame: 0,
                     frame_count: 4,
                 },
                 ImpSequence {
                     metadata: [0; 11],
-                    first_cycle: 2,
-                    cycle_count: 1,
+                    first_facing: 2,
+                    facing_count: 1,
                     first_frame: 4,
                     frame_count: 2,
                 },
             ],
-            cycles: vec![
-                ImpCycle {
+            facings: vec![
+                ImpFacing {
                     metadata: 0,
                     first_frame: 0,
                     frame_count: 2,
                 },
-                ImpCycle {
+                ImpFacing {
                     metadata: 0,
                     first_frame: 2,
                     frame_count: 2,
                 },
-                ImpCycle {
+                ImpFacing {
                     metadata: 0,
                     first_frame: 4,
                     frame_count: 2,

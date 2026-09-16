@@ -285,7 +285,7 @@ fn probe_imp_sprite(bytes: &[u8]) -> Result<AssetInfo, String> {
     Ok(AssetInfo::new(
         AssetKind::ImpSprite,
         format!(
-            "max-width={};max-height={};file-flags=0x{:02x};record-variant={};compressed={};bits-per-pixel={};sequences={};cycles={};frames={};duplicate-frames={};origin-frames={origin_frames};origin-x-range={origin_x_range};origin-y-range={origin_y_range};hotspot-frames={hotspot_frames};hotspots={};hotspot-ids={};hotspot-id-values={hotspot_id_values};hotspot-id-counts={hotspot_id_counts};hotspot-x-range={hotspot_x_range};hotspot-y-range={hotspot_y_range};hotspot-bytes={};raw-bytes={};stored-pixel-bytes={};green-key-index={green_key}",
+            "max-width={};max-height={};file-flags=0x{:02x};record-variant={};compressed={};bits-per-pixel={};sequences={};facings={};frames={};duplicate-frames={};origin-frames={origin_frames};origin-x-range={origin_x_range};origin-y-range={origin_y_range};hotspot-frames={hotspot_frames};hotspots={};hotspot-ids={};hotspot-id-values={hotspot_id_values};hotspot-id-counts={hotspot_id_counts};hotspot-x-range={hotspot_x_range};hotspot-y-range={hotspot_y_range};hotspot-bytes={};raw-bytes={};stored-pixel-bytes={};green-key-index={green_key}",
             sprite.maximum_width,
             sprite.maximum_height,
             sprite.file_flags,
@@ -293,7 +293,7 @@ fn probe_imp_sprite(bytes: &[u8]) -> Result<AssetInfo, String> {
             sprite.compressed,
             sprite.bits_per_pixel,
             sprite.sequence_count,
-            sprite.cycle_count,
+            sprite.facing_count,
             sprite.frame_count,
             sprite.duplicate_frame_count,
             sprite.hotspot_count,
