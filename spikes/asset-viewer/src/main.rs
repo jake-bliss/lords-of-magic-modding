@@ -73,6 +73,7 @@ enum Command {
         member: String,
         expression: Option<String>,
         stubs: Vec<(String, GameScriptValue)>,
+        executable: Option<PathBuf>,
     },
     ScanMapDirectory(PathBuf),
     ValidateImp(Source),
@@ -204,7 +205,14 @@ fn run() -> Result<(), String> {
             member,
             expression,
             stubs,
-        } => probe_gamescript_member(&source, &member, expression.as_deref(), &stubs),
+            executable,
+        } => probe_gamescript_member(
+            &source,
+            &member,
+            expression.as_deref(),
+            &stubs,
+            executable.as_deref(),
+        ),
         Command::ScanMapDirectory(path) => scan_map_directory(&path),
         Command::ValidateImp(source) => validate_imp_archive(&source),
         Command::ViewImp {
@@ -313,6 +321,7 @@ fn parse_args() -> Result<Command, String> {
                 member: args[2].clone(),
                 expression,
                 stubs,
+                executable,
             })
         }
         "--scan-map-dir" => {
@@ -957,12 +966,43 @@ fn scan_archive(source: &Source) -> Result<(), String> {
 /// An unresolved name is the interesting outcome, not merely a failure: it names a host
 /// call and shows how far the script got before it needed one. The VM stops rather than
 /// guessing, so this trace is the classification evidence.
-fn report_gamescript_failure(error: GameScriptVmError) -> String {
+fn report_gamescript_failure(
+    error: GameScriptVmError,
+    operators: Option<&native_table::OperatorIndex>,
+) -> String {
     if let Some(trace) = error.unknown_name() {
         eprintln!("unknown-native-name\t{}", trace.name);
         eprintln!("unknown-at-step\t{}", trace.steps);
         for (depth, frame) in trace.call_stack.iter().enumerate() {
             eprintln!("unknown-call-stack\t{depth}\t{frame}");
+        }
+        if let Some(operators) = operators {
+            // With the engine's operator tables loaded, a stop is a classification rather than a
+            // research question: the name is either something the engine implements, a constant it
+            // exposes, or neither.
+            match operators.classify(&trace.name) {
+                native_table::NameClass::Operator { entry_point } => {
+                    eprintln!("unknown-name-class\toperator");
+                    eprintln!("unknown-name-entry-point\t{entry_point:#010x}");
+                    eprintln!(
+                        "unknown-name-remedy\tthe engine implements this; supply it with --stub {}=VALUE",
+                        trace.name
+                    );
+                }
+                native_table::NameClass::EngineConstant => {
+                    eprintln!("unknown-name-class\tengine-constant");
+                    eprintln!(
+                        "unknown-name-remedy\tSCREAMING_CASE and absent from the operator tables, so this is a constant; supply its value with --stub {}=VALUE",
+                        trace.name
+                    );
+                }
+                native_table::NameClass::Unresolved => {
+                    eprintln!("unknown-name-class\tunresolved");
+                    eprintln!(
+                        "unknown-name-remedy\tneither an operator nor constant-shaped; most likely defined in a module this run has not loaded"
+                    );
+                }
+            }
         }
     }
     error.to_string()
@@ -973,7 +1013,17 @@ fn probe_gamescript_member(
     member: &str,
     expression: Option<&str>,
     stubs: &[(String, GameScriptValue)],
+    executable: Option<&Path>,
 ) -> Result<(), String> {
+    let operators = executable
+        .map(|path| {
+            let image = fs::read(path).map_err(|error| {
+                format!("could not read executable {}: {error}", path.display())
+            })?;
+            native_table::OperatorIndex::from_image(&image)
+                .map_err(|error| format!("could not read the operator table: {error}"))
+        })
+        .transpose()?;
     let (archive, entries) = open_archive(source)?;
     let entry = entries
         .iter()
@@ -990,14 +1040,14 @@ fn probe_gamescript_member(
         vm.define_native_stub(name.clone(), value.clone());
     }
     vm.execute_document(&document)
-        .map_err(report_gamescript_failure)?;
+        .map_err(|error| report_gamescript_failure(error, operators.as_ref()))?;
     let expression_tokens = expression
         .map(|source| {
             let expression =
                 GameScriptDocument::parse(source.as_bytes()).map_err(|error| error.to_string())?;
             let tokens = expression.tokens.len();
             vm.execute_document(&expression)
-                .map_err(report_gamescript_failure)?;
+                .map_err(|error| report_gamescript_failure(error, operators.as_ref()))?;
             Ok::<usize, String>(tokens)
         })
         .transpose()?;

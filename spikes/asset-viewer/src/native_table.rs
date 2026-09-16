@@ -259,6 +259,65 @@ fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
+/// What a name that the VM could not resolve turns out to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameClass {
+    /// The engine implements it. It needs a stub before dependent script can run.
+    Operator { entry_point: u32 },
+    /// SCREAMING_CASE and absent from the operator tables: an engine constant pushed by name.
+    EngineConstant,
+    /// Neither. Most often a definition in a module this run has not loaded; failing that, a
+    /// definition site our definition-shape classifier does not recognise.
+    Unresolved,
+}
+
+/// The engine's operator tables, indexed by name for lookup.
+#[derive(Debug, Clone, Default)]
+pub struct OperatorIndex {
+    entry_points: std::collections::BTreeMap<String, u32>,
+}
+
+impl OperatorIndex {
+    pub fn from_image(image_bytes: &[u8]) -> Result<Self, NativeTableError> {
+        let runs = extract(image_bytes)?;
+        let mut entry_points = std::collections::BTreeMap::new();
+        for entry in runs.iter().flat_map(|run| run.entries.iter()) {
+            // Two names appear in both tables; the primitive table is authoritative for them
+            // because it is the one the interpreter consults first.
+            entry_points
+                .entry(entry.name.to_ascii_lowercase())
+                .or_insert(entry.entry_point);
+        }
+        Ok(Self { entry_points })
+    }
+
+    pub fn len(&self) -> usize {
+        self.entry_points.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entry_points.is_empty()
+    }
+
+    pub fn classify(&self, name: &str) -> NameClass {
+        if let Some(entry_point) = self.entry_points.get(&name.to_ascii_lowercase()) {
+            NameClass::Operator {
+                entry_point: *entry_point,
+            }
+        } else if is_screaming_case(name) {
+            NameClass::EngineConstant
+        } else {
+            NameClass::Unresolved
+        }
+    }
+}
+
+/// Whether a name is written in the SCREAMING_CASE the corpus uses for engine constants.
+pub fn is_screaming_case(name: &str) -> bool {
+    name.chars().any(|character| character.is_ascii_uppercase())
+        && !name.chars().any(|character| character.is_ascii_lowercase())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,6 +414,49 @@ mod tests {
         let image = synthetic_image(&["pop", "def", "undef"]);
         let runs = extract(&image).expect("synthetic image parses");
         assert!(runs.is_empty(), "a three-record run is below the threshold");
+    }
+
+    #[test]
+    fn classifies_a_name_the_engine_implements_as_an_operator() {
+        let image = synthetic_image(&[
+            "pop", "def", "undef", "begin", "end", "exch", "dup", "getarmydata", "setarmydata",
+        ]);
+        let index = OperatorIndex::from_image(&image).expect("synthetic image parses");
+        assert_eq!(index.len(), 9);
+        assert_eq!(
+            index.classify("getarmydata"),
+            NameClass::Operator {
+                entry_point: 0x0040_101c
+            }
+        );
+        // The corpus writes operator calls in lower case, but match case-insensitively so a
+        // differently-cased call site still resolves.
+        assert!(matches!(
+            index.classify("GetArmyData"),
+            NameClass::Operator { .. }
+        ));
+    }
+
+    #[test]
+    fn classifies_screaming_case_names_as_engine_constants() {
+        let image = synthetic_image(&[
+            "pop", "def", "undef", "begin", "end", "exch", "dup", "getarmydata", "setarmydata",
+        ]);
+        let index = OperatorIndex::from_image(&image).expect("synthetic image parses");
+        assert_eq!(index.classify("SD_MANA"), NameClass::EngineConstant);
+        assert_eq!(index.classify("EDITBOX_SCROLL"), NameClass::EngineConstant);
+        assert_eq!(index.classify("give_level_exp"), NameClass::Unresolved);
+        assert_eq!(index.classify("Type_Imp"), NameClass::Unresolved);
+    }
+
+    #[test]
+    fn screaming_case_needs_an_upper_case_letter_and_no_lower_case_one() {
+        assert!(is_screaming_case("SD_MANA"));
+        assert!(is_screaming_case("ORDER"));
+        assert!(!is_screaming_case("getarmydata"));
+        assert!(!is_screaming_case("Type_Imp"));
+        // Digits and underscores alone are not evidence either way.
+        assert!(!is_screaming_case("_1"));
     }
 
     #[test]
