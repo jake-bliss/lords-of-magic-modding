@@ -5,6 +5,10 @@ pub struct PbmImage {
     pub width: u16,
     pub height: u16,
     pub rgba: Vec<u8>,
+    /// Raw palette indices, row-major, one per pixel. Kept alongside `rgba` so
+    /// callers that need a lossless re-encode (e.g. indexed PNG export) do not
+    /// have to reverse-map colours back onto the palette.
+    pub indices: Vec<u8>,
     pub palette: Vec<[u8; 3]>,
     pub palette_entries: usize,
     pub compression: u8,
@@ -140,6 +144,7 @@ impl PbmImage {
             width,
             height,
             rgba,
+            indices,
             palette: palette_colors,
             palette_entries,
             compression,

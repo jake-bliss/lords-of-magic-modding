@@ -130,6 +130,19 @@ The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synth
 - **Documented:** the hotspot ID is a type tag from a 19-constant engine vocabulary, and frame byte `+1` is a **count** of hotspot records rather than a type tag — settled by ozz on the board and confirmed here by measurement. Sequence-record byte 1 is a mirror flag: values `>= 128` mirror, and no unmirrored sequence in the corpus has more than two facings. See [community research](community-research.md#the-hotspot-mechanism-thread-2176).
 - **Unknown:** how the shadow index is blended or recolored, how hotspot coordinates translate to screen placement, what the remaining sequence/facing metadata fields mean, and whether exceptional metadata cases use additional sharing rules. Animation timing appears to be carried solely by duplicate-frame repetition, since no delay field survives scrutiny on either side.
 
+### LBM export
+
+`--export-pbm ARCHIVE MEMBER OUTPUT.png` writes an LBM out as an indexed PNG, preserving palette
+indices and the 256-entry palette exactly. Transparency follows the file's own BMHD: a `tRNS` chunk
+is written only when `masking` is 2, the IFF value for "has a transparent colour", keyed on the
+declared `transparent_color` index.
+
+**Measured across all 1,044 LBM members of the installed archives: every one has `masking = 0`.**
+No shipped LBM declares a transparent colour, so the `tRNS` path never fires on real data and is
+covered by synthetic tests only. Recording that here because the tempting "fix" for an LBM that
+looks opaque is to key transparency on index 0 — which is exactly the bug that was removed from IMP
+export, where the key is a header field and is nonzero in 94 of 300 sampled sprites.
+
 ## Map/scenario findings
 
 The loose installed map corpus contains 20 `.scn`, 337 `.smp`, and eight `.lgd` files. All 365 pass the bounded parser. Each file declares width, height, an observed depth of 8, and one eight-byte record per cell in X-major order. Treating the second word as little-endian `f32` yields finite values from 0 to 20 and coherent relief. The first word resolves to an original tile-atlas index plus an observed `0x00800000` forced-texture flag; `URAK.scn` now renders as a coherent, correctly oriented world through `tilesb01.til` and `tilesb01.lbm`.
