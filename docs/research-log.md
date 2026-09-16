@@ -927,3 +927,81 @@ It is now a sharp, cheap hypothesis to test, and the test needs no frame identif
 **perturb record 0 of a unit sprite by a large known amount, inject, and look.** If record 0 is the
 draw placement, every frame of that unit shifts by the perturbation. If it is not, nothing moves.
 A single keypress settles it.
+
+## 2026-09-16 — Hotspot record 0 *is* the draw placement, and the rule is the same one
+
+**Evidence class: observed in gameplay.** The inference from the reserved-slot finding is now
+measured. Both `gs.mpq` and `imp.mpq` were modified with checksum-verified backups and restored
+byte-identical afterwards.
+
+### The design: build the control instead of finding one
+
+No shipped unit sprite has uniform frame sizes, so animation would reintroduce the frame
+identification problem that sank the first attempt. Rather than search harder, the control was
+manufactured:
+
+1. Extract `units\imp\aicr2a.imp` and inject it back as `units\imp\zzprba.imp` — sprite **A**.
+2. Take the same bytes, shift hotspot **record 0 of every frame** by exactly `(+60, +40)`, and inject
+   that as `units\imp\zzprbb.imp` — sprite **B**. 105 distinct records were patched and all 105 were
+   verified to have moved by exactly the delta before injection.
+3. Leave record **7** untouched in both. If the engine placed by record 7, nothing would move — a
+   control built into the experiment rather than argued for afterwards.
+
+Shifting *every* frame is what makes the result frame-independent: whichever frame the engine draws,
+it moves by the same amount.
+
+A unit IMP cannot be placed as a unit from script, but `addterrainspritetype` takes an arbitrary
+filename, so `["units/imp/zzprba.imp"]cvx addterrainspritetype` registers a unit sprite as a terrain
+sprite type. Both types registered (ids 470 and 471). One hotkey then captured a plate, placed A,
+captured, destroyed it, placed B, captured, destroyed it.
+
+### The measurement
+
+The naive plate difference gave bounding boxes of `110x191` and `129x151` — larger than any frame in
+the file, because the map is live and an unrelated interface element was animating. Clustering the
+changed pixels into connected components separates them cleanly:
+
+| Capture | Component | Top-left | Size |
+| --- | --- | --- | --- |
+| A | sprite | (331, 136) | 49x67 |
+| B | sprite | (391, 176) | 49x67 |
+| both | interface noise at (411, 301) | — | 10x26, identical in both |
+
+Both silhouettes are `49x67`, which is frame 0's exact size, so the same frame was drawn both times.
+Differencing A against B directly yields the same two components and nothing else.
+
+```
+B - A = (+60, +40)        exactly the record-0 delta that was built in
+```
+
+And the absolute rule holds without modification. Solving `top_left = anchor + placement - (w>>1, h>>1)`
+from A's record 0 of `(1, -33)` gives `anchor = (354, 202)`; feeding B's record 0 of `(61, 7)` through
+the same anchor predicts `(391, 176)`, which is what was measured.
+
+### What this settles
+
+**Hotspot record 0 is the draw placement for record-bearing frames, and it obeys the same rule as the
+origin pair**, added and centre-relative. Placement is therefore unified across the whole corpus:
+
+| Frame form | Where placement lives |
+| --- | --- |
+| hotspot count 0 | the origin pair in the record's `+8` dword |
+| hotspot count > 0 | hotspot **record 0**, which no script can read |
+
+That closes the gap the placement writer had to leave open, and `--set-imp-placement --hotspot 0` is
+the command that writes it.
+
+### One caveat, stated rather than buried
+
+This placed a unit IMP through the **terrain sprite** path. It proves the renderer reads record 0 from
+the IMP frame and applies the measured rule; it does not prove the unit draw path computes its
+*anchor* the same way. The sign, the centre-relative form and the choice of record 0 are settled; a
+unit-specific constant offset in the anchor is not ruled out.
+
+### A lead, not a result
+
+The first run measured anchor `(320, 180)` at cell `(63, 70)`; this run measured `(354, 202)` at cell
+`(64, 70)`. One cell of x apparently costs `(+34, +22)` of screen, which has the right shape for an
+isometric step. **The two runs were separate games and the camera may not have matched**, so this is
+recorded as a lead to test deliberately, not a measurement. It would also give a second, independent
+route at `map2screen`'s still-wrong y convention.

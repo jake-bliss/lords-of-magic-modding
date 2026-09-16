@@ -89,9 +89,14 @@ shows which a frame has. The writer keeps the file length identical, re-parses b
 refuses a placement it cannot read back, refuses to overwrite an existing output, refuses a duplicate
 frame's origin, and warns when several frames share the record or the hotspot array being written.
 
-**Scope.** The rule above was measured against frames carrying the *origin pair*. Which hotspot type
-the engine uses as the draw anchor for record-bearing frames is **not yet established** — see the
-research log. `examples/imp_placement_survey.rs` reports the corpus split.
+**Both placement forms obey the same rule.** A frame with a zero hotspot count carries its placement
+as the origin pair; a frame with hotspot records carries it in **record 0**, which is engine-reserved
+and unreadable from script. Record 0 was confirmed by measurement in the running engine on
+2026-09-16. Use `--hotspot 0` for that form. `examples/imp_placement_survey.rs` reports the corpus
+split, and `examples/shift_record0.rs` shifts record 0 across every frame of a sprite.
+
+One caveat: the record-0 measurement went through the terrain-sprite draw path, so a unit-specific
+constant in the *anchor* is not ruled out. The sign and the centre-relative form are settled.
 
 `--extract`, `--export-imp-frame`, and `--export-map-preview` use create-new semantics and refuse to overwrite an existing output. IMP frame export writes an 8-bit indexed PNG with the source palette indices and RGB palette intact. Map preview export writes an RGBA overview using the original terrain atlas at 8×8 output pixels per map cell. Neither path reimports PNGs into the game format. Add `--listfile "$LISTFILE"` to any command when public names are needed. To inventory all five archives in one pass, use [`scripts/inventory-native-assets.sh`](../../scripts/inventory-native-assets.sh).
 
