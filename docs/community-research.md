@@ -67,7 +67,8 @@ with the author's note that he was *"observing the possibility"*. The constants 
 `START.GS` instead. It is evidence that script `def` **can** shadow native names — confirmed
 independently by `START.GS:76` redefining `run` itself — not evidence that GS5R3 ships that override.
 
-**Frame byte `+1` is a delay and the dword at `+8` is a checksum.** Both are snv's guesses, marked
+**Frame byte `+1` is a delay and the dword at `+8` is a checksum.** *(snv's 2011 forum post only;
+the later IMP Studio port drops both guesses and agrees with us.)* Both are snv's guesses, marked
 with question marks in his own template. They are our hotspot count and hotspot-array pointer, and
 the dword dereferences to well-formed 6-byte `(id, i16 x, i16 y)` records whose totals match the
 generated-header hotspot statistic for 1,798 pairs with zero mismatches.
@@ -89,6 +90,15 @@ been unable to test.
 
 **Frame `Size` may be 0 because the RLE is self-terminating.** This is the same distinction as our
 two record variants, one with explicit stored sizes and one whose payload length is implicit.
+
+**Frame byte `+1` and the dword at `+8` are hotspot fields.** IMP Studio names them `HSType` and
+`HSpot`, with `HSType` 0 meaning the dword holds a packed XY pair and 2/3/4 meaning it is an offset
+to a hotspot struct. That is structurally identical to our reading, which treats the byte as a
+hotspot count and the dword as either two `i16` origins when the count is 0 or a pointer to that many
+6-byte records otherwise. Two independent derivations converged on the same layout from opposite
+directions. The remaining question is only whether the byte is a type tag or a count; our reading is
+the one that explains the generated-header hotspot byte totals for all 1,798 pairs, so it stands
+until something contradicts it.
 
 **Palette index 1 is the shadow.** This resolves our open "secondary mask" question. Our own
 observation of *"a separate pure-red index for a 1,651-pixel silhouette beneath the creature"*
