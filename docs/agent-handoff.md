@@ -190,7 +190,7 @@ the player-colour remap. Fix both by choosing the subject and by subtracting a t
 | `terrainspriteat` | `<x> <y> terrainspriteat` → sprite handle |
 | `getterrainspritelocation` | `<sprite> getterrainspritelocation` → packed location (`xy_to_x_y` unpacks) |
 | `destroyterrainsprite` | `<sprite> destroyterrainsprite` |
-| `map2screen` | 3 operands, 3 results — **semantics still to verify** |
+| `map2screen` | `<x> <y> <z> map2screen` -> three floats; **top of stack is screen X**, then screen Y, then the `z = 0` ground screen Y. Verified statically 2026-09-16 |
 
 **Procedure**, all from one injected hotkey so it runs in a single frame with nothing else moving:
 
@@ -223,9 +223,24 @@ so its decoded hotspot is known. The remaining unknown is the commanded position
    then recover the animation period from the repeating sequence of silhouettes and index frames by
    position in the cycle instead of recognising them.
 
-**Also worth pinning first, cheaply and statically:** `map2screen`'s operand order and units, read off
-`0x0046B0C0`. Do not trust the recovered arity of 3 — the arity walk undercounts operators that pop
-through the shared helper at `0x0040ADB0`, which is exactly how `drawimpframe` hid two operands.
+**`map2screen` is now pinned, statically — done 2026-09-16.** Disassembly of `0x0046B0C0` and the
+camera transform at `0x00469AE0` gives the full contract; see the research log entry for the
+derivation. The short version, and why it helps:
+
+- Operands are `<x> <y> <z> map2screen` in written order, each accepted as int, 8.8 fixed or float.
+- Results are three floats with **screen X on top**, then screen Y, then the same point re-projected
+  at `z = 0` (a ground-level baseline, useful for shadows).
+- The viewport is `640x384` centred at `(320, 192)`: `screen_x = ndc_x * 320 + 320` and
+  `screen_y = 192 - ndc_y * 192`, from literals at `0x0054D7D4`/`0x0054D7D8`/`0x0054D7DC`.
+- **World `+y` is up, screen `+y` is down.** State which space any hotspot sign result is in.
+- **The camera scroll at `+0x1A4`/`+0x1A8` is already added** to screen X and Y (but not to the third
+  result). So `observed_top_left - map2screen(cell)` is directly comparable to a screen capture with
+  no separate scroll bookkeeping — this removes the largest error source in the measurement below.
+
+That is two operators now whose real contract came from disassembly rather than the arity walk. The
+walk finds candidates; it is not evidence about a contract, because it undercounts operators that pop
+through the shared helper at `0x0040ADB0` — exactly how `drawimpframe` hid two operands. Read the
+entry point before designing an experiment around an operator.
 
 ### Engine probe harness — this is the reusable part
 
