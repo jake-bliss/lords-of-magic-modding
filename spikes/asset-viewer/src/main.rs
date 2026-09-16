@@ -1085,13 +1085,7 @@ fn operator_signature_lines(
 ) -> Vec<String> {
     match operator_arity::stack_effect(pe_image, entry_point) {
         Ok(effect) => {
-            let confidence = if effect.is_well_formed() {
-                "well-formed"
-            } else if effect.truncated {
-                "truncated"
-            } else {
-                "unclassified-store"
-            };
+            let confidence = effect.confidence();
             vec![
                 format!("unknown-name-pops\t{}", effect.pops),
                 format!("unknown-name-pushes\t{}", effect.pushes),
@@ -2314,15 +2308,7 @@ fn scan_native_table(executable: &Path, source: Option<&Source>) -> Result<(), S
                             entry.entry_point,
                             effect.pops,
                             effect.pushes,
-                            if effect.is_well_formed() {
-                                "well-formed"
-                            } else if effect.indirect_branches > 0 {
-                                "indirect-branch"
-                            } else if effect.truncated {
-                                "truncated"
-                            } else {
-                                "unclassified-store"
-                            }
+                            effect.confidence()
                         ));
                     }
                     Err(error) => {

@@ -66,6 +66,22 @@ pub struct StackEffect {
 }
 
 impl StackEffect {
+    /// A one-word description of how much of the operator body the walk actually saw.
+    ///
+    /// Both the table report and the VM's stop report label results with this, so the two can
+    /// never disagree about the same operator.
+    pub fn confidence(&self) -> &'static str {
+        if self.is_well_formed() {
+            "well-formed"
+        } else if self.indirect_branches > 0 {
+            "indirect-branch"
+        } else if self.truncated {
+            "truncated"
+        } else {
+            "unclassified-store"
+        }
+    }
+
     /// Whether the walk reached every instruction it needed to and recognised every store it saw.
     ///
     /// This says the analysis did not give up, **not** that the counts are the operator's arity.
@@ -540,6 +556,32 @@ mod tests {
         let effect = stack_effect(&image, ENTRY).expect("entry is code");
         assert_eq!(effect.indirect_branches, 1, "the callee's dispatch is inherited");
         assert!(!effect.is_well_formed());
+    }
+
+    #[test]
+    fn confidence_names_the_reason_a_walk_was_incomplete() {
+        const JMP_TABLE: [u8; 7] = [0xff, 0x24, 0x85, 0x84, 0xd1, 0x41, 0x00];
+        let bytes = image_with_code(&assemble(&[&LOAD_INDEX, &INC_EAX, &STORE_INDEX, &RET]));
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        assert_eq!(
+            stack_effect(&image, ENTRY).expect("entry is code").confidence(),
+            "well-formed"
+        );
+
+        let bytes = image_with_code(&assemble(&[&LOAD_INDEX, &STORE_INDEX, &RET]));
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        assert_eq!(
+            stack_effect(&image, ENTRY).expect("entry is code").confidence(),
+            "unclassified-store"
+        );
+
+        let bytes = image_with_code(&assemble(&[&LOAD_INDEX, &INC_EAX, &STORE_INDEX, &JMP_TABLE]));
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        assert_eq!(
+            stack_effect(&image, ENTRY).expect("entry is code").confidence(),
+            "indirect-branch",
+            "a dispatch the walk cannot follow outranks anything else it managed to explain"
+        );
     }
 
     #[test]
