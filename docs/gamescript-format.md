@@ -217,6 +217,31 @@ every difficulty and in both multiplayer states. The body quoted on the forum,
 multiplayer — exactly the behaviour its author described. So the description matched real code that
 did not ship. See [difficulty and AI](difficulty-ai.md).
 
+### Classifying a stop
+
+`--probe-gamescript` stops on the first name it cannot resolve and emits a structured trace. With
+`--exe`, the trace is also classified against the operator tables, which turns a stop from a research
+question into a decision:
+
+| `unknown-name-class` | Meaning | What to do |
+| --- | --- | --- |
+| `operator` | the engine implements it; the entry point is reported | supply `--stub NAME=VALUE` |
+| `engine-constant` | SCREAMING_CASE and absent from the tables | supply `--stub NAME=VALUE` |
+| `unresolved` | neither | the definition is probably in a module this run has not loaded |
+
+```
+unknown-native-name       getdifficultylevel
+unknown-at-step           236
+unknown-name-class        operator
+unknown-name-entry-point  0x00485e90
+unknown-name-remedy       the engine implements this; supply it with --stub getdifficultylevel=VALUE
+```
+
+The `unresolved` class is the one worth reading carefully. At corpus scale it means the
+definition-shape classifier missed a definition, but during a single-module run it far more often
+means exactly what it says: the name is defined somewhere that has not been executed yet. The class
+does not distinguish those, and should not be read as evidence of engine surface.
+
 ## Static module references
 
 The analyzer records a dependency only for the adjacent token pattern:
@@ -272,6 +297,13 @@ target/release/lom-asset-viewer \
   --listfile '../../artifacts/reference-listfiles/lords-of-magic.txt' \
   --stub getdifficultylevel=2 --stub getmultiplayerflag=false \
   --eval '[25 50 75]getdifficultylevel get'
+
+# Passing --exe classifies any name the VM stops on against the engine's operator tables.
+target/release/lom-asset-viewer \
+  --probe-gamescript '/path/to/English/gs.mpq' 'gs\standard.gs' \
+  --listfile '../../artifacts/reference-listfiles/lords-of-magic.txt' \
+  --exe '/path/to/English/lomse.exe' \
+  --eval 'getdifficultylevel'
 ```
 
 Omit `--exe` to skip binary correlation. The command is read-only and emits tab-separated summary and diagnostic lines to standard output.

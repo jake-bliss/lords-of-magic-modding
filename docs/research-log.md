@@ -260,6 +260,16 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
   classifier does not recognise, so the comparison measures classifier recall, not engine surface.
   The scan reuses the established candidate rule instead.
 
+## 2026-09-16 — VM stops are now classified against the operator tables
+
+- **Implemented:** `--probe-gamescript --exe` classifies any name the VM stops on as `operator`
+  (reporting its entry point), `engine-constant`, or `unresolved`, and prints the corresponding
+  remedy. Verified on all three paths: `getdifficultylevel` resolves to an operator at `0x00485e90`,
+  `SD_MANA` to a constant, `give_level_exp` to unresolved.
+- **Unknown:** the `unresolved` class does not distinguish "our definition-shape classifier missed a
+  definition" from "the definition is in a module this run has not loaded". During single-module runs
+  the second is far more common, so the class must not be read as evidence of engine surface.
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:
