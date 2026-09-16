@@ -31,6 +31,8 @@ The current deliverable is a useful native asset and reverse-engineering tool, n
 
 - [macOS runbook](docs/macos-runbook.md) — launch, configuration, recovery, and troubleshooting
 - [Game and data architecture](docs/game-architecture.md) — known modding surfaces and hard engine boundaries
+- [Difficulty and computer-player AI](docs/difficulty-ai.md) — verified script gates, mod-specific changes, and remaining gameplay test
+- [Agent handoff](docs/agent-handoff.md) — current state, local setup, reproducibility, and next bounded work
 - [Native preservation engine plan](docs/native-engine-plan.md) — staged Rust/SDL3 candidate with explicit stop/go gates
 - [Native asset layer](docs/native-asset-stage.md) — live Stage 1 evidence, validation gates, and remaining work
 - [Map and scenario format](docs/map-format.md) — cell/terrain lookup, placed-sprite records, corpus measurements, and open variants
