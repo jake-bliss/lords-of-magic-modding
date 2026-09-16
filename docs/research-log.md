@@ -215,7 +215,7 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
   already the count; the open question recorded in community research is now closed.
 - **Observed:** across all 1,800 IMP members, hotspot records per frame range from 2 (24,412 frames)
   to 9 (10 frames). `imp.c` assumes 2; ozz had observed a maximum of 5.
-- **Observed:** `lomse.exe` defines 19 `*_HOTSPOT` constants, not the 10 quoted on the board from a
+- **Observed, since corrected:** `lomse.exe` has 19 `*_HOTSPOT`-shaped names, but only 11 are IMP hotspot types (nine distinct values, 0-8); the eight `BOLT_HOTSPOT_*` names are bolt-record field indices. See the constant-table entry at the end of this log. The original observation was that there are more than the 10 quoted on the board from a
   code comment. The extra names account for the observed types 10 and 16. The engine also exports
   the natives `getimphotspot` and `enumimphotspots`, so hotspots are reachable from GameScript.
 - **Observed:** shipped `gs\aura.gs` carries no `;` comments at all, but does use `NO_HOTSPOT`,
@@ -318,6 +318,8 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
   not counted as a call site.
 
 ## 2026-09-16 — The cursor hotspot is authored, not derived
+
+> **Naming corrected later the same day.** This entry measured hotspot type **0**, which the exe's constant table names `NO_HOTSPOT`, not `CURSOR_HOTSPOT` (which is type 1). Type 0 is the engine-reserved **draw placement**. The measurement is unaffected; see the constant-table entry at the end of this log.
 
 - **Observed:** across all 28,447 unit frames carrying a type-0 `CURSOR_HOTSPOT`, fitting the
   hotspot against frame size leaves most of the spread standing. On x the slope against width is
@@ -1005,3 +1007,106 @@ The first run measured anchor `(320, 180)` at cell `(63, 70)`; this run measured
 isometric step. **The two runs were separate games and the camera may not have matched**, so this is
 recorded as a lead to test deliberately, not a measurement. It would also give a second, independent
 route at `map2screen`'s still-wrong y convention.
+
+## 2026-09-16 — The hotspot type numbers, read out of the exe, and two corrections
+
+**Evidence class: observed in a local binary.** The engine keeps a name/value table of GameScript
+constants as 8-byte `{char* name, int value}` pairs. Locating every `*_HOTSPOT` string, finding the
+dword that points at it, and reading the next dword gives the numbers directly:
+
+| Constant | Value |
+| --- | --- |
+| `NO_HOTSPOT` | **0** |
+| `CURSOR_HOTSPOT` | **1** |
+| `MISSILE_ORIGIN_HOTSPOT` | **1** |
+| `SPELL_ORIGIN1_HOTSPOT` | 2 |
+| `SPELL_ORIGIN2_HOTSPOT` | 3 |
+| `SPELL_ORIGIN3_HOTSPOT` | 4 |
+| `SPELL_ORIGIN4_HOTSPOT` | 5 |
+| `FLAP_OFFSET_HOTSPOT` | 6 |
+| `MISSILE_TARGET_HOTSPOT` | **7** |
+| `SPELL_TARGET_HOTSPOT` | **7** |
+| `STREAMER_HOTSPOT` | 8 |
+
+The table is at `0x00560108` through `0x00560158`.
+
+### Correction 1: the vocabulary is nine values, not nineteen names
+
+The `BOLT_HOTSPOT_S0`–`S3` and `BOLT_HOTSPOT_D0`–`D3` names, which this repository has been counting
+as part of the hotspot vocabulary since PR #12, are **not IMP hotspot types at all**. They live in a
+different block at `0x005604B0` with values 15 through 22, immediately followed by:
+
+```
+0x5604f0  BOLT_SPELLDEF_ID  = 23
+0x5604f8  BOLT_RESULT_PROC  = 24
+```
+
+They are **field indices into a bolt definition record**, not type tags. `MISSILE_HOTSPOT = 14` at
+`0x00560580` is the same kind of thing. So the real IMP hotspot vocabulary is **eleven names mapping
+to nine distinct values, 0 through 8**, with two aliased pairs (`CURSOR`/`MISSILE_ORIGIN` both 1,
+`MISSILE_TARGET`/`SPELL_TARGET` both 7).
+
+That fits the corpus exactly. The measured ids include every value 0 to 8 and all of them are common:
+0 (28,661), 7 (28,183), 8 (1,409), 1 (1,130), 2 (1,125), 3 (966), 4 (890), 5 (834), 6 (132). The ids
+that remain genuinely outside the vocabulary are 9, 10, 16, 106, 136, 138, 143 and 190.
+
+### Correction 2: type 0 is `NO_HOTSPOT`, and this repository has been calling it the cursor hotspot
+
+`CURSOR_HOTSPOT` is **1**, not 0. The "cursor hotspot is authored, not derivable" study earlier today
+measured type **0**, so its subject was mislabelled throughout. The finding itself is unaffected and
+in fact becomes more important, because type 0 is now known to be the **draw placement** — the study
+was measuring the thing that actually matters, under the wrong name.
+
+Better still, the number corroborates the reserved-slot result independently. Record 0 is the slot the
+engine refuses to search or enumerate, and its type tag reads `NO_HOTSPOT` — literally "this is not a
+typed attach point". The format is self-describing once the numbers are known.
+
+### What the types mean, from the only scripts that use them
+
+`getimphotspot` and `enumimphotspots` are **never called anywhere in the 4,692-member corpus**; they
+are tool- and engine-facing. The one consumer is `addauratype` in `gs\aura.gs`, whose documented
+operand order is `<hotspot> <looping_sound> <imp_filename_proc> ... addauratype`, across 71 calls.
+No script ever passes a bare integer — always a named constant — and no script defines the numbers,
+which is why they had to come from the exe.
+
+| Type | Meaning, from usage |
+| --- | --- |
+| 0 `NO_HOTSPOT` | no anchor; the effect is drawn on the unit as a whole. All 8 elemental sphere auras, plus whole-body shields. Also the tag on the reserved draw-placement record. |
+| 1 `CURSOR` / `MISSILE_ORIGIN` | launch anchor for attack and breath projectiles — the dragon-breath family sets `/missile_launch_hotspot MISSILE_ORIGIN_HOTSPOT def`. |
+| 2–5 `SPELL_ORIGIN1..4` | caster-side emission points, hand or staff. `bolt_fury.gs` has all four commented out in sequence as alternative launch points, and the hydra auras use ORIGIN1 and ORIGIN2 for different heads. |
+| 6 `FLAP_OFFSET` | never passed to a native in any script; name suggests a wing-flap offset for flyers. |
+| 7 `MISSILE_TARGET` / `SPELL_TARGET` | the impact anchor on the *target*. The overwhelming default for per-spell auras — 54 of the 71 `addauratype` calls. |
+| 8 `STREAMER` | never passed to a native; name suggests a trailing-streamer attach point. |
+
+### The two out-of-vocabulary files, re-triaged
+
+`units\imp\eacr5a.imp` uses 136 in record 0 for all 110 frames, and 106, 138 and 143 in later slots.
+`units\imp\aiwm1b.imp` mixes 190 in with ordinary 0, 7 and 10.
+
+Record 0's tag is **never read by the engine**, so an odd value there is harmless — that disposes of
+the `eacr5a` record-0 anomaly and of `aiwm1b`'s, and its record-0 offsets are tightly clustered and
+track frame size, i.e. ordinary placement data. What is **not** disposed of is `eacr5a` carrying 106,
+138 and 143 in slots 1 and 2, which the engine *does* search. Those remain unexplained and are the
+right thing to ask the board about.
+
+### Shadow blend: measured the wrong sprite, and saying so
+
+The plan was to recover the shadow blend from the unit captures already on disk. It did not work, for
+a reason worth recording rather than retrying blindly. Of frame 0's 3,283 pixels, 1,022 are the colour
+key and render fully transparent — confirmed, 100% of them leave the plate untouched — and **every
+other pixel is an opaque palette colour**: zero pixels blend with the background.
+
+The reason is that `aicr2a.imp` has `palette[1] = [255, 0, 0]` and never uses index 1 at all. Across
+the corpus, index 1 *is* the shadow for most art — 1,223 of 1,800 files and 32,784 of 41,344 frames
+use it, 6.6% of all pixels, and a typical `palette[1]` is `[8, 8, 8]`. The probe sprite was simply one
+of the exceptions.
+
+So the shadow blend needs one capture of a sprite that actually uses index 1, which is a game run
+rather than an offline analysis. Not attempted here rather than guessed at.
+
+A channel-order discrepancy also surfaced while comparing rendered pixels against decoded palette
+entries: the two agree on every index where red equals green, and disagree where they differ. That is
+the signature of a channel swap somewhere between our decoder and the capture, and it bears on the
+"palette is BGRA, swapped to RGB" claim recorded in [Stage 1](native-asset-stage.md). It is **not**
+resolved here — one frame against one background cannot separate a decoder bug from a BMP reader bug —
+and it needs a deliberate test against a known colour.

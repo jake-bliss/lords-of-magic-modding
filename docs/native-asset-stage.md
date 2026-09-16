@@ -67,7 +67,7 @@ The paired generated `.h` files provide unusually valuable ground truth. The cur
 
 The shared-pixel correction removed 27 false origin records, bounded the remaining origin ranges to X `-66..70` and Y `-207..77`, and improved exact generated-header matches. Across the corpus, 15,725 logical frames carry signed origins and 28,771 carry 64,432 six-byte hotspot records. The hotspot bytes consistently decode as a candidate unsigned ID followed by signed X/Y offsets, with observed coordinate ranges X `-115..123` and Y `-232..86`.
 
-The ID is now identified: it is a **hotspot type**, drawn from the 19 `*_HOTSPOT` constants in `lomse.exe`'s string table (`CURSOR_HOTSPOT`, `MISSILE_ORIGIN_HOTSPOT`, `SPELL_ORIGIN1..4_HOTSPOT`, `MISSILE_TARGET_HOTSPOT`, `SPELL_TARGET_HOTSPOT`, `FLAP_OFFSET_HOTSPOT`, `STREAMER_HOTSPOT`, `MISSILE_HOTSPOT`, `BOLT_HOTSPOT_D0..D3`, `BOLT_HOTSPOT_S0..S3`, plus `NO_HOTSPOT`). Types 0 and 7 occur on nearly every unit frame (28,661 and 28,183 occurrences); record counts per frame run from 2 to 9. The engine also exports the natives `getimphotspot` and `enumimphotspots`. Two files carry types outside that vocabulary — see [community research](community-research.md#the-hotspot-mechanism-thread-2176). Placement semantics remain a reference-comparison task in [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1).
+The ID is a **hotspot type**, and the numbers are now read directly out of `lomse.exe`'s constant table at `0x00560108` (8-byte `{name, value}` pairs): `NO_HOTSPOT` 0, `CURSOR_HOTSPOT` 1, `MISSILE_ORIGIN_HOTSPOT` 1, `SPELL_ORIGIN1..4_HOTSPOT` 2-5, `FLAP_OFFSET_HOTSPOT` 6, `MISSILE_TARGET_HOTSPOT` 7, `SPELL_TARGET_HOTSPOT` 7, `STREAMER_HOTSPOT` 8. **Corrected 2026-09-16:** the vocabulary is eleven names over nine distinct values 0-8, not nineteen. The `BOLT_HOTSPOT_S0..S3`/`D0..D3` names are field indices into a bolt definition record (values 15-22, in a block ending `BOLT_SPELLDEF_ID` 23 and `BOLT_RESULT_PROC` 24), not IMP hotspot types; `MISSILE_HOTSPOT` 14 likewise. Every value 0-8 appears in the corpus. Record **0** is engine-reserved and holds the **draw placement**, which is why its tag reads `NO_HOTSPOT`; `getimphotspot` and `enumimphotspots` both begin their walk at record 1. Ids 9, 10, 16, 106, 136, 138, 143 and 190 are genuinely outside the vocabulary - see [community research](community-research.md#the-hotspot-mechanism-thread-2176). Placement semantics are settled; see the research log.
 
 For example, `units\imp\chcr5a.imp` contains seven named actions (`MOVE`, `STAND`, `DEFEND`, `GET_HIT`, `DIE`, `CORPSE`, and `MELEE_ATTACK`), five facings per action, and 170 logical frames. The five facings are likely directional views, but that interpretation and the remaining sequence/facing metadata have not yet been confirmed against the original executable.
 
@@ -127,10 +127,12 @@ The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synth
 - **Observed:** header byte 3 is a transparency colour key, nonzero in 94 of 300 sampled files; on those files palette index 0 is absent from the pixel data entirely.
 - **Observed:** across the full 1,800-member corpus the file types are 9 (8-bit RLE, 957), 8 (8-bit raw, 606), 57 (4-bit RLE, 188), 25 (1-bit RLE, 27), 10 unclassified, and 12 that crash the community parser. An independent community decoder reaches 100% of non-duplicate frames on types 8, 9, and 25 — exact agreement with ours — but 0% on type 57 and on the 12 crash cases, for 91.6% overall against our 100%. Type 57 alone is 188 files and 3,388 frames that no public tool decodes.
 - **Documented:** a community specification agrees with our header offsets, record sizes, and RLE algorithm exactly, including the `control + 3` bias; it confirms the palette is stored BGRA and swapped to RGB, which resolves our open channel-order question in favour of the current implementation; it names palette index 1 the shadow and our facings facings. Its guesses at a per-frame delay byte and a checksum dword are refuted by our hotspot decoding, which matches generated-header ground truth for all 1,798 pairs.
-- **Documented:** the hotspot ID is a type tag from a 19-constant engine vocabulary, and frame byte `+1` is a **count** of hotspot records rather than a type tag — settled by ozz on the board and confirmed here by measurement. Sequence-record byte 1 is a mirror flag: values `>= 128` mirror, and no unmirrored sequence in the corpus has more than two facings. See [community research](community-research.md#the-hotspot-mechanism-thread-2176).
+- **Documented, since corrected:** the hotspot ID is a type tag; the vocabulary is nine values 0-8, not 19 names (see above), and frame byte `+1` is a **count** of hotspot records rather than a type tag — settled by ozz on the board and confirmed here by measurement. Sequence-record byte 1 is a mirror flag: values `>= 128` mirror, and no unmirrored sequence in the corpus has more than two facings. See [community research](community-research.md#the-hotspot-mechanism-thread-2176).
 - **Unknown:** how the shadow index is blended or recolored, how hotspot coordinates translate to screen placement, what the remaining sequence/facing metadata fields mean, and whether exceptional metadata cases use additional sharing rules. Animation timing appears to be carried solely by duplicate-frame repetition, since no delay field survives scrutiny on either side.
 
-### The cursor hotspot is not derivable from frame geometry
+### The draw placement (type 0) is not derivable from frame geometry
+
+**Naming corrected 2026-09-16:** this section measured hotspot type **0**, which is `NO_HOTSPOT` and is the engine-reserved **draw placement**. `CURSOR_HOTSPOT` is type 1. The measurement stands; only the label was wrong, and its subject turns out to be the more important one.
 
 Type 0, `CURSOR_HOTSPOT`, is present on essentially every unit frame and is described on the modding
 board as the anchor the other hotspots hang from. Whether it can be *derived* decides whether a
@@ -138,7 +140,7 @@ rebuilt sprite can ever be correct, because the community's standing workaround 
 "512x512 hotspot" problem is to crop each frame to its minimum extent and re-centre the frames
 against each other — which assumes the anchor is a function of frame size.
 
-Measured with `tools/hotspot_geometry.py` over all 28,447 unit frames that carry a cursor hotspot,
+Measured with `tools/hotspot_geometry.py` over all 28,447 unit frames that carry a type-0 record,
 fitting each axis against the matching frame dimension:
 
 | Axis | Fit | Raw spread | Spread left after the fit |
@@ -155,13 +157,13 @@ predicts roughly a third of the hotspot's y, which is what you would expect from
 having their feet further down, but the residual is far too large for the anchor to be a function of
 the frame box.
 
-So the cursor hotspot is **per-frame authored data**: where the artist put that sprite's feet in that
+So the draw placement is **per-frame authored data**: where the artist put that sprite's feet in that
 pose. That is the mechanical reason the board's crop-and-re-centre approach kept producing wobble and
 a drifting health bar and never converged — it reconstructs a value that is not reconstructible from
 the cropped image. It also explains why `lomut` omitting the hotspot array is unrecoverable rather
 than merely inconvenient: the information is gone, not mislaid.
 
-The missile-target hotspot (type 7) sits `(+2.0, -10.7)` from the cursor hotspot on average across
+The missile/spell-target hotspot (type 7) sits `(+2.0, -10.7)` from the type-0 draw placement on average across
 28,159 frames, so projectiles are aimed at the body rather than the feet.
 
 ### LBM export
