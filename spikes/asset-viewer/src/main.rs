@@ -15,6 +15,7 @@ use lom_asset_viewer::gamescript_vm::{
 use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::map::MapAsset;
 use lom_asset_viewer::mpq::{Archive, Entry};
+use lom_asset_viewer::native_table;
 use lom_asset_viewer::pbm::PbmImage;
 use lom_asset_viewer::png_export::{write_imp_frame_png, write_rgba_png};
 use lom_asset_viewer::tile::TileSetDefinition;
@@ -62,6 +63,10 @@ enum Command {
     ScanGameScript {
         source: Source,
         executable: Option<PathBuf>,
+    },
+    ScanNatives {
+        executable: PathBuf,
+        source: Option<Source>,
     },
     ProbeGameScript {
         source: Source,
@@ -191,6 +196,9 @@ fn run() -> Result<(), String> {
         Command::ScanGameScript { source, executable } => {
             scan_gamescript_archive(&source, executable.as_deref())
         }
+        Command::ScanNatives { executable, source } => {
+            scan_native_table(&executable, source.as_ref())
+        }
         Command::ProbeGameScript {
             source,
             member,
@@ -287,6 +295,15 @@ fn parse_args() -> Result<Command, String> {
             Ok(Command::ScanGameScript {
                 source: source(&args[1], listfile),
                 executable,
+            })
+        }
+        "--scan-natives" => {
+            if args.len() != 2 && args.len() != 3 {
+                return Err(usage());
+            }
+            Ok(Command::ScanNatives {
+                executable: PathBuf::from(&args[1]),
+                source: args.get(2).map(|archive| source(archive, listfile)),
             })
         }
         "--probe-gamescript" => {
@@ -418,7 +435,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -2060,6 +2077,120 @@ fn draw_rgba_in_bounds(
         .map_err(|error| error.to_string())?;
     canvas.present();
     Ok(())
+}
+
+/// Executable-name counts paired with definition-name counts for a whole archive.
+type GameScriptNameCounts = (BTreeMap<String, usize>, BTreeMap<String, usize>);
+
+/// Collect executable-name and definition-name counts across every `.gs` member of an archive.
+fn collect_gamescript_names(source: &Source) -> Result<GameScriptNameCounts, String> {
+    let (archive, entries) = open_archive(source)?;
+    let mut executable_names = BTreeMap::<String, usize>::new();
+    let mut definition_names = BTreeMap::<String, usize>::new();
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.name.to_ascii_lowercase().ends_with(".gs"))
+    {
+        let Ok(bytes) = archive.read(&entry.name) else {
+            continue;
+        };
+        let Ok(document) = GameScriptDocument::parse(&bytes) else {
+            continue;
+        };
+        let analysis = document.analyze();
+        merge_name_counts(&mut executable_names, &analysis.executable_names);
+        merge_name_counts(&mut definition_names, &analysis.definition_names);
+    }
+    Ok((executable_names, definition_names))
+}
+
+/// Report the engine's operator tables, and optionally reconcile them against a script corpus.
+fn scan_native_table(executable: &Path, source: Option<&Source>) -> Result<(), String> {
+    let image = fs::read(executable)
+        .map_err(|error| format!("could not read executable {}: {error}", executable.display()))?;
+    let runs = native_table::extract(&image)
+        .map_err(|error| format!("could not read the operator table: {error}"))?;
+
+    println!("operator-table-runs\t{}", runs.len());
+    for run in &runs {
+        println!(
+            "operator-table-run\t{:#x}\t{}\t{}",
+            run.file_offset,
+            run.entries.len(),
+            run.entries
+                .iter()
+                .take(4)
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
+    let natives = native_table::operator_names(&runs);
+    println!("distinct-operators\t{}", natives.len());
+
+    let Some(source) = source else {
+        for run in &runs {
+            for entry in &run.entries {
+                println!("operator\t{}\t{:#010x}", entry.name, entry.entry_point);
+            }
+        }
+        return Ok(());
+    };
+
+    let (executable_names, definition_names) = collect_gamescript_names(source)?;
+
+    // Reuse the established candidate rule: a name the corpus calls, never defines, and which
+    // appears verbatim in the executable. Comparing the operator table against the raw
+    // called-but-not-defined set instead is misleading, because that set is dominated by names
+    // whose definition site our definition-shape classifier does not recognise.
+    let candidates = likely_engine_names(executable, &executable_names, &definition_names)?;
+
+    let mut confirmed = 0_usize;
+    let mut unconfirmed = Vec::new();
+    for (name, count) in &candidates {
+        if natives.contains(&name.to_ascii_lowercase()) {
+            confirmed += 1;
+        } else {
+            unconfirmed.push((name.clone(), *count));
+        }
+    }
+
+    let called: BTreeSet<String> = candidates
+        .iter()
+        .map(|(name, _)| name.to_ascii_lowercase())
+        .collect();
+    let never_called: Vec<&String> = natives.iter().filter(|name| !called.contains(*name)).collect();
+
+    // Unconfirmed names divide sharply by shape: SCREAMING_CASE names are engine constants pushed
+    // by name rather than operators, so they are absent from the operator table by construction.
+    let constant_like = unconfirmed
+        .iter()
+        .filter(|(name, _)| is_screaming_case(name))
+        .count();
+
+    println!("engine-name-candidates\t{}", candidates.len());
+    println!("candidates-confirmed-as-operators\t{confirmed}");
+    println!("candidates-unconfirmed\t{}", unconfirmed.len());
+    println!("unconfirmed-screaming-case\t{constant_like}");
+    println!("unconfirmed-other\t{}", unconfirmed.len() - constant_like);
+    println!("operators-never-called\t{}", never_called.len());
+
+    for (name, count) in unconfirmed
+        .iter()
+        .filter(|(name, _)| !is_screaming_case(name))
+    {
+        println!("unconfirmed-name\t{name}\t{count}");
+    }
+    for name in never_called {
+        println!("operator-never-called\t{name}");
+    }
+    Ok(())
+}
+
+/// Whether a name is written in the SCREAMING_CASE the corpus uses for engine constants.
+fn is_screaming_case(name: &str) -> bool {
+    name.chars().any(|character| character.is_ascii_uppercase())
+        && !name.chars().any(|character| character.is_ascii_lowercase())
 }
 
 #[cfg(test)]
