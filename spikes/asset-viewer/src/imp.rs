@@ -25,6 +25,17 @@ pub struct ImpFrame {
     pub palette_indices: Vec<u8>,
     pub rgba: Vec<u8>,
     pub source_frame: Option<usize>,
+    /// Byte offset of the 16-byte frame record that backs this frame.
+    ///
+    /// Frames in a repeated facing, and every frame of a `0x04` shared-pixel run, alias the
+    /// *same* record, so this value is not unique. Editing a record edits every frame that
+    /// shares it — see [`ImpSprite::frames_sharing_record`].
+    pub record_offset: usize,
+    /// Byte offset of this frame's hotspot array, when it has one.
+    ///
+    /// `None` means the frame carries an origin pair in the same dword instead; the two are
+    /// mutually exclusive, because they occupy the same four bytes at record offset 8.
+    pub hotspot_offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -292,6 +303,8 @@ impl ImpSprite {
                             palette_indices: Vec::new(),
                             rgba: Vec::new(),
                             source_frame: Some(source_frame),
+                            record_offset: frame_offset,
+                            hotspot_offset: (frame_hotspots > 0).then_some(auxiliary),
                         });
                         continue;
                     }
@@ -364,6 +377,8 @@ impl ImpSprite {
                         palette_indices,
                         rgba,
                         source_frame: None,
+                        record_offset: frame_offset,
+                        hotspot_offset: (frame_hotspots > 0).then_some(auxiliary),
                     });
                 }
                 frame_count = frame_count
@@ -444,6 +459,48 @@ impl ImpSprite {
         ))
     }
 
+    /// Every frame index whose hotspot records live in the same array as `frame_index`.
+    ///
+    /// Distinct frame records may store the same array pointer, in which case editing a hotspot
+    /// through one frame edits the others too — a different sharing relation from
+    /// [`ImpSprite::frames_sharing_record`], and the one that matters for hotspot writes.
+    ///
+    /// Returns an empty vector when the frame carries an origin pair instead.
+    pub fn frames_sharing_hotspots(&self, frame_index: usize) -> Result<Vec<usize>, ImpError> {
+        let frame = self.frames.get(frame_index).ok_or_else(|| {
+            ImpError::new(format!("IMP frame index {frame_index} is out of range"))
+        })?;
+        let Some(offset) = frame.hotspot_offset else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .frames
+            .iter()
+            .enumerate()
+            .filter(|(_, other)| other.hotspot_offset == Some(offset))
+            .map(|(index, _)| index)
+            .collect())
+    }
+
+    /// Every frame index backed by the same 16-byte record as `frame_index`, itself included.
+    ///
+    /// Repeated facings and `0x04` shared-pixel runs alias one record, so a write through any of
+    /// these indices is a write through all of them. Callers that edit placement should report
+    /// this rather than surprise the user.
+    pub fn frames_sharing_record(&self, frame_index: usize) -> Result<Vec<usize>, ImpError> {
+        let frame = self.frames.get(frame_index).ok_or_else(|| {
+            ImpError::new(format!("IMP frame index {frame_index} is out of range"))
+        })?;
+        let offset = frame.record_offset;
+        Ok(self
+            .frames
+            .iter()
+            .enumerate()
+            .filter(|(_, other)| other.record_offset == offset)
+            .map(|(index, _)| index)
+            .collect())
+    }
+
     pub fn frame_location(&self, frame_index: usize) -> Result<(usize, usize, usize), ImpError> {
         if frame_index >= self.frames.len() {
             return Err(ImpError::new(format!(
@@ -468,6 +525,158 @@ impl ImpSprite {
             "IMP frame index {frame_index} is not owned by a facing"
         )))
     }
+}
+
+/// Screen-space top-left at which the engine draws a frame placed at `anchor`.
+///
+/// Measured in the running engine on 2026-09-16 against four terrain sprites with known,
+/// differing placement values, sharing one map cell so the anchor cancels:
+///
+/// ```text
+/// top_left = anchor + placement - (width >> 1, height >> 1)
+/// ```
+///
+/// So the stored pair is the vector from the anchor to the **centre** of the frame, in screen
+/// pixels with `+y` downward, and it is **added**. The convention is centre-relative, which is
+/// why re-cropping art shifts the value it needs by half the crop.
+///
+/// **Scope.** This is established for frames carrying the *origin* pair. Frames carrying hotspot
+/// records instead have no origin field, and which hotspot type the engine treats as the draw
+/// anchor is not yet established — see the research log.
+pub fn frame_top_left(
+    anchor: (i32, i32),
+    placement: (i16, i16),
+    width: u16,
+    height: u16,
+) -> Result<(i32, i32), ImpError> {
+    Ok((
+        screen_axis(anchor.0, i32::from(placement.0), i32::from(width >> 1), "x")?,
+        screen_axis(anchor.1, i32::from(placement.1), i32::from(height >> 1), "y")?,
+    ))
+}
+
+/// `anchor + placement - half`, refusing to wrap.
+///
+/// Anchors reach this from the command line unvalidated, so an unchecked `i32` add here panics in a
+/// debug build and silently wraps in the release build the README tells users to make.
+fn screen_axis(anchor: i32, placement: i32, half: i32, axis: &str) -> Result<i32, ImpError> {
+    anchor
+        .checked_add(placement)
+        .and_then(|sum| sum.checked_sub(half))
+        .ok_or_else(|| ImpError::new(format!("IMP screen {axis} overflows a 32-bit integer")))
+}
+
+/// The placement pair that makes a frame of this size land at `top_left` when drawn at `anchor`.
+///
+/// Exact inverse of [`frame_top_left`]. This is the value a re-cropping tool needs to write back:
+/// keep the art's existing screen position, solve for the pair.
+pub fn placement_for_top_left(
+    anchor: (i32, i32),
+    top_left: (i32, i32),
+    width: u16,
+    height: u16,
+) -> Result<(i16, i16), ImpError> {
+    let axis = |top_left: i32, anchor: i32, half: i32, name: &str| {
+        top_left
+            .checked_sub(anchor)
+            .and_then(|delta| delta.checked_add(half))
+            .ok_or_else(|| ImpError::new(format!("IMP placement {name} overflows a 32-bit integer")))
+    };
+    let x = axis(top_left.0, anchor.0, i32::from(width >> 1), "x")?;
+    let y = axis(top_left.1, anchor.1, i32::from(height >> 1), "y")?;
+    let narrow = |value: i32, axis: &str| {
+        i16::try_from(value)
+            .map_err(|_| ImpError::new(format!("IMP placement {axis} {value} does not fit in i16")))
+    };
+    Ok((narrow(x, "x")?, narrow(y, "y")?))
+}
+
+/// Rewrite one frame's origin pair, returning new file bytes of identical length.
+///
+/// Only the four bytes of that frame record's origin dword change, so every offset stored
+/// elsewhere in the file stays valid. Refuses a frame that carries hotspot records, because the
+/// origin pair and the hotspot array pointer are the same four bytes.
+pub fn write_frame_origin(
+    source: &[u8],
+    frame_index: usize,
+    x: i16,
+    y: i16,
+) -> Result<Vec<u8>, ImpError> {
+    let sprite = ImpSprite::parse(source)?;
+    let frame = sprite.frames.get(frame_index).ok_or_else(|| {
+        ImpError::new(format!("IMP frame index {frame_index} is out of range"))
+    })?;
+    if frame.hotspot_offset.is_some() {
+        return Err(ImpError::new(format!(
+            "IMP frame {frame_index} carries {} hotspot records, so its record has no origin pair; edit a hotspot record instead",
+            frame.hotspots.len()
+        )));
+    }
+    // A duplicate or shared-pixel frame has no origin of its own: the parser reports `None` for it,
+    // and what the dword means for that record class is not established. Refuse by name rather than
+    // patching four bytes and letting the caller puzzle over reading back `None`.
+    if let Some(source_frame) = frame.source_frame {
+        return Err(ImpError::new(format!(
+            "IMP frame {frame_index} is a duplicate of frame {source_frame} and carries no origin pair of its own; edit frame {source_frame}"
+        )));
+    }
+    let offset = frame.record_offset + 8;
+    let mut output = source.to_vec();
+    require_range(&output, offset, 1, 4, "frame origin")?;
+    output[offset..offset + 2].copy_from_slice(&x.to_le_bytes());
+    output[offset + 2..offset + 4].copy_from_slice(&y.to_le_bytes());
+    Ok(output)
+}
+
+/// Rewrite the offsets of one hotspot record, selected by its type id.
+///
+/// Returns new file bytes of identical length; only that record's four offset bytes change. The
+/// type id itself is left alone. Refuses when the frame has no record of that type, and when more
+/// than one record shares it, rather than guessing which was meant.
+pub fn write_frame_hotspot(
+    source: &[u8],
+    frame_index: usize,
+    id: u16,
+    x: i16,
+    y: i16,
+) -> Result<Vec<u8>, ImpError> {
+    let sprite = ImpSprite::parse(source)?;
+    let frame = sprite.frames.get(frame_index).ok_or_else(|| {
+        ImpError::new(format!("IMP frame index {frame_index} is out of range"))
+    })?;
+    let Some(base) = frame.hotspot_offset else {
+        return Err(ImpError::new(format!(
+            "IMP frame {frame_index} carries an origin pair rather than hotspot records"
+        )));
+    };
+    let matches: Vec<usize> = frame
+        .hotspots
+        .iter()
+        .enumerate()
+        .filter(|(_, spot)| spot.id == id)
+        .map(|(index, _)| index)
+        .collect();
+    let slot = match matches.as_slice() {
+        [only] => *only,
+        [] => {
+            let present: Vec<u16> = frame.hotspots.iter().map(|spot| spot.id).collect();
+            return Err(ImpError::new(format!(
+                "IMP frame {frame_index} has no hotspot of type {id}; it carries {present:?}"
+            )));
+        }
+        many => {
+            return Err(ImpError::new(format!(
+                "IMP frame {frame_index} carries {} hotspots of type {id}; refusing to guess",
+                many.len()
+            )))
+        }
+    };
+    let offset = base + slot * HOTSPOT_RECORD_SIZE + 2;
+    let mut output = source.to_vec();
+    require_range(&output, offset, 1, 4, "hotspot offsets")?;
+    output[offset..offset + 2].copy_from_slice(&x.to_le_bytes());
+    output[offset + 2..offset + 4].copy_from_slice(&y.to_le_bytes());
+    Ok(output)
 }
 
 fn check_equal<T>(label: &str, actual: T, expected: T) -> Result<(), ImpError>
@@ -949,6 +1158,226 @@ mod tests {
             unpack_pixels(&[0b1010_1010], 11, 1, 1).unwrap(),
             [1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0]
         );
+    }
+
+    /// A synthetic sprite whose single frame carries two hotspot records instead of an origin.
+    fn synthetic_imp_with_hotspots() -> Vec<u8> {
+        let mut source = synthetic_imp();
+        let hotspot_offset = source.len();
+        source[56 + 1] = 2;
+        source[56 + 8..56 + 12].copy_from_slice(&(hotspot_offset as u32).to_le_bytes());
+        // type 0 at (1, -2), then type 7 at (3, -4)
+        source.extend_from_slice(&[0x00, 0x00, 0x01, 0x00, 0xfe, 0xff]);
+        source.extend_from_slice(&[0x07, 0x00, 0x03, 0x00, 0xfc, 0xff]);
+        source.resize(hotspot_offset + hotspot_bytes_for(2).unwrap(), 0);
+        source
+    }
+
+    /// The rule measured in the running engine on 2026-09-16, pinned against the four terrain
+    /// sprites it was fitted to. Anchor (320, 180) was recovered from the same run.
+    ///
+    /// `teeth` is listed at its predicted top-left rather than the measured one: its row 155
+    /// contained no changed pixels, so the capture bounded the frame one row low.
+    #[test]
+    fn frame_top_left_reproduces_the_measured_terrain_sprites() {
+        let anchor = (320, 180);
+        let cases = [
+            ("orchard", (0_i16, -35_i16), 60_u16, 70_u16, (290, 110)),
+            ("teeth", (0, -1), 52, 48, (294, 155)),
+            ("palm1", (9, -20), 53, 53, (303, 134)),
+            ("dtree", (-6, -12), 21, 34, (304, 151)),
+        ];
+        for (name, placement, width, height, expected) in cases {
+            assert_eq!(
+                frame_top_left(anchor, placement, width, height).unwrap(),
+                expected,
+                "{name} top-left"
+            );
+            assert_eq!(
+                placement_for_top_left(anchor, expected, width, height).unwrap(),
+                placement,
+                "{name} inverse"
+            );
+        }
+    }
+
+    /// Odd sizes settle floor against ceil: palm1 is 53 wide and its silhouette measured exactly
+    /// 53 columns from x=303, which ceil would have placed at 302.
+    #[test]
+    fn frame_top_left_halves_toward_zero_for_odd_sizes() {
+        assert_eq!(
+            frame_top_left((320, 180), (9, -20), 53, 53).unwrap(),
+            (303, 134)
+        );
+        assert_ne!(
+            frame_top_left((320, 180), (9, -20), 53, 53).unwrap(),
+            (302, 133)
+        );
+    }
+
+    #[test]
+    fn writing_the_same_origin_back_reproduces_the_input_byte_for_byte() {
+        let source = synthetic_imp();
+        let original = ImpSprite::parse(&source).unwrap();
+        let (x, y) = (
+            original.frames[0].origin_x.unwrap(),
+            original.frames[0].origin_y.unwrap(),
+        );
+        assert_eq!(write_frame_origin(&source, 0, x, y).unwrap(), source);
+    }
+
+    #[test]
+    fn writing_an_origin_changes_only_that_records_four_bytes() {
+        let source = synthetic_imp();
+        let patched = write_frame_origin(&source, 0, -1234, 567).unwrap();
+
+        assert_eq!(patched.len(), source.len());
+        let differing: Vec<usize> = (0..source.len())
+            .filter(|index| source[*index] != patched[*index])
+            .collect();
+        let record = ImpSprite::parse(&source).unwrap().frames[0].record_offset;
+        assert!(
+            differing.iter().all(|index| (record + 8..record + 12).contains(index)),
+            "unexpected bytes changed: {differing:?}"
+        );
+
+        let reparsed = ImpSprite::parse(&patched).unwrap();
+        assert_eq!(reparsed.frames[0].origin_x, Some(-1234));
+        assert_eq!(reparsed.frames[0].origin_y, Some(567));
+    }
+
+    /// Regression for a review finding: a duplicate frame has no origin of its own, but the only
+    /// guard used to be "does it have hotspots", so the write silently patched four bytes and the
+    /// caller read back `None`.
+    #[test]
+    fn writing_an_origin_refuses_a_duplicate_frame() {
+        let mut source = synthetic_imp();
+        source.splice(56..56, [0_u8; FACING_RECORD_SIZE + FRAME_RECORD_SIZE]);
+        source[8..12].copy_from_slice(&96_u32.to_le_bytes());
+        source[32 + 11] = 2;
+        source[48 + 4..48 + 8].copy_from_slice(&80_u32.to_le_bytes());
+        source[56 + 2..56 + 4].copy_from_slice(&5_u16.to_le_bytes());
+        source[56 + 4..56 + 8].copy_from_slice(&64_u32.to_le_bytes());
+        source[64] = FRAME_FLAG_SHARED_PIXELS;
+        source[64 + 12..64 + 16].copy_from_slice(&1120_u32.to_le_bytes());
+        source[80 + 12..80 + 16].copy_from_slice(&1120_u32.to_le_bytes());
+
+        let message = write_frame_origin(&source, 1, -1234, 567)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("duplicate of frame 0"), "{message}");
+        // And the untouched original frame still accepts a write.
+        assert!(write_frame_origin(&source, 0, -1234, 567).is_ok());
+    }
+
+    /// Regression for a review finding: these overflowed silently in a release build, printing a
+    /// wrapped value that looked like a real answer. That is why the release-only probe missed it.
+    #[test]
+    fn placement_arithmetic_refuses_to_wrap() {
+        assert!(placement_for_top_left((i32::MIN, 0), (i32::MAX, 0), 61, 61).is_err());
+        assert!(frame_top_left((i32::MAX, 0), (32767, 0), 0, 0).is_err());
+        assert!(frame_top_left((i32::MIN, 0), (-32768, 0), 0, 0).is_err());
+        // The ordinary range is unaffected.
+        assert_eq!(frame_top_left((320, 180), (0, -35), 60, 70).unwrap(), (290, 110));
+    }
+
+    /// Two distinct frame records may store the same hotspot array pointer, which
+    /// `frames_sharing_record` cannot see. Not present in shipped GS5R3 art, but the writer
+    /// documents an aliasing guarantee, so it has to hold for files we did not author.
+    #[test]
+    fn frames_sharing_hotspots_sees_arrays_shared_across_distinct_records() {
+        let mut source = synthetic_imp();
+        source.splice(56..56, [0_u8; FRAME_RECORD_SIZE]);
+        source[8..12].copy_from_slice(&80_u32.to_le_bytes());
+        source[48 + 2..48 + 4].copy_from_slice(&2_u16.to_le_bytes());
+        // Two independent frame records, same pixels, same hotspot array.
+        for record in [56_usize, 72] {
+            source[record + 1] = 2;
+            source[record + 2..record + 4].copy_from_slice(&2_u16.to_le_bytes());
+            source[record + 4..record + 6].copy_from_slice(&1_u16.to_le_bytes());
+            source[record + 6..record + 8].copy_from_slice(&2_u16.to_le_bytes());
+        }
+        let hotspot_offset = source.len() + PALETTE_BYTES + 2;
+        for record in [56_usize, 72] {
+            source[record + 8..record + 12]
+                .copy_from_slice(&(hotspot_offset as u32).to_le_bytes());
+        }
+        let palette_offset = source.len();
+        source[56 + 12..56 + 16].copy_from_slice(&((palette_offset + PALETTE_BYTES) as u32).to_le_bytes());
+        source[72 + 12..72 + 16].copy_from_slice(&((palette_offset + PALETTE_BYTES) as u32).to_le_bytes());
+        source.resize(palette_offset + PALETTE_BYTES, 0);
+        source.extend_from_slice(&[0xaa, 0xbb]);
+        source.extend_from_slice(&[0x00, 0x00, 0x01, 0x00, 0xfe, 0xff]);
+        source.extend_from_slice(&[0x07, 0x00, 0x03, 0x00, 0xfc, 0xff]);
+        source.resize(hotspot_offset + hotspot_bytes_for(2).unwrap(), 0);
+
+        let sprite = ImpSprite::parse(&source).unwrap();
+        assert_eq!(sprite.frames.len(), 2);
+        assert_eq!(sprite.frames_sharing_record(0).unwrap(), [0]);
+        assert_eq!(sprite.frames_sharing_hotspots(0).unwrap(), [0, 1]);
+    }
+
+    #[test]
+    fn frames_sharing_hotspots_is_empty_for_an_origin_frame() {
+        let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
+        assert!(sprite.frames_sharing_hotspots(0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn writing_an_origin_refuses_a_frame_that_carries_hotspot_records() {
+        let source = synthetic_imp_with_hotspots();
+        let message = write_frame_origin(&source, 0, 1, 2).unwrap_err().to_string();
+        assert!(message.contains("hotspot records"), "{message}");
+    }
+
+    #[test]
+    fn writing_a_hotspot_edits_the_selected_type_and_leaves_the_others_alone() {
+        let source = synthetic_imp_with_hotspots();
+        let patched = write_frame_hotspot(&source, 0, 7, -9, 11).unwrap();
+
+        assert_eq!(patched.len(), source.len());
+        let reparsed = ImpSprite::parse(&patched).unwrap();
+        let spots = &reparsed.frames[0].hotspots;
+        assert_eq!((spots[0].id, spots[0].x, spots[0].y), (0, 1, -2));
+        assert_eq!((spots[1].id, spots[1].x, spots[1].y), (7, -9, 11));
+    }
+
+    #[test]
+    fn writing_a_hotspot_reports_the_types_present_when_the_type_is_absent() {
+        let source = synthetic_imp_with_hotspots();
+        let message = write_frame_hotspot(&source, 0, 42, 0, 0)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("[0, 7]"), "{message}");
+    }
+
+    #[test]
+    fn writing_a_hotspot_refuses_a_frame_that_carries_an_origin_pair() {
+        let source = synthetic_imp();
+        let message = write_frame_hotspot(&source, 0, 0, 1, 2)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("origin pair"), "{message}");
+    }
+
+    /// A repeated facing aliases one record across every logical frame, so an edit through any of
+    /// them is an edit through all of them. Callers have to be told.
+    #[test]
+    fn frames_sharing_record_reports_repeated_facing_aliases() {
+        let mut source = synthetic_imp();
+        source.splice(56..56, [0_u8; FACING_RECORD_SIZE + FRAME_RECORD_SIZE]);
+        source[8..12].copy_from_slice(&96_u32.to_le_bytes());
+        source[32 + 11] = 2;
+        source[48 + 4..48 + 8].copy_from_slice(&80_u32.to_le_bytes());
+        source[56 + 2..56 + 4].copy_from_slice(&5_u16.to_le_bytes());
+        source[56 + 4..56 + 8].copy_from_slice(&64_u32.to_le_bytes());
+        source[64] = FRAME_FLAG_SHARED_PIXELS;
+        source[64 + 12..64 + 16].copy_from_slice(&1120_u32.to_le_bytes());
+        source[80 + 12..80 + 16].copy_from_slice(&1120_u32.to_le_bytes());
+
+        let sprite = ImpSprite::parse(&source).unwrap();
+        assert_eq!(sprite.frames_sharing_record(1).unwrap(), [1, 2, 3, 4, 5]);
+        assert_eq!(sprite.frames_sharing_record(0).unwrap(), [0]);
     }
 
     #[test]

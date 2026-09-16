@@ -763,3 +763,98 @@ exactly 53 columns starting at 303; `ceil` predicts 302, which would have measur
 recovered anchor y of `180`. Its x agreed and its y did not, so the y/z input convention is wrong
 somewhere — units, or a required elevation term. **`map2screen` is not validated by this run**, and
 nothing above depends on it, because the four-subject differencing never used it. Left open.
+
+## 2026-09-16 — A placement writer, and the two things it is not allowed to claim
+
+**Evidence class: observed in a local binary.** With the draw rule measured, the tool can now write
+placement back. `--set-imp-placement` edits a loose IMP in place and `--imp-placement-for` solves for
+the value a re-cropped frame needs.
+
+### The corpus splits in two, and the split matters
+
+Frame record bytes `+8..+12` are **overloaded**. When the record's hotspot count byte is zero those
+four bytes are the `origin_x`/`origin_y` pair; when it is non-zero they are a file offset to the
+hotspot array. A frame therefore cannot carry both, and across GS5R3's `imp.mpq`:
+
+| Placement form | Frames |
+| --- | --- |
+| origin pair | 15,725 (454 of them exactly zero) |
+| hotspot records | 28,771 |
+| neither (duplicate/back-reference frames) | 7,170 |
+
+**Hotspot records are the majority form.** The rule measured earlier today was measured on terrain
+sprites, which carry the *origin pair*. So the writer edits either form mechanically, but the
+**semantic** claim covers the origin pair only.
+
+### Which hotspot type is the draw anchor is still open
+
+Types 0 and 7 appear on nearly every unit frame. Two things were tried and neither settles it:
+
+- Regressing the offsets against frame height separates the types but identifies none of them as the
+  anchor. Type 0 gives `y ~ -0.301h - 1.26` (residual 9.93 of 14.54) and type 7 gives
+  `y ~ -0.430h - 2.97`; the origin pair itself gives `y ~ -0.365h + 4.19` with a *worse* residual
+  than either. The four measured terrain sprites had `-y/h` ranging from 0.02 to 0.50, so no single
+  ratio was expected, and none is found.
+- **Refuted:** `units\imp\aicr2a.imp` has type 0 at `y = -33` on a 67-tall frame and `aicr2b.imp` has
+  `-16` on 33, both exactly `-(h >> 1)`. That looked like a rule. Corpus-wide it holds for **1.7%** of
+  frames. Two samples agreeing is not a rule; the check is kept in
+  `examples/imp_placement_survey.rs` so the same idea is cheap to re-test rather than re-derive.
+
+Settling this needs a second engine measurement against a sprite whose hotspot records we know,
+in the way the terrain-sprite probe settled the origin pair.
+
+### What the writer guarantees
+
+- **Identity is byte-identical.** Writing a frame's existing placement back reproduces the input
+  exactly, verified against shipped `palm1b.imp` and `units\imp\aicr2a.imp`.
+- **Length never changes**, so every offset stored elsewhere in the file stays valid. A real edit
+  touches only the bytes that actually differ — two, for the cases tested.
+- **It re-parses before writing** and refuses to emit a file it cannot read back, or one whose
+  placement does not read back as the value requested.
+- **It refuses rather than guesses**: writing an origin to a hotspot-bearing frame, writing a hotspot
+  type the frame does not carry (the error names the types it does carry), and writing a type that
+  appears more than once.
+- **It warns about aliasing, per path.** An origin lives in the frame record and a hotspot lives in
+  the array the record points at, and the two share differently: `frames_sharing_record` covers
+  repeated facings and `0x04` shared-pixel runs, `frames_sharing_hotspots` covers distinct records
+  storing one array pointer. The second does not occur in any of 241 shipped unit sprites, but the
+  writer advertises a guarantee, so it holds for files we did not author.
+- **It refuses a duplicate frame's origin.** A `0x04`/`0x08` frame has no origin of its own.
+- **It refuses to overwrite**, like every other output path in the tool.
+- **It refuses arithmetic that would wrap** rather than printing a wrapped value.
+
+### The demonstration that matters for the board
+
+`palm1b.imp` frame 0 is 53x53 with origin `(9, -20)`. Pad the art by 4 pixels on every side, to
+61x61, and ask what keeps it on screen:
+
+```
+$ lom-asset-viewer --imp-placement-for 61 61 320 180 303 134
+placement	13	-16
+```
+
+`(9, -20)` becomes `(13, -16)` — each axis shifts by exactly half the added pixels. That is the
+centre-relative convention stated as a recipe, and it is precisely the correction the board's
+crop-and-re-centre workaround was missing.
+
+
+### Review of the writer, and what each side caught
+
+Both a Claude reviewer and a Codex reviewer ran over the same diff. **They disagreed, and the
+disagreement is the interesting part.** Codex reported no defects; the Claude reviewer reported five,
+four of which were confirmed here by reading the code and running the path:
+
+| Finding | Verdict | Fix |
+| --- | --- | --- |
+| `set_imp_placement` used `fs::write`, which truncates, while every other output path in the tool is create-new | **Confirmed.** This is the only command that mutates game art. | create-new, plus a CLI test |
+| `write_frame_origin` accepted a duplicate/shared-pixel frame, patching four bytes the parser reports as having no origin | **Confirmed** by reading the guard: the only check was `hotspot_offset.is_some()` | refuse by name, plus a regression test |
+| Placement arithmetic overflowed on command-line coordinates | **Confirmed** | `checked_add`/`checked_sub`, plus a regression test |
+| The aliasing warning used record sharing for the hotspot path, where the shared unit is the array | **Confirmed as a defect, but not reachable in shipped art** — 0 of 241 unit sprites have two records pointing at one hotspot array. Fixed anyway | `frames_sharing_hotspots` |
+| No test covered the new CLI layer | Fair | five new tests |
+
+**Why Codex missed the overflow is worth recording.** It probed the boundary with the *release*
+binary, where the subtraction wraps silently and prints a plausible number, and read that as a pass.
+The Claude reviewer ran a debug build and got `attempt to subtract with overflow`. Reproduced here
+both ways. A boundary probe against an optimised build is not a boundary probe.
+
+Tests after the fixes: **83 library and 11 CLI**, clippy clean.

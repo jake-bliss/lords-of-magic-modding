@@ -12,6 +12,7 @@ use lom_asset_viewer::gamescript::GameScriptDocument;
 use lom_asset_viewer::gamescript_vm::{
     GameScriptVm, GameScriptVmError, Value as GameScriptValue,
 };
+use lom_asset_viewer::imp;
 use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::map::MapAsset;
 use lom_asset_viewer::mpq::{Archive, Entry};
@@ -41,6 +42,20 @@ enum Command {
         source: Source,
         member: String,
         frame: usize,
+        output: PathBuf,
+    },
+    ImpPlacementFor {
+        width: u16,
+        height: u16,
+        anchor: (i32, i32),
+        top_left: (i32, i32),
+    },
+    SetImpPlacement {
+        input: PathBuf,
+        frame: usize,
+        x: i16,
+        y: i16,
+        hotspot: Option<u16>,
         output: PathBuf,
     },
     ExportMapPreview {
@@ -185,6 +200,20 @@ fn run() -> Result<(), String> {
             frame,
             output,
         } => export_imp_frame(&source, &member, frame, &output),
+        Command::ImpPlacementFor {
+            width,
+            height,
+            anchor,
+            top_left,
+        } => imp_placement_for(width, height, anchor, top_left),
+        Command::SetImpPlacement {
+            input,
+            frame,
+            x,
+            y,
+            hotspot,
+            output,
+        } => set_imp_placement(&input, frame, x, y, hotspot, &output),
         Command::ExportMapPreview {
             map,
             tile_set,
@@ -241,6 +270,13 @@ fn parse_args() -> Result<Command, String> {
     let listfile = take_option(&mut args, "--listfile")?.map(PathBuf::from);
     let executable = take_option(&mut args, "--exe")?.map(PathBuf::from);
     let expression = take_option(&mut args, "--eval")?;
+    let hotspot = take_option(&mut args, "--hotspot")?
+        .map(|value| {
+            value
+                .parse::<u16>()
+                .map_err(|_| format!("hotspot type must be a nonnegative integer: {value}"))
+        })
+        .transpose()?;
     let stubs = take_repeated_option(&mut args, "--stub")
         .iter()
         .map(|specification| parse_native_stub(specification))
@@ -277,6 +313,26 @@ fn parse_args() -> Result<Command, String> {
                 member: args[2].clone(),
                 frame: parse_frame_index(&args[3])?,
                 output: args[4].clone().into(),
+            })
+        }
+        "--imp-placement-for" => {
+            require_len(&args, 7)?;
+            Ok(Command::ImpPlacementFor {
+                width: parse_dimension(&args[1])?,
+                height: parse_dimension(&args[2])?,
+                anchor: (parse_coordinate(&args[3])?, parse_coordinate(&args[4])?),
+                top_left: (parse_coordinate(&args[5])?, parse_coordinate(&args[6])?),
+            })
+        }
+        "--set-imp-placement" => {
+            require_len(&args, 6)?;
+            Ok(Command::SetImpPlacement {
+                input: args[1].clone().into(),
+                frame: parse_frame_index(&args[2])?,
+                x: parse_offset(&args[3])?,
+                y: parse_offset(&args[4])?,
+                hotspot,
+                output: args[5].clone().into(),
             })
         }
         "--export-map-preview" => {
@@ -389,6 +445,24 @@ fn parse_args() -> Result<Command, String> {
     }
 }
 
+fn parse_offset(value: &str) -> Result<i16, String> {
+    value
+        .parse()
+        .map_err(|_| format!("placement offset must fit in a signed 16-bit integer: {value}"))
+}
+
+fn parse_dimension(value: &str) -> Result<u16, String> {
+    value
+        .parse()
+        .map_err(|_| format!("frame dimension must be a nonnegative 16-bit integer: {value}"))
+}
+
+fn parse_coordinate(value: &str) -> Result<i32, String> {
+    value
+        .parse()
+        .map_err(|_| format!("screen coordinate must be an integer: {value}"))
+}
+
 fn parse_frame_index(value: &str) -> Result<usize, String> {
     value
         .parse()
@@ -447,7 +521,7 @@ fn take_option(args: &mut Vec<String>, option: &str) -> Result<Option<String>, S
         return Err(format!("{option} may only be supplied once"));
     }
     if position + 1 >= args.len() {
-        return Err(format!("{option} requires a path"));
+        return Err(format!("{option} requires a value"));
     }
     let value = args.remove(position + 1);
     args.remove(position);
@@ -463,7 +537,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -607,6 +681,96 @@ fn export_map_preview(
         preview.height,
         preview.atlas_name,
     );
+    Ok(())
+}
+
+/// Solve for the placement pair that keeps a frame where it is after its size changed.
+///
+/// This is the calculation a re-cropping tool needs. It is pure arithmetic over the rule in
+/// [`lom_asset_viewer::imp::frame_top_left`], so it takes no file.
+fn imp_placement_for(
+    width: u16,
+    height: u16,
+    anchor: (i32, i32),
+    top_left: (i32, i32),
+) -> Result<(), String> {
+    let (x, y) = imp::placement_for_top_left(anchor, top_left, width, height)
+        .map_err(|error| error.to_string())?;
+    println!("placement\t{x}\t{y}");
+    let check = imp::frame_top_left(anchor, (x, y), width, height)
+        .map_err(|error| error.to_string())?;
+    println!("check\ttop-left {check:?} for a {width}x{height} frame drawn at {anchor:?}");
+    Ok(())
+}
+
+/// Rewrite one frame's placement in a loose IMP file.
+///
+/// Works on a file rather than an archive member because the workflow it serves is repairing a
+/// sprite a third-party tool emitted, before it is packed back into an MPQ.
+fn set_imp_placement(
+    input: &Path,
+    frame: usize,
+    x: i16,
+    y: i16,
+    hotspot: Option<u16>,
+    output: &Path,
+) -> Result<(), String> {
+    let source = fs::read(input)
+        .map_err(|error| format!("could not read {}: {error}", input.display()))?;
+    let sprite = ImpSprite::parse(&source).map_err(|error| error.to_string())?;
+
+    // The unit of sharing differs by path: an origin lives in the frame record, a hotspot lives in
+    // the array the record points at, and two distinct records can point at one array.
+    let shared = match hotspot {
+        Some(_) => sprite.frames_sharing_hotspots(frame),
+        None => sprite.frames_sharing_record(frame),
+    }
+    .map_err(|error| error.to_string())?;
+    if shared.len() > 1 {
+        let unit = if hotspot.is_some() { "hotspot array" } else { "record" };
+        eprintln!("note: frames {shared:?} share one {unit}, so this writes all of them");
+    }
+
+    let patched = match hotspot {
+        Some(id) => imp::write_frame_hotspot(&source, frame, id, x, y),
+        None => imp::write_frame_origin(&source, frame, x, y),
+    }
+    .map_err(|error| error.to_string())?;
+
+    // Re-parse before writing: a file we cannot read back is a file we must not emit.
+    let reparsed = ImpSprite::parse(&patched).map_err(|error| {
+        format!("refusing to write: the patched sprite no longer parses: {error}")
+    })?;
+    let written = &reparsed.frames[frame];
+    let observed = match hotspot {
+        Some(id) => written
+            .hotspots
+            .iter()
+            .find(|spot| spot.id == id)
+            .map(|spot| (spot.x, spot.y)),
+        None => written.origin_x.zip(written.origin_y),
+    };
+    if observed != Some((x, y)) {
+        return Err(format!(
+            "refusing to write: expected placement ({x}, {y}) but read back {observed:?}"
+        ));
+    }
+
+    // Create-new, like every other output path in this tool. This is the one command that mutates
+    // game art, so silently truncating an existing file is the worst place to allow it.
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    file.write_all(&patched)
+        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+    let changed = source
+        .iter()
+        .zip(&patched)
+        .filter(|(before, after)| before != after)
+        .count();
+    println!("wrote\t{}\t{changed} bytes changed", output.display());
     Ok(())
 }
 
@@ -2387,7 +2551,11 @@ fn is_screaming_case(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::{parse_coordinate, parse_dimension, parse_offset, set_imp_placement};
     use std::collections::BTreeMap;
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
 
     use lom_asset_viewer::imp::{ImpFacing, ImpFrame, ImpSequence, ImpSprite};
     use lom_asset_viewer::map::{MapAsset, MapCell};
@@ -2543,9 +2711,84 @@ mod tests {
         assert_eq!(&preview[8 * 4..9 * 4], &[10, 20, 30, 255]);
     }
 
+    /// A minimal single-frame IMP with an origin pair, built here because the library's own
+    /// fixture is `#[cfg(test)]` inside the library crate and so is not visible to this binary.
+    fn minimal_imp() -> Vec<u8> {
+        const PALETTE_BYTES: usize = 256 * 4;
+        let mut source = vec![0_u8; 32 + 16 + 8 + 16];
+        source[2] = 1;
+        source[4..6].copy_from_slice(&2_u16.to_le_bytes());
+        source[6..8].copy_from_slice(&1_u16.to_le_bytes());
+        let palette_offset = source.len();
+        source[8..12].copy_from_slice(&(palette_offset as u32).to_le_bytes());
+        source[26..28].copy_from_slice(&1_u16.to_le_bytes());
+        source[28..32].copy_from_slice(&32_u32.to_le_bytes());
+        source[32 + 11] = 1;
+        source[32 + 12..32 + 16].copy_from_slice(&48_u32.to_le_bytes());
+        source[48 + 2..48 + 4].copy_from_slice(&1_u16.to_le_bytes());
+        source[48 + 4..48 + 8].copy_from_slice(&56_u32.to_le_bytes());
+        source[56 + 2..56 + 4].copy_from_slice(&2_u16.to_le_bytes());
+        source[56 + 4..56 + 6].copy_from_slice(&1_u16.to_le_bytes());
+        source[56 + 6..56 + 8].copy_from_slice(&2_u16.to_le_bytes());
+        let pixel_offset = palette_offset + PALETTE_BYTES;
+        source[56 + 12..56 + 16].copy_from_slice(&(pixel_offset as u32).to_le_bytes());
+        source.resize(pixel_offset, 0);
+        source[palette_offset..palette_offset + 4].copy_from_slice(&[3, 2, 1, 0]);
+        source.extend_from_slice(&[0xaa, 0xbb]);
+        source
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let path = env::temp_dir().join(format!("lom-placement-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("create scratch dir");
+        path
+    }
+
+    /// Regression for the review's critical finding: this is the only command that mutates game
+    /// art, and it used `fs::write`, which truncates. Every other output path here is create-new.
+    #[test]
+    fn set_imp_placement_refuses_to_overwrite_an_existing_output() {
+        let dir = scratch_dir("overwrite");
+        let input = dir.join("in.imp");
+        let output = dir.join("out.imp");
+        fs::write(&input, minimal_imp()).unwrap();
+        fs::write(&output, b"precious").unwrap();
+
+        let error = set_imp_placement(&input, 0, 1, 2, None, &output).unwrap_err();
+        assert!(error.contains("could not create"), "{error}");
+        assert_eq!(fs::read(&output).unwrap(), b"precious");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_imp_placement_writes_a_new_file_and_reads_the_value_back() {
+        let dir = scratch_dir("write");
+        let input = dir.join("in.imp");
+        let output = dir.join("out.imp");
+        fs::write(&input, minimal_imp()).unwrap();
+
+        set_imp_placement(&input, 0, -7, 9, None, &output).unwrap();
+        let written = ImpSprite::parse(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(written.frames[0].origin_x, Some(-7));
+        assert_eq!(written.frames[0].origin_y, Some(9));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn placement_arguments_reject_values_that_do_not_fit() {
+        assert!(parse_offset("40000").is_err());
+        assert!(parse_offset("-40000").is_err());
+        assert_eq!(parse_offset("-35").unwrap(), -35);
+        assert!(parse_dimension("-1").is_err());
+        assert_eq!(parse_dimension("53").unwrap(), 53);
+        assert_eq!(parse_coordinate("-320").unwrap(), -320);
+        assert!(parse_coordinate("x").is_err());
+    }
+
     fn navigation_sprite() -> ImpSprite {
         let frames = (0..6)
-            .map(|_| ImpFrame {
+            .map(|index| ImpFrame {
                 flags: 0,
                 width: 1,
                 height: 1,
@@ -2555,6 +2798,8 @@ mod tests {
                 palette_indices: vec![2],
                 rgba: vec![1, 2, 3, 255],
                 source_frame: None,
+                record_offset: index * 16,
+                hotspot_offset: None,
             })
             .collect();
         ImpSprite {
