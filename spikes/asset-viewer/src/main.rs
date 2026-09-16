@@ -18,7 +18,7 @@ use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
 use lom_asset_viewer::operator_arity;
 use lom_asset_viewer::pbm::PbmImage;
-use lom_asset_viewer::png_export::{write_imp_frame_png, write_rgba_png};
+use lom_asset_viewer::png_export::{write_imp_frame_png, write_pbm_png, write_rgba_png};
 use lom_asset_viewer::tile::TileSetDefinition;
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
@@ -47,6 +47,11 @@ enum Command {
         map: PathBuf,
         tile_set: PathBuf,
         atlas: PathBuf,
+        output: PathBuf,
+    },
+    ExportPbm {
+        source: Source,
+        member: String,
         output: PathBuf,
     },
     Extract {
@@ -186,6 +191,11 @@ fn run() -> Result<(), String> {
             atlas,
             output,
         } => export_map_preview(&map, &tile_set, &atlas, &output),
+        Command::ExportPbm {
+            source,
+            member,
+            output,
+        } => export_pbm(&source, &member, &output),
         Command::Extract {
             source,
             member,
@@ -276,6 +286,14 @@ fn parse_args() -> Result<Command, String> {
                 tile_set: args[2].clone().into(),
                 atlas: args[3].clone().into(),
                 output: args[4].clone().into(),
+            })
+        }
+        "--export-pbm" => {
+            require_len(&args, 4)?;
+            Ok(Command::ExportPbm {
+                source: source(&args[1], listfile),
+                member: args[2].clone(),
+                output: args[3].clone().into(),
             })
         }
         "--list" => {
@@ -445,7 +463,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -528,6 +546,36 @@ fn export_imp_frame(
         frame.width,
         frame.height,
         frame_index
+    );
+    Ok(())
+}
+
+fn export_pbm(source: &Source, member: &str, output: &PathBuf) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name.eq_ignore_ascii_case(member))
+        .ok_or_else(|| format!("archive has no member named {member}"))?;
+    let bytes = archive
+        .read(&entry.name)
+        .map_err(|error| error.to_string())?;
+    let image = PbmImage::decode(&bytes).map_err(|error| error.to_string())?;
+    let mut encoded = Vec::new();
+    write_pbm_png(&mut encoded, &image)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    file.write_all(&encoded)
+        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+    println!(
+        "wrote\t{}\t{}\t{}x{}\tpalette={}",
+        output.display(),
+        encoded.len(),
+        image.width,
+        image.height,
+        image.palette_entries,
     );
     Ok(())
 }
@@ -2425,6 +2473,7 @@ mod tests {
             width: 2,
             height: 1,
             rgba: vec![10, 20, 30, 255, 200, 210, 220, 255],
+            indices: vec![0, 1],
             palette: Vec::new(),
             palette_entries: 0,
             compression: 0,

@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use crate::imp::ImpSprite;
+use crate::pbm::PbmImage;
 
 pub fn write_imp_frame_png<W: Write>(
     writer: W,
@@ -10,13 +11,38 @@ pub fn write_imp_frame_png<W: Write>(
     let frame = sprite
         .resolved_frame(frame_index)
         .map_err(|error| error.to_string())?;
+    let palette_rgb: Vec<[u8; 3]> = sprite
+        .palette
+        .iter()
+        .map(|rgba| [rgba[0], rgba[1], rgba[2]])
+        .collect();
     write_indexed_png(
         writer,
         frame.width,
         frame.height,
-        &sprite.palette,
+        &palette_rgb,
         &frame.palette_indices,
-        sprite.color_key,
+        // IMP frames always carry a colour-key shadow index, unlike PBM's
+        // per-file masking field, so the key is always transparent here.
+        Some(sprite.color_key),
+    )
+}
+
+/// Writes a decoded PBM/LBM image as an indexed PNG, preserving the original
+/// palette indices and palette bytes so the export round-trips losslessly.
+///
+/// The IFF BMHD `masking` field of 2 (`mskHasTransparentColor`) is the only
+/// value that declares a transparent palette index; anything else means the
+/// image has no colour-keyed transparency and gets no `tRNS` chunk at all.
+pub fn write_pbm_png<W: Write>(writer: W, image: &PbmImage) -> Result<(), String> {
+    let transparent_index = (image.masking == 2).then_some(image.transparent_color);
+    write_indexed_png(
+        writer,
+        image.width,
+        image.height,
+        &image.palette,
+        &image.indices,
+        transparent_index,
     )
 }
 
@@ -55,12 +81,12 @@ fn write_indexed_png<W: Write>(
     writer: W,
     width: u16,
     height: u16,
-    palette: &[[u8; 4]],
+    palette: &[[u8; 3]],
     palette_indices: &[u8],
-    color_key: u8,
+    transparent_index: Option<u8>,
 ) -> Result<(), String> {
     if width == 0 || height == 0 {
-        return Err("cannot export an empty IMP frame".to_owned());
+        return Err("cannot export an empty indexed image".to_owned());
     }
     if palette.is_empty() || palette.len() > 256 {
         return Err(format!(
@@ -70,10 +96,10 @@ fn write_indexed_png<W: Write>(
     }
     let expected_pixels = usize::from(width)
         .checked_mul(usize::from(height))
-        .ok_or_else(|| "IMP frame dimensions overflow".to_owned())?;
+        .ok_or_else(|| "indexed image dimensions overflow".to_owned())?;
     if palette_indices.len() != expected_pixels {
         return Err(format!(
-            "IMP frame has {} palette indices; expected {expected_pixels}",
+            "indexed image has {} palette indices; expected {expected_pixels}",
             palette_indices.len()
         ));
     }
@@ -81,24 +107,30 @@ fn write_indexed_png<W: Write>(
         .iter()
         .find(|index| usize::from(**index) >= palette.len())
     {
-        return Err(format!("IMP frame uses missing palette index {index}"));
+        return Err(format!("indexed image uses missing palette index {index}"));
+    }
+    if let Some(index) = transparent_index
+        && usize::from(index) >= palette.len()
+    {
+        return Err(format!(
+            "transparent index {index} exceeds {} palette entries",
+            palette.len()
+        ));
     }
 
-    let palette_rgb: Vec<u8> = palette
-        .iter()
-        .flat_map(|rgba| [rgba[0], rgba[1], rgba[2]])
-        .collect();
+    let palette_rgb: Vec<u8> = palette.iter().flatten().copied().collect();
     let mut encoder = png::Encoder::new(writer, u32::from(width), u32::from(height));
     encoder.set_color(png::ColorType::Indexed);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_palette(palette_rgb);
-    // The header's colour-key index is transparent and slot 1 is the shadow silhouette.
-    // Without a tRNS chunk the exported frame is fully opaque and the key is lost, even
-    // though the interactive viewer honours it. tRNS entries apply to palette indices in
-    // order, so mark every index up to the key opaque and the key itself transparent.
-    let mut transparency = vec![255_u8; usize::from(color_key) + 1];
-    transparency[usize::from(color_key)] = 0;
-    encoder.set_trns(transparency);
+    if let Some(index) = transparent_index {
+        // tRNS entries apply to palette indices in order, so mark every index up
+        // to the transparent one opaque and the transparent one itself clear;
+        // there is no need to describe indices past it.
+        let mut transparency = vec![255_u8; usize::from(index) + 1];
+        transparency[usize::from(index)] = 0;
+        encoder.set_trns(transparency);
+    }
     let mut png_writer = encoder
         .write_header()
         .map_err(|error| format!("could not write PNG header: {error}"))?;
@@ -111,17 +143,18 @@ fn write_indexed_png<W: Write>(
 mod tests {
     use std::io::Cursor;
 
-    use super::{write_indexed_png, write_rgba_png};
+    use super::{write_indexed_png, write_pbm_png, write_rgba_png};
+    use crate::pbm::PbmImage;
 
     #[test]
     fn marks_a_nonzero_colour_key_transparent() {
-        let mut palette = vec![[0, 0, 0, 255]; 256];
-        palette[0] = [0, 255, 0, 255];
-        palette[188] = [12, 34, 56, 255];
+        let mut palette = vec![[0, 0, 0]; 256];
+        palette[0] = [0, 255, 0];
+        palette[188] = [12, 34, 56];
         let indices = [188, 7, 188, 7, 188, 7];
         let mut encoded = Vec::new();
 
-        write_indexed_png(&mut encoded, 3, 2, &palette, &indices, 188).unwrap();
+        write_indexed_png(&mut encoded, 3, 2, &palette, &indices, Some(188)).unwrap();
 
         let decoder = png::Decoder::new(Cursor::new(encoded));
         let reader = decoder.read_info().unwrap();
@@ -136,14 +169,14 @@ mod tests {
 
     #[test]
     fn exports_indexed_pixels_and_palette_losslessly() {
-        let mut palette = vec![[0, 0, 0, 255]; 256];
-        palette[0] = [0, 255, 0, 255];
-        palette[1] = [255, 0, 0, 255];
-        palette[42] = [1, 2, 3, 255];
+        let mut palette = vec![[0, 0, 0]; 256];
+        palette[0] = [0, 255, 0];
+        palette[1] = [255, 0, 0];
+        palette[42] = [1, 2, 3];
         let indices = [0, 1, 42, 1, 0, 42];
         let mut encoded = Vec::new();
 
-        write_indexed_png(&mut encoded, 3, 2, &palette, &indices, 0).unwrap();
+        write_indexed_png(&mut encoded, 3, 2, &palette, &indices, Some(0)).unwrap();
 
         let decoder = png::Decoder::new(Cursor::new(encoded));
         let mut reader = decoder.read_info().unwrap();
@@ -180,10 +213,85 @@ mod tests {
         assert_eq!(&decoded[..info.buffer_size()], rgba);
     }
 
-    fn palette_bytes(palette: &[[u8; 4]]) -> Vec<u8> {
-        palette
-            .iter()
-            .flat_map(|rgba| [rgba[0], rgba[1], rgba[2]])
-            .collect()
+    fn pbm_image(masking: u8, transparent_color: u8) -> PbmImage {
+        let mut palette = vec![[0, 0, 0]; 256];
+        palette[0] = [0, 255, 0];
+        palette[1] = [255, 0, 0];
+        palette[200] = [1, 2, 3];
+        let indices = vec![0, 1, 200, 1, 0, 200];
+        PbmImage {
+            width: 3,
+            height: 2,
+            rgba: Vec::new(),
+            indices,
+            palette,
+            palette_entries: 256,
+            compression: 0,
+            masking,
+            transparent_color,
+        }
+    }
+
+    #[test]
+    fn pbm_export_preserves_indices_and_palette_byte_exactly() {
+        let image = pbm_image(0, 0);
+        let mut encoded = Vec::new();
+
+        write_pbm_png(&mut encoded, &image).unwrap();
+
+        let decoder = png::Decoder::new(Cursor::new(encoded));
+        let mut reader = decoder.read_info().unwrap();
+        let mut decoded = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut decoded).unwrap();
+        assert_eq!((info.width, info.height), (3, 2));
+        assert_eq!(info.color_type, png::ColorType::Indexed);
+        assert_eq!(&decoded[..info.buffer_size()], image.indices.as_slice());
+        assert_eq!(
+            reader.info().palette.as_deref(),
+            Some(&palette_bytes(&image.palette)[..])
+        );
+    }
+
+    #[test]
+    fn pbm_masking_two_marks_the_declared_index_transparent() {
+        // Use a nonzero transparent index so a hardcoded index-0 assumption
+        // (the bug already fixed for IMP frames) would be caught here too.
+        let image = pbm_image(2, 200);
+        let mut encoded = Vec::new();
+
+        write_pbm_png(&mut encoded, &image).unwrap();
+
+        let decoder = png::Decoder::new(Cursor::new(encoded));
+        let reader = decoder.read_info().unwrap();
+        let transparency = reader.info().trns.as_deref().expect("tRNS chunk");
+        assert_eq!(transparency.len(), 201);
+        assert_eq!(
+            transparency[200], 0,
+            "the declared transparent index must be transparent"
+        );
+        assert!(
+            transparency[..200].iter().all(|alpha| *alpha == 255),
+            "every index below the transparent one stays opaque"
+        );
+    }
+
+    #[test]
+    fn pbm_without_masking_has_no_trns_chunk() {
+        let image = pbm_image(0, 200);
+        let mut encoded = Vec::new();
+
+        write_pbm_png(&mut encoded, &image).unwrap();
+
+        let decoder = png::Decoder::new(Cursor::new(encoded));
+        let reader = decoder.read_info().unwrap();
+        assert_eq!(
+            reader.info().trns,
+            None,
+            "an unmasked PBM must not declare any transparent index"
+        );
+    }
+
+    fn palette_bytes(palette: &[[u8; 3]]) -> Vec<u8> {
+        palette.iter().flatten().copied().collect()
     }
 }
