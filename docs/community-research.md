@@ -49,6 +49,11 @@ in `gs\LEVLMODS5.gs`. The word that actually gates the AI stat bonus there is `i
 quoted a hand-edited or pre-ship version; treat `extra_strong?` as vestigial as installed. The
 underlying phenomenon is real — see [Difficulty and AI](difficulty-ai.md).
 
+Executing both bodies later confirmed the charitable reading: the shipped body is `false` at every
+difficulty, while the body he quoted returns `true` on Hard in single-player and `false` in
+multiplayer, which is precisely the behaviour he described. He was describing code that did not ship,
+not misremembering the game.
+
 **A definition ends with `;`.** The forum fragment's trailing `;` is a line comment, not a
 terminator. Definitions end with `def`: the GS5R3 corpus has 77,391 bare `def` tokens, 6,462 `}def`
 sequences, and zero occurrences of `}` followed by `;`. Our lexer already had this right.
@@ -253,6 +258,9 @@ rows in `--describe-imp` now cross-reference `facing:N` rather than `cycle:N`.
 ## How to use this document
 
 Treat every community statement as a hypothesis with a named source, not as specification. The two
-refutations above were both from the mod's own author about his own code, and both were wrong in
-ways that would have propagated into our documentation had they not been checked. Where community
+refutations above both came from the mod's own author describing his own code, and both would have
+propagated into our documentation unchecked. Note what later execution showed about one of them: the
+`extra_strong?` body he quoted behaves exactly as he said, so he was describing real code that did
+not ship rather than misremembering how the game works. That distinction matters, and the accurate
+claim is the narrower one — a source can be describing a different build than the one you installed. Where community
 material and our corpus disagree, the corpus wins and the disagreement is recorded.
