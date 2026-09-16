@@ -1255,7 +1255,7 @@ fn operator_signature_lines(
                 format!("unknown-name-pushes\t{}", effect.pushes),
                 format!("unknown-name-confidence\t{confidence}"),
                 format!(
-                    "unknown-name-remedy\tthe engine implements this; a static site count ({confidence}) says it takes {} operand{} and returns {} result{} — a sound upper bound, not proven arity (see mul); supply it with --stub {name}=VALUE",
+                    "unknown-name-remedy\tthe engine implements this; a static site count ({confidence}) says it takes {} operand{} and returns {} result{} — not proven arity. Pushes are a sound upper bound, but pops UNDERCOUNT operators that pop through the shared helper at 0x0040ADB0 (drawimpframe really takes 6, getimphotspot 5) \u{2014} read the entry point before relying on it. Supply a value with --stub {name}=VALUE",
                     effect.pops,
                     if effect.pops == 1 { "" } else { "s" },
                     effect.pushes,

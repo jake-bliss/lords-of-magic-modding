@@ -6,7 +6,7 @@ AI is being used as a development assistant for research, scripting, asset work,
 
 ## Current state
 
-Game runtime last verified: **2026-09-11** on an **M4 Max Mac running macOS 26.5.2**. Native asset tooling last verified: **2026-09-12**.
+Game runtime last verified: **2026-09-16** (controlled measurements in the running engine) on an **M4 Max Mac running macOS 26.5.2**. Native asset corpus last rescanned: **2026-09-12**.
 
 | Profile | Purpose | Status |
 | --- | --- | --- |
@@ -14,7 +14,7 @@ Game runtime last verified: **2026-09-11** on an **M4 Max Mac running macOS 26.5
 | `Lords of Magic 3.02.app` | Near-vanilla community bug-fix build | Installed and launch-tested |
 | `Lords of Magic GS5R3.app` | ManTerA balance overhaul | Installed and launch-tested |
 
-All three are stored in `/Users/jakebliss/Applications/`. The modded apps are APFS copy-on-write clones with independent Wine prefixes, game files, registry state, and save directories.
+All three are stored in `~/Applications/`. They are locally built Wineskin wrappers around a user-owned Steam install; the repository contains no game data or app bundles, and none of it is redistributable. The [macOS runbook](docs/macos-runbook.md) records how they were configured. The modded apps are APFS copy-on-write clones with independent Wine prefixes, game files, registry state, and save directories.
 
 ### Preservation-engine track
 
@@ -22,14 +22,18 @@ All three are stored in `/Users/jakebliss/Applications/`. The modded apps are AP
 | --- | --- | --- |
 | 0. Evidence baseline | Initial pass complete | Reproducible archive/profile inventories and patch/mod comparisons |
 | 1. Native asset layer | In progress; image, sprite-export, terrain, and dominant map-record milestones complete | 9,804 members classified, 1,800 IMPs decoded, all 365 maps bounded, original terrain rendered, and 16,628 placed-sprite records decoded structurally |
-| 2. GameScript VM probe | Started; lexical/vocabulary and first interpreter checkpoints complete | All 4,692 `.gs` members tokenize; 3.02 `standard.gs` loads in the experimental VM and its `min`/`max` utilities execute correctly |
+| 2. GameScript VM probe | Started; lexing, vocabulary, host-API recovery, and first interpreter checkpoints complete | All 4,692 `.gs` members tokenize; the engine's 1,906 named operators are recovered from `lomse.exe` with entry points and disassembled arity; 3.02 `standard.gs` loads in the experimental VM and its `min`/`max` utilities execute correctly |
 | 3–5. Native game/runtime | Not started | Contingent on the GameScript VM stop/go result |
 
 The current deliverable is a useful native asset and reverse-engineering tool, not yet a native replacement game. See the [candidate plan](docs/native-engine-plan.md) for scope and estimates.
 
+Concretely, today you can **inspect, decode, render, export, and measure**, and you can write a single sprite placement back into an IMP or replace an archive member by hand. There is no mod build pipeline, no validation command, no packaging, and no native game — Phases 3 and 4 of the [roadmap](docs/roadmap.md) have not started.
+
 ## Start here
 
 - [macOS runbook](docs/macos-runbook.md) — launch, configuration, recovery, and troubleshooting
+- [Native Rust asset tool](spikes/asset-viewer/README.md) — build, commands, what it proves and what it does not
+- [Sprite placement and hotspots](docs/hotspots.md) — the solved placement rule and how to write it back
 - [Game and data architecture](docs/game-architecture.md) — known modding surfaces and hard engine boundaries
 - [Difficulty and computer-player AI](docs/difficulty-ai.md) — verified script gates, mod-specific changes, and remaining gameplay test
 - [Agent handoff](docs/agent-handoff.md) — current state, local setup, reproducibility, and next bounded work

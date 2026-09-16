@@ -70,8 +70,11 @@ A safe asset workflow should:
 - Purpose-level names for some generic or mismatched public-listfile entries, including four orphan IMP header/binary names.
 - Full script grammar, built-in vocabulary, type behavior, and execution model inside `gs.mpq`.
 - Which AI, pathfinding, diplomacy, and auto-combat behaviors are scripted versus hard-coded.
-- Uncommon IMP shared-frame metadata variants and composition rules for hotspots, pivots, palettes, chroma-key transparency, and sequence timing.
+- Uncommon IMP shared-frame metadata variants, the shadow-index blend, palette/chroma-key transparency, and sequence timing. **Placement is settled** — see [hotspots](hotspots.md).
 - Hard limits on units, artifacts, spells, maps, IDs, and string tables.
 - Save-file compatibility rules after data changes.
 - Multiplayer determinism requirements and checksum/version checks.
-- Whether loose files override MPQ members consistently.
+- ~~Whether loose files override MPQ members consistently.~~ **Settled 2026-09-16: they do not.**
+  A three-arm controlled test (probe script, garbage file, shipped original) reached run position 93
+  identically in every arm, while the same bytes executed from inside `gs.mpq`. Modding therefore
+  requires archive write-back.

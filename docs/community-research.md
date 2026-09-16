@@ -105,8 +105,10 @@ hotspot count and the dword as either two `i16` origins when the count is 0 or a
 directions.
 
 The open question in that paragraph — *"whether the byte is a type tag or a count"* — is now
-**settled as a count**, by ozz in thread 2176 and independently by measurement here. See
-[the hotspot mechanism](#the-hotspot-mechanism-thread-2176) below.
+**settled as a count**, by ozz in thread 2176 and independently by measurement here. The consequence
+for the dword at `+8` is that it is **overloaded**: when the count is zero those four bytes are the
+`origin_x`/`origin_y` placement pair, and otherwise they are a `u32` offset to the record array. See
+[the hotspot mechanism](#the-hotspot-mechanism-thread-2176) below and [hotspots](hotspots.md).
 
 **Palette index 1 is the shadow.** This resolves our open "secondary mask" question. Our own
 observation of *"a separate pure-red index for a 1,651-pixel silhouette beneath the creature"*
@@ -148,7 +150,7 @@ Original claim: eyesodilated, July 2026:
 number and reserved space. However, when maps exceed the original maximum size, that header
 disappears. That's why some maps and save files become corrupted, and why the game may display
 'TRASHBIN.'"* This is an independent name for the unknown `metadata` field at offset `0x00` in
-[map format](map-format.md), plus a falsifiable prediction. Parked in issue #4.
+[map format](map-format.md), plus a falsifiable prediction. Parked in [issue #22](https://github.com/jake-bliss/lords-of-magic-modding/issues/22).
 
 **Auto-calc combat resolution.** Boaster's formula: each army's collective **barter value** is scaled
 by a **Total Army Factor** derived from Team Points accumulated over three tiers — highest
@@ -222,7 +224,7 @@ remains write-back, editing, and map repair, which we do not attempt at all.
 ## The hotspot mechanism, thread 2176
 
 Thread 2176 is 115 posts spanning 2014-07-30 to 2026-06-13 — eyesodilated, Boaster, orzie and **ozz**
-— and it is the origin of the "512x512 hotspot" problem recorded in issue #1. It matters for two
+— and it is the origin of the "512x512 hotspot" problem recorded in issue #1, now **closed**: the placement was measured and is writable with `--set-imp-placement` (see [hotspots](hotspots.md)). It matters for two
 reasons: it states the mechanism precisely, and the statement is testable against our corpus.
 
 ### The nine-year workaround ladder, and why it never closed
@@ -252,7 +254,7 @@ ozz's reading of the frame record, which matches ours field for field:
 - `+1` `HSType` — the **number** of hotspot records for this frame, not a type tag.
 - `+8` `HSpot` — a packed XY displacement when `HSType` is 0, otherwise a **file offset** to that
   many records, stored near end of file and padded to an 8-byte boundary.
-- Each record is a `(type, x, y)` trio of signed 2-byte values.
+- Each record is `(id: u16, x: i16, y: i16)`. **Record index 0 is engine-reserved** and holds the draw placement: `getimphotspot` (`0x0049BF90`) and `enumimphotspots` (`0x0049C1D0`) both begin their walk at index 1, so no script can read it.
 
 He also notes that **snv's `imp.c` hotspot struct is wrong**: it hardcodes two hotspot sets when the
 count is variable. That defect is inherited by every tool ported from it.
@@ -281,23 +283,28 @@ observed:
 | 9 | 10 |
 
 **Types 0 and 7 are near-universal** — 28,661 and 28,183 occurrences — corroborating ozz's "present
-in all units". Types 1 through 6, 8 and 9 appear in the hundreds to low thousands, and types 10 and
-16 also occur.
+in all units". **The near-universal "type 0" is record 0, the engine-reserved draw placement rather
+than a hotspot** — see [hotspots](hotspots.md). Types 1 through 6 and 8 appear in the hundreds to low
+thousands. Ids 9, 10 and 16 also occur and are *outside* the nine-value vocabulary, not part of it.
 
 **`lomse.exe` defines 19 `*_HOTSPOT`-shaped constants, not 10 — but only 11 are IMP hotspot types.** (Corrected 2026-09-16: the eight `BOLT_HOTSPOT_S0..D3` names are field indices into a bolt definition record, values 15-22, not type tags. The real vocabulary is nine values, 0 through 8, and their numbers are now read from the exe's constant table at `0x00560108`.) ozz's list came from a code comment; the
 binary's string table is authoritative:
 
 ```
-NO_HOTSPOT              CURSOR_HOTSPOT          MISSILE_ORIGIN_HOTSPOT
-MISSILE_HOTSPOT         MISSILE_TARGET_HOTSPOT  FLAP_OFFSET_HOTSPOT
-SPELL_ORIGIN1_HOTSPOT   SPELL_ORIGIN2_HOTSPOT   SPELL_ORIGIN3_HOTSPOT
-SPELL_ORIGIN4_HOTSPOT   SPELL_TARGET_HOTSPOT    STREAMER_HOTSPOT
-BOLT_HOTSPOT_D0..D3     BOLT_HOTSPOT_S0..S3
+NO_HOTSPOT 0            CURSOR_HOTSPOT 1        MISSILE_ORIGIN_HOTSPOT 1
+SPELL_ORIGIN1_HOTSPOT 2 SPELL_ORIGIN2_HOTSPOT 3 SPELL_ORIGIN3_HOTSPOT 4
+SPELL_ORIGIN4_HOTSPOT 5 FLAP_OFFSET_HOTSPOT 6   MISSILE_TARGET_HOTSPOT 7
+SPELL_TARGET_HOTSPOT 7  STREAMER_HOTSPOT 8
+
+; NOT hotspot types -- bolt-record field indices, read from the exe 2026-09-16:
+BOLT_HOTSPOT_S0..S3 = 15..18   BOLT_HOTSPOT_D0..D3 = 19..22
+MISSILE_HOTSPOT = 14           (block ends BOLT_SPELLDEF_ID 23, BOLT_RESULT_PROC 24)
 ```
 
-The extra names cover the observed types 10 and 16 that the ten-name list cannot explain. The engine
+Those extra names do **not** explain the observed ids 10 and 16. The vocabulary is nine values, 0 through 8; ids 9, 10, 16, 106, 136, 138, 143 and 190 are genuinely outside it. See [hotspots](hotspots.md#hotspot-types). The engine
 also exports the natives **`getimphotspot`** and **`enumimphotspots`**, so hotspots are reachable
-from GameScript directly — relevant to issue #5.
+from GameScript directly — relevant to issue #5. Both start their walk at record index 1, though, so record 0
+(the draw placement) is unreachable from script.
 
 **ozz asked whether the hotspot comment block is in the original `aura.gs`. It is not, but the names
 are real.** Shipped `aura.gs` is a single line with no `;` comments anywhere. The identifiers are
@@ -316,7 +323,7 @@ just incomplete and sourced from a comment that the shipped scripts do not carry
 - Byte 3 is `0x01` in 4,623 of 4,629 sequences; byte 4 is `0xff` in all 4,629. ozz's "4th byte is
   always 1" holds to 99.87%.
 
-### Open: two files carry hotspot types outside the engine's vocabulary
+### Open: hotspot types outside the engine's vocabulary
 
 `units\imp\eacr5a.imp` uses types 106, 136, 138 and 143 on all 110 frames and carries **neither type
 0 nor type 7**, which every other unit has on every frame. `units\imp\aiwm1b.imp` uses type 190 on 25
@@ -346,14 +353,14 @@ The board hosts a working toolchain that overlaps our Stage 1 scope:
 itself as a byte-for-byte port of `lomut`'s `imp.c` and is the best format documentation located so
 far — better than the 2011 forum post, because it is executable and annotated. Its stated limits are
 informative: **sprite type 57 (4-bit RLE) is not decoded, because `lomut` never implemented it**. Type
-57 is 103 of our 300-file sample, so our sub-byte decoder covers a third of the corpus that no public
+57 is 188 files and 3,388 frames of the full 1,800-member corpus, which no public
 tool reads. The `.exe` tools remain undownloaded and unrun. Their existence does not reduce the value of an independent, tested,
 cross-platform decoder, but it does mean **we are not the only party decoding these formats**, and
 their author has solved at least one problem we have open.
 
 ## What changed here as a result
 
-- `spikes/asset-viewer/src/png_export.rs` now writes a `tRNS` chunk marking palette index 0
+- `spikes/asset-viewer/src/png_export.rs` now writes a `tRNS` chunk marking the header's colour-key index (`ImpSprite::color_key`)
   transparent. Exported indexed PNGs were previously fully opaque, silently losing the transparency
   key that the interactive viewer already honoured. Covered by a test.
 - `spikes/asset-viewer/src/main.rs` renames `secondary_mask` to `shadow` and documents that
