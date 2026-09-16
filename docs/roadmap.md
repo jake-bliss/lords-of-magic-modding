@@ -13,7 +13,8 @@ Create a reproducible, source-controlled modding toolkit that lets us inspect, c
 - [x] Diff all three extracted trees and distinguish formatting/comment-only changes from token-level script changes.
 - [x] Recover the public Lords of Magic filename catalog and apply it without modifying archives.
 - [x] Classify every member in the five core GS5R3 archives by detected format.
-- [ ] Validate a deterministic repacking implementation before any development-profile install.
+- [x] Prove archive write-back: `SFileAddFileEx` round-trips a `gs.mpq` member and the game executes the rewritten archive (2026-09-16).
+- [ ] Wrap that in a deterministic, reproducible repack command with a byte-shape check before any development-profile install.
 
 Delivered: [MPQ inventory](mpq-inventory.md), tracked comparison summaries, and reproducible extraction commands.
 
@@ -67,9 +68,11 @@ Success criteria:
 - [x] Parse the common header and cell grid of all installed `.scn`, `.smp`, and `.lgd` files and visualize candidate elevation.
 - [x] Resolve standard map tags through `.til` definitions and original terrain atlases; export correctly oriented map previews.
 - [x] Structurally decode and corpus-validate the dominant 49-byte placed-sprite record family.
-- Resolve uncommon IMP metadata variants and verify chroma keys, origins, hotspots, and timing against the game ([issues #1–#3](https://github.com/jake-bliss/lords-of-magic-modding/issues)).
+- [x] Verify sprite origins and hotspot placement against the running engine ([issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1), closed 2026-09-16 — see [hotspots](hotspots.md)).
+- Resolve uncommon IMP metadata variants and verify chroma keys, the shadow blend, and timing against the game ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2), [issue #3](https://github.com/jake-bliss/lords-of-magic-modding/issues/3)).
 - Decode the remaining map-tail variants and prove candidate placed-sprite field behavior ([issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4)).
-- Build batch conversion, IMP reimport, and lossless repack tests.
+- [x] IMP placement write-back (`--set-imp-placement`, `--imp-placement-for`).
+- Build batch conversion, IMP **pixel** reimport, and lossless repack tests.
 - Evaluate AI upscaling on portraits and interface art.
 - Compare Lanczos runtime scaling against remastered source assets.
 - Add automated dimension and palette validation.

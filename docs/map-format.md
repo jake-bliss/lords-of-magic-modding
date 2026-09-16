@@ -39,7 +39,7 @@ family - every `ORLIBR*`, `ORTGIL*` and `FIVILG*` sub-map is `0x4f`, and world `
 `0x6c`-`0x6f` - which makes a **tileset or terrain-set selector** the better hypothesis, and would
 also close the separate "header-to-tileset selection" unknown recorded below. Neither reading is
 proven. The community claim's testable half is untouched: an oversized map should *omit* the field
-and shift every later offset by four bytes. Recorded in issue #4 and in
+and shift every later offset by four bytes. Recorded in [issue #22](https://github.com/jake-bliss/lords-of-magic-modding/issues/22) and in
 [community research](community-research.md).
 
 The second word is strongly inferred to be elevation or height. The shipped tile-definition comments state that `1000` represents `1.0` in the map model, but exact runtime units and interpolation remain unverified.

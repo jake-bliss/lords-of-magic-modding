@@ -23,7 +23,7 @@ Run from the repository root, choosing a new output directory each time:
 
 ```sh
 scripts/inventory-installed-profiles.sh \
-  /Users/jakebliss/Applications \
+  ~/Applications \
   artifacts/run-20260911
 ```
 
@@ -115,8 +115,8 @@ This evidence reinforces the profile policy: do not stack 3.02 and GS5R3. Treat 
 - Extraction requires a new or empty destination and warns when an archive contains duplicate case-insensitive paths.
 - Uncatalogued entries can be extracted and hashed, but their placeholder names are archive-slot labels only.
 - The earlier `.gs` lexical normalizer remains suitable for change triage. The newer bounded lexer tokenizes every named script across all three profiles and inventories definitions, calls, and static loads; it is still not a complete parser or proof of behavioral equivalence. See the [GameScript probe](gamescript-format.md).
-- Repacking is deliberately not implemented yet. We should validate archive creation and round-trip behavior in a disposable development profile before writing any game archive.
+- Archive repacking is deliberately not implemented yet, though `lom-asset-viewer --set-imp-placement` does write **loose** IMP files (identical length, re-parsed and read back before writing, non-overwriting). We should validate archive creation and round-trip behavior in a disposable development profile before writing any game archive.
 
 ## Next investigation
 
-Classify the new executable/binary vocabulary into language primitives, script definitions, native host calls, constants, and false positives. Expand the new bounded stack/dictionary interpreter only as required for representative utilities, then use the focused 3.02 change set as the first annotated semantic corpus.
+**Largely done** — the executable's operator dispatch table, its GameScript constant table at `0x00560108`, and individual natives (`map2screen` at `0x0046B0C0`, `getimphotspot` at `0x0049BF90`, `enumimphotspots` at `0x0049C1D0`) have all been read. Track the remainder under [issue #5](https://github.com/jake-bliss/lords-of-magic-modding/issues/5) and see [agent handoff](agent-handoff.md). Expand the new bounded stack/dictionary interpreter only as required for representative utilities, then use the focused 3.02 change set as the first annotated semantic corpus.

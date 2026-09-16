@@ -6,7 +6,7 @@ Use this runbook to launch or recover the known-good Apple Silicon installations
 
 ## Launching
 
-Open the desired app directly from `/Users/jakebliss/Applications/`:
+Open the desired app directly from `~/Applications/`:
 
 - `Lords of Magic 3.02.app` for the near-vanilla bug-fix release.
 - `Lords of Magic GS5R3.app` for the balance overhaul.

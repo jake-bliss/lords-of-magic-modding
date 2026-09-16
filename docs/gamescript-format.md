@@ -2,7 +2,7 @@
 
 ## Status
 
-**Lexical and archive-wide vocabulary milestone complete; experimental VM core started.** The native Rust tool tokenizes every named `.gs` member in the preserved baseline, 3.02, and GS5R3 archives, inventories names and static `run` references, and correlates executable tokens with strings embedded in each profile's `lomse.exe`. A deliberately small interpreter now supports enough stack, collection, dictionary, definition, procedure, conditional, and numeric behavior to load the 3.02 `gs\standard.gs` utility module and execute two of its procedures.
+**Lexical and vocabulary milestones complete; the engine's operator tables and their arity are recovered from the binary; the experimental VM core executes shipped utility code with native stubs.** What remains is loading a second engine-light module end to end ([issue #5](https://github.com/jake-bliss/lords-of-magic-modding/issues/5)). The native Rust tool tokenizes every named `.gs` member in the preserved baseline, 3.02, and GS5R3 archives, inventories names and static `run` references, and correlates executable tokens with strings embedded in each profile's `lomse.exe`. A deliberately small interpreter now supports enough stack, collection, dictionary, definition, procedure, conditional, and numeric behavior to load the 3.02 `gs\standard.gs` utility module and execute two of its procedures.
 
 This is the first Stage 2 preservation-engine result. It establishes that the source language is tractable enough for a bounded parser and experimental interpreter. It does **not** prove that the native host API, simulation, or complete game can be reproduced economically.
 
@@ -181,7 +181,7 @@ as the first argument and three of its fields matter:
 
 A pop increments the index and stores it back; a push decrements it and stores it back. Counting
 those commits from each entry point recovers stack effect, and `--scan-natives` reports it per
-operator as `pops`, `pushes` and a confidence column.
+operator as `pops`, `pushes` and a confidence column. The `pops` column **undercounts** operators that pop through the shared helper at `0x0040ADB0` — see below.
 
 Three complications had to be handled, each found by a prediction disagreeing with a known answer:
 
@@ -204,6 +204,14 @@ The single disagreement is `mul`, reported as pushing twice. It has two push sit
 exclusive type paths — the shared helper at `0x004cae73` for one operand type and an inline commit
 at `0x004cae98` for the other. Each path pushes one result; a static count sees both. **So the
 numbers are site counts, and they equal arity only when every commit lies on one path.**
+
+**And the count is not a safe upper bound either: it undercounts.** Operators that take their
+operands through the shared pop helper at `0x0040ADB0` commit the stack index inside the helper, so a
+walk that does not follow it sees no pop at all. Three operators have been caught this way and
+corrected against the binary: `drawimpframe` takes **six** operands rather than the five reported,
+`map2screen` takes **three**, and `getimphotspot` takes **five** rather than one. Treat a reported
+`pops` figure as a lower bound, and read the entry point before designing anything around an
+operator whose disassembly reaches `0x0040ADB0`.
 
 Completeness is a separate question from correctness, and the two must not be conflated:
 

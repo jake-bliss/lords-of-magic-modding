@@ -156,10 +156,10 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 ## What it does not prove
 
 - The rendering is not yet behaviorally equivalent to the game. A visible bright-green color in the atlas suggests an engine-level chroma-key rule that is not represented by the PBM header's masking field.
-- IMP rendering is not yet behaviorally equivalent to the game. The clean preview hides palette indices 0 and 1 as the inferred background and secondary-mask channels; the other viewer modes expose them. Their exact compositing semantics, origins, hotspots, and sequence timing still need reference comparisons.
+- IMP rendering is not yet behaviorally equivalent to the game. The clean preview hides palette indices 0 and 1 as the inferred background and secondary-mask channels; the other viewer modes expose them. Placement is settled — see [hotspots](../../docs/hotspots.md). What still needs reference comparison is the shadow-index blend, the chroma-key rule, and sequence timing and facing direction ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)).
 - BMP/WAVE currently have metadata probes. Map/scenario/component grids, standard terrain lookup, and the dominant 49-byte trailing family are decoded; 52-/53-byte map records, fonts, and video are not decoded.
 - The viewer recreates its streaming texture while drawing; caching is a production optimization, not a spike requirement.
-- There is no thumbnail grid, search UI, batch/GUI export, editing, IMP reimport, or MPQ writing.
+- There is no thumbnail grid, search UI, batch/GUI export, or general asset reimport. IMP **placement** write-back exists (`--set-imp-placement`); pixel and frame reimport do not. MPQ member replacement is proven in `examples/mpq_replace.rs` but is not a supported CLI command.
 - A successful asset decoder does not reduce the much larger uncertainty in the GameScript host, simulation, AI, saves, or multiplayer.
 
 ## Code map

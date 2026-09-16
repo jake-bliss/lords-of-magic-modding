@@ -83,9 +83,14 @@ increases difficulty. Treat it as separate from both, and as a separate profile.
 
 ## Writing to archives
 
-Not yet attempted here, but recorded before the first attempt. Community practice holds that `.gs`
-members must be repacked with a Diablo-1-style ruleset — Implode plus Encrypt `0x00010100`,
-compression `IMPLODE` — or the game reports `gs.mpq file is corrupt`. Ladik's MPQ Editor is reported
+**Attempted, and working — 2026-09-16.** Community practice holds that `.gs` members must be repacked
+with a Diablo-1-style ruleset — Implode plus Encrypt `0x00010100` — or the game reports
+`gs.mpq file is corrupt`. **That is not required for this game.** GS5R3 `gs.mpq` members are stored as
+plain `MPQ_FILE_IMPLODE | MPQ_FILE_EXISTS`; only `(listfile)` is encrypted. `SFileAddFileEx`
+round-trips a member, the rewritten archive keeps its original shape, a control rewrite starts
+normally, and an archive carrying an injected script executes it. See
+`spikes/asset-viewer/examples/mpq_replace.rs` and the [research log](research-log.md). The claims
+below about the editors remain unverified. Ladik's MPQ Editor is reported
 to corrupt unit and champion portraits when used to repack an existing archive, and to inflate member
 sizes; WinMPQ is the community's editor of choice for existing archives, with Ladik's reserved for
 creating new ones. Verify independently before trusting any of this. See

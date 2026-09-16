@@ -2,9 +2,9 @@
 
 ## Status
 
-**In progress; archive inventory, IMP inspection/export, terrain-atlas rendering, and the dominant map-object record milestone are complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels, frame references, sequences, facings, origins, and hotspot records of all 1,800 IMP sprite binaries. It also bounds all 365 installed `.scn`, `.smp`, and `.lgd` files, resolves standard map cells through original terrain art, and structurally decodes 16,628 placed-sprite records.
+**In progress; archive inventory, IMP inspection/export, terrain-atlas rendering, and the dominant map-object record milestone are complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels, frame references, sequences, facings, origins, and hotspot records of all 1,800 IMP sprite binaries. It also **writes sprite placement back** into a loose IMP (`--set-imp-placement`, with `--hotspot 0` for the record-bearing form) and solves the placement a re-cropped frame needs (`--imp-placement-for`). It also bounds all 365 installed `.scn`, `.smp`, and `.lgd` files, resolves standard map cells through original terrain art, and structurally decodes 16,628 placed-sprite records.
 
-This is useful tooling now, but it is not yet the lossless asset layer promised by Stage 1. Full map/scenario semantics, verified compositing/origin behavior, reimport/repacking, and cross-platform packaging remain open.
+This is useful tooling now, but it is not yet the lossless asset layer promised by Stage 1. Full map/scenario semantics, the shadow-blend half of compositing, reimport/repacking, and cross-platform packaging remain open; placement is settled (see [hotspots](hotspots.md)).
 
 ## Component boundaries
 
@@ -13,7 +13,7 @@ This is useful tooling now, but it is not yet the lossless asset layer promised 
 | MPQ adapter | Read-only archive open, enumeration, external listfile loading, member reads | Asset interpretation or archive writes |
 | Format decoders | Bounds-checked parsing of PBM, IMP, BMP, and WAVE structures | Game-specific compositing or simulation |
 | Asset probe | Content-first classification and typed metadata | Rendering state |
-| CLI | Inventory, catalog, inspect, extract, indexed-frame export, validation, and viewer entry points | Format parsing logic |
+| CLI | Inventory, catalog, inspect, extract, indexed-frame export, validation, sprite-placement solve and write-back (`--imp-placement-for`, `--set-imp-placement`), and viewer entry points | Format parsing logic |
 | SDL viewer | Native presentation of decoded pixels | Archive or decoder policy |
 
 StormLib remains behind a small unsafe FFI boundary. The rest of the crate consumes safe Rust-owned names and byte buffers.
@@ -65,9 +65,9 @@ The paired generated `.h` files provide unusually valuable ground truth. The cur
 - most-significant-bit-first packing for sub-byte pixels, which produces recognizable output across representative sprites;
 - complete pixel expansion, frame-reference resolution, and sequence/facing traversal for all 1,800 observed binaries.
 
-The shared-pixel correction removed 27 false origin records, bounded the remaining origin ranges to X `-66..70` and Y `-207..77`, and improved exact generated-header matches. Across the corpus, 15,725 logical frames carry signed origins and 28,771 carry 64,432 six-byte hotspot records. The hotspot bytes consistently decode as a candidate unsigned ID followed by signed X/Y offsets, with observed coordinate ranges X `-115..123` and Y `-232..86`.
+The shared-pixel correction removed 27 false origin records, bounded the remaining origin ranges to X `-66..70` and Y `-207..77`, and improved exact generated-header matches. Across the corpus, 15,725 logical frames carry signed origins and 28,771 carry 64,432 six-byte hotspot records. The hotspot bytes decode as `id: u16` then `x: i16`, `y: i16`. Frame record bytes `+8..+12` are **overloaded**: with a zero count byte at `+1` they are the `origin_x`/`origin_y` placement pair, otherwise a `u32` offset to `count` 6-byte records, of which **record 0 is engine-reserved and holds the draw placement**. Offsets show with observed coordinate ranges X `-115..123` and Y `-232..86`.
 
-The ID is a **hotspot type**, and the numbers are now read directly out of `lomse.exe`'s constant table at `0x00560108` (8-byte `{name, value}` pairs): `NO_HOTSPOT` 0, `CURSOR_HOTSPOT` 1, `MISSILE_ORIGIN_HOTSPOT` 1, `SPELL_ORIGIN1..4_HOTSPOT` 2-5, `FLAP_OFFSET_HOTSPOT` 6, `MISSILE_TARGET_HOTSPOT` 7, `SPELL_TARGET_HOTSPOT` 7, `STREAMER_HOTSPOT` 8. **Corrected 2026-09-16:** the vocabulary is eleven names over nine distinct values 0-8, not nineteen. The `BOLT_HOTSPOT_S0..S3`/`D0..D3` names are field indices into a bolt definition record (values 15-22, in a block ending `BOLT_SPELLDEF_ID` 23 and `BOLT_RESULT_PROC` 24), not IMP hotspot types; `MISSILE_HOTSPOT` 14 likewise. Every value 0-8 appears in the corpus. Record **0** is engine-reserved and holds the **draw placement**, which is why its tag reads `NO_HOTSPOT`; `getimphotspot` and `enumimphotspots` both begin their walk at record 1. Ids 9, 10, 16, 106, 136, 138, 143 and 190 are genuinely outside the vocabulary - see [community research](community-research.md#the-hotspot-mechanism-thread-2176). Placement semantics are settled; see the research log.
+The ID is a **hotspot type**, and the numbers are now read directly out of `lomse.exe`'s constant table at `0x00560108` (8-byte `{name, value}` pairs): `NO_HOTSPOT` 0, `CURSOR_HOTSPOT` 1, `MISSILE_ORIGIN_HOTSPOT` 1, `SPELL_ORIGIN1..4_HOTSPOT` 2-5, `FLAP_OFFSET_HOTSPOT` 6, `MISSILE_TARGET_HOTSPOT` 7, `SPELL_TARGET_HOTSPOT` 7, `STREAMER_HOTSPOT` 8. **Corrected 2026-09-16:** the vocabulary is eleven names over nine distinct values 0-8, not nineteen. The `BOLT_HOTSPOT_S0..S3`/`D0..D3` names are field indices into a bolt definition record (values 15-22, in a block ending `BOLT_SPELLDEF_ID` 23 and `BOLT_RESULT_PROC` 24), not IMP hotspot types; `MISSILE_HOTSPOT` 14 likewise. Every value 0-8 appears in the corpus. Record **0** is engine-reserved and holds the **draw placement**, which is why its tag reads `NO_HOTSPOT`; `getimphotspot` and `enumimphotspots` both begin their walk at record 1. Ids 9, 10, 16, 106, 136, 138, 143 and 190 are genuinely outside the vocabulary - see [community research](community-research.md#the-hotspot-mechanism-thread-2176). Placement semantics are settled: `top_left = anchor + placement - (width >> 1, height >> 1)`, added and centre-relative. See [hotspots](hotspots.md).
 
 For example, `units\imp\chcr5a.imp` contains seven named actions (`MOVE`, `STAND`, `DEFEND`, `GET_HIT`, `DIE`, `CORPSE`, and `MELEE_ATTACK`), five facings per action, and 170 logical frames. The five facings are likely directional views, but that interpretation and the remaining sequence/facing metadata have not yet been confirmed against the original executable.
 
@@ -116,9 +116,9 @@ never generalised. `secondary_mask` is renamed `shadow` in the viewer accordingl
 names what this project originally called a "cycle" a **facing**, ordered clockwise. The clockwise
 claim is untested, but the naming is better than ours and has been adopted throughout the code, the
 docs, and the `--describe-imp` output, where sequence rows now cross-reference `facing:N` rather than
-`cycle:N`. See [community research](community-research.md). Exact mask meaning, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves all source palette indices and colors unchanged.
+`cycle:N`. See [community research](community-research.md). Exact mask meaning and animation timing still need comparison against the original executable; placement semantics and the hotspot type vocabulary were settled on 2026-09-16 (see [hotspots](hotspots.md)); the decoder preserves all source palette indices and colors unchanged.
 
-The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synthetic decode-back test verifies exact palette bytes and palette-index pixels, and a real GS5R3 export was independently identified as a 165×127 indexed PNG. Exports now carry a `tRNS` chunk marking the header's colour-key index transparent; before 2026-09-16 every exported frame was fully opaque, silently losing the transparency key. Export uses create-new semantics so it cannot silently replace an existing file. This is a lossless inspection format, not yet a game-compatible IMP reimport or archive-writing pipeline.
+The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synthetic decode-back test verifies exact palette bytes and palette-index pixels, and a real GS5R3 export was independently identified as a 165×127 indexed PNG. Exports now carry a `tRNS` chunk marking the header's colour-key index transparent; before 2026-09-16 every exported frame was fully opaque, silently losing the transparency key. Export uses create-new semantics so it cannot silently replace an existing file. This is a lossless inspection format. Placement fields can now be written back into a loose IMP with `--set-imp-placement`; full IMP reimport and archive writing remain unimplemented.
 
 ## Evidence and confidence
 
@@ -128,19 +128,20 @@ The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synth
 - **Observed:** across the full 1,800-member corpus the file types are 9 (8-bit RLE, 957), 8 (8-bit raw, 606), 57 (4-bit RLE, 188), 25 (1-bit RLE, 27), 10 unclassified, and 12 that crash the community parser. An independent community decoder reaches 100% of non-duplicate frames on types 8, 9, and 25 — exact agreement with ours — but 0% on type 57 and on the 12 crash cases, for 91.6% overall against our 100%. Type 57 alone is 188 files and 3,388 frames that no public tool decodes.
 - **Documented:** a community specification agrees with our header offsets, record sizes, and RLE algorithm exactly, including the `control + 3` bias; it confirms the palette is stored BGRA and swapped to RGB, which resolves our open channel-order question in favour of the current implementation; it names palette index 1 the shadow and our facings facings. Its guesses at a per-frame delay byte and a checksum dword are refuted by our hotspot decoding, which matches generated-header ground truth for all 1,798 pairs.
 - **Documented, since corrected:** the hotspot ID is a type tag; the vocabulary is nine values 0-8, not 19 names (see above), and frame byte `+1` is a **count** of hotspot records rather than a type tag — settled by ozz on the board and confirmed here by measurement. Sequence-record byte 1 is a mirror flag: values `>= 128` mirror, and no unmirrored sequence in the corpus has more than two facings. See [community research](community-research.md#the-hotspot-mechanism-thread-2176).
-- **Unknown:** how the shadow index is blended or recolored, how hotspot coordinates translate to screen placement, what the remaining sequence/facing metadata fields mean, and whether exceptional metadata cases use additional sharing rules. Animation timing appears to be carried solely by duplicate-frame repetition, since no delay field survives scrutiny on either side.
+- **Observed:** the engine draws a frame at `top_left = anchor + placement - (width >> 1, height >> 1)` — the stored pair is the vector from the anchor to the **centre** of the frame, in screen pixels with `+y` down, and it is **added**. Measured in the running engine on 2026-09-16; see [hotspots](hotspots.md).
+- **Unknown:** how the shadow index is blended or recolored, what the remaining sequence/facing metadata fields mean, and whether exceptional metadata cases use additional sharing rules. Animation timing appears to be carried solely by duplicate-frame repetition, since no delay field survives scrutiny on either side.
 
-### The draw placement (type 0) is not derivable from frame geometry
+### The draw placement (record 0) is not derivable from frame geometry
 
 **Naming corrected 2026-09-16:** this section measured hotspot type **0**, which is `NO_HOTSPOT` and is the engine-reserved **draw placement**. `CURSOR_HOTSPOT` is type 1. The measurement stands; only the label was wrong, and its subject turns out to be the more important one.
 
-Type 0, `CURSOR_HOTSPOT`, is present on essentially every unit frame and is described on the modding
+Record 0, tagged `NO_HOTSPOT`, is present on essentially every unit frame and is described on the modding
 board as the anchor the other hotspots hang from. Whether it can be *derived* decides whether a
 rebuilt sprite can ever be correct, because the community's standing workaround for the
 "512x512 hotspot" problem is to crop each frame to its minimum extent and re-centre the frames
 against each other — which assumes the anchor is a function of frame size.
 
-Measured with `tools/hotspot_geometry.py` over all 28,447 unit frames that carry a type-0 record,
+Measured with `tools/hotspot_geometry.py` over all 28,447 unit frames that carry a record 0,
 fitting each axis against the matching frame dimension:
 
 | Axis | Fit | Raw spread | Spread left after the fit |
@@ -187,11 +188,11 @@ All 26 recovered `.til` definitions parse and explicitly bind atlas geometry, 32
 
 ## Latest verification
 
-Verified on 2026-09-12:
+Verified on 2026-09-16 (the full corpus scan itself dates from 2026-09-12):
 
-- 29 Rust library tests and four viewer tests pass;
+- 83 Rust library tests and 11 CLI/viewer tests pass;
 - strict Clippy (`-D warnings`) passes for all targets;
-- all three repository Python tests pass;
+- all 21 repository Python tests pass;
 - a fresh read-only scan classifies all five GS5R3 core archives with zero probe failures;
 - all 1,800 IMP payloads decode with bounded sequence/facing ranges;
 - exact IMP/header validation matches 1,788 of 1,798 pairs; the ten remaining paired disagreements and four orphan names remain intentionally reported;
@@ -232,12 +233,13 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 ## Remaining before Stage 1 is complete
 
 - [ ] Resolve the ten known IMP metadata mismatches and four catalog-name orphans ([issue #3](https://github.com/jake-bliss/lords-of-magic-modding/issues/3)).
-- [ ] Establish palette, chroma-key, hotspot, pivot, and compositing semantics ([issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1)).
+- [x] Establish palette, chroma-key, hotspot, and placement semantics ([issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1), closed — see [hotspots](hotspots.md)).
+- [ ] Measure the shadow-index blend and resolve the palette channel order, the two compositing questions issue #1 left behind.
 - [ ] Verify IMP direction and timing metadata ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)).
 - [ ] Decode the remaining 52-/53-byte and unknown map tails; prove the candidate 49-byte object-field semantics ([issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4)).
 - [ ] Inventory loose WAVE/Smacker resources outside the core archives.
-- [ ] Add batch export, IMP reimport, and deterministic game-format round-trip tests.
+- [ ] Add batch export, full IMP reimport, and deterministic game-format round-trip tests. Placement write-back is done.
 - [ ] Add searchable browsing, cached textures, animation controls, and export to the GUI.
 - [ ] Make native-library discovery and packaging portable across macOS, Windows, and Linux.
 
-The controlled Map Editor save diff remains parked in issue #4 after macOS accessibility controls prevented reliable Wine-window automation. The parallel GameScript track now has a complete lexical/vocabulary scan and a first stack/dictionary interpreter checkpoint; its next bounded slice is read-only module loading and host-call classification. The remaining 52-/53-byte tails and original-engine-only IMP presentation work stay parked in issues #1–#4 rather than being encoded as assumptions.
+The controlled Map Editor save diff remains parked in issue #4 after macOS accessibility controls prevented reliable Wine-window automation. The parallel GameScript track now has a complete lexical/vocabulary scan and a first stack/dictionary interpreter checkpoint; its next bounded slice is read-only module loading and host-call classification. The remaining 52-/53-byte tails and original-engine-only IMP presentation work stay parked in issues #2–#4 and #22 rather than being encoded as assumptions.
