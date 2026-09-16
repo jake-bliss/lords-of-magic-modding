@@ -1017,44 +1017,98 @@ fn scan_archive(source: &Source) -> Result<(), String> {
 /// guessing, so this trace is the classification evidence.
 fn report_gamescript_failure(
     error: GameScriptVmError,
-    operators: Option<&native_table::OperatorIndex>,
+    operators: Option<(&native_table::OperatorIndex, &native_table::PeImage<'_>)>,
 ) -> String {
-    if let Some(trace) = error.unknown_name() {
-        eprintln!("unknown-native-name\t{}", trace.name);
-        eprintln!("unknown-at-step\t{}", trace.steps);
-        for (depth, frame) in trace.call_stack.iter().enumerate() {
-            eprintln!("unknown-call-stack\t{depth}\t{frame}");
-        }
-        if let Some(operators) = operators {
-            // With the engine's operator tables loaded, a stop is a classification rather than a
-            // research question: the name is either something the engine implements, a constant it
-            // exposes, or neither.
-            match operators.classify(&trace.name) {
-                native_table::NameClass::Operator { entry_point } => {
-                    eprintln!("unknown-name-class\toperator");
-                    eprintln!("unknown-name-entry-point\t{entry_point:#010x}");
-                    eprintln!(
-                        "unknown-name-remedy\tthe engine implements this; supply it with --stub {}=VALUE",
-                        trace.name
-                    );
-                }
-                native_table::NameClass::EngineConstant => {
-                    eprintln!("unknown-name-class\tengine-constant");
-                    eprintln!(
-                        "unknown-name-remedy\tSCREAMING_CASE and absent from the operator tables, so this is a constant; supply its value with --stub {}=VALUE",
-                        trace.name
-                    );
-                }
-                native_table::NameClass::Unresolved => {
-                    eprintln!("unknown-name-class\tunresolved");
-                    eprintln!(
-                        "unknown-name-remedy\tneither an operator nor constant-shaped; most likely defined in a module this run has not loaded"
-                    );
-                }
+    for line in gamescript_failure_lines(&error, operators) {
+        eprintln!("{line}");
+    }
+    error.to_string()
+}
+
+/// Build the structured trace lines for a VM failure. Split out from
+/// `report_gamescript_failure` so the wording is unit-testable without capturing stderr.
+fn gamescript_failure_lines(
+    error: &GameScriptVmError,
+    operators: Option<(&native_table::OperatorIndex, &native_table::PeImage<'_>)>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    let Some(trace) = error.unknown_name() else {
+        return lines;
+    };
+    lines.push(format!("unknown-native-name\t{}", trace.name));
+    lines.push(format!("unknown-at-step\t{}", trace.steps));
+    for (depth, frame) in trace.call_stack.iter().enumerate() {
+        lines.push(format!("unknown-call-stack\t{depth}\t{frame}"));
+    }
+    if let Some((operators, pe_image)) = operators {
+        // With the engine's operator tables loaded, a stop is a classification rather than a
+        // research question: the name is either something the engine implements, a constant it
+        // exposes, or neither.
+        match operators.classify(&trace.name) {
+            native_table::NameClass::Operator { entry_point } => {
+                lines.push("unknown-name-class\toperator".to_owned());
+                lines.push(format!("unknown-name-entry-point\t{entry_point:#010x}"));
+                lines.extend(operator_signature_lines(&trace.name, entry_point, pe_image));
+            }
+            native_table::NameClass::EngineConstant => {
+                lines.push("unknown-name-class\tengine-constant".to_owned());
+                lines.push(format!(
+                    "unknown-name-remedy\tSCREAMING_CASE and absent from the operator tables, so this is a constant; supply its value with --stub {}=VALUE",
+                    trace.name
+                ));
+            }
+            native_table::NameClass::Unresolved => {
+                lines.push("unknown-name-class\tunresolved".to_owned());
+                lines.push(
+                    "unknown-name-remedy\tneither an operator nor constant-shaped; most likely defined in a module this run has not loaded"
+                        .to_owned(),
+                );
             }
         }
     }
-    error.to_string()
+    lines
+}
+
+/// Report the recovered stack effect for an unresolved operator name, computed lazily for just
+/// that one entry point so a probe that stops early never pays for the other ~1,900 operators.
+///
+/// The counts are static site counts, not proven arity — they equal the operator's true arity
+/// only when every stack commit in its body lies on a single execution path. `mul` is the
+/// documented counterexample: it reports two pushes because it commits on two mutually exclusive
+/// type paths, one per operand type. The remedy line states that caveat instead of presenting the
+/// count as fact; the confidence marker matches the one `--scan-natives` reports, so a "well
+/// formed" walk still means only that the walk completed cleanly, not that the arity is proven.
+fn operator_signature_lines(
+    name: &str,
+    entry_point: u32,
+    pe_image: &native_table::PeImage<'_>,
+) -> Vec<String> {
+    match operator_arity::stack_effect(pe_image, entry_point) {
+        Ok(effect) => {
+            let confidence = if effect.is_well_formed() {
+                "well-formed"
+            } else if effect.truncated {
+                "truncated"
+            } else {
+                "unclassified-store"
+            };
+            vec![
+                format!("unknown-name-pops\t{}", effect.pops),
+                format!("unknown-name-pushes\t{}", effect.pushes),
+                format!("unknown-name-confidence\t{confidence}"),
+                format!(
+                    "unknown-name-remedy\tthe engine implements this; a static site count ({confidence}) says it takes {} operand{} and returns {} result{} — a sound upper bound, not proven arity (see mul); supply it with --stub {name}=VALUE",
+                    effect.pops,
+                    if effect.pops == 1 { "" } else { "s" },
+                    effect.pushes,
+                    if effect.pushes == 1 { "" } else { "s" },
+                ),
+            ]
+        }
+        Err(error) => vec![format!(
+            "unknown-name-remedy\tthe engine implements this, but its stack effect could not be recovered ({error}); supply it with --stub {name}=VALUE"
+        )],
+    }
 }
 
 fn probe_gamescript_member(
@@ -1064,15 +1118,28 @@ fn probe_gamescript_member(
     stubs: &[(String, GameScriptValue)],
     executable: Option<&Path>,
 ) -> Result<(), String> {
-    let operators = executable
+    let image_bytes = executable
         .map(|path| {
-            let image = fs::read(path).map_err(|error| {
-                format!("could not read executable {}: {error}", path.display())
-            })?;
-            native_table::OperatorIndex::from_image(&image)
+            fs::read(path)
+                .map_err(|error| format!("could not read executable {}: {error}", path.display()))
+        })
+        .transpose()?;
+    let operators = image_bytes
+        .as_deref()
+        .map(|image| {
+            native_table::OperatorIndex::from_image(image)
                 .map_err(|error| format!("could not read the operator table: {error}"))
         })
         .transpose()?;
+    let pe_image = image_bytes
+        .as_deref()
+        .map(|image| {
+            native_table::PeImage::parse(image)
+                .map_err(|error| format!("could not read the executable: {error}"))
+        })
+        .transpose()?;
+    // Both come from the same successfully-loaded image, so either both are present or neither is.
+    let operator_context = operators.as_ref().zip(pe_image.as_ref());
     let (archive, entries) = open_archive(source)?;
     let entry = entries
         .iter()
@@ -1089,14 +1156,14 @@ fn probe_gamescript_member(
         vm.define_native_stub(name.clone(), value.clone());
     }
     vm.execute_document(&document)
-        .map_err(|error| report_gamescript_failure(error, operators.as_ref()))?;
+        .map_err(|error| report_gamescript_failure(error, operator_context))?;
     let expression_tokens = expression
         .map(|source| {
             let expression =
                 GameScriptDocument::parse(source.as_bytes()).map_err(|error| error.to_string())?;
             let tokens = expression.tokens.len();
             vm.execute_document(&expression)
-                .map_err(|error| report_gamescript_failure(error, operators.as_ref()))?;
+                .map_err(|error| report_gamescript_failure(error, operator_context))?;
             Ok::<usize, String>(tokens)
         })
         .transpose()?;
@@ -2557,5 +2624,175 @@ mod tests {
             ],
             frames,
         }
+    }
+
+    use super::{gamescript_failure_lines, operator_signature_lines};
+    use lom_asset_viewer::gamescript_vm::GameScriptVmError;
+    use lom_asset_viewer::native_table::{OperatorIndex, PeImage};
+
+    /// Matches the private `RECORD_SIZE` in `native_table`: a name pointer and a code pointer.
+    const NATIVE_RECORD_SIZE: usize = 8;
+
+    /// Wrap a run of machine code and an operator table in a minimal PE, following the pattern in
+    /// `native_table`'s and `operator_arity`'s own test modules, so the reporting path can be
+    /// exercised without the proprietary binary.
+    ///
+    /// `code` is placed at the start of `.text`; `names` become a native-operator table whose
+    /// records all point at that same entry point (its arity is what these tests check, not any
+    /// distinction between operators).
+    fn synthetic_probe_image(code: &[u8], names: &[&str]) -> Vec<u8> {
+        const PE_OFFSET: usize = 0x80;
+        const IMAGE_BASE: u32 = 0x0040_0000;
+        const CODE_VA: u32 = 0x1000;
+        const CODE_RAW: u32 = 0x200;
+        const CODE_SIZE: u32 = 0x400;
+        const DATA_VA: u32 = 0x2000;
+        const DATA_RAW: u32 = 0x800;
+        const DATA_SIZE: u32 = 0x400;
+
+        let mut image = vec![0_u8; (DATA_RAW + DATA_SIZE) as usize];
+        image[0x3c..0x40].copy_from_slice(&(PE_OFFSET as u32).to_le_bytes());
+        image[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PE\0\0");
+        image[PE_OFFSET + 6..PE_OFFSET + 8].copy_from_slice(&2_u16.to_le_bytes());
+        let optional_size: u16 = 0xe0;
+        image[PE_OFFSET + 20..PE_OFFSET + 22].copy_from_slice(&optional_size.to_le_bytes());
+        image[PE_OFFSET + 24..PE_OFFSET + 26].copy_from_slice(&0x10b_u16.to_le_bytes());
+        image[PE_OFFSET + 52..PE_OFFSET + 56].copy_from_slice(&IMAGE_BASE.to_le_bytes());
+
+        let section_table = PE_OFFSET + 24 + usize::from(optional_size);
+        let mut write_section =
+            |index: usize, name: &[u8], va: u32, raw_size: u32, raw: u32, characteristics: u32| {
+                let base = section_table + index * 40;
+                image[base..base + name.len()].copy_from_slice(name);
+                image[base + 12..base + 16].copy_from_slice(&va.to_le_bytes());
+                image[base + 16..base + 20].copy_from_slice(&raw_size.to_le_bytes());
+                image[base + 20..base + 24].copy_from_slice(&raw.to_le_bytes());
+                image[base + 36..base + 40].copy_from_slice(&characteristics.to_le_bytes());
+            };
+        write_section(0, b".text", CODE_VA, CODE_SIZE, CODE_RAW, 0x2000_0000);
+        write_section(1, b".data", DATA_VA, DATA_SIZE, DATA_RAW, 0x4000_0000);
+
+        image[CODE_RAW as usize..CODE_RAW as usize + code.len()].copy_from_slice(code);
+        let entry_point = IMAGE_BASE + CODE_VA;
+
+        let mut name_addresses = Vec::new();
+        let mut cursor = (DATA_RAW + DATA_SIZE) as usize - 0x100;
+        for name in names {
+            let bytes = name.as_bytes();
+            image[cursor..cursor + bytes.len()].copy_from_slice(bytes);
+            image[cursor + bytes.len()] = 0;
+            name_addresses.push(IMAGE_BASE + DATA_VA + (cursor as u32 - DATA_RAW));
+            cursor += bytes.len() + 1;
+        }
+        for (index, address) in name_addresses.iter().enumerate() {
+            let record = DATA_RAW as usize + index * NATIVE_RECORD_SIZE;
+            image[record..record + 4].copy_from_slice(&address.to_le_bytes());
+            image[record + 4..record + 8].copy_from_slice(&entry_point.to_le_bytes());
+        }
+        image
+    }
+
+    /// `mov eax,[esi+0x54]`
+    const LOAD_INDEX: [u8; 3] = [0x8b, 0x46, 0x54];
+    /// `inc eax`
+    const INC_EAX: [u8; 1] = [0x40];
+    /// `mov [esi+0x54],eax`
+    const STORE_INDEX: [u8; 3] = [0x89, 0x46, 0x54];
+    /// `ret`
+    const RET: [u8; 1] = [0xc3];
+
+    /// Enough distinct names to clear `MINIMUM_RUN` in `native_table::extract`.
+    const NINE_NAMES: [&str; 9] = [
+        "add", "sub", "mul", "dup", "exch", "def", "undef", "begin", "end",
+    ];
+
+    fn two_pop_one_push_body() -> Vec<u8> {
+        [
+            LOAD_INDEX.as_slice(),
+            &INC_EAX,
+            &STORE_INDEX,
+            &LOAD_INDEX,
+            &INC_EAX,
+            &STORE_INDEX,
+            &LOAD_INDEX,
+            &[0x48], // dec eax
+            &STORE_INDEX,
+            &RET,
+        ]
+        .concat()
+    }
+
+    fn unknown_name_error(name: &str) -> GameScriptVmError {
+        GameScriptVmError {
+            message: format!("unknown executable name {name}"),
+            step: 7,
+            call_stack: vec!["outer".to_owned()],
+        }
+    }
+
+    #[test]
+    fn operator_signature_lines_report_a_well_formed_two_operand_one_result_operator() {
+        let bytes = synthetic_probe_image(&two_pop_one_push_body(), &NINE_NAMES);
+        let pe_image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let lines = operator_signature_lines("add", 0x0040_1000, &pe_image);
+
+        assert!(lines.contains(&"unknown-name-pops\t2".to_owned()));
+        assert!(lines.contains(&"unknown-name-pushes\t1".to_owned()));
+        assert!(lines.contains(&"unknown-name-confidence\twell-formed".to_owned()));
+        let remedy = lines
+            .iter()
+            .find(|line| line.starts_with("unknown-name-remedy"))
+            .expect("a remedy line");
+        assert!(remedy.contains("takes 2 operands and returns 1 result"), "{remedy}");
+        // The site-count caveat must survive even for a well-formed walk: `mul` is well formed
+        // and still overcounts, so "well-formed" must not be sold as proof of arity.
+        assert!(
+            remedy.contains("not proven arity"),
+            "remedy must not present the count as certain: {remedy}"
+        );
+    }
+
+    #[test]
+    fn operator_signature_lines_flag_an_unclassified_store_as_lower_confidence() {
+        // A commit with no recognised adjustment: the idiom does not apply here, and the walk
+        // must say so rather than reporting a clean pop/push count.
+        let code = [LOAD_INDEX.as_slice(), &STORE_INDEX, &RET].concat();
+        let bytes = synthetic_probe_image(&code, &NINE_NAMES);
+        let pe_image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let lines = operator_signature_lines("add", 0x0040_1000, &pe_image);
+
+        assert!(lines.contains(&"unknown-name-confidence\tunclassified-store".to_owned()));
+    }
+
+    #[test]
+    fn gamescript_failure_lines_include_the_recovered_signature_for_an_operator_name() {
+        let bytes = synthetic_probe_image(&two_pop_one_push_body(), &NINE_NAMES);
+        let operators = OperatorIndex::from_image(&bytes).expect("synthetic image parses");
+        let pe_image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let error = unknown_name_error("add");
+
+        let lines = gamescript_failure_lines(&error, Some((&operators, &pe_image)));
+
+        assert!(lines.contains(&"unknown-name-class\toperator".to_owned()));
+        assert!(lines.iter().any(|line| line.starts_with("unknown-name-pops")));
+        assert!(lines.iter().any(|line| line.starts_with("unknown-name-pushes")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("unknown-name-confidence"))
+        );
+    }
+
+    #[test]
+    fn gamescript_failure_lines_report_no_signature_for_a_constant() {
+        let bytes = synthetic_probe_image(&two_pop_one_push_body(), &NINE_NAMES);
+        let operators = OperatorIndex::from_image(&bytes).expect("synthetic image parses");
+        let pe_image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let error = unknown_name_error("SD_MANA");
+
+        let lines = gamescript_failure_lines(&error, Some((&operators, &pe_image)));
+
+        assert!(lines.contains(&"unknown-name-class\tengine-constant".to_owned()));
+        assert!(!lines.iter().any(|line| line.starts_with("unknown-name-pops")));
     }
 }
