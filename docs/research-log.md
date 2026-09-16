@@ -293,6 +293,23 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
   The counts are therefore **site counts**, equal to arity only when every commit lies on one path,
   and a sound upper bound otherwise.
 
+## 2026-09-16 — Operator table order is meaningful, but not along the obvious axis
+
+- **Observed:** adjacent entries in the engine's operator table share callers far more than chance.
+  Mean caller-set Jaccard is 0.3145 against a shuffled baseline of 0.0133, a **23.6x** ratio, and
+  58.5% of adjacent pairs share at least one calling script against 10.5% for random pairs.
+- **Observed:** adjacent entries share a name stem 12.87% of the time against a shuffled baseline of
+  0.021% — a **611x** ratio. Eleven runs of three or more consecutive same-stem operators exist on
+  exact stem equality alone, which is a conservative floor.
+- **Refuted:** that the subsystem label can be read from where the calling scripts live. Mean run
+  length of dominant caller directory is 1.45 against a shuffled 1.10, only **1.33x**. GS5R3's
+  script tree is organised for the mod's authors and two directories dominate it, so the label cuts
+  across the engine's seams rather than along them. Inferring subsystems that way yields a
+  plausible map with no way to tell where it is wrong.
+- **Implemented:** `tools/operator_groups.py` performs all three comparisons against shuffled
+  baselines. It tokenises with the project lexer, so a name appearing only inside a `;` comment is
+  not counted as a call site.
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:
