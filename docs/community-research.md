@@ -103,7 +103,13 @@ anything back** and is recorded now so it is not rediscovered painfully.
 
 ### Open, worth testing
 
-**Maps carry a 4-byte compression header that vanishes on oversized maps.** eyesodilated, July 2026:
+**Maps carry a 4-byte compression header that vanishes on oversized maps.** *Partly refuted on
+measurement — see [map format](map-format.md).* The field is not a version number: across 365
+installed maps it takes 20+ values in `0x3f`-`0x6f`, independent of geometry, clustering by file
+family. A tileset selector fits better. The claim's testable half, that oversized maps omit the field
+entirely, remains open.
+
+Original claim: eyesodilated, July 2026:
 *"Lords of Magic stores a 4-byte compression header in every map. It's basically just a version
 number and reserved space. However, when maps exceed the original maximum size, that header
 disappears. That's why some maps and save files become corrupted, and why the game may display
@@ -121,6 +127,13 @@ opposing army`, which GS5 and GSZ removed. Relevant if we ever model combat; not
 **A Game Script Manual existed.** Boaster sold it as a donation-gated PDF from 2011. Its table of
 contents covers system symbols, mathematics/operands/procedures, real versus integer stats, and unit,
 artifact and spell editing. Never published; only the contents listing survives publicly.
+
+## Independent map corpus
+
+Eight community maps were downloaded from Mantera's site on 2026-09-16 and parsed with zero failures
+— the first maps this project has tested that did not ship with an installed profile. One,
+`Feuerundeis.scn`, is **160x160**, a dimension absent from all three installs and outside the
+previously documented set. See [map format](map-format.md).
 
 ## Prior art we did not know about
 

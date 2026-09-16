@@ -166,6 +166,13 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 - **Documented:** a 2026 community toolchain already reads MPQ, IMP, and map files and claims to
   repair the map/save corruption we have not yet characterised. We are not the only party decoding
   these formats.
+- **Observed:** eight community maps parse with zero failures, including a **160x160** scenario whose
+  dimension appears in no installed profile and outside the previously documented 32/48/64/128/256
+  set. The parser accepted it unchanged, so its bounds are data-driven rather than fitted.
+- **Refuted:** that the unknown 4-byte map field at offset `0x00` is a version number. It takes 20+
+  distinct values in `0x3f`-`0x6f` across 365 installed maps, is independent of dimensions and record
+  counts, and clusters by file family. A tileset or terrain-set selector is the better hypothesis,
+  which would also close the separate header-to-tileset unknown.
 - **Decision:** treat all community material as hypotheses with named sources. Two headline claims by
   the mod's own author about his own code were wrong; both would have propagated into our docs
   unchecked.
