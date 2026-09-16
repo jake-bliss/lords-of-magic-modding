@@ -74,6 +74,22 @@ generated-header hotspot statistic for 1,798 pairs with zero mismatches.
 
 ### Confirmed, and useful
 
+**The transparency index is a header field, not a hardcoded 0.** `IMP-Studio-Help.txt` and the
+accompanying Python port of `lomut`'s `imp.c` document header byte 3 as `ColorKey`, *"transparency
+index (usually 0)"*. Measured across a 300-file sample: **94 files carry a nonzero key**, and on those
+sprites palette slot 0 never occurs in the pixel data while the key index is the frame's most common
+value. We were hardcoding 0 and rendering those backgrounds opaque. Fixed; see
+[native asset stage](native-asset-stage.md). This is the single most valuable thing the survey found.
+
+**The palette is stored BGRA and swapped to RGB on load.** Confirms our channel order, which we had
+been unable to test.
+
+**Frame type 4 with size 0 is also a duplicate**, pointing back at a shared bitmap. Matches our
+`0x04` shared-pixels handling exactly, independently derived.
+
+**Frame `Size` may be 0 because the RLE is self-terminating.** This is the same distinction as our
+two record variants, one with explicit stored sizes and one whose payload length is implicit.
+
 **Palette index 1 is the shadow.** This resolves our open "secondary mask" question. Our own
 observation of *"a separate pure-red index for a 1,651-pixel silhouette beneath the creature"*
 independently corroborates it. Compositing is keyed by palette **index**, not by colour; the green
@@ -148,8 +164,12 @@ The board hosts a working toolchain that overlaps our Stage 1 scope:
   preservation of the IMP properties `lomut` dropped, map/save repair by rebuilding the missing
   4-byte header, and SVG import. Reports built-in portrait animation effects in static LBM portraits.
 
-These are Windows binaries posted as forum attachments by a community member. They have not been
-downloaded or run. Their existence does not reduce the value of an independent, tested,
+`IMP Studio` was obtained on 2026-09-16 as Python and HTML source and read, not run. It describes
+itself as a byte-for-byte port of `lomut`'s `imp.c` and is the best format documentation located so
+far — better than the 2011 forum post, because it is executable and annotated. Its stated limits are
+informative: **sprite type 57 (4-bit RLE) is not decoded, because `lomut` never implemented it**. Type
+57 is 103 of our 300-file sample, so our sub-byte decoder covers a third of the corpus that no public
+tool reads. The `.exe` tools remain undownloaded and unrun. Their existence does not reduce the value of an independent, tested,
 cross-platform decoder, but it does mean **we are not the only party decoding these formats**, and
 their author has solved at least one problem we have open.
 

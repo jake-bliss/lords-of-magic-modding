@@ -59,6 +59,8 @@ pub struct ImpSprite {
     pub bits_per_pixel: u8,
     pub maximum_width: u16,
     pub maximum_height: u16,
+    /// Palette index treated as transparent, read from header byte 3.
+    pub color_key: u8,
     pub sequence_count: usize,
     pub cycle_count: usize,
     pub frame_count: usize,
@@ -118,6 +120,11 @@ impl ImpSprite {
 
         let file_flags = source[0];
         let record_variant = source[2];
+        // Header byte 3 is the transparency index. It is 0 for most unit art but is
+        // frequently nonzero for aura and effect sprites, where palette slot 0 is not
+        // used by the pixel data at all. Keying transparency on a hardcoded 0 renders
+        // those sprites with an opaque background.
+        let color_key = source[3];
         let compressed = file_flags & FILE_FLAG_RLE != 0;
         let bits_per_pixel = match file_flags & FILE_FLAG_DEPTH {
             0x00 => 8,
@@ -384,6 +391,7 @@ impl ImpSprite {
             bits_per_pixel,
             maximum_width,
             maximum_height,
+            color_key,
             sequence_count,
             cycle_count,
             frame_count,

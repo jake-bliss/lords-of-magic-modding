@@ -16,6 +16,7 @@ pub fn write_imp_frame_png<W: Write>(
         frame.height,
         &sprite.palette,
         &frame.palette_indices,
+        sprite.color_key,
     )
 }
 
@@ -56,6 +57,7 @@ fn write_indexed_png<W: Write>(
     height: u16,
     palette: &[[u8; 4]],
     palette_indices: &[u8],
+    color_key: u8,
 ) -> Result<(), String> {
     if width == 0 || height == 0 {
         return Err("cannot export an empty IMP frame".to_owned());
@@ -90,11 +92,13 @@ fn write_indexed_png<W: Write>(
     encoder.set_color(png::ColorType::Indexed);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_palette(palette_rgb);
-    // IMP palette slot 0 is the transparency key and slot 1 is the shadow silhouette.
+    // The header's colour-key index is transparent and slot 1 is the shadow silhouette.
     // Without a tRNS chunk the exported frame is fully opaque and the key is lost, even
-    // though the interactive viewer honours it. A one-byte tRNS marks index 0 fully
-    // transparent; PNG treats every later index as opaque by default.
-    encoder.set_trns(vec![0_u8]);
+    // though the interactive viewer honours it. tRNS entries apply to palette indices in
+    // order, so mark every index up to the key opaque and the key itself transparent.
+    let mut transparency = vec![255_u8; usize::from(color_key) + 1];
+    transparency[usize::from(color_key)] = 0;
+    encoder.set_trns(transparency);
     let mut png_writer = encoder
         .write_header()
         .map_err(|error| format!("could not write PNG header: {error}"))?;
@@ -110,6 +114,27 @@ mod tests {
     use super::{write_indexed_png, write_rgba_png};
 
     #[test]
+    fn marks_a_nonzero_colour_key_transparent() {
+        let mut palette = vec![[0, 0, 0, 255]; 256];
+        palette[0] = [0, 255, 0, 255];
+        palette[188] = [12, 34, 56, 255];
+        let indices = [188, 7, 188, 7, 188, 7];
+        let mut encoded = Vec::new();
+
+        write_indexed_png(&mut encoded, 3, 2, &palette, &indices, 188).unwrap();
+
+        let decoder = png::Decoder::new(Cursor::new(encoded));
+        let reader = decoder.read_info().unwrap();
+        let transparency = reader.info().trns.as_deref().expect("tRNS chunk");
+        assert_eq!(transparency.len(), 189);
+        assert_eq!(transparency[188], 0, "the colour key must be transparent");
+        assert!(
+            transparency[..188].iter().all(|alpha| *alpha == 255),
+            "every index below the colour key stays opaque"
+        );
+    }
+
+    #[test]
     fn exports_indexed_pixels_and_palette_losslessly() {
         let mut palette = vec![[0, 0, 0, 255]; 256];
         palette[0] = [0, 255, 0, 255];
@@ -118,7 +143,7 @@ mod tests {
         let indices = [0, 1, 42, 1, 0, 42];
         let mut encoded = Vec::new();
 
-        write_indexed_png(&mut encoded, 3, 2, &palette, &indices).unwrap();
+        write_indexed_png(&mut encoded, 3, 2, &palette, &indices, 0).unwrap();
 
         let decoder = png::Decoder::new(Cursor::new(encoded));
         let mut reader = decoder.read_info().unwrap();
@@ -129,7 +154,7 @@ mod tests {
         assert_eq!(
             reader.info().trns.as_deref(),
             Some([0_u8].as_slice()),
-            "indexed export must mark palette index 0 transparent"
+            "indexed export must mark the colour-key index transparent"
         );
         assert_eq!(info.bit_depth, png::BitDepth::Eight);
         assert_eq!(&decoded[..info.buffer_size()], indices);
