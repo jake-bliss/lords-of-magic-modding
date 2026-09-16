@@ -235,6 +235,68 @@ answer into a flagged one.
 are engine capabilities the shipped mod does not reach, which makes them the most interesting part of
 the table for anything that wants to do something the game does not currently do.
 
+### Is the table order meaningful? Measured, not assumed
+
+The operator table's order is fixed at build time, so if neighbouring entries belong to the same
+subsystem the table is a free outline of the host API. That is a tempting thing to assert from
+eyeballing it — `getcheckmarkstate, togglehelpcheck, addhelppanel, enablemap, disablemap` certainly
+*looks* like a UI cluster. `tools/operator_groups.py` tests it instead, comparing the real order
+against a shuffled baseline on signals the table itself does not contain.
+
+| Signal | Real order | Shuffled | Ratio |
+| --- | ---: | ---: | ---: |
+| Adjacent operators' caller-set overlap (mean Jaccard) | 0.3145 | 0.0133 | **23.6x** |
+| Adjacent operators sharing at least one caller file | 58.5% | 10.5% | **5.6x** |
+| Adjacent operators sharing a name stem | 12.87% | 0.021% | **611x** |
+| Mean run length of dominant caller directory | 1.45 | 1.10 | 1.33x |
+
+The first three say the ordering is real and strong. **The fourth says the obvious labelling axis is
+the wrong one**, and that is worth as much as the positive results.
+
+#### The negative result
+
+Grouping operators by the directory their callers live in barely beats chance. The reason is
+structural: GS5R3's script tree is organised for the mod's authors — `gs\dlg`, `gs\dungeons`,
+`gs\barters` — and two of those directories dominate the corpus, so "dominant caller directory" is a
+coarse, lopsided label that cuts across the engine's internal seams rather than along them. Anyone
+inferring subsystems from where the calling scripts live will produce a plausible map with no way to
+tell where it is wrong.
+
+#### What does label them
+
+Name morphology, overwhelmingly. The engine names accessors around a shared subject, so stripping
+the leading verb recovers it: `getcastdata`, `setcastdata` and `initcastdata` are one subject, and
+`isdetectthief?` and `candetectthief?` are another. Adjacent operators share a stem **611 times more
+often than chance**, and the runs fall out directly:
+
+```
+scriptwindow       updatescriptwindow, openscriptwindow, closescriptwindow,
+                   clearscriptwindow, savescriptwindow
+multiplayeroption  getmultiplayeroption, setmultiplayeroption,
+                   incmultiplayeroption, decmultiplayeroption
+lighttables        makelighttables, calclighttables, loadlighttables, savelighttables
+movingstealthily   startmovingstealthily, stopmovingstealthily, ismovingstealthily?
+detectthief        detectthief, isdetectthief?, candetectthief?
+hotkey             addhotkey, removehotkey, gethotkey
+```
+
+Eleven runs of three or more reach that bar on exact stem equality alone. That is a floor, not a
+ceiling: it counts only strictly consecutive entries whose stems match exactly, so
+`enumchildbuildings` beside `enumpossiblebuildings` does not register. A fuzzier stem comparison
+would find more, at the cost of a threshold nobody can justify — so the strict count stands as the
+conservative measurement.
+
+#### Reproducing it
+
+```sh
+target/release/lom-asset-viewer --scan-natives '/path/to/English/lomse.exe' > scan.txt
+# extract the .gs members of gs.mpq into a directory first
+python3 -m tools.operator_groups scan.txt /path/to/extracted/scripts
+```
+
+Tokenising uses the project lexer rather than a regex, so a name appearing only inside a `;` comment
+is not counted as a call site.
+
 ### Operator diagnostics name their parameters
 
 Separately from the table, 83 diagnostic strings in the binary follow the form `operator - message`,
