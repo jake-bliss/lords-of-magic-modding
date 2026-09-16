@@ -86,8 +86,8 @@ target/release/lom-asset-viewer --set-imp-placement in.imp 0 5 -40 out.imp --hot
 Frame record bytes `+8..+12` are overloaded: a frame carries **either** an origin pair **or** a
 pointer to hotspot records, never both. Use `--hotspot TYPE` for the second form; `--describe-imp`
 shows which a frame has. The writer keeps the file length identical, re-parses before writing,
-refuses a placement it cannot read back, and warns when repeated facings or shared-pixel runs make
-several frames share one record.
+refuses a placement it cannot read back, refuses to overwrite an existing output, refuses a duplicate
+frame's origin, and warns when several frames share the record or the hotspot array being written.
 
 **Scope.** The rule above was measured against frames carrying the *origin pair*. Which hotspot type
 the engine uses as the draw anchor for record-bearing frames is **not yet established** — see the

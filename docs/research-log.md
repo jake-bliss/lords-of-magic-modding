@@ -814,8 +814,14 @@ in the way the terrain-sprite probe settled the origin pair.
 - **It refuses rather than guesses**: writing an origin to a hotspot-bearing frame, writing a hotspot
   type the frame does not carry (the error names the types it does carry), and writing a type that
   appears more than once.
-- **It warns about aliasing.** Repeated facings and `0x04` shared-pixel runs alias one record, so an
-  edit through any index is an edit through all of them; `frames_sharing_record` reports the set.
+- **It warns about aliasing, per path.** An origin lives in the frame record and a hotspot lives in
+  the array the record points at, and the two share differently: `frames_sharing_record` covers
+  repeated facings and `0x04` shared-pixel runs, `frames_sharing_hotspots` covers distinct records
+  storing one array pointer. The second does not occur in any of 241 shipped unit sprites, but the
+  writer advertises a guarantee, so it holds for files we did not author.
+- **It refuses a duplicate frame's origin.** A `0x04`/`0x08` frame has no origin of its own.
+- **It refuses to overwrite**, like every other output path in the tool.
+- **It refuses arithmetic that would wrap** rather than printing a wrapped value.
 
 ### The demonstration that matters for the board
 
@@ -830,3 +836,25 @@ placement	13	-16
 `(9, -20)` becomes `(13, -16)` — each axis shifts by exactly half the added pixels. That is the
 centre-relative convention stated as a recipe, and it is precisely the correction the board's
 crop-and-re-centre workaround was missing.
+
+
+### Review of the writer, and what each side caught
+
+Both a Claude reviewer and a Codex reviewer ran over the same diff. **They disagreed, and the
+disagreement is the interesting part.** Codex reported no defects; the Claude reviewer reported five,
+four of which were confirmed here by reading the code and running the path:
+
+| Finding | Verdict | Fix |
+| --- | --- | --- |
+| `set_imp_placement` used `fs::write`, which truncates, while every other output path in the tool is create-new | **Confirmed.** This is the only command that mutates game art. | create-new, plus a CLI test |
+| `write_frame_origin` accepted a duplicate/shared-pixel frame, patching four bytes the parser reports as having no origin | **Confirmed** by reading the guard: the only check was `hotspot_offset.is_some()` | refuse by name, plus a regression test |
+| Placement arithmetic overflowed on command-line coordinates | **Confirmed** | `checked_add`/`checked_sub`, plus a regression test |
+| The aliasing warning used record sharing for the hotspot path, where the shared unit is the array | **Confirmed as a defect, but not reachable in shipped art** — 0 of 241 unit sprites have two records pointing at one hotspot array. Fixed anyway | `frames_sharing_hotspots` |
+| No test covered the new CLI layer | Fair | five new tests |
+
+**Why Codex missed the overflow is worth recording.** It probed the boundary with the *release*
+binary, where the subtraction wraps silently and prints a plausible number, and read that as a pass.
+The Claude reviewer ran a debug build and got `attempt to subtract with overflow`. Reproduced here
+both ways. A boundary probe against an optimised build is not a boundary probe.
+
+Tests after the fixes: **83 library and 11 CLI**, clippy clean.
