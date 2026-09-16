@@ -4,7 +4,7 @@
 
 This is a working macOS setup plus a native Rust asset/MPQ viewer and an experimental GameScript interpreter, **not** a native playable replacement.
 
-**The immediate next task on [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1) is to pin the hotspot *sign*. The hotspot is now proved to be applied at draw time; `drawimpframe` is vestigial and must not be used.** Steps 1 and 2 were completed on 2026-09-16 — loose-file precedence is refuted and a working GameScript injection path into the running engine is proved. See "The issue #1 experiment" below. Game files are modified only with a checksum-verified backup and restore. Do not jump straight to a full engine rewrite. The user's immediate question about difficulty is answered in [Difficulty and AI](difficulty-ai.md): vanilla has difficulty-gated strategic behavior, while GS5R3 adds tactical difficulty checks and difficulty-scaled AI stat bonuses.
+**[Issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1) is resolved.** The hotspot convention was measured in the running engine on 2026-09-16: `top_left = anchor + hotspot - (w >> 1, h >> 1)`. The hotspot is the vector from the anchor to the **centre** of the frame, in screen pixels with `+y` down, and it is **added**. See "The issue #1 experiment" below and the research log. `drawimpframe` is vestigial and must not be used. The next task is a hotspot **writer** that uses this rule, plus the still-open `map2screen` y/z convention. Steps 1 and 2 were completed on 2026-09-16 — loose-file precedence is refuted and a working GameScript injection path into the running engine is proved. See "The issue #1 experiment" below. Game files are modified only with a checksum-verified backup and restore. Do not jump straight to a full engine rewrite. The user's immediate question about difficulty is answered in [Difficulty and AI](difficulty-ai.md): vanilla has difficulty-gated strategic behavior, while GS5R3 adds tactical difficulty checks and difficulty-scaled AI stat bonuses.
 
 A community research survey was completed on 2026-09-16 — see [community research](community-research.md). The surviving modding community is **live**, has a 2011 IMP specification that matches our decoder, and has a 2026 toolchain covering much of our Stage 1 scope. Read that document before trusting any community claim: two headline claims by the mod's own author about his own code were refuted by our corpus.
 
@@ -192,7 +192,20 @@ the player-colour remap. Fix both by choosing the subject and by subtracting a t
 | `destroyterrainsprite` | `<sprite> destroyterrainsprite` |
 | `map2screen` | `<x> <y> <z> map2screen` -> three floats; **top of stack is screen X**, then screen Y, then the `z = 0` ground screen Y. Verified statically 2026-09-16 |
 
-**Procedure**, all from one injected hotkey so it runs in a single frame with nothing else moving:
+**This experiment was run on 2026-09-16 and it worked.** The result is
+`top_left = anchor + hotspot - (w >> 1, h >> 1)`, fitted exactly against four subjects at one cell;
+the derivation, the measured table and one honest negative about `map2screen` are in the research log.
+Two refinements over the design as written, both worth keeping for any future engine probe:
+
+- **Use `terrainsprites`, not `addterrainspritetype`.** `tree2.gs` already defines the dictionary and
+  every entry resolves to `imp/<name><zoom>.imp` with **one sequence, one facing, one frame**. So
+  `terrainsprites /orchard get` is enough, and frame identification disappears rather than shrinking.
+- **Place four subjects at one cell, not one subject at several cells.** A shared anchor cancels every
+  unknown constant, so the result stops depending on `map2screen` — which turned out to matter,
+  because `map2screen`'s y did not agree.
+
+The procedure as run, all from one injected hotkey so it happens in a single frame with nothing else
+moving:
 
 1. `"plate.bmp" screencapture` — the tile with **no** sprite on it.
 2. `x y typeid addterrainsprite`, then `rendermap refreshdirty`.

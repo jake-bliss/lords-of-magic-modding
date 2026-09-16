@@ -690,3 +690,76 @@ Four consequences, all of which matter for [issue #1](https://github.com/jake-bl
 This is the second operator whose real signature came out of the disassembly rather than the arity
 walk, after `drawimpframe`. The walk is useful for finding candidates; it is not evidence about an
 operator's contract. Read the entry point before designing an experiment around an operator.
+
+## 2026-09-16 — The hotspot convention, measured in the running engine
+
+**Evidence class: observed in gameplay.** Issue #1's last open question — the hotspot *sign* — is
+answered. The game was modified with a checksum-verified backup and restored to a byte-identical
+`gs.mpq` afterwards.
+
+### The rule
+
+```
+top_left = anchor + hotspot - (w >> 1, h >> 1)
+```
+
+Equivalently: **the hotspot is the vector from the anchor point to the centre of the frame**, in
+screen pixels with `+y` downward. The frame is drawn **centred**, and the hotspot is **added**.
+
+### How it was measured
+
+The earlier attempt failed because the subject was uncontrolled — an army banner whose sequence,
+facing and cycle position were all unknown, segmented with a luminance threshold against unknown
+terrain. This run removed frame identification entirely instead of improving it.
+
+`tree2.gs` defines a `terrainsprites` dictionary whose entries resolve to `imp/<name><zoom>.imp`.
+Every candidate is **one sequence, one facing, one frame** — there is nothing to identify. A single
+injected hotkey then did, in one frame with nothing else moving:
+
+1. `currentplayer { ... anythinglocation UNITTYPELAND findemptylocation } enumplayerarmies` to pick an
+   empty on-screen cell, logged as `cell 63 70`.
+2. `"plate.bmp" screencapture` — the cell with nothing on it.
+3. For each of four subjects: `hsx hsy terrainsprites /<name> get addterrainsprite`,
+   `rendermap refreshdirty`, capture, then `hsx hsy terrainspriteat destroyterrainsprite` and
+   re-render. Self-cleaning, so the save was left as found.
+
+Differencing each capture against the plate gives the **exact opaque silhouette** — no threshold, no
+palette-remap assumption, dark pixels included.
+
+Four subjects at one cell means the anchor is shared and unknown constants cancel, so the result does
+not depend on `map2screen` being correct.
+
+| Subject | Frame | Hotspot | Predicted top-left | Measured |
+| --- | --- | --- | --- | --- |
+| `orchard` | 60x70 | `(0, -35)` | (290, 110) | **(290, 110)** |
+| `teeth` | 52x48 | `(0, -1)` | (294, 155) | (294, 156) |
+| `palm1` | 53x53 | `(9, -20)` | (303, 134) | **(303, 134)** |
+| `dtree` | 21x34 | `(-6, -12)` | (304, 151) | **(304, 151)** |
+
+Recovered anchor: `(320, 180)`. Two free parameters fit against eight measurements.
+
+**The `teeth` row.** Its predicted top row 155 measured zero changed pixels, and the per-row diff
+profile tapers smoothly to zero at both ends (`... 4 2 4 2 2 2 1 0 0 0 0`), so the frame's outermost
+rows simply happen to match the terrain beneath. This was checked rather than assumed: the frames were
+decoded and **none of the four has any fully transparent border row or column**, which refutes the
+first explanation offered for the shortfall. A coincidental colour match on one row is the surviving
+one, and it is consistent with every other row.
+
+**`floor`, not `ceil`.** Both odd-sized cases settle it. `palm1` is 53 wide and its silhouette measured
+exactly 53 columns starting at 303; `ceil` predicts 302, which would have measured 54.
+
+### Why this matters
+
+- **The sign is plus.** Every shipped hotspot `y` is negative, which shifts art *upward* on screen —
+  art grows up from where the object stands.
+- **The convention is centre-relative, not corner-relative.** That `w >> 1` term explains why the
+  board's crop-and-re-centre workaround kept almost working: re-cropping changes the implied hotspot
+  by half the crop, so the error tracks the edit instead of staying fixed. Combined with the already
+  established fact that `lomut` writes no hotspot array at all, this is what a correct writer needs.
+
+### One honest negative
+
+`map2screen(63, 70, 0)` returned `x = 320`, matching the recovered anchor x, but `y = 2027` against a
+recovered anchor y of `180`. Its x agreed and its y did not, so the y/z input convention is wrong
+somewhere — units, or a required elevation term. **`map2screen` is not validated by this run**, and
+nothing above depends on it, because the four-subject differencing never used it. Left open.
