@@ -64,7 +64,7 @@ Newly available leads, all from the 2026-09-16 survey:
 
 For any new task, document the evidence class: **observed in a local binary/script**, **observed in gameplay**, **community claim**, or **inference**. Keep 3.02's focused bug fix distinct from GS5R3's broad replacement scripts. Run proportionate Rust tests and read-only corpus checks, then update the relevant documentation and GitHub issue. The user has previously asked to keep work pushed and merged to `main`; check current authorization and remote state before publishing a new branch.
 
-## The issue #1 experiment — steps 1 and 2 are done, step 3 is ready to run
+## The issue #1 experiment — steps 1 and 2 done, step 3 blocked on one precondition
 
 Everything the *files* can say about hotspots has been said. What remains on
 [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1) is how the engine
@@ -77,10 +77,10 @@ The plan, with current status:
 1. ~~Confirm loose-file precedence.~~ **Done 2026-09-16, and it is refuted** — see below.
 2. ~~Get a modified `.gs` into `gs.mpq` in a form the shipped `storm.dll` will read.~~ **Done.**
    StormLib writes an archive the engine reads, and an injected statement was observed executing.
-3. **Ready.** Write a `.gs` calling **`drawimpframe`** to draw a known frame at known screen
-   coordinates — one whose hotspot we have already decoded.
-4. Launch, screenshot, measure where the sprite actually landed. The offset between commanded and
-   observed position *is* the sign convention; the shadow blend is visible in the same capture.
+3. **Attempted, blocked.** A `.gs` calling **`drawimpframe`** runs without error but draws **zero
+   pixels**, in every context tried. See "Why step 3 stalled" below.
+4. Still open: measure where the sprite lands. The offset between commanded and observed position
+   *is* the sign convention; the shadow blend is visible in the same capture.
 
 **Why `getimphotspot` alone is not the answer.** It returns the hotspot the engine read *from the
 file* — the same number our decoder already reports. The convention lives in the consumer, not the
@@ -134,6 +134,39 @@ running interpreter without reading the screen.
 A prototype writer lives in `spikes/asset-viewer/examples/mpq_replace.rs`. Promote it to a CLI flag
 when the next experiment needs it. **Always back the archive up first and verify the restore by
 checksum** — `artifacts/experiment-backups/` holds the manifest pattern used on 2026-09-16.
+
+### The experiment harness — use this, it makes runs cheap
+
+All three live in `START.GS`, which we can replace via the injection path:
+
+- **Disable the intro.** Change the `true{...}if` guarding `imptitle.smk`/`intro.smk` to `false`.
+  Startup drops from **over 150 s to about 6 s**. Do this first in any probe.
+- **Reach a live map view with no user input**:
+  `{}gamemodeproc gamemode 128 128 newmap default_edit_mode` (lifted from the Map Editor button in
+  `gs/dlg/NEWDLG5.gs`). Rendered 128x128 map in ~8 s. Replace `{newdlg opendialog}ifelse` with
+  `{}ifelse` to suppress the main menu when a clean screen is wanted.
+- **Capture pixels**: `"name.bmp" screencapture` writes a 640x480 24-bit BMP. **Its `bfOffBits` field
+  says 14 but the pixels really start at 54** — compute the offset, do not trust the header.
+  `refreshdirty` is needed to present anything, and it repaints dialogs over direct draws, so settle
+  the screen, capture a control, then draw and capture again and diff.
+
+### Why step 3 stalled
+
+`drawimpframe` is `<imp> <sequence> <facing> <frame> <x> <y>` — six operands, confirmed both by
+disassembly and by the interpreter accepting them with no stack or type error. The operand roles are
+pinned by record sizes: the first int indexes 16-byte Sequence records, the second 8-byte Facing
+records, and the frame is `[facing+4] + index*16`, matching our decoded format exactly.
+
+`0x584AB8`, pushed by the forwarder at `0x004F2F50`, is **not** a render target — it is a clip
+`RECT{0,0,639,383}` initialised at `0x0049AA90`.
+
+Zero pixels resulted in every context: main menu, no menu at all, and a **live map editor session**
+with the viewport rendered and the clip rect initialised, using both `imp` and `flagimp`. No error is
+ever raised. **Inferred:** a further precondition on imp-player state is unmet, most likely a null
+inner data pointer making `0x004F31F0` take its `test eax,eax / je` exit, i.e. the loaders are lazy
+and something else normally forces the load. **Next step: log `getimpmemory` and `getimpfilename` for
+the loaded handle** — that diagnostic was written but its run halted before producing output, so it
+is untried, not refuted.
 
 ### Read this before judging any launch
 

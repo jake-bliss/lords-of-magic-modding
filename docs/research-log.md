@@ -444,6 +444,73 @@ engine's own file operators as the output channel. A prototype writer lives in
   looked up in a registry at `0x5A7B50` and rejected with the string `drawimpframe - no such imp`.
   The undercount is worth chasing in `operator_arity`.
 
+## 2026-09-16 — Step 3: a working experiment harness, and `drawimpframe` refusing to draw
+
+With injection proved, the next step was to call `drawimpframe` at known coordinates and measure
+where the sprite landed. **The measurement was not obtained.** What was built along the way is
+reusable, and the failure is bounded and specific.
+
+### The operator signature, recovered and partly confirmed
+
+`drawimpframe` at `0x0049C500` takes **six** operands, not the five the arity walk reports:
+
+```
+<imp> <sequence> <facing> <frame> <x> <y> drawimpframe
+```
+
+- **Observed:** four operands arrive through the inline pop sequence and two more through the shared
+  pop helper at `0x0040ADB0`. The last popped — the first written in a script — is the IMP handle,
+  looked up in the registry at `0x5A7B50` and rejected with `drawimpframe - no such imp`.
+- **Observed:** the setup call `0x004F31F0` stores the imp data then calls `0x004F2FC0`, which
+  indexes a **16-byte** record table by the first int (clamped against a count at `[table+0x1A]`),
+  from which `0x004F2F70` indexes an **8-byte** table by the second, and the draw then computes
+  `frame = [facing+4] + index*16`. Those record sizes are exactly our decoded Sequence (16),
+  Facing (8) and Frame (16) records, which is what fixes the operand roles.
+- **Observed in the running engine:** the interpreter accepted all six operands with no stack or type
+  error, in this order, across several runs. That is a real confirmation of the arity and types, even
+  though no pixels resulted.
+- `imp` expects a string (`cmp cl,8`) and registers the object in `0x5A7B50`; `flagimp` has the same
+  shape. Both were tried.
+
+### `0x584AB8` is a clip rectangle, not a render target
+
+The forwarder at `0x004F2F50` pushes `0x584AB8` before calling the real draw. That address is **not**
+a surface: `0x0049AA90` initialises it as a `RECT{0, 0, 0x27F, 0x17F}` = `{0,0,639,383}`. 383 is the
+map viewport height, below which the editor and game panels sit. An uninitialised (all-zero) rect
+would clip everything away, which was the first hypothesis for the silent no-op — and it was wrong,
+see below.
+
+### What was tried, and the bounded negative result
+
+- **Refuted:** that the draw was merely unpresented. Adding `refreshdirty` does present, but it
+  repaints dialogs over anything drawn directly, and without it nothing appears either.
+- **Refuted:** that the clip rect was uninitialised. The probe was re-run inside a **live map editor
+  session** — clip rect initialised, map rendered, viewport active — and the captures were still
+  byte-identical.
+- **Observed:** across menu, no-menu, and live-map-editor contexts, with both `imp` and `flagimp`,
+  `drawimpframe` changed **zero pixels** while never raising an error.
+
+**Inferred:** there is a further precondition on the imp-player state that neither loader satisfies
+from a bare script — most likely `[imp+0]` (the inner data pointer) is null because the loaders are
+lazy, so `0x004F31F0` takes its `test eax,eax / je` exit and the draw silently does nothing. The next
+attempt should confirm that by logging `getimpmemory`, which was the one diagnostic that did not run.
+
+### The harness, which is the durable part
+
+Three things make future engine experiments cheap, and all are in `START.GS`:
+
+- **Disable the intro**: the `true{...}if` guarding `imptitle.smk` and `intro.smk` becomes `false`.
+  Startup to the end of the script drops from **over 150 s to about 6 s**. This alone changes what is
+  practical to iterate on.
+- **Reach a live map view with no user input**: `{}gamemodeproc gamemode 128 128 newmap
+  default_edit_mode`, lifted from the Map Editor button in `gs/dlg/NEWDLG5.gs`. It reaches a rendered
+  128x128 map in about 8 s. Replacing `{newdlg opendialog}ifelse` with `{}ifelse` suppresses the main
+  menu when a clean screen is wanted.
+- **Capture pixels**: `"name.bmp" screencapture` writes a 640x480 24-bit BMP. **Gotcha:** the file's
+  `bfOffBits` field says `14`, but the pixel data actually starts at the normal `54`. Trust the
+  computed offset, not the header field. `refreshdirty` is required before a capture to present
+  anything, and it repaints dialogs, so capture a control frame *after* settling and diff the pair.
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:
