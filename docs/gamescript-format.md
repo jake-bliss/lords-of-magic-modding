@@ -124,6 +124,73 @@ A shipped member demonstrates that scripts can shadow native names: `START.GS:76
 itself. `gs5_globals.gs` ships a 50-line constant table intended to *"supplement, add or replace EXE
 variables"*, but its `run` is **commented out** at `START.GS:34`, so it is not live behavior.
 
+## The engine's operator tables
+
+The candidate heuristic above infers the host API from the script side. The binary states it
+directly. `lomse.exe` registers every native operator in a table of eight-byte records, each a
+pointer to the operator's NUL-terminated name followed by a pointer to its implementation.
+`--scan-natives` recovers it:
+
+| Table | File offset | Entries | First names |
+| --- | --- | ---: | --- |
+| Interpreter primitives | `0x15bd20` | 104 | `pop`, `def`, `undef`, `begin` |
+| Game operators | `0x15f120` | 1,804 | `cameraposition`, `cameraorientation`, `lightorientation`, `ambientlight` |
+
+**1,908 records, 1,906 distinct names, each with an entry-point address.** This is the host API
+itself, not a bound on it.
+
+Recovery is structural, not fitted: a record is accepted only when its first dword resolves to a
+string inside the image and its second lands in an executable section. Unrelated data satisfies
+those constraints by coincidence — the shipped binary has locale tables of exactly that shape — so
+names must additionally be lexable as GameScript executable names. That rule comes from our own
+grammar, not from tuning against this binary, and it reduces the result to exactly the two tables
+above with no length threshold applied.
+
+### What this settles about the candidate vocabulary
+
+Reconciling the 2,151-name candidate vocabulary against the table:
+
+| Class | Count | Reading |
+| --- | ---: | --- |
+| Confirmed operators | 1,445 | present in the table with an entry point |
+| SCREAMING_CASE | 671 | engine **constants** pushed by name, not operators |
+| Remainder | 35 | see below |
+| **Candidates** | **2,151** | |
+
+The heuristic's stated weakness — *"can contain false positives from unrelated binary strings"* — is
+now measured rather than assumed. Two thirds of the vocabulary are confirmed procedures, and almost
+all of the rest are a category the heuristic could not distinguish: **constants are not operators**,
+so they are absent from the table by construction rather than by error.
+
+The 35-name remainder is the heuristic's actual error bar. Nineteen are `Type_*` engine type tags
+(`Type_Imp`, `Type_Font`, `Type_EditBox`). The other sixteen are short, low-use names (`e1`, `uf`,
+`hh`, `jx`, `rx`, `xp`, `ice`, `log`, `no`) that look like dictionary keys our definition-shape
+classifier does not recognise as definitions. That is a **precision limit of the classifier**, not
+evidence of engine surface, and it is the tightest bound we have on it: roughly 0.7% of candidates.
+
+### Unused engine surface
+
+**465 operators are never called by any GS5R3 script.** Examples: `addfollower`, `addbuilding`,
+`aimedattack`, `animatearmy`, `airstrengthinregion`, `armyspyarmyartifacts`, `addspelleffect`. These
+are engine capabilities the shipped mod does not reach, which makes them the most interesting part of
+the table for anything that wants to do something the game does not currently do.
+
+### Operator diagnostics name their parameters
+
+Separately from the table, 83 diagnostic strings in the binary follow the form `operator - message`,
+covering 57 operators and naming their arguments:
+
+```
+getarmydata - invalid data_id          setarmydata - invalid value for owner
+getarmydata - no army                  setarmydata - invalid value for location
+getunitdata - invalid unit_num         setarmydata - invalid value for num_units
+getcitydata - invalid player reference setarmydata - invalid value for drawn_unit
+getimphotspot - no such hotspot        setarmydata - cannot set army mps directly
+```
+
+This gives a partial field vocabulary for the core data accessors — `data_id`, `unit_num`,
+`player reference`, `owner`, `location`, `num_units`, `drawn_unit` — without running the game.
+
 ## Native host stubs and unknown-name traces
 
 The host API is not implemented and is not guessed at. Two mechanisms added on 2026-09-16 let script
@@ -185,6 +252,14 @@ target/release/lom-asset-viewer \
   --scan-gamescript '/path/to/English/gs.mpq' \
   --listfile '../../artifacts/reference-listfiles/lords-of-magic.txt' \
   --exe '/path/to/English/lomse.exe'
+
+# Recover the engine's operator tables. With an archive, the candidate vocabulary is reconciled
+# against them; without one, every operator is listed with its entry point.
+target/release/lom-asset-viewer --scan-natives '/path/to/English/lomse.exe'
+
+target/release/lom-asset-viewer \
+  --scan-natives '/path/to/English/lomse.exe' '/path/to/English/gs.mpq' \
+  --listfile '../../artifacts/reference-listfiles/lords-of-magic.txt'
 
 target/release/lom-asset-viewer \
   --probe-gamescript '/path/to/English/gs.mpq' 'gs\standard.gs' \

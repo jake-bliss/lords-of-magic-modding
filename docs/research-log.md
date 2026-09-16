@@ -232,6 +232,34 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
   regular, and both files pass `--validate-imp`, so this is not a decoder defect. The meaning of the
   values is open.
 
+## 2026-09-16 — The engine's GameScript operator tables
+
+- **Observed:** `lomse.exe` registers native operators in two tables of eight-byte
+  `(name pointer, implementation pointer)` records: 104 interpreter primitives at file offset
+  `0x15bd20` and 1,804 game operators at `0x15f120`. 1,908 records, 1,906 distinct names, each with
+  an entry-point address. This is the host API itself rather than a bound on it.
+- **Observed:** reconciling the 2,151-name candidate vocabulary against the tables gives 1,445
+  confirmed operators, 671 SCREAMING_CASE engine constants, and a 35-name remainder.
+- **Inferred:** SCREAMING_CASE candidates are constants pushed by name, not operators, so their
+  absence from the tables is structural rather than an error. That accounts for 95% of the names the
+  tables do not confirm.
+- **Corrected:** the candidate heuristic's documented risk of "false positives from unrelated binary
+  strings" is now measured instead of assumed. Its real error bar is the 35-name remainder — 19
+  `Type_*` engine type tags plus 16 short, low-use names that look like dictionary keys the
+  definition-shape classifier misses. That is roughly 0.7% of candidates, and it is a precision limit
+  of the classifier rather than engine surface.
+- **Observed:** 465 operators are never called by any GS5R3 script, including `addfollower`,
+  `addbuilding`, `aimedattack`, `animatearmy` and `addspelleffect`. This is engine capability the
+  shipped mod does not reach.
+- **Observed:** 83 diagnostic strings of the form `operator - message` cover 57 operators and name
+  their parameters (`data_id`, `unit_num`, `player reference`, `owner`, `location`, `num_units`,
+  `drawn_unit`), giving a partial field vocabulary for the core data accessors without running the
+  game.
+- **Rejected:** comparing the tables against the raw called-but-never-defined set (5,548 names)
+  rather than the candidate vocabulary. That set is dominated by names whose definition site the
+  classifier does not recognise, so the comparison measures classifier recall, not engine surface.
+  The scan reuses the established candidate rule instead.
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:

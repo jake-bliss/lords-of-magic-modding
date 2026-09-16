@@ -4,6 +4,7 @@ pub mod gamescript_vm;
 pub mod imp;
 pub mod map;
 pub mod mpq;
+pub mod native_table;
 pub mod pbm;
 pub mod png_export;
 pub mod tile;
