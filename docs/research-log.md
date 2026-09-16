@@ -542,6 +542,80 @@ Three things make future engine experiments cheap, and all are in `START.GS`:
   computed offset, not the header field. `refreshdirty` is required before a capture to present
   anything, and it repaints dialogs, so capture a control frame *after* settling and diff the pair.
 
+## 2026-09-16 — The engine applies the hotspot; the sign is still open
+
+With `drawimpframe` established as vestigial, the measurement moved to the engine's *working* sprite
+path: a stationary army on the world map, whose banner animates in place. A hotkey injected into
+`gs/hotkey.gs` dumps a true 640x480 BMP on each press, so the sprite can be measured in game pixels
+rather than through a scaled, filtered window capture.
+
+**48 captures** of one stationary army were taken across two sessions.
+
+### The result that needs no frame identification
+
+Segmenting the banner cloth by luminance in a fixed window:
+
+| Quantity | Across all 48 captures |
+| --- | --- |
+| cloth **right** edge | `x = 323` — every capture |
+| cloth **top** edge | `y = 155` — every capture |
+| cloth **left** edge | varies, `306..315` |
+| cloth **width** | varies, `9..18` |
+
+- **Observed:** the drawn sprite grows and shrinks **leftward and downward from a pinned top-right
+  corner**, over a 10 px range of widths, with no movement of the anchor.
+- **Inferred, strongly:** the engine does **not** draw a frame at its raw top-left. In
+  `iface/orflagb.imp` the cloth begins flush with the frame box's left edge (`cx0 = 0`) in twelve of
+  the fourteen facings, so a renderer that ignored the hotspot and drew each frame box at a fixed
+  screen position would pin the **left** edge and let the right edge move with the width. The
+  opposite is observed. **The hotspot is consumed by the drawing code.**
+
+That answers the first half of [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1):
+the per-frame anchor is real and is applied at draw time, not merely stored.
+
+### What was not settled, and why
+
+**The sign is still unknown.** Deciding between `position - hotspot` and `position + hotspot` needs
+each capture matched to a specific frame, and that matching was not good enough to build on:
+
+- Silhouette matching of the segmented cloth against all 112 decoded frames (and their mirrors)
+  returned best-fit IoU of only about **0.45**, and the frames it chose — 98 to 103 — render as thin
+  wisps that look nothing like the banner on screen. The match is wrong.
+- The observed cloth widths span `9..18`, but **no single facing** in `orflagb.imp` covers that range;
+  the widest facings run 14..21 and the narrowest 3..9. So either the segmentation width is not a
+  faithful measure of frame width, or the displayed sequence is not the one assumed.
+- An anchor-constancy test run per facing gives contradictory answers: facing 0 favours
+  `pos - hotspot` (spread 2 vs 13) while facings 9 and 10 favour `pos + hotspot` (spread 8 vs 2).
+  Without knowing which facing is on screen, that test decides nothing.
+
+A provisional calculation using the bad matches favoured `pos + hotspot` by a spread of 4 against 12.
+**It is recorded here only to be dismissed**: it rests on frame identifications that are demonstrably
+wrong, and it should not be cited.
+
+### What would settle it
+
+Identify the displayed frame independently of shape. The cleanest route is to capture a *complete*
+animation cycle at a known tick rate and use the cycle's frame count and ordering to index frames,
+rather than trying to recognise each one. Alternatively, segment against a true background plate —
+obtainable by capturing the same tile with the army moved away — which would yield the sprite's full
+opaque silhouette including the dark pole, instead of a luminance-thresholded fragment.
+
+### Harness facts, including one self-inflicted detour
+
+- Hotkeys can be added by inserting before the final `end` of `gs/hotkey.gs`:
+  `ASCII_VAL"z"0 get{ ... }addhotkey`. Keys `e f g i j n o r u v w x z` and backtick are unbound;
+  F1-F9 are taken by the game and F10-F12 by macOS.
+- The counter-and-filename idiom **works**:
+  `dest{"shot"n".bmp"}build_statement_ns strcpy` then `dest screencapture`. It produced
+  `shot1.bmp` through `shot37.bmp`.
+- **`screencapture` will not overwrite an existing file.** A probe writing one fixed filename
+  captures exactly once and then silently does nothing.
+- **The detour:** those 36 extra captures existed for most of the session and went unnoticed, because
+  only `shot1.bmp` was ever checked. From that absence it was concluded that the counter had failed,
+  and a second, simpler probe was built on the bad inference — costing a game restart and a repeat of
+  the user's navigation. *Check for the files a mechanism would actually produce before concluding the
+  mechanism is broken.*
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:

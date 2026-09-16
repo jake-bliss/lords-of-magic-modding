@@ -4,7 +4,7 @@
 
 This is a working macOS setup plus a native Rust asset/MPQ viewer and an experimental GameScript interpreter, **not** a native playable replacement.
 
-**The immediate next task is step 3 of the [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1) experiment: call `drawimpframe` from an injected script and measure where the sprite lands.** Steps 1 and 2 were completed on 2026-09-16 — loose-file precedence is refuted and a working GameScript injection path into the running engine is proved. See "The issue #1 experiment" below. Game files are modified only with a checksum-verified backup and restore. Do not jump straight to a full engine rewrite. The user's immediate question about difficulty is answered in [Difficulty and AI](difficulty-ai.md): vanilla has difficulty-gated strategic behavior, while GS5R3 adds tactical difficulty checks and difficulty-scaled AI stat bonuses.
+**The immediate next task on [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1) is to pin the hotspot *sign*. The hotspot is now proved to be applied at draw time; `drawimpframe` is vestigial and must not be used.** Steps 1 and 2 were completed on 2026-09-16 — loose-file precedence is refuted and a working GameScript injection path into the running engine is proved. See "The issue #1 experiment" below. Game files are modified only with a checksum-verified backup and restore. Do not jump straight to a full engine rewrite. The user's immediate question about difficulty is answered in [Difficulty and AI](difficulty-ai.md): vanilla has difficulty-gated strategic behavior, while GS5R3 adds tactical difficulty checks and difficulty-scaled AI stat bonuses.
 
 A community research survey was completed on 2026-09-16 — see [community research](community-research.md). The surviving modding community is **live**, has a 2011 IMP specification that matches our decoder, and has a 2026 toolchain covering much of our Stage 1 scope. Read that document before trusting any community claim: two headline claims by the mod's own author about his own code were refuted by our corpus.
 
@@ -64,7 +64,7 @@ Newly available leads, all from the 2026-09-16 survey:
 
 For any new task, document the evidence class: **observed in a local binary/script**, **observed in gameplay**, **community claim**, or **inference**. Keep 3.02's focused bug fix distinct from GS5R3's broad replacement scripts. Run proportionate Rust tests and read-only corpus checks, then update the relevant documentation and GitHub issue. The user has previously asked to keep work pushed and merged to `main`; check current authorization and remote state before publishing a new branch.
 
-## The issue #1 experiment — steps 1 and 2 done, step 3 blocked on one precondition
+## The issue #1 experiment — the hotspot is applied; the sign is still open
 
 Everything the *files* can say about hotspots has been said. What remains on
 [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1) is how the engine
@@ -150,35 +150,48 @@ All three live in `START.GS`, which we can replace via the injection path:
   `refreshdirty` is needed to present anything, and it repaints dialogs over direct draws, so settle
   the screen, capture a control, then draw and capture again and diff.
 
-### Why step 3 stalled — `drawimpframe` is vestigial, use a different instrument
+### Where issue #1 actually stands
 
-`drawimpframe` is `<imp> <sequence> <facing> <frame> <x> <y>` — six operands, confirmed both by
-disassembly and by the running interpreter accepting them with no stack or type error. The operand
-roles are pinned by record sizes: the first int indexes 16-byte Sequence records, the second 8-byte
-Facing records, and the frame is `[facing+4] + index*16`, matching our decoded format exactly.
+**Settled: the engine consumes the hotspot at draw time.** Across **48 true 640x480 engine captures**
+of one stationary army, the banner's cloth right edge sits at `x = 323` and its top at `y = 155` in
+*every* capture, while the left edge ranges `306..315` and the width `9..18`. The sprite grows
+leftward from a pinned top-right corner. In `iface/orflagb.imp` the cloth starts flush with the frame
+box's left edge (`cx0 = 0`) in twelve of fourteen facings, so a renderer ignoring the hotspot would
+pin the **left** edge. It does not. The anchor is real and applied.
 
-**It draws nothing, and three explanations have been ruled out:**
+**Not settled: the sign.** `position - hotspot` versus `position + hotspot` needs each capture matched
+to a specific frame, and the matching failed. Silhouette matching reached only ~0.45 IoU and selected
+frames 98-103, which render as thin wisps unlike the on-screen banner. The observed width range
+`9..18` matches no single facing. A per-facing anchor-constancy test contradicts itself: facing 0
+favours `pos - hotspot`, facings 9 and 10 favour `pos + hotspot`. A provisional number favouring
+`pos + hotspot` exists in the research log and is **explicitly dismissed** there — do not cite it.
 
-- **Not unpresented.** `refreshdirty` presents, but repaints dialogs over direct draws; without it
-  nothing appears either.
-- **Not an uninitialised clip rect.** `0x584AB8` is a clip `RECT{0,0,639,383}` set at `0x0049AA90`.
-  Re-running inside a live map editor session, with the viewport rendered, left captures identical.
-- **Not an unloaded imp.** The engine's own accessors report `filename= iface/ordragb.imp` and
-  `memory= 42964` for the handle. The earlier lazy-loader inference is **refuted**.
-- **Not a surface mismatch.** `screencapture` reads `[0x584AE8+0x684]`, and `drawimpframe` calls
-  `0x004753D0` on that same object right after drawing.
-- **Not a parameter problem.** A sweep of 20 calls across both sequences, all five facings, two frame
-  indices and twenty positions changed zero pixels.
+**To finish:** identify the displayed frame without relying on shape. Either capture a complete
+animation cycle and index frames by position in the cycle, or build a true background plate by
+capturing the same tile with the army moved away, which gives the full opaque silhouette (pole
+included) instead of a luminance-thresholded fragment.
 
-**Conclusion: treat `drawimpframe` as vestigial in the shipped build.** It type-checks its operands
-and would report `drawimpframe - no such imp` for a bad handle, but paints nothing, and it has **zero
-call sites in all 1,471 extractable scripts** — nothing in the shipped game exercises it.
+`drawimpframe` remains **vestigial** — it type-checks its six operands, looks up the imp, and paints
+nothing, with zero call sites in 1,471 scripts. Do not reach for it again.
 
-**Use the engine's working sprite path instead.** Units *are* drawn on the map in every editor
-capture, so that path is alive. `getspritescreenx` / `getspritescreeny` (1 operand, 1 result each)
-give a live sprite's screen position; pair that with a capture and the frame's decoded hotspot and the
-convention falls out of commanded-versus-observed. Reaching a real game rather than the editor needs
-a few menu clicks — **the user has offered to click**, because macOS blocks synthetic input to Wine.
+### Engine probe harness — this is the reusable part
+
+- **Hotkey**: insert before the final `end` of `gs/hotkey.gs`:
+  `ASCII_VAL"z"0 get{ ... }addhotkey`. Free keys: `e f g i j n o r u v w x z` and backtick. F1-F9 are
+  taken by the game, F10-F12 by macOS.
+- **Capture**: `"name.bmp" screencapture` writes a true 640x480 24-bit BMP.
+  **Its `bfOffBits` says 14 while pixels start at 54** — compute the offset; ImageMagick rejects the
+  file outright, so use the small reader in the research log's approach.
+  **`screencapture` will not overwrite an existing file**, so a fixed filename captures exactly once.
+  Use the counter idiom, which works:
+  `dest{"shot"n".bmp"}build_statement_ns strcpy` then `dest screencapture`.
+- **Fast startup**: set the `true{...}if` guarding `imptitle.smk`/`intro.smk` in `START.GS` to
+  `false`. Over 150 s becomes about 6 s.
+- **Live map with no user input**: `{}gamemodeproc gamemode 128 128 newmap default_edit_mode`.
+- **Reaching a real game needs a human** — macOS blocks synthetic input to Wine, so menu navigation
+  has to be asked for. The user has been willing; make each run count.
+- **Check for the files a mechanism would produce before declaring it broken.** 36 captures sat
+  unnoticed because only `shot1.bmp` was checked; a whole probe was rebuilt on that bad inference.
 
 ### Read this before judging any launch
 
