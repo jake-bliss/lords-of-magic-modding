@@ -4,7 +4,7 @@
 
 This is a working macOS setup plus a native Rust asset/MPQ viewer and an experimental GameScript interpreter, **not** a native playable replacement.
 
-**The immediate next task is a controlled experiment on [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1), and it is waiting on user permission — do not start it without asking.** See "The pending issue #1 experiment" below. Do not jump straight to a full engine rewrite. The user's immediate question about difficulty is answered in [Difficulty and AI](difficulty-ai.md): vanilla has difficulty-gated strategic behavior, while GS5R3 adds tactical difficulty checks and difficulty-scaled AI stat bonuses.
+**The immediate next task is step 3 of the [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1) experiment: call `drawimpframe` from an injected script and measure where the sprite lands.** Steps 1 and 2 were completed on 2026-09-16 — loose-file precedence is refuted and a working GameScript injection path into the running engine is proved. See "The issue #1 experiment" below. Game files are modified only with a checksum-verified backup and restore. Do not jump straight to a full engine rewrite. The user's immediate question about difficulty is answered in [Difficulty and AI](difficulty-ai.md): vanilla has difficulty-gated strategic behavior, while GS5R3 adds tactical difficulty checks and difficulty-scaled AI stat bonuses.
 
 A community research survey was completed on 2026-09-16 — see [community research](community-research.md). The surviving modding community is **live**, has a 2011 IMP specification that matches our decoder, and has a 2026 toolchain covering much of our Stage 1 scope. Read that document before trusting any community claim: two headline claims by the mod's own author about his own code were refuted by our corpus.
 
@@ -64,7 +64,7 @@ Newly available leads, all from the 2026-09-16 survey:
 
 For any new task, document the evidence class: **observed in a local binary/script**, **observed in gameplay**, **community claim**, or **inference**. Keep 3.02's focused bug fix distinct from GS5R3's broad replacement scripts. Run proportionate Rust tests and read-only corpus checks, then update the relevant documentation and GitHub issue. The user has previously asked to keep work pushed and merged to `main`; check current authorization and remote state before publishing a new branch.
 
-## The pending issue #1 experiment — ask before starting
+## The issue #1 experiment — steps 1 and 2 are done, step 3 is ready to run
 
 Everything the *files* can say about hotspots has been said. What remains on
 [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1) is how the engine
@@ -72,37 +72,85 @@ Everything the *files* can say about hotspots has been said. What remains on
 `position + hotspot`, and does `+y` mean up or down?) and how the shadow index is blended. Both live
 in the drawing code, so no amount of file measurement settles them.
 
-The designed experiment, agreed with the user but **not yet authorised to run**:
+The plan, with current status:
 
-1. **Confirm loose-file precedence** — cheapest falsifiable step, do this first.
-2. Write a `.gs` calling **`drawimpframe`** (5 operands, from the operator table) to draw a known
-   frame at known screen coordinates — one whose hotspot we have already decoded.
-3. Launch the profile, screenshot, measure where the sprite actually landed.
-4. The offset between commanded and observed position *is* the sign convention. The shadow blend is
-   visible in the same capture.
+1. ~~Confirm loose-file precedence.~~ **Done 2026-09-16, and it is refuted** — see below.
+2. ~~Get a modified `.gs` into `gs.mpq` in a form the shipped `storm.dll` will read.~~ **Done.**
+   StormLib writes an archive the engine reads, and an injected statement was observed executing.
+3. **Ready.** Write a `.gs` calling **`drawimpframe`** to draw a known frame at known screen
+   coordinates — one whose hotspot we have already decoded.
+4. Launch, screenshot, measure where the sprite actually landed. The offset between commanded and
+   observed position *is* the sign convention; the shadow blend is visible in the same capture.
 
 **Why `getimphotspot` alone is not the answer.** It returns the hotspot the engine read *from the
 file* — the same number our decoder already reports. The convention lives in the consumer, not the
 accessor. Querying it only confirms both sides read the same bytes. `drawimpframe` is the native
 that matters.
 
-### The loose-file finding this depends on
+**`drawimpframe` takes six operands, not five.** Read at `0x0049C500`: four arrive through the
+inline pop sequence and two more through the shared pop helper at `0x0040ADB0`, which the arity walk
+undercounts. The last operand popped — the *first* written in a script — is the IMP handle; a bad one
+is rejected with `drawimpframe - no such imp`. Non-integer numbers in the interpreter are **8.8 fixed
+point** (the coercion helper at `0x004026A0` multiplies by `256.0` and `0.00390625`).
 
-GS5R3 ships files on disk that shadow archive members and **differ from them**:
+### Loose-file precedence: refuted, do not retry it
 
-```
-gs/dlg/comb_dlg.gs     4,951 bytes   loose on disk
-gs\dlg\comb_dlg.gs     6,293 bytes   inside gs.mpq
-```
+The earlier hypothesis — that GS5R3's loose on-disk `.gs` files override their `gs.mpq` namesakes,
+letting the experiment skip archive write-back — was tested in the running game and is **false**.
+Full three-arm write-up in the [research log](research-log.md). The short version:
 
-Two `.gs` and one `.lbm` are shipped this way. That is the shape of a patch mechanism, and if the
-engine really does prefer disk over archive then the experiment needs **no MPQ write-back at all** —
-which would otherwise mean implementing archive writing plus the community's finicky
-Implode+Encrypt(`0x00010100`) repack ruleset.
+- `gs/dlg/comb_dlg.gs` is a **dead vanilla leftover**: `START.GS` runs `COMB_DLG5.gs` instead, and
+  nothing in the 1,471 extractable scripts names it. Only `scroldlg.gs` is actually loaded.
+- `scroldlg.gs` loads at position **53** of 94 `run` statements; `gs/logs/makelogs.gs` loads at
+  **93** and appends a line to `combat.log` every start. That ordering is the control that makes a
+  null result readable — without it, "no effect" and "never reached" look the same.
+- A loose file carrying a sentinel that writes its own log file produced nothing, while the control
+  line appeared. A loose file of pure garbage changed nothing either.
 
-**This is strong evidence, not proof.** The loose files could be dead leftovers. Confirm before
-building anything on it: place a deliberately malformed loose file and see whether the game
-complains. If it does, precedence is real.
+**The methodological trap here cost a wrong conclusion.** The garbage arm *did* fail to launch the
+first time, which looked like proof of precedence. The cause was `wineserver` still shutting down 3
+seconds after the previous instance was killed. Re-run against a quiesced prefix, it started fine.
+Always wait for `lomse.exe` to disappear *and* add a fixed delay before judging a launch.
+
+### The injection path, proved end to end
+
+Archive write-back works. The encryption worry was misplaced: members are plain
+`MPQ_FILE_IMPLODE | MPQ_FILE_EXISTS` (`0x80000100`), only `(listfile)` is encrypted.
+
+- `SFileAddFileEx` round-trips: member replaced, reads back byte-identical, member count unchanged at
+  1,700, flags preserved. The archive keeps its original shape — format `0`, sector shift `3`, 4,096
+  hash entries, 1,700 block entries; only `archive_size` and the two table offsets move.
+- A control archive rewritten with the member's *original* bytes starts normally (position 93 in
+  147 s), so the rewrite itself is sound.
+- An archive carrying an injected statement **executed it**: the probe created its own log file
+  145 s after launch, and startup still completed.
+
+**The output channel is the engine's own file operators.** `"name" "w" file`, then
+`dup <string> writestring`, `dup carriage_return`, `closefile` — `writestring` is defined in
+`gs/standard.gs`, which runs at position 4, so it is available to anything loaded later. This is how
+`gs/logs/makelogs.gs` writes `combat.log`, and it is the cheapest way to get a value out of the
+running interpreter without reading the screen.
+
+A prototype writer lives in `spikes/asset-viewer/examples/mpq_replace.rs`. Promote it to a CLI flag
+when the next experiment needs it. **Always back the archive up first and verify the restore by
+checksum** — `artifacts/experiment-backups/` holds the manifest pattern used on 2026-09-16.
+
+### Read this before judging any launch
+
+`START.GS` plays `smk/imptitle.smk` then `smk/intro.smk` with `MODAL playvideo`, **before** the 94
+`run` statements. `intro.smk` is a multi-minute cinematic and how much of it plays varies run to run:
+a measured pristine startup took over two minutes to reach position 93, while other runs took 12
+seconds.
+
+- **`combat.log` growing by 36 bytes is proof** that execution reached position 93.
+- **`combat.log` not growing inside a window proves nothing.** Hang and "intro still playing" look
+  identical, and a screenshot taken between the two movies shows a plain black window.
+- Also wait for `lomse.exe` to actually disappear after `pkill`, plus a fixed delay, before
+  relaunching. A 3-second wait left `wineserver` mid-shutdown and produced a launch failure that
+  looked like a real result.
+
+This trap produced a wrong conclusion once already during the loose-file work. Judge by the positive
+signal or by a screenshot showing recognisable game content — never by a timeout.
 
 ### Permissions required
 

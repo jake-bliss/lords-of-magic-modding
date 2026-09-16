@@ -334,6 +334,116 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 - **Observed:** the missile-target hotspot sits `(+2.0, -10.7)` from the cursor hotspot on average
   across 28,159 frames, so projectiles are aimed at the body rather than the feet.
 
+## 2026-09-16 — Loose files on disk do not override archive members
+
+The [pending issue #1 experiment](https://github.com/jake-bliss/lords-of-magic-modding/issues/1)
+rested on a hypothesis recorded the same day: that GS5R3 ships two `.gs` files and one `.lbm` loose
+on disk which differ from their `gs.mpq` namesakes, and that the engine therefore prefers disk over
+archive. It was labelled strong evidence, not proof. It is now **refuted**, in the running game.
+
+### What the loose files actually are
+
+- **Observed:** GS5R3's `START.GS` runs `gs/dlg/COMB_DLG5.gs`, not `gs/dlg/comb_dlg.gs`. The loose
+  `comb_dlg.gs` is not named anywhere in the 1,471 extractable scripts, so it could never have been
+  loaded regardless of precedence. It is a vanilla-era leftover.
+- **Observed:** `gs/dlg/scroldlg.gs` *is* run, at position 53 of the 94 `run` statements in
+  `START.GS`. That makes it the only usable probe of the two.
+- **Observed:** the loose `scroldlg.gs` is the older vanilla text. It sets `1 1 finescrollpixels`
+  where the archived copy sets `world_scrolling dup finescrollpixels`, and `START.GS` defines
+  `/world_scrolling 8 def`. Had the loose copy ever won, GS5R3's world map would scroll at 1 px
+  instead of 8.
+
+### The control that makes the result readable
+
+`gs/logs/makelogs.gs` runs at position **93** and appends `Lords of Magic has been launched.` to
+`combat.log` on every start. Because 93 is after 53, a grown `combat.log` proves execution passed
+the point where `scroldlg.gs` is loaded. Without that ordering fact, "no effect" and "never reached"
+are indistinguishable, and the experiment says nothing.
+
+### Three arms, `gs.mpq` untouched throughout
+
+| Arm | Loose `gs/dlg/scroldlg.gs` | Reached position 93 | Probe fired |
+| --- | --- | --- | --- |
+| A | archived bytes **plus** a statement writing `precedence.log` | yes | **no** |
+| B | not GameScript at all — a line of garbage | yes | n/a |
+| C | the shipped vanilla file, restored | yes | n/a |
+
+- **Observed:** in arm A the sentinel used the engine's own logging idiom
+  (`"name" "w" file dup <string> writestring dup carriage_return closefile`, all reachable since
+  `gs/standard.gs` runs at position 4). `precedence.log` was never created, while `combat.log` grew.
+- **Observed:** in arm B a file that cannot parse as GameScript changed nothing. Startup completed
+  normally.
+- **Refuted:** loose-file precedence for `.gs` members. The engine reads `gs\dlg\scroldlg.gs` from
+  `gs.mpq` and ignores the file of the same name on disk.
+
+### The trap in arm B, and why the first run of it was thrown away
+
+The first garbage run *did* fail to start, which looked like confirmation of precedence. It was an
+artifact: the game had been killed 3 seconds earlier and `wineserver` had not finished shutting
+down. Re-run after waiting for the process to disappear plus a fixed delay, the same garbage file
+started normally. **A launch failure is only evidence if the launcher was given a quiesced prefix.**
+
+### The timing trap that nearly produced a second wrong conclusion
+
+`START.GS` plays `smk/imptitle.smk` and `smk/intro.smk` with `MODAL playvideo` at byte 1183,
+**before** the 94 `run` statements. `intro.smk` is a multi-minute narrated cinematic, and how much of
+it plays varies between launches. A measured pristine startup reached position 93 only after well
+over two minutes, where earlier runs had reached it in 12 to 16 seconds.
+
+That asymmetry is the whole lesson:
+
+- **`combat.log` growing is proof.** It can only happen if execution reached position 93, whatever
+  the elapsed time. Every conclusion above rests on a growth event, so none of them are affected.
+- **`combat.log` not growing inside a fixed window proves nothing.** It is equally consistent with a
+  hang and with the intro still playing.
+
+A screenshot taken during a gap between the two movies shows a black window, which looks exactly
+like a hang. On that basis a rewritten `gs.mpq` was briefly recorded here as unreadable by the
+engine. **That was wrong — the rewritten archive works, as recorded below — and the claim was
+withdrawn before it left this file.** Judge a launch by
+the positive signal, or by a screenshot that shows recognisable game content, never by a timeout.
+
+### Consequence: archive write-back works, and it is now the injection path
+
+The experiment needs a modified member inside `gs.mpq`. The encryption worry was misplaced: members
+are plain `MPQ_FILE_IMPLODE | MPQ_FILE_EXISTS` (`0x80000100`) and only `(listfile)` is encrypted, so
+there is no Implode+Encrypt ruleset to reproduce.
+
+- **Observed:** `SFileAddFileEx` round-trips correctly. The member reads back byte-identical through
+  our own reader, the member count is unchanged at 1,700, and the flags are preserved.
+- **Observed:** the rewritten archive keeps the original shape — format `0`, sector shift `3`, hash
+  table 4,096 entries, block table 1,700 entries. Only `archive_size` and the two table offsets move,
+  which is what compaction is expected to do.
+- **Observed:** a control archive, rewritten by the same tool but with the member's *original* bytes,
+  starts normally and reaches position 93 in 147 s.
+- **Observed:** the archive carrying the probe **executes it**. `precedence.log` was created with the
+  expected contents 145 s after launch, and `combat.log` still grew, so startup completed normally
+  afterwards.
+
+That last pair is the positive control the loose-file arms needed. **The same bytes execute from
+inside `gs.mpq` and do nothing at all on disk.** The loose file is not merely ineffective; it is
+never read. It also confirms the probe itself was valid GameScript, which the null result on disk
+could not establish by itself.
+
+**GameScript can now be injected into the running engine and observed from outside**, using the
+engine's own file operators as the output channel. A prototype writer lives in
+`spikes/asset-viewer/examples/mpq_replace.rs`.
+
+### Two incidental findings from `lomse.exe`
+
+- **Observed:** the five archives open through one wrapper at `0x004FEB10`, with `gs.mpq` opened
+  **last**.
+- **Observed:** the empty `custldr` directory is created by a plain
+  `CreateDirectoryA("custldr", NULL)` at `0x004FF441`. It is not a loader hook.
+- **Observed:** the numeric coercion helper at `0x004026A0` multiplies by `256.0` and `0.00390625`,
+  so the interpreter's non-integer numbers are **8.8 fixed point**, and it returns a number in three
+  forms at once — integer, raw fixed, and float.
+- **Observed:** `drawimpframe` at `0x0049C500` pops **six** operands, not the five our arity walk
+  reports: four through the inline pop sequence and two more through the shared pop helper at
+  `0x0040ADB0`. The last one popped — so the first written in a script — is the IMP handle, which is
+  looked up in a registry at `0x5A7B50` and rejected with the string `drawimpframe - no such imp`.
+  The undercount is worth chasing in `operator_arity`.
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:
