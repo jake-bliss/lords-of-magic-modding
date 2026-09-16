@@ -203,6 +203,35 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
   `false` in multiplayer. The author's description matched code that did not ship. This upgrades the
   difficulty finding from a reading of the source to an execution under declared inputs.
 
+## 2026-09-16 — Sprite hotspot mechanism, from board thread 2176
+
+- **Documented:** `lomut` never writes hotspot data. Recompiled IMPs come back with `HSType = 0`, so
+  the engine reads a packed XY displacement from a field holding a stale pointer. This, not frame
+  sizing, is the root cause of the "512x512 hotspot" problem, and of the wobble, health-bar and
+  depth-sorting symptoms that chased each other for nine years on the board. Source: ozz, 2023.
+- **Documented:** snv's `imp.c` hotspot struct hardcodes two hotspot sets; the count is variable.
+  Every tool ported from that source inherits the defect.
+- **Corrected:** frame byte `+1` is a **count** of hotspot records, not a type tag. Our reading was
+  already the count; the open question recorded in community research is now closed.
+- **Observed:** across all 1,800 IMP members, hotspot records per frame range from 2 (24,412 frames)
+  to 9 (10 frames). `imp.c` assumes 2; ozz had observed a maximum of 5.
+- **Observed:** `lomse.exe` defines 19 `*_HOTSPOT` constants, not the 10 quoted on the board from a
+  code comment. The extra names account for the observed types 10 and 16. The engine also exports
+  the natives `getimphotspot` and `enumimphotspots`, so hotspots are reachable from GameScript.
+- **Observed:** shipped `gs\aura.gs` carries no `;` comments at all, but does use `NO_HOTSPOT`,
+  `SPELL_TARGET_HOTSPOT`, `SPELL_ORIGIN1_HOTSPOT` and `SPELL_ORIGIN2_HOTSPOT` as live identifiers
+  passed to `addauratype`. The board's list is genuine engine vocabulary quoted from a comment the
+  shipped scripts do not contain.
+- **Observed:** sequence-record byte 1 is a mirror flag. Across 4,629 sequences, no unmirrored
+  sequence has more than two facings, and all 28 of the 33-facing sequences are flagged mirrored,
+  matching the account of arrows storing 33 facings and mirroring to 64 directions. Byte 3 is `0x01`
+  in 4,623 of 4,629; byte 4 is `0xff` in all 4,629.
+- **Unknown:** `units\imp\eacr5a.imp` uses hotspot types 106, 136, 138 and 143 on all 110 frames
+  and carries neither type 0 nor type 7, which every other unit has. `units\imp\aiwm1b.imp` uses
+  type 190 on 25 frames. An independent hex parse confirms the bytes are genuinely present and
+  regular, and both files pass `--validate-imp`, so this is not a decoder defect. The meaning of the
+  values is open.
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:
