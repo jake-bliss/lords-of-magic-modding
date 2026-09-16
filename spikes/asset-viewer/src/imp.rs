@@ -59,10 +59,20 @@ pub struct ImpSprite {
     pub bits_per_pixel: u8,
     pub maximum_width: u16,
     pub maximum_height: u16,
+    /// Palette index treated as transparent, read from header byte 3.
+    pub color_key: u8,
     pub sequence_count: usize,
     pub cycle_count: usize,
     pub frame_count: usize,
     pub duplicate_frame_count: usize,
+    /// Frames carrying only `FRAME_FLAG_DUPLICATE` (0x08), i.e. true back-references
+    /// to an earlier frame index. Excludes `FRAME_FLAG_SHARED_PIXELS` (0x04) frames,
+    /// which `duplicate_frame_count` also counts.
+    ///
+    /// Kept separate for analysis only. Validating this against the generated header's
+    /// "Duplicate bitmaps found" statistic instead of `duplicate_frame_count` raises
+    /// corpus failures from 10 to 112, so that statistic provably counts both flags.
+    pub back_reference_frame_count: usize,
     pub hotspot_count: usize,
     pub hotspot_bytes: u64,
     pub raw_pixel_bytes: u64,
@@ -110,6 +120,11 @@ impl ImpSprite {
 
         let file_flags = source[0];
         let record_variant = source[2];
+        // Header byte 3 is the transparency index. It is 0 for most unit art but is
+        // frequently nonzero for aura and effect sprites, where palette slot 0 is not
+        // used by the pixel data at all. Keying transparency on a hardcoded 0 renders
+        // those sprites with an opaque background.
+        let color_key = source[3];
         let compressed = file_flags & FILE_FLAG_RLE != 0;
         let bits_per_pixel = match file_flags & FILE_FLAG_DEPTH {
             0x00 => 8,
@@ -147,6 +162,7 @@ impl ImpSprite {
         let mut hotspot_count = 0_usize;
         let mut hotspot_bytes = 0_u64;
         let mut duplicate_frame_count = 0_usize;
+        let mut back_reference_frame_count = 0_usize;
         let mut raw_pixel_bytes = 0_u64;
         let mut stored_pixel_bytes = 0_u64;
         let mut sequences = Vec::with_capacity(sequence_count);
@@ -259,6 +275,13 @@ impl ImpSprite {
                         duplicate_frame_count = duplicate_frame_count
                             .checked_add(1)
                             .ok_or_else(|| ImpError::new("IMP duplicate frame count overflow"))?;
+                        if !shared_pixels {
+                            back_reference_frame_count = back_reference_frame_count
+                                .checked_add(1)
+                                .ok_or_else(|| {
+                                    ImpError::new("IMP back reference frame count overflow")
+                                })?;
+                        }
                         frames.push(ImpFrame {
                             flags: frame_flags,
                             width: 0,
@@ -368,10 +391,12 @@ impl ImpSprite {
             bits_per_pixel,
             maximum_width,
             maximum_height,
+            color_key,
             sequence_count,
             cycle_count,
             frame_count,
             duplicate_frame_count,
+            back_reference_frame_count,
             hotspot_count,
             hotspot_bytes,
             raw_pixel_bytes,

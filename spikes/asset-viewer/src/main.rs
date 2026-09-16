@@ -1374,7 +1374,12 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             .window_mut()
             .set_title(&title)
             .map_err(|error| error.to_string())?;
-        let display_rgba = imp_display_rgba(&frame.palette_indices, &frame.rgba, display_mode);
+        let display_rgba = imp_display_rgba(
+            &frame.palette_indices,
+            &frame.rgba,
+            display_mode,
+            sprite.color_key,
+        );
         draw_rgba_in_bounds(
             &mut canvas,
             frame.width,
@@ -1913,7 +1918,12 @@ fn draw_rgba(
     draw_rgba_in_bounds(canvas, width, height, width, height, rgba)
 }
 
-fn imp_display_rgba(palette_indices: &[u8], source: &[u8], mode: ImpDisplayMode) -> Vec<u8> {
+fn imp_display_rgba(
+    palette_indices: &[u8],
+    source: &[u8],
+    mode: ImpDisplayMode,
+    color_key: u8,
+) -> Vec<u8> {
     debug_assert_eq!(palette_indices.len() * 4, source.len());
     if matches!(mode, ImpDisplayMode::Raw) {
         return source.to_vec();
@@ -1923,9 +1933,12 @@ fn imp_display_rgba(palette_indices: &[u8], source: &[u8], mode: ImpDisplayMode)
         .zip(palette_indices)
         .flat_map(|(rgba, palette_index)| {
             let mut pixel: [u8; 4] = rgba.try_into().expect("RGBA chunks have four bytes");
-            let background = *palette_index == 0;
-            let secondary_mask = *palette_index == 1;
-            if background || matches!(mode, ImpDisplayMode::Preview) && secondary_mask {
+            // Compositing is keyed by palette INDEX, not by colour: the header's colour
+            // key marks transparency and slot 1 is the shadow silhouette. The RGB values
+            // those slots hold (often green and red) are incidental art-tool choices.
+            let background = *palette_index == color_key;
+            let shadow = *palette_index == 1;
+            if background || matches!(mode, ImpDisplayMode::Preview) && shadow {
                 pixel[3] = 0;
             }
             pixel
@@ -1992,15 +2005,15 @@ mod tests {
         let source = [0, 255, 0, 255, 255, 0, 0, 255, 1, 2, 3, 255, 0, 255, 0, 128];
 
         assert_eq!(
-            imp_display_rgba(&indices, &source, ImpDisplayMode::Preview),
+            imp_display_rgba(&indices, &source, ImpDisplayMode::Preview, 0),
             [0, 255, 0, 0, 255, 0, 0, 0, 1, 2, 3, 255, 0, 255, 0, 0,]
         );
         assert_eq!(
-            imp_display_rgba(&indices, &source, ImpDisplayMode::Mask),
+            imp_display_rgba(&indices, &source, ImpDisplayMode::Mask, 0),
             [0, 255, 0, 0, 255, 0, 0, 255, 1, 2, 3, 255, 0, 255, 0, 0,]
         );
         assert_eq!(
-            imp_display_rgba(&indices, &source, ImpDisplayMode::Raw),
+            imp_display_rgba(&indices, &source, ImpDisplayMode::Raw, 0),
             source
         );
     }
@@ -2153,7 +2166,9 @@ mod tests {
             sequence_count: 2,
             cycle_count: 3,
             frame_count: 6,
+            color_key: 0,
             duplicate_frame_count: 0,
+            back_reference_frame_count: 0,
             hotspot_count: 0,
             hotspot_bytes: 0,
             raw_pixel_bytes: 6,

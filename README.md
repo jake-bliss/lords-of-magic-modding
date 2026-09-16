@@ -41,6 +41,7 @@ The current deliverable is a useful native asset and reverse-engineering tool, n
 - [Mod ecosystem](docs/mod-ecosystem.md) — 3.02, GS5R3, optional packages, and compatibility
 - [Research log](docs/research-log.md) — evidence and conclusions from the working installation
 - [Roadmap](docs/roadmap.md) — proposed mod SDK and first experiments
+- [Community research](docs/community-research.md) — surviving modding community, prior art, and the verdict on each claim
 - [Sources](docs/sources.md) — primary and community references
 
 ## Working principles

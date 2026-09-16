@@ -23,6 +23,16 @@ The corpus supports this initial token model:
 | `<<` and `>>` | Runtime dictionary operators | Usually paired, but not safe to validate as source nesting |
 | `;` through end of line | Comment | Human-readable 3.02 and GS5R3 sources use this form |
 
+Definitions terminate with `def`, not with `;`. The GS5R3 corpus contains 77,391 bare `def` tokens
+and 6,462 `}def` sequences, and zero occurrences of `}` followed by `;`. A community post implying a
+`;` terminator is quoting its own trailing comment; see [community research](community-research.md).
+Key/value pairs written as `/name { ... }` without `def` are dictionary-literal entries inside
+`<< ... >>`, not definitions.
+
+The corpus's dominant closure and static-data idiom is
+`X /dummy <dict> replace bind def` — 7,472 uses of `replace` in GS5R3 alone. The VM already
+special-cases it; it belongs in the grammar model rather than only in the runtime notes.
+
 Strings do not use C-style backslash escaping. A backslash is preserved as an ordinary byte; this is required to tokenize the shipped `char_array` definition and Windows-style paths correctly.
 
 The lexer records byte offset, line, and column for every token. It rejects an unterminated string or an empty literal name, but it does not reject unmatched procedure braces. A few shipped fragments are incomplete or intentionally loaded as snippets, so brace problems are retained as explicit diagnostics while the rest of the archive remains analyzable.
@@ -70,6 +80,38 @@ For each profile, the scanner:
 4. excludes names also defined literally by scripts.
 
 The result is a useful **candidate vocabulary**, not a built-in count. It includes language primitives such as `if`, `get`, `exch`, and `bind`, and can contain false positives from unrelated binary strings. Conversely, a built-in stored in a non-ASCII table or exposed dynamically would be missed. The roughly 2,100 candidates bound the first host-API cataloging pass but must be classified by call sites and runtime experiments before estimating VM completion.
+
+## Confirmed native host names
+
+Cross-checking never-script-defined executable names against `lomse.exe` strings on 2026-09-16
+promotes a first set from candidate to **confirmed native**, with GS5R3 call counts:
+
+`getdifficultylevel`, `setdifficultylevel`, `getmultiplayerflag`, `getplayeraistatus`,
+`gamerand` (3,968), `addsoundfx` (3,587), `additem` (2,996), `getspelldefdata` (2,017),
+`editbox` (1,924), `strcpy` (1,862), `getarmydata` (1,761), `setunittypesound` (1,692),
+`getunitdata` (1,676), `strcat` (1,569), `getuniteffectivedata` (1,284), `doodad` (1,190),
+`getspellinfo` (1,070), `button` (918), `getunittypedata` (817), `closedialog` (753),
+`getcurrentartifactdata` (749), `currentuser` (689), `getbuildingdata` (645), `currentplayer` (563),
+`currentturn` (533), `addterrainspritetype` (532), `getplayerdata` (527), `incombat` (522),
+plus `enumunits`, `enumarmies`, `tickalarm`, `invoke_spell`, and `addunitmodifier`.
+
+The native constants `EASY_LEVEL`, `MEDIUM_LEVEL`, and `HARD_LEVEL` are likewise never
+script-defined. GS5R3 adds a script-side `/INSANE_LEVEL 3 def`, implying native values 0, 1, 2.
+
+**A classifier refinement this pass proved necessary.** Presence as a `/literal` does not mean a name
+is script-defined: `gs\artifact\_custom\sword_enlightenment.gs:53` contains `/invoke_spell cvx`,
+deferring a *native* call. The classifier must therefore require a definition **shape** —
+`/name ... def`, `/name ... replace ... def`, or `/name value` inside `<< >>` — rather than mere
+literal presence. `removeunitmodifiers` is the same trap.
+
+Recommended first VM stubs, all pure reads of game state with small return types:
+`getdifficultylevel`, `getmultiplayerflag`, `getplayeraistatus`, `getarmydata`, `getunitdata`,
+`getuniteffectivedata`. Stubbing those six lets the `gs\LEVLMODS5.gs` AI-bonus block execute
+deterministically against a synthetic state.
+
+A shipped member demonstrates that scripts can shadow native names: `START.GS:76` redefines `run`
+itself. `gs5_globals.gs` ships a 50-line constant table intended to *"supplement, add or replace EXE
+variables"*, but its `run` is **commented out** at `START.GS:34`, so it is not live behavior.
 
 ## Static module references
 

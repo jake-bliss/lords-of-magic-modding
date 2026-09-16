@@ -133,6 +133,50 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 - **Implemented:** the first bounded interpreter supports core values, operand/dictionary stacks, definitions, procedures, arrays/dictionaries, conditionals, arithmetic/comparison, a step limit, and structured unknown-name call traces.
 - **Observed:** the shipped 3.02 `gs\standard.gs` loads in 339 VM steps, leaves an empty operand stack, defines 36 names, and its `min`/`max` procedures return `3`/`5` for the probe expression `3 5 min 3 5 max`.
 
+## 2026-09-16 — Community research survey and corpus cross-check
+
+- **Documented:** Mantera's fan site and the `impz.proboards.com` LOMSE Modding board are both live;
+  the board has 169 threads and tool releases as recent as July 2026. Sources and per-claim verdicts
+  are in [community research](community-research.md).
+- **Documented:** a 2011 community IMP specification agrees with our header offsets, record sizes,
+  and RLE algorithm **exactly**, including the `control + 3` positive-branch bias.
+- **Corrected:** palette index 1 is the **shadow**, and compositing is keyed by palette index rather
+  than by colour. This retires the "not a single universal chroma key" framing and resolves the
+  secondary-mask question. The viewer's `secondary_mask` is renamed `shadow`.
+- **Corrected:** exported indexed PNGs never wrote a `tRNS` chunk, so index-0 transparency was
+  silently lost on export although the interactive viewer honoured it. Fixed and covered by a test.
+- **Observed:** validating the generated header's "Duplicate bitmaps found" statistic against a
+  `0x08`-only back-reference count raises corpus failures from 10 to 112. That statistic counts
+  `0x04` shared-pixel frames too, so our existing conflation is correct. Hypothesis refuted; the
+  separate tally is retained as `back_reference_frame_count`.
+- **Refuted:** the mod author's claim that `extra_strong?` controls difficulty-scaled AI bonuses. The
+  shipped body in `gs\scenario\default.gs` is `[false false false]getdifficultylevel get` — false on
+  every difficulty — and the name appears nowhere in `gs\LEVLMODS5.gs`, which gates on `insane_mode?`.
+  The phenomenon is real; the named control is vestigial.
+- **Refuted:** that a definition terminates with `;`. Definitions end with `def`; `;` is the line
+  comment. Our lexer was already correct.
+- **Refuted:** that `gs5_globals.gs` supplements EXE variables in GS5R3. It ships, but its `run` is
+  commented out at `START.GS:34`.
+- **Observed:** `gs\artifact\_custom\misc\ai_stat_bonus.gs` is a second, live difficulty-to-AI-stat
+  path in GS5R3 that no community source mentions.
+- **Observed:** roughly 30 native host names are now confirmed rather than merely candidates, by
+  intersecting never-script-defined executables with `lomse.exe` strings.
+- **Corrected:** a name appearing as `/literal` does not prove it is script-defined — `/invoke_spell
+  cvx` defers a native call — so the issue #5 classifier must match definition **shape**.
+- **Documented:** a 2026 community toolchain already reads MPQ, IMP, and map files and claims to
+  repair the map/save corruption we have not yet characterised. We are not the only party decoding
+  these formats.
+- **Observed:** eight community maps parse with zero failures, including a **160x160** scenario whose
+  dimension appears in no installed profile and outside the previously documented 32/48/64/128/256
+  set. The parser accepted it unchanged, so its bounds are data-driven rather than fitted.
+- **Refuted:** that the unknown 4-byte map field at offset `0x00` is a version number. It takes 20+
+  distinct values in `0x3f`-`0x6f` across 365 installed maps, is independent of dimensions and record
+  counts, and clusters by file family. A tileset or terrain-set selector is the better hypothesis,
+  which would also close the separate header-to-tileset unknown.
+- **Decision:** treat all community material as hypotheses with named sources. Two headline claims by
+  the mod's own author about his own code were wrong; both would have propagated into our docs
+  unchecked.
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:

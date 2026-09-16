@@ -12,8 +12,8 @@ Every one of the 365 inspected files begins with the same little-endian prefix:
 
 | Offset | Size | Current name | Evidence |
 | ---: | ---: | --- | --- |
-| `0x00` | 4 | `metadata` | Varies by file; meaning unknown |
-| `0x04` | 4 | `width` | Matches 32, 48, 64, 128, or 256 cell dimensions |
+| `0x00` | 4 | `metadata` | Varies by file; meaning unknown. A 2026 community claim names this a compression header holding a version number plus reserved space — see below |
+| `0x04` | 4 | `width` | 32, 48, 64, 128, 160, or 256 in the observed corpus |
 | `0x08` | 4 | `height` | Matches the same bounded cell dimensions |
 | `0x0c` | 4 | `bits_per_pixel` | Always 8 in the observed corpus |
 | `0x10` | `width × height × 8` | Cell grid | Exactly one eight-byte record per cell |
@@ -26,6 +26,21 @@ The cell record currently preserves both words without assigning engine behavior
 | `+4` | 4 | `value_bits` / `value` | Every value is a finite little-endian `f32` in `0..20`; grayscale rendering produces coherent world relief |
 
 The cells are stored X-major: `cell_index = x × height + y`. This is consistent across placed-object coordinates and the Map Editor scripts. The viewer converts this storage order to normal display rows; a regression test prevents the earlier transposed rendering.
+
+A July 2026 community report describes the first word as *"a 4-byte compression header in every
+map ... basically just a version number and reserved space"* which *"disappears"* when a map exceeds
+the original maximum size, corrupting maps and saves and producing a `TRASHBIN` display.
+
+**Measured on 2026-09-16, that reading does not survive.** Across all 365 installed map files the word
+takes more than twenty distinct values spanning `0x3f`-`0x6f`, and it is independent of geometry:
+`0x6f` occurs at 32x32, 48x48, 64x64, 128x128 and 256x256, while 48x48 files alone carry a dozen
+different values. A version number would not vary that way. The values instead cluster by file
+family - every `ORLIBR*`, `ORTGIL*` and `FIVILG*` sub-map is `0x4f`, and world `.scn` files are
+`0x6c`-`0x6f` - which makes a **tileset or terrain-set selector** the better hypothesis, and would
+also close the separate "header-to-tileset selection" unknown recorded below. Neither reading is
+proven. The community claim's testable half is untouched: an oversized map should *omit* the field
+and shift every later offset by four bytes. Recorded in issue #4 and in
+[community research](community-research.md).
 
 The second word is strongly inferred to be elevation or height. The shipped tile-definition comments state that `1000` represents `1.0` in the map model, but exact runtime units and interpolation remain unverified.
 
@@ -41,6 +56,25 @@ The low tag bits directly index the atlas declared by the active `.til` file. Fo
 The flag appears only in `.smp` files: 27,448 cells across 146 files. Many 48×48 maps contain exactly 188 flagged cells, the size of their perimeter. Combined with the editor's separate `setterrain` and `forcetexture` operations, this is strong evidence that `0x00800000` means a forced texture rather than another tile-index bit. The decoder retains the raw tag while exposing masked index and flag accessors.
 
 All 26 recovered `.til` members parse as bounded text definitions. They declare an atlas name, grid dimensions, 32×32 tile size, terrain types, and tile-to-terrain relationships. The repository does not include those proprietary definitions or images.
+
+## Independent community corpus
+
+Eight community maps were downloaded on 2026-09-16 from Mantera's site into ignored `artifacts/` and
+parsed with no failures. They are the first map corpus this project has tested that did not ship with
+an installed profile:
+
+| Map | Dimensions | Records | Footer |
+| --- | --- | ---: | ---: |
+| `Feuerundeis.scn` | 160x160 | 1,056 | 0 |
+| `Mumm-Ra2005.scn` | 128x128 | 684 | 0 |
+| `Mumm-Ra2005b.scn` | 128x128 | 698 | 0 |
+| `Permeon.scn` | 256x256 | 1,345 | 0 |
+| `URAKpartII.scn` | 128x128 | 583 | 1 |
+| `Van Lezing.scn` | 128x128 | 2,243 | 0 |
+
+`Feuerundeis.scn` is **160x160**, a dimension absent from every installed profile and outside the
+previously documented 32/48/64/128/256 set. The parser accepted it unchanged, which is evidence the
+bounds are genuinely data-driven rather than fitted to the shipped corpus.
 
 ## Corpus result
 
