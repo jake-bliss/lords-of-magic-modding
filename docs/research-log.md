@@ -495,6 +495,37 @@ from a bare script — most likely `[imp+0]` (the inner data pointer) is null be
 lazy, so `0x004F31F0` takes its `test eax,eax / je` exit and the draw silently does nothing. The next
 attempt should confirm that by logging `getimpmemory`, which was the one diagnostic that did not run.
 
+### Follow-up: the lazy-loader inference is refuted, and `drawimpframe` looks vestigial
+
+The diagnostic that had not run was run. Using the engine's own accessors on the handle returned by
+`imp`:
+
+```
+filename= iface/ordragb.imp
+memory= 42964
+```
+
+- **Refuted:** that the imp was unloaded and `0x004F31F0` was taking its `test eax,eax / je` exit.
+  The file is loaded, correctly named, and occupying 42,964 bytes.
+- **Observed:** `screencapture` operates on the object at `0x584AE8`, reading `[obj+0x684]`, and
+  `drawimpframe` calls `0x004753D0` on that **same object** immediately after drawing. The draw
+  target and the capture source are the same surface, so a surface mismatch does not explain the
+  silence either.
+- **Observed:** a sweep of **20 calls** covering both sequences, all five facings, two frame indices
+  each, at twenty distinct screen positions inside the clip rect, changed **zero pixels** in a live
+  map editor session. The result is independent of the parameters.
+
+**Inferred, and now the leading explanation:** `drawimpframe` is **vestigial** in the shipped build.
+It is present in the dispatch table, it parses and type-checks its six operands correctly, it looks
+up the imp and would report `drawimpframe - no such imp` for a bad handle — and it paints nothing.
+It also has **zero call sites across all 1,471 extractable scripts**, which is consistent: nothing in
+the shipped game uses it, so nothing would have caught its rotting.
+
+That makes it the wrong instrument for issue #1. The engine's *working* sprite path is the one that
+draws units on the map — visible in every editor capture — and that is where the convention should be
+measured instead. `getspritescreenx` / `getspritescreeny` (each 1 operand, 1 result) expose a live
+sprite's screen position, which is exactly the commanded-versus-observed pair this experiment needs.
+
 ### The harness, which is the durable part
 
 Three things make future engine experiments cheap, and all are in `START.GS`:
