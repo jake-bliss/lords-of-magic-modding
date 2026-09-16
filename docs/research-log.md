@@ -52,7 +52,7 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 ### IMP format findings
 
 - **Observed:** all 1,800 IMP binaries pass bounded table, palette, frame-reference, and packed-pixel decoding, including RLE expansion where applicable.
-- **Observed:** the format contains 32-byte file headers, animation sequences/cycles/frames, 256-entry BGRA palettes, six-byte padded hotspots, direct duplicate frames, and repeated cycles.
+- **Observed:** the format contains 32-byte file headers, animation sequences/facings/frames, 256-entry BGRA palettes, six-byte padded hotspots, direct duplicate frames, and repeated facings.
 - **Observed:** the custom RLE uses controls below `0x80` for repeated runs and controls at or above `0x80` for literal runs.
 - **Inferred:** file-flag bits `0x30` select 8-, 1-, 2-, or 4-bit indexed storage, and sub-byte indices are packed most-significant-bit first.
 - **Observed:** generated-header comparison matches 1,784 of 1,798 paired stems exactly. Fourteen bounded metadata disagreements and four orphan names remain explicit validation failures.
@@ -83,24 +83,24 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 - **Observed:** one inspected creature frame uses green palette index 0 for 8,576 background pixels and a separate pure-red index for a 1,651-pixel silhouette beneath the creature.
 - **Observed:** an inspected 1-bit aura asset uses bright green and red as its two palette colors, confirming that blindly deleting both colors destroys meaningful mask data.
 - **Inferred:** green is a background channel in the inspected frames, while red is a separate shadow, translucency, recoloring, or other compositor input.
-- **Implemented:** the viewer defaults to a clean preview while `C` cycles through visible-mask and untouched raw-palette modes. The decoder itself preserves every source index and palette color.
+- **Implemented:** the viewer defaults to a clean preview while `C` facings through visible-mask and untouched raw-palette modes. The decoder itself preserves every source index and palette color.
 - **Corrected:** sampling the top-left pixel as a chroma key failed when frame 156 of `chcr5a.imp` touched that corner and removed gold artwork. Viewer channels are now selected by palette index 0 (background) and index 1 (secondary mask), preserving the same colors when they occur at other indices.
 - **Unknown:** the original engine's exact mask blend, origins, hotspot behavior, sequence boundaries, and timing still require controlled comparison.
 
-## 2026-09-12 — IMP actions, cycles, export, and FFI safety
+## 2026-09-12 — IMP actions, facings, export, and FFI safety
 
-- **Observed:** all 1,800 IMP binaries expose bounded sequence-to-cycle and cycle-to-frame ranges under the current parser.
+- **Observed:** all 1,800 IMP binaries expose bounded sequence-to-facing and facing-to-frame ranges under the current parser.
 - **Observed:** generated C-header labels cover 4,649 of 4,666 declared sequence slots; aliases are retained, and 1,799 of 1,800 headers provide at least one label.
-- **Observed:** `units\imp\chcr5a.imp` contains seven named actions, five cycles per action, and 170 logical frames. The action names are `MOVE`, `STAND`, `DEFEND`, `GET_HIT`, `DIE`, `CORPSE`, and `MELEE_ATTACK`.
-- **Inferred:** the five cycles in each inspected creature action are directional views. Raw sequence and cycle metadata remain preserved but uninterpreted.
-- **Implemented:** the viewer navigates frames within a cycle, cycles within an action, and named actions; autoplay wraps within the selected cycle.
+- **Observed:** `units\imp\chcr5a.imp` contains seven named actions, five facings per action, and 170 logical frames. The action names are `MOVE`, `STAND`, `DEFEND`, `GET_HIT`, `DIE`, `CORPSE`, and `MELEE_ATTACK`.
+- **Inferred:** the five facings in each inspected creature action are directional views. Raw sequence and facing metadata remain preserved but uninterpreted.
+- **Implemented:** the viewer navigates frames within a facing, facings within an action, and named actions; autoplay wraps within the selected facing.
 - **Implemented:** the CLI exports a resolved logical frame as an 8-bit indexed PNG while preserving palette indices and RGB palette entries. Synthetic decode-back verifies exact bytes, and output creation refuses overwrite.
 - **Corrected:** the manual StormLib binding used Windows' 260-byte `MAX_PATH` inside `SFILE_FIND_DATA`, but StormLib's macOS portability header uses 1,024 bytes. Enumeration consequently overwrote adjacent stack memory. The binding now selects the platform ABI, a layout regression test matches the installed C header's 1,064-byte structure, and the full five-archive scan still succeeds.
 - **Observed:** after the ABI correction, a real frame-155 export reports the requested index and is independently identified as a 165×127, 8-bit indexed PNG.
 
 ## 2026-09-12 — IMP placement records and native map grid
 
-- **Corrected:** frame flag `0x04` is a shared-pixel reference even when it occurs after the first record in a cycle. Applying it consistently removed 27 false origin records and increased exact generated-header matches from 1,784 to 1,788 of 1,798 pairs.
+- **Corrected:** frame flag `0x04` is a shared-pixel reference even when it occurs after the first record in a facing. Applying it consistently removed 27 false origin records and increased exact generated-header matches from 1,784 to 1,788 of 1,798 pairs.
 - **Observed:** the remaining IMP corpus contains 15,725 logical origin records and 64,432 six-byte hotspots across 28,771 frames. Origin ranges are X `-66..70`, Y `-207..77`; hotspot ranges are X `-115..123`, Y `-232..86`.
 - **Inferred:** hotspot records are `u16 id, i16 x, i16 y`. All six bytes remain preserved while original-engine placement behavior is tracked in issue #1.
 - **Corrected:** generated-header action aliases can share a sequence number (`MOVE` and `STAND` in `aicr2a.h`), so the parser now retains every alias instead of overwriting the earlier name.
@@ -182,6 +182,26 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 - **Decision:** treat all community material as hypotheses with named sources. Two headline claims by
   the mod's own author about his own code were wrong; both would have propagated into our docs
   unchecked.
+
+## 2026-09-16 — Facing rename, definition-shape classifier, and native stubs
+
+- **Corrected:** IMP "cycles" are renamed **facings** throughout the code, docs, and
+  `--describe-imp` output, matching the community specification and what the records actually are.
+  Behaviour is unchanged.
+- **Corrected:** the native-candidate heuristic excluded any name appearing as a `/literal`
+  anywhere, which hid genuine host calls because the corpus defers native calls by pushing the name
+  (`/invoke_spell cvx`). It now requires a definition **shape**.
+- **Observed:** GS5R3 has 17,641 distinct literal names but only 13,609 definitions — 4,032 literals
+  are not definitions. The native-candidate count rises from 2,091 to 2,151.
+- **Implemented:** native host stubs (`--stub NAME=VALUE`) for pure state reads, with call counts as
+  classification evidence, plus structured unknown-name traces carrying the name, VM step, and call
+  stack at the point of failure. Unknown names still stop execution rather than being guessed.
+- **Observed:** the real GS5R3 difficulty idiom `[25 50 75]getdifficultylevel get` executes and
+  returns 25, 50, and 75 for Easy, Medium, and Hard.
+- **Observed:** the shipped `extra_strong?` body evaluates to `false` at every difficulty and in both
+  multiplayer states; the body quoted on the forum evaluates to `true` on Hard in single-player and
+  `false` in multiplayer. The author's description matched code that did not ship. This upgrades the
+  difficulty finding from a reading of the source to an execution under declared inputs.
 
 ## Evidence labels for future entries
 

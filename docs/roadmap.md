@@ -63,7 +63,7 @@ Success criteria:
 - [x] Inventory core-archive image/audio formats, palettes, dimensions, and candidate transparency metadata.
 - [x] Parse all IMP sprite containers structurally and cross-check the common variants against generated headers.
 - [x] Decode both observed IMP pixel-storage variants and display individual/animated frames.
-- [x] Recover action/cycle ranges and generated action names, navigate them, and export indexed PNG frames losslessly.
+- [x] Recover action/facing ranges and generated action names, navigate them, and export indexed PNG frames losslessly.
 - [x] Parse the common header and cell grid of all installed `.scn`, `.smp`, and `.lgd` files and visualize candidate elevation.
 - [x] Resolve standard map tags through `.til` definitions and original terrain atlases; export correctly oriented map previews.
 - [x] Structurally decode and corpus-validate the dominant 49-byte placed-sprite record family.

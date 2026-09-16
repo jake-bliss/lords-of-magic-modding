@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 
 use lom_asset_viewer::asset::{AssetKind, probe};
 use lom_asset_viewer::gamescript::GameScriptDocument;
-use lom_asset_viewer::gamescript_vm::GameScriptVm;
+use lom_asset_viewer::gamescript_vm::{
+    GameScriptVm, GameScriptVmError, Value as GameScriptValue,
+};
 use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::map::MapAsset;
 use lom_asset_viewer::mpq::{Archive, Entry};
@@ -65,6 +67,7 @@ enum Command {
         source: Source,
         member: String,
         expression: Option<String>,
+        stubs: Vec<(String, GameScriptValue)>,
     },
     ScanMapDirectory(PathBuf),
     ValidateImp(Source),
@@ -192,7 +195,8 @@ fn run() -> Result<(), String> {
             source,
             member,
             expression,
-        } => probe_gamescript_member(&source, &member, expression.as_deref()),
+            stubs,
+        } => probe_gamescript_member(&source, &member, expression.as_deref(), &stubs),
         Command::ScanMapDirectory(path) => scan_map_directory(&path),
         Command::ValidateImp(source) => validate_imp_archive(&source),
         Command::ViewImp {
@@ -210,6 +214,10 @@ fn parse_args() -> Result<Command, String> {
     let listfile = take_option(&mut args, "--listfile")?.map(PathBuf::from);
     let executable = take_option(&mut args, "--exe")?.map(PathBuf::from);
     let expression = take_option(&mut args, "--eval")?;
+    let stubs = take_repeated_option(&mut args, "--stub")
+        .iter()
+        .map(|specification| parse_native_stub(specification))
+        .collect::<Result<Vec<_>, String>>()?;
     let first = args.first().ok_or_else(usage)?.as_str();
     match first {
         "--catalog" => {
@@ -287,6 +295,7 @@ fn parse_args() -> Result<Command, String> {
                 source: source(&args[1], listfile),
                 member: args[2].clone(),
                 expression,
+                stubs,
             })
         }
         "--scan-map-dir" => {
@@ -348,6 +357,39 @@ fn source(archive: &str, listfile: Option<PathBuf>) -> Source {
     }
 }
 
+/// Collect every occurrence of a repeatable option, in command-line order.
+fn take_repeated_option(args: &mut Vec<String>, option: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    while let Some(position) = args.iter().position(|argument| argument == option) {
+        if position + 1 >= args.len() {
+            args.remove(position);
+            break;
+        }
+        values.push(args.remove(position + 1));
+        args.remove(position);
+    }
+    values
+}
+
+/// Parse a `NAME=VALUE` native stub. Values are integers, `true`, or `false` — the return
+/// shapes of the pure state reads worth stubbing. Anything richer needs real host modelling.
+fn parse_native_stub(specification: &str) -> Result<(String, GameScriptValue), String> {
+    let (name, value) = specification
+        .split_once('=')
+        .ok_or_else(|| format!("--stub expects NAME=VALUE, got {specification}"))?;
+    if name.is_empty() {
+        return Err("--stub requires a name before =".to_owned());
+    }
+    let value = match value {
+        "true" => GameScriptValue::Boolean(true),
+        "false" => GameScriptValue::Boolean(false),
+        other => GameScriptValue::Number(other.parse::<f64>().map_err(|_| {
+            format!("--stub value must be a number, true, or false, got {other}")
+        })?),
+    };
+    Ok((name.to_owned(), value))
+}
+
 fn take_option(args: &mut Vec<String>, option: &str) -> Result<Option<String>, String> {
     let Some(position) = args.iter().position(|argument| argument == option) else {
         return Ok(None);
@@ -376,7 +418,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE]\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -513,24 +555,24 @@ fn describe_imp(source: &Source, member: &str) -> Result<(), String> {
             .map(|labels| labels.join("|"))
             .unwrap_or_else(|| "unnamed".to_owned());
         println!(
-            "sequence\t{sequence_index}\t-\t{}\t{}\tcycle:{};frame:{}\tcycle:{};frame:{}\t-",
+            "sequence\t{sequence_index}\t-\t{}\t{}\tfacing:{};frame:{}\tfacing:{};frame:{}\t-",
             clean_field(&labels),
             hex_bytes(&sequence.metadata),
-            sequence.first_cycle,
+            sequence.first_facing,
             sequence.first_frame,
-            sequence.cycle_count,
+            sequence.facing_count,
             sequence.frame_count,
         );
-        for cycle_index in sequence.first_cycle..sequence.first_cycle + sequence.cycle_count {
-            let cycle = &sprite.cycles[cycle_index];
+        for facing_index in sequence.first_facing..sequence.first_facing + sequence.facing_count {
+            let facing = &sprite.facings[facing_index];
             println!(
-                "cycle\t{cycle_index}\tsequence:{sequence_index}\t-\t0x{:04x}\tframe:{}\tframe:{}\t-",
-                cycle.metadata, cycle.first_frame, cycle.frame_count,
+                "facing\t{facing_index}\tsequence:{sequence_index}\t-\t0x{:04x}\tframe:{}\tframe:{}\t-",
+                facing.metadata, facing.first_frame, facing.frame_count,
             );
         }
     }
     for (frame_index, frame) in sprite.frames.iter().enumerate() {
-        let (sequence_index, cycle_index, frame_in_cycle) = sprite
+        let (sequence_index, facing_index, frame_in_facing) = sprite
             .frame_location(frame_index)
             .map_err(|error| error.to_string())?;
         let resolved = sprite
@@ -552,7 +594,7 @@ fn describe_imp(source: &Source, member: &str) -> Result<(), String> {
             .source_frame
             .map_or_else(|| "direct".to_owned(), |index| format!("source:{index}"));
         println!(
-            "frame\t{frame_index}\tsequence:{sequence_index};cycle:{cycle_index};offset:{frame_in_cycle}\t0x{:02x};{source_frame}\t{}x{}\t-\t{}\t{}",
+            "frame\t{frame_index}\tsequence:{sequence_index};facing:{facing_index};offset:{frame_in_facing}\t0x{:02x};{source_frame}\t{}x{}\t-\t{}\t{}",
             frame.flags,
             resolved.width,
             resolved.height,
@@ -893,10 +935,27 @@ fn scan_archive(source: &Source) -> Result<(), String> {
     }
 }
 
+/// Print the structured trace for a VM failure before surfacing it.
+///
+/// An unresolved name is the interesting outcome, not merely a failure: it names a host
+/// call and shows how far the script got before it needed one. The VM stops rather than
+/// guessing, so this trace is the classification evidence.
+fn report_gamescript_failure(error: GameScriptVmError) -> String {
+    if let Some(trace) = error.unknown_name() {
+        eprintln!("unknown-native-name\t{}", trace.name);
+        eprintln!("unknown-at-step\t{}", trace.steps);
+        for (depth, frame) in trace.call_stack.iter().enumerate() {
+            eprintln!("unknown-call-stack\t{depth}\t{frame}");
+        }
+    }
+    error.to_string()
+}
+
 fn probe_gamescript_member(
     source: &Source,
     member: &str,
     expression: Option<&str>,
+    stubs: &[(String, GameScriptValue)],
 ) -> Result<(), String> {
     let (archive, entries) = open_archive(source)?;
     let entry = entries
@@ -910,15 +969,18 @@ fn probe_gamescript_member(
     let token_count = document.tokens.len();
     let anomaly_count = document.procedure_anomalies.len();
     let mut vm = GameScriptVm::new(1_000_000);
+    for (name, value) in stubs {
+        vm.define_native_stub(name.clone(), value.clone());
+    }
     vm.execute_document(&document)
-        .map_err(|error| error.to_string())?;
+        .map_err(report_gamescript_failure)?;
     let expression_tokens = expression
         .map(|source| {
             let expression =
                 GameScriptDocument::parse(source.as_bytes()).map_err(|error| error.to_string())?;
             let tokens = expression.tokens.len();
             vm.execute_document(&expression)
-                .map_err(|error| error.to_string())?;
+                .map_err(report_gamescript_failure)?;
             Ok::<usize, String>(tokens)
         })
         .transpose()?;
@@ -944,6 +1006,9 @@ fn probe_gamescript_member(
         if let Some(summary) = value.scalar_summary() {
             println!("operand-stack-scalar\t{index}\t{summary}");
         }
+    }
+    for (name, count) in vm.native_calls() {
+        println!("native-stub-call\t{}\t{count}", clean_field(name));
     }
     println!("defined-names\t{}", defined_names.len());
     for name in defined_names.iter().take(50) {
@@ -974,6 +1039,7 @@ fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result
     let mut procedure_anomalies = Vec::<(String, String, usize, usize, usize)>::new();
     let mut executable_names = BTreeMap::<String, usize>::new();
     let mut literal_names = BTreeMap::<String, usize>::new();
+    let mut definition_names = BTreeMap::<String, usize>::new();
     let mut dependency_edges = BTreeSet::<(String, String)>::new();
     let mut failures = Vec::new();
 
@@ -1017,6 +1083,7 @@ fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result
         }
         merge_name_counts(&mut executable_names, &analysis.executable_names);
         merge_name_counts(&mut literal_names, &analysis.literal_names);
+        merge_name_counts(&mut definition_names, &analysis.definition_names);
         for dependency in analysis.static_run_dependencies {
             dependency_edges.insert((entry.name.clone(), dependency));
         }
@@ -1031,7 +1098,7 @@ fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result
         .filter(|(_, dependency)| !archive_names.contains(&normalize_member_name(dependency)))
         .collect();
     let likely_engine_names = executable
-        .map(|path| likely_engine_names(path, &executable_names, &literal_names))
+        .map(|path| likely_engine_names(path, &executable_names, &definition_names))
         .transpose()?;
 
     println!("archive-entries\t{}", entries.len());
@@ -1047,6 +1114,7 @@ fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result
     println!("procedure-anomalies\t{}", procedure_anomalies.len());
     println!("distinct-executable-names\t{}", executable_names.len());
     println!("distinct-literal-names\t{}", literal_names.len());
+    println!("distinct-definition-names\t{}", definition_names.len());
     println!("static-run-reference-edges\t{}", dependency_edges.len());
     println!("resolved-static-run-references\t{resolved_dependencies}");
     println!(
@@ -1054,8 +1122,14 @@ fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result
         missing_dependencies.len()
     );
     if let Some(names) = &likely_engine_names {
+        // The full candidate vocabulary is the useful artefact, but printing ~2,000 lines by
+        // default buries the summary. `LOM_CANDIDATE_LIMIT` raises the cap for cataloguing.
+        let candidate_display_limit = std::env::var("LOM_CANDIDATE_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(50);
         println!("likely-hardcoded-engine-names\t{}", names.len());
-        for (name, count) in names.iter().take(50) {
+        for (name, count) in names.iter().take(candidate_display_limit) {
             println!("engine-name-candidate\t{name}\t{count}");
         }
     }
@@ -1103,12 +1177,15 @@ fn normalize_member_name(name: &str) -> String {
 fn likely_engine_names(
     path: &Path,
     executable_names: &BTreeMap<String, usize>,
-    literal_names: &BTreeMap<String, usize>,
+    definition_names: &BTreeMap<String, usize>,
 ) -> Result<Vec<(String, usize)>, String> {
     let bytes = fs::read(path)
         .map_err(|error| format!("could not read executable {}: {error}", path.display()))?;
     let binary_strings = ascii_strings(&bytes);
-    let literal_names: BTreeSet<String> = literal_names
+    // Exclude names the corpus actually DEFINES, not every name that appears as a literal.
+    // The scripts push a native name and convert it to defer the call (`/invoke_spell cvx`),
+    // so excluding on literal presence hid genuine host calls.
+    let definition_names: BTreeSet<String> = definition_names
         .keys()
         .map(|name| name.to_ascii_lowercase())
         .collect();
@@ -1116,7 +1193,7 @@ fn likely_engine_names(
         .iter()
         .filter(|(name, _)| {
             let lower = name.to_ascii_lowercase();
-            !literal_names.contains(&lower) && binary_strings.contains(&lower)
+            !definition_names.contains(&lower) && binary_strings.contains(&lower)
         })
         .map(|(name, count)| (name.clone(), *count))
         .collect();
@@ -1275,7 +1352,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     repeat: false,
                     ..
                 } => {
-                    frame_index = step_imp_cycle(&sprite, frame_index, 1)?;
+                    frame_index = step_imp_facing(&sprite, frame_index, 1)?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
@@ -1283,7 +1360,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     repeat: false,
                     ..
                 } => {
-                    frame_index = step_imp_cycle(&sprite, frame_index, -1)?;
+                    frame_index = step_imp_facing(&sprite, frame_index, -1)?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
@@ -1327,11 +1404,11 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             .resolved_frame(frame_index)
             .map_err(|error| error.to_string())?;
         let logical_frame = &sprite.frames[frame_index];
-        let (sequence_index, cycle_index, frame_in_cycle) = sprite
+        let (sequence_index, facing_index, frame_in_facing) = sprite
             .frame_location(frame_index)
             .map_err(|error| error.to_string())?;
         let sequence = &sprite.sequences[sequence_index];
-        let cycle = &sprite.cycles[cycle_index];
+        let facing = &sprite.facings[facing_index];
         let sequence_label = sequence_labels
             .get(sequence_index)
             .filter(|labels| !labels.is_empty())
@@ -1350,15 +1427,15 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             "placement=inherited".to_owned()
         };
         let title = format!(
-            "Lords of Magic IMP viewer — {} — {} {}/{} — cycle {}/{} — frame {}/{} (global {}/{}, {}×{}, {} bpp, {}, {}, seq={}, cycle=0x{:04x}{})",
+            "Lords of Magic IMP viewer — {} — {} {}/{} — facing {}/{} — frame {}/{} (global {}/{}, {}×{}, {} bpp, {}, {}, seq={}, facing=0x{:04x}{})",
             entry.name,
             sequence_label,
             sequence_index + 1,
             sprite.sequences.len(),
-            cycle_index - sequence.first_cycle + 1,
-            sequence.cycle_count,
-            frame_in_cycle + 1,
-            cycle.frame_count,
+            facing_index - sequence.first_facing + 1,
+            sequence.facing_count,
+            frame_in_facing + 1,
+            facing.frame_count,
             frame_index + 1,
             sprite.frames.len(),
             frame.width,
@@ -1367,7 +1444,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             display_mode.label(),
             placement,
             hex_bytes(&sequence.metadata),
-            cycle.metadata,
+            facing.metadata,
             if playing { ", playing" } else { "" }
         );
         canvas
@@ -1445,27 +1522,27 @@ fn find_imp_frame(
 }
 
 fn step_imp_frame(sprite: &ImpSprite, current: usize, direction: isize) -> Result<usize, String> {
-    let (_, cycle_index, frame_in_cycle) = sprite
+    let (_, facing_index, frame_in_facing) = sprite
         .frame_location(current)
         .map_err(|error| error.to_string())?;
-    find_visible_in_cycle(sprite, cycle_index, frame_in_cycle, direction, false)
+    find_visible_in_facing(sprite, facing_index, frame_in_facing, direction, false)
 }
 
-fn step_imp_cycle(sprite: &ImpSprite, current: usize, direction: isize) -> Result<usize, String> {
-    let (sequence_index, cycle_index, _) = sprite
+fn step_imp_facing(sprite: &ImpSprite, current: usize, direction: isize) -> Result<usize, String> {
+    let (sequence_index, facing_index, _) = sprite
         .frame_location(current)
         .map_err(|error| error.to_string())?;
     let sequence = &sprite.sequences[sequence_index];
-    let relative_cycle = cycle_index - sequence.first_cycle;
-    for distance in 1..=sequence.cycle_count {
-        let relative = (relative_cycle as isize + direction * distance as isize)
-            .rem_euclid(sequence.cycle_count as isize) as usize;
-        let candidate = sequence.first_cycle + relative;
-        if let Ok(frame) = find_visible_in_cycle(sprite, candidate, 0, 1, true) {
+    let relative_facing = facing_index - sequence.first_facing;
+    for distance in 1..=sequence.facing_count {
+        let relative = (relative_facing as isize + direction * distance as isize)
+            .rem_euclid(sequence.facing_count as isize) as usize;
+        let candidate = sequence.first_facing + relative;
+        if let Ok(frame) = find_visible_in_facing(sprite, candidate, 0, 1, true) {
             return Ok(frame);
         }
     }
-    Err("IMP sequence contains no visible cycles".to_owned())
+    Err("IMP sequence contains no visible facings".to_owned())
 }
 
 fn step_imp_sequence(
@@ -1480,9 +1557,9 @@ fn step_imp_sequence(
         let candidate = (sequence_index as isize + direction * distance as isize)
             .rem_euclid(sprite.sequences.len() as isize) as usize;
         let sequence = &sprite.sequences[candidate];
-        for relative_cycle in 0..sequence.cycle_count {
+        for relative_facing in 0..sequence.facing_count {
             if let Ok(frame) =
-                find_visible_in_cycle(sprite, sequence.first_cycle + relative_cycle, 0, 1, true)
+                find_visible_in_facing(sprite, sequence.first_facing + relative_facing, 0, 1, true)
             {
                 return Ok(frame);
             }
@@ -1491,25 +1568,25 @@ fn step_imp_sequence(
     Err("IMP sprite contains no visible sequences".to_owned())
 }
 
-fn find_visible_in_cycle(
+fn find_visible_in_facing(
     sprite: &ImpSprite,
-    cycle_index: usize,
+    facing_index: usize,
     current_offset: usize,
     direction: isize,
     include_current: bool,
 ) -> Result<usize, String> {
-    let cycle = sprite
-        .cycles
-        .get(cycle_index)
-        .ok_or_else(|| format!("IMP cycle index {cycle_index} is out of range"))?;
-    if cycle.frame_count == 0 {
-        return Err("IMP cycle contains no frames".to_owned());
+    let facing = sprite
+        .facings
+        .get(facing_index)
+        .ok_or_else(|| format!("IMP facing index {facing_index} is out of range"))?;
+    if facing.frame_count == 0 {
+        return Err("IMP facing contains no frames".to_owned());
     }
     let first_distance = usize::from(!include_current);
-    for distance in first_distance..first_distance + cycle.frame_count {
+    for distance in first_distance..first_distance + facing.frame_count {
         let offset = (current_offset as isize + direction * distance as isize)
-            .rem_euclid(cycle.frame_count as isize) as usize;
-        let index = cycle.first_frame + offset;
+            .rem_euclid(facing.frame_count as isize) as usize;
+        let index = facing.first_frame + offset;
         let frame = sprite
             .resolved_frame(index)
             .map_err(|error| error.to_string())?;
@@ -1517,7 +1594,7 @@ fn find_visible_in_cycle(
             return Ok(index);
         }
     }
-    Err("IMP cycle contains no visible frames".to_owned())
+    Err("IMP facing contains no visible frames".to_owned())
 }
 
 fn view_map_file(path: &Path, tile_set_paths: Option<&(PathBuf, PathBuf)>) -> Result<(), String> {
@@ -1989,13 +2066,13 @@ fn draw_rgba_in_bounds(
 mod tests {
     use std::collections::BTreeMap;
 
-    use lom_asset_viewer::imp::{ImpCycle, ImpFrame, ImpSequence, ImpSprite};
+    use lom_asset_viewer::imp::{ImpFacing, ImpFrame, ImpSequence, ImpSprite};
     use lom_asset_viewer::map::{MapAsset, MapCell};
     use lom_asset_viewer::pbm::PbmImage;
     use lom_asset_viewer::tile::{TileDefinition, TileSetDefinition};
 
     use super::{
-        ImpDisplayMode, MapDisplayMode, imp_display_rgba, map_display_rgba, step_imp_cycle,
+        ImpDisplayMode, MapDisplayMode, imp_display_rgba, map_display_rgba, step_imp_facing,
         step_imp_frame, step_imp_sequence, terrain_preview_rgba,
     };
 
@@ -2019,13 +2096,13 @@ mod tests {
     }
 
     #[test]
-    fn imp_navigation_respects_cycle_and_sequence_boundaries() {
+    fn imp_navigation_respects_facing_and_sequence_boundaries() {
         let sprite = navigation_sprite();
 
         assert_eq!(step_imp_frame(&sprite, 1, 1).unwrap(), 0);
         assert_eq!(step_imp_frame(&sprite, 0, -1).unwrap(), 1);
-        assert_eq!(step_imp_cycle(&sprite, 0, 1).unwrap(), 2);
-        assert_eq!(step_imp_cycle(&sprite, 2, -1).unwrap(), 0);
+        assert_eq!(step_imp_facing(&sprite, 0, 1).unwrap(), 2);
+        assert_eq!(step_imp_facing(&sprite, 2, -1).unwrap(), 0);
         assert_eq!(step_imp_sequence(&sprite, 2, 1).unwrap(), 4);
         assert_eq!(step_imp_sequence(&sprite, 4, -1).unwrap(), 0);
     }
@@ -2164,7 +2241,7 @@ mod tests {
             maximum_width: 1,
             maximum_height: 1,
             sequence_count: 2,
-            cycle_count: 3,
+            facing_count: 3,
             frame_count: 6,
             color_key: 0,
             duplicate_frame_count: 0,
@@ -2177,31 +2254,31 @@ mod tests {
             sequences: vec![
                 ImpSequence {
                     metadata: [0; 11],
-                    first_cycle: 0,
-                    cycle_count: 2,
+                    first_facing: 0,
+                    facing_count: 2,
                     first_frame: 0,
                     frame_count: 4,
                 },
                 ImpSequence {
                     metadata: [0; 11],
-                    first_cycle: 2,
-                    cycle_count: 1,
+                    first_facing: 2,
+                    facing_count: 1,
                     first_frame: 4,
                     frame_count: 2,
                 },
             ],
-            cycles: vec![
-                ImpCycle {
+            facings: vec![
+                ImpFacing {
                     metadata: 0,
                     first_frame: 0,
                     frame_count: 2,
                 },
-                ImpCycle {
+                ImpFacing {
                     metadata: 0,
                     first_frame: 2,
                     frame_count: 2,
                 },
-                ImpCycle {
+                ImpFacing {
                     metadata: 0,
                     first_frame: 4,
                     frame_count: 2,

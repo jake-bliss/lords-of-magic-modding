@@ -45,6 +45,11 @@ On 2026-09-16 the GS5R3 corpus was searched after the mod's author, posting as B
   `[false false false]getdifficultylevel get` followed by `getmultiplayerflag{pop false}if`. That is
   **false on Easy, Medium and Hard**. The forum post quotes `true` in that position, so it describes
   a hand-edited or pre-ship version.
+- **Executed, not merely read.** With `getdifficultylevel` and `getmultiplayerflag` stubbed, the
+  shipped body evaluates to `false` at every difficulty and in both multiplayer states, while the
+  body quoted on the forum evaluates to `true` on Hard in single-player and `false` in multiplayer —
+  precisely the behaviour its author described. The description therefore matched real code that did
+  not ship. Both cases are regression-tested; see [GameScript](gamescript-format.md).
 - `extra_strong?` appears nowhere in `gs\LEVLMODS5.gs`. It occurs in exactly two GS5R3 members and in
   neither 3.02 nor baseline. Treat it as vestigial as installed.
 - The bonus block in `gs\LEVLMODS5.gs` lines 366-383 is gated on `insane_mode?`, an opt-in mode

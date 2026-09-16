@@ -98,11 +98,22 @@ plus `enumunits`, `enumarmies`, `tickalarm`, `invoke_spell`, and `addunitmodifie
 The native constants `EASY_LEVEL`, `MEDIUM_LEVEL`, and `HARD_LEVEL` are likewise never
 script-defined. GS5R3 adds a script-side `/INSANE_LEVEL 3 def`, implying native values 0, 1, 2.
 
-**A classifier refinement this pass proved necessary.** Presence as a `/literal` does not mean a name
-is script-defined: `gs\artifact\_custom\sword_enlightenment.gs:53` contains `/invoke_spell cvx`,
-deferring a *native* call. The classifier must therefore require a definition **shape** —
-`/name ... def`, `/name ... replace ... def`, or `/name value` inside `<< >>` — rather than mere
-literal presence. `removeunitmodifiers` is the same trap.
+**The classifier now requires a definition shape. Implemented 2026-09-16.** Presence as a `/literal`
+never meant a name was script-defined: `gs\artifact\_custom\sword_enlightenment.gs:53` contains
+`/invoke_spell cvx`, which defers a *native* call, and `removeunitmodifiers` is the same trap. The
+old heuristic excluded any name appearing as a literal anywhere, hiding genuine host calls.
+
+`GameScriptAnalysis::definition_names` counts only literals in a definition position:
+
+- `/name <value-or-procedure> ... def` within three tokens at the same nesting depth, covering
+  `/NAME{...}def`, `/INSANE_LEVEL 3 def`, and `/a exch def`;
+- `/name <value>` directly inside a `<< >>` dictionary literal, which is how scenario tables such as
+  `gs\scenario\default.gs` declare entries.
+
+Measured on GS5R3: 17,641 distinct literal names but only **13,609 definitions**, so 4,032 literals
+were never definitions. The native-candidate count rises from 2,091 to **2,151**. The scan reports
+`distinct-definition-names` alongside the literal count, and `LOM_CANDIDATE_LIMIT` raises the
+50-line display cap for cataloguing the full vocabulary.
 
 Recommended first VM stubs, all pure reads of game state with small return types:
 `getdifficultylevel`, `getmultiplayerflag`, `getplayeraistatus`, `getarmydata`, `getunitdata`,
@@ -112,6 +123,32 @@ deterministically against a synthetic state.
 A shipped member demonstrates that scripts can shadow native names: `START.GS:76` redefines `run`
 itself. `gs5_globals.gs` ships a 50-line constant table intended to *"supplement, add or replace EXE
 variables"*, but its `run` is **commented out** at `START.GS:34`, so it is not live behavior.
+
+## Native host stubs and unknown-name traces
+
+The host API is not implemented and is not guessed at. Two mechanisms added on 2026-09-16 let script
+logic that depends on it be executed and observed anyway:
+
+- `GameScriptVm::define_native_stub` supplies a value for a native call, exposed as
+  `--stub NAME=VALUE` (integer, `true`, or `false`). A stub stands in for a **pure read of game
+  state** under a declared input. Anything with side effects must not be stubbed this way.
+  `native_calls()` counts which stubs were reached, which is the evidence that a candidate really is
+  a host call rather than a script definition.
+- `GameScriptVmError::unknown_name` returns a structured trace — the name, the VM step, and the call
+  stack at the point of failure. It is read from the error rather than the VM because the call stack
+  unwinds as the failure propagates. The probe prints `unknown-native-name`, `unknown-at-step`, and
+  `unknown-call-stack` rows before surfacing the error.
+
+Executing the real GS5R3 difficulty idiom from `gs\MAKEARMY5.gs`, `[25 50 75]getdifficultylevel get`,
+returns 25, 50, and 75 for Easy, Medium, and Hard.
+
+**This upgrades the difficulty finding from reading to execution.** The shipped `extra_strong?` body
+from `gs\scenario\default.gs`,
+`[false false false]getdifficultylevel get getmultiplayerflag{pop false}if`, evaluates to `false` at
+every difficulty and in both multiplayer states. The body quoted on the forum,
+`true getmultiplayerflag{pop false}if`, evaluates to `true` on Hard in single-player and `false` in
+multiplayer — exactly the behaviour its author described. So the description matched real code that
+did not ship. See [difficulty and AI](difficulty-ai.md).
 
 ## Static module references
 
@@ -153,6 +190,13 @@ target/release/lom-asset-viewer \
   --probe-gamescript '/path/to/English/gs.mpq' 'gs\standard.gs' \
   --listfile '../../artifacts/reference-listfiles/lords-of-magic.txt' \
   --eval '3 5 min 3 5 max'
+
+# Native state reads may be stubbed so dependent logic can be executed and observed.
+target/release/lom-asset-viewer \
+  --probe-gamescript '/path/to/English/gs.mpq' 'gs\standard.gs' \
+  --listfile '../../artifacts/reference-listfiles/lords-of-magic.txt' \
+  --stub getdifficultylevel=2 --stub getmultiplayerflag=false \
+  --eval '[25 50 75]getdifficultylevel get'
 ```
 
 Omit `--exe` to skip binary correlation. The command is read-only and emits tab-separated summary and diagnostic lines to standard output.

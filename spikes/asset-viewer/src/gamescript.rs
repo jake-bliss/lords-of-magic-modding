@@ -54,6 +54,18 @@ pub struct GameScriptAnalysis {
     pub procedure_anomaly_count: usize,
     pub executable_names: BTreeMap<String, usize>,
     pub literal_names: BTreeMap<String, usize>,
+    /// Literal names that appear in a *definition* position, as opposed to merely
+    /// occurring as a literal somewhere.
+    ///
+    /// A literal name is not evidence that a script defines it. The corpus defers native
+    /// calls by pushing the name and converting it, as in `/invoke_spell cvx`, so treating
+    /// every literal as script-defined hides real host calls. Only these shapes count:
+    ///
+    /// - `/name <value-or-procedure> ... def` within a short window at the same nesting
+    ///   depth, which covers `/NAME{...}def`, `/INSANE_LEVEL 3 def`, and `/a exch def`;
+    /// - `/name <value>` directly inside a `<< >>` dictionary literal, which is how
+    ///   scenario tables such as `gs\scenario\default.gs` declare their entries.
+    pub definition_names: BTreeMap<String, usize>,
     pub static_run_dependencies: BTreeSet<String>,
 }
 
@@ -142,9 +154,18 @@ impl GameScriptDocument {
     pub fn analyze(&self) -> GameScriptAnalysis {
         let mut executable_names = BTreeMap::new();
         let mut literal_names = BTreeMap::new();
+        let mut definition_names = BTreeMap::new();
         let mut static_run_dependencies = BTreeSet::new();
         let mut string_count = 0;
         let mut number_count = 0;
+
+        for (index, token) in self.tokens.iter().enumerate() {
+            if let TokenKind::LiteralName(name) = &token.kind
+                && self.is_definition_site(index)
+            {
+                *definition_names.entry(name.clone()).or_default() += 1;
+            }
+        }
 
         for token in &self.tokens {
             match &token.kind {
@@ -185,8 +206,74 @@ impl GameScriptDocument {
             procedure_anomaly_count: self.procedure_anomalies.len(),
             executable_names,
             literal_names,
+            definition_names,
             static_run_dependencies,
         }
+    }
+
+    /// How many tokens after a literal name a `def` may appear and still be read as that
+    /// name's definition. Three covers the observed forms without spanning statements.
+    const DEFINITION_WINDOW: usize = 3;
+
+    /// Decide whether the literal name at `index` occupies a definition position.
+    fn is_definition_site(&self, index: usize) -> bool {
+        if self.dictionary_depth_before(index) > 0 {
+            // Inside `<< >>` a literal name is a key, and the following token is its value.
+            return matches!(
+                self.tokens.get(index + 1).map(|token| &token.kind),
+                Some(
+                    TokenKind::Number(_)
+                        | TokenKind::StringLiteral(_)
+                        | TokenKind::ExecutableName(_)
+                        | TokenKind::LiteralName(_)
+                        | TokenKind::Delimiter(
+                            Delimiter::ProcedureOpen | Delimiter::ArrayOpen
+                        )
+                )
+            );
+        }
+
+        let mut depth = 0_isize;
+        let mut seen = 0_usize;
+        for token in self.tokens.iter().skip(index + 1) {
+            match &token.kind {
+                TokenKind::Delimiter(
+                    Delimiter::ProcedureOpen | Delimiter::ArrayOpen | Delimiter::DictionaryOpen,
+                ) => depth += 1,
+                TokenKind::Delimiter(
+                    Delimiter::ProcedureClose | Delimiter::ArrayClose | Delimiter::DictionaryClose,
+                ) => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return false;
+                    }
+                }
+                TokenKind::ExecutableName(name) if depth == 0 && name.eq_ignore_ascii_case("def") => {
+                    return true;
+                }
+                _ => {}
+            }
+            // A nested group counts as one token, matching `/NAME{...}def`.
+            if depth == 0 {
+                seen += 1;
+                if seen > Self::DEFINITION_WINDOW {
+                    return false;
+                }
+            }
+        }
+        false
+    }
+
+    fn dictionary_depth_before(&self, index: usize) -> usize {
+        let mut depth = 0_usize;
+        for token in self.tokens.iter().take(index) {
+            match &token.kind {
+                TokenKind::Delimiter(Delimiter::DictionaryOpen) => depth += 1,
+                TokenKind::Delimiter(Delimiter::DictionaryClose) => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        depth
     }
 }
 
@@ -418,6 +505,42 @@ mod tests {
             "unclosed procedure delimiter {"
         );
         assert_eq!(document.procedure_anomalies[1].offset, 7);
+    }
+
+    #[test]
+    fn counts_only_definition_shaped_literals_as_definitions() {
+        // `/min { ... } def` is a definition; `/invoke_spell cvx` is a deferred native call
+        // pushed as a literal, which must NOT be treated as script-defined.
+        let source = b"/min{2 copy gt{exch}if pop}def /invoke_spell cvx tickalarm";
+        let analysis = GameScriptDocument::parse(source).unwrap().analyze();
+
+        assert_eq!(analysis.literal_names["min"], 1);
+        assert_eq!(analysis.literal_names["invoke_spell"], 1);
+        assert_eq!(analysis.definition_names["min"], 1);
+        assert!(
+            !analysis.definition_names.contains_key("invoke_spell"),
+            "a literal followed by cvx defers a native call and is not a definition"
+        );
+    }
+
+    #[test]
+    fn counts_dictionary_literal_entries_as_definitions() {
+        // Scenario tables declare entries as `/key value` inside `<< >>` with no `def`.
+        let source = b"<< /legendary_refresh? 140 /extra_strong?{false}>>";
+        let analysis = GameScriptDocument::parse(source).unwrap().analyze();
+
+        assert_eq!(analysis.definition_names["legendary_refresh?"], 1);
+        assert_eq!(analysis.definition_names["extra_strong?"], 1);
+    }
+
+    #[test]
+    fn does_not_treat_a_distant_def_as_a_definition() {
+        // `def` beyond the window belongs to a later statement, not to `/first`.
+        let source = b"/first pop pop pop pop /second 1 def";
+        let analysis = GameScriptDocument::parse(source).unwrap().analyze();
+
+        assert!(!analysis.definition_names.contains_key("first"));
+        assert_eq!(analysis.definition_names["second"], 1);
     }
 
     #[test]
