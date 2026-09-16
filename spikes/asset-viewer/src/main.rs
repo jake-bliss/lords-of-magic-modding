@@ -1923,9 +1923,12 @@ fn imp_display_rgba(palette_indices: &[u8], source: &[u8], mode: ImpDisplayMode)
         .zip(palette_indices)
         .flat_map(|(rgba, palette_index)| {
             let mut pixel: [u8; 4] = rgba.try_into().expect("RGBA chunks have four bytes");
+            // Compositing is keyed by palette INDEX, not by colour: slot 0 is the
+            // transparency key and slot 1 is the shadow silhouette. The RGB values those
+            // slots happen to hold (often green and red) are incidental art-tool choices.
             let background = *palette_index == 0;
-            let secondary_mask = *palette_index == 1;
-            if background || matches!(mode, ImpDisplayMode::Preview) && secondary_mask {
+            let shadow = *palette_index == 1;
+            if background || matches!(mode, ImpDisplayMode::Preview) && shadow {
                 pixel[3] = 0;
             }
             pixel
@@ -2154,6 +2157,7 @@ mod tests {
             cycle_count: 3,
             frame_count: 6,
             duplicate_frame_count: 0,
+            back_reference_frame_count: 0,
             hotspot_count: 0,
             hotspot_bytes: 0,
             raw_pixel_bytes: 6,

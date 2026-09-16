@@ -90,6 +90,11 @@ fn write_indexed_png<W: Write>(
     encoder.set_color(png::ColorType::Indexed);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_palette(palette_rgb);
+    // IMP palette slot 0 is the transparency key and slot 1 is the shadow silhouette.
+    // Without a tRNS chunk the exported frame is fully opaque and the key is lost, even
+    // though the interactive viewer honours it. A one-byte tRNS marks index 0 fully
+    // transparent; PNG treats every later index as opaque by default.
+    encoder.set_trns(vec![0_u8]);
     let mut png_writer = encoder
         .write_header()
         .map_err(|error| format!("could not write PNG header: {error}"))?;
@@ -121,6 +126,11 @@ mod tests {
         let info = reader.next_frame(&mut decoded).unwrap();
         assert_eq!((info.width, info.height), (3, 2));
         assert_eq!(info.color_type, png::ColorType::Indexed);
+        assert_eq!(
+            reader.info().trns.as_deref(),
+            Some([0_u8].as_slice()),
+            "indexed export must mark palette index 0 transparent"
+        );
         assert_eq!(info.bit_depth, png::BitDepth::Eight);
         assert_eq!(&decoded[..info.buffer_size()], indices);
         assert_eq!(

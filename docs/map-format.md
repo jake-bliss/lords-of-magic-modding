@@ -12,7 +12,7 @@ Every one of the 365 inspected files begins with the same little-endian prefix:
 
 | Offset | Size | Current name | Evidence |
 | ---: | ---: | --- | --- |
-| `0x00` | 4 | `metadata` | Varies by file; meaning unknown |
+| `0x00` | 4 | `metadata` | Varies by file; meaning unknown. A 2026 community claim names this a compression header holding a version number plus reserved space — see below |
 | `0x04` | 4 | `width` | Matches 32, 48, 64, 128, or 256 cell dimensions |
 | `0x08` | 4 | `height` | Matches the same bounded cell dimensions |
 | `0x0c` | 4 | `bits_per_pixel` | Always 8 in the observed corpus |
@@ -26,6 +26,13 @@ The cell record currently preserves both words without assigning engine behavior
 | `+4` | 4 | `value_bits` / `value` | Every value is a finite little-endian `f32` in `0..20`; grayscale rendering produces coherent world relief |
 
 The cells are stored X-major: `cell_index = x × height + y`. This is consistent across placed-object coordinates and the Map Editor scripts. The viewer converts this storage order to normal display rows; a regression test prevents the earlier transposed rendering.
+
+A July 2026 community report describes the first word as *"a 4-byte compression header in every
+map ... basically just a version number and reserved space"* which *"disappears"* when a map exceeds
+the original maximum size, corrupting maps and saves and producing a `TRASHBIN` display. That is an
+independent name for this field and a falsifiable prediction: oversized custom maps should lack it
+and shift every subsequent offset by four bytes. Untested here; recorded in issue #4 and in
+[community research](community-research.md).
 
 The second word is strongly inferred to be elevation or height. The shipped tile-definition comments state that `1000` represents `1.0` in the map model, but exact runtime units and interpolation remain unverified.
 

@@ -63,6 +63,14 @@ pub struct ImpSprite {
     pub cycle_count: usize,
     pub frame_count: usize,
     pub duplicate_frame_count: usize,
+    /// Frames carrying only `FRAME_FLAG_DUPLICATE` (0x08), i.e. true back-references
+    /// to an earlier frame index. Excludes `FRAME_FLAG_SHARED_PIXELS` (0x04) frames,
+    /// which `duplicate_frame_count` also counts.
+    ///
+    /// Kept separate for analysis only. Validating this against the generated header's
+    /// "Duplicate bitmaps found" statistic instead of `duplicate_frame_count` raises
+    /// corpus failures from 10 to 112, so that statistic provably counts both flags.
+    pub back_reference_frame_count: usize,
     pub hotspot_count: usize,
     pub hotspot_bytes: u64,
     pub raw_pixel_bytes: u64,
@@ -147,6 +155,7 @@ impl ImpSprite {
         let mut hotspot_count = 0_usize;
         let mut hotspot_bytes = 0_u64;
         let mut duplicate_frame_count = 0_usize;
+        let mut back_reference_frame_count = 0_usize;
         let mut raw_pixel_bytes = 0_u64;
         let mut stored_pixel_bytes = 0_u64;
         let mut sequences = Vec::with_capacity(sequence_count);
@@ -259,6 +268,13 @@ impl ImpSprite {
                         duplicate_frame_count = duplicate_frame_count
                             .checked_add(1)
                             .ok_or_else(|| ImpError::new("IMP duplicate frame count overflow"))?;
+                        if !shared_pixels {
+                            back_reference_frame_count = back_reference_frame_count
+                                .checked_add(1)
+                                .ok_or_else(|| {
+                                    ImpError::new("IMP back reference frame count overflow")
+                                })?;
+                        }
                         frames.push(ImpFrame {
                             flags: frame_flags,
                             width: 0,
@@ -372,6 +388,7 @@ impl ImpSprite {
             cycle_count,
             frame_count,
             duplicate_frame_count,
+            back_reference_frame_count,
             hotspot_count,
             hotspot_bytes,
             raw_pixel_bytes,

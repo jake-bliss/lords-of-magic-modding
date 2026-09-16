@@ -68,9 +68,28 @@ A 2023 package replaces the clipped, noisy 8-bit WAV music with compatible 16-bi
 
 A 2024 community project built on 3.02. It focuses on artifact and spell-sound errors, modest unit/artifact/spell adjustments, and more varied dungeon encounters. This is a possible third gameplay profile, not something to stack blindly onto GS5R3.
 
-### GSZero+ / GS5R3+
+### GSZ / GS Zero, and GSZero+
 
-A later GS5-derived variant that changes AI lord classes and further increases difficulty. It is less established than the original GS5R3 and should be treated as a separate profile.
+Mantera's own site presents `GS5` and `GSZ` as **two sibling mods, not a version chain**: its `/mods/`
+index is literally `| GS5 | GSZ |`, the GS5 page self-titles "GS v5.3" (the GS5R3 we run), and the
+GSZ page states its data is *"relative only to the unmodded Special Edition and GSZ mod"* while a GSZ
+changelog entry justifies removing a mechanic as *"more exclusive to the GS5 ... not the GSZ which
+tries to stay closest to the original style of the game"*. So GSZ is a deliberately conservative
+parallel line, and **nothing establishes that it supersedes GS5R3**. Its script members carry a `0`
+suffix (`autocalc0.gs`, `combat0.gs`, `speltool0.gs`) against GS5R3's `5`.
+
+The ModDB "GSZero+" listing is a further third-party variant that changes AI lord classes and
+increases difficulty. Treat it as separate from both, and as a separate profile.
+
+## Writing to archives
+
+Not yet attempted here, but recorded before the first attempt. Community practice holds that `.gs`
+members must be repacked with a Diablo-1-style ruleset — Implode plus Encrypt `0x00010100`,
+compression `IMPLODE` — or the game reports `gs.mpq file is corrupt`. Ladik's MPQ Editor is reported
+to corrupt unit and champion portraits when used to repack an existing archive, and to inflate member
+sizes; WinMPQ is the community's editor of choice for existing archives, with Ladik's reserved for
+creating new ones. Verify independently before trusting any of this. See
+[community research](community-research.md).
 
 ## Save policy
 

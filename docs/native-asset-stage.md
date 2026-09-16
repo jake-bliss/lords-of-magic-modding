@@ -87,15 +87,34 @@ All stored-pixel byte totals now agree with the generated headers. The remaining
 | Generated logical-frame count | 1 |
 | Missing expected `.imp`/`.h` counterpart | 4 |
 
-The native viewer displays individual frames, follows duplicate/repeated references, navigates within a cycle or between cycles and actions, and can autoplay the current cycle at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, green index 0 fills the background while a distinct pure-red index forms a 1,651-pixel silhouette beneath the creature; an inspected 1-bit aura asset similarly uses green and red as its only two colors. This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes. Exact mask meaning, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves all source palette indices and colors unchanged.
+One hypothesis for the five duplicate-frame disagreements has been **tested and refuted**. Because the
+community specification defines only frame types `0x00` and `0x08`, while we additionally fold our
+`0x04` shared-pixel frames into the same counter, it looked plausible that the generated header's
+"Duplicate bitmaps found" statistic counts only true `0x08` back-references. Validating against a
+`0x08`-only count raises corpus failures from 10 to **112**. That statistic therefore counts both
+flags and our existing conflation is correct. `ImpSprite::back_reference_frame_count` retains the
+separate `0x08` tally for analysis. The five disagreements have another cause; the repeated-cycle
+heuristic remains the leading suspect for the logical-frame and raw-pixel cases.
 
-The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synthetic decode-back test verifies exact palette bytes and palette-index pixels, and a real GS5R3 export was independently identified as a 165×127 indexed PNG. Export uses create-new semantics so it cannot silently replace an existing file. This is a lossless inspection format, not yet a game-compatible IMP reimport or archive-writing pipeline.
+The native viewer displays individual frames, follows duplicate/repeated references, navigates within a cycle or between cycles and actions, and can autoplay the current cycle at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, green index 0 fills the background while a distinct pure-red index forms a 1,651-pixel silhouette beneath the creature; an inspected 1-bit aura asset similarly uses green and red as its only two colors. This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes.
+
+A community specification located on 2026-09-16 states the rule directly: **palette index 0 is
+transparency and palette index 1 is the shadow**, keyed by index rather than by colour. Our own
+observation of a pure-red silhouette *beneath* a creature independently corroborates "shadow". The
+green and red RGB values in those slots are incidental art-tool choices, which is why colour-keying
+never generalised. `secondary_mask` is renamed `shadow` in the viewer accordingly. The same source
+names our "cycle" a **facing**, ordered clockwise; the clockwise claim is untested, but the naming is
+better than ours and the code rename is deferred as a separate mechanical change. See
+[community research](community-research.md). Exact mask meaning, origins, hotspot meaning, and animation timing still need comparison against the original executable; the decoder preserves all source palette indices and colors unchanged.
+
+The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synthetic decode-back test verifies exact palette bytes and palette-index pixels, and a real GS5R3 export was independently identified as a 165×127 indexed PNG. Exports now carry a `tRNS` chunk marking palette index 0 transparent; before 2026-09-16 every exported frame was fully opaque, silently losing the transparency key that the interactive viewer already honoured. Export uses create-new semantics so it cannot silently replace an existing file. This is a lossless inspection format, not yet a game-compatible IMP reimport or archive-writing pipeline.
 
 ## Evidence and confidence
 
 - **Observed:** all 9,804 core members are readable and classified; all 1,377 PBMs and 1,800 IMP binaries pass their bounded decoders; every IMP exposes bounded sequence/cycle/frame ranges; representative 8-bit IMP frames are visually recognizable; red and green occupy distinct palette indices/masks in inspected sprites.
-- **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, palette index 0 is the background channel, palette index 1 is a secondary engine mask, and common five-cycle action groups represent directions. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
-- **Unknown:** how red masks are blended or recolored, how origins and hotspots affect placement, what the sequence/cycle metadata fields mean, how timing is selected, and whether exceptional metadata cases use additional sharing rules.
+- **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, palette index 0 is the background channel, and common five-cycle action groups represent directions. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
+- **Documented:** a community specification agrees with our header offsets, record sizes, and RLE algorithm exactly, including the `control + 3` bias; it names palette index 1 the shadow and our cycles facings. Its guesses at a per-frame delay byte and a checksum dword are refuted by our hotspot decoding, which matches generated-header ground truth for all 1,798 pairs.
+- **Unknown:** how the shadow index is blended or recolored, how origins and hotspots affect placement, what the sequence/cycle metadata fields mean, and whether exceptional metadata cases use additional sharing rules. Animation timing appears to be carried solely by duplicate-frame repetition, since no delay field survives scrutiny on either side.
 
 ## Map/scenario findings
 

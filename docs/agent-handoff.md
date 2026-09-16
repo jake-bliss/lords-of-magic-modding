@@ -1,8 +1,10 @@
-# Agent handoff — 2026-09-15
+# Agent handoff — 2026-09-16
 
 ## Outcome and next move
 
-This is a working macOS setup plus a native Rust asset/MPQ viewer and an experimental GameScript interpreter, **not** a native playable replacement. The best next bounded implementation task is [issue #5](https://github.com/jake-bliss/lords-of-magic-modding/issues/5): extend the VM just far enough to load one more engine-light module and classify unknown host calls. Do not jump straight to a full engine rewrite. The user's immediate question about difficulty is answered in [Difficulty and AI](difficulty-ai.md): vanilla has difficulty-gated strategic behavior, while GS5R3 adds tactical difficulty checks.
+This is a working macOS setup plus a native Rust asset/MPQ viewer and an experimental GameScript interpreter, **not** a native playable replacement. The best next bounded implementation task is [issue #5](https://github.com/jake-bliss/lords-of-magic-modding/issues/5): extend the VM just far enough to load one more engine-light module and classify unknown host calls. Do not jump straight to a full engine rewrite. The user's immediate question about difficulty is answered in [Difficulty and AI](difficulty-ai.md): vanilla has difficulty-gated strategic behavior, while GS5R3 adds tactical difficulty checks and difficulty-scaled AI stat bonuses.
+
+A community research survey was completed on 2026-09-16 — see [community research](community-research.md). The surviving modding community is **live**, has a 2011 IMP specification that matches our decoder, and has a 2026 toolchain covering much of our Stage 1 scope. Read that document before trusting any community claim: two headline claims by the mod's own author about his own code were refuted by our corpus.
 
 ## Repository and local setup
 
@@ -33,21 +35,29 @@ cargo clippy --all-targets -- -D warnings
 cargo build --release
 ```
 
-As of 2026-09-15, `cargo test` passed **40 library and 4 CLI/viewer tests** in a fresh worktree. The full proprietary corpus was last scanned on 2026-09-12; rerun that scan on the user's installed GS5R3 archives before claiming a new corpus validation. The exact read-only inventory and viewer commands are in the [tool README](../spikes/asset-viewer/README.md). Current `build.rs` assumes Homebrew StormLib/SDL3 under `/opt/homebrew/opt`; portable discovery is still open.
+As of 2026-09-16, `cargo test` passes **40 library and 4 CLI/viewer tests** and `cargo clippy --all-targets -- -D warnings` is clean. `--validate-imp` on the GS5R3 `imp.mpq` reports 1,798 pairs, 1,788 validated, 10 failures, 4 orphans — unchanged, and the 10 are the known bounded mismatches. The full proprietary corpus was last scanned on 2026-09-12; rerun that scan on the user's installed GS5R3 archives before claiming a new corpus validation. The exact read-only inventory and viewer commands are in the [tool README](../spikes/asset-viewer/README.md). Current `build.rs` assumes Homebrew StormLib/SDL3 under `/opt/homebrew/opt`; portable discovery is still open.
 
 ## Open work and safe order
 
 1. [#5 GameScript VM](https://github.com/jake-bliss/lords-of-magic-modding/issues/5): next bounded, engine-light module load and host-call classification; stop with structured traces for unknown names.
 2. [#4 Map variants](https://github.com/jake-bliss/lords-of-magic-modding/issues/4): 52-/53-byte tails, object-field semantics, and controlled Map Editor save diff. The save diff is parked because Wine-window automation was blocked by macOS accessibility controls; ask the user for a manual export if needed.
 3. [#1 IMP presentation](https://github.com/jake-bliss/lords-of-magic-modding/issues/1), [#2 timing/direction](https://github.com/jake-bliss/lords-of-magic-modding/issues/2), and [#3 validation exceptions](https://github.com/jake-bliss/lords-of-magic-modding/issues/3): original-game comparison and lossless decoder exceptions.
-4. [#6 Difficulty/AI gameplay proof](https://github.com/jake-bliss/lords-of-magic-modding/issues/6): static finding is documented, but controlled gameplay proof and the full GS5R3 call-path audit remain open.
+4. [#6 Difficulty/AI gameplay proof](https://github.com/jake-bliss/lords-of-magic-modding/issues/6): the static finding is now stronger — GS5R3's AI stat-bonus path is located and a competing community claim refuted — but controlled gameplay proof remains open.
+
+Newly available leads, all from the 2026-09-16 survey:
+
+- Issue #4 gains a falsifiable hypothesis: the unknown 4-byte map field at offset `0x00` is described by a community tool author as a compression header that **disappears** on oversized maps, corrupting maps and saves. Oversized custom maps should therefore shift every later offset by four bytes.
+- Issue #5 gains roughly 30 confirmed native host names, six recommended first stubs, and a required classifier correction: match definition **shape**, not mere `/literal` presence.
+- Issues #1 and #2 gain palette index semantics (0 transparency, 1 shadow) and the facing/clockwise naming. A `0x08`-only duplicate-count hypothesis for issue #3 was tested and **refuted** (10 failures becomes 112).
 
 For any new task, document the evidence class: **observed in a local binary/script**, **observed in gameplay**, **community claim**, or **inference**. Keep 3.02's focused bug fix distinct from GS5R3's broad replacement scripts. Run proportionate Rust tests and read-only corpus checks, then update the relevant documentation and GitHub issue. The user has previously asked to keep work pushed and merged to `main`; check current authorization and remote state before publishing a new branch.
 
 ## Practical pitfalls
 
 - Archive path names are case-insensitive Windows names; some original members are anonymous until the public/internal listfiles are loaded.
-- The IMP viewer's green/red raw channels are not a single universal chroma key. Clean preview, mask, and raw modes expose different evidence; exact compositing is unresolved.
+- IMP compositing is keyed by palette **index**, not colour: slot 0 is transparency and slot 1 is the shadow. The green and red RGB values in those slots are incidental. Clean preview, mask, and raw modes still expose different evidence, and blending behavior is unresolved.
+- Community material is a source of hypotheses, never specification. Check it against the corpus before writing it down; the survey refuted two author-originated claims.
+- Mantera's site is **HTTP-only with no TLS listener**, so any fetcher that force-upgrades to HTTPS fails with `ECONNREFUSED`. The forum rate-limits automated requests with a proof-of-work challenge; read it politely and do not attempt to defeat it.
 - Generated `.h` IMP metadata is strong ground truth but not perfect: ten paired disagreements and four public-catalog orphans remain explicit failures.
 - The GameScript VM is deliberately bounded. A successful utility module does not imply a tractable full host/simulation API.
 - Keep the working baseline and its saves untouched. Use independent mod profiles for gameplay tests.

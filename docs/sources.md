@@ -29,6 +29,21 @@
 - [LoMSE Update Mod](https://www.moddb.com/mods/lords-of-magic-special-edition-update-mod)
 - [High-quality music fix](https://www.moddb.com/games/lords-of-magic-special-edition/addons/lords-of-magic-high-quality-music-fix)
 
+## Community modding archive
+
+- [Mantera's LOMSE site](http://mantera.xorgate.com/website.html) (HTTP only; no TLS listener)
+- [GS5 per-revision changelog](http://mantera.xorgate.com/mods/GS5/history.html)
+- [LOMSE Modding board](https://impz.proboards.com/board/18)
+- [snv's IMP sprite format and RLE algorithm](https://impz.proboards.com/thread/2012/imp-sprites-rle-algorithm)
+- [Auto-calc combat resolution explained](https://impz.proboards.com/thread/2243/auto-calc-explained-numbers)
+- [GS5R3 updates and reports](https://impz.proboards.com/thread/1682/gs5r3-updates-reports)
+- [GSZ updates and reports](https://impz.proboards.com/thread/1948/gsz-updates-reports)
+- [MPQ repack ruleset for `.gs` members](https://impz.proboards.com/thread/2102/error-when-mpq-edditing)
+- [2026 Lords of Magic SE Utility Suite](https://impz.proboards.com/thread/2590/lords-magic-utility-suite-open)
+
+See [community research](community-research.md) for the verdict on each claim. Two of the
+highest-profile claims, both by the mod's own author about his own code, are refuted by our corpus.
+
 ## Modding tools and guides
 
 - [Steam Guide to Simple Modding](https://steamcommunity.com/sharedfiles/filedetails/?id=2839540731)
@@ -53,6 +68,6 @@
 - The `cnc-ddraw` repository is the authoritative source for its configuration and capabilities.
 - Patch/mod behavior is primarily documented by the authors' included readmes and surviving community posts.
 - The public Lords of Magic listfile is used only to resolve archive member names; the reproducibility script pins both its bundle and extracted-file SHA-256 hashes.
-- Proprietary IMP format findings come from bounded comparison of user-owned binaries with their generated C headers and visible output. No public IMP specification has been identified, so compositing interpretations remain labeled as inference.
+- Proprietary IMP format findings come from bounded comparison of user-owned binaries with their generated C headers and visible output. A community IMP specification was located on 2026-09-16 and agrees with our header offsets and RLE algorithm exactly; where it guesses, our bytes override it. See [community research](community-research.md).
 - Community claims should be verified against extracted data or controlled in-game tests before becoming implementation assumptions.
 - SierraVault's GameScript history is secondary context, not a language specification or a substitute for local corpus and runtime evidence.
