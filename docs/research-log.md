@@ -624,3 +624,69 @@ Use these labels when recording findings:
 - **Documented:** stated in original or community documentation.
 - **Inferred:** strongly suggested by evidence but not yet directly proven.
 - **Unknown:** an open question requiring research or experiment.
+
+## 2026-09-16 — `map2screen` decoded statically: a real 3D projection, and it already includes scroll
+
+**Evidence class: observed in a local binary.** Disassembled `0x0046B0C0` (the `map2screen` native)
+and the transform it calls at `0x00469AE0` in GS5R3 `lomse.exe`. No game launch was needed.
+
+The recovered arity of 3 operands and 3 results is correct — but that was the least interesting part.
+
+### Operands
+
+Three pops, each coerced through the usual `0x004026A0` helper, so each operand may be written as an
+int, an 8.8 fixed, or a float. The coercion's *float* output is the one used. Operands map to the
+transform input vector in **written order**:
+
+```
+x y z map2screen
+```
+
+`x` becomes `in[0]`, `y` `in[1]`, `z` `in[2]`. A stack-empty pop raises error 6 and a non-numeric
+operand raises error `0x0E`, both as elsewhere.
+
+### Results
+
+Three floats (tag 4) are pushed, and they are pushed **innermost-first**, so the stack reads
+bottom-to-top as `out[2] out[1] out[0]`. That is, **screen X is on top** — the first thing a
+following `exch`/`def` sees.
+
+| Result | Meaning |
+| --- | --- |
+| `out[0]` (top of stack) | screen X, pixels, scroll included |
+| `out[1]` | screen Y, pixels, scroll included |
+| `out[2]` (deepest) | screen Y of the same `(x, y)` at **`z = 0`**, i.e. the ground point directly below — **scroll not applied** |
+
+### The transform
+
+`0x00469AE0` is a thiscall on the global camera object at `0x005876D0`. It builds the homogeneous
+vector `{x, y, z, 1.0}` and runs it through two 4x4 matrix multiplies (`0x004A47C0`) using the
+matrices at camera `+0x164` and camera `+0x64`, then maps to the viewport with the literals at
+`0x0054D7D4`, `0x0054D7D8` and `0x0054D7DC`:
+
+```
+screen_x = ndc_x * 320.0 + 320.0        ; 54D7D4 = 320.0, 54D7D8 = -320.0
+screen_y = 192.0 - ndc_y * 192.0        ; 54D7DC = 192.0
+```
+
+Then, back in `0x00469AE0`, the integer camera scroll at `+0x1A4` and `+0x1A8` is added to
+`screen_x` and `screen_y` respectively.
+
+Four consequences, all of which matter for [issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1):
+
+1. **The map view is 640x384**, centred at `(320, 192)` — 480 minus 96 rows of interface chrome.
+   The half-extents are baked in as literals, not read from a mode structure.
+2. **World `+y` is up; screen `+y` is down.** The `fsubr` inverts it. Any hotspot sign conclusion has
+   to state which space it is in, and the two differ in sign on the y axis.
+3. **`map2screen` output is directly comparable to a screen capture.** Scroll is already folded in,
+   so `observed_top_left - map2screen(cell)` needs no separate camera bookkeeping. This removes the
+   largest remaining source of error in the planned hotspot measurement.
+4. **`out[2]` is a free ground-level baseline.** The engine re-projects the same point with `z`
+   forced to zero, which is exactly the quantity a shadow or a terrain footprint needs. Remember it
+   does **not** have the scroll offset added, unlike `out[0]` and `out[1]`.
+
+### Method note
+
+This is the second operator whose real signature came out of the disassembly rather than the arity
+walk, after `drawimpframe`. The walk is useful for finding candidates; it is not evidence about an
+operator's contract. Read the entry point before designing an experiment around an operator.
