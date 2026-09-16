@@ -270,6 +270,29 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
   definition" from "the definition is in a module this run has not loaded". During single-module runs
   the second is far more common, so the class must not be read as evidence of engine surface.
 
+## 2026-09-16 — Operator arity recovered by disassembly
+
+- **Observed:** the interpreter context carries the operand array at `+0x50`, a stack index at
+  `+0x54` that counts **down** as values are pushed, and a limit at `+0x58`. A pop increments the
+  index and stores it back; a push decrements it and stores it back. Entries are eight-byte
+  `(tag, value)` pairs.
+- **Observed:** `0x0041d1d0` is the shared push-one-operand helper, taking `(tag, value)` with the
+  context in `ecx`. Most operators push their result through it rather than inline.
+- **Implemented:** `--scan-natives` walks each operator from its entry point with `iced-x86` and
+  reports `pops`, `pushes` and a confidence column. 1,875 of 1,908 walks are well formed, 28 contain
+  an unexplained store, 3 hit the instruction budget.
+- **Observed:** measured against 24 operators whose arity follows from PostScript semantics,
+  **23 agree**.
+- **Corrected, three times, each by a known answer disagreeing:** the adjustment is not adjacent to
+  the commit (the shipped `pop` interleaves an error-slot store); the compiler also spells the
+  adjustment `lea ecx,[eax+1]`, which made the comparison operators look one-operand; and results
+  are usually pushed by a helper, which made `add` and `sub` look like they pushed nothing. Each fix
+  is structural rather than special-cased.
+- **Unknown:** `mul` is reported as pushing twice. It has two push sites on mutually exclusive type
+  paths — the helper at `0x004cae73` and an inline commit at `0x004cae98` — each pushing one result.
+  The counts are therefore **site counts**, equal to arity only when every commit lies on one path,
+  and a sound upper bound otherwise.
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:

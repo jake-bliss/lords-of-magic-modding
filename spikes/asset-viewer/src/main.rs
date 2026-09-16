@@ -16,6 +16,7 @@ use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::map::MapAsset;
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
+use lom_asset_viewer::operator_arity;
 use lom_asset_viewer::pbm::PbmImage;
 use lom_asset_viewer::png_export::{write_imp_frame_png, write_rgba_png};
 use lom_asset_viewer::tile::TileSetDefinition;
@@ -2179,10 +2180,48 @@ fn scan_native_table(executable: &Path, source: Option<&Source>) -> Result<(), S
     println!("distinct-operators\t{}", natives.len());
 
     let Some(source) = source else {
+        let pe = native_table::PeImage::parse(&image)
+            .map_err(|error| format!("could not read the executable: {error}"))?;
+        let mut exact = 0_usize;
+        let mut walked = 0_usize;
+        let mut rows = Vec::new();
         for run in &runs {
             for entry in &run.entries {
-                println!("operator\t{}\t{:#010x}", entry.name, entry.entry_point);
+                match operator_arity::stack_effect(&pe, entry.entry_point) {
+                    Ok(effect) => {
+                        walked += 1;
+                        if effect.is_well_formed() {
+                            exact += 1;
+                        }
+                        rows.push(format!(
+                            "operator\t{}\t{:#010x}\t{}\t{}\t{}",
+                            entry.name,
+                            entry.entry_point,
+                            effect.pops,
+                            effect.pushes,
+                            if effect.is_well_formed() {
+                                "well-formed"
+                            } else if effect.truncated {
+                                "truncated"
+                            } else {
+                                "unclassified-store"
+                            }
+                        ));
+                    }
+                    Err(error) => {
+                        rows.push(format!(
+                            "operator\t{}\t{:#010x}\t-\t-\t{error}",
+                            entry.name, entry.entry_point
+                        ));
+                    }
+                }
             }
+        }
+        println!("operators-walked\t{walked}");
+        println!("operators-with-well-formed-walk\t{exact}");
+        println!("operator-columns\tname\tentry-point\tpops\tpushes\tconfidence");
+        for row in rows {
+            println!("{row}");
         }
         return Ok(());
     };

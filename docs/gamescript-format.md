@@ -168,6 +168,51 @@ The 35-name remainder is the heuristic's actual error bar. Nineteen are `Type_*`
 classifier does not recognise as definitions. That is a **precision limit of the classifier**, not
 evidence of engine surface, and it is the tightest bound we have on it: roughly 0.7% of candidates.
 
+### Operator arity, recovered from the code
+
+Every operator reaches the operand stack through one inlined idiom. The interpreter context arrives
+as the first argument and three of its fields matter:
+
+| Offset | Meaning |
+| --- | --- |
+| `+0x50` | base of the operand array, entries being an eight-byte `(tag, value)` pair |
+| `+0x54` | current index, which counts **down** as values are pushed |
+| `+0x58` | the limit index, compared against `+0x54` to detect underflow |
+
+A pop increments the index and stores it back; a push decrements it and stores it back. Counting
+those commits from each entry point recovers stack effect, and `--scan-natives` reports it per
+operator as `pops`, `pushes` and a confidence column.
+
+Three complications had to be handled, each found by a prediction disagreeing with a known answer:
+
+- **The adjustment is not adjacent to the commit.** The shipped `pop` writes an error slot between
+  `inc eax` and the store, so pattern-matching on adjacent instructions misses it. The register is
+  tracked through the block instead — loaded from the field, adjusted, stored back — and any other
+  write to it abandons the tracking.
+- **The compiler also spells the adjustment `lea ecx,[eax+1]`.** The comparison operators use that
+  form. Recognising only `inc`/`dec` reported `gt`, `ge`, `lt`, `le` and `div` as one-operand.
+- **Results are usually pushed by a shared helper**, `0x0041d1d0`, which takes `(tag, value)` and
+  pushes once. A body-only walk reported `add` and `sub` as pushing nothing. Calls are followed one
+  level, and each distinct callee contributes once however many sites reach it.
+
+#### Measured accuracy
+
+Checked against 24 operators whose arity follows from PostScript semantics, plus
+`getdifficultylevel`, which we had already established independently:
+
+**23 of 24 agree.** The single disagreement is `mul`, reported as pushing twice.
+
+That disagreement is the method's real limitation, and it is worth stating precisely rather than
+rounding away. `mul` has two push sites on mutually exclusive type paths — the shared helper at
+`0x004cae73` for one operand type and an inline commit at `0x004cae98` for the other. Each path
+pushes one result; a static count sees both. **So the numbers are site counts, and they equal arity
+only when every commit lies on one path.** They are a sound upper bound otherwise.
+
+Across all 1,908 records: 1,875 walks are well formed, 28 contain a store the idiom did not explain,
+and 3 hit the instruction budget. The confidence column carries that distinction, and it earns its
+place — before the `lea` form was recognised, five of the six wrong predictions were already flagged
+`unclassified-store`.
+
 ### Unused engine surface
 
 **465 operators are never called by any GS5R3 script.** Examples: `addfollower`, `addbuilding`,
@@ -279,7 +324,8 @@ target/release/lom-asset-viewer \
   --exe '/path/to/English/lomse.exe'
 
 # Recover the engine's operator tables. With an archive, the candidate vocabulary is reconciled
-# against them; without one, every operator is listed with its entry point.
+# against them; without one, every operator is listed with its entry point, recovered arity and a
+# confidence column.
 target/release/lom-asset-viewer --scan-natives '/path/to/English/lomse.exe'
 
 target/release/lom-asset-viewer \

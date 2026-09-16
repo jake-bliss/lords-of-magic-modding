@@ -41,7 +41,7 @@ pub struct NativeTableRun {
 pub struct NativeTableError(String);
 
 impl NativeTableError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self(message.into())
     }
 }
@@ -62,15 +62,16 @@ struct Section {
     executable: bool,
 }
 
+/// A parsed 32-bit PE image: enough of the headers to translate addresses and classify sections.
 #[derive(Debug, Clone)]
-struct Image<'a> {
+pub struct PeImage<'a> {
     bytes: &'a [u8],
     image_base: u32,
     sections: Vec<Section>,
 }
 
-impl<'a> Image<'a> {
-    fn parse(bytes: &'a [u8]) -> Result<Self, NativeTableError> {
+impl<'a> PeImage<'a> {
+    pub fn parse(bytes: &'a [u8]) -> Result<Self, NativeTableError> {
         let pe_offset = read_u32(bytes, 0x3c)
             .ok_or_else(|| NativeTableError::new("executable is too short for a DOS header"))?
             as usize;
@@ -126,7 +127,7 @@ impl<'a> Image<'a> {
     }
 
     /// Translate a virtual address to a file offset, if it falls inside raw section data.
-    fn file_offset(&self, address: u32) -> Option<usize> {
+    pub fn file_offset(&self, address: u32) -> Option<usize> {
         for section in &self.sections {
             let start = self.image_base.checked_add(section.virtual_address)?;
             let end = start.checked_add(section.raw_size)?;
@@ -137,7 +138,7 @@ impl<'a> Image<'a> {
         None
     }
 
-    fn is_code_address(&self, address: u32) -> bool {
+    pub fn is_code_address(&self, address: u32) -> bool {
         self.sections.iter().any(|section| {
             if !section.executable {
                 return false;
@@ -150,6 +151,11 @@ impl<'a> Image<'a> {
             };
             (start..end).contains(&address)
         })
+    }
+
+    /// The raw image bytes.
+    pub fn bytes(&self) -> &'a [u8] {
+        self.bytes
     }
 
     /// Read a NUL-terminated operator name at a virtual address.
@@ -188,7 +194,7 @@ fn is_operator_name(name: &str) -> bool {
 
 /// Recover every run of operator records in a PE image, in file order.
 pub fn extract(image_bytes: &[u8]) -> Result<Vec<NativeTableRun>, NativeTableError> {
-    let image = Image::parse(image_bytes)?;
+    let image = PeImage::parse(image_bytes)?;
 
     let mut runs: Vec<NativeTableRun> = Vec::new();
     let mut current: Vec<NativeEntry> = Vec::new();
