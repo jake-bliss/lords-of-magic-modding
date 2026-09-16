@@ -62,6 +62,22 @@ pub struct GameScriptVmError {
     pub call_stack: Vec<String>,
 }
 
+impl GameScriptVmError {
+    /// The structured trace for an unknown-name failure, for host-call classification.
+    ///
+    /// Read from the error rather than the VM: the call stack unwinds as the failure
+    /// propagates, so only the error still holds the frames at the point of failure.
+    pub fn unknown_name(&self) -> Option<UnknownNameTrace> {
+        self.message
+            .strip_prefix("unknown executable name ")
+            .map(|name| UnknownNameTrace {
+                name: name.to_owned(),
+                steps: self.step,
+                call_stack: self.call_stack.clone(),
+            })
+    }
+}
+
 impl fmt::Display for GameScriptVmError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{} at VM step {}", self.message, self.step)?;
@@ -81,6 +97,19 @@ pub struct GameScriptVm {
     call_stack: Vec<String>,
     steps: usize,
     maximum_steps: usize,
+    native_stubs: BTreeMap<String, Value>,
+    native_calls: BTreeMap<String, usize>,
+}
+
+/// One observation of an executable name the VM could not resolve.
+///
+/// Unknown names stop execution rather than being guessed. This record is what makes the
+/// failure inspectable: which name, how deep in the call stack, and after how many steps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownNameTrace {
+    pub name: String,
+    pub steps: usize,
+    pub call_stack: Vec<String>,
 }
 
 impl GameScriptVm {
@@ -91,7 +120,25 @@ impl GameScriptVm {
             call_stack: Vec::new(),
             steps: 0,
             maximum_steps,
+            native_stubs: BTreeMap::new(),
+            native_calls: BTreeMap::new(),
         }
+    }
+
+    /// Supply a value for a native host call the engine would otherwise provide.
+    ///
+    /// The host API is not implemented and is not being guessed at. A stub stands in for a
+    /// *pure read of game state* so that script logic depending on it can be executed and
+    /// observed under a known, declared input. Anything with side effects must not be
+    /// stubbed this way.
+    pub fn define_native_stub(&mut self, name: impl Into<String>, value: Value) {
+        self.native_stubs.insert(name.into(), value);
+    }
+
+    /// Names satisfied from the stub table, with call counts. This is the evidence for
+    /// classifying a candidate as a native host call rather than a script definition.
+    pub fn native_calls(&self) -> &BTreeMap<String, usize> {
+        &self.native_calls
     }
 
     pub fn execute_document(
@@ -147,6 +194,11 @@ impl GameScriptVm {
             return self.execute_resolved(name, value);
         }
         if self.execute_builtin(name)? {
+            return Ok(());
+        }
+        if let Some(value) = self.native_stubs.get(name).cloned() {
+            *self.native_calls.entry(name.to_owned()).or_default() += 1;
+            self.operand_stack.push(value);
             return Ok(());
         }
         Err(self.error(format!("unknown executable name {name}")))
@@ -655,6 +707,54 @@ mod tests {
     fn procedure_metadata_does_not_replace_executable_body_tokens() {
         let vm = run(b"/utility { 1 } dup 0 5 dict put bind def utility").unwrap();
         assert_eq!(vm.operand_stack(), &[Value::Number(1.0)]);
+    }
+
+    #[test]
+    fn native_stubs_supply_state_reads_and_are_counted() {
+        // The real GS5R3 difficulty idiom, from gs\MAKEARMY5.gs: index a three-element
+        // table by the native difficulty level.
+        for (level, expected) in [(0.0, 25.0), (1.0, 50.0), (2.0, 75.0)] {
+            let document =
+                GameScriptDocument::parse(b"[25 50 75]getdifficultylevel get").unwrap();
+            let mut vm = GameScriptVm::new(10_000);
+            vm.define_native_stub("getdifficultylevel", Value::Number(level));
+            vm.execute_document(&document).unwrap();
+
+            assert_eq!(vm.operand_stack(), &[Value::Number(expected)]);
+            assert_eq!(vm.native_calls()["getdifficultylevel"], 1);
+        }
+    }
+
+    #[test]
+    fn the_shipped_extra_strong_body_is_false_on_every_difficulty() {
+        // gs\scenario\default.gs lines 147-152 as installed. The mod author described this
+        // control as enabling AI stat bonuses on Hard; executing it shows it never does.
+        let body = b"[false false false]getdifficultylevel get getmultiplayerflag{pop false}if";
+        for level in [0.0, 1.0, 2.0] {
+            let document = GameScriptDocument::parse(body).unwrap();
+            let mut vm = GameScriptVm::new(10_000);
+            vm.define_native_stub("getdifficultylevel", Value::Number(level));
+            vm.define_native_stub("getmultiplayerflag", Value::Boolean(false));
+            vm.execute_document(&document).unwrap();
+
+            assert_eq!(
+                vm.operand_stack(),
+                &[Value::Boolean(false)],
+                "shipped extra_strong? must be false at difficulty {level}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_name_yields_an_inspectable_trace() {
+        let document = GameScriptDocument::parse(b"/probe{1 2 getarmydata}def probe").unwrap();
+        let mut vm = GameScriptVm::new(10_000);
+        let error = vm.execute_document(&document).unwrap_err();
+        let trace = error.unknown_name().expect("a trace for an unknown name");
+
+        assert_eq!(trace.name, "getarmydata");
+        assert_eq!(trace.call_stack, vec!["probe".to_owned()]);
+        assert!(trace.steps > 0);
     }
 
     #[test]

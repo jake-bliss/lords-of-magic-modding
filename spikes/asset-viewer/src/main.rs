@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 
 use lom_asset_viewer::asset::{AssetKind, probe};
 use lom_asset_viewer::gamescript::GameScriptDocument;
-use lom_asset_viewer::gamescript_vm::GameScriptVm;
+use lom_asset_viewer::gamescript_vm::{
+    GameScriptVm, GameScriptVmError, Value as GameScriptValue,
+};
 use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::map::MapAsset;
 use lom_asset_viewer::mpq::{Archive, Entry};
@@ -65,6 +67,7 @@ enum Command {
         source: Source,
         member: String,
         expression: Option<String>,
+        stubs: Vec<(String, GameScriptValue)>,
     },
     ScanMapDirectory(PathBuf),
     ValidateImp(Source),
@@ -192,7 +195,8 @@ fn run() -> Result<(), String> {
             source,
             member,
             expression,
-        } => probe_gamescript_member(&source, &member, expression.as_deref()),
+            stubs,
+        } => probe_gamescript_member(&source, &member, expression.as_deref(), &stubs),
         Command::ScanMapDirectory(path) => scan_map_directory(&path),
         Command::ValidateImp(source) => validate_imp_archive(&source),
         Command::ViewImp {
@@ -210,6 +214,10 @@ fn parse_args() -> Result<Command, String> {
     let listfile = take_option(&mut args, "--listfile")?.map(PathBuf::from);
     let executable = take_option(&mut args, "--exe")?.map(PathBuf::from);
     let expression = take_option(&mut args, "--eval")?;
+    let stubs = take_repeated_option(&mut args, "--stub")
+        .iter()
+        .map(|specification| parse_native_stub(specification))
+        .collect::<Result<Vec<_>, String>>()?;
     let first = args.first().ok_or_else(usage)?.as_str();
     match first {
         "--catalog" => {
@@ -287,6 +295,7 @@ fn parse_args() -> Result<Command, String> {
                 source: source(&args[1], listfile),
                 member: args[2].clone(),
                 expression,
+                stubs,
             })
         }
         "--scan-map-dir" => {
@@ -348,6 +357,39 @@ fn source(archive: &str, listfile: Option<PathBuf>) -> Source {
     }
 }
 
+/// Collect every occurrence of a repeatable option, in command-line order.
+fn take_repeated_option(args: &mut Vec<String>, option: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    while let Some(position) = args.iter().position(|argument| argument == option) {
+        if position + 1 >= args.len() {
+            args.remove(position);
+            break;
+        }
+        values.push(args.remove(position + 1));
+        args.remove(position);
+    }
+    values
+}
+
+/// Parse a `NAME=VALUE` native stub. Values are integers, `true`, or `false` — the return
+/// shapes of the pure state reads worth stubbing. Anything richer needs real host modelling.
+fn parse_native_stub(specification: &str) -> Result<(String, GameScriptValue), String> {
+    let (name, value) = specification
+        .split_once('=')
+        .ok_or_else(|| format!("--stub expects NAME=VALUE, got {specification}"))?;
+    if name.is_empty() {
+        return Err("--stub requires a name before =".to_owned());
+    }
+    let value = match value {
+        "true" => GameScriptValue::Boolean(true),
+        "false" => GameScriptValue::Boolean(false),
+        other => GameScriptValue::Number(other.parse::<f64>().map_err(|_| {
+            format!("--stub value must be a number, true, or false, got {other}")
+        })?),
+    };
+    Ok((name.to_owned(), value))
+}
+
 fn take_option(args: &mut Vec<String>, option: &str) -> Result<Option<String>, String> {
     let Some(position) = args.iter().position(|argument| argument == option) else {
         return Ok(None);
@@ -376,7 +418,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE]\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -893,10 +935,27 @@ fn scan_archive(source: &Source) -> Result<(), String> {
     }
 }
 
+/// Print the structured trace for a VM failure before surfacing it.
+///
+/// An unresolved name is the interesting outcome, not merely a failure: it names a host
+/// call and shows how far the script got before it needed one. The VM stops rather than
+/// guessing, so this trace is the classification evidence.
+fn report_gamescript_failure(error: GameScriptVmError) -> String {
+    if let Some(trace) = error.unknown_name() {
+        eprintln!("unknown-native-name\t{}", trace.name);
+        eprintln!("unknown-at-step\t{}", trace.steps);
+        for (depth, frame) in trace.call_stack.iter().enumerate() {
+            eprintln!("unknown-call-stack\t{depth}\t{frame}");
+        }
+    }
+    error.to_string()
+}
+
 fn probe_gamescript_member(
     source: &Source,
     member: &str,
     expression: Option<&str>,
+    stubs: &[(String, GameScriptValue)],
 ) -> Result<(), String> {
     let (archive, entries) = open_archive(source)?;
     let entry = entries
@@ -910,15 +969,18 @@ fn probe_gamescript_member(
     let token_count = document.tokens.len();
     let anomaly_count = document.procedure_anomalies.len();
     let mut vm = GameScriptVm::new(1_000_000);
+    for (name, value) in stubs {
+        vm.define_native_stub(name.clone(), value.clone());
+    }
     vm.execute_document(&document)
-        .map_err(|error| error.to_string())?;
+        .map_err(report_gamescript_failure)?;
     let expression_tokens = expression
         .map(|source| {
             let expression =
                 GameScriptDocument::parse(source.as_bytes()).map_err(|error| error.to_string())?;
             let tokens = expression.tokens.len();
             vm.execute_document(&expression)
-                .map_err(|error| error.to_string())?;
+                .map_err(report_gamescript_failure)?;
             Ok::<usize, String>(tokens)
         })
         .transpose()?;
@@ -944,6 +1006,9 @@ fn probe_gamescript_member(
         if let Some(summary) = value.scalar_summary() {
             println!("operand-stack-scalar\t{index}\t{summary}");
         }
+    }
+    for (name, count) in vm.native_calls() {
+        println!("native-stub-call\t{}\t{count}", clean_field(name));
     }
     println!("defined-names\t{}", defined_names.len());
     for name in defined_names.iter().take(50) {
@@ -974,6 +1039,7 @@ fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result
     let mut procedure_anomalies = Vec::<(String, String, usize, usize, usize)>::new();
     let mut executable_names = BTreeMap::<String, usize>::new();
     let mut literal_names = BTreeMap::<String, usize>::new();
+    let mut definition_names = BTreeMap::<String, usize>::new();
     let mut dependency_edges = BTreeSet::<(String, String)>::new();
     let mut failures = Vec::new();
 
@@ -1017,6 +1083,7 @@ fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result
         }
         merge_name_counts(&mut executable_names, &analysis.executable_names);
         merge_name_counts(&mut literal_names, &analysis.literal_names);
+        merge_name_counts(&mut definition_names, &analysis.definition_names);
         for dependency in analysis.static_run_dependencies {
             dependency_edges.insert((entry.name.clone(), dependency));
         }
@@ -1031,7 +1098,7 @@ fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result
         .filter(|(_, dependency)| !archive_names.contains(&normalize_member_name(dependency)))
         .collect();
     let likely_engine_names = executable
-        .map(|path| likely_engine_names(path, &executable_names, &literal_names))
+        .map(|path| likely_engine_names(path, &executable_names, &definition_names))
         .transpose()?;
 
     println!("archive-entries\t{}", entries.len());
@@ -1047,6 +1114,7 @@ fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result
     println!("procedure-anomalies\t{}", procedure_anomalies.len());
     println!("distinct-executable-names\t{}", executable_names.len());
     println!("distinct-literal-names\t{}", literal_names.len());
+    println!("distinct-definition-names\t{}", definition_names.len());
     println!("static-run-reference-edges\t{}", dependency_edges.len());
     println!("resolved-static-run-references\t{resolved_dependencies}");
     println!(
@@ -1054,8 +1122,14 @@ fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result
         missing_dependencies.len()
     );
     if let Some(names) = &likely_engine_names {
+        // The full candidate vocabulary is the useful artefact, but printing ~2,000 lines by
+        // default buries the summary. `LOM_CANDIDATE_LIMIT` raises the cap for cataloguing.
+        let candidate_display_limit = std::env::var("LOM_CANDIDATE_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(50);
         println!("likely-hardcoded-engine-names\t{}", names.len());
-        for (name, count) in names.iter().take(50) {
+        for (name, count) in names.iter().take(candidate_display_limit) {
             println!("engine-name-candidate\t{name}\t{count}");
         }
     }
@@ -1103,12 +1177,15 @@ fn normalize_member_name(name: &str) -> String {
 fn likely_engine_names(
     path: &Path,
     executable_names: &BTreeMap<String, usize>,
-    literal_names: &BTreeMap<String, usize>,
+    definition_names: &BTreeMap<String, usize>,
 ) -> Result<Vec<(String, usize)>, String> {
     let bytes = fs::read(path)
         .map_err(|error| format!("could not read executable {}: {error}", path.display()))?;
     let binary_strings = ascii_strings(&bytes);
-    let literal_names: BTreeSet<String> = literal_names
+    // Exclude names the corpus actually DEFINES, not every name that appears as a literal.
+    // The scripts push a native name and convert it to defer the call (`/invoke_spell cvx`),
+    // so excluding on literal presence hid genuine host calls.
+    let definition_names: BTreeSet<String> = definition_names
         .keys()
         .map(|name| name.to_ascii_lowercase())
         .collect();
@@ -1116,7 +1193,7 @@ fn likely_engine_names(
         .iter()
         .filter(|(name, _)| {
             let lower = name.to_ascii_lowercase();
-            !literal_names.contains(&lower) && binary_strings.contains(&lower)
+            !definition_names.contains(&lower) && binary_strings.contains(&lower)
         })
         .map(|(name, count)| (name.clone(), *count))
         .collect();

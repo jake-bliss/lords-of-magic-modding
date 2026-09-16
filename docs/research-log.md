@@ -183,6 +183,26 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
   the mod's own author about his own code were wrong; both would have propagated into our docs
   unchecked.
 
+## 2026-09-16 — Facing rename, definition-shape classifier, and native stubs
+
+- **Corrected:** IMP "cycles" are renamed **facings** throughout the code, docs, and
+  `--describe-imp` output, matching the community specification and what the records actually are.
+  Behaviour is unchanged.
+- **Corrected:** the native-candidate heuristic excluded any name appearing as a `/literal`
+  anywhere, which hid genuine host calls because the corpus defers native calls by pushing the name
+  (`/invoke_spell cvx`). It now requires a definition **shape**.
+- **Observed:** GS5R3 has 17,641 distinct literal names but only 13,609 definitions — 4,032 literals
+  are not definitions. The native-candidate count rises from 2,091 to 2,151.
+- **Implemented:** native host stubs (`--stub NAME=VALUE`) for pure state reads, with call counts as
+  classification evidence, plus structured unknown-name traces carrying the name, VM step, and call
+  stack at the point of failure. Unknown names still stop execution rather than being guessed.
+- **Observed:** the real GS5R3 difficulty idiom `[25 50 75]getdifficultylevel get` executes and
+  returns 25, 50, and 75 for Easy, Medium, and Hard.
+- **Observed:** the shipped `extra_strong?` body evaluates to `false` at every difficulty and in both
+  multiplayer states; the body quoted on the forum evaluates to `true` on Hard in single-player and
+  `false` in multiplayer. The author's description matched code that did not ship. This upgrades the
+  difficulty finding from a reading of the source to an execution under declared inputs.
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:
