@@ -161,6 +161,56 @@ Eight community maps were downloaded from Mantera's site on 2026-09-16 and parse
 `Feuerundeis.scn`, is **160x160**, a dimension absent from all three installs and outside the
 previously documented set. See [map format](map-format.md).
 
+## Cross-check against IMP Studio, 2026-09-16
+
+`impstudio.py` is stdlib-only with no network, subprocess, or `eval` use, and writes only to explicit
+output paths, so it was audited and then run read-only against all 1,800 IMP members extracted from
+the GS5R3 `imp.mpq` into a temporary directory.
+
+### Round-trip: 1,800 of 1,800 byte-identical
+
+Their `verify` command passes on every file. **Read carefully, this is a weaker result than it
+sounds.** `serialize_passthrough` copies the original bytes and re-packs only the header and frame
+headers over them, writing back the same values it read. It therefore proves the **byte layout** —
+that no field is mis-sized or misaligned anywhere in 1,800 files — but not the semantic naming, since
+two `u1` fields misread as one `u2` would round-trip identically. Their help text is honest about
+this ("with no edits it is byte-identical"). The semantics of `ColorKey` were established separately,
+by measuring pixel usage.
+
+It is still a genuine independent confirmation of the header layout we share.
+
+### Decode coverage: they reach 91.6% of non-duplicate frames, we reach all of them
+
+Their `scan` command over the same 1,800 files, counting only non-duplicate frames since duplicates
+are skipped by design:
+
+| Type | Files | Non-duplicate frames | They decoded | Coverage |
+| --- | ---: | ---: | ---: | ---: |
+| 8-bit RLE (9) | 957 | 35,798 | 35,798 | 100% |
+| 8-bit raw (8) | 606 | 1,064 | 1,064 | 100% |
+| 1-bit RLE (25) | 27 | 804 | 804 | 100% |
+| **4-bit RLE (57)** | **188** | **3,388** | **0** | **0%** |
+| Unclassified | 10 | 88 | 0 | 0% |
+| **Parse error** | **12** | — | — | — |
+| **Total** | 1,800 | 41,142 | 37,666 | 91.6% |
+
+Where their decoder runs, it agrees with ours completely — 100% on all three implemented types. The
+gap is the two categories it does not attempt:
+
+- **Type 57, 4-bit RLE: 188 files, 3,388 frames, zero decoded.** Their documentation states plainly
+  that `lomut` never implemented this path, so there was nothing faithful to port. Our decoder reads
+  it: exporting frame 0 of `aura\agx01aa.imp` produces a correct 21x44 indexed PNG with a `tRNS`
+  chunk and recognizable art.
+- **Twelve files crash their parser** with `index out of range` — four `building\*lad*`, two
+  `imp\flag*`, two `missile\*bps`, and four `units\imp\*` members. Our parser reads all twelve;
+  `imp\flagblue.imp` for instance resolves to two sequences of 1x1 frames. These are not among our
+  ten known validation mismatches.
+
+**Conclusion.** On the formats both tools implement, two independent decoders agree exactly, which is
+strong mutual corroboration. Our coverage is strictly larger: every one of the 1,800 members parses
+and expands here, including 188 files and 3,388 frames no public tool decodes. Their advantage
+remains write-back, editing, and map repair, which we do not attempt at all.
+
 ## Prior art we did not know about
 
 The board hosts a working toolchain that overlaps our Stage 1 scope:
