@@ -1110,3 +1110,50 @@ the signature of a channel swap somewhere between our decoder and the capture, a
 "palette is BGRA, swapped to RGB" claim recorded in [Stage 1](native-asset-stage.md). It is **not**
 resolved here — one frame against one background cannot separate a decoder bug from a BMP reader bug —
 and it needs a deliberate test against a known colour.
+
+## 2026-09-16 — An unattended probe does not work, and why
+
+**Evidence class: observed in gameplay (negative result).** The two remaining offline-ish hotspot
+questions — the shadow blend and the palette channel order — were prepared as a probe that needed no
+human, on the theory that the harness's scripted map view (`{}gamemodeproc gamemode 128 128 newmap
+default_edit_mode`) removes the only step macOS blocks. **It does not work from `START.GS`.**
+
+What was tried: intro disabled, main menu suppressed by replacing `{newdlg opendialog}ifelse` with
+`{}ifelse`, then the map-view idiom, a custom sprite type, a plate capture, nine placements along the
+map diagonal, a second capture, and cleanup — all appended to the end of `START.GS`.
+
+What happened: `lomse.exe` started and stayed resident, but **`combat.log` never grew**, so startup
+never reached run position 93, and a screenshot showed **no game window at all**. No probe output was
+produced.
+
+The likely reason, stated as a hypothesis rather than a finding: this work runs at *script-load* time,
+while the map view, rendering and `screencapture` all need the **game loop** to be running. The
+harness note that recorded the idiom did not say which context it was exercised from, and every probe
+that has actually worked here ran from a hotkey — that is, from inside the loop.
+
+**Do not retry this by appending to `START.GS`.** If an unattended probe is wanted later, the thing to
+investigate is a tick alarm: the corpus has `TICKALARM_END_OF_COMBAT` and `TICKALARM_RETURN_TO_WORLD`
+constants and an `eventalarm` operator, which would fire from inside the loop without input. That is
+unverified and should be treated as a lead.
+
+The game was restored to byte-identical `gs.mpq` and `imp.mpq` afterwards.
+
+### What is prepared, so the next attended run is one keypress
+
+The measurement itself is ready and needs only the proven hotkey path:
+
+- **Donor sprite**: `imp\tree4e.imp` — single frame, 72x76, 915 pixels of palette index 1, and
+  `palette[1]` is the sentinel `[255, 0, 0]`. Single-frame means no animation to confound anything.
+- **Authored palette** (`examples/author_palette.rs`): five entries rewritten as **raw bytes**, which
+  is the point — comparing bytes written against pixels rendered settles the channel order without
+  assuming our decoder's. Index 166 becomes raw `ff 00 00`, 141 `00 ff 00`, 200 `00 00 ff`, 135
+  `ff ff ff`, and index 1 becomes raw `ff 00 ff`.
+- **The shadow test falls out of the same capture.** If the index-1 region renders magenta, index 1 is
+  an ordinary colour. If it renders as a darkened version of whatever is behind it, it is a blend, and
+  the capture gives the blend function directly.
+- A useful observation already: our decoder reports `palette[1] = [255, 0, 0]` for raw bytes
+  `00 00 ff`, i.e. it reverses the triple. The capture will say whether that is right.
+
+Because all of this places through a terrain sprite type, it runs on the **world map of a real game**,
+which is where the unit-anchor check and the cell-to-screen fit also have to happen. One attended
+session with one keypress can therefore settle all three.

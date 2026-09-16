@@ -111,7 +111,9 @@ what the commands above are for.
 - **The shadow blend.** Palette index 1 is the shadow for most art (1,223 of 1,800 files, 32,784 of
   41,344 frames, typical `palette[1] = [8, 8, 8]`), but the sprite used for the placement captures is
   one of the exceptions and contains no index-1 pixels, so the captures on hand cannot answer it.
-  Needs one capture of a sprite that uses index 1.
+  **The measurement is prepared** — donor `imp\tree4e.imp` with an authored palette, see the research
+  log — and needs one attended run. An unattended version was tried and does not work; do not retry it
+  by appending to `START.GS`.
 - **A channel-order discrepancy.** Decoded palette entries and rendered pixels agree wherever red
   equals green and disagree where they differ. This bears on the "palette is BGRA, swapped to RGB"
   claim in [Stage 1](native-asset-stage.md). One frame against one background cannot separate a
