@@ -150,23 +150,35 @@ All three live in `START.GS`, which we can replace via the injection path:
   `refreshdirty` is needed to present anything, and it repaints dialogs over direct draws, so settle
   the screen, capture a control, then draw and capture again and diff.
 
-### Why step 3 stalled
+### Why step 3 stalled — `drawimpframe` is vestigial, use a different instrument
 
 `drawimpframe` is `<imp> <sequence> <facing> <frame> <x> <y>` — six operands, confirmed both by
-disassembly and by the interpreter accepting them with no stack or type error. The operand roles are
-pinned by record sizes: the first int indexes 16-byte Sequence records, the second 8-byte Facing
-records, and the frame is `[facing+4] + index*16`, matching our decoded format exactly.
+disassembly and by the running interpreter accepting them with no stack or type error. The operand
+roles are pinned by record sizes: the first int indexes 16-byte Sequence records, the second 8-byte
+Facing records, and the frame is `[facing+4] + index*16`, matching our decoded format exactly.
 
-`0x584AB8`, pushed by the forwarder at `0x004F2F50`, is **not** a render target — it is a clip
-`RECT{0,0,639,383}` initialised at `0x0049AA90`.
+**It draws nothing, and three explanations have been ruled out:**
 
-Zero pixels resulted in every context: main menu, no menu at all, and a **live map editor session**
-with the viewport rendered and the clip rect initialised, using both `imp` and `flagimp`. No error is
-ever raised. **Inferred:** a further precondition on imp-player state is unmet, most likely a null
-inner data pointer making `0x004F31F0` take its `test eax,eax / je` exit, i.e. the loaders are lazy
-and something else normally forces the load. **Next step: log `getimpmemory` and `getimpfilename` for
-the loaded handle** — that diagnostic was written but its run halted before producing output, so it
-is untried, not refuted.
+- **Not unpresented.** `refreshdirty` presents, but repaints dialogs over direct draws; without it
+  nothing appears either.
+- **Not an uninitialised clip rect.** `0x584AB8` is a clip `RECT{0,0,639,383}` set at `0x0049AA90`.
+  Re-running inside a live map editor session, with the viewport rendered, left captures identical.
+- **Not an unloaded imp.** The engine's own accessors report `filename= iface/ordragb.imp` and
+  `memory= 42964` for the handle. The earlier lazy-loader inference is **refuted**.
+- **Not a surface mismatch.** `screencapture` reads `[0x584AE8+0x684]`, and `drawimpframe` calls
+  `0x004753D0` on that same object right after drawing.
+- **Not a parameter problem.** A sweep of 20 calls across both sequences, all five facings, two frame
+  indices and twenty positions changed zero pixels.
+
+**Conclusion: treat `drawimpframe` as vestigial in the shipped build.** It type-checks its operands
+and would report `drawimpframe - no such imp` for a bad handle, but paints nothing, and it has **zero
+call sites in all 1,471 extractable scripts** — nothing in the shipped game exercises it.
+
+**Use the engine's working sprite path instead.** Units *are* drawn on the map in every editor
+capture, so that path is alive. `getspritescreenx` / `getspritescreeny` (1 operand, 1 result each)
+give a live sprite's screen position; pair that with a capture and the frame's decoded hotspot and the
+convention falls out of commanded-versus-observed. Reaching a real game rather than the editor needs
+a few menu clicks — **the user has offered to click**, because macOS blocks synthetic input to Wine.
 
 ### Read this before judging any launch
 
