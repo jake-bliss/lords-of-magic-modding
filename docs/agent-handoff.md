@@ -174,6 +174,59 @@ included) instead of a luminance-thresholded fragment.
 `drawimpframe` remains **vestigial** — it type-checks its six operands, looks up the imp, and paints
 nothing, with zero call sites in 1,471 scripts. Do not reach for it again.
 
+### The next experiment, designed — a controlled sprite with a background plate
+
+The last attempt failed on **frame identification**, not on capture quality. It used an uncontrolled
+subject (an army banner whose sequence, facing and cycle position were all unknown) and segmented it
+by luminance threshold against unknown terrain, which throws away the dark pole and is perturbed by
+the player-colour remap. Fix both by choosing the subject and by subtracting a true background.
+
+**The operators needed all exist and their idioms are confirmed in shipped scripts:**
+
+| Operator | Idiom (from the corpus) |
+| --- | --- |
+| `addterrainspritetype` | `[ ... ]cvx addterrainspritetype` → returns a type id |
+| `addterrainsprite` | `<x> <y> <typeid> addterrainsprite` |
+| `terrainspriteat` | `<x> <y> terrainspriteat` → sprite handle |
+| `getterrainspritelocation` | `<sprite> getterrainspritelocation` → packed location (`xy_to_x_y` unpacks) |
+| `destroyterrainsprite` | `<sprite> destroyterrainsprite` |
+| `map2screen` | 3 operands, 3 results — **semantics still to verify** |
+
+**Procedure**, all from one injected hotkey so it runs in a single frame with nothing else moving:
+
+1. `"plate.bmp" screencapture` — the tile with **no** sprite on it.
+2. `x y typeid addterrainsprite`, then `rendermap refreshdirty`.
+3. `"sprite.bmp" screencapture`.
+4. `x y terrainspriteat destroyterrainsprite`, `rendermap refreshdirty` — leaves the map as found.
+
+`sprite.bmp - plate.bmp` is then the sprite's **exact opaque silhouette**, dark pole included, with no
+threshold and no palette assumptions. Because we chose the sprite type, its IMP and frame are known,
+so its decoded hotspot is known. The remaining unknown is the commanded position, which comes from
+`getterrainspritelocation` plus `map2screen` — log both through the file operators.
+
+`observed_top_left - commanded_screen_position` is then the answer, and its sign is the result.
+
+**Why this is strictly better than what was tried:**
+
+- No frame identification at all — we place a sprite whose frame we chose.
+- Exact silhouette, so the measured box is the real frame box rather than a bright fragment.
+- Repeatable at several map cells in one run, which turns a single reading into a fitted line and
+  exposes any constant offset in `map2screen`.
+- Self-cleaning: the sprite is destroyed, so the save is untouched.
+
+**Fallbacks if terrain sprites prove awkward:**
+
+1. **Plate by displacement.** Keep the army subject but ask the user to move it one tile, capture the
+   vacated tile as the plate, and difference against an earlier capture of the same tile. Recovers the
+   exact silhouette without any new operators.
+2. **Index frames by cycle rather than shape.** Hold the capture key so auto-repeat samples densely,
+   then recover the animation period from the repeating sequence of silhouettes and index frames by
+   position in the cycle instead of recognising them.
+
+**Also worth pinning first, cheaply and statically:** `map2screen`'s operand order and units, read off
+`0x0046B0C0`. Do not trust the recovered arity of 3 — the arity walk undercounts operators that pop
+through the shared helper at `0x0040ADB0`, which is exactly how `drawimpframe` hid two operands.
+
 ### Engine probe harness — this is the reusable part
 
 - **Hotkey**: insert before the final `end` of `gs/hotkey.gs`:
