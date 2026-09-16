@@ -317,6 +317,23 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
   baselines. It tokenises with the project lexer, so a name appearing only inside a `;` comment is
   not counted as a call site.
 
+## 2026-09-16 — The cursor hotspot is authored, not derived
+
+- **Observed:** across all 28,447 unit frames carrying a type-0 `CURSOR_HOTSPOT`, fitting the
+  hotspot against frame size leaves most of the spread standing. On x the slope against width is
+  `-0.021` with a median of exactly 0 and the residual spread is 8.84 px against a raw 8.87 px — the
+  fit explains essentially nothing. On y the slope against height is `-0.298` and the residual is
+  10.03 px against a raw 14.55 px, about half the variance.
+- **Inferred:** the anchor is per-frame authored data — where the artist placed that sprite's feet in
+  that pose — with only a horizontal centring convention derivable from the frame box.
+- **Refuted, with consequences:** that a cropped frame can have its anchor reconstructed by
+  re-centring frames against each other. That is the board's standing workaround for the
+  "512x512 hotspot" problem, and it explains mechanically why it kept producing wobble and a
+  drifting health bar over nine years: it reconstructs a value that is not reconstructible. It also
+  makes `lomut` omitting the hotspot array unrecoverable rather than merely inconvenient.
+- **Observed:** the missile-target hotspot sits `(+2.0, -10.7)` from the cursor hotspot on average
+  across 28,159 frames, so projectiles are aimed at the body rather than the feet.
+
 ## Evidence labels for future entries
 
 Use these labels when recording findings:
