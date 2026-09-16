@@ -284,7 +284,7 @@ observed:
 in all units". Types 1 through 6, 8 and 9 appear in the hundreds to low thousands, and types 10 and
 16 also occur.
 
-**`lomse.exe` defines 19 hotspot constants, not 10.** ozz's list came from a code comment; the
+**`lomse.exe` defines 19 `*_HOTSPOT`-shaped constants, not 10 — but only 11 are IMP hotspot types.** (Corrected 2026-09-16: the eight `BOLT_HOTSPOT_S0..D3` names are field indices into a bolt definition record, values 15-22, not type tags. The real vocabulary is nine values, 0 through 8, and their numbers are now read from the exe's constant table at `0x00560108`.) ozz's list came from a code comment; the
 binary's string table is authoritative:
 
 ```
