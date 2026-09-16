@@ -173,6 +173,12 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
   distinct values in `0x3f`-`0x6f` across 365 installed maps, is independent of dimensions and record
   counts, and clusters by file family. A tileset or terrain-set selector is the better hypothesis,
   which would also close the separate header-to-tileset unknown.
+- **Observed:** the community `impstudio.py` round-trips all 1,800 IMP members byte-identically, which
+  independently confirms the shared header byte layout. The test re-packs values over a copy of the
+  original bytes, so it proves layout, not semantics.
+- **Observed:** the same tool decodes 37,666 of 41,142 non-duplicate frames (91.6%). It reaches 100%
+  on the three types it implements — exact agreement with our decoder — and 0% on type 57 (4-bit RLE,
+  188 files, 3,388 frames) plus 12 files that crash its parser. Our decoder handles all 1,800.
 - **Decision:** treat all community material as hypotheses with named sources. Two headline claims by
   the mod's own author about his own code were wrong; both would have propagated into our docs
   unchecked.
