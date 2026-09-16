@@ -130,6 +130,40 @@ The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synth
 - **Documented:** the hotspot ID is a type tag from a 19-constant engine vocabulary, and frame byte `+1` is a **count** of hotspot records rather than a type tag — settled by ozz on the board and confirmed here by measurement. Sequence-record byte 1 is a mirror flag: values `>= 128` mirror, and no unmirrored sequence in the corpus has more than two facings. See [community research](community-research.md#the-hotspot-mechanism-thread-2176).
 - **Unknown:** how the shadow index is blended or recolored, how hotspot coordinates translate to screen placement, what the remaining sequence/facing metadata fields mean, and whether exceptional metadata cases use additional sharing rules. Animation timing appears to be carried solely by duplicate-frame repetition, since no delay field survives scrutiny on either side.
 
+### The cursor hotspot is not derivable from frame geometry
+
+Type 0, `CURSOR_HOTSPOT`, is present on essentially every unit frame and is described on the modding
+board as the anchor the other hotspots hang from. Whether it can be *derived* decides whether a
+rebuilt sprite can ever be correct, because the community's standing workaround for the
+"512x512 hotspot" problem is to crop each frame to its minimum extent and re-centre the frames
+against each other — which assumes the anchor is a function of frame size.
+
+Measured with `tools/hotspot_geometry.py` over all 28,447 unit frames that carry a cursor hotspot,
+fitting each axis against the matching frame dimension:
+
+| Axis | Fit | Raw spread | Spread left after the fit |
+| --- | --- | ---: | ---: |
+| x | `-0.021 x width + 0.99`, median 0 | 8.87 px | **8.84 px** |
+| y | `-0.298 x height - 1.67` | 14.55 px | **10.03 px** |
+
+**Horizontally the anchor is independent of frame width** — the slope is effectively zero and the
+median is exactly 0, so sprites are centred on the anchor by convention, and the 8.8 px of spread is
+per-frame art, not geometry.
+
+**Vertically the fit explains about half the variance and leaves 10 px standing.** Frame height
+predicts roughly a third of the hotspot's y, which is what you would expect from taller sprites
+having their feet further down, but the residual is far too large for the anchor to be a function of
+the frame box.
+
+So the cursor hotspot is **per-frame authored data**: where the artist put that sprite's feet in that
+pose. That is the mechanical reason the board's crop-and-re-centre approach kept producing wobble and
+a drifting health bar and never converged — it reconstructs a value that is not reconstructible from
+the cropped image. It also explains why `lomut` omitting the hotspot array is unrecoverable rather
+than merely inconvenient: the information is gone, not mislaid.
+
+The missile-target hotspot (type 7) sits `(+2.0, -10.7)` from the cursor hotspot on average across
+28,159 frames, so projectiles are aimed at the body rather than the feet.
+
 ### LBM export
 
 `--export-pbm ARCHIVE MEMBER OUTPUT.png` writes an LBM out as an indexed PNG, preserving palette
