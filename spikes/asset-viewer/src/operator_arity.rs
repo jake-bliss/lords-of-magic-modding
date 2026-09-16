@@ -58,17 +58,20 @@ pub struct StackEffect {
     pub branching: bool,
     /// Whether the walk hit `MAXIMUM_INSTRUCTIONS` rather than exhausting the body.
     pub truncated: bool,
+    /// Indirect branches encountered, such as `jmp [table + eax*4]`. The walk cannot follow these,
+    /// so any stack traffic behind them is invisible and the counts are incomplete.
+    pub indirect_branches: usize,
     /// Instructions decoded while walking.
     pub instructions: usize,
 }
 
 impl StackEffect {
-    /// Whether the walk completed and recognised every store it saw.
+    /// Whether the walk reached every instruction it needed to and recognised every store it saw.
     ///
     /// This says the analysis did not give up, **not** that the counts are the operator's arity.
     /// A body that pops different amounts on different paths still produces a site count.
     pub fn is_well_formed(&self) -> bool {
-        !self.truncated && self.unclassified == 0
+        !self.truncated && self.unclassified == 0 && self.indirect_branches == 0
     }
 }
 
@@ -102,6 +105,7 @@ fn stack_effect_to_depth(
         unclassified: 0,
         branching: false,
         truncated: false,
+        indirect_branches: 0,
         instructions: 0,
     };
     // Commits are counted per address so that a block reached from two predecessors is not
@@ -179,6 +183,9 @@ fn stack_effect_to_depth(
                 }
             }
 
+            if instruction.mnemonic() == Mnemonic::Call && branch_target(&instruction).is_none() {
+                effect.indirect_branches += 1;
+            }
             if instruction.mnemonic() == Mnemonic::Call
                 && depth > 0
                 && let Some(target) = branch_target(&instruction)
@@ -192,13 +199,17 @@ fn stack_effect_to_depth(
                 effect.unclassified += callee.unclassified;
                 effect.instructions += callee.instructions;
                 effect.truncated |= callee.truncated;
+                effect.indirect_branches += callee.indirect_branches;
             }
 
             match instruction.mnemonic() {
                 Mnemonic::Ret => break,
                 Mnemonic::Jmp => {
-                    if let Some(target) = branch_target(&instruction) {
-                        queue.push_back(target);
+                    match branch_target(&instruction) {
+                        Some(target) => queue.push_back(target),
+                        // A computed jump, which is how operators dispatch on operand type. Its
+                        // arms are unreachable here, so whatever they do to the stack is unseen.
+                        None => effect.indirect_branches += 1,
                     }
                     break;
                 }
@@ -492,6 +503,43 @@ mod tests {
         let effect = stack_effect(&image, ENTRY).expect("entry is code");
         assert_eq!(effect.pushes, 1, "the helper contributes once, not per call site");
         assert!(helper_va > ENTRY);
+    }
+
+    #[test]
+    fn an_indirect_jump_marks_the_walk_incomplete() {
+        // Operators dispatch on operand type with `jmp [table+eax*4]`. The arms are unreachable
+        // here, so stack traffic behind them is invisible and the result must say so.
+        const JMP_TABLE: [u8; 7] = [0xff, 0x24, 0x85, 0x84, 0xd1, 0x41, 0x00];
+        let code = assemble(&[&LOAD_INDEX, &INC_EAX, &STORE_INDEX, &JMP_TABLE]);
+        let bytes = image_with_code(&code);
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let effect = stack_effect(&image, ENTRY).expect("entry is code");
+        assert_eq!(effect.pops, 1, "what was seen is still counted");
+        assert_eq!(effect.indirect_branches, 1);
+        assert!(
+            !effect.is_well_formed(),
+            "a walk that could not follow a dispatch is not complete"
+        );
+    }
+
+    #[test]
+    fn an_indirect_branch_inside_a_callee_marks_the_caller_incomplete() {
+        // The shipped `getarmydata` pushes its result behind a jump table in a helper it calls, so
+        // the incompleteness has to propagate or the caller reports a confident wrong answer.
+        const HELPER_OFFSET: usize = 0x40;
+        const JMP_TABLE: [u8; 7] = [0xff, 0x24, 0x85, 0x84, 0xd1, 0x41, 0x00];
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0xe8]);
+        code.extend_from_slice(&((HELPER_OFFSET as u32 - 5).to_le_bytes()));
+        code.extend_from_slice(&RET);
+        code.resize(HELPER_OFFSET, 0x90);
+        code.extend_from_slice(&JMP_TABLE);
+
+        let bytes = image_with_code(&code);
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let effect = stack_effect(&image, ENTRY).expect("entry is code");
+        assert_eq!(effect.indirect_branches, 1, "the callee's dispatch is inherited");
+        assert!(!effect.is_well_formed());
     }
 
     #[test]
