@@ -1619,3 +1619,79 @@ By their own account that workaround costs about 300% more processing. It is unn
 keys on the palette **index** and ignores the entry's colour — index 0 is transparent, index 1 draws
 the background at half brightness — which the magenta rewrite proved directly on 2026-09-17. An
 author needs the two indices right and may paint them anything at all.
+
+## 2026-09-17 (later) — The oversized map, generated here: the header does not disappear
+
+Issue #22 was parked for want of a map larger than 256x256. It did not need one from outside. The
+shipped GS5R3 editor generates up to 1024, so the map was generated in the running engine, saved,
+and parsed.
+
+**Observed in gameplay**, one keypress in the Map Editor, `LOM_PROBE=mapsize`:
+
+```
+map size ladder start
+gen begin 128   gen done 128  mapw 128  maph 128   save 128 name map/zz128.scn result -1
+gen begin 256   gen done 256  mapw 256  maph 256   save 256 name map/zz256.scn result -1
+gen begin 512   gen done 512  mapw 512  maph 512   save 512 name map/zz512.scn result -1
+map size ladder done
+```
+
+`mapw` and `maph` report the engine's own view of the live map, so the engine accepted 512x512
+without clamping. All three saves returned the same value as the 128 control, which is what makes
+`-1` readable as success rather than as an error code.
+
+### The result
+
+| File | Bytes | `[0x00]` | Declared | `16 + w*h*8` | Trailing | Records | Footer |
+| --- | ---: | ---: | --- | ---: | ---: | ---: | --- |
+| `zz128.scn` | 132,272 | `0x6f` | 128x128x8 | 131,088 | 1,184 | 24 | `01000000` |
+| `zz256.scn` | 525,488 | `0x6f` | 256x256x8 | 524,304 | 1,184 | 24 | `01000000` |
+| `zz512.scn` | 2,098,352 | `0x6f` | 512x512x8 | 2,097,168 | 1,184 | 24 | `01000000` |
+
+**The claim is refuted.** The four-byte word at `0x00` is present in a 512x512 map, holding the same
+`0x6f` as the 128 and the 256. Every file is exactly `16 + width x height x 8 + 1,184` bytes, so the
+16-byte prefix is intact at every size and nothing downstream is shifted. The native parser reads
+all three unchanged, with no code path for an oversized map and none needed:
+
+> Lords of Magic stores a 4-byte compression header in every map. It's basically just a version
+> number and reserved space. However, when maps exceed the original maximum size, that header
+> disappears.
+
+Both halves of that are now answered. The "version number" half was refuted by measurement on
+2026-09-16 — the word takes 20+ values across the corpus, independent of geometry. The "disappears
+when oversized" half is refuted here, by the engine's own writer.
+
+The underlying phenomenon is real and has a different cause. `gs\edit\mapgen.gs` line 192 warns that
+maps over 128 in a dimension break **random dungeon placement** outside GS5R3, which is a script
+concern, not a header one.
+
+### What the controls bought
+
+The 128 and 256 rungs are why this is a result rather than an anecdote. Both sizes exist in the
+shipped corpus, so the generated files can be checked against what the game itself ships: `0x6f`
+falls inside the `0x6c`-`0x6f` band world `.scn` files occupy, the 16-byte prefix matches, the
+trailing section is the dominant 49-byte family with an 8-byte frame, and the footer value `1` is
+one of the three observed. The generator writes what the game writes, so the 512 is evidence about
+the format and not about the generator.
+
+They also carry two findings of their own:
+
+- **`0x6f` now appears at 512x512 as well as 32, 48, 64, 128 and 256.** One more size the word is
+  indifferent to, and all three files here came from the same generator with the same tile set,
+  which is what the tileset-selector hypothesis predicts.
+- **X-major cell indexing holds at 512.** Every one of the 24 records in each file satisfies
+  `cell_index = x * height + y` within bounds — record 0 of `zz512.scn` is cell 241,316 at
+  (471, 164), and `471 * 512 + 164 = 241,316`. The convention was established on maps no larger
+  than 256; it does not change when the index no longer fits in 16 bits.
+
+The three files carry an identical 24-record placement set at every size — same instance ids 200
+upward, same sprite-type sequence, only the cells differ. That is the random map generator placing a
+keep, a leader and a great temple for each of eight faiths, and it makes the record layout
+demonstrably independent of map size.
+
+### Cost
+
+One keypress. The 512 took about two minutes of single-threaded script; the run start to finish was
+under five. Nothing was placed on a map that mattered, nothing was destroyed, and the three
+generated files were collected into `artifacts/` and removed from the game directory, which is back
+to its 366 shipped files.
