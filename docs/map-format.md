@@ -42,7 +42,39 @@ proven. The community claim's testable half is untouched: an oversized map shoul
 and shift every later offset by four bytes. Recorded in [issue #22](https://github.com/jake-bliss/lords-of-magic-modding/issues/22) and in
 [community research](community-research.md).
 
+### The oversized map can be generated here
+
+That test was parked because no map larger than 256x256 was available. It no longer needs one from
+outside. **Observed in the archive**, the shipped GS5R3 map editor generates maps from 32 to 1024 in
+steps of 32: `gs\edit\mapgen.gs` holds `map_width` and `map_height` in units of 32 at map zoom and
+offers presets of 32, 512 and 1024. Its only call into the generator, at line 306, also fixes the
+operand order as width first:
+
+```
+newmapdict begin map_width 32 mul map_height 32 mul end make_custom_random_map
+```
+
+`gs\rmg.gs` defines `make_custom_random_map`, which pops height then width and ends in `mw mh
+newmap`. `gs\hotkey.gs` line 562 gives the save operator, one string operand. So the whole
+experiment is one hotkey body:
+
+```
+512 512 make_custom_random_map
+"map/zz512.scn" savescenariomap pop
+```
+
+It writes one new file to `map/` and modifies no archive. `mapgen.gs` line 192 warns that maps with
+a dimension greater than 128 break random dungeons outside GS5R3, which is independent support for
+the *phenomenon* the community claim describes without saying anything about its mechanism.
+
 The second word is strongly inferred to be elevation or height. The shipped tile-definition comments state that `1000` represents `1.0` in the map model, but exact runtime units and interpolation remain unverified.
+
+Script-side elevation is a **float**. The shipped random map generator in `gs\rmg.gs` passes `0.11`,
+`0.5`, `1.0`, `2.0`, `6.3` and `-1.0` to `paintelevation` (`x y terrain elevation`) and `setelevation`
+(`x y elevation`), and reads back through `getelevation` (`x y`). All three take coordinate pairs,
+not the packed locations that `getterrainspritelocation` returns. A 2020 forum note that "the previous
+elevation of 1.0 is effective to 10" describes a change to the **GSZ map editor's** UI, not to the
+engine, and must not be folded into the measured `map2screen` z coefficient.
 
 ## Terrain tile lookup
 

@@ -1471,3 +1471,151 @@ survived scrutiny here. Our decoder and the community tool agreed with each othe
 **agreement between two implementations was mistaken for confirmation from evidence.** Neither had
 been checked against the engine until now.
 
+
+## 2026-09-17 (later still) — A board sweep, and the two shipped files it pointed at
+
+Six pages of the LOMSE Modding board were listed (169 threads) and twelve read. Most threads carried
+nothing testable. Two of them named shipped script files this project had never opened, and those
+files answered a parked question and supplied a better probe harness than the one we built.
+
+The threads themselves are **Documented** evidence at best. Everything below that is labelled
+Observed was read out of the shipped GS5R3 `gs.mpq`, not out of a forum post.
+
+### `gs\rmg.gs` and `gs\edit\mapgen.gs`: issue #22 is not blocked any more
+
+Thread 2206 mentioned in passing that map generation is driven by "an rmg file in the gs folder".
+There are two: `gs\rmg2.gs`, which only defines `make_big_random_map` at a fixed 128x128, and
+`gs\rmg.gs`, which adds `make_custom_random_map` taking the dimensions as operands.
+
+**Observed in the archive**, `gs\edit\mapgen.gs` line 306 is the only call site, and it settles the
+operand order — width first:
+
+```
+newmapdict begin map_width 32 mul map_height 32 mul end make_custom_random_map
+```
+
+The same file shows the New Map dialog's range. `map_width` and `map_height` are held in units of
+32 at map zoom (4 at dungeon zoom), and the three presets offered are:
+
+| Preset | Dungeon zoom | Map zoom |
+| --- | ---: | ---: |
+| red | 4 | 32 |
+| yellow | 64 | 512 |
+| green | 128 | 1024 |
+
+So the shipped GS5R3 editor already generates maps from **32 to 1024** in steps of 32. It also warns
+about exactly the failure eyesodilated described, at `mapgen.gs` line 192:
+
+> Do not attempt to generate maps for play with any other mod or unmodded version of the game with
+> Random Dungeons turned 'ON' for maps with a dimension greater than 128, or else the game will
+> experience errors when loading the map for game play.
+
+That is independent support for the *phenomenon* behind the "4-byte header disappears" claim, and
+says nothing about the mechanism. The mechanism is still ours to measure — and now we can, because
+we no longer need someone else to hand us an oversized map.
+
+`gs\hotkey.gs` line 562 supplies the other half. Saving takes one string operand:
+
+```
+mapfilename savescenariomap        ; .scn
+mapfilename savespecialmap         ; .smp
+```
+
+Which makes the whole test one hotkey body and one keypress:
+
+```
+512 512 make_custom_random_map
+"map/zz512.scn" savescenariomap pop
+```
+
+[Issue #22](https://github.com/jake-bliss/lords-of-magic-modding/issues/22) moves from blocked to
+ready. See [map format](map-format.md) for what the resulting file is supposed to tell us.
+
+### `gs\generate.gs`: a synthetic map beats a shipped one
+
+`/generate_simple_game` builds an entire playable scenario from script with no user input:
+
+```
+64 64 newmap 392 clearmap 0 unknowndarken resetvisibility clearregions
+0 63 63 0 markborder findregions
+1 maxslope 20 43 1.5 33 32 5.0 tt_mountain ridge ...
+.3 maxslope 16 16 tt_happy 1.0 paintelevation 24 20 tt_desert 0.75 paintelevation
+16 16 LIFE LIFE addcapitol 48 48 DEATH DEATH addcapitol
+unittypedict begin 20 16 liinf 1 -1 addunit 52 48 deinf 0 -1 addunit end
+resetnetworking 2 newgame 1 1 setplayeraistatus ... create3dmap gamemode
+```
+
+This is the harness the open `map2screen` y question actually wants. The residual problem there is
+that the drawn y depends on a terrain mesh we did not choose and can only survey after the fact. A
+map built by `newmap` and painted by `paintelevation` is one we specify: flat where we want it flat,
+stepped where we want a step, with a unit at a cell we picked. It removes the "placements 0 and 3
+fell outside the surveyed square" caveat by construction.
+
+Not yet run. Recorded as the preferred rig for the next elevation experiment.
+
+### `addterrainsprite` takes three operands, and now for a reason
+
+Our probe emits `x y ttype addterrainsprite`. It worked, but several shipped call sites read as
+though the operator took four:
+
+```
+cx cy f terrainsprites begin keep_ttype end addterrainsprite
+```
+
+It does not. **Observed in the archive**, `gs\tree.gs` line 178:
+
+```
+/great_temple{/dummy exch get}/dummy great_temple_array replace bind def
+```
+
+`great_temple`, `keep_ttype` and `leader_ttype` are *procedures* inside the `terrainsprites` dict.
+Each consumes the faith and returns one type id, so `f terrainsprites begin keep_ttype end` is a
+single value by the time `addterrainsprite` sees it. The three-operand sites — `s_x s_y
+terrainsprites /tower3 get addterrainsprite`, `x y esp03 addterrainsprite`, `xy_to_x_y
+terrainsprites begin dirtpil end addterrainsprite` — are the same call. Arity is 3.
+
+This is the rule from [the arity section](gamescript-format.md#operator-arity-recovered-from-the-code)
+working as intended: the recovered table cannot say what operands *are*, call sites can, and a call
+site that looks like a counter-example has to be read rather than counted.
+
+### Elevation is a float, and the forum's "1.0 is now 10" is about a different program
+
+The shipped generator passes fractional elevations throughout: `0.11`, `0.5`, `1.0`, `2.0`, `6.3`,
+and `-1.0`. `paintelevation` takes `x y terrain elevation`, `setelevation` takes `x y elevation`, and
+`getelevation` takes `x y`, all as coordinate **pairs** — not the packed locations that
+`getterrainspritelocation` and `anythinglocation` return.
+
+Thread 2334 says "the previous elevation of 1.0 is effective to 10". That is a GSZ **map editor** UI
+change, made by Boaster in 2020, not engine behaviour. It must not be folded into the `map2screen`
+z coefficient of 20.3625 per unit, which was measured against the shipped engine.
+
+### What the rest of the board was worth
+
+| Thread | Subject | Outcome |
+| --- | --- | --- |
+| 2033 | Game Script Manual | Paid PDF, $5.99. Its own contents list is unit, artifact and spell editing across 25 pages — no interpreter, no operator reference, no file formats. **Not worth buying**; we recovered 1,906 operators from the binary |
+| 2542 | LOM source code search | No source exists; Rebellion holds the rights. Ghidra yields ~684,794 lines. Repeats the claim that "the mpq files are not fully decryptable", which our injection path refutes |
+| 2316 | Decompile/recompile LOMSE.exe | No result. Poses one answerable question: `UNIT_WIZARD_MANA` is locked to -1 for non-wizards and is believed to live in the exe |
+| 2426 | `gs\edit\radius_terrain` | The only `.txt` in `gs.mpq`. Boaster: "That may have been something I left in there" |
+| 2428 | LOMSE Borderless | cnc-ddraw wrapper. No resolution or coordinate detail |
+| 2014 | lomut | Format support only; no offsets, no hotspot detail |
+| 2083 | `waicons.imp` fix | A colour improvement with no technical description |
+| 2406 | Alternate web server | A download mirror at `lomse.ddns.net`; mod builds only, no documents |
+| 2493 | "Corrupted" images in `pic.mpq` | Not corrupt. The reporter had no listfile. Repeats the red/green palette convention, for LBM |
+| 2247 | Editing small_doodads | **A naming trap.** `small_doodad` is a roster-sprite override keyed on `code` (WM1, WM2, FIT, THF), resolved through `gs\graphics5.gs`. It has nothing to do with terrain doodads |
+| 2222 | GSZ all map sizes | Announcement: 32x32 to "1024x1024, or perhaps larger". No implementation detail. The shipped editor already does this range |
+| 2334 | Map editor updates | Elevation UI change above, plus a real engine note: `genericpanel` calls `copydoodad`, whose graphics never unload, so `maxgraphics` in `START.gs` had to be roughly doubled |
+
+### The thing we should give back
+
+Thread 2437, May 2023, someone building new unit sprites in Blender:
+
+> When I add the pallet to the sprite images the Red shadow is getting blended into the sprite, same
+> with transparent Green. I have solved this by compositing. The green is background, and the red
+> shadow is foreground and all three images get put together after adjusting the pallet and then
+> applying the pallet right after they are joined.
+
+By their own account that workaround costs about 300% more processing. It is unnecessary. The engine
+keys on the palette **index** and ignores the entry's colour — index 0 is transparent, index 1 draws
+the background at half brightness — which the magenta rewrite proved directly on 2026-09-17. An
+author needs the two indices right and may paint them anything at all.

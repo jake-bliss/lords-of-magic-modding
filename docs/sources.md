@@ -48,6 +48,12 @@
 - [Sprite hotspot and mirroring mechanism (thread 2176)](https://impz.proboards.com/thread/2176/great-masters-necropian-abyss-summon)
 - [MPQ repack ruleset for `.gs` members](https://impz.proboards.com/thread/2102/error-when-mpq-edditing) — **its ruleset turned out not to be required**; see [mod ecosystem](mod-ecosystem.md#writing-to-archives)
 - [2026 Lords of Magic SE Utility Suite](https://impz.proboards.com/thread/2590/lords-magic-utility-suite-open)
+- [Generating Maps](https://impz.proboards.com/thread/2206/generating-maps) — named `gs\rmg.gs`, which unblocked issue #22
+- [GSZ will support All MAP Sizes](https://impz.proboards.com/thread/2222/gsz-support-all-map-sizes)
+- [Map Editor Interface adjustments/updates](https://impz.proboards.com/thread/2334/map-editor-interface-adjustments-updates) — the elevation UI change and the `maxgraphics` note
+- [Units/Sprites/.IMP dumping ground](https://impz.proboards.com/thread/2437/new-units-sprites-imp-dumping) — the palette-compositing workaround our index finding makes unnecessary
+- [Editing small_doodads](https://impz.proboards.com/thread/2247/editing-small-doodads) — `small_doodad` is a roster-sprite override, not a terrain doodad
+- [Game Script Manual](https://impz.proboards.com/thread/2033/game-script-manual-available) — paid PDF; contents are unit/artifact/spell editing only
 
 See [community research](community-research.md) for the verdict on each claim. Two of the
 highest-profile claims, both by the mod's own author about his own code, are refuted by our corpus.

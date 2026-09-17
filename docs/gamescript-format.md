@@ -236,6 +236,81 @@ counted as complete, and `getarmydata` was reported `well-formed` with a missing
 indirect branches, and inheriting them from followed callees, is what turned that silent wrong
 answer into a flagged one.
 
+### A call site that looks like a counter-example has to be read, not counted
+
+The recovered table gives stack effect. It cannot say what the operands *are*, and it cannot resolve a
+call site whose operands are themselves computed. `addterrainsprite` is the worked example.
+
+Most shipped sites read as three operands:
+
+```
+s_x s_y terrainsprites /tower3 get addterrainsprite
+x y esp03 addterrainsprite
+xy_to_x_y terrainsprites begin dirtpil end addterrainsprite
+```
+
+Several read as four, with a faith in the middle:
+
+```
+cx cy f terrainsprites begin keep_ttype end addterrainsprite
+currfaithx currfaithy currfaith keep_ttype addterrainsprite
+```
+
+They are the same call. `keep_ttype`, `leader_ttype` and `great_temple` are **procedures** in the
+`terrainsprites` dict that consume the faith and return one type id — `gs\tree.gs` line 178:
+
+```
+/great_temple{/dummy exch get}/dummy great_temple_array replace bind def
+```
+
+So `f terrainsprites begin keep_ttype end` is a single value by the time the operator sees it, and
+`addterrainsprite` takes **three** operands: `x y ttype`. The engine probe already emitted that form;
+this is what turned it from a working guess into a checked fact.
+
+The general rule: when call sites disagree about a shipped operator's operand count, resolve the
+names before concluding the operator is variadic. A name looked up through `begin`/`end` may be a
+procedure rather than a constant.
+
+### Other operand orders read from shipped call sites
+
+All **Observed in the archive**, each with its call site:
+
+| Operator | Operands | Call site |
+| --- | --- | --- |
+| `newmap` | `width height` | `gs\generate.gs` — `64 64 newmap`; `gs\maplib.gs` — `mapw maph newmap` |
+| `savescenariomap` | `filename` | `gs\hotkey.gs` 562 — writes `.scn` |
+| `savespecialmap` | `filename` | `gs\hotkey.gs` 562 — writes `.smp` |
+| `make_custom_random_map` | `width height` | `gs\edit\mapgen.gs` 306 (defined in `gs\rmg.gs`, pops height first) |
+| `paintelevation` | `x y terrain elevation` | `gs\rmg.gs` — `tx ty tt e paintelevation` |
+| `setelevation` | `x y elevation` | `gs\rmg.gs` — `x dx add y dy add 0 setelevation` |
+| `getelevation` | `x y` | `gs\rmg.gs` — `/e x y getelevation def` |
+| `setterrain` | `x y terrain` | `gs\rmg.gs` — `tx ty tt setterrain` |
+| `getterrain` | `x y` | `gs\rmg.gs` — `x -1 1 singlerand add y getterrain` |
+| `setterrainwithradius` | `x y radius terrain` | `gs\rmg.gs` — `... 3 5 singlerand tt setterrainwithradius` |
+| `maxslope` | `slope` | `gs\rmg.gs` — `0.7 maxslope` |
+| `addcapitol` | `x y faith faith` | `gs\generate.gs` — `16 16 LIFE LIFE addcapitol` |
+| `addunit` | `x y unittype player ?` | `gs\generate.gs` — `20 16 liinf 1 -1 addunit`, inside `unittypedict begin ... end` |
+
+`mapw` and `maph` are readable names giving the current map's dimensions, which removes the need to
+assume a width when unpacking a location.
+
+Note the coordinate convention split: these terrain and elevation operators take **pairs**, while
+`anythinglocation`, `getterrainspritelocation` and `findemptylocation` deal in **packed** locations
+(`y * mapw + x`). Mixing the two is the mistake that destroyed a map object on 2026-09-16.
+
+### `<<` and `>>` dictionary literals are in the shipped corpus
+
+`gs\rmg.gs` builds a dispatch table with PostScript dictionary-literal syntax:
+
+```
+/dummy2 << -1{neutral_landscape}LIFE{life_landscape}DEATH{death_landscape} ... >> replace bind def
+```
+
+Any lexer or VM for this language has to handle `<<` and `>>` as delimiters, not as shift operators
+and not as ordinary names. Both of ours already do — checked, not assumed: `tools/gs_syntax.py`
+tokenises them separately, and `gamescript_vm.rs` opens and closes a `CollectionKind::Dictionary` on
+them.
+
 ### Unused engine surface
 
 **465 operators are never called by any GS5R3 script.** Examples: `addfollower`, `addbuilding`,

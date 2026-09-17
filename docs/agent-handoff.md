@@ -48,7 +48,7 @@ As of 2026-09-16, `cargo test` passes **83 library and 11 CLI/viewer tests**, `p
 
 1. **[#1 IMP presentation](https://github.com/jake-bliss/lords-of-magic-modding/issues/1) — closed.** See [hotspots](hotspots.md); the residual questions are listed there, not here.
 2. [#5 GameScript VM](https://github.com/jake-bliss/lords-of-magic-modding/issues/5): **mostly resolved.** The engine's operator tables are recovered (1,906 natives with entry points), arity is recovered by disassembly, and the VM classifies any name it stops on as operator / engine-constant / unresolved with a signature. What remains is loading a *second* engine-light module end to end.
-3. [#22 Oversized map header](https://github.com/jake-bliss/lords-of-magic-modding/issues/22): **blocked**, needs one map larger than 256x256. Ask the board; eyesodilated's MapEditor likely has samples.
+3. [#22 Oversized map header](https://github.com/jake-bliss/lords-of-magic-modding/issues/22): **ready, no longer blocked.** It needed one map larger than 256x256; the shipped GS5R3 editor generates up to 1024 and the whole thing is scriptable in one hotkey body — `512 512 make_custom_random_map` then `"map/zz512.scn" savescenariomap pop`. Operand order and call sites in [GameScript](gamescript-format.md) and [map format](map-format.md). Writes one new file to `map/`; modifies no archive.
 4. [#4 Map variants](https://github.com/jake-bliss/lords-of-magic-modding/issues/4): 52-/53-byte tails and object-field semantics. The Map Editor save diff is parked because Wine-window automation was blocked by macOS accessibility controls; ask the user for a manual export if needed.
 5. [#2 timing/direction](https://github.com/jake-bliss/lords-of-magic-modding/issues/2) and [#3 validation exceptions](https://github.com/jake-bliss/lords-of-magic-modding/issues/3): original-game comparison and lossless decoder exceptions.
 6. [#6 Difficulty/AI gameplay proof](https://github.com/jake-bliss/lords-of-magic-modding/issues/6): static side closed; controlled gameplay measurement holding `insane_mode?` constant remains open.
@@ -62,7 +62,7 @@ As of 2026-09-16, `cargo test` passes **83 library and 11 CLI/viewer tests**, `p
 
 Newly available leads, all from the 2026-09-16 survey:
 
-- The oversized-map hypothesis moved out of #4 into its own tracked issue, **#22**, labelled blocked. It needs one map larger than 256x256, which nothing locally provides.
+- The oversized-map hypothesis moved out of #4 into its own tracked issue, **#22**. It was labelled blocked for want of a map larger than 256x256; on 2026-09-17 the shipped editor's own generator was found to cover 32-1024, so it is ready to run. Do not go asking the board for a sample map.
 - Issue #5's classifier correction is **done**; roughly 30 confirmed native host names and six recommended first stubs are listed in the issue and in [GameScript](gamescript-format.md).
 - Issues #1 and #2 gained palette index semantics and the facing/clockwise naming, both now applied in code. A `0x08`-only duplicate-count hypothesis for issue #3 was tested and **refuted** (10 failures becomes 112) — do not retry it. **Issue #1 is now closed**; everything it covered, including the hotspot mechanism from board thread 2176 and the placement measurements, is consolidated in [hotspots](hotspots.md). The board's crop-and-re-centre workaround never converged because placement is authored per frame and the convention is centre-relative — both now established.
 - **Issue #6's static side is effectively closed.** The GS5R3 AI-bonus path is located, and the `extra_strong?` question is settled by execution: the shipped body is `false` at every difficulty, while the body quoted on the forum is `true` on Hard in single-player. What remains is controlled *gameplay* measurement, holding `insane_mode?` constant.
@@ -191,6 +191,25 @@ edited subject in the same capture costs nothing extra and answers that directly
   plate difference can bound far more than the sprite. Cluster the changed pixels into connected
   components instead of taking a bounding box — that turned a spurious `110x191` box into the
   correct `49x67`.
+
+### Build the map instead of surveying it
+
+Found 2026-09-17, not yet run, and it supersedes the "place sprites and survey the neighbourhood"
+approach for the open `map2screen` y question.
+
+`gs\generate.gs` defines `/generate_simple_game`, which builds a complete playable scenario from
+script with no user input: `64 64 newmap`, `clearmap`, `paintelevation` at chosen cells, `addcapitol`,
+`addunit` inside `unittypedict begin ... end`, `2 newgame`, `create3dmap`, `gamemode`. Every operand
+order is in [GameScript](gamescript-format.md).
+
+Why it matters: the residual y error was measured against a shipped map whose terrain mesh we did not
+choose and could only survey afterwards, and two of six placements fell outside the surveyed square.
+A map painted by `paintelevation` is one we specify — flat where we want flat, a known step where we
+want a step, unit at a cell we picked, each sprite at its own screen x. Build the control instead of
+reconstructing it.
+
+Related, from the same sweep: `mapw` and `maph` are readable script names giving the live map's
+dimensions, so a packed location can be unpacked without assuming a width.
 
 ### Read this before judging any launch
 

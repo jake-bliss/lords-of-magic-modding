@@ -447,6 +447,74 @@ tool reads. The `.exe` tools remain undownloaded and unrun. Their existence does
 cross-platform decoder, but it does mean **we are not the only party decoding these formats**, and
 their author has solved at least one problem we have open.
 
+## Board sweep, 2026-09-17
+
+All six pages of board 18 were listed (169 threads) and twelve read in full. The purpose was to find
+anything that would accelerate open work rather than to re-survey claims. The honest summary: the
+board's value here was **indirect**. Two threads mentioned shipped script files by name, and those
+files — not the threads — produced the results.
+
+### What it pointed at
+
+| Thread | Pointed at | Result |
+| --- | --- | --- |
+| 2206, "Generating Maps" | "an rmg file in the gs folder" | `gs\rmg.gs` and `gs\edit\mapgen.gs`: the editor generates 32-1024 in steps of 32, and `make_custom_random_map` plus `savescenariomap` make it scriptable. **Unblocks [issue #22](https://github.com/jake-bliss/lords-of-magic-modding/issues/22)** |
+| 2222, "GSZ will support All MAP Sizes" | Maps to "1024x1024, or perhaps larger" | Announcement only. But it prompted the search above, and the shipped editor already covers that range |
+| 2334, "Map Editor Interface adjustments" | Elevation and graphics memory | "1.0 is effective to 10" is a **GSZ editor UI change**, not engine behaviour — do not fold it into the `map2screen` z coefficient. Separately: `genericpanel` calls `copydoodad`, whose graphics never unload, so `maxgraphics` in `START.gs` was roughly doubled |
+
+`gs\generate.gs`, found while chasing the above, defines `/generate_simple_game` — a complete
+scenario built from script with no user input. It is the preferred rig for the next elevation
+experiment, because a map we paint ourselves has a mesh we specify rather than one we must survey.
+Details in the [research log](research-log.md).
+
+### Threads with no technical content
+
+Recorded so nobody re-reads them looking for one.
+
+| Thread | Subject | Why it is empty |
+| --- | --- | --- |
+| 2542 | LOM source code search | No source exists; Rebellion holds the rights; Ghidra yields ~684,794 lines. Repeats "the mpq files are not fully decryptable", which our injection path refutes |
+| 2316 | Decompile/recompile LOMSE.exe | No result. Poses one answerable question: `UNIT_WIZARD_MANA` is locked to -1 for non-wizards and is believed to be in the exe |
+| 2426 | `gs\edit\radius_terrain` | The only `.txt` in `gs.mpq`. Boaster: "That may have been something I left in there" |
+| 2428 | LOMSE Borderless | A cnc-ddraw wrapper recommendation. No resolution or coordinate detail |
+| 2014 | Lords of Magic Utility v0.2 | Format support only; no offsets, no hotspot detail |
+| 2083 | `waicons.imp` fix | A colour improvement with no technical description |
+| 2406 | Alternate web server | A download mirror at `lomse.ddns.net`; mod builds only |
+| 2493 | "Corrupted" images in `pic.mpq` | Not corrupt — the reporter had no listfile. Repeats the red/green palette convention for LBM |
+
+### The Game Script Manual is not worth buying
+
+Thread 2033 sells a 25-page PDF for a $5.99 minimum donation. Its own advertised contents are
+"USING THE RIGHT TOOLS", "SYSTEM SYMBOLS", "MATHEMATICS, OPERANDS AND PROCEDURES", then unit,
+artifact and spell editing. No interpreter description, no operator reference, no file formats. We
+recovered 1,906 operators and their stack effects from the binary; the manual is downstream of what
+this repository already holds. Recorded as a decision, not a judgement of the work.
+
+### A naming trap
+
+Thread 2247: `small_doodad` is **a roster-sprite override**, keyed on a unit's `code` (`WM1`, `WM2`,
+`FIT`, `THF`) and resolved through `gs\graphics5.gs` by faith and race. It has nothing to do with
+terrain doodads or `addterrainsprite`. `portrait_doodad` defaults to -1.
+
+### What we can give back
+
+Thread 2437, May 2023, an author building unit sprites in Blender:
+
+> When I add the pallet to the sprite images the Red shadow is getting blended into the sprite, same
+> with transparent Green. I have solved this by compositing. The green is background, and the red
+> shadow is foreground and all three images get put together after adjusting the pallet and then
+> applying the pallet right after they are joined.
+
+By their own account that costs about 300% more processing, and it is unnecessary. The engine keys on
+the palette **index** and ignores the entry's colour: index 0 is transparent, index 1 draws the
+background at half brightness. The magenta rewrite on 2026-09-17 proved it directly — 903 index-1
+pixels in the control and 889 in a magenta-rewritten copy, every one within a palette step of exact
+halving, both rendered copies identical. An author needs the two *indices* right and may paint them
+anything.
+
+That is the most useful thing this project currently has for the board, and it is ours: measured in
+the running engine, not relayed.
+
 ## What changed here as a result
 
 - `spikes/asset-viewer/src/png_export.rs` now writes a `tRNS` chunk marking the header's colour-key index (`ImpSprite::color_key`)
