@@ -247,12 +247,43 @@ rather than surveyed after; every placement has its own screen x, so no sprite i
 cell by whichever assignment fits best; and the map is the probe's own creation, so nothing of the
 game's is at risk at any point.
 
+**A seventh sprite is the instrument that makes B-versus-C readable.** The camera cannot be moved
+out of the plateau: framing the row pins `centeron` to within a cell or two of the row itself, so
+the camera cell is inside any block that covers the placements with a margin. If `centeron` derives
+its offset from terrain height the way the sprite renderer may, the whole viewport shifts about 41
+pixels between B and C, every sprite moves with it, and `392 clearmap` leaves a uniform texture with
+no landmark to notice it — a camera artefact would read as the mesh coefficient, or cancel a real
+one into a false null. So a control sprite stands at (35, 41), six cells clear of the block and flat
+in all three phases. Any movement in **its** drawn y is purely camera, and is subtracted from the
+rest.
+
 Each phase takes its own plate, because phases B and C move the ground and a shared plate would put
 the whole changed mesh into the sprite difference. `rebuild3dmap` runs after every elevation change
-or the render keeps the old heights and all three phases look alike. Tests enforce the phase order,
-the plate-per-phase rule, the block margin around every placement, the screen-x separation against
-the 72-pixel frame, and — asserted as a *sequence*, because a substring search cannot tell one
-block write from another — that the spike phase lowers the plateau before raising its cells.
+or the render keeps the old heights and all three phases look alike. Each phase sweeps **twice** and
+then counts survivors into the log: destroying during an enumeration may advance past an entry, and
+a survivor is the same art on the same cell in the next phase's plate *and* shot, so it contributes
+zero changed pixels and reads exactly like "the sprite did not render".
+
+The tests assert **order**, not the presence of strings: three `rebuild3dmap` calls say nothing if
+all three run before the elevations change, and three sweeps say nothing if they all run at the end.
+They enforce the phase order, that each phase plates before it places, that each phase rebuilds and
+re-points between its own elevation change and its own plate, that every phase places on all seven
+cells exactly once, that the block loops use the declared bounds, that every placement's *drawn
+frame* — not just its anchor — is on screen once the camera offset is accounted for, and — as a
+*sequence*, because a substring search cannot tell one block write from another — that the spike
+phase lowers the plateau before raising its cells.
+
+### Captures are per-probe and per-run, and this was paid for
+
+`ladder` and `elevation` both wrote `zp0`/`zs1`/`zs2`, and `scripts/restore-game-archives.sh`
+collected them into one flat directory. **On 2026-09-17 that destroyed the elevation run's survey
+log** — the raw data behind the `map2screen` decode — when the mapsize run reused `zprobe.log`.
+The conclusions survive in this log; the raw file does not.
+
+Two fixes, both in place. Every probe now owns a capture prefix (`zl`, `ze`, `zm`, `zf`) and a test
+fails if two probes share a name. And the restore script files each run in its own
+`run-YYYYmmdd-HHMMSS/` directory, refusing to start if that directory already exists. An attended
+run costs a human a game session; its output is not something to overwrite.
 
 ### The shipped precedent it was built from
 

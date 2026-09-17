@@ -123,9 +123,42 @@ class SharedProbeSafetyTest(unittest.TestCase):
             self.assertIn("no army found", body, name)
 
     def test_placing_probes_capture_a_plate_and_a_result(self) -> None:
+        """A capture before the first placement and another after it.
+
+        Named by position rather than by filename: each probe owns its own capture names, because
+        sharing them across probes is what overwrote the elevation run's collected output.
+        """
         for name, body in self.placement_bodies().items():
-            for capture in ('"zp0.bmp"screencapture', '"zs1.bmp"screencapture'):
-                self.assertIn(capture, body, name)
+            captures = [m.start() for m in re.finditer(r'"z[^"]*\.bmp"screencapture', body)]
+            # `addterrainsprite` is a prefix of `addterrainspritetype`, which registers a type
+            # long before anything is placed. Matching the prefix put the "first placement" at the
+            # registration and made the plate look late.
+            placement = re.search(r"addterrainsprite(?!type)", body)
+            self.assertIsNotNone(placement, name)
+            first_placement = placement.start()
+            self.assertTrue(
+                any(at < first_placement for at in captures),
+                f"{name}: no plate captured before the first placement",
+            )
+            self.assertTrue(
+                any(at > first_placement for at in captures),
+                f"{name}: no capture after placing",
+            )
+
+    def test_no_two_probes_share_a_capture_name(self) -> None:
+        """A shared name is only destructive once the restore script collects it.
+
+        That is not hypothetical: the mapsize probe reused `zprobe.log` and the elevation run's
+        survey log -- the raw data behind the map2screen decode -- was overwritten on 2026-09-17.
+        The restore script now collects into a per-run directory, and this keeps the names distinct
+        as well.
+        """
+        seen: dict[str, str] = {}
+        for name, body in self.bodies().items():
+            for capture in set(re.findall(r'"(z[^"]*\.bmp)"screencapture', body)):
+                if capture in seen:
+                    self.fail(f"{name} and {seen[capture]} both capture {capture}")
+                seen[capture] = name
 
     def test_placing_probes_remove_what_they_placed(self) -> None:
         """A probe that leaves sprites behind has changed the map it was measuring.
@@ -224,110 +257,219 @@ class ElevationProbeTest(unittest.TestCase):
 
 
 class FlatGroundProbeTest(unittest.TestCase):
-    """The probe that builds its own mesh to close the `map2screen` y convention."""
+    """The probe that builds its own mesh to close the `map2screen` y convention.
+
+    These assert on the ORDER of emitted operations, not on the presence of strings. A probe body
+    is a program: `rebuild3dmap` three times says nothing if all three run before the elevations
+    change, and three cleanup sweeps say nothing if they all run at the end.
+    """
+
+    PIXELS_PER_X_STEP = 33.941
+    SCREEN_WIDTH = 640
+    FRAME_WIDTH = 72
 
     def setUp(self) -> None:
         self.body = engine_probe.flat_ground_body()
 
+    def _phase_spans(self):
+        """(tag, start, end) for each phase, bounded by its own plate and the next phase's."""
+        marks = [(tag, self.body.index(f'"{plate}"screencapture'))
+                 for tag, plate, _ in engine_probe.FLAT_PHASES]
+        spans = []
+        for index, (tag, begin) in enumerate(marks):
+            finish = marks[index + 1][1] if index + 1 < len(marks) else len(self.body)
+            spans.append((tag, begin, finish))
+        return spans
+
     def test_three_phases_in_the_order_that_makes_them_comparable(self) -> None:
-        positions = [self.body.index(f'"zs{n}.bmp"screencapture') for n in (1, 2, 3)]
-        self.assertEqual(positions, sorted(positions))
-        for tag in ("flat", "plateau", "spike"):
-            self.assertIn(f'"cleanup {tag} done"', self.body)
+        shots = [self.body.index(f'"{shot}"screencapture')
+                 for _, _, shot in engine_probe.FLAT_PHASES]
+        self.assertEqual(shots, sorted(shots))
+        self.assertEqual([tag for tag, _, _ in engine_probe.FLAT_PHASES],
+                         ["flat", "plateau", "spike"])
 
-    def test_each_phase_has_its_own_plate(self) -> None:
-        """A phase differenced against another phase's terrain would show the whole changed mesh.
+    def test_every_capture_name_is_unique_and_this_probes_own(self) -> None:
+        """Each probe owns its capture names, and none may collide inside one run.
 
-        Phases B and C move the ground, so a single plate taken at the start would put every
-        raised cell into the difference and bury the sprites the probe is trying to measure.
+        The engine also refuses to overwrite an existing capture, so a duplicate name inside one
+        run silently loses the second shot.
         """
-        for plate in ('"zp0.bmp"', '"zp1.bmp"', '"zp2.bmp"'):
-            self.assertIn(f"{plate}screencapture", self.body)
-        for plate, shot in (("zp0", "zs1"), ("zp1", "zs2"), ("zp2", "zs3")):
+        names = re.findall(r'"(z[^"]*\.bmp)"screencapture', self.body)
+        self.assertEqual(len(names), len(set(names)), f"duplicate capture name: {names}")
+        expected = [n for phase in engine_probe.FLAT_PHASES for n in phase[1:]]
+        self.assertEqual(names, expected)
+        for other in ("zl0.bmp", "ze0.bmp", "zm128.bmp"):
+            self.assertNotIn(f'"{other}"', self.body, "collides with an earlier probe's captures")
+
+    def test_each_phase_plates_before_it_places_and_shoots_after(self) -> None:
+        """Asserting only plate-before-shot passes for `place, plate, shot`.
+
+        That ordering puts the sprites in the plate, the difference comes out empty, and it reads
+        exactly like "nothing rendered".
+        """
+        for (tag, plate, shot), (_, begin, finish) in zip(
+            engine_probe.FLAT_PHASES, self._phase_spans()
+        ):
+            window = self.body[begin:finish]
+            plate_at = window.index(f'"{plate}"screencapture')
+            first_placement = window.index(f'"place {tag} 0 cell ')
+            shot_at = window.index(f'"{shot}"screencapture')
+            self.assertLess(plate_at, first_placement, f"{plate} is taken after {tag} places")
+            self.assertLess(first_placement, shot_at, f"{shot} is taken before {tag} places")
+
+    def test_each_phase_rebuilds_and_re_points_before_its_own_plate(self) -> None:
+        """A rebuild that happens before the elevation change renders the previous phase's mesh."""
+        camera = f"{engine_probe.FLAT_CAMERA[0]} {engine_probe.FLAT_CAMERA[1]} centeron"
+        for (tag, plate, _), (_, begin, finish) in zip(
+            engine_probe.FLAT_PHASES, self._phase_spans()
+        ):
+            window = self.body[begin:finish]
+            # The rebuild and centeron for a phase sit just before its plate, which is where this
+            # window starts, so look in the run-up to it instead.
+            run_up = self.body[:begin]
+            self.assertIn("rebuild3dmap", run_up.rsplit(f'"{plate}"', 1)[0][-400:],
+                          f"{tag} does not rebuild immediately before its plate")
+            self.assertIn(camera, run_up[-400:], f"{tag} does not re-point the camera")
+            self.assertNotIn("setelevation", window.split(f'"{plate}"')[0],
+                             f"{tag} changes elevations after its own rebuild")
+
+    def test_each_phase_sweeps_twice_and_counts_survivors(self) -> None:
+        """One sweep is not enough: destroying during an enumeration may advance past an entry.
+
+        A survivor is the same art on the same cell in the next phase's plate AND shot, so it
+        contributes zero changed pixels and reads as "the sprite did not render". The count turns
+        that silent corruption into a line in the log.
+        """
+        sweep = ("{dup getterrainspritetype zt eq"
+                 "{destroyterrainsprite}{pop}ifelse}enumterrainsprites")
+        for tag, begin, finish in self._phase_spans():
+            window = self.body[begin:finish]
+            self.assertEqual(window.count(sweep), 2, f"{tag} sweeps once; it must sweep twice")
+            self.assertIn("/zleft 0 def", window, f"{tag} does not count survivors")
+            self.assertIn(f'"cleanup {tag} left "zleft', window)
             self.assertLess(
-                self.body.index(f'"{plate}.bmp"'),
-                self.body.index(f'"{shot}.bmp"'),
-                f"{plate} must be captured before {shot}",
+                window.index(f'"{engine_probe.FLAT_PHASES[0][2]}"' if False else sweep),
+                window.index(f'"cleanup {tag} left "zleft'),
             )
 
-    def test_plateau_and_spike_put_the_same_elevation_on_the_placement_cells(self) -> None:
-        """This is the entire experiment: same cell, same `getelevation`, opposite neighbourhood.
+    def test_every_phase_cleans_up_before_the_next_one_plates(self) -> None:
+        for index, (tag, begin, finish) in enumerate(self._phase_spans()[:-1]):
+            cleanup_at = begin + self.body[begin:finish].index(f'"cleanup {tag} left "zleft')
+            next_plate = self.body.index(f'"{engine_probe.FLAT_PHASES[index + 1][1]}"screencapture')
+            self.assertLess(cleanup_at, next_plate, f"{tag}'s sprites survive into the next plate")
 
-        If the two phases used different elevations, any difference in drawn y would be explained
-        by the elevation and would say nothing about the mesh.
+    def test_plateau_and_spike_put_the_same_elevation_on_the_placement_cells(self) -> None:
+        """The experiment: same cell, same `getelevation`, opposite neighbourhood.
+
+        The block writes are asserted as a SEQUENCE. A substring search cannot tell the spike
+        phase's block-lowering from phase A's flattening, and a spike phase that never lowers the
+        block is a second plateau -- the two phases would then agree for a reason that has nothing
+        to do with the mesh.
         """
         elevation = engine_probe.FLAT_ELEVATION
-
-        # The block-wide writes, in the order the body performs them. Asserted as a SEQUENCE: a
-        # substring search cannot tell the spike phase's block-lowering from phase A's flattening,
-        # and a spike phase that never lowers the block is just a second plateau -- which would
-        # make the two phases agree for a reason that has nothing to do with the mesh.
         block_writes = re.findall(r"zsx zsy (\S+) setelevation", self.body)
-        self.assertEqual(
-            block_writes,
-            ["0", elevation, "0"],
-            "expected flatten, then raise the block, then lower it again before the spikes",
-        )
+        self.assertEqual(block_writes, ["0", elevation, "0"])
 
-        # And the six cells are raised after that final lowering.
         cell_writes = re.findall(
             rf"zrow (\d+) get {engine_probe.FLAT_ROW_Y} (\S+) setelevation", self.body
         )
-        self.assertEqual(
-            cell_writes,
-            [(str(i), elevation) for i in range(len(engine_probe.FLAT_ROW_X))],
-        )
+        self.assertEqual(cell_writes,
+                         [(str(i), elevation) for i in range(len(engine_probe.FLAT_ROW_X))])
         last_lowering = [m.start() for m in re.finditer(r"zsx zsy 0 setelevation", self.body)][-1]
-        first_spike = self.body.index(f"zrow 0 get {engine_probe.FLAT_ROW_Y} {elevation}")
-        self.assertLess(last_lowering, first_spike)
+        self.assertLess(last_lowering,
+                        self.body.index(f"zrow 0 get {engine_probe.FLAT_ROW_Y} {elevation}"))
 
+    def test_the_block_loops_use_the_declared_bounds(self) -> None:
+        """Checking the constant alone would pass on a body that looped over something else."""
         x0, y0, x1, y1 = engine_probe.FLAT_BLOCK
-        self.assertLessEqual(y0, y1)
-        self.assertLessEqual(x0, x1)
+        self.assertEqual(self.body.count(f"{x0} 1 {x1}{{/zsx exch def"), 2)
+        self.assertEqual(self.body.count(f"{y0} 1 {y1}{{/zsy exch def"), 2)
+        self.assertIn(f"0 1 {engine_probe.FLAT_MAP - 1}{{/zsx exch def", self.body)
 
     def test_the_plateau_block_clears_every_placement_neighbourhood(self) -> None:
-        """A mesh sampler must not be able to see the block's edge from any placement cell."""
         x0, y0, x1, y1 = engine_probe.FLAT_BLOCK
         margin = 2
         for x in engine_probe.FLAT_ROW_X:
-            self.assertGreaterEqual(x - x0, margin, f"cell x={x} is too close to the block edge")
-            self.assertGreaterEqual(x1 - x, margin, f"cell x={x} is too close to the block edge")
+            self.assertGreaterEqual(x - x0, margin)
+            self.assertGreaterEqual(x1 - x, margin)
         self.assertGreaterEqual(engine_probe.FLAT_ROW_Y - y0, margin)
         self.assertGreaterEqual(y1 - engine_probe.FLAT_ROW_Y, margin)
         self.assertLess(x1, engine_probe.FLAT_MAP)
         self.assertLess(y1, engine_probe.FLAT_MAP)
 
-    def test_every_placement_gets_its_own_screen_x(self) -> None:
-        """The earlier run had two pairs sharing a screen x and picked the assignment that fit.
+    def test_the_control_sprite_stands_on_ground_that_never_changes(self) -> None:
+        """It is the only thing that can tell a camera shift from a mesh effect.
 
-        Screen x is `33.941 * (x - y) + L`. With one row, distinct x means distinct screen x, and
-        the separation must exceed the 72-pixel donor frame or the clusters merge.
+        The camera cannot be moved out of the plateau -- framing the row pins it to within a cell
+        or two of the row itself -- so the camera cell's elevation differs between the plateau and
+        spike phases. If `centeron` reads terrain height, the whole viewport moves and every sprite
+        moves with it. This one does not stand on ground that ever changes, so its movement is
+        purely camera.
         """
+        cx, cy = engine_probe.FLAT_CONTROL
+        x0, y0, x1, y1 = engine_probe.FLAT_BLOCK
+        margin = 2
+        outside = cx < x0 - margin or cx > x1 + margin or cy < y0 - margin or cy > y1 + margin
+        self.assertTrue(outside, "the control sits in or beside the plateau, so it moves with it")
+        self.assertNotIn((cx, cy), [(x, engine_probe.FLAT_ROW_Y)
+                                    for x in engine_probe.FLAT_ROW_X])
+        for tag, _, _ in engine_probe.FLAT_PHASES:
+            self.assertIn(f'"control {tag} cell "zx" "zy" elev "ze', self.body)
+        self.assertEqual(self.body.count(f"/zx {cx} def /zy {cy} def"),
+                         len(engine_probe.FLAT_PHASES))
+
+    def test_the_control_does_not_collide_with_a_placement_on_screen(self) -> None:
+        """Same screen x is allowed; the 259 pixels of vertical separation is what keeps it apart."""
+        cx, cy = engine_probe.FLAT_CONTROL
+        for x in engine_probe.FLAT_ROW_X:
+            dx = abs((cx - cy) - (x - engine_probe.FLAT_ROW_Y)) * self.PIXELS_PER_X_STEP
+            dy = abs((cx + cy) - (x + engine_probe.FLAT_ROW_Y)) * 14.4
+            self.assertTrue(dx > self.FRAME_WIDTH or dy > 67,
+                            f"control overlaps the sprite at x={x}: dx={dx:.0f} dy={dy:.0f}")
+
+    def test_every_placement_is_on_screen_once_the_camera_is_accounted_for(self) -> None:
+        """The anchor is the drawn LEFT edge, so the frame extends further right.
+
+        Checking only the row's span passes on a row that is centred badly and runs off the screen;
+        with the camera at `x - y = 1` the rightmost frame reached x 640 exactly.
+        """
+        camera_x, camera_y = engine_probe.FLAT_CAMERA
+        camera_step = camera_x - camera_y
+        for x, y in _flat_cells_for_test():
+            left = self.SCREEN_WIDTH / 2 + ((x - y) - camera_step) * self.PIXELS_PER_X_STEP
+            right = left + self.FRAME_WIDTH
+            self.assertGreaterEqual(left, 0, f"cell ({x},{y}) is off the left edge")
+            self.assertLessEqual(right, self.SCREEN_WIDTH, f"cell ({x},{y}) is clipped on the right")
+
+    def test_every_placement_gets_its_own_screen_x(self) -> None:
         columns = engine_probe.FLAT_ROW_X
         self.assertEqual(len(set(columns)), len(columns))
-        pixels_per_step = 33.941
-        gaps = [
-            (b - a) * pixels_per_step for a, b in zip(sorted(columns), sorted(columns)[1:])
-        ]
-        self.assertTrue(all(gap > 72 for gap in gaps), f"frames would overlap: {gaps}")
-        span = (max(columns) - min(columns)) * pixels_per_step
-        self.assertLess(span, 640 - 72, "the row does not fit on a 640-pixel screen")
+        gaps = [(b - a) * self.PIXELS_PER_X_STEP
+                for a, b in zip(sorted(columns), sorted(columns)[1:])]
+        self.assertTrue(all(gap > self.FRAME_WIDTH for gap in gaps), f"frames overlap: {gaps}")
 
-    def test_the_camera_is_pointed_rather_than_inherited(self) -> None:
-        """No army here, so nothing positions the view unless the probe does it."""
-        x, y = engine_probe.FLAT_CAMERA
-        self.assertIn(f"{x} {y} centeron", self.body)
-        self.assertEqual(self.body.count("centeron"), 3, "each phase re-points after its rebuild")
-
-    def test_the_mesh_is_rebuilt_after_every_elevation_change(self) -> None:
-        """Without a rebuild the render keeps the old heights and all three phases look alike."""
-        self.assertEqual(self.body.count("rebuild3dmap"), 3)
+    def test_every_phase_places_on_all_six_cells_and_the_control(self) -> None:
+        """Checking the constant would pass on a body that placed the same cell six times."""
+        for tag, begin, finish in self._phase_spans():
+            window = self.body[begin:finish]
+            placed = re.findall(r"/zx (\d+) def /zy (\d+) def", window)
+            self.assertEqual(
+                [(int(a), int(b)) for a, b in placed],
+                _flat_cells_for_test(),
+                f"{tag} does not place on every cell exactly once",
+            )
+            self.assertEqual(window.count("zx zy zt addterrainsprite"), len(placed))
 
     def test_it_builds_its_own_map_and_saves_nothing(self) -> None:
-        """Nothing of the game's is touched: the map is created in memory and never written."""
         self.assertIn(f"{engine_probe.FLAT_MAP} {engine_probe.FLAT_MAP} newmap", self.body)
         for forbidden in ("savescenariomap", "savespecialmap", "terrainspriteat"):
             self.assertNotIn(forbidden, self.body)
+
+
+def _flat_cells_for_test():
+    return [(x, engine_probe.FLAT_ROW_Y) for x in engine_probe.FLAT_ROW_X] + [
+        engine_probe.FLAT_CONTROL
+    ]
 
 
 class EngineProbeTest(unittest.TestCase):

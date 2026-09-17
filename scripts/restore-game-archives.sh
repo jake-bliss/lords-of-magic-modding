@@ -26,10 +26,22 @@ fi
 # nullglob only drops patterns that match nothing, so zprobe.log is written as a pattern too.
 shopt -s nullglob
 captures=("${game_dir}"/z*.bmp "${game_dir}"/zprobe.lo[g])
+# Every run gets its OWN directory, decided once and used by both collections below.
+#
+# Collecting into a flat directory silently overwrote whatever the previous run left under the same
+# name. On 2026-09-17 that destroyed the elevation run's survey log -- the raw data behind the
+# map2screen decode -- when the mapsize run reused `zprobe.log`. An attended run costs a human a
+# game session; its output is not something to overwrite.
+run_dir="${capture_dir}/run-$(date +%Y%m%d-%H%M%S)"
+if [[ -e "${run_dir}" ]]; then
+  echo "refusing to collect: ${run_dir} already exists" >&2
+  exit 1
+fi
+
 if (( ${#captures[@]} )); then
-  mkdir -p "${capture_dir}"
-  cp "${captures[@]}" "${capture_dir}/"
-  echo "collected ${#captures[@]} probe file(s) into ${capture_dir}"
+  mkdir -p "${run_dir}"
+  cp "${captures[@]}" "${run_dir}/"
+  echo "collected ${#captures[@]} probe file(s) into ${run_dir}"
   rm -f "${captures[@]}"
 fi
 
@@ -49,16 +61,16 @@ done < <(PYTHONPATH="${project_dir}/tools" python3 -c \
   'import engine_probe; print("\n".join(engine_probe.generated_map_names()))')
 
 if (( ${#generated[@]} )); then
-  mkdir -p "${capture_dir}"
-  echo "collecting ${#generated[@]} generated map(s) into ${capture_dir}"
+  mkdir -p "${run_dir}"
+  echo "collecting ${#generated[@]} generated map(s) into ${run_dir}"
   for path in "${generated[@]}"; do
     base="${path##*/}"
     # The source is hashed BEFORE the copy and the copy is hashed after. Comparing the copy against
     # the file it was just copied from proves nothing, and the original is about to be deleted --
     # this is the only moment at which a bad copy can still be caught.
     before="$(file_hash "${path}")"
-    cp "${path}" "${capture_dir}/${base}"
-    after="$(file_hash "${capture_dir}/${base}")"
+    cp "${path}" "${run_dir}/${base}"
+    after="$(file_hash "${run_dir}/${base}")"
     if [[ "${before}" != "${after}" ]]; then
       echo "keeping ${base}: the collected copy does not match the original" >&2
       continue
