@@ -2895,3 +2895,117 @@ tiles".
 only consumers want *a tile `getterrain` answers with this terrain* so `clearmap` can lay a
 background, and both 392 and 63 satisfy that. Changing water's 392 to its anchor 63 would make the
 probe's background a constraint-violating field — strictly worse.
+
+## 2026-09-17 — Six record layouts, not three families and 18 mysteries
+
+Object editing worked on 196 of the 365 installed maps. The other 169 had trailing sections this
+project could not parse — recorded as "52-byte and 53-byte families" plus "18 unmatched tails" —
+so `--map-place-sprite` and `--map-remove-sprite` refused them. This run decoded all of it, offline,
+from the installed corpus alone. No engine run was involved and no map file in the game directory
+was touched.
+
+### The population, measured before anything was interpreted
+
+Counting exactly — a section is `4 + count × record_size + footer`, with **nothing left over**, and
+every record's head validated at the stride — each of the 365 files resolves to exactly one layout:
+
+| Records | Footer | Files | Records | Header word at `0x00` |
+| ---: | --- | ---: | ---: | --- |
+| 47 | none | 6 | 434 | 98 |
+| 47 | `u32` | 3 | 52 | 101 |
+| 48 | none | 9 | 222 | 63, 73 |
+| 49 | `u32` | 196 | 16,628 | 102, 105-111 |
+| 52 | none | 144 | 1,253 | 76, 79, 81, 87, 89 |
+| 53 | none | 6 | 2,528 | 96, 97 |
+| | | **364** | **21,117** | |
+
+The 365th, `chbldg01.smp`, holds a four-byte section: a zero count and no footer.
+
+**No map mixes record sizes.** Size is a per-map property, which is what made a single
+`layout` field on the section the right parser shape rather than a per-record one.
+
+**The 18 "unmatched tails" were never a separate phenomenon.** Nine are the 48-byte layout and nine
+the 47-byte one. They looked unmatched because only three record sizes had ever been tried. The one
+"ambiguous file" was `chbldg01.smp`.
+
+### The head aligns; the brief's leading hypothesis did not survive
+
+The head does align, field for field, across all 21,117 records in all six layouts: eight `u32`s,
+`record_kind` and `record_version` always `1`, `+12` always `0xffffffff`, `+16` always `0`, then
+`cell_index`, `instance_id`, `attribute_bits`, `sprite_type`. `cell_index` is unique and in bounds in
+every file; `instance_id` is unique and strictly increasing in every file. So the shared-head
+assumption held, and it was checked rather than assumed.
+
+**What did not hold is "the 49-byte record plus three or four extra bytes".** Two of the newly
+decoded layouts are *shorter* than 49 bytes, and past `+32` there are two tail shapes that are not
+one shape at an offset:
+
+- **procedure tail**, sizes 47 and 49, 17,114 records: `ff 01`, a `u32` procedure id, `u32` `0`,
+  `u32` `0xffffffff`, then **one** zero byte (47) or **three** (49).
+- **plain tail**, sizes 48, 52 and 53, 4,003 records: `u32` `0`, `u32` `0`, `u32` `0xffffffff`,
+  `u32` `0`, then a `u32` `0xffffffff` (52, 53), then one zero byte (53).
+
+The plain tail has no procedure-id field at all — not an extra one. The `0x01ff` marker is two bytes
+where the plain tail has four zero bytes, and the trailing padding differs, so no single shift maps
+either onto the other. Several shifts were tried before this was accepted; each matched three or
+four words and then broke.
+
+### What the extra bytes are, and what cannot be said about them
+
+Every byte outside the eight head fields and the procedure id is **constant within its layout across
+the whole corpus** — zero, or `0xffffffff`. There is therefore nothing to correlate against sprite
+type, coordinates, footer value or map dimensions: a field with one value has no distribution. They
+are decoded as named, typed, per-layout fields that round-trip exactly and are asserted of nothing.
+Their meaning is **Unknown**, and it is unknowable from this corpus.
+
+The one head field that varies by shape is `attribute_bits` at `+24`: the procedure-tail layouts
+carry the upper-nibble codes already recorded, and all 4,003 plain-tail records carry zero.
+
+### The header word at `0x00` partitions the layouts, and an old refutation was wrong
+
+The word's 19 distinct values partition the six layouts **with no overlap at all**, and in order:
+63-73, 76-89, 96-97, 98, 101, 102-111. The engine's own fresh save stamps 111 — the top of the range
+— and writes the 49-byte layout.
+
+This document had recorded the community's "version number" reading as **refuted**, on the 2026-09-16
+argument that the word varies independently of geometry and clusters by file family, so "a version
+number would not vary that way". That argument does not follow: a version varies with *when* a file
+was built, which is independent of its geometry and does cluster by family. The refutation is
+**corrected**. What is genuinely refuted is the tileset-selector reading that replaced it, since the
+engine rewrites the word from its own state on every save. And the same 2026-09-16 measurement said
+"more than twenty distinct values"; the count is **19**.
+
+Reading the word as a format version, and as what the loader uses to pick a layout, stays
+**Inferred**. The partition is the observation. Because it is inferred, the parser consults the word
+for exactly one thing: a section whose record **count is zero**, where the length genuinely cannot
+distinguish the layouts. Only the 19 observed values resolve; anything else leaves the section raw
+rather than interpolating a version number.
+
+### Results
+
+- `--map-roundtrip` on the installed `map/` directory: **365 checked, 365 byte-identical, 21,117
+  records rebuilt from their typed fields, 0 failures** — up from 16,628. The 4,489 newly counted
+  records are the 169 files that previously round-tripped as opaque bytes with no field checked.
+- **Object editing works on all 365 maps.** Exercised through the CLI, one process per file: place a
+  sprite on a free cell, then remove it. All 365 came back byte-identical to the shipped file, and
+  the placement grew each file by exactly its own layout's record size.
+- A new record is minted **in the map's own layout**. In the plain-tail layouts that includes `+24`,
+  written as zero because that is the only value those 4,003 records hold — and it is flagged
+  **Inferred and unmeasured**, because the engine run that watched a fresh record being written wrote
+  a 49-byte record and says nothing about the older layouts.
+
+### The trap, and the check that catches it
+
+A wrong record size can divide a section evenly. Four 48-byte records with no footer and four
+47-byte records with a footer are both 196 bytes, and one installed map — `CAVWAT02.SMP` — is exactly
+that size. Arithmetic cannot choose, and `candidate_tail_layouts` honestly reports both. What chooses
+is the record heads: at the 47-byte stride the second record's `record_kind` lands inside the first
+record's padding, which is zero rather than `1`. A synthetic fixture of that exact shape is a test,
+and deleting the head check makes it fail.
+
+Two fixtures the corpus cannot supply also exist, for the same reason the X-major bug survived
+months in a 2×2 fixture: a section of **mixed** record sizes, which no installed map is, and a
+49-byte-stride section carrying the plain shape's zero marker, which would otherwise have four zero
+bytes read as a procedure id of `0`. Nothing in the parser validates the marker or the procedure id
+beyond this check — and `0` appears in **no** corpus record, whose procedure ids are `-1` or `8..717` — so the misreading would have been invisible in every other
+assertion, round trip included.

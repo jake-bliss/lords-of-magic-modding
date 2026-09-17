@@ -186,19 +186,24 @@ fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
     let trailing_head = map
         .trailing_head_u32()
         .map_or_else(|| "none".to_owned(), |count| count.to_string());
-    let tail_layouts = map
-        .candidate_tail_layouts()
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    let tail_layouts = if tail_layouts.is_empty() {
-        "unknown".to_owned()
-    } else {
-        tail_layouts
-    };
+    let tail_layouts = map.resolved_tail_layout().map_or_else(
+        || {
+            let candidates = map
+                .candidate_tail_layouts()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            if candidates.is_empty() {
+                "unknown".to_owned()
+            } else {
+                format!("undecoded:{candidates}")
+            }
+        },
+        |layout| layout.to_string(),
+    );
     let (placed_sprite_count, placed_sprite_types, placed_sprite_footer) = map
-        .placed_sprites_49
+        .placed_sprites
         .as_ref()
         .map(|section| {
             let types = section
@@ -210,14 +215,16 @@ fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
             (
                 section.records.len().to_string(),
                 types.to_string(),
-                section.footer.to_string(),
+                section
+                    .footer
+                    .map_or_else(|| "none".to_owned(), |footer| footer.to_string()),
             )
         })
         .unwrap_or_else(|| ("none".to_owned(), "none".to_owned(), "none".to_owned()));
     Ok(AssetInfo::new(
         kind,
         format!(
-            "metadata={};width={};height={};bits-per-pixel={};cells={};distinct-cell-tags={};distinct-tile-indexes={};high-flag-cells={high_flag_cells};candidate-value-range={value_range};nonfinite-values={nonfinite_values};trailing-bytes={};trailing-head-u32={trailing_head};tail-layout-candidates={tail_layouts};placed-sprites-49={placed_sprite_count};placed-sprite-types={placed_sprite_types};placed-sprite-footer={placed_sprite_footer}",
+            "metadata={};width={};height={};bits-per-pixel={};cells={};distinct-cell-tags={};distinct-tile-indexes={};high-flag-cells={high_flag_cells};candidate-value-range={value_range};nonfinite-values={nonfinite_values};trailing-bytes={};trailing-head-u32={trailing_head};tail-layout={tail_layouts};placed-sprite-records={placed_sprite_count};placed-sprite-types={placed_sprite_types};placed-sprite-footer={placed_sprite_footer}",
             map.metadata,
             map.width,
             map.height,

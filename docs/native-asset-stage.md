@@ -2,7 +2,7 @@
 
 ## Status
 
-**In progress; archive inventory, IMP inspection/export, terrain-atlas rendering, and the dominant map-object record milestone are complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels, frame references, sequences, facings, origins, and hotspot records of all 1,800 IMP sprite binaries. It also **writes sprite placement back** into a loose IMP (`--set-imp-placement`, with `--hotspot 0` for the record-bearing form) and solves the placement a re-cropped frame needs (`--imp-placement-for`). It also bounds all 365 installed `.scn`, `.smp`, and `.lgd` files, resolves standard map cells through original terrain art, and structurally decodes 16,628 placed-sprite records.
+**In progress; archive inventory, IMP inspection/export, terrain-atlas rendering, and the dominant map-object record milestone are complete.** The native Rust tool can read the five core GS5R3 archives without modifying them, recover their public filenames, classify all 9,804 members, probe common standard formats, fully decode the observed PBM image corpus, and decode the pixels, frame references, sequences, facings, origins, and hotspot records of all 1,800 IMP sprite binaries. It also **writes sprite placement back** into a loose IMP (`--set-imp-placement`, with `--hotspot 0` for the record-bearing form) and solves the placement a re-cropped frame needs (`--imp-placement-for`). It also bounds all 365 installed `.scn`, `.smp`, and `.lgd` files, resolves standard map cells through original terrain art, and structurally decodes 21,117 placed-object records across the six record layouts all 365 maps use.
 
 This is useful tooling now, but it is not yet the lossless asset layer promised by Stage 1. Full map/scenario semantics, the shadow-blend half of compositing, reimport/repacking, and cross-platform packaging remain open; placement is settled (see [hotspots](hotspots.md)).
 
@@ -307,7 +307,7 @@ export, where the key is a header field and is nonzero in 94 of 300 sampled spri
 
 The loose installed map corpus contains 20 `.scn`, 337 `.smp`, and eight `.lgd` files. All 365 pass the bounded parser. Each file declares width, height, an observed depth of 8, and one eight-byte record per cell in packed y-major order (`y × width + x`, corrected 2026-09-17 from X-major). Treating the second word as little-endian `f32` yields finite values from 0 to 20 and coherent relief. The first word resolves to an original tile-atlas index — confirmed by forcing seven slots in the running engine on 2026-09-17 — plus a `0x00800000` flag whose meaning is Unknown (the forced-texture reading was refuted by the same run); `URAK.scn` renders as a coherent world through `tilesb01.til` and `tilesb01.lbm`, which shows the masked tag indexes real terrain art — but says nothing about orientation, since a transposed world map is equally coherent. The render transposes relative to every preview exported before 2026-09-17.
 
-All 26 recovered `.til` definitions parse and explicitly bind atlas geometry, 32×32 tile dimensions, terrain types, and tile indices. The dominant trailing family is also decoded structurally: 196 files contain 16,628 exact 49-byte placed-sprite records. Cell indices are bounded and unique per file, and candidate instance, sprite-type, and procedure fields are exposed without discarding raw bytes. The 52-/53-byte families and exact object-field behavior remain open. See the [map-format record](map-format.md) and [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
+All 26 recovered `.til` definitions parse and explicitly bind atlas geometry, 32×32 tile dimensions, terrain types, and tile indices. The trailing record section is also decoded structurally, in **all 365 files**: 21,117 records across six layouts — 47, 48, 49, 52 and 53 bytes, with a footer in two of them. Cell indices are bounded and unique per file, instance ids are unique and increasing per file, and candidate instance, sprite-type, and procedure fields are exposed without discarding raw bytes. **Corrected 2026-09-17:** this previously described three families plus 18 unmatched tails; there are six layouts and nothing unmatched. Exact object-field behavior remains open, and every tail word outside the head is constant within its layout, so the corpus cannot say what it means. See the [map-format record](map-format.md) and [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
 
 ## Latest verification
 
@@ -319,7 +319,7 @@ Verified on 2026-09-16 (the full corpus scan itself dates from 2026-09-12):
 - a fresh read-only scan classifies all five GS5R3 core archives with zero probe failures;
 - all 1,800 IMP payloads decode with bounded sequence/facing ranges;
 - exact IMP/header validation matches 1,795 of 1,800 pairs; the five remaining paired disagreements and two orphan names are value-pinned catalog entries, and anything else re-fails;
-- all 365 loose map/scenario/component files pass; all 196 exact 49-byte-family files decode 16,628 bounded records;
+- all 365 loose map/scenario/component files pass; all 365 resolve to one of six record layouts and decode 21,117 bounded records;
 - all 26 tile-set definitions parse, and a real `URAK.scn` terrain preview exports as a coherent 1024×1024 RGBA PNG (coherent, not *correctly oriented* — a transposed world map is equally coherent, and the orientation is unverified);
 - indexed-PNG export preserves synthetic palette indices and palette bytes, succeeds on a real 165×127 frame, and refuses overwrite.
 
@@ -352,6 +352,7 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [x] Decode packed map coordinates, standard tile-atlas indices, and the `0x00800000` tag flag (meaning still Unknown).
 - [x] Parse all 26 recovered `.til` definitions and render/export original-art terrain overviews.
 - [x] Structurally decode and validate all 16,628 records in the dominant 49-byte placed-sprite family.
+- [x] Structurally decode the other five record layouts — 47, 48, 52 and 53 bytes — bringing the corpus to 21,117 records in 365 of 365 files, and object editing to all 365 maps.
 
 ## Remaining before Stage 1 is complete
 
@@ -359,10 +360,10 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [x] Establish palette, chroma-key, hotspot, and placement semantics ([issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1), closed — see [hotspots](hotspots.md)).
 - [ ] Measure the shadow-index blend and resolve the palette channel order, the two compositing questions issue #1 left behind.
 - [ ] Verify IMP direction and timing metadata ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)).
-- [ ] Decode the remaining 52-/53-byte and unknown map tails; prove the candidate 49-byte object-field semantics ([issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4)).
+- [ ] Prove the candidate object-field semantics, and find out what the six layouts' constant tail words mean — which this corpus cannot answer, because each is constant within its layout ([issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4)).
 - [ ] Inventory loose WAVE/Smacker resources outside the core archives.
 - [ ] Add batch export, full IMP reimport, and deterministic game-format round-trip tests. Placement write-back is done.
 - [ ] Add searchable browsing, cached textures, animation controls, and export to the GUI.
 - [ ] Make native-library discovery and packaging portable across macOS, Windows, and Linux.
 
-The controlled Map Editor save diff remains parked in issue #4 after macOS accessibility controls prevented reliable Wine-window automation. The parallel GameScript track now has a complete lexical/vocabulary scan and a first stack/dictionary interpreter checkpoint; its next bounded slice is read-only module loading and host-call classification. The remaining 52-/53-byte tails and original-engine-only IMP presentation work stay parked in issues #2–#4 and #22 rather than being encoded as assumptions.
+The controlled Map Editor save diff remains parked in issue #4 after macOS accessibility controls prevented reliable Wine-window automation. The parallel GameScript track now has a complete lexical/vocabulary scan and a first stack/dictionary interpreter checkpoint; its next bounded slice is read-only module loading and host-call classification. The original-engine-only IMP presentation work stays parked in issues #2–#4 and #22 rather than being encoded as assumptions.
