@@ -11,6 +11,8 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 artifacts_dir="${LOM_ARTIFACTS_DIR:-${project_dir}/artifacts}"
 backup_dir="${artifacts_dir}/experiment-backups/gs5r3-20260916"
 app_dir="${1:-${HOME}/Applications/Lords of Magic GS5R3.app}"
+# Which probe to install: "ladder" (the four-rung compositing diagnostic) or "elevation".
+probe="${LOM_PROBE:-ladder}"
 game_subpath='Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition/English'
 game_dir="${app_dir}/${game_subpath}"
 viewer_dir="${project_dir}/spikes/asset-viewer"
@@ -72,24 +74,29 @@ viewer="${viewer_dir}/target/release/lom-asset-viewer"
 mpq_replace="${viewer_dir}/target/release/examples/mpq_replace"
 author_palette="${viewer_dir}/target/release/examples/author_palette"
 
-echo "== preparing sprites =="
-# zzctl.imp is byte-identical to the donor: it isolates "an added member cannot be read" from
-# "our palette edit broke the file". zzpal.imp carries five raw-byte palette entries.
-"${viewer}" --extract "${game_dir}/imp.mpq" 'imp\tree4e.imp' "${work_dir}/tree4e.imp" \
-  --listfile "${listfile}" >/dev/null
-cp "${work_dir}/tree4e.imp" "${work_dir}/zzctl.imp"
-"${author_palette}" "${work_dir}/tree4e.imp" "${work_dir}/zzpal.imp"
-mkdir -p "${artifacts_dir}"
+echo "== preparing sprites (probe: ${probe}) =="
+# The elevation probe places shipped art through a custom type, which the ladder run proved
+# renders, so it needs no injected sprites at all -- two fewer archive writes.
+if [[ "${probe}" == "ladder" ]]; then
+  # zzctl.imp is byte-identical to the donor: it isolates "an added member cannot be read" from
+  # "our palette edit broke the file". zzpal.imp carries five raw-byte palette entries.
+  "${viewer}" --extract "${game_dir}/imp.mpq" 'imp\tree4e.imp' "${work_dir}/tree4e.imp" \
+    --listfile "${listfile}" >/dev/null
+  cp "${work_dir}/tree4e.imp" "${work_dir}/zzctl.imp"
+  "${author_palette}" "${work_dir}/tree4e.imp" "${work_dir}/zzpal.imp"
+  mkdir -p "${artifacts_dir}"
 # The index map records which frame pixels carry each authored palette entry, so the capture
 # can be read without guessing which blob is which colour.
-cp "${work_dir}/zzpal.imp.map" "${artifacts_dir}/zzpal-index-map.txt"
+  cp "${work_dir}/zzpal.imp.map" "${artifacts_dir}/zzpal-index-map.txt"
+fi
 
 echo "== preparing scripts =="
 "${viewer}" --extract "${game_dir}/gs.mpq" 'gs\hotkey.gs' "${work_dir}/hotkey.gs" \
   --listfile "${listfile}" >/dev/null
 "${viewer}" --extract "${game_dir}/gs.mpq" 'START.GS' "${work_dir}/START.GS" \
   --listfile "${listfile}" >/dev/null
-PYTHONPATH="${project_dir}/tools" python3 - "${work_dir}" <<'PY'
+PYTHONPATH="${project_dir}/tools" LOM_PROBE="${probe}" python3 - "${work_dir}" <<'PY'
+import os
 import pathlib
 import sys
 
@@ -97,10 +104,13 @@ import engine_probe
 
 work = pathlib.Path(sys.argv[1])
 hotkey = (work / "hotkey.gs").read_text(encoding="latin-1")
-(work / "hotkey_probe.gs").write_text(engine_probe.install(hotkey), encoding="latin-1")
+(work / "hotkey_probe.gs").write_text(
+    engine_probe.install(hotkey, probe=os.environ.get("LOM_PROBE", "ladder")), encoding="latin-1"
+)
 start = (work / "START.GS").read_text(encoding="latin-1")
 (work / "START_fast.GS").write_text(engine_probe.disable_intro(start), encoding="latin-1")
-print("  probe installed into hotkey.gs; intro movies disabled in START.GS")
+print(f"  {os.environ.get('LOM_PROBE', 'ladder')} probe installed into hotkey.gs; "
+      "intro movies disabled in START.GS")
 PY
 
 # `screencapture` refuses to overwrite, so a stale capture from an earlier attempt would survive the
@@ -111,8 +121,10 @@ rm -f "${game_dir}"/z*.bmp "${game_dir}"/zprobe.log
 
 echo "== injecting =="
 writing=1
-"${mpq_replace}" "${game_dir}/imp.mpq" 'imp\zzctl.imp' "${work_dir}/zzctl.imp"
-"${mpq_replace}" "${game_dir}/imp.mpq" 'imp\zzpal.imp' "${work_dir}/zzpal.imp"
+if [[ "${probe}" == "ladder" ]]; then
+  "${mpq_replace}" "${game_dir}/imp.mpq" 'imp\zzctl.imp' "${work_dir}/zzctl.imp"
+  "${mpq_replace}" "${game_dir}/imp.mpq" 'imp\zzpal.imp' "${work_dir}/zzpal.imp"
+fi
 "${mpq_replace}" "${game_dir}/gs.mpq" 'gs\hotkey.gs' "${work_dir}/hotkey_probe.gs"
 "${mpq_replace}" "${game_dir}/gs.mpq" 'START.GS' "${work_dir}/START_fast.GS"
 
@@ -128,7 +140,7 @@ echo "  scripts read back byte-identical"
 # Newly added members are findable by hash but not by the listfile, so check them that way.
 # "the engine cannot read an added archive member" is rung 2's whole hypothesis, so an unreadable
 # member here must stop the install rather than send someone to burn an attended run on it.
-for member in 'imp\zzctl.imp' 'imp\zzpal.imp'; do
+for member in $([[ "${probe}" == "ladder" ]] && echo 'imp\zzctl.imp imp\zzpal.imp'); do
   read_back="$(cd "${viewer_dir}" && cargo run --release --quiet --example read_member -- \
     "${game_dir}/imp.mpq" "${member}")"
   echo "  ${read_back}"
