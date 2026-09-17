@@ -14,6 +14,14 @@ placed, one created from nothing, and one that is **non-square**. The two create
 re-saved **byte-identically**. See [Writing maps](#writing-maps) and [Engine
 acceptance](#engine-acceptance-measured).
 
+**`setterrain` is reproduced from shipped data, not from a measurement.** The `.til` tilesets declare
+a constraint on all eight neighbours of every atlas slot, and painting is: set the region's terrain,
+then re-select a tile for every disturbed cell. That reproduces the engine on 2,084 of 2,084
+deterministic cells across the `terrainrings` captures, and it works on shipped world maps, where the
+earlier offset-table version refused everywhere. A painted region's interior remains a random draw
+the engine makes and no writer can reproduce. See [the tileset declares the whole blend
+rule](#the-tileset-declares-the-whole-blend-rule).
+
 The corpus is the working GS5R3 profile, including its supplied custom maps. No original map data or rendered captures are stored in Git.
 
 ## Observed prefix
@@ -190,7 +198,9 @@ claim from inferred-by-correlation to observed-by-construction.
 The low tag bits directly index the atlas declared by the active `.til` file. For the standard world map:
 
 - `tilesb01.til` declares `tilesb01.lbm`, a 16×39 atlas of 32×32 tiles (624 slots);
-- its definitions cover 617 tile slots and 11 terrain types;
+- its definitions cover 617 tile slots and 11 terrain types, **each with a constraint on all eight of
+  its neighbours** — which is the whole blend rule, and is
+  [what the paint operator reads](#the-tileset-declares-the-whole-blend-rule);
 - masking `0x00800000` from all 1,258,496 corpus cells produces 603 distinct indices, all in `0..623`;
 - rendering `URAK.scn` through those indices produces a coherent world containing connected oceans, snow, forest/grass, and desert regions. This establishes that the masked values index real terrain art rather than noise. It establishes **nothing about orientation**: a transposed world map is also coherent, which is why this check never caught the X-major error.
 
@@ -401,43 +411,85 @@ Two rules make that possible while most of this format is still Unknown:
 | Fill every cell with a terrain type | Reproduces `clearmap` |
 | Set a cell's elevation word | Writes the word; its runtime units stay **Inferred** |
 | Place or remove a terrain sprite | Round-trips byte-exactly, as the engine's own does |
-| **Paint a region and blend its transition ring** | Reproduces `setterrain`'s **ring** on a uniform, recognised background; refuses everything else. See below |
+| **Paint a region and re-tile everything it disturbs** | Reproduces `setterrain` from the active `.til`'s declared constraints, except a region's randomly drawn interior. See below |
 | Create a map from nothing | **Not offered.** See below |
 
-**`setterrain`'s ring is now reproduced, and only its ring.** `--map-paint-terrain IN X0 Y0 X1 Y1
-TERRAIN OUT` paints a rectangle and writes the measured transition ring one cell outside it, from
-[the offset table](#setterrain-transition-tiles-one-offset-table-one-anchor-per-background): one
-tile per direction, `anchor(background) + offset(direction)`. What it does **not** reproduce is the
-*core*: the engine picks its core tile from a family — terrain 6 onto a tile-15 background wrote
-tiles in `385..391` — and the region here is filled with the type's representative tile instead,
-which is `forcetexture` semantics. The blend is measured; the core is not, and the command says so
-on stderr every time.
+**`setterrain` is now reproduced from the tileset, not from an offset table.** `--map-paint-terrain
+IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til` sets the region's terrain and then **re-selects a tile for
+every cell the paint disturbed** by matching its eight-neighbourhood against the constraints the
+`.til` file declares. See [the tileset declares the whole blend
+rule](#the-tileset-declares-the-whole-blend-rule). There is no direction table in the code path any
+more; the ring falls out of the same mechanism as the region's own perimeter, because in the engine
+it always was the same mechanism.
 
-Everything the run did not establish is **refused**, not approximated, because plausible-looking
-wrong tiles in a map are exactly what no test here could catch:
+The tileset is a **trailing positional argument**, the shape `--view-map` already uses. It is not
+optional in effect: the map file does not record which tileset it was authored against — the header
+word at `0x00` was [refuted](#the-header-word-at-0x00-is-engine-output-not-map-input) as a stored
+selector — so without one the verb refuses rather than defaulting to a guess.
+
+What it still does **not** reproduce is a region's **interior**. A cell whose eight neighbours all
+share its terrain matches its terrain's whole eight-slot interior family, and the engine draws among
+them at random; the same 3x3 painted twice gave centre tiles 385 and 390. The tool chooses the
+lowest matching slot by default, takes `--seed N` for a different legal draw, and prints how many
+cells were ambiguous on stderr every time. A byte-exact match against an engine-painted interior is
+**impossible**, and no test here claims one.
+
+Everything the tileset cannot decide is **refused**, not approximated:
 
 | Case | Why |
 | --- | --- |
-| `tt_road` as the painted terrain | Ragged along every edge on all seven backgrounds where it blends — not one tile per direction |
-| `tt_road` as the background | Its ring depends on the painted terrain and only its edges change |
-| A background cell whose tile is not a type's representative tile | The background terrain is then unknown, and the rule was measured against a known background |
-| Two terrains in the 8-neighbourhood | Painting next to an existing boundary is unmeasured |
-| A region covering the whole map | No ring, so no background to read; that is `--map-fill-terrain` |
+| No tileset supplied | No cell's terrain can be read, and the map does not say which `.til` it used |
+| The tileset declares no tiles for the painted terrain | `tilesa01.til` stops at terrain 9 where `tilesb01.til` reaches 10, so this is a real difference between shipped files |
+| A cell holds a tile the tileset does not declare | The map was authored against a different tileset; `tilesb01.til` also leaves seven slots commented out |
+| **No tile of the required terrain accepts a cell's neighbourhood** | The tileset declares no boundary tile for that shape. This is the road and impassable case, and the engine writes something there anyway — imitating it would be invention |
 
-`tt_dirt` (0) and `tt_impassible` (10) are not refused: the region is painted and **no** ring is
-written, which is what the engine does. Painting a terrain onto itself writes nothing at all — the
-run's own control row produced a ring of pure background tile.
+**Three refusals from the old offset-table version are gone**, because the tileset answers what the
+eleven-slot representative table could not:
 
-**On shipped maps this refuses almost everywhere, and that is the honest answer.** Real maps are
-painted from tile families, and only the eleven representative slots are in the terrain table, so
-`--map-paint-terrain` on `URAK.scn` reports `tile 31 at (39, 39) is not any terrain type's
-representative tile`. The command is usable on uniform ground — a `--map-create` map, or a
-`--map-fill-terrain` one — and says why it will not guess anywhere else.
+- *"A background cell whose tile is not a type's representative tile."* The tileset declares the
+  `self` column for 617 of 624 slots. **All 1,258,496 cells of all 365 installed maps hold a tile
+  `tilesb01.til` declares** — zero unrecognised, measured 2026-09-17. This refusal never fires on
+  the corpus.
+- *"Two terrains in the 8-neighbourhood."* Painting next to an existing boundary is what constraint
+  matching is *for*; the constraints are written in terms of mixed neighbourhoods.
+- *"`tt_road` as the background."* Road backgrounds are decided by the road blocks like any other
+  terrain, where the tileset has a tile for the shape.
+
+**On shipped maps this now works, where it used to refuse everywhere.** Measured 2026-09-17 against
+`tilesb01.til`, sampling 3x3 plains paints on a stride-8 grid:
+
+| | Maps | Maps accepting at least one paint | Sampled sites succeeding |
+| --- | --- | --- | --- |
+| `.scn` world maps | 20 | 20 | 4,104 / 5,456 (75%) |
+| `.lgd` legend maps | 8 | 8 | 1,227 / 2,048 (60%) |
+| `.smp` battle maps | 337 | — | not `tilesb01`; see below |
+
+A real example, `URAK.scn` at `(10, 26)..(12, 28)`: 9 region cells and 16 ring cells written, **24 of
+the 25 determined by a single candidate**, one ambiguous (the interior), elevations and trailing
+section untouched. The previous version refused this outright.
+
+**The `.smp` battle maps are a different tileset, and `tilesb01.til` is the wrong one for them.**
+`pic.mpq` holds 26 `.til` members, only two of which (`tilesa01`, `tilesb01`) are world tilesets;
+the rest are building, cave and ruin sets. Checking each map class against a 15-member sample of
+them: world `.scn` files fit `tilesb01` best (0% undeclared tiles), while no sampled tileset fits
+`.smp` (the best had 36% of cells undeclared). Since the file does not name its tileset, a caller
+editing a battle map has to supply the right one, and this project has not identified which.
+
+**Shipped world maps are not fully consistent with their own tileset, and this is why some paints
+refuse.** 5.9% of `.scn` cells and 9.5% of `.lgd` cells hold a tile that does not satisfy its own
+declared constraints (**Observed in a local binary, 2026-09-17**; only `Denmor64.scn` and
+`Kelmor32.scn` are clean). The failures cluster on roads: a plains cell with road to its west and
+south-west has no tile in the plains block that accepts it, so a paint whose region or ring includes
+such a cell refuses with `no tile of terrain 6 accepts the neighbourhood`. Whether the authors used
+`forcetexture` freely, or the engine only enforces constraints during a paint and not as a stored
+invariant, is **Unknown** — but the consequence for a writer is concrete and is the reason the
+success rate above is 75% and not 100%.
 
 `--map-set-terrain` is unchanged and still offered: it writes one cell, `forcetexture`-style, and it
-is the only one of the two that works where the neighbourhood cannot be read. What remains open on
-[issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4) is the core-tile family,
-road in either role, and painting across an existing boundary.
+is the only one of the two that needs no tileset at all. What remains open on [issue
+#4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4) is the interior draw (permanently
+unreproducible), which tileset each `.smp` uses, and why shipped world maps violate their own
+constraints.
 
 **There is a create-from-scratch mode, `--map-create`, and the engine accepts what it produces.**
 It was held back until the [`mapload` run](#engine-acceptance-measured) because three fields would
@@ -763,8 +815,11 @@ background, the same 3×3 at the same coordinates, two separate attended runs �
 runs**. That double result is worth more than either half: the ring is confirmed by independent
 replication, and the interior is confirmed to be unreproducible.
 
-So a writer cannot reproduce an interior, and should not try. Writing one representative tile is a
-legitimate, if less varied, choice — and it is what `--map-set-terrain` and `--map-paint-terrain` do.
+So a writer cannot reproduce an interior, and should not try. `--map-set-terrain` writes one
+representative tile, which is a legitimate if less varied choice. `--map-paint-terrain` no longer
+does: it draws the interior from the same family the engine does — the `.til` file declares those
+eight slots as equally valid, which is [why the draw is random](#the-tileset-declares-the-whole-blend-rule)
+— and chooses among them by `TileSelector`, reporting the count it could not determine.
 
 **This corrects two earlier claims of mine, both in the same direction.** An earlier section said
 `base_tile` was non-invariant "for terrain 6" and blamed the *background*, citing a tile-392
@@ -780,6 +835,131 @@ which explains it, came out of checking that reviewer's numbers against my own.
 The reverse direction is unaffected: `getterrain` on a representative tile answers its type, and the
 blend background read back as expected on all eleven rows. What the writer does with the table —
 forcing one representative tile of a type into a cell — remains right.
+
+
+### The tileset declares the whole blend rule
+
+**Observed in a local binary, 2026-09-17.** The 56-constraint offset table above is a *lookup into
+data the game ships*. `tilesb01.til` declares, for every atlas slot, which terrain a cell holding it
+belongs to **and what it requires of all eight neighbours**. `setterrain` is then one operation, not
+two: set the region's terrain, and re-select a tile for every cell whose neighbourhood moved. The
+"transition ring" is not a special case — it is the same re-selection applied to the cells just
+outside the region.
+
+The line format, which this repository has parsed since Stage 1 and was until now reading only two
+columns of:
+
+```text
+;TILE= tilenum,self, n, ne,  e, se,  s, sw,  w, nw,    index
+TILE=     15, 6,  ~6,  *,  ~6,  *,  ~6,  *,  ~6,  *,  15
+TILE=     16, 6,  6,  6,  6,  6,  6,  6,  6,  ~6|9,  16
+TILE=    384, 6,  6,  6,  6,  6,  6,  6,  6,  6,   0
+```
+
+`~` is *not*, `|` is *one of*, `*` is *don't care*. `self` is the cell's own terrain type. So tile 15
+is literally "a plains cell none of whose four cardinal neighbours is plains", tile 16 is "plains
+with non-plains only to the north-west", and tile 384 is "plains surrounded by plains".
+
+#### Corrected: the declaration was already in reach and was being discarded
+
+This is not a newly located file. `docs/game-architecture.md` has recorded the 26 `.til` members in
+GS5R3 `pic.mpq` since Stage 1, and `docs/research-log.md` recorded `tilesb01.til`'s 624-slot atlas
+and 11 terrain types. What was wrong is narrower and worse: **`spikes/asset-viewer/src/tile.rs`
+parsed each `TILE=` line and kept only `tilenum` and `self`, throwing the eight neighbour columns and
+the trailing index column away.** So the blend rule was measured in an attended engine run — 121
+painted blobs, a human at the keyboard — while the same statement sat unparsed in a file the
+repository had already opened. The lesson is not "find the file"; it is **read every column of a
+format you claim to parse, or say in the parser which ones you are dropping and why.**
+
+(A note for anyone working from a hand-off: a claim that no `.til` member could be found in the
+archives is not one this repository ever made, and `gs.mpq`/`imp.mpq` are the wrong archives to have
+looked in. The members are in `pic.mpq` under a `til\` prefix, which is why a bare `*.til` search
+against the other two archives returns nothing.)
+
+#### The direction convention: derived, not chosen
+
+A `.til` column could mean either *"the neighbour in this geometric direction from me"* or *"the
+direction from that neighbour back to me"*. The two are mirror images. **A wrong choice here
+produces maps that look entirely plausible and are systematically flipped**, which is precisely the
+failure mode that let the X-major cell order survive for months.
+
+It is settled by the engine's own saved maps, not by which reading makes the arithmetic tidier.
+Against `artifacts/engine-probe-captures/terrainrings-20260917`, over the eight blending backgrounds
+× eight painted terrains × eight ring cells:
+
+| reading | ring tiles satisfying their own constraints |
+| --- | --- |
+| column = geometric direction from the cell | **576 / 576** |
+| column = direction from the neighbour back to the cell (mirrored) | **0 / 576** |
+
+And each of the eight columns discriminates *individually* — every column has a nonzero failure count
+under the mirrored reading — so this is eight independent confirmations, not one systemic fit.
+
+The concrete line, in `zr6.scn`: the ring cell one step north of a painted blob holds tile **2**,
+whose only non-plains column is `s`. The paint is to its south, which is where the paint actually
+is. So `n` means `(0, −1)`, `s` means `(0, +1)`, and `y` increases southwards as everywhere else in
+this writer.
+
+**This is where the apparent "inversion" comes from, and it is not one.** Measured `W = −13 + 2 = −11`
+gives tile 4 from anchor 15, and tile 4 declares a single *east* edge. That reads like a mirror until
+you name the two things separately: the measured label `W` is *the ring cell's position relative to
+the blob*, while `e` is *the direction from that cell to its own neighbour*. The cell west of the
+paint has the paint to its east. Both are geometric; neither is inverted.
+
+#### What the constraints reproduce, and what they cannot
+
+Simulating "set the region's terrain, then re-select every disturbed cell" over all 121
+background-by-painted rows of the run:
+
+| outcome | cells | agree with the engine |
+| --- | --- | --- |
+| exactly one candidate tile | 1,888 | **1,888** |
+| the cell's existing tile is still the only valid one | 196 | **196** |
+| several candidates match equally | 253 | 44 — but the engine's tile is **within the candidate set in all 253** |
+| no candidate at all | 512 | 0 — the engine writes one anyway |
+
+**2,084 of 2,084 deterministic cells, zero mismatches.** That covers every transition ring cell and
+every perimeter cell of every painted region — the whole of what the eight-entry offset table
+covered, and the region perimeters besides, which it did not.
+
+The 253 ambiguous cells are the interior draw. The 512 with no candidate are exactly road and
+impassable: `tilesb01.til` gives `tt_impassible` slots `464..=471`, every one of which demands that
+all eight neighbours also be impassable, so a rectangle of it has no legal boundary; and road's
+slots describe a *network*, not an area.
+
+#### What this explains that was previously unexplained
+
+- **The random interior is no longer just an observation.** `TILE=384..391` are eight *identical*
+  all-neighbours-plains lines. Nothing distinguishes them, so nothing can choose between them but a
+  draw — which is why two runs of the same experiment gave 385 and 390 with a byte-identical ring.
+  The observation and the mechanism now agree, and `384 + 8k` is a block of eight per terrain in the
+  file rather than an inference from anchors.
+- **The three backgrounds that "produce no uniform ring" are three different things, all declared.**
+  `tt_dirt`'s slots 31, 79, 127, 175, 223, 271 are `self = 0` with `*` in all eight columns, so a
+  dirt cell matches whatever it already holds and is never re-selected. `tt_impassible`'s slots
+  demand all-impassable neighbours and so have no boundary member at all. Road's slots are a
+  network. None of the three needed a special case in the measurement's sense; they fall out.
+- **Terrain 9 is `"free move"`** — roads. That is why `6|9` appears throughout the plains
+  constraints and `~6|9` in its negations: a road counts as plains for blending purposes, which is
+  what lets a road run through a field without cutting a shoreline into it.
+- **Water's anchor 63 was never an exception.** 63 is water's block-index-15 slot, exactly like
+  plains' 15 — `48 + 15`. What differs is `TERRAIN_BASE_TILES`, which records water's *interior*
+  slot 392 where it records plains' *index-15* slot 15. Those were never the same kind of thing, and
+  the engine's own table is simply inconsistent between the two rows.
+
+#### The empirical measurement is retained, as corroboration
+
+**The 56-constraint offset table does not become wrong. It becomes derived.** Fifty-six measurements
+collapsing onto seven numbers is real evidence, independently obtained, and it agrees with the file.
+`TRANSITION_RING_OFFSETS`, `TERRAIN_TRANSITIONS`, `transition_anchor`, `transition_ring`,
+`road_background_ring` and `interior_tile_family` are all **kept**, and
+`the_measured_offset_table_is_what_the_declared_constraints_produce` holds the two against each
+other: it builds a tileset laid out the way a real terrain block is laid out, paints through the
+constraint matcher, and asserts the result equals `anchor + offset` for all eight directions. If
+either side drifts, that test fails.
+
+What was *retired* is the offset table's role as the **paint's decision procedure**. The paint no
+longer consults it; `--map-transition-rings` still prints it as the measurement it is.
 
 
 ## Commands
@@ -799,7 +979,8 @@ target/release/lom-asset-viewer --map-set-tile IN.scn 10 20 392 OUT.scn
 target/release/lom-asset-viewer --map-set-terrain IN.scn 10 20 water OUT.scn
 target/release/lom-asset-viewer --map-set-elevation IN.scn 10 20 2.5 OUT.scn
 target/release/lom-asset-viewer --map-fill-terrain IN.scn water OUT.scn
-target/release/lom-asset-viewer --map-paint-terrain IN.scn 10 20 14 22 water OUT.scn
+target/release/lom-asset-viewer --map-paint-terrain IN.scn 10 20 14 22 water OUT.scn tilesb01.til
+target/release/lom-asset-viewer --map-paint-terrain IN.scn 10 20 14 22 water OUT.scn tilesb01.til --seed 7
 target/release/lom-asset-viewer --map-place-sprite IN.scn 10 20 470 OUT.scn
 target/release/lom-asset-viewer --map-remove-sprite IN.scn 200 OUT.scn
 target/release/lom-asset-viewer --view-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
@@ -830,5 +1011,9 @@ With a tile definition and atlas, the viewer starts in terrain-art mode. Press `
 - **Observed in gameplay (2026-09-17, mapload probe):** the engine loads maps this project wrote -- edited, sprite-placed, created from nothing, and non-square -- and the two created-from-nothing maps re-save byte-identically; the header word at `0x00` is rewritten from engine state on every save rather than carried from the file; tag bit `0x00800000` does not survive a load-and-save; `setterrain`'s transition ring is a direction table on the background, identical across nine of the eleven terrains.
 - **Observed in gameplay (2026-09-17, terrainrings):** `setterrain`'s transition ring, for all eleven backgrounds. It is one offset table plus a per-background anchor for the eight that blend; `tt_dirt` and `tt_impassible` blend nothing; `tt_road` as a background has its own measured edge table. A painted region's **interior** is a random draw from its terrain's `384 + 8k` family and cannot be reproduced by a writer.
 - **Not reproduced, permanently:** a painted region's interior. The same experiment run twice gave centre tiles 385 and 390 while the ring was byte-identical, so this is a property of the engine rather than a gap in the measurement.
+- **Observed in a local binary (2026-09-17):** the whole blend rule is declared in the shipped `.til` tilesets, whose eight neighbour-constraint columns this project had been parsing and discarding. Re-selecting tiles from those constraints reproduces the engine on 2,084 of 2,084 deterministic cells across the `terrainrings` captures, with zero mismatches, and every cell of all 365 installed maps holds a tile `tilesb01.til` declares. See [the tileset declares the whole blend rule](#the-tileset-declares-the-whole-blend-rule).
+- **Derived (2026-09-17):** the `.til` neighbour columns are geometric directions from the cell's own position, `n` being `(0, -1)`. The mirrored reading satisfies 0 of 576 engine-written ring tiles against 576 of 576 for this one.
+- **Corrected:** the tileset parser, which read a `TILE=` line's slot and `self` column and threw its eight neighbour constraints away. The rule it was discarding was then measured in an attended engine run instead.
+- **Observed in a local binary (2026-09-17):** shipped world maps are **not** fully consistent with their own tileset -- 5.9% of `.scn` cells hold a tile that does not satisfy its declared constraints -- and the 337 `.smp` battle maps do not use `tilesb01.til` at all.
 - **Refuted (2026-09-17):** the header word at `0x00` as a value the engine *carries through a save*. `URAK.scn`'s `0x6c` came back as `0x6f`. Whether the **loader** reads it is untested -- that would take loading two maps differing only in that word -- and "from its own state" is equally consistent with "set by the last `newmap`".
 - **Unknown:** elevation units, what sets tag bit `0x00800000` in memory, the trailing footer's `1` vs `3`, the attribute field at `+24`, and what distinguishes the 52-/53-byte record variants. The writer copies all of them rather than minting them -- except a newly placed sprite, which mints `+24`, and that record has now been shown to survive the engine byte-exactly.

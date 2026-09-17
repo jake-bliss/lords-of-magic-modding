@@ -16,6 +16,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 import engine_probe  # noqa: E402
 import gs_syntax  # noqa: E402
 import map_projection  # noqa: E402
+import terrain_rings  # noqa: E402
 
 
 class SharedProbeSafetyTest(unittest.TestCase):
@@ -1283,6 +1284,75 @@ class TerrainRingProbeTest(unittest.TestCase):
         # These are outputs, not prerequisites: nothing has to exist before the run.
         for name in names:
             self.assertNotIn(name, engine_probe.generated_map_inputs())
+
+
+class DirectionConventionTest(unittest.TestCase):
+    """The analyser's direction labels and the Rust writer's must mean the same thing.
+
+    `tools/terrain_rings.py` labelled the measured ring `N, S, W, E, NW, NE, SW, SE`, and those
+    labels are what the `.til` column convention was derived *against*. If the Rust flipped its
+    reading of a column and the analyser kept its labels, every number in the run sheet would
+    silently refer to a different cell and the derivation recorded in `docs/map-format.md` would be
+    describing an experiment nobody ran.
+
+    So this parses the offsets back out of the Rust rather than trusting that two files agree.
+    """
+
+    ROOT = Path(__file__).resolve().parents[1] / "spikes" / "asset-viewer" / "src"
+
+    def test_the_analysers_ring_labels_match_the_rust_offset_table(self) -> None:
+        source = (self.ROOT / "map.rs").read_text()
+        table = source[source.index("pub const TRANSITION_RING_OFFSETS") :]
+        table = table[: table.index("];")]
+        rust = [
+            (int(dx), int(dy))
+            for dx, dy in re.findall(r"direction:\s*\((-?\d+),\s*(-?\d+)\)", table)
+        ]
+        self.assertEqual(len(rust), 8, "did not find all eight rows in map.rs")
+        analyser = [offset for offset, _name in terrain_rings.DIRECTIONS]
+        self.assertEqual(
+            analyser,
+            rust,
+            "terrain_rings.py samples the ring in a different order from TRANSITION_RING_OFFSETS",
+        )
+
+    def test_the_til_column_convention_matches_the_analysers_labels(self) -> None:
+        """`Direction::offset` is the derived `.til` reading; the labels must agree with it.
+
+        The derivation is recorded in `Direction::offset`'s own documentation and was checked
+        against `artifacts/engine-probe-captures/terrainrings-20260917`. A mirrored convention
+        would negate all eight of these, which is exactly the failure this catches.
+        """
+        source = (self.ROOT / "tile.rs").read_text()
+        body = source[source.index("pub const fn offset(self)") :]
+        body = body[: body.index("\n    }")]
+        pairs = re.findall(
+            r"Direction::(\w+) => \((-?\d+), (-?\d+)\)", body
+        )
+        rust = {name: (int(dx), int(dy)) for name, dx, dy in pairs}
+        self.assertEqual(len(rust), 8, "did not find all eight columns in tile.rs")
+        expected = {
+            "North": (0, -1),
+            "NorthEast": (1, -1),
+            "East": (1, 0),
+            "SouthEast": (1, 1),
+            "South": (0, 1),
+            "SouthWest": (-1, 1),
+            "West": (-1, 0),
+            "NorthWest": (-1, -1),
+        }
+        self.assertEqual(rust, expected)
+        # And the analyser's own labels name the same cells, spelled out rather than derived, so
+        # both sides of the derivation are pinned instead of one being defined by the other.
+        labels = {name: offset for offset, name in terrain_rings.DIRECTIONS}
+        self.assertEqual(labels["N"], rust["North"])
+        self.assertEqual(labels["S"], rust["South"])
+        self.assertEqual(labels["W"], rust["West"])
+        self.assertEqual(labels["E"], rust["East"])
+        self.assertEqual(labels["NW"], rust["NorthWest"])
+        self.assertEqual(labels["NE"], rust["NorthEast"])
+        self.assertEqual(labels["SW"], rust["SouthWest"])
+        self.assertEqual(labels["SE"], rust["SouthEast"])
 
 
 if __name__ == "__main__":

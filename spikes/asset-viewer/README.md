@@ -78,7 +78,7 @@ target/release/lom-asset-viewer --map-set-tile      IN.scn X Y TILE_SLOT   OUT.s
 target/release/lom-asset-viewer --map-set-terrain   IN.scn X Y TERRAIN     OUT.scn
 target/release/lom-asset-viewer --map-set-elevation IN.scn X Y VALUE       OUT.scn
 target/release/lom-asset-viewer --map-fill-terrain  IN.scn TERRAIN         OUT.scn
-target/release/lom-asset-viewer --map-paint-terrain IN.scn X0 Y0 X1 Y1 TERRAIN OUT.scn
+target/release/lom-asset-viewer --map-paint-terrain IN.scn X0 Y0 X1 Y1 TERRAIN OUT.scn TILESET.til [--seed N]
 target/release/lom-asset-viewer --map-place-sprite  IN.scn X Y SPRITE_TYPE OUT.scn
 target/release/lom-asset-viewer --map-sprite-types
 target/release/lom-asset-viewer --map-transition-rings
@@ -233,7 +233,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/pbm.rs` — bounded IFF chunk parsing, palette conversion, PBM row handling, and ByteRun1 decoding.
 - `src/imp.rs` — bounds-checked IMP tables, palette, RLE and packed-pixel decoding, hotspot and duplicate/repeated-frame structures, and generated-header validation.
 - `src/map.rs` — bounded common header/cell-grid parsing, packed `y * width + x` coordinates, terrain tags, the measured terrain-type-to-tile table, and 49-byte placed-sprite records for SCN/SMP/LGD files.
-- `src/tile.rs` — parser for `.til` atlas geometry, terrain types, and tile relationships.
+- `src/tile.rs` — parser for `.til` atlas geometry, terrain types, and the full eight-column neighbour constraints, plus the constraint matcher `--map-paint-terrain` re-tiles from.
 - `src/gamescript.rs` — bounded GameScript lexer, procedure diagnostics, name inventory, and static `run` references.
 - `src/gamescript_vm.rs` — experimental bounded value stack, dictionaries, procedures, core operators, and structured execution failures.
 - `src/png_export.rs` — lossless indexed IMP-frame PNG and RGBA map-preview output.

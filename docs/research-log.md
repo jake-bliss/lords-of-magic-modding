@@ -2655,3 +2655,108 @@ Also fixed: a doc comment displaced onto the wrong function by an insertion, the
 the atlas-block claim this branch had already retracted, three stale test counts, README text saying
 the blend tiles were unmeasured, and the two listing verbs having no test at all — the same "the
 untested layer is the one that matters" note this log recorded one review earlier.
+
+## 2026-09-17 — The blend rule was shipped as data, and we had been discarding it
+
+**Observed in a local binary.** `setterrain`'s transition ring is not an engine constant that had to
+be measured. It is declared, per atlas slot, in the `.til` tileset files, and this repository had
+been parsing those files since Stage 1 while reading two of their eleven columns.
+
+A `TILE=` line is `tilenum, self, n, ne, e, se, s, sw, w, nw, index`. `self` is the terrain a cell
+holding the tile belongs to; the eight middle columns are constraints on that cell's neighbours, in
+a small syntax — `~` for *not*, `|` for *one of*, `*` for *don't care*. `src/tile.rs` kept `tilenum`
+and `self` and threw the rest away. So tile 15 — the "anchor" the 2026-09-17 `terrainrings` run
+recovered by painting 121 blobs in an attended engine session — is literally the line that says *a
+plains cell none of whose four cardinal neighbours is plains*.
+
+**The lesson is not "find the file."** The file was found, documented, opened and parsed. The lesson
+is that a parser which silently drops columns converts shipped data into an unknown, and an unknown
+gets measured at the cost of a human sitting at a keyboard. Either read every column of a format you
+claim to parse, or say in the parser which ones you are dropping and why.
+
+(A hand-off note claimed the `.til` members had previously been reported missing from the archives.
+Not by this repository: `docs/game-architecture.md` has recorded 26 tile-set definitions in GS5R3
+`pic.mpq` from the start. The members live under a `til\` prefix, so a bare `*.til` search against
+`gs.mpq` or `imp.mpq` — the wrong archives — returns nothing, which may be where the story came from.)
+
+### The direction convention was derived, because guessing it is invisible
+
+A neighbour column can mean *the neighbour in this geometric direction from me* or *the direction
+from that neighbour back to me*. Those are mirror images, and both fit some lines. A wrong choice
+produces maps that look completely plausible and are systematically flipped — the same failure that
+let the X-major cell order stand for months, and the reason this was resolved against saved artifacts
+rather than by eye.
+
+Over `artifacts/engine-probe-captures/terrainrings-20260917`, eight blending backgrounds × eight
+painted terrains × eight ring cells: the geometric reading has **576 of 576** ring tiles satisfying
+their own declared constraints; the mirrored reading has **0 of 576**. Every one of the eight columns
+carries a nonzero failure count under the mirror, so that is eight independent confirmations rather
+than one global fit. The single decisive line: in `zr6.scn` the ring cell north of a blob holds tile
+2, whose only non-plains column is `s`, and the paint is indeed to its south.
+
+The apparent inversion in the measured table is a naming collision, not a mirror. `W = −11` gives
+tile 4, which declares an east edge — because the measured label `W` is the ring cell's position
+*relative to the blob*, while `e` is the direction from that cell to its own neighbour. The cell west
+of the paint has the paint to its east. Both readings are geometric; neither is flipped.
+
+### What the constraints reproduce
+
+Simulating "set the region's terrain, then re-select a tile for every disturbed cell" over all 121
+rows of the run: **2,084 of 2,084** cells whose candidate set was a single tile match what the engine
+wrote — every ring cell and every painted-region perimeter cell — with zero mismatches. 253 cells had
+several equally valid candidates, and the engine's tile was inside the candidate set in **all 253**.
+512 had no candidate, and the engine wrote something there regardless.
+
+So the rule reproduces the engine wherever the engine is deterministic, and the three cases that
+looked like special rules are all declared:
+
+- The **random interior** is now explained rather than merely observed. `TILE=384..391` are eight
+  *identical* all-neighbours-plains lines; nothing distinguishes them, so nothing can choose but a
+  draw. That is why the same experiment twice gave centre tiles 385 and 390 with a byte-identical
+  ring. It also makes `384 + 8k` a block in the file rather than an inference from anchors.
+- `tt_dirt`'s slots are `self = 0` with `*` in all eight columns, so a dirt cell always matches what
+  it already holds and is never re-selected. That is the "no transitions at all" row.
+- `tt_impassible`'s slots `464..=471` each require all eight neighbours to be impassable, so a
+  rectangle of it has no legal boundary tile — and road's slots describe a network, not an area.
+  Those are the 512 no-candidate cells, and the reason both are refused rather than imitated.
+- **Terrain 9 is `"free move"`**, which is roads. Hence `6|9` throughout the plains constraints: a
+  road counts as plains for blending, so a road can cross a field without cutting a shore into it.
+- **Water's anchor 63 was never an exception.** It is water's block-index-15 slot, `48 + 15`, exactly
+  parallel to plains' 15. What differs is `TERRAIN_BASE_TILES`, which happens to record water's
+  *interior* slot 392 where it records plains' *index-15* slot. The engine's own table is
+  inconsistent between those two rows; the anchors never were.
+
+### The empirical table is kept, as corroboration
+
+Fifty-six measured ring tiles collapsing onto seven offsets is real, independently obtained evidence,
+and it agrees with the data file. Nothing measured is deleted. `TRANSITION_RING_OFFSETS`,
+`TERRAIN_TRANSITIONS`, `transition_anchor`, `transition_ring`, `road_background_ring` and
+`interior_tile_family` all remain, and a test builds a tileset laid out the way a real terrain block
+is laid out, paints through the constraint matcher, and asserts the result equals `anchor + offset`
+for all eight directions. The two routes to the same answer are pinned to each other.
+
+**The table does not become wrong; it becomes derived.** What was retired is only its role as the
+paint's decision procedure.
+
+### Two findings that were not being looked for
+
+**Every cell of all 365 installed maps holds a tile `tilesb01.til` declares** — 1,258,496 cells, zero
+unrecognised. This is what removes the old refusal: the paint could not previously read a shipped
+map's background because only eleven representative slots were known, and the tileset knows 617.
+Sampling 3x3 plains paints on a stride-8 grid, 20 of 20 `.scn` and 8 of 8 `.lgd` world maps now accept
+paints, at 75% and 60% of sampled sites. On `URAK.scn` a 3x3 at `(10, 26)` writes 25 cells of which
+24 are determined by a single candidate.
+
+**But shipped world maps are not consistent with their own tileset.** 5.9% of `.scn` cells and 9.5%
+of `.lgd` cells hold a tile that does not satisfy its declared constraints; only `Denmor64.scn` and
+`Kelmor32.scn` are clean. The failures cluster on roads — a plains cell with road to its west and
+south-west has no plains-block tile that accepts it — which is exactly why the success rate above is
+75% and not 100%. Whether the authors used `forcetexture` freely, or the engine enforces constraints
+only during a paint and not as a stored invariant, is **Unknown**.
+
+**And the 337 `.smp` battle maps are not `tilesb01` maps at all.** Checked against a 15-member sample
+of the 26 tilesets, the world `.scn` files fit `tilesb01` best with 0% undeclared tiles, while no
+sampled tileset fits `.smp` — the best still left 36% of cells undeclared. The map file does not
+record its tileset, so this is a real limit: editing a battle map needs the right `.til`, and which
+one that is has not been identified. It is also why the CLI takes the tileset as an argument and
+refuses without it instead of defaulting to the world one.
