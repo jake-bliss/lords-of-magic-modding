@@ -24,6 +24,14 @@ Two hazards the previous run walked into, both fixed here:
   a second type-only sweep, since nothing else on the map can be carrying them.
 - The hotkey auto-repeats while the key is held. A `zdone` flag in `userdict` makes the body
   fire exactly once per launch.
+
+**Locations are packed, not pairs.** `anythinglocation` and `getterrainspritelocation` each
+return ONE value, `y * map_width + x`, and `findemptylocation` takes `(location, unittype)` --
+two operands. The shipped corpus is the authority here: `anythinglocation xy_to_x_y` appears 31
+times, and `/temple_loc temple_id getterrainspritelocation def` stores a single scalar. The
+recovered arity table undercounts and must not be used to design an operand order. Reading a
+packed location as a pair underflows the stack and kills the body silently: the 2026-09-16 run
+logged an empty x beside `9152`, which at map width 128 is cell (64,71).
 """
 
 from __future__ import annotations
@@ -36,9 +44,12 @@ SPRITE_TYPES: list[tuple[str, str]] = [
     ("custom_type_authored_palette", '["imp/zzpal.imp"]cvx addterrainspritetype'),
 ]
 
-# Seed offsets from the army cell, one per sprite type. `findemptylocation` walks outward from
-# each seed, so spreading the seeds is what keeps the four results distinct.
-SEED_OFFSETS: list[tuple[int, int]] = [(2, 0), (-2, 0), (0, 2), (0, -2)]
+# Seed offsets from the army cell, one per sprite type. `findemptylocation` walks outward from each
+# seed, so the seeds have to be far enough apart that two rungs cannot converge on one cell -- two
+# sprites in the same cell makes the ladder unreadable. A cell is about 34 screen pixels of x, and
+# the donor frame is 72 wide, so 2 cells is the minimum separation and 4 is comfortable. Laying them
+# along one axis also gives four collinear points for the cell-to-screen fit.
+SEED_OFFSETS: list[tuple[int, int]] = [(2, 0), (4, 0), (-2, 0), (-4, 0)]
 
 HOTKEY = "z"
 
@@ -76,41 +87,57 @@ def probe_body() -> str:
     emit("\trendermap refreshdirty")
     emit('\t"zp0.bmp"screencapture')
 
-    emit("\t/zax0 -1 def /zay0 -1 def /zseen false def")
+    # `anythinglocation` returns ONE PACKED LOCATION, not an x/y pair. The shipped corpus settles it
+    # -- `anythinglocation xy_to_x_y` appears 31 times, and you do not decompose an already
+    # decomposed pair. The 2026-09-16 run proves it too: its log line printed an empty x and
+    # y=9152, which at map width 128 is cell (64,71). Reading it as a pair underflows the stack and
+    # kills the body before the first placement.
+    emit("\t/zaloc -1 def /zseen false def")
     emit(
-        "\tcurrentplayer{zseen not{anythinglocation /zay0 exch def /zax0 exch def "
-        "/zseen true def}{pop}ifelse}enumplayerarmies"
+        "\tcurrentplayer{zseen not{anythinglocation /zaloc exch def /zseen true def}"
+        "{pop}ifelse}enumplayerarmies"
     )
-    emit("\t" + _log('"army "zax0" "zay0'))
+    emit("\tzseen")
+    emit("\t\t{")
+    emit("\t\tzaloc xy_to_x_y /zay0 exch def /zax0 exch def")
+    emit("\t\t" + _log('"army loc "zaloc" cell "zax0" "zay0'))
 
     for index, ((label, expression), (dx, dy)) in enumerate(
         zip(SPRITE_TYPES, SEED_OFFSETS), start=0
     ):
-        emit(f"\t{expression} /zt{index} exch def")
-        emit(f"\tzax0 {dx} add zay0 {dy} add UNITTYPELAND findemptylocation /zl{index} exch def")
-        emit(f"\tzl{index} xy_to_x_y /zy{index} exch def /zx{index} exch def")
-        emit(f"\tzx{index} zy{index} 0 map2screen /zm3 exch def /zm2 exch def /zm1 exch def")
+        emit(f"\t\t{expression} /zt{index} exch def")
+        # `findemptylocation` takes (location, unittype) -- two operands, not three. Shipped form:
+        # `unit_loc UNITTYPELAND findemptylocation /unit_loc exch def`. `x_y_to_xy` packs the pair.
         emit(
-            "\t"
+            f"\t\tzax0 {dx} add zay0 {dy} add x_y_to_xy UNITTYPELAND findemptylocation "
+            f"/zl{index} exch def"
+        )
+        emit(f"\t\tzl{index} xy_to_x_y /zy{index} exch def /zx{index} exch def")
+        emit(f"\t\tzx{index} zy{index} 0 map2screen /zm3 exch def /zm2 exch def /zm1 exch def")
+        emit(
+            "\t\t"
             + _log(
-                f'"type {index} {label} id "zt{index}" cell "zx{index}" "zy{index}'
-                f'" m2s "zm1" "zm2" "zm3'
+                f'"type {index} {label} id "zt{index}" loc "zl{index}'
+                f'" cell "zx{index}" "zy{index}" m2s "zm1" "zm2" "zm3'
             )
         )
+        # Place before resolving the next rung, so `findemptylocation` has a chance to route around
+        # a cell this probe just filled.
+        emit(f"\t\tzx{index} zy{index} zt{index} addterrainsprite")
 
-    # Place all four, then capture once. One capture carries the whole ladder.
-    for index in range(len(SPRITE_TYPES)):
-        emit(f"\tzx{index} zy{index} zt{index} addterrainsprite")
-    emit("\trendermap refreshdirty")
-    emit('\t"zs1.bmp"screencapture')
+    emit("\t\trendermap refreshdirty")
+    emit('\t\t"zs1.bmp"screencapture')
 
     # Cleanup must match the type *and* the cell the probe placed it on. Matching on location alone
     # destroyed a village; matching on type alone is worse, because rung 0 reuses the **shipped**
     # orchard type and would delete every orchard the map generator placed.
+    # `getterrainspritelocation` also returns ONE packed location -- shipped uses are
+    # `/temple_loc temple_id getterrainspritelocation def` and `... getterrainspritelocation 4 mod`.
+    # Compare it against the packed cell the probe placed on, not against a decomposed pair.
     for index in range(len(SPRITE_TYPES)):
         emit(
-            f"\t{{dup getterrainspritetype zt{index} eq"
-            f"{{dup getterrainspritelocation zy{index} eq exch zx{index} eq and"
+            f"\t\t{{dup getterrainspritetype zt{index} eq"
+            f"{{dup getterrainspritelocation zl{index} eq"
             "{destroyterrainsprite}{pop}ifelse}"
             "{pop}ifelse}enumterrainsprites"
         )
@@ -121,12 +148,15 @@ def probe_body() -> str:
         if not is_freshly_registered(index):
             continue
         emit(
-            f"\t{{dup getterrainspritetype zt{index} eq"
+            f"\t\t{{dup getterrainspritetype zt{index} eq"
             "{destroyterrainsprite}{pop}ifelse}enumterrainsprites"
         )
-    emit("\trendermap refreshdirty")
-    emit('\t"zs2.bmp"screencapture')
-    emit("\t" + _log('"cleanup done"'))
+    emit("\t\trendermap refreshdirty")
+    emit('\t\t"zs2.bmp"screencapture')
+    emit("\t\t" + _log('"cleanup done"'))
+    emit("\t\t}")
+    # No army means no anchor cell, so say so in the log rather than placing at (-1,-1).
+    emit("\t\t{" + _log('"no army found; nothing placed"') + "}ifelse")
 
     emit("\tzlog closefile")
     emit("\tend")

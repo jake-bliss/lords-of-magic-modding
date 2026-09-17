@@ -1262,3 +1262,29 @@ Worth recording as a pattern: the fix for a destructive bug was itself destructi
 direction, because it generalised from one incident instead of from the invariant. The invariant is
 "destroy only what this keypress created", and neither location nor type alone expresses it.
 
+### Corrected: map locations are packed, and the arity table cannot settle operand order
+
+Cross-model review of the rebuilt probe found three operand-order errors in it, all the same
+mistake. **`anythinglocation` and `getterrainspritelocation` each return one packed location**,
+`y * map_width + x`, and **`findemptylocation` takes `(location, unittype)`** — two operands, not
+three. The shipped corpus is unambiguous: `anythinglocation xy_to_x_y` appears 31 times (you do not
+decompose an already decomposed pair), `unit_loc UNITTYPELAND findemptylocation` is the shipped
+call form, and `/temple_loc temple_id getterrainspritelocation def` stores a single scalar.
+
+**The failed run's own log confirms it and was misread at the time.** Its first line printed as
+`army    9152  base  63   70` — an *empty* x beside `9152`. At map width 128, `9152` is cell
+(64,71), one step from the `(63,70)` that `findemptylocation` returned. The x was empty because
+reading the packed value as a pair underflowed the stack. That line was read as a successful army
+lookup.
+
+This sharpens the standing warning in [hotspots](hotspots.md#do-not). The recovered arity table
+undercounts pops, and it also cannot express *what* the operands are. **Operand order comes from
+shipped call sites; the table is only a hint.** The previous session's probe got this right by
+copying `anythinglocation UNITTYPELAND findemptylocation` verbatim from working code — the rewrite
+"improved" it into a stack underflow.
+
+One more from the same review: `screencapture` refuses to overwrite, so **stale captures must be
+cleared from the game directory before each run** or a second attempt silently produces nothing and
+the old plate is collected as if it were fresh — which reads identically to "the sprite did not
+render", the very conclusion under test.
+

@@ -21,13 +21,25 @@ source "${project_dir}/scripts/lib-game-archives.sh"
 work_dir="$(mktemp -d)"
 # Injection is not atomic: gs.mpq and imp.mpq are written by four separate calls. Anything that
 # fails after the first write would otherwise leave the game half-modified while reporting failure,
-# so the exit trap rolls both archives back unless the script reached the end.
+# so the exit trap rolls both archives back.
+#
+# `writing` gates that rollback, and it is only set immediately before the first write. Rolling back
+# on a path that never wrote anything would be actively destructive: refusing a non-pristine archive
+# (say, a different installation passed as app_dir) would then copy THIS machine's archives over it,
+# and a failed backup verification would write an unverified backup over a live game -- the exact
+# thing the verification exists to prevent.
 installed=0
+writing=0
 cleanup() {
   local status=$?
-  if (( status != 0 )) && (( installed == 0 )); then
-    echo "install failed; rolling the archives back" >&2
-    restore_archives "${backup_dir}" "${game_dir}" >&2 || true
+  if (( status != 0 )) && (( installed == 0 )) && (( writing == 1 )); then
+    echo "install failed after writing; rolling the archives back" >&2
+    if verify_backups "${backup_dir}"; then
+      restore_archives "${backup_dir}" "${game_dir}" >&2 || true
+    else
+      echo "BACKUPS DID NOT VERIFY; leaving the archives as they are rather than making it worse." >&2
+      echo "The game archives are modified. Restore them by hand from a known-good copy." >&2
+    fi
   fi
   rm -rf "${work_dir}"
   exit "${status}"
@@ -91,7 +103,14 @@ start = (work / "START.GS").read_text(encoding="latin-1")
 print("  probe installed into hotkey.gs; intro movies disabled in START.GS")
 PY
 
+# `screencapture` refuses to overwrite, so a stale capture from an earlier attempt would survive the
+# run and be collected as if it were this run's output -- a plate diffed against itself reads as
+# "the sprite did not render", which is the exact conclusion this probe exists to test.
+echo "== clearing stale probe output =="
+rm -f "${game_dir}"/z*.bmp "${game_dir}"/zprobe.log
+
 echo "== injecting =="
+writing=1
 "${mpq_replace}" "${game_dir}/imp.mpq" 'imp\zzctl.imp' "${work_dir}/zzctl.imp"
 "${mpq_replace}" "${game_dir}/imp.mpq" 'imp\zzpal.imp' "${work_dir}/zzpal.imp"
 "${mpq_replace}" "${game_dir}/gs.mpq" 'gs\hotkey.gs' "${work_dir}/hotkey_probe.gs"
@@ -107,10 +126,19 @@ cmp "${work_dir}/rb_START.GS" "${work_dir}/START_fast.GS"
 echo "  scripts read back byte-identical"
 
 # Newly added members are findable by hash but not by the listfile, so check them that way.
-(cd "${viewer_dir}" && cargo run --release --quiet --example read_member -- \
-  "${game_dir}/imp.mpq" 'imp\zzctl.imp')
-(cd "${viewer_dir}" && cargo run --release --quiet --example read_member -- \
-  "${game_dir}/imp.mpq" 'imp\zzpal.imp')
+# "the engine cannot read an added archive member" is rung 2's whole hypothesis, so an unreadable
+# member here must stop the install rather than send someone to burn an attended run on it.
+for member in 'imp\zzctl.imp' 'imp\zzpal.imp'; do
+  read_back="$(cd "${viewer_dir}" && cargo run --release --quiet --example read_member -- \
+    "${game_dir}/imp.mpq" "${member}")"
+  echo "  ${read_back}"
+  case "${read_back}" in
+    *"READ FAILED"*|*"not a parseable IMP"*)
+      echo "injected member is unreadable; aborting." >&2
+      exit 1
+      ;;
+  esac
+done
 
 installed=1
 

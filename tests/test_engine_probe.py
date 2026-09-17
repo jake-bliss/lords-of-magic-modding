@@ -73,7 +73,7 @@ class EngineProbeTest(unittest.TestCase):
                 self.body,
                 f"rung {index} reuses a shipped type and must be cleaned up by cell as well",
             )
-            self.assertIn(f"getterrainspritelocation zy{index} eq", self.body)
+            self.assertIn(f"getterrainspritelocation zl{index} eq", self.body)
 
     def test_every_rung_is_registered_placed_and_cleaned_up(self) -> None:
         for index, (label, expression) in enumerate(engine_probe.SPRITE_TYPES):
@@ -91,6 +91,50 @@ class EngineProbeTest(unittest.TestCase):
             if not engine_probe.is_freshly_registered(index)
         ]
         self.assertEqual(reused, [0])
+
+    def test_packed_locations_are_never_read_as_a_pair(self) -> None:
+        """`anythinglocation` and `getterrainspritelocation` each return ONE packed location.
+
+        Reading either as an x/y pair underflows the operand stack, which is what killed the
+        2026-09-16 run: its log printed an empty x beside y=9152, a packed cell (64,71) at map
+        width 128. The shipped corpus decomposes with `xy_to_x_y` precisely because the value
+        arrives packed.
+        """
+        self.assertIn("anythinglocation /zaloc exch def", self.body)
+        self.assertNotIn("anythinglocation /zay0 exch def", self.body)
+        self.assertIn("zaloc xy_to_x_y /zay0 exch def /zax0 exch def", self.body)
+        for index in range(len(engine_probe.SPRITE_TYPES)):
+            # The cleanup guard must compare packed-to-packed, never packed against a coordinate.
+            self.assertNotIn(f"getterrainspritelocation zy{index}", self.body)
+            self.assertNotIn(f"getterrainspritelocation zx{index}", self.body)
+
+    def test_findemptylocation_receives_two_operands(self) -> None:
+        """Shipped form is `<location> UNITTYPELAND findemptylocation`, not `<x> <y> ...`.
+
+        Passing three operands strands the x on the stack and derives every cell from y alone.
+        """
+        for index, (_label, _expression) in enumerate(engine_probe.SPRITE_TYPES):
+            dx, dy = engine_probe.SEED_OFFSETS[index]
+            self.assertIn(
+                f"zax0 {dx} add zay0 {dy} add x_y_to_xy UNITTYPELAND findemptylocation "
+                f"/zl{index} exch def",
+                self.body,
+            )
+
+    def test_reports_when_no_army_was_found(self) -> None:
+        # Otherwise the probe places at (-1,-1) and the log looks like a rendering failure.
+        self.assertIn("no army found", self.body)
+
+    def test_seeds_are_far_enough_apart_to_read(self) -> None:
+        """Two rungs resolving to one cell makes the ladder unreadable.
+
+        A cell is roughly 34 screen pixels of x and the donor frame is 72 wide, so seeds closer
+        than two cells could overlap on screen even when they land on distinct cells.
+        """
+        for i, first in enumerate(engine_probe.SEED_OFFSETS):
+            for second in engine_probe.SEED_OFFSETS[i + 1:]:
+                distance = abs(first[0] - second[0]) + abs(first[1] - second[1])
+                self.assertGreaterEqual(distance, 2, f"{first} and {second} are too close")
 
     def test_seeds_are_distinct(self) -> None:
         self.assertEqual(

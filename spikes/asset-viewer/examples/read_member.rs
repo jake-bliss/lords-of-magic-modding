@@ -7,7 +7,12 @@ fn main() {
     let archive = Archive::open(std::path::Path::new(&args.next().expect("archive"))).expect("open");
     let name = args.next().expect("member");
     match archive.read(&name) {
-        Err(error) => println!("{name}: READ FAILED: {error}"),
+        Err(error) => {
+            // Exit non-zero: callers script this as a gate, and a failure that exits 0 once let an
+            // installer report "Ready" over a member it already knew was unreadable.
+            println!("{name}: READ FAILED: {error}");
+            std::process::exit(1);
+        }
         Ok(bytes) => {
             print!("{name}: {} bytes", bytes.len());
             match ImpSprite::parse(&bytes) {
@@ -17,7 +22,10 @@ fn main() {
                         f.hotspots.iter().map(|s| (s.id, s.x, s.y)).collect();
                     println!("  frame0 {}x{} hotspots {spots:?}", f.width, f.height);
                 }
-                Err(e) => println!("  (not a parseable IMP: {e})"),
+                Err(e) => {
+                    println!("  (not a parseable IMP: {e})");
+                    std::process::exit(1);
+                }
             }
         }
     }
