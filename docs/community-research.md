@@ -291,21 +291,54 @@ special. Either way, do not treat index 255 as reserved.
 > order, but those have to be the first two colors in the palette in order for all of those features
 > to work well."*
 
-We can answer that. **Index 0 is pure red and is the transparency; index 1 is pure green and is the
-translucency** — and *translucent* is the better word, because it is measured as the background drawn
-at half brightness, not a black shadow. Both orderings look like "red and green", so his uncertainty
-was not resolvable from the files alone; it needed the engine.
+We can answer the order, and correct the requirement.
 
-**Hexdragon's `LOM_Sprite_Tool`, November 2023, already handles placement correctly** — and this
-qualifies our headline framing. Its frame-data notes say:
+**Where the convention holds, index 0 is pure red (transparency) and index 1 is pure green
+(translucency)** — and *translucent* is the better word, because it is measured as the background
+drawn at half brightness, not a black shadow. Both orderings look like "red and green", so his
+uncertainty was not resolvable from the files alone; it needed the engine.
+
+But *"those have to be the first two colors in the palette in order for all of those features to work
+well"* is **not a requirement**, measured across all 1,800 shipped IMPs:
+
+| Slots 0 and 1 | Files |
+| --- | --- |
+| pure red then pure green | 1,542 (85.7%) |
+| black then `(8,8,8)` | 167 |
+| pure red then a cyan | 56 |
+| other | 35 |
+
+258 shipped files break the convention and work fine, because **the engine keys on the index and
+ignores the colour entirely** — which we proved directly by rewriting index 1 to magenta and seeing
+no change in the render. The convention is an art-pipeline habit, not an engine constraint. This
+matters practically: anyone repainting a palette does not need to preserve those two colours, only
+those two *indices*.
+
+**IMP Studio has the same red/green swap we did**, verified by reading its code rather than its
+documentation. Its palette accessor is:
+
+```js
+return [p[i*4+2], p[i*4+1], p[i*4]];
+```
+
+a reversal, where the engine's layout requires `[p[i*4+1], p[i*4+2], p[i*4]]`. So every colour that
+tool has ever displayed or exported has red and green transposed, exactly as ours did. That is worth
+telling the board, and it explains how the wrong order survived: the tool and our decoder agreed with
+each other, and agreement was mistaken for confirmation.
+
+**Hexdragon's `LOM_Sprite_Tool`, November 2023, is described as handling placement correctly** — and
+that alone qualifies our headline framing. This is a **community claim, not verified here**: the tool
+has not been obtained or run, and what follows is Hexdragon's own description of it. Its frame-data
+notes say:
 
 > *"Frame HSP Type: Taken from original IMP file"*
 > *"HSP Offset/DspX/DspY: Adjusted upon accumulated change in RLE sizes (except when HSP Type = 0)"*
 > *"HotSpot structure data: Taken from original imp file"*
 
-That is the overloaded `+8` dword, independently and correctly: adjust it as a file offset when the
-count is non-zero, and leave it alone when the count is zero because it is then a displacement pair,
-not a pointer. The community calls that pair **`DspX`/`DspY`**; we have been calling it the origin
+That describes the overloaded `+8` dword independently and, if accurate, correctly: adjust it as a
+file offset when the count is non-zero, and leave it alone when the count is zero because it is then
+a displacement pair, not a pointer. Confirming it would mean running the tool on a known input and
+diffing the bytes, which has not been done. The community calls that pair **`DspX`/`DspY`**; we have been calling it the origin
 pair, and their name is better.
 
 So "`lomut` writes no hotspot data" remains true **of `lomut`**, but "community tools lose placement"

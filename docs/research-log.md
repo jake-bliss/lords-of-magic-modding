@@ -1438,3 +1438,36 @@ choosing where to place. If the residuals collapse to about a pixel on flat grou
 interpolates and the y convention is closed; if they do not, the extra term is something else. Give
 each sprite its own screen x so no assignment is ever inferred.
 
+### Checking the community threads rather than relaying them
+
+Four claims from impz threads 2012 and 2086 were tested here instead of being taken on trust. Three
+survived in part, one did not, and one of our own statements needed narrowing.
+
+| Claim | Source | Outcome |
+| --- | --- | --- |
+| The RLE algorithm, with the `+3` bias | snv, 2011 | **Confirmed** — matches `decode_rle_packet` line for line |
+| `u1 Palette[256*4]; // RGBA palette` | snv, 2011 | Size confirmed, **order refuted**: stored blue, red, green, pad |
+| "index 0xff is RLE special value" | snv, 2011 | **Refuted** as a palette claim: index 255 is ordinary pixel data in 164 of 1,800 files, 7,070 frames, 6.25M pixels, across every asset category |
+| "Pure Red and Pure Green... have to be the first two colors" | Boaster, 2023 | **Order answered, requirement refuted** — see below |
+| `LOM_Sprite_Tool` preserves and adjusts placement | Hexdragon, 2023 | **Unverified.** The tool has not been obtained or run; recorded as a community claim |
+
+**Boaster's ordering, measured across all 1,800 shipped IMPs:** 1,542 files (85.7%) do hold pure red
+at index 0 and pure green at index 1. The other 258 do not — 167 hold black and `(8,8,8)`, 56 hold
+pure red and a cyan, 35 something else. They render correctly anyway, because the engine keys on the
+**index** and ignores the colour, which the magenta test proved directly. So the convention is an
+art-pipeline habit, not an engine constraint: repainting a palette must preserve those two *indices*,
+not those two colours.
+
+**IMP Studio carries the same red/green swap**, established by reading its code rather than its
+documentation:
+
+```js
+return [p[i*4+2], p[i*4+1], p[i*4]];
+```
+
+The engine's layout requires `[p[i*4+1], p[i*4+2], p[i*4]]`. Every colour that tool has displayed or
+exported has red and green transposed, exactly as ours did — and that is how the wrong order
+survived scrutiny here. Our decoder and the community tool agreed with each other, and
+**agreement between two implementations was mistaken for confirmation from evidence.** Neither had
+been checked against the engine until now.
+

@@ -107,9 +107,10 @@ passes through `lomut` cannot have its placement reconstructed. It has to be wri
 what the commands above are for.
 
 **This is not an indictment of every community tool.** Hexdragon's `LOM_Sprite_Tool` (impz thread
-2086, November 2023) preserves the hotspot structure and adjusts the `+8` dword correctly — as a file
-offset when the count is non-zero, and left alone when the count is zero because it is then the
-displacement pair they call `DspX`/`DspY`. What it cannot do, and what nothing else does either, is
+2086, November 2023) is *described by its author* as preserving the hotspot structure and adjusting
+the `+8` dword as a file offset when the count is non-zero, while leaving it alone when the count is
+zero because it is then the displacement pair they call `DspX`/`DspY`. That is a community claim we
+have not verified — the tool has not been run here. What it cannot do, and what nothing else does either, is
 say what placement a **re-cropped** frame should now carry. Carrying `DspX`/`DspY` over unchanged is
 right when the pixels do not move and wrong the moment they do, which is every attempt to fix the
 wobble by cropping. That is the gap the rule above closes.
