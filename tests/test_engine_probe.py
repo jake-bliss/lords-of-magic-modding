@@ -5,6 +5,7 @@ a unit test is worth several of them. These assert the properties whose absence 
 cost a run: unbalanced braces, a missing fire-once guard, and cleanup by location.
 """
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -26,6 +27,14 @@ class SharedProbeSafetyTest(unittest.TestCase):
     def bodies(self):
         return {name: builder() for name, builder in engine_probe.PROBES.items()}
 
+    def placement_bodies(self):
+        """Probes that put a sprite on the map, which is what the anchor rules are about.
+
+        Keyed on the body rather than on a list, so a new placing probe cannot opt itself out of
+        the rules by forgetting to register anywhere.
+        """
+        return {n: b for n, b in self.bodies().items() if "addterrainsprite" in b}
+
     def test_braces_and_brackets_balance(self) -> None:
         for name, body in self.bodies().items():
             tokens = list(gs_syntax.tokens(body))
@@ -43,16 +52,55 @@ class SharedProbeSafetyTest(unittest.TestCase):
         for name, body in self.bodies().items():
             guard = body.index("userdict /zdone known not")
             flag = body.index("/zdone true def")
-            first_effect = min(body.index("screencapture"), body.index("addterrainsprite"))
+            effects = [
+                body.index(marker)
+                for marker in ("screencapture", "addterrainsprite", "savescenariomap", "clearmap")
+                if marker in body
+            ]
+            self.assertTrue(effects, f"{name}: body has no observable effect at all")
             self.assertLess(guard, flag, name)
-            self.assertLess(flag, first_effect, f"{name}: acts before the fire-once flag")
+            self.assertLess(flag, min(effects), f"{name}: acts before the fire-once flag")
 
     def test_never_cleans_up_by_location_alone(self) -> None:
         for name, body in self.bodies().items():
             self.assertNotIn("terrainspriteat", body, name)
 
-    def test_packed_locations_are_never_read_as_a_pair(self) -> None:
+    def test_every_body_captures_something(self) -> None:
         for name, body in self.bodies().items():
+            self.assertIn("screencapture", body, f"{name}: a run with no capture cannot be read")
+
+    def test_writes_only_to_names_the_probe_owns(self) -> None:
+        """Every file the probe names is a `z`-prefixed one of ours.
+
+        The game directory holds 366 loose map files and the engine's save operators overwrite
+        without asking. A probe that wrote `map/URAK.scn` would destroy shipped content that no
+        archive backup covers, because the backups cover `gs.mpq` and `imp.mpq`, not `map/`.
+        """
+        written = (".bmp", ".log", ".scn", ".smp", ".sav")
+        owned_maps = set(engine_probe.generated_map_names())
+        for name, body in self.bodies().items():
+            for quoted in re.findall(r'"([^"]*)"', body):
+                if not quoted.lower().endswith(written):
+                    continue  # `.imp` and `.gs` names are read, and reads harm nothing
+                stem = quoted.rsplit("/", 1)[-1]
+                if quoted.lower().startswith("map/"):
+                    # Anything under map/ has to be a name the cleanup path actually knows about.
+                    # A `map/zURAK.scn` starts with `z` and would satisfy a looser rule, but the
+                    # install and restore scripts work from `generated_map_names()`, so it would
+                    # be written into an unbacked-up directory and left there for ever.
+                    self.assertIn(
+                        quoted,
+                        owned_maps,
+                        f"{name}: writes {quoted!r}, which the cleanup path would not remove",
+                    )
+                    continue
+                self.assertTrue(
+                    stem.startswith("z"),
+                    f"{name}: writes {quoted!r}, which the probe does not own",
+                )
+
+    def test_placing_probes_anchor_on_an_army_and_unpack_correctly(self) -> None:
+        for name, body in self.placement_bodies().items():
             self.assertIn("anythinglocation /zaloc exch def", body, name)
             self.assertIn("zaloc xy_to_x_y /zay0 exch def /zax0 exch def", body, name)
             self.assertNotIn("anythinglocation /zay0", body, name)
@@ -60,14 +108,69 @@ class SharedProbeSafetyTest(unittest.TestCase):
             self.assertNotIn("add UNITTYPELAND findemptylocation", body.replace(
                 "x_y_to_xy UNITTYPELAND findemptylocation", ""), name)
 
-    def test_reports_when_no_army_was_found(self) -> None:
-        for name, body in self.bodies().items():
+    def test_placing_probes_report_when_no_army_was_found(self) -> None:
+        for name, body in self.placement_bodies().items():
             self.assertIn("no army found", body, name)
 
-    def test_every_body_captures_a_plate_and_a_result(self) -> None:
-        for name, body in self.bodies().items():
+    def test_placing_probes_capture_a_plate_and_a_result(self) -> None:
+        for name, body in self.placement_bodies().items():
             for capture in ('"zp0.bmp"screencapture', '"zs1.bmp"screencapture'):
                 self.assertIn(capture, body, name)
+
+
+class MapSizeProbeTest(unittest.TestCase):
+    """The oversized-map ladder for issue #22."""
+
+    def setUp(self) -> None:
+        self.body = engine_probe.map_size_body()
+
+    def test_controls_come_before_the_subject(self) -> None:
+        """128 and 256 exist in the shipped corpus; 512 does not.
+
+        If a generated 128 does not match a shipped 128, the generator is not a faithful writer and
+        the 512 result means nothing. The control has to run first, and has to be in the ladder at
+        all.
+        """
+        self.assertEqual(engine_probe.MAP_SIZES[:2], [128, 256])
+        self.assertEqual(engine_probe.MAP_SIZES[-1], 512)
+        positions = [self.body.index(f"{size} {size} make_custom_random_map")
+                     for size in engine_probe.MAP_SIZES]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_operand_order_is_width_then_height(self) -> None:
+        """From the only shipped call site, gs\\edit\\mapgen.gs:306 -- width is pushed first.
+
+        Asserted with UNEQUAL arguments. Every size in the ladder is square, so an assertion made
+        against the ladder alone would pass just as happily with the operands transposed, and the
+        whole point of this order is that the arity table could not settle it.
+        """
+        self.assertEqual(engine_probe.generate_call(512, 256), "512 256 make_custom_random_map")
+        for size in engine_probe.MAP_SIZES:
+            self.assertIn(engine_probe.generate_call(size, size), self.body)
+
+    def test_logs_the_engines_own_view_of_the_size(self) -> None:
+        """A silent clamp would otherwise look exactly like a successful oversized generation."""
+        for size in engine_probe.MAP_SIZES:
+            self.assertIn(f'"gen done "{size}" mapw "mapw" maph "maph', self.body)
+
+    def test_save_result_is_captured_not_popped(self) -> None:
+        self.assertIn("zname savescenariomap /zok exch def", self.body)
+        self.assertNotIn("savescenariomap pop", self.body)
+
+    def test_every_size_saves_to_its_own_new_file(self) -> None:
+        """The names in the body and the names the scripts clean up must be the same list.
+
+        They are read from one function so they cannot drift, and this is what would catch it if
+        somebody reintroduced a second copy.
+        """
+        names = re.findall(r'"(map/[^"]*)"', self.body)
+        self.assertEqual(names, engine_probe.generated_map_names())
+        self.assertEqual(names, [f"map/zz{size}.scn" for size in engine_probe.MAP_SIZES])
+        self.assertEqual(len(set(names)), len(names), "two sizes share a filename")
+
+    def test_places_nothing_and_destroys_nothing(self) -> None:
+        for forbidden in ("addterrainsprite", "destroyterrainsprite", "savespecialmap"):
+            self.assertNotIn(forbidden, self.body)
 
 
 class ElevationProbeTest(unittest.TestCase):

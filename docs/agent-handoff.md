@@ -122,10 +122,40 @@ checksum** — `artifacts/experiment-backups/` holds the manifest pattern used o
 
 ### Engine probe harness — this is the reusable part
 
-**Two probes exist.** `LOM_PROBE=ladder` (the default) is the four-rung compositing diagnostic that
+**Three probes exist.** `LOM_PROBE=ladder` (the default) is the four-rung compositing diagnostic that
 settled the shadow blend and the palette order. `LOM_PROBE=elevation` surveys `getelevation` beside
 `map2screen` called with `z = 0` and with `z =` the cell's own elevation, then places six sprites to
-measure real anchors — that is the open half of the y convention.
+measure real anchors — that is the open half of the y convention. `LOM_PROBE=mapsize` generates and
+saves a 128, a 256 and a 512 map for [issue #22](https://github.com/jake-bliss/lords-of-magic-modding/issues/22);
+it places no sprites, destroys nothing, and is the only probe run from the **Map Editor** rather than
+from a game.
+
+**The mapsize probe writes outside the archives, and that needs care.** The game directory has a
+loose `map/` folder holding 366 shipped files, and **no backup here covers it** — the manifest covers
+`gs.mpq` and `imp.mpq` only.
+
+Both scripts therefore work from an **exact list of names**, `engine_probe.generated_map_names()`,
+and never from a glob. `map/zz*.scn` would have been a standing offer to delete somebody's own
+`zzCustom.scn`, with nothing to restore it from. One source of truth means the cleanup list cannot
+drift from what the probe writes, and a test asserts that every `map/` name in a probe body is on
+that list — which is stricter than "starts with `z`", because `map/zURAK.scn` would satisfy the
+loose rule and then never be cleaned up at all.
+
+The restore script hashes each generated map **before** copying it and compares after. Comparing a
+copy against the file it was just copied from proves nothing, and the original is about to be
+deleted. If a probe ever needs to write elsewhere under `map/`, back that directory up first.
+
+**Where `make_custom_random_map` comes from.** `START.GS:106` runs `gs\edit\TERREDIT5.gs`, whose
+first lines are `userdict begin "gs/rmg.gs"run "gs/edit/mapgen.gs"run end`. So the generator is
+defined in **userdict** at startup and is reachable from a hotkey anywhere, editor or not. The probe
+does not call `clearmap` first — the editor does, but only to blank a map it already has loaded, and
+`make_random_map` opens with `mw mh newmap` itself. Requiring a map to already exist would be a
+precondition the probe does not need.
+
+Its ladder is 128, 256, then 512, in that order and for a reason: 128 and 256 both exist in the
+shipped corpus, so a generated one can be compared against a file the game itself wrote. If the
+generated 128 does not match, the generator is not a faithful writer and nothing the 512 says can be
+trusted. The control runs first; a test enforces the order.
 
 **Run it with the two scripts, not by hand.** `scripts/install-engine-probe.sh` verifies both
 archives against the recorded originals, injects the sprites and the generated hotkey, disables the

@@ -33,6 +33,41 @@ if (( ${#captures[@]} )); then
   rm -f "${captures[@]}"
 fi
 
+# The mapsize probe writes generated maps into the game's loose map/ directory. They are the
+# result, so they are collected before being removed.
+#
+# That directory holds 366 shipped map files and no backup here covers it, so this works from an
+# EXACT list of names taken from the probe generator itself, never from a glob. A pattern that
+# could match a file this probe did not create has no place in a delete path with no undo.
+generated=()
+while IFS= read -r map_name; do
+  # Spelled as an if rather than `[[ ]] &&` so its exit status can never interact with `set -e`.
+  if [[ -e "${game_dir}/${map_name}" ]]; then
+    generated+=("${game_dir}/${map_name}")
+  fi
+done < <(PYTHONPATH="${project_dir}/tools" python3 -c \
+  'import engine_probe; print("\n".join(engine_probe.generated_map_names()))')
+
+if (( ${#generated[@]} )); then
+  mkdir -p "${capture_dir}"
+  echo "collecting ${#generated[@]} generated map(s) into ${capture_dir}"
+  for path in "${generated[@]}"; do
+    base="${path##*/}"
+    # The source is hashed BEFORE the copy and the copy is hashed after. Comparing the copy against
+    # the file it was just copied from proves nothing, and the original is about to be deleted --
+    # this is the only moment at which a bad copy can still be caught.
+    before="$(file_hash "${path}")"
+    cp "${path}" "${capture_dir}/${base}"
+    after="$(file_hash "${capture_dir}/${base}")"
+    if [[ "${before}" != "${after}" ]]; then
+      echo "keeping ${base}: the collected copy does not match the original" >&2
+      continue
+    fi
+    rm -f "${path}"
+    echo "  ${base} ${after}"
+  done
+fi
+
 # Preflight every backup before copying any of them, so a missing or corrupt second backup cannot
 # leave one archive restored and the other still modified.
 echo "== verifying the backups against MANIFEST.sha256 =="
