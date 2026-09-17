@@ -13,8 +13,12 @@ backup_dir="${artifacts_dir}/experiment-backups/gs5r3-20260916"
 app_dir="${1:-${HOME}/Applications/Lords of Magic GS5R3.app}"
 # Which probe to install: "ladder" (the four-rung compositing diagnostic), "elevation",
 # "mapsize" (the oversized-map ladder, issue #22 -- now closed), "flatground" (the built-mesh
-# probe that closes the map2screen y convention), or "maptag" (the cell-tag and trailing-record
-# probe for issue #4).
+# probe that closes the map2screen y convention), "maptag" (the cell-tag and trailing-record probe
+# for issue #4), or "mapload" (does the engine accept a map THIS PROJECT wrote?).
+#
+# "mapload" is the only probe with prerequisites: its rungs 1-6 load files that must already be in
+# the game's map/ directory, built by scripts/build-mapload-inputs.sh. Installing it without them
+# would spend the user's attended session loading files that are not there, so this script refuses.
 probe="${LOM_PROBE:-ladder}"
 game_subpath='Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition/English'
 game_dir="${app_dir}/${game_subpath}"
@@ -55,6 +59,31 @@ for path in "${game_dir}/gs.mpq" "${game_dir}/imp.mpq" "${backup_dir}/gs.mpq.ori
             "${backup_dir}/imp.mpq.orig" "${listfile}"; do
   [[ -f "${path}" ]] || { echo "missing: ${path}" >&2; exit 1; }
 done
+
+if [[ "${probe}" == "mapload" ]]; then
+  echo "== the mapload probe needs its input maps in place first =="
+  missing=0
+  for name in zm1 zm2 zm3 zm4 zm5 zm6; do
+    if [[ ! -f "${game_dir}/map/${name}.scn" ]]; then
+      echo "   MISSING: ${game_dir}/map/${name}.scn" >&2
+      missing=1
+    fi
+  done
+  if (( missing )); then
+    echo "" >&2
+    echo "Run this first, then install again:" >&2
+    echo "  scripts/build-mapload-inputs.sh '${app_dir}'" >&2
+    exit 1
+  fi
+  # zm0 is the engine's own control, written during the run. A leftover from a previous run would
+  # be loaded at rung 0 instead of a freshly saved one, which silently removes the control.
+  if [[ -e "${game_dir}/map/zm0.scn" ]]; then
+    echo "refusing to install: ${game_dir}/map/zm0.scn already exists." >&2
+    echo "Rung 0's control must be written by the engine during the run, not left over." >&2
+    exit 1
+  fi
+  echo "   all six input maps present, and no stale zm0.scn"
+fi
 
 echo "== verifying the backups against MANIFEST.sha256 =="
 verify_backups "${backup_dir}"

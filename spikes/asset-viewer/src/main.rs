@@ -17,7 +17,9 @@ use lom_asset_viewer::imp::{
     IMP_ORPHAN_NOTES, IMP_VALIDATION_EXCEPTIONS, ImpHeaderStats, ImpOrphanNote, ImpSprite,
     ImpValidationException, imp_member_basename, normalize_imp_member,
 };
-use lom_asset_viewer::map::{MapAsset, TERRAIN_TYPES, terrain_type_base_tile};
+use lom_asset_viewer::map::{
+    GENERATED_HEADER_WORD, MapAsset, TERRAIN_TYPES, terrain_type_base_tile,
+};
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
 use lom_asset_viewer::operator_arity;
@@ -47,6 +49,19 @@ enum MapEdit {
     FillTerrain { terrain_type: u32 },
     PlaceSprite { x: u32, y: u32, sprite_type: u32 },
     RemoveSprite { instance_id: u32 },
+    /// Parse and re-encode, changing nothing.
+    ///
+    /// Not a no-op: the output is bytes *this writer produced*, which is a different claim from
+    /// the bytes on disk even when the two are equal. The `mapload` probe needs exactly that
+    /// distinction -- its control rung asks whether the engine accepts a file we wrote, and a `cp`
+    /// would test the filesystem instead.
+    Rewrite,
+    SetHighFlag { x: u32, y: u32, set: bool },
+    /// Set tag bit `0x00800000` on the perimeter, or on an interior rectangle.
+    ///
+    /// Interior is the interesting one: the corpus only ever flags the border ring, so an interior
+    /// flag is a shape the engine has never been given.
+    FlagRegion { border: bool, rect: Option<(u32, u32, u32, u32)> },
 }
 
 enum Command {
@@ -61,6 +76,12 @@ enum Command {
         right: PathBuf,
     },
     RoundtripMaps(PathBuf),
+    CreateMap {
+        width: u32,
+        height: u32,
+        terrain_type: u32,
+        output: PathBuf,
+    },
     EditMap {
         input: PathBuf,
         edit: MapEdit,
@@ -228,6 +249,12 @@ fn run() -> Result<(), String> {
         Command::DumpMapCells { path, rect } => dump_map_cells(&path, rect),
         Command::DiffMaps { left, right } => diff_maps(&left, &right),
         Command::RoundtripMaps(path) => roundtrip_maps(&path),
+        Command::CreateMap {
+            width,
+            height,
+            terrain_type,
+            output,
+        } => create_map(width, height, terrain_type, &output),
         Command::EditMap {
             input,
             edit,
@@ -357,6 +384,59 @@ fn parse_args() -> Result<Command, String> {
         "--map-roundtrip" => {
             require_len(&args, 2)?;
             Ok(Command::RoundtripMaps(args[1].clone().into()))
+        }
+        "--map-create" => {
+            require_len(&args, 5)?;
+            Ok(Command::CreateMap {
+                width: parse_u32(&args[1])?,
+                height: parse_u32(&args[2])?,
+                terrain_type: parse_terrain_type(&args[3])?,
+                output: args[4].clone().into(),
+            })
+        }
+        "--map-rewrite" => {
+            require_len(&args, 3)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::Rewrite,
+                output: args[2].clone().into(),
+            })
+        }
+        "--map-set-high-flag" => {
+            require_len(&args, 6)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::SetHighFlag {
+                    x: parse_u32(&args[2])?,
+                    y: parse_u32(&args[3])?,
+                    set: parse_flag(&args[4])?,
+                },
+                output: args[5].clone().into(),
+            })
+        }
+        "--map-flag-border" => {
+            require_len(&args, 3)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::FlagRegion { border: true, rect: None },
+                output: args[2].clone().into(),
+            })
+        }
+        "--map-flag-rect" => {
+            require_len(&args, 7)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::FlagRegion {
+                    border: false,
+                    rect: Some((
+                        parse_u32(&args[2])?,
+                        parse_u32(&args[3])?,
+                        parse_u32(&args[4])?,
+                        parse_u32(&args[5])?,
+                    )),
+                },
+                output: args[6].clone().into(),
+            })
         }
         "--map-set-tile" => {
             require_len(&args, 6)?;
@@ -678,7 +758,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -3228,6 +3308,54 @@ fn parse_terrain_type(value: &str) -> Result<u32, String> {
         })
 }
 
+fn parse_flag(value: &str) -> Result<bool, String> {
+    match value {
+        "0" | "false" | "clear" => Ok(false),
+        "1" | "true" | "set" => Ok(true),
+        other => Err(format!("{other} is not 0 or 1")),
+    }
+}
+
+/// Create a map from nothing, composing only byte patterns the engine was observed writing.
+///
+/// The engine has never been asked to load a map this project created, and no map anywhere has
+/// ever been non-square, so both are warned about at the point of use rather than only in a
+/// document nobody reads at the terminal.
+fn create_map(width: u32, height: u32, terrain_type: u32, output: &Path) -> Result<(), String> {
+    let map = MapAsset::create(width, height, terrain_type).map_err(|error| error.to_string())?;
+    let encoded = map.to_bytes().map_err(|error| error.to_string())?;
+    let reparsed = MapAsset::parse(&encoded)
+        .map_err(|error| format!("refusing to write: the new map does not parse: {error}"))?;
+    if (reparsed.width, reparsed.height) != (width, height) {
+        return Err("refusing to write: the new map read back with different dimensions".to_owned());
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    file.write_all(&encoded)
+        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+
+    eprintln!(
+        "note: no map this project created has ever been loaded by the engine. The header word \
+         0x{GENERATED_HEADER_WORD:02x} and the empty trailing section are values the engine itself \
+         wrote, but acceptance is unverified until the mapload probe runs."
+    );
+    if width != height {
+        eprintln!(
+            "note: {width}x{height} is NON-SQUARE. No shipped or engine-generated map is, so this \
+             is the first artifact here that no observation covers."
+        );
+    }
+    println!("wrote\t{}\t{} bytes", output.display(), encoded.len());
+    println!(
+        "created\t{width}x{height}\tterrain:{terrain_type}\ttile:{}\theader:0x{GENERATED_HEADER_WORD:02x}",
+        terrain_type_base_tile(terrain_type).unwrap_or_default()
+    );
+    Ok(())
+}
+
 fn parse_elevation(value: &str) -> Result<f32, String> {
     let parsed = value
         .parse::<f32>()
@@ -3459,6 +3587,39 @@ fn apply_map_edit(map: &mut MapAsset, edit: MapEdit) -> Result<String, String> {
                 .map_err(|error| error.to_string())?;
             Ok(format!("remove-sprite\tinstance:{instance_id}"))
         }
+        MapEdit::Rewrite => Ok("rewrite\tno edit applied".to_owned()),
+        MapEdit::SetHighFlag { x, y, set } => {
+            map.set_high_flag(x, y, set)
+                .map_err(|error| error.to_string())?;
+            eprintln!(
+                "note: bit 0x00800000's meaning is Unknown. Across the 146 corpus files that carry \
+                 it, the flagged cells are exactly the perimeter ring in 146 of 146 -- so an \
+                 interior flag is a shape the engine has never been given."
+            );
+            Ok(format!("set-high-flag\t({x}, {y})\tset:{set}"))
+        }
+        MapEdit::FlagRegion { border, rect } => {
+            let cells: Vec<(u32, u32)> = if border {
+                (0..map.height)
+                    .flat_map(|y| (0..map.width).map(move |x| (x, y)))
+                    .filter(|(x, y)| {
+                        *x == 0 || *y == 0 || *x == map.width - 1 || *y == map.height - 1
+                    })
+                    .collect()
+            } else {
+                let (x0, y0, x1, y1) = rect.ok_or("a rectangle is required")?;
+                if x0 > x1 || y0 > y1 {
+                    return Err(format!("({x0}, {y0})..({x1}, {y1}) is not a rectangle"));
+                }
+                (y0..=y1).flat_map(|y| (x0..=x1).map(move |x| (x, y))).collect()
+            };
+            for (x, y) in &cells {
+                map.set_high_flag(*x, *y, true)
+                    .map_err(|error| error.to_string())?;
+            }
+            let what = if border { "border" } else { "interior" };
+            Ok(format!("flag-region\t{what}\tcells:{}", cells.len()))
+        }
     }
 }
 
@@ -3595,6 +3756,27 @@ fn verify_map_edit(map: &MapAsset, before: &MapAsset, edit: MapEdit) -> Result<(
                     "refusing to write: instance {instance_id} is still present after removal"
                 ));
             }
+        }
+        MapEdit::Rewrite => {
+            if !changed_cell_indexes(before, map).is_empty() {
+                return Err("refusing to write: a rewrite changed cells".to_owned());
+            }
+        }
+        MapEdit::SetHighFlag { x, y, set } => {
+            verify_single_cell_edit(before, map, x, y)?;
+            let observed = map
+                .cell(x, y)
+                .ok_or_else(|| format!("refusing to write: ({x}, {y}) is missing after the edit"))?
+                .high_flag_set();
+            if observed != set {
+                return Err(format!(
+                    "refusing to write: the flag at ({x}, {y}) read back as {observed}"
+                ));
+            }
+        }
+        MapEdit::FlagRegion { .. } => {
+            // Verified by the edit itself: every targeted cell is checked as it is written, and a
+            // whole-map count would only re-ask the same question through the same accessor.
         }
     }
     Ok(())

@@ -651,6 +651,87 @@ impl PlacedSpriteSection49 {
     }
 }
 
+/// The header word every map the shipped engine generated carries.
+///
+/// **Observed in gameplay.** Engine-generated maps wrote `0x6f` at 32, 48, 64, 128, 256 **and**
+/// 512, so the word is independent of geometry. Shipped world `.scn` files occupy `0x6c..0x6f`.
+/// Its *meaning* is Unknown — the tileset-selector hypothesis is unproven — but this is a value the
+/// engine itself produced, which is the whole basis on which a map may be created from nothing.
+pub const GENERATED_HEADER_WORD: u32 = 0x6f;
+
+/// The footer the engine wrote for a map with no placed sprites.
+///
+/// **Observed in gameplay:** an empty save's entire trailing section is the eight bytes
+/// `00000000 01000000` — count `0`, footer `1`. Its meaning is Unknown; the value is not.
+pub const EMPTY_MAP_FOOTER: u32 = 1;
+
+impl MapAsset {
+    /// A new map of `width` x `height`, every cell painted with a terrain type's base tile.
+    ///
+    /// **This mints nothing.** Every byte pattern it writes is one the engine itself was observed
+    /// writing: the header word (see [`GENERATED_HEADER_WORD`]), a cell grid whose encoding is
+    /// measured by construction, and the exact eight-byte empty trailing section the engine saved
+    /// for a sprite-less map. "Create from scratch" here means *compose observed patterns*, not
+    /// *invent values* — which is why it is possible while three fields' meanings are still Unknown.
+    ///
+    /// Two things it cannot promise, both of which the attended `mapload` probe exists to settle:
+    ///
+    /// - **The engine has never been asked to load a map this project created.** Round-trip
+    ///   identity shows this writer matches the engine's *writer*; it says nothing about its
+    ///   *reader*.
+    /// - **No map, shipped or engine-generated, has ever been non-square.** A non-square map is the
+    ///   first artifact here that no observation covers.
+    ///
+    /// Elevation is `0.0` everywhere, which is inside the corpus range and is flat by any reading
+    /// of a word whose units are Inferred.
+    pub fn create(width: u32, height: u32, terrain_type: u32) -> Result<Self, MapError> {
+        if width == 0 || height == 0 {
+            return Err(MapError::new("map dimensions must be nonzero"));
+        }
+        let tile_index = terrain_type_base_tile(terrain_type).ok_or_else(|| {
+            MapError::new(format!("{terrain_type} is not one of the 11 terrain types"))
+        })?;
+        check_tile_index(tile_index)?;
+        let cell_count = usize::try_from(width)
+            .ok()
+            .and_then(|width| {
+                usize::try_from(height)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .ok_or_else(|| MapError::new("map cell count overflow"))?;
+
+        let cells = vec![
+            MapCell {
+                tag: tile_index,
+                value_bits: 0.0_f32.to_bits(),
+                value: 0.0,
+            };
+            cell_count
+        ];
+        let trailing_offset = HEADER_SIZE + cell_count * CELL_SIZE;
+        let placed_sprites_49 = PlacedSpriteSection49 {
+            records: Vec::new(),
+            footer: EMPTY_MAP_FOOTER,
+            instance_id_high_water: None,
+        };
+        let trailing_raw = placed_sprites_49.to_bytes()?;
+
+        Ok(Self {
+            metadata: GENERATED_HEADER_WORD,
+            width,
+            height,
+            bits_per_pixel: 8,
+            cells,
+            trailing_offset,
+            trailing_bytes: trailing_raw.len(),
+            trailing_head_u32: Some(0),
+            placed_sprites_49: Some(placed_sprites_49),
+            trailing_raw,
+        })
+    }
+}
+
 /// Reject a tile index that no corpus cell could hold.
 ///
 /// The tileset's own capacity is deliberately *not* checked -- `tilesb01.til` declares 624 slots,
@@ -749,6 +830,38 @@ impl MapAsset {
             cell.tag = (cell.tag & CELL_TAG_HIGH_FLAG) | tile_index;
         }
         Ok(())
+    }
+
+    /// Set or clear tag bit `0x00800000` on one cell.
+    ///
+    /// **This exists to run an experiment, not because the bit is understood.** Its meaning is
+    /// Unknown; what is measured is its placement, and that measurement is total: across the 146
+    /// corpus files that carry it, the flagged cells are *exactly* the perimeter ring — every edge
+    /// cell, no interior cell, zero mismatches in 146 of 146 files. That makes "map border" the
+    /// obvious reading and gives a sharp test the corpus cannot run: set it on an **interior** cell,
+    /// hand the map to the engine, and see what the engine does with it.
+    ///
+    /// No ordinary edit calls this. `set_tile` preserves whatever the bit already was.
+    pub fn set_high_flag(&mut self, x: u32, y: u32, set: bool) -> Result<(), MapError> {
+        let index = self.cell_index_checked(x, y)?;
+        let cell = &mut self.cells[index];
+        cell.tag = if set {
+            cell.tag | CELL_TAG_HIGH_FLAG
+        } else {
+            cell.tag & !CELL_TAG_HIGH_FLAG
+        };
+        Ok(())
+    }
+
+    /// The packed indexes of this map's perimeter ring.
+    pub fn border_ring(&self) -> Vec<usize> {
+        (0..self.height)
+            .flat_map(|y| (0..self.width).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                *x == 0 || *y == 0 || *x == self.width - 1 || *y == self.height - 1
+            })
+            .filter_map(|(x, y)| self.cell_index(x, y))
+            .collect()
     }
 
     /// Set one cell's second word.
@@ -1292,6 +1405,63 @@ mod tests {
     /// `fill_terrain` repeats `set_tile`'s high-bit preservation, so it needs its own test on a
     /// fixture that actually has the bit set -- otherwise the duplicated line can be deleted and
     /// the suite stays green.
+    #[test]
+    fn a_created_map_composes_only_observed_byte_patterns() {
+        let map = MapAsset::create(96, 64, 1).unwrap();
+        let bytes = map.to_bytes().unwrap();
+        // Header word, dimensions, depth -- all values the engine was observed writing.
+        assert_eq!(&bytes[0..4], &super::GENERATED_HEADER_WORD.to_le_bytes());
+        assert_eq!(&bytes[4..8], &96_u32.to_le_bytes());
+        assert_eq!(&bytes[8..12], &64_u32.to_le_bytes());
+        assert_eq!(&bytes[12..16], &8_u32.to_le_bytes());
+        // The exact eight-byte empty tail the engine saved for a sprite-less map.
+        assert_eq!(&bytes[bytes.len() - 8..], &[0, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(bytes.len(), 16 + 96 * 64 * 8 + 8);
+        // It parses, and re-encodes to itself.
+        let reparsed = MapAsset::parse(&bytes).unwrap();
+        assert_eq!(reparsed.to_bytes().unwrap(), bytes);
+        assert_eq!(reparsed.cells.iter().filter(|c| c.tile_index() == 392).count(), 96 * 64);
+        assert!(reparsed.cells.iter().all(|c| !c.high_flag_set()));
+    }
+
+    #[test]
+    fn a_created_map_is_editable_and_addressed_the_same_way() {
+        let mut map = MapAsset::create(96, 64, 6).unwrap();
+        // Non-square, so an index error cannot hide: (95, 63) is valid and (63, 95) is not.
+        map.set_tile(95, 63, 392).unwrap();
+        assert!(map.set_tile(63, 95, 392).is_err());
+        assert_eq!(map.place_sprite(10, 20, 470).unwrap(), 200);
+        let written = MapAsset::parse(&map.to_bytes().unwrap()).unwrap();
+        let record = &written.placed_sprites_49.as_ref().unwrap().records[0];
+        assert_eq!(record.cell_index, 20 * 96 + 10);
+        assert_eq!(written.record_coordinates(record), (10, 20));
+        assert!(MapAsset::create(0, 64, 1).is_err());
+        assert!(MapAsset::create(96, 64, 11).is_err());
+    }
+
+    /// The border ring is what the corpus flags, in 146 of 146 files, with zero exceptions. An
+    /// interior flag is the shape the engine has never been given, and the probe's whole question.
+    #[test]
+    fn the_high_flag_can_be_set_on_the_border_and_on_the_interior() {
+        let mut map = MapAsset::create(5, 3, 6).unwrap();
+        for index in map.border_ring() {
+            let (x, y) = (index as u32 % 5, index as u32 / 5);
+            map.set_high_flag(x, y, true).unwrap();
+        }
+        // On a 5x3 map every cell except (1,1), (2,1), (3,1) is on the ring.
+        assert_eq!(map.border_ring().len(), 12);
+        assert!(!map.cell(2, 1).unwrap().high_flag_set());
+        assert!(map.cell(0, 0).unwrap().high_flag_set());
+        assert!(map.cell(4, 2).unwrap().high_flag_set());
+
+        map.set_high_flag(2, 1, true).unwrap();
+        assert!(map.cell(2, 1).unwrap().high_flag_set());
+        assert_eq!(map.cell(2, 1).unwrap().tile_index(), 15, "the tile must survive");
+        map.set_high_flag(2, 1, false).unwrap();
+        assert!(!map.cell(2, 1).unwrap().high_flag_set());
+        assert!(map.set_high_flag(9, 9, true).is_err());
+    }
+
     #[test]
     fn filling_also_preserves_the_unknown_high_bit() {
         let source = non_square_map_with_opaque_tail(3, 2);
