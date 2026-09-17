@@ -122,7 +122,7 @@ checksum** — `artifacts/experiment-backups/` holds the manifest pattern used o
 
 ### Engine probe harness — this is the reusable part
 
-**Three probes exist.** `LOM_PROBE=ladder` (the default) is the four-rung compositing diagnostic that
+**Four probes exist.** `LOM_PROBE=ladder` (the default) is the four-rung compositing diagnostic that
 settled the shadow blend and the palette order. `LOM_PROBE=elevation` surveys `getelevation` beside
 `map2screen` called with `z = 0` and with `z =` the cell's own elevation, then places six sprites to
 measure real anchors — that is the open half of the y convention. `LOM_PROBE=mapsize` generates and
@@ -222,10 +222,39 @@ edited subject in the same capture costs nothing extra and answers that directly
   components instead of taking a bounding box — that turned a spurious `110x191` box into the
   correct `49x67`.
 
-### Build the map instead of surveying it
+### Build the map instead of surveying it — `LOM_PROBE=flatground`
 
-Found 2026-09-17, not yet run, and it supersedes the "place sprites and survey the neighbourhood"
-approach for the open `map2screen` y question.
+Implemented 2026-09-17. This supersedes the "place sprites and survey the neighbourhood" approach
+for the open `map2screen` y question.
+
+The probe builds a 64x64 map with `newmap`, sets every elevation with `setelevation`, points the
+camera with `centeron`, and photographs **the same six cells three times**:
+
+| Phase | Mesh | What it gives |
+| --- | --- | --- |
+| A `flat` | every cell 0 | calibrates drawn y against output 2 with no z term |
+| B `plateau` | a uniform block at 2.0 | cell elevation 2.0, neighbourhood also 2.0 |
+| C `spike` | only the six cells at 2.0 | cell elevation 2.0, neighbourhood 0 |
+
+**B against C is the experiment.** Identical `getelevation` at every placement cell, identical
+screen x, and the only difference is what surrounds them. If the drawn y moves, the renderer reads
+the mesh rather than the cell and the move measures it; if it does not, mesh interpolation is dead
+and the missing term is something else. Either way it is an answer, which the earlier run could not
+produce.
+
+Three things the earlier run could not do, all free here: the neighbourhood is known before placing
+rather than surveyed after; every placement has its own screen x, so no sprite is ever matched to a
+cell by whichever assignment fits best; and the map is the probe's own creation, so nothing of the
+game's is at risk at any point.
+
+Each phase takes its own plate, because phases B and C move the ground and a shared plate would put
+the whole changed mesh into the sprite difference. `rebuild3dmap` runs after every elevation change
+or the render keeps the old heights and all three phases look alike. Tests enforce the phase order,
+the plate-per-phase rule, the block margin around every placement, the screen-x separation against
+the 72-pixel frame, and — asserted as a *sequence*, because a substring search cannot tell one
+block write from another — that the spike phase lowers the plateau before raising its cells.
+
+### The shipped precedent it was built from
 
 `gs\generate.gs` defines `/generate_simple_game`, which builds a complete playable scenario from
 script with no user input: `64 64 newmap`, `clearmap`, `paintelevation` at chosen cells, `addcapitol`,

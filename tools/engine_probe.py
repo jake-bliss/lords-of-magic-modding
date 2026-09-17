@@ -384,10 +384,180 @@ def map_size_body() -> str:
     return "\n".join(lines) + "\n"
 
 
+# --- flat ground probe -------------------------------------------------------------------------
+#
+# `map2screen` is decoded, and the drawn screen x matches its third output to under a pixel. The
+# drawn y only approximately matches the second output: fitting six placements gave residuals up to
+# 11 pixels, and two placements sharing an `x + y` were drawn 24 pixels apart while output 2
+# differed by 5.09. No rescaling of output 2 produces that.
+#
+# The candidate is that the renderer interpolates height across the terrain mesh instead of
+# sampling the anchor cell. That hypothesis has a counter-example in hand, because it was tested
+# against a map nobody chose: the elevation run measured a shipped world map, surveyed its
+# neighbourhoods afterwards, and two of its six placements fell outside the surveyed square.
+#
+# So this probe does not measure a map. It BUILDS one. `newmap` and `setelevation` mean the mesh is
+# specified rather than reconstructed, and the same six cells are then photographed three times:
+#
+#   A  flat        every cell 0            -- calibrates drawn y against output 2 with no z term
+#   B  plateau     a uniform block at E    -- cell elevation E, neighbourhood also E
+#   C  spikes      only the six cells at E -- cell elevation E, neighbourhood 0
+#
+# A against B gives the z term where cell and neighbourhood agree. **B against C is the whole
+# experiment**: identical `getelevation` at every placement cell, identical screen x, and the only
+# difference is what surrounds them. If the drawn y moves, the renderer is reading the mesh and not
+# the cell, and the size of the move measures it. If it does not, interpolation is dead and the
+# missing term is something else.
+#
+# Three things the earlier run could not do, all free here:
+#   - the neighbourhood is known before placing rather than surveyed after
+#   - every placement has its own screen x, so no sprite is ever matched to a cell by which
+#     assignment fits best
+#   - the map is one this probe created, so nothing of the game's is at risk at any point
+
+# Cells along one row. Screen x is `33.941 * (x - y) + L`, so a step of 3 in x puts them 101.8
+# pixels apart -- wider than the 72-pixel donor frame, and six of them span 509 of the 640-pixel
+# screen. Screen y is driven by `x + y`, which also varies, so they descend the screen as they go.
+FLAT_ROW_Y = 32
+FLAT_ROW_X = [26, 29, 32, 35, 38, 41]
+
+# The camera is pointed with `centeron` rather than assumed. Every earlier probe anchored on an
+# army and inherited wherever the player had scrolled to; this one has no army and no player.
+FLAT_CAMERA = (33, 32)
+
+# Map size, and the block raised for the plateau phase. The block covers every placement cell and
+# more than a 3x3 around each, so a mesh sampler cannot see an edge from any of them.
+FLAT_MAP = 64
+FLAT_BLOCK = (20, 26, 47, 38)  # x0, y0, x1, y1 inclusive
+
+# The raised elevation. `20.3625 * 2.0` is about 41 pixels of output 2 -- far outside the 11-pixel
+# residual being chased, so a null result is as readable as a positive one.
+FLAT_ELEVATION = "2.0"
+
+FLAT_SPRITE = '["imp/tree4e.imp"]cvx addterrainspritetype'
+
+
+def _flat_survey(emit, tag: str) -> None:
+    """Log elevation and both map2screen calls for every placement cell and its 3x3 neighbours."""
+    emit(f"\t\t{-1} 1 {1}{{/zdy exch def")
+    emit(f"\t\t{-1} 1 {1}{{/zdx exch def")
+    emit("\t\t0 1 " + str(len(FLAT_ROW_X) - 1) + "{/zi exch def")
+    emit("\t\t/zcx zrow zi get zdx add def /zcy " + str(FLAT_ROW_Y) + " zdy add def")
+    emit("\t\tzcx zcy getelevation /ze exch def")
+    emit("\t\tzcx zcy 0 map2screen /zb3 exch def /zb2 exch def /zb1 exch def")
+    emit("\t\tzcx zcy ze map2screen /zn3 exch def /zn2 exch def /zn1 exch def")
+    emit(
+        "\t\t"
+        + _log(
+            f'"field {tag} "zi" "zdx" "zdy" cell "zcx" "zcy" elev "ze'
+            '" z0 "zb1" "zb2" "zb3" ze "zn1" "zn2" "zn3'
+        )
+    )
+    emit("\t\t}for")
+    emit("\t\t}for")
+    emit("\t\t}for")
+
+
+def _flat_set_block(emit, x0: int, y0: int, x1: int, y1: int, value: str) -> None:
+    """`x y elevation setelevation`, from `tempx tempy rad_val setelevation` in the editor."""
+    emit(f"\t\t{x0} 1 {x1}{{/zsx exch def")
+    emit(f"\t\t{y0} 1 {y1}{{/zsy exch def")
+    emit(f"\t\tzsx zsy {value} setelevation")
+    emit("\t\t}for")
+    emit("\t\t}for")
+
+
+def _flat_phase(emit, tag: str, plate: str, shot: str) -> None:
+    """Re-render, plate, place on every row cell, photograph, then remove exactly what was placed."""
+    # The mesh has to be rebuilt after elevations change or the render keeps the old heights, and
+    # the camera is re-pointed because a rebuild is not guaranteed to preserve it.
+    emit("\t\trebuild3dmap resetvisibility rendermap refreshdirty")
+    emit(f"\t\t{FLAT_CAMERA[0]} {FLAT_CAMERA[1]} centeron")
+    emit("\t\trendermap refreshdirty")
+    _flat_survey(emit, tag)
+    # The plate is taken AFTER the elevation change: each phase is differenced against its own
+    # terrain, so the changed mesh never shows up in the sprite difference.
+    emit(f'\t\t"{plate}"screencapture')
+    for index in range(len(FLAT_ROW_X)):
+        emit(f"\t\t/zx zrow {index} get def /zy {FLAT_ROW_Y} def")
+        emit("\t\tzx zy getelevation /ze exch def")
+        emit("\t\tzx zy 0 map2screen /zb3 exch def /zb2 exch def /zb1 exch def")
+        emit("\t\tzx zy ze map2screen /zn3 exch def /zn2 exch def /zn1 exch def")
+        emit(
+            "\t\t"
+            + _log(
+                f'"place {tag} {index} cell "zx" "zy" elev "ze'
+                '" z0 "zb1" "zb2" "zb3" ze "zn1" "zn2" "zn3'
+            )
+        )
+        emit("\t\tzx zy zt addterrainsprite")
+    emit("\t\trendermap refreshdirty")
+    emit(f'\t\t"{shot}"screencapture')
+    # `zt` was minted by this keypress, so nothing the game placed can be carrying it. The map is
+    # this probe's own creation as well, so there is nothing of the game's here to destroy -- the
+    # sweep runs anyway, because the next phase needs the row empty.
+    emit(
+        "\t\t{dup getterrainspritetype zt eq"
+        "{destroyterrainsprite}{pop}ifelse}enumterrainsprites"
+    )
+    emit("\t\trendermap refreshdirty")
+    emit("\t\t" + _log(f'"cleanup {tag} done"'))
+
+
+def flat_ground_body() -> str:
+    lines: list[str] = []
+    emit = lines.append
+    x0, y0, x1, y1 = FLAT_BLOCK
+
+    emit("; ---- BEGIN FLAT GROUND PROBE (generated by tools/engine_probe.py) ----")
+    emit(f'ASCII_VAL"{HOTKEY}"0 get')
+    emit("{")
+    emit("userdict /zdone known not")
+    emit("\t{")
+    emit("\tuserdict begin")
+    emit("\t/zdone true def")
+    emit('\t"zprobe.log""abw"file /zlog exch def')
+    emit("\t" + _log('"flat ground probe start"'))
+    emit("\t/zrow[" + " ".join(str(value) for value in FLAT_ROW_X) + "]def")
+    # Build the map. `392 clearmap` is the texture the shipped `generate_simple_game` uses, and
+    # clearmap re-runs `mapw maph newmap` before painting it over every cell.
+    emit(
+        f"\t{{}}gamemodeproc gamemode {FLAT_MAP} {FLAT_MAP} newmap 392 clearmap default_edit_mode"
+    )
+    emit("\t" + _log(f'"map built "mapw" "maph'))
+    emit(f"\t{FLAT_SPRITE} /zt exch def")
+    emit("\t" + _log('"sprite type "zt'))
+
+    # Phase A: everything flat. Explicit rather than trusting newmap to zero the mesh -- the whole
+    # experiment rests on knowing the elevations, so they are set, not assumed.
+    _flat_set_block(emit, 0, 0, FLAT_MAP - 1, FLAT_MAP - 1, "0")
+    _flat_phase(emit, "flat", "zp0.bmp", "zs1.bmp")
+
+    # Phase B: a uniform raised block. Cell and neighbourhood agree.
+    _flat_set_block(emit, x0, y0, x1, y1, FLAT_ELEVATION)
+    _flat_phase(emit, "plateau", "zp1.bmp", "zs2.bmp")
+
+    # Phase C: the block goes back down and only the six placement cells stay raised. Same
+    # `getelevation` at every placement cell as phase B, opposite neighbourhood.
+    _flat_set_block(emit, x0, y0, x1, y1, "0")
+    for index in range(len(FLAT_ROW_X)):
+        emit(f"\t\tzrow {index} get {FLAT_ROW_Y} {FLAT_ELEVATION} setelevation")
+    _flat_phase(emit, "spike", "zp2.bmp", "zs3.bmp")
+
+    emit("\t" + _log('"flat ground probe done"'))
+    emit("\tzlog closefile")
+    emit("\tend")
+    emit("\t}if")
+    emit("}addhotkey")
+    emit("; ---- END FLAT GROUND PROBE ----")
+    return "\n".join(lines) + "\n"
+
+
 PROBES = {
     "ladder": lambda: probe_body(),
     "elevation": elevation_body,
     "mapsize": map_size_body,
+    "flatground": flat_ground_body,
 }
 
 

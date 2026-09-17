@@ -28,12 +28,22 @@ class SharedProbeSafetyTest(unittest.TestCase):
         return {name: builder() for name, builder in engine_probe.PROBES.items()}
 
     def placement_bodies(self):
-        """Probes that put a sprite on the map, which is what the anchor rules are about.
+        """Probes that put a sprite on the map, which is what the cleanup rules are about.
 
         Keyed on the body rather than on a list, so a new placing probe cannot opt itself out of
         the rules by forgetting to register anywhere.
         """
         return {n: b for n, b in self.bodies().items() if "addterrainsprite" in b}
+
+    def army_anchored_bodies(self):
+        """Probes that take their cells from a player's army.
+
+        Placing and army-anchoring are not the same thing. A probe that builds its own map picks
+        absolute cells and has no army to ask; holding it to the army rules would force it to
+        invent a dependency it does not have. What must not happen is a probe calling
+        `anythinglocation` and mishandling the packed location it returns.
+        """
+        return {n: b for n, b in self.bodies().items() if "anythinglocation" in b}
 
     def test_braces_and_brackets_balance(self) -> None:
         for name, body in self.bodies().items():
@@ -99,8 +109,8 @@ class SharedProbeSafetyTest(unittest.TestCase):
                     f"{name}: writes {quoted!r}, which the probe does not own",
                 )
 
-    def test_placing_probes_anchor_on_an_army_and_unpack_correctly(self) -> None:
-        for name, body in self.placement_bodies().items():
+    def test_army_anchored_probes_unpack_the_packed_location(self) -> None:
+        for name, body in self.army_anchored_bodies().items():
             self.assertIn("anythinglocation /zaloc exch def", body, name)
             self.assertIn("zaloc xy_to_x_y /zay0 exch def /zax0 exch def", body, name)
             self.assertNotIn("anythinglocation /zay0", body, name)
@@ -108,14 +118,26 @@ class SharedProbeSafetyTest(unittest.TestCase):
             self.assertNotIn("add UNITTYPELAND findemptylocation", body.replace(
                 "x_y_to_xy UNITTYPELAND findemptylocation", ""), name)
 
-    def test_placing_probes_report_when_no_army_was_found(self) -> None:
-        for name, body in self.placement_bodies().items():
+    def test_army_anchored_probes_report_when_no_army_was_found(self) -> None:
+        for name, body in self.army_anchored_bodies().items():
             self.assertIn("no army found", body, name)
 
     def test_placing_probes_capture_a_plate_and_a_result(self) -> None:
         for name, body in self.placement_bodies().items():
             for capture in ('"zp0.bmp"screencapture', '"zs1.bmp"screencapture'):
                 self.assertIn(capture, body, name)
+
+    def test_placing_probes_remove_what_they_placed(self) -> None:
+        """A probe that leaves sprites behind has changed the map it was measuring.
+
+        Every placement is matched by a `destroyterrainsprite` guarded on the type, and the type
+        has to be one this keypress minted -- a shipped type id is shared with the map's own
+        sprites, which is how a village was destroyed on 2026-09-16.
+        """
+        for name, body in self.placement_bodies().items():
+            self.assertIn("destroyterrainsprite", body, name)
+            self.assertIn("getterrainspritetype", body, name)
+            self.assertIn("addterrainspritetype", body, f"{name}: no freshly minted type to sweep")
 
 
 class MapSizeProbeTest(unittest.TestCase):
@@ -199,6 +221,113 @@ class ElevationProbeTest(unittest.TestCase):
         # A shipped type id would make the type-only sweep destroy the game's own sprites.
         self.assertIn("addterrainspritetype", engine_probe.ELEVATION_SPRITE)
         self.assertEqual(self.body.count("addterrainspritetype"), 1)
+
+
+class FlatGroundProbeTest(unittest.TestCase):
+    """The probe that builds its own mesh to close the `map2screen` y convention."""
+
+    def setUp(self) -> None:
+        self.body = engine_probe.flat_ground_body()
+
+    def test_three_phases_in_the_order_that_makes_them_comparable(self) -> None:
+        positions = [self.body.index(f'"zs{n}.bmp"screencapture') for n in (1, 2, 3)]
+        self.assertEqual(positions, sorted(positions))
+        for tag in ("flat", "plateau", "spike"):
+            self.assertIn(f'"cleanup {tag} done"', self.body)
+
+    def test_each_phase_has_its_own_plate(self) -> None:
+        """A phase differenced against another phase's terrain would show the whole changed mesh.
+
+        Phases B and C move the ground, so a single plate taken at the start would put every
+        raised cell into the difference and bury the sprites the probe is trying to measure.
+        """
+        for plate in ('"zp0.bmp"', '"zp1.bmp"', '"zp2.bmp"'):
+            self.assertIn(f"{plate}screencapture", self.body)
+        for plate, shot in (("zp0", "zs1"), ("zp1", "zs2"), ("zp2", "zs3")):
+            self.assertLess(
+                self.body.index(f'"{plate}.bmp"'),
+                self.body.index(f'"{shot}.bmp"'),
+                f"{plate} must be captured before {shot}",
+            )
+
+    def test_plateau_and_spike_put_the_same_elevation_on_the_placement_cells(self) -> None:
+        """This is the entire experiment: same cell, same `getelevation`, opposite neighbourhood.
+
+        If the two phases used different elevations, any difference in drawn y would be explained
+        by the elevation and would say nothing about the mesh.
+        """
+        elevation = engine_probe.FLAT_ELEVATION
+
+        # The block-wide writes, in the order the body performs them. Asserted as a SEQUENCE: a
+        # substring search cannot tell the spike phase's block-lowering from phase A's flattening,
+        # and a spike phase that never lowers the block is just a second plateau -- which would
+        # make the two phases agree for a reason that has nothing to do with the mesh.
+        block_writes = re.findall(r"zsx zsy (\S+) setelevation", self.body)
+        self.assertEqual(
+            block_writes,
+            ["0", elevation, "0"],
+            "expected flatten, then raise the block, then lower it again before the spikes",
+        )
+
+        # And the six cells are raised after that final lowering.
+        cell_writes = re.findall(
+            rf"zrow (\d+) get {engine_probe.FLAT_ROW_Y} (\S+) setelevation", self.body
+        )
+        self.assertEqual(
+            cell_writes,
+            [(str(i), elevation) for i in range(len(engine_probe.FLAT_ROW_X))],
+        )
+        last_lowering = [m.start() for m in re.finditer(r"zsx zsy 0 setelevation", self.body)][-1]
+        first_spike = self.body.index(f"zrow 0 get {engine_probe.FLAT_ROW_Y} {elevation}")
+        self.assertLess(last_lowering, first_spike)
+
+        x0, y0, x1, y1 = engine_probe.FLAT_BLOCK
+        self.assertLessEqual(y0, y1)
+        self.assertLessEqual(x0, x1)
+
+    def test_the_plateau_block_clears_every_placement_neighbourhood(self) -> None:
+        """A mesh sampler must not be able to see the block's edge from any placement cell."""
+        x0, y0, x1, y1 = engine_probe.FLAT_BLOCK
+        margin = 2
+        for x in engine_probe.FLAT_ROW_X:
+            self.assertGreaterEqual(x - x0, margin, f"cell x={x} is too close to the block edge")
+            self.assertGreaterEqual(x1 - x, margin, f"cell x={x} is too close to the block edge")
+        self.assertGreaterEqual(engine_probe.FLAT_ROW_Y - y0, margin)
+        self.assertGreaterEqual(y1 - engine_probe.FLAT_ROW_Y, margin)
+        self.assertLess(x1, engine_probe.FLAT_MAP)
+        self.assertLess(y1, engine_probe.FLAT_MAP)
+
+    def test_every_placement_gets_its_own_screen_x(self) -> None:
+        """The earlier run had two pairs sharing a screen x and picked the assignment that fit.
+
+        Screen x is `33.941 * (x - y) + L`. With one row, distinct x means distinct screen x, and
+        the separation must exceed the 72-pixel donor frame or the clusters merge.
+        """
+        columns = engine_probe.FLAT_ROW_X
+        self.assertEqual(len(set(columns)), len(columns))
+        pixels_per_step = 33.941
+        gaps = [
+            (b - a) * pixels_per_step for a, b in zip(sorted(columns), sorted(columns)[1:])
+        ]
+        self.assertTrue(all(gap > 72 for gap in gaps), f"frames would overlap: {gaps}")
+        span = (max(columns) - min(columns)) * pixels_per_step
+        self.assertLess(span, 640 - 72, "the row does not fit on a 640-pixel screen")
+
+    def test_the_camera_is_pointed_rather_than_inherited(self) -> None:
+        """No army here, so nothing positions the view unless the probe does it."""
+        x, y = engine_probe.FLAT_CAMERA
+        self.assertIn(f"{x} {y} centeron", self.body)
+        self.assertEqual(self.body.count("centeron"), 3, "each phase re-points after its rebuild")
+
+    def test_the_mesh_is_rebuilt_after_every_elevation_change(self) -> None:
+        """Without a rebuild the render keeps the old heights and all three phases look alike."""
+        self.assertEqual(self.body.count("rebuild3dmap"), 3)
+
+    def test_it_builds_its_own_map_and_saves_nothing(self) -> None:
+        """Nothing of the game's is touched: the map is created in memory and never written."""
+        self.assertIn(f"{engine_probe.FLAT_MAP} {engine_probe.FLAT_MAP} newmap", self.body)
+        for forbidden in ("savescenariomap", "savespecialmap", "terrainspriteat"):
+            self.assertNotIn(forbidden, self.body)
 
 
 class EngineProbeTest(unittest.TestCase):
