@@ -1063,7 +1063,11 @@ fn diff_maps(left: &Path, right: &Path) -> Result<(), String> {
     } else {
         let mut differing = 0usize;
         for (index, (a, b)) in left_map.cells.iter().zip(&right_map.cells).enumerate() {
-            if a == b {
+            // Compare the bytes as stored, not the decoded float. `MapCell` derives `PartialEq`
+            // over an `f32`, and `NaN != NaN`, so two byte-identical cells holding a non-finite
+            // elevation would report as differing -- in a tool whose whole job is to say which
+            // bytes a save changed. The corpus is all finite today; a generated map need not be.
+            if a.tag == b.tag && a.value_bits == b.value_bits {
                 continue;
             }
             differing += 1;
@@ -1079,8 +1083,7 @@ fn diff_maps(left: &Path, right: &Path) -> Result<(), String> {
 
     let left_tail = &left_bytes[left_map.trailing_offset..];
     let right_tail = &right_bytes[right_map.trailing_offset..];
-    let common = left_tail.len().min(right_tail.len());
-    let first_difference = (0..common).find(|at| left_tail[*at] != right_tail[*at]);
+    let first_difference = first_tail_difference(left_tail, right_tail);
     println!(
         "tail\tleft:{}\tright:{}\tfirst-difference:{}",
         left_tail.len(),
@@ -1100,6 +1103,19 @@ fn diff_maps(left: &Path, right: &Path) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// The first offset at which two trailing sections diverge, or `None` when they are identical.
+///
+/// A shared prefix with different lengths still diverges: one side ends where the other continues,
+/// so the divergence is at the end of the shorter. Scanning only the common range and reporting
+/// nothing would read as "the tails agree" -- which is exactly how a record appended at the very
+/// end would be missed, and appending a record is the main thing these diffs are used to watch.
+fn first_tail_difference(left: &[u8], right: &[u8]) -> Option<usize> {
+    let common = left.len().min(right.len());
+    (0..common)
+        .find(|at| left[*at] != right[*at])
+        .or((left.len() != right.len()).then_some(common))
 }
 
 fn describe_map(path: &Path) -> Result<(), String> {
@@ -1125,7 +1141,7 @@ fn describe_map(path: &Path) -> Result<(), String> {
         "record\tcell-index\tx\ty\tinstance-id\tattribute-bits\tattribute-code\tsprite-type\tprocedure-id-candidate\traw"
     );
     for (index, record) in section.records.iter().enumerate() {
-        let (x, y) = record.coordinates(map.height);
+        let (x, y) = map.record_coordinates(record);
         println!(
             "{index}\t{}\t{x}\t{y}\t{}\t0x{:08x}\t{}\t{}\t{}\t{}",
             record.cell_index,
@@ -3957,5 +3973,15 @@ mod tests {
 
         assert!(lines.contains(&"unknown-name-class\tengine-constant".to_owned()));
         assert!(!lines.iter().any(|line| line.starts_with("unknown-name-pops")));
+    }
+
+    #[test]
+    fn a_tail_that_is_a_prefix_of_the_other_differs_where_it_ends() {
+        assert_eq!(super::first_tail_difference(b"ABCD", b"ABCD"), None);
+        assert_eq!(super::first_tail_difference(b"ABCD", b"ABCDEF"), Some(4));
+        assert_eq!(super::first_tail_difference(b"ABCDEF", b"ABCD"), Some(4));
+        assert_eq!(super::first_tail_difference(b"ABCD", b"ABXD"), Some(2));
+        assert_eq!(super::first_tail_difference(b"", b""), None);
+        assert_eq!(super::first_tail_difference(b"", b"A"), Some(0));
     }
 }

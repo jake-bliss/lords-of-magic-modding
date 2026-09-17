@@ -686,8 +686,10 @@ MAPTAG_X_STRIDE = 2
 MAPTAG_SPRITE_CELLS = [(18, 14), (19, 14), (18, 15)]
 MAPTAG_SPRITE = '["imp/tree4e.imp"]cvx addterrainspritetype'
 
-# Camera. The painted rows are at y 8 and 12 and the sprites at y 30, so nothing frames all of it;
-# the capture is a sanity control, not a measurement, and the saved bytes carry the result.
+# Camera. The painted rows at y 8 and 12 run off the frame at their far ends, so the capture never
+# shows all of both -- the saved bytes carry the terrain result. The sprites are a different matter:
+# they are placed beside the camera so they ARE in frame, and `map_projection.is_in_frame` holds
+# them to it. A capture pair around a placement nobody can see is two screenshots and no evidence.
 MAPTAG_CAMERA = (16, 16)
 
 # Own capture prefix, like every other probe. `zl*` ladder, `ze*` elevation, `zm*` mapsize,

@@ -186,10 +186,14 @@ elif [[ "${probe}" == "maptag" ]]; then
   echo "and deleted by the restore script."
   echo
   echo "Expect one redraw and two captures. The painted rows are at y 8 and y 12 and the camera"
-  echo "is on (16,16), so you should see two short bands of odd-looking terrain; the sprites are"
-  echo "at y 30 and may be off screen, which is fine -- the result is in the saved bytes, and"
-  echo "zprobe.log reports the sprite count after every placement. Do not save anything yourself"
-  echo "afterwards, and do not open one of the zzt maps in the editor."
+  echo "is on (16,16), so you should see two short bands of odd-looking terrain."
+  echo
+  echo "The three sprites are at (18,14), (19,14) and (18,15), which the projection puts inside"
+  echo "the frame. They SHOULD be visible. If you see no sprites appear, say so -- that is a real"
+  echo "result and not a normal outcome. An earlier run placed them off screen and the two"
+  echo "captures came back byte-identical, which cost a screenshot each and proved nothing."
+  echo
+  echo "Do not save anything yourself afterwards, and do not open one of the zzt maps in the editor."
 elif [[ "${probe}" == "mapsize" ]]; then
   echo "Ready. Launch 'Lords of Magic GS5R3.app' and open the MAP EDITOR (not a game), then TAP z"
   echo "once. It generates and saves a 128, a 256 and a 512 map in turn, which takes a while --"

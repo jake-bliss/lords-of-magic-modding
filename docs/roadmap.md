@@ -66,7 +66,7 @@ Success criteria:
 - [x] Decode both observed IMP pixel-storage variants and display individual/animated frames.
 - [x] Recover action/facing ranges and generated action names, navigate them, and export indexed PNG frames losslessly.
 - [x] Parse the common header and cell grid of all installed `.scn`, `.smp`, and `.lgd` files and visualize candidate elevation.
-- [x] Resolve standard map tags through `.til` definitions and original terrain atlases; export correctly oriented map previews.
+- [x] Resolve standard map tags through `.til` definitions and original terrain atlases; export coherent map previews. (Orientation is **not** established — see [map format](map-format.md). The previews transpose as of 2026-09-17.)
 - [x] Structurally decode and corpus-validate the dominant 49-byte placed-sprite record family.
 - [x] Verify sprite origins and hotspot placement against the running engine ([issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1), closed 2026-09-16 — see [hotspots](hotspots.md)).
 - Resolve uncommon IMP metadata variants and verify chroma keys, the shadow blend, and timing against the game ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2), [issue #3](https://github.com/jake-bliss/lords-of-magic-modding/issues/3)).

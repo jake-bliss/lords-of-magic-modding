@@ -137,6 +137,16 @@ impl MapCell {
     /// 623 with the editor's `forcetexture` round-tripped byte-exact through `savescenariomap`,
     /// including both ends of the range, so the low tag bits *are* the slot. This was previously
     /// only inferred from the fact that masked corpus values land inside the atlas.
+    /// Whether two cells hold the same eight bytes.
+    ///
+    /// NOT `==`. `MapCell` derives `PartialEq` over an `f32`, and `NaN != NaN`, so two cells
+    /// copied from identical bytes would compare unequal whenever the elevation is non-finite --
+    /// in a diff whose entire job is to say which bytes changed. Every corpus elevation is finite
+    /// today; nothing guarantees a generated one is.
+    pub fn has_same_bytes(&self, other: &Self) -> bool {
+        self.tag == other.tag && self.value_bits == other.value_bits
+    }
+
     pub fn tile_index(&self) -> u32 {
         self.tag & !CELL_TAG_HIGH_FLAG
     }
@@ -338,6 +348,17 @@ impl MapAsset {
     /// travel down-left. Both painted bands run down-right, so the first operand is x.
     ///
     /// Tests that exercise this must use a **non-square** map; a square fixture cannot fail.
+    /// Where a placed-sprite record sits, taken from this map rather than a caller's guess.
+    ///
+    /// `PlacedSpriteRecord49::coordinates` needs the map's **width**, and `map.height` compiles
+    /// just as well. That is not hypothetical: `--describe-map` was still passing `height` after
+    /// the packing correction had landed everywhere else, and no test caught it, because a square
+    /// map cannot tell the two apart -- the same reason the X-major reading survived for months.
+    /// Going through the map removes the choice.
+    pub fn record_coordinates(&self, record: &PlacedSpriteRecord49) -> (u32, u32) {
+        record.coordinates(self.width)
+    }
+
     pub fn cell_index(&self, x: u32, y: u32) -> Option<usize> {
         if x >= self.width || y >= self.height {
             return None;
@@ -745,5 +766,68 @@ mod tests {
         assert_eq!(section.footer, 3);
         assert_eq!(map.cell(2, 1), Some(&map.cells[5]));
         assert!(map.cell(3, 0).is_none());
+    }
+
+    #[test]
+    fn record_coordinates_come_from_the_map_not_a_caller_supplied_dimension() {
+        // 5 wide, 3 tall. Under the corrected packing, index 7 is (2, 1). Passing `height` (3)
+        // instead of `width` (5) yields (1, 2) -- a y equal to the height, which cannot exist.
+        // On any square map the two agree, which is exactly why this went unnoticed until a
+        // reviewer looked, and why this fixture is deliberately not square.
+        let map = MapAsset::parse(&non_square_map_with_one_record(7)).expect("parse");
+        let section = map
+            .placed_sprites_49
+            .as_ref()
+            .expect("the fixture writes one 49-byte record");
+        let record = &section.records[0];
+        assert_eq!(map.record_coordinates(record), (2, 1));
+        assert_eq!(record.coordinates(map.width), (2, 1));
+        assert_ne!(record.coordinates(map.height), (2, 1));
+        let (_, y) = map.record_coordinates(record);
+        assert!(y < map.height, "a record cannot sit outside the map");
+    }
+
+    fn non_square_map_with_one_record(cell_index: u32) -> Vec<u8> {
+        let (width, height) = (5_u32, 3_u32);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0x6f_u32.to_le_bytes());
+        bytes.extend_from_slice(&width.to_le_bytes());
+        bytes.extend_from_slice(&height.to_le_bytes());
+        bytes.extend_from_slice(&8_u32.to_le_bytes());
+        for _ in 0..width * height {
+            bytes.extend_from_slice(&0_u32.to_le_bytes());
+            bytes.extend_from_slice(&0_f32.to_le_bytes());
+        }
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        let mut record = [0_u8; 49];
+        record[0..4].copy_from_slice(&1_u32.to_le_bytes());
+        record[4..8].copy_from_slice(&1_u32.to_le_bytes());
+        record[8..12].copy_from_slice(&cell_index.to_le_bytes());
+        record[12..16].copy_from_slice(&0xffff_ffff_u32.to_le_bytes());
+        record[32..34].copy_from_slice(&0x01ff_u16.to_le_bytes());
+        record[34..38].copy_from_slice(&(-1_i32).to_le_bytes());
+        record[42..46].copy_from_slice(&0xffff_ffff_u32.to_le_bytes());
+        bytes.extend_from_slice(&record);
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn cells_with_a_non_finite_elevation_still_compare_equal_to_themselves() {
+        let quiet_nan = super::MapCell {
+            tag: 392,
+            value_bits: 0x7fc0_0000,
+            value: f32::from_bits(0x7fc0_0000),
+        };
+        assert!(quiet_nan.value.is_nan());
+        assert!(quiet_nan.has_same_bytes(&quiet_nan));
+        // The derived comparison is what a diff would reach for, and it is wrong here.
+        assert_ne!(quiet_nan, quiet_nan);
+        let other = super::MapCell {
+            tag: 392,
+            value_bits: 0x7fc0_0001,
+            value: f32::from_bits(0x7fc0_0001),
+        };
+        assert!(!quiet_nan.has_same_bytes(&other));
     }
 }

@@ -305,7 +305,7 @@ export, where the key is a header field and is nonzero in 94 of 300 sampled spri
 
 ## Map/scenario findings
 
-The loose installed map corpus contains 20 `.scn`, 337 `.smp`, and eight `.lgd` files. All 365 pass the bounded parser. Each file declares width, height, an observed depth of 8, and one eight-byte record per cell in packed y-major order (`y × width + x`, corrected 2026-09-17 from X-major). Treating the second word as little-endian `f32` yields finite values from 0 to 20 and coherent relief. The first word resolves to an original tile-atlas index — confirmed by forcing seven slots in the running engine on 2026-09-17 — plus a `0x00800000` flag whose meaning is Unknown (the forced-texture reading was refuted by the same run); `URAK.scn` now renders as a coherent, correctly oriented world through `tilesb01.til` and `tilesb01.lbm`.
+The loose installed map corpus contains 20 `.scn`, 337 `.smp`, and eight `.lgd` files. All 365 pass the bounded parser. Each file declares width, height, an observed depth of 8, and one eight-byte record per cell in packed y-major order (`y × width + x`, corrected 2026-09-17 from X-major). Treating the second word as little-endian `f32` yields finite values from 0 to 20 and coherent relief. The first word resolves to an original tile-atlas index — confirmed by forcing seven slots in the running engine on 2026-09-17 — plus a `0x00800000` flag whose meaning is Unknown (the forced-texture reading was refuted by the same run); `URAK.scn` renders as a coherent world through `tilesb01.til` and `tilesb01.lbm`, which shows the masked tag indexes real terrain art — but says nothing about orientation, since a transposed world map is equally coherent. The render transposes relative to every preview exported before 2026-09-17.
 
 All 26 recovered `.til` definitions parse and explicitly bind atlas geometry, 32×32 tile dimensions, terrain types, and tile indices. The dominant trailing family is also decoded structurally: 196 files contain 16,628 exact 49-byte placed-sprite records. Cell indices are bounded and unique per file, and candidate instance, sprite-type, and procedure fields are exposed without discarding raw bytes. The 52-/53-byte families and exact object-field behavior remain open. See the [map-format record](map-format.md) and [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
 
@@ -320,7 +320,7 @@ Verified on 2026-09-16 (the full corpus scan itself dates from 2026-09-12):
 - all 1,800 IMP payloads decode with bounded sequence/facing ranges;
 - exact IMP/header validation matches 1,795 of 1,800 pairs; the five remaining paired disagreements and two orphan names are value-pinned catalog entries, and anything else re-fails;
 - all 365 loose map/scenario/component files pass; all 196 exact 49-byte-family files decode 16,628 bounded records;
-- all 26 tile-set definitions parse, and a real `URAK.scn` terrain preview exports as a correctly oriented 1024×1024 RGBA PNG;
+- all 26 tile-set definitions parse, and a real `URAK.scn` terrain preview exports as a coherent 1024×1024 RGBA PNG (coherent, not *correctly oriented* — a transposed world map is equally coherent, and the orientation is unverified);
 - indexed-PNG export preserves synthetic palette indices and palette bytes, succeeds on a real 165×127 frame, and refuses overwrite.
 
 ## Test strategy and gates

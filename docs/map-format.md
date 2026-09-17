@@ -51,6 +51,14 @@ proportional to `(x + y)`, so a painted run with the **first** operand varying m
 to the **right**, and one with the second varying must travel down and to the left. Both painted
 bands in the capture run down-right, so the first operand is x.
 
+**What that argument does and does not establish.** It rules out `forcetexture`'s first operand
+disagreeing with `map2screen`'s first operand — they are the same axis. It cannot establish which of
+`map2screen`'s own two operands is the world's *x*, because that labelling was itself decoded and
+measured the same way. A global swap of both leaves every number in this document correct and every
+`x`/`y` column in `--dump-map-cells` and `--describe-map` consistently mislabelled. Treat the axis
+*names* as **Inferred**; the packing itself — `second_operand × width + first_operand` — is
+**Observed**, and nothing downstream depends on the naming.
+
 The rendered map preview transposes relative to every capture taken before 2026-09-17. That is the
 correction, not a regression.
 
@@ -176,7 +184,7 @@ The low tag bits directly index the atlas declared by the active `.til` file. Fo
 - `tilesb01.til` declares `tilesb01.lbm`, a 16×39 atlas of 32×32 tiles (624 slots);
 - its definitions cover 617 tile slots and 11 terrain types;
 - masking `0x00800000` from all 1,258,496 corpus cells produces 603 distinct indices, all in `0..623`;
-- rendering `URAK.scn` through those indices produces a coherent, correctly oriented world containing connected oceans, snow, forest/grass, and desert regions.
+- rendering `URAK.scn` through those indices produces a coherent world containing connected oceans, snow, forest/grass, and desert regions. This establishes that the masked values index real terrain art rather than noise. It establishes **nothing about orientation**: a transposed world map is also coherent, which is why this check never caught the X-major error.
 
 ### Tag bit `0x00800000` — **Refuted** as a forced-texture flag
 
@@ -303,7 +311,7 @@ Unknown.
 | `+12` | 4 | `unknown_12` | Always `0xffffffff`; observed |
 | `+16` | 4 | `unknown_16` | Always `0`; observed |
 | `+20` | 4 | `instance_id` | Unique per file, range `200..1659`. **Observed in gameplay, 2026-09-17:** three sprites on a fresh map got 200, 201, 202 — sequential, starting at 200 |
-| `+24` | 4 | `attribute_bits` | Meaning unknown, and the decoder's nibble reading is **suspect**: every probe record carries a plain `0x00000001`, which `attribute_code_candidate()` reports as 0. No replacement reading is asserted |
+| `+24` | 4 | `attribute_bits` | Meaning unknown. **Observed in a local binary:** across 16,628 corpus records only the upper nibble varies, taking codes `0..11` and `15`. **Observed in gameplay, 2026-09-17:** all three probe records carry `0x00000001`, which has low bits set and so *violates* that corpus invariant. The contradiction is the finding. The likelier reading is that a freshly minted, procedure-less sprite writes a record shape the corpus does not contain — not that 16,628 records were misread — so the corpus measurement stands and `attribute_code_candidate()` is retained, flagged, and asserted of nothing |
 | `+28` | 4 | `sprite_type` | **Observed in gameplay, 2026-09-17:** all three probe records carry 470, the id `addterrainspritetype` returned in the same keypress. Promoted from `sprite_type_candidate` |
 | `+32` | 2 | `marker_32` | Always `0x01ff`; observed |
 | `+34` | 4 | `procedure_id_candidate` | `-1` or `0..717`; correlated with `setterrainspriteprocid` usage |
@@ -370,12 +378,13 @@ tails as raw bytes from their own starts, because assuming a record size would b
 diff is being used to answer. Together they are the readback half of an engine probe: writing
 chosen values from the running game is only useful if they can be read out again.
 
-With a tile definition and atlas, the viewer starts in terrain-art mode. Press `C` to cycle through diagnostic cell tags and candidate elevation. The terrain view proves tile selection and orientation, but its 8×8-per-cell overview is not yet a faithful recreation of the original renderer's full-size terrain composition.
+With a tile definition and atlas, the viewer starts in terrain-art mode. Press `C` to cycle through diagnostic cell tags and candidate elevation. The terrain view proves tile selection — the masked tags resolve to real terrain art — but not orientation, and its 8×8-per-cell overview is not yet a faithful recreation of the original renderer's full-size terrain composition.
 
 ## Confidence
 
 - **Observed in a local binary:** all 365 files have a 16-byte prefix, declared 8-bit depth, a complete `width × height × 8` cell grid, and a bounded trailing section; all 196 exact 49-byte-family files and 16,628 records satisfy the decoded bounds and invariants.
-- **Observed in gameplay (2026-09-17):** the low tag bits are the tile-atlas slot exactly, for seven forced slots spanning `0..623`; cells are packed `y × width + x`; the terrain-type-to-tile table above; terrain type is derived from the tile through the tileset, not stored in the cell; `forcetexture` writes one cell while `setterrain` also blends its 8-neighbourhood; the trailing section is `count`, records, `footer`; `sprite_type` at `+28` is the terrain sprite type id; `instance_id` starts at 200 and increments; `savescenariomap` and `savespecialmap` write identical bytes; sprite placement and removal round-trip byte-exactly.
+- **Inferred (2026-09-17):** which operand is *x*. The capture shows the two paint operators agree with `map2screen` on axis order; it cannot fix `map2screen`'s own labelling. See the storage-order section.
+- **Observed in gameplay (2026-09-17):** the low tag bits are the tile-atlas slot exactly, for seven forced slots spanning `0..623`; cells are packed `second_operand × width + first_operand`; the terrain-type-to-tile table above; terrain type is derived from the tile through the tileset, not stored in the cell; `forcetexture` writes one cell while `setterrain` also blends its 8-neighbourhood; the trailing section is `count`, records, `footer`; `sprite_type` at `+28` is the terrain sprite type id; `instance_id` starts at 200 and increments; `savescenariomap` and `savespecialmap` write identical bytes; sprite placement and removal round-trip byte-exactly.
 - **Observed in gameplay (2026-09-17), earlier run:** a 512x512 map generated by the shipped engine carries the same 16-byte prefix as a 128, so the header does not disappear on oversized maps.
 - **Corrected:** cell and record coordinates, previously documented and implemented as X-major (`x × height + y`). Every shipped map is square, so the corpus could not falsify it.
 - **Refuted:** tag bit `0x00800000` as a forced-texture flag. Forcing textures into 4,096 cells set it in none of them.

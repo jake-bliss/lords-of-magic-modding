@@ -112,10 +112,16 @@ def is_uniform(neighbourhood: dict[tuple[int, int], float]) -> bool:
 # decoded, so this is checkable rather than hopeable.
 #
 # Measured from `zg0.bmp`: the capture is 640x480 and the editor's panel begins at y=375, so the map
-# occupies 640x375. The engine draws a sprite from its top-left corner, and the donor frame used by
-# the probes (`imp/tree4e.imp`) is 72x104.
+# occupies 640x375. The donor frame the probes place (`imp/tree4e.imp`) is 72x104.
+#
+# The projected point is NOT the frame's top-left corner. The decoded rule is
+# `top_left = anchor + placement - (width >> 1, height >> 1)` -- see docs/hotspots.md, which is the
+# single source of truth -- so the frame's CENTRE sits at `anchor + placement`, and `placement` is
+# per-frame art data this function does not have. The bound below therefore demands a full sprite
+# of clearance on every side, which is visibility under either convention and for any placement
+# within half a frame of the anchor. It is deliberately conservative: rejecting a cell that would
+# in fact have been visible costs nothing, and accepting one that is not costs an attended run.
 CAPTURE_WIDTH = 640
-CAPTURE_HEIGHT = 480
 EDITOR_PANEL_TOP = 375
 PROBE_SPRITE_WIDTH = 72
 PROBE_SPRITE_HEIGHT = 104
@@ -143,9 +149,7 @@ def is_in_frame(cell: tuple[int, int], camera: tuple[int, int]) -> bool:
     "cannot be off screen the way the 2026-09-17 run was", not as a pixel-accurate prediction.
     """
     offset_x, offset_y = screen_offset_from_camera(cell, camera)
-    half_width = CAPTURE_WIDTH / 2
-    half_height = EDITOR_PANEL_TOP / 2
     return (
-        abs(offset_x) + PROBE_SPRITE_WIDTH <= half_width
-        and abs(offset_y) + PROBE_SPRITE_HEIGHT <= half_height
+        abs(offset_x) + PROBE_SPRITE_WIDTH <= CAPTURE_WIDTH / 2
+        and abs(offset_y) + PROBE_SPRITE_HEIGHT <= EDITOR_PANEL_TOP / 2
     )
