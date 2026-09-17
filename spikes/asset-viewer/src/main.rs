@@ -3296,14 +3296,25 @@ fn roundtrip_maps(path: &Path) -> Result<(), String> {
         let encoded = map.to_bytes();
         match first_tail_difference(&bytes, &encoded) {
             None => identical += 1,
-            Some(at) => failures.push(format!(
-                "{}: re-encoded byte {at} differs (read 0x{:02x}, wrote {})",
-                path.display(),
-                bytes.get(at).copied().unwrap_or(0),
-                encoded
-                    .get(at)
-                    .map_or_else(|| "nothing".to_owned(), |byte| format!("0x{byte:02x}")),
-            )),
+            Some(at) => {
+                // Distinguish "these bytes differ" from "one side ended here": at a length
+                // mismatch `first_tail_difference` returns the common length, and reporting a
+                // byte that does not exist as a value would be a wrong failure message on the one
+                // command whose whole job is to be believed.
+                let describe = |source: &[u8]| {
+                    source
+                        .get(at)
+                        .map_or_else(|| "end-of-file".to_owned(), |byte| format!("0x{byte:02x}"))
+                };
+                failures.push(format!(
+                    "{}: byte {at} differs (read {}, wrote {}; {} bytes in, {} bytes out)",
+                    path.display(),
+                    describe(&bytes),
+                    describe(&encoded),
+                    bytes.len(),
+                    encoded.len(),
+                ))
+            }
         }
     }
 
@@ -3314,11 +3325,16 @@ fn roundtrip_maps(path: &Path) -> Result<(), String> {
     for failure in &failures {
         println!("failure\t{}", clean_field(failure));
     }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("{} maps did not round-trip", failures.len()))
+    if !failures.is_empty() {
+        return Err(format!("{} maps did not round-trip", failures.len()));
     }
+    // Zero files checked is not a pass. This command is the load-bearing evidence for everything
+    // else here, and a mistyped-but-existing directory would otherwise print `failures 0` and exit
+    // 0 -- a green corpus validation that validated nothing.
+    if checked == 0 {
+        return Err(format!("no map files were checked under {}", path.display()));
+    }
+    Ok(())
 }
 
 /// Apply one edit and write a **new** file.
@@ -3351,8 +3367,14 @@ fn edit_map(input: &Path, edit: MapEdit, output: &Path) -> Result<(), String> {
         .create_new(true)
         .open(output)
         .map_err(|error| format!("could not create {}: {error}", output.display()))?;
-    file.write_all(&encoded)
-        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+    if let Err(error) = file.write_all(&encoded) {
+        // A short write leaves a truncated map behind, which the documented "a refused edit leaves
+        // no partial file" property does not allow. Drop the handle first so the removal is not
+        // racing an open descriptor.
+        drop(file);
+        let _ = fs::remove_file(output);
+        return Err(format!("could not write {}: {error}", output.display()));
+    }
 
     let changed_cells = map
         .cells
@@ -4493,18 +4515,20 @@ mod tests {
 
         // Reached by a different spelling of the same file, too.
         let indirect = dir.join(".").join("m.scn");
-        assert!(
-            edit_map(
-                &indirect,
-                MapEdit::SetTile {
-                    x: 0,
-                    y: 0,
-                    tile_index: 392
-                },
-                &input,
-            )
-            .is_err()
-        );
+        // Assert the *message*, not just is_err: `create_new` also fails here, so a bare is_err
+        // would still pass with `paths_are_same_file` deleted outright -- the one test covering the
+        // guard's unique contribution could not fail on it.
+        let error = edit_map(
+            &indirect,
+            MapEdit::SetTile {
+                x: 0,
+                y: 0,
+                tile_index: 392,
+            },
+            &input,
+        )
+        .unwrap_err();
+        assert!(error.contains("refusing to write to the input file"), "{error}");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4583,6 +4607,14 @@ mod tests {
             !output.exists(),
             "an edit that could not be applied must not leave a partial file"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn round_tripping_a_directory_with_no_maps_is_not_a_pass() {
+        let dir = scratch_dir("map-roundtrip-empty");
+        let error = roundtrip_maps(&dir).unwrap_err();
+        assert!(error.contains("no map files were checked"), "{error}");
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -370,10 +370,18 @@ placed-sprite records rebuilt from their typed fields, 0 failures.** Run it befo
 
 Two rules make that possible while most of this format is still Unknown:
 
-1. **Fields whose meaning is unknown are copied, never minted.** The header word at `0x00`, the
-   trailing footer, the record attribute field at `+24`, tag bit `0x00800000` and the whole
-   trailing section of every family this project has *not* decoded all survive a round trip
-   untouched. A writer that guessed at them would corrupt maps in ways no test here could see.
+1. **When editing existing data, fields whose meaning is unknown are copied, never minted.** The
+   header word at `0x00`, the trailing footer, the record attribute field at `+24`, tag bit
+   `0x00800000` and the whole trailing section of every family this project has *not* decoded all
+   survive a round trip untouched. A writer that guessed at them would corrupt maps in ways no test
+   here could see.
+
+   **Placing a new sprite is the exception, and it mints nine fields.** A record that did not exist
+   has to get its bytes from somewhere. Eight of the nine are invariant across all 16,628 corpus
+   records. The ninth is the `+24` attribute field, written as `0x00000001` because that is what the
+   2026-09-17 probe watched the engine write for a fresh sprite — and it **contradicts** the corpus
+   reading of that field, in which only the upper nibble varies. Whether the engine accepts a record
+   of this shape is unmeasured. Editing an existing sprite mints nothing; placing a new one does.
 2. **Records rebuild from typed fields, not from carried-over bytes.** The decoded fields cover all
    49 bytes of a placed-sprite record with no gap, so `PlacedSpriteRecord49::to_bytes` reproduces
    the original exactly *and* an edited field actually lands. `--map-roundtrip` checks that record
@@ -432,14 +440,30 @@ lom-asset-viewer --map-remove-sprite IN.scn INSTANCE_ID     OUT.scn
 ```
 
 `TERRAIN` is a number `0..10` or a `gs\maplib.gs` name with or without its `tt_` prefix, so
-`1`, `tt_water` and `water` are the same thing. `TILE_SLOT` is a raw atlas index; it is *not*
-range-checked against the tileset, because the atlas size comes from the active `.til` file and
-`tilesb01.til`'s 624 slots are one tileset's answer rather than the format's.
+`1`, `tt_water` and `water` are the same thing. `TILE_SLOT` is a raw atlas index. It is *not* range-checked against the **tileset**, because the
+atlas size comes from the active `.til` file and `tilesb01.til`'s 624 slots are one tileset's answer
+rather than the format's. It *is* range-checked against the **tag word**: corpus tag bits `10..22`
+are zero across all 1,258,496 cells, so an index of 1024 or more is refused — a fat-fingered `3920`
+for `392` is the realistic input, and it used to be written straight into the tag.
 
-A new sprite takes the next `instance_id` above every id the map has held, starting at 200 on an
-empty map. A removed id is **not** reissued: whether the engine reuses ids is unmeasured, and other
-files reference objects by id, so reusing one could silently re-point an outside reference at a
-different object.
+A new sprite takes the next `instance_id` above every id in the file, starting at 200 on an empty
+map.
+
+**A removed id *is* reissued by the next invocation.** Each command reads one file and writes one
+file, so the high-water mark that holds a freed id back lives only as long as that process. In
+practice:
+
+```
+--map-place-sprite  a.scn 0 0 470 b.scn   -> instance:200
+--map-place-sprite  b.scn 1 0 470 c.scn   -> instance:201
+--map-remove-sprite c.scn 201       d.scn
+--map-place-sprite  d.scn 2 0 470 e.scn   -> instance:201   <- reissued, different cell
+```
+
+This is a limitation, not a bug to work around: the format has nowhere to persist a high-water mark,
+and inventing a field would break the copy-never-mint rule above. It matters because other files
+reference objects by id, so a reused id can silently re-point an outside reference at a different
+object. **If something outside the map references a sprite by instance id, do not remove-then-place.**
 
 ### Worked example
 

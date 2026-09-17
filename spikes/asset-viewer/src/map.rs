@@ -215,13 +215,22 @@ impl PlacedSpriteRecord49 {
 pub struct PlacedSpriteSection49 {
     pub records: Vec<PlacedSpriteRecord49>,
     pub footer: u32,
-    /// The highest instance id this section has ever held, including ones since removed.
+    /// The highest instance id this section has held **since it was parsed**.
     ///
-    /// Not serialized -- it is rebuilt from the records on every parse. It exists so that removing
-    /// a sprite and placing another does not hand the dead id straight back out. Whether the engine
-    /// reuses ids is unmeasured; what is known is that other files reference objects by id, so a
-    /// reused id would silently re-point an outside reference at a different object. Not reusing
-    /// cannot do that.
+    /// **This is not persisted, and it cannot be**: the format has no field for it, and inventing
+    /// one would violate the rule that unknown bytes are copied rather than minted. It is rebuilt
+    /// from the live records on every parse.
+    ///
+    /// So the no-reuse property holds only *within one parse*. Each CLI invocation is its own
+    /// parse, so `--map-remove-sprite` followed by `--map-place-sprite` **does** reissue the freed
+    /// id -- verified on the built binary, where place/place/remove-201/place returns 201 again,
+    /// now pointing at a different cell. That is a real limitation of editing one file per process
+    /// and it is documented as one in `docs/map-format.md`, not papered over here.
+    ///
+    /// It is still worth keeping for a caller that makes several edits against one parsed map --
+    /// a future interactive editor -- because within that scope it does prevent the dead id from
+    /// coming back. Other files reference objects by id, so a reused id can silently re-point an
+    /// outside reference at a different object.
     pub(crate) instance_id_high_water: Option<u32>,
 }
 
@@ -511,9 +520,17 @@ fn read_u32(source: &[u8], offset: usize) -> Result<u32, MapError> {
 // engine itself uses. Two rules hold throughout, and both exist because most of this format is
 // still Unknown:
 //
-//   1. **Fields whose meaning is unknown are copied, never minted.** The header word at `0x00`,
-//      the trailing footer and the record attribute field at `+24` all survive a round trip
-//      untouched. A writer that guesses at them would corrupt maps in ways no test here could see.
+//   1. **When editing existing data, fields whose meaning is unknown are copied, never minted.**
+//      The header word at `0x00`, the trailing footer and the record attribute field at `+24` all
+//      survive a round trip untouched. A writer that guesses at them would corrupt maps in ways no
+//      test here could see.
+//
+//      **Placing a *new* sprite is the exception, and it necessarily mints.** A record that did not
+//      exist has to get bytes from somewhere. `PlacedSpriteRecord49::new` takes them from the one
+//      run in which this project watched the engine write a fresh record, and one of them -- the
+//      `+24` attribute field -- *contradicts* the corpus reading of that field. That is stated at
+//      the constant, in `docs/map-format.md` and in the tool README, because a reader who believes
+//      rule 1 unconditionally would believe a placed sprite guessed at nothing.
 //   2. **An unedited map re-encodes to the exact input bytes.** That is asserted over the whole
 //      installed corpus, not just fixtures, by `--map-roundtrip`.
 // ---------------------------------------------------------------------------
@@ -535,10 +552,17 @@ pub const FIRST_SPRITE_INSTANCE_ID: u32 = 200;
 impl PlacedSpriteRecord49 {
     /// A record of the shape the engine writes for a newly placed terrain sprite.
     ///
-    /// Every constant here is one this project observed in every record it has ever read:
-    /// `record_kind` and `record_version` are `1` in all 16,628 corpus records, `+12` and `+42`
-    /// are `0xffffffff`, `+16`, `+38` and `+46..49` are zero, and `marker_32` is `0x01ff`. The
-    /// procedure id is `-1`, the "no procedure" value, which is what the probe's sprites carried.
+    /// **This mints.** Nine fields get values that were not copied from anything in the file being
+    /// edited, so a placed sprite is the one place the writer's copy-never-mint rule does not hold.
+    ///
+    /// Eight of the nine are invariant across all 16,628 corpus records, which is as close to safe
+    /// as this project can get: `record_kind` and `record_version` are `1`, `+12` and `+42` are
+    /// `0xffffffff`, `+16`, `+38` and `+46..49` are zero, and `marker_32` is `0x01ff`. The
+    /// procedure id is `-1`, the "no procedure" value the probe's sprites carried.
+    ///
+    /// The ninth is [`FRESH_SPRITE_ATTRIBUTE_BITS`], and it is **not** corpus-invariant -- it
+    /// contradicts the corpus reading of `+24`. See that constant. Whether the engine accepts a
+    /// record of this shape is unmeasured; only an attended engine run settles it.
     pub fn new(cell_index: u32, instance_id: u32, sprite_type: u32) -> Self {
         let mut record = Self {
             raw: [0; PLACED_SPRITE_RECORD_49_SIZE],
@@ -608,18 +632,41 @@ impl PlacedSpriteSection49 {
     /// map.
     ///
     /// The maximum is taken over the live records *and* the high-water mark, so a removed id is
-    /// never handed back out -- see [`instance_id_high_water`](Self::instance_id_high_water). The
-    /// live records alone are not enough: removing the highest and placing another would reissue
-    /// the id that was just freed.
-    pub fn next_instance_id(&self) -> u32 {
+    /// not handed back out **within one parse** -- see
+    /// [`instance_id_high_water`](Self::instance_id_high_water), which explains why that scope
+    /// cannot be widened and why a sequence of CLI invocations does reissue a freed id.
+    pub fn next_instance_id(&self) -> Option<u32> {
         self.records
             .iter()
             .map(|record| record.instance_id)
             .chain(self.instance_id_high_water)
             .max()
-            .map_or(FIRST_SPRITE_INSTANCE_ID, |highest| highest.saturating_add(1))
+            .map_or(Some(FIRST_SPRITE_INSTANCE_ID), |highest| highest.checked_add(1))
     }
 }
+
+/// Reject a tile index that no corpus cell could hold.
+///
+/// The tileset's own capacity is deliberately *not* checked -- `tilesb01.til` declares 624 slots,
+/// but that is one tileset's answer rather than the format's, and the active `.til` decides. What
+/// is checked is the **tag word's** layout: bits `10..22` are zero across all 1,258,496 corpus
+/// cells, so an index of 1024 or more is outside every observed shape, and `0x00800000` is a
+/// separate flag whose meaning is Unknown. A fat-fingered `3920` for `392` is the realistic input.
+fn check_tile_index(tile_index: u32) -> Result<(), MapError> {
+    if tile_index >= TILE_INDEX_LIMIT {
+        return Err(MapError::new(format!(
+            "tile index {tile_index} is outside 0..{TILE_INDEX_LIMIT}; corpus tag bits 10..22 are \
+             unused, so no observed cell holds an index this large"
+        )));
+    }
+    Ok(())
+}
+
+/// One past the largest tile index the corpus tag layout can express.
+///
+/// Corpus tag bits `10..22` are zero in every one of the 1,258,496 cells, so the tile field is the
+/// low ten bits.
+pub const TILE_INDEX_LIMIT: u32 = 1 << 10;
 
 impl MapAsset {
     /// This map as a complete file.
@@ -667,11 +714,7 @@ impl MapAsset {
     /// it set beforehand, so whether the engine clears it is unmeasured. Its meaning is Unknown,
     /// and preserving an unknown bit is the conservative half of an unmeasured choice.
     pub fn set_tile(&mut self, x: u32, y: u32, tile_index: u32) -> Result<(), MapError> {
-        if tile_index & CELL_TAG_HIGH_FLAG != 0 {
-            return Err(MapError::new(format!(
-                "tile index {tile_index} overlaps tag bit 0x00800000"
-            )));
-        }
+        check_tile_index(tile_index)?;
         let index = self.cell_index_checked(x, y)?;
         let cell = &mut self.cells[index];
         cell.tag = (cell.tag & CELL_TAG_HIGH_FLAG) | tile_index;
@@ -695,6 +738,7 @@ impl MapAsset {
         let tile_index = terrain_type_base_tile(terrain_type).ok_or_else(|| {
             MapError::new(format!("{terrain_type} is not one of the 11 terrain types"))
         })?;
+        check_tile_index(tile_index)?;
         for cell in &mut self.cells {
             cell.tag = (cell.tag & CELL_TAG_HIGH_FLAG) | tile_index;
         }
@@ -744,7 +788,9 @@ impl MapAsset {
                 "({x}, {y}) already holds a placed sprite"
             )));
         }
-        let instance_id = section.next_instance_id();
+        let instance_id = section.next_instance_id().ok_or_else(|| {
+            MapError::new("this map has used every instance id up to u32::MAX")
+        })?;
         section.instance_id_high_water = Some(instance_id);
         section
             .records
@@ -1237,6 +1283,35 @@ mod tests {
         assert!(map.set_terrain(0, 0, 11).is_err());
     }
 
+    /// `fill_terrain` repeats `set_tile`'s high-bit preservation, so it needs its own test on a
+    /// fixture that actually has the bit set -- otherwise the duplicated line can be deleted and
+    /// the suite stays green.
+    #[test]
+    fn filling_also_preserves_the_unknown_high_bit() {
+        let source = non_square_map_with_opaque_tail(3, 2);
+        let mut map = MapAsset::parse(&source).unwrap();
+        assert!(map.cells.iter().all(|cell| cell.high_flag_set()));
+        map.fill_terrain(1).unwrap();
+        assert!(
+            map.cells.iter().all(|cell| cell.high_flag_set()),
+            "a fill must not silently drop a bit whose meaning is Unknown"
+        );
+        assert!(map.cells.iter().all(|cell| cell.tag == (CELL_TAG_HIGH_FLAG | 392)));
+    }
+
+    #[test]
+    fn a_tile_index_no_corpus_cell_could_hold_is_rejected() {
+        let source = non_square_map_with_record(5, 3, 0);
+        let mut map = MapAsset::parse(&source).unwrap();
+        // The realistic input: a digit too many.
+        assert!(map.set_tile(0, 0, 3920).is_err());
+        assert!(map.set_tile(0, 0, 4_000_000_000).is_err());
+        assert!(map.set_tile(0, 0, super::TILE_INDEX_LIMIT).is_err());
+        // The largest slot the shipped tileset declares still fits.
+        map.set_tile(0, 0, 623).unwrap();
+        assert_eq!(map.cell(0, 0).unwrap().tile_index(), 623);
+    }
+
     #[test]
     fn filling_writes_the_base_tile_into_every_cell() {
         let source = non_square_map_with_record(5, 3, 0);
@@ -1270,18 +1345,68 @@ mod tests {
         );
     }
 
+    /// Pins the **real** cross-invocation behaviour, which is that a freed id *is* reissued.
+    ///
+    /// The high-water mark is not serialized and cannot be, so it dies with the process. The test
+    /// below covers the in-parse scope; this one covers what a modder actually gets from a sequence
+    /// of CLI calls, by round-tripping through bytes between every edit. The in-memory test alone
+    /// passed while the shipped tool reissued ids -- a test that cannot fail on the axis it names.
     #[test]
-    fn instance_ids_start_at_200_and_do_not_reuse_a_removed_id() {
-        // A map with no records at all: `count` 0, then the footer.
+    fn a_freed_instance_id_comes_back_once_the_map_has_been_written_and_re_read() {
+        let mut source = empty_record_map(5, 3);
+        let reparse = |bytes: &Vec<u8>| MapAsset::parse(bytes).unwrap();
+
+        let mut map = reparse(&source);
+        assert_eq!(map.place_sprite(0, 0, 470).unwrap(), 200);
+        source = map.to_bytes();
+
+        let mut map = reparse(&source);
+        assert_eq!(map.place_sprite(1, 0, 470).unwrap(), 201);
+        source = map.to_bytes();
+
+        let mut map = reparse(&source);
+        map.remove_sprite(201).unwrap();
+        source = map.to_bytes();
+
+        let mut map = reparse(&source);
+        assert_eq!(
+            map.place_sprite(2, 0, 470).unwrap(),
+            201,
+            "the freed id returns across a write, which is the documented limitation"
+        );
+        let written = reparse(&map.to_bytes());
+        let section = written.placed_sprites_49.as_ref().unwrap();
+        let reissued = section
+            .records
+            .iter()
+            .find(|record| record.instance_id == 201)
+            .unwrap();
+        assert_eq!(
+            written.record_coordinates(reissued),
+            (2, 0),
+            "and it now names a different cell than the sprite that first held it"
+        );
+    }
+
+    /// A map with a decoded but empty 49-byte section: `count` 0, then the footer.
+    fn empty_record_map(width: u32, height: u32) -> Vec<u8> {
         let mut source = Vec::new();
         source.extend_from_slice(&0_u32.to_le_bytes());
-        source.extend_from_slice(&5_u32.to_le_bytes());
-        source.extend_from_slice(&3_u32.to_le_bytes());
+        source.extend_from_slice(&width.to_le_bytes());
+        source.extend_from_slice(&height.to_le_bytes());
         source.extend_from_slice(&8_u32.to_le_bytes());
-        source.extend_from_slice(&[0; 5 * 3 * 8]);
+        for _ in 0..width * height {
+            source.extend_from_slice(&15_u32.to_le_bytes());
+            source.extend_from_slice(&1.0_f32.to_bits().to_le_bytes());
+        }
         source.extend_from_slice(&0_u32.to_le_bytes());
         source.extend_from_slice(&1_u32.to_le_bytes());
+        source
+    }
 
+    #[test]
+    fn instance_ids_start_at_200_and_do_not_reuse_a_removed_id_within_one_parse() {
+        let source = empty_record_map(5, 3);
         let mut map = MapAsset::parse(&source).unwrap();
         assert_eq!(map.place_sprite(0, 0, 470).unwrap(), 200);
         assert_eq!(map.place_sprite(1, 0, 470).unwrap(), 201);
@@ -1289,7 +1414,7 @@ mod tests {
         assert_eq!(
             map.place_sprite(2, 0, 470).unwrap(),
             202,
-            "a freed id must not come back while the engine's reuse behaviour is unmeasured"
+            "within one parse the high-water mark holds the freed id back"
         );
     }
 

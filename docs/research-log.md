@@ -2208,15 +2208,38 @@ along `y = 12` changed rows 11, 12 and 13 across `x = 7..29` — but not **which
 Approximating it would put plausible-looking wrong tiles into a map, and no test here could tell.
 `--map-set-terrain` writes one cell, reproducing `forcetexture`, and says so on every run.
 
-### A test that bit
+### The same test bit twice, and the second time it was the test that was wrong
 
 `next_instance_id` was written to take the maximum live instance id and add one, with a doc comment
-claiming a removed id is never reissued. It reissued it immediately — remove the highest, place
-another, get the dead id back. The test that caught it was written from the doc comment rather than
-from the code, which is the only reason the two could disagree. Fixed with a high-water mark that is
-rebuilt at parse and never serialized. The argument for not reusing is not aesthetics: other files
-reference objects by id, so a reused id can silently re-point an outside reference at a different
-object.
+claiming a removed id is never reissued. It reissued it immediately. Fixed with a high-water mark
+rebuilt at parse and never serialized, and a test that passed.
+
+**The review then showed the fix does not hold where it matters.** The high-water mark dies with the
+process, and the CLI edits exactly one file per process — so `place, place, remove, place` across
+four invocations reissues the freed id, now pointing at a different cell. Verified on the built
+binary. The test passed because it made all four edits against **one parsed map**, which is the only
+scope where the guarantee is true and is not the scope anyone uses.
+
+That is this project's own lesson landing on the person who wrote it down the same day: *a test that
+cannot fail on the axis it is named for*. The in-memory test never went through bytes, so it could
+not see the only thing that breaks the property.
+
+The mechanism is kept — it is correct within one parse, which is the scope a future interactive
+editor will have — but the guarantee is now documented as the limitation it is, in all three places
+that stated it, and a second test round-trips through bytes between every edit and asserts the freed
+id **does** come back. Pinning the real behaviour beats asserting the desired one. The format has
+nowhere to persist a high-water mark and inventing a field would break the copy-never-mint rule, so
+there is no fix available, only an honest statement.
+
+### An overclaim the review caught
+
+"Fields whose meaning is unknown are copied, never minted" was written in three files and is false
+on the `--map-place-sprite` path. A record that did not exist has to get its bytes from somewhere:
+`PlacedSpriteRecord49::new` mints nine fields, and one of them is `+24` — the very field the
+sentence lists as never-minted, written as `0x00000001` because that is what the probe watched the
+engine write, in direct contradiction of the corpus reading in which only the upper nibble varies.
+Eight of the nine are corpus-invariant; that one is not. All three copies of the claim now scope it
+to editing and name the exception.
 
 ### Applying the fixture lesson from earlier the same day
 

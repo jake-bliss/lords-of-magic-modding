@@ -86,9 +86,12 @@ Everything here rests on one property: **an unedited map re-encodes to the exact
 from.** `--map-roundtrip` asserts it over the installed corpus — 365 checked, 365 byte-identical,
 16,628 placed-sprite records rebuilt from their typed fields, 0 failures. Run it first.
 
-Fields whose meaning is still Unknown — the header word at `0x00`, the trailing footer, the record
-attribute field at `+24`, tag bit `0x00800000`, and the entire trailing section of every family this
-project has not decoded — are **copied, never minted**. That is what lets the writer be correct
+When **editing existing data**, fields whose meaning is still Unknown — the header word at `0x00`,
+the trailing footer, the record attribute field at `+24`, tag bit `0x00800000`, and the entire
+trailing section of every family this project has not decoded — are **copied, never minted**.
+Placing a *new* sprite is the exception: a record that did not exist has to get its bytes from
+somewhere, and one of the nine it mints (`+24`) contradicts the corpus reading of that field. See
+[map format](../../docs/map-format.md#writing-maps). That is what lets the writer be correct
 while the format is only partly solved, and it is also why there is no create-a-map-from-nothing
 mode: three of those fields would have to be invented. Generate in the shipped GS5R3 editor, which
 makes maps from 32 to 1024 in steps of 32, then edit here.
@@ -99,6 +102,10 @@ makes maps from 32 to 1024 in steps of 32, then edit here.
 `--map-set-terrain` reproduces the editor's `forcetexture`: **one cell**. The engine's `setterrain`
 also blends transition tiles into the 8-neighbourhood, and which tiles it blends is unmeasured, so
 that is not approximated here.
+
+A removed `instance_id` **is** reissued by the next invocation — the high-water mark that holds it
+back cannot be persisted, because the format has nowhere to put one. If anything outside the map
+references a sprite by id, do not remove-then-place.
 
 The loose `map/` directory has no backup, so there is no in-place mode: every command takes an
 explicit output path, refuses to write over its input by canonical path, opens the output
