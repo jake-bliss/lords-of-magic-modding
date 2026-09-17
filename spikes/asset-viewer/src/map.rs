@@ -3464,9 +3464,26 @@ TILE= 26,    2, 2,    2,   2,    2,   2,    2,   2,    1,    26
             );
         }
 
+        // The measured behaviour table says this background blends, and names the anchor the
+        // offsets are relative to. Both accessors are exercised here rather than left as
+        // unreferenced public functions, which is how a retained measurement goes stale.
+        assert_eq!(
+            super::transition_behaviour(1),
+            Some(super::TransitionBehaviour::Blends { anchor }),
+        );
+        assert_eq!(super::transition_anchor(1), Some(anchor));
+
         // And the measured ring function agrees cell for cell, so the two routes to the same
         // answer are pinned to each other rather than merely both existing.
         let measured = super::transition_ring(1, 6).unwrap();
+        for offset in super::TRANSITION_RING_OFFSETS {
+            let expected = u32::try_from(i64::from(anchor) + i64::from(offset.offset)).unwrap();
+            assert_eq!(
+                super::ring_tile(&measured, offset.direction),
+                Some(expected),
+                "ring_tile must index the measured ring by direction"
+            );
+        }
         for (index, offset) in super::TRANSITION_RING_OFFSETS.iter().enumerate() {
             let (dx, dy) = offset.direction;
             let cell = plan
