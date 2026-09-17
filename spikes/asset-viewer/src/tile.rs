@@ -674,6 +674,174 @@ impl TileSetDefinition {
 
 }
 
+/// Which class of map a file is, for the purpose of choosing a tileset.
+///
+/// The engine keeps **two** tilesets live at once and picks between them by what kind of map is
+/// being drawn, not by anything stored in the map file. See [`engine_tileset_member`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MapClass {
+    /// The overland map: `.scn` scenarios, `.lgd` legends, and the loose `.map`.
+    World,
+    /// A combat map: the 337 `.smp` special maps.
+    Combat,
+}
+
+impl MapClass {
+    /// The class a map file's extension puts it in, or `None` for an extension not in the corpus.
+    ///
+    /// Matched **case-insensitively**, because the installed `map/` directory is split: 172 files
+    /// end `.smp` and 165 end `.SMP`. A case-sensitive match would silently classify 165 combat
+    /// maps as unknown, which is precisely the kind of half-working that reads as "no rule found".
+    pub fn from_extension(extension: &str) -> Option<Self> {
+        if extension.eq_ignore_ascii_case("smp") {
+            Some(Self::Combat)
+        } else if ["scn", "lgd", "map"]
+            .iter()
+            .any(|known| extension.eq_ignore_ascii_case(known))
+        {
+            Some(Self::World)
+        } else {
+            None
+        }
+    }
+
+    /// The class of the map at `path`, from its extension.
+    pub fn from_path(path: &std::path::Path) -> Option<Self> {
+        Self::from_extension(path.extension()?.to_str()?)
+    }
+
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::World => "world map",
+            Self::Combat => "combat map",
+        }
+    }
+}
+
+/// The `.til` member the shipped engine reads this class of map through.
+///
+/// **Observed in a local binary, 2026-09-17, and this closes "which tileset each `.smp` uses".**
+/// The engine does not derive a combat map's tileset from the file, from its name, or from its
+/// terrain: it sets one globally at startup and never changes it. `START.GS` lines 74-75 of the
+/// GS5R3 `gs.mpq` read
+///
+/// ```text
+/// "til/tilesb01.til"dup /currenttileset exch def maptileset
+/// "til/tilesa01.til"combattileset
+/// ```
+///
+/// and `combattileset` appears **exactly once in all 1,696 gamescript members** -- it is never
+/// re-set, never parameterised, and takes no map argument. So every one of the 337 `.smp` files is
+/// read through `tilesa01.til` and every `.scn`, `.lgd` and `.map` through `tilesb01.til`.
+///
+/// The other 24 `.til` members are the **terrain editor's** interactive tile palette: `terredit`'s
+/// `tileselector` feeds whatever the user picks to `maptileset`, and nothing in the corpus feeds
+/// any of them to `combattileset`. A per-faith or per-location rule read off the `.smp` filenames
+/// -- `AIBLDG01.SMP` against `aibldg01.til` -- fits 236 of the 263 faith-prefixed maps and is
+/// nonetheless **wrong**; see `docs/map-format.md`.
+pub const fn engine_tileset_member(class: MapClass) -> &'static str {
+    match class {
+        MapClass::World => "tilesb01.til",
+        MapClass::Combat => "tilesa01.til",
+    }
+}
+
+/// The 26 `.til` members shipped in GS5R3 `pic.mpq`, lowercase, sorted.
+///
+/// Only the **names** are recorded; no tileset is committed. This exists so a supplied tileset can
+/// be told apart from a modded one: a caller who passes a shipped tileset the engine does not use
+/// for that map class has made a mistake worth refusing, while a caller who passes `mymod.til`
+/// has not, and must keep working.
+pub const SHIPPED_TILESET_MEMBERS: [&str; 26] = [
+    "aibldg01.til",
+    "cavecry2.til",
+    "cavecrys.til",
+    "cavelava.til",
+    "cavewatr.til",
+    "chbldg01.til",
+    "chbldg02.til",
+    "chbldg0x.til",
+    "debldg01.til",
+    "debldg02.til",
+    "eabldg01.til",
+    "fibldg01.til",
+    "fibldg02.til",
+    "fibldg0x.til",
+    "jeff01.til",
+    "libldg01.til",
+    "libldg0x.til",
+    "orbldg01.til",
+    "orbldg02.til",
+    "orbldg0x.til",
+    "ruins01.til",
+    "ruins0x.til",
+    "tilesa01.til",
+    "tilesb01.til",
+    "wabldg01.til",
+    "wabldg02.til",
+];
+
+/// Whether `file_name` names one of the shipped tilesets, case-insensitively.
+pub fn is_shipped_tileset(file_name: &str) -> bool {
+    SHIPPED_TILESET_MEMBERS
+        .iter()
+        .any(|member| member.eq_ignore_ascii_case(file_name))
+}
+
+/// A supplied tileset that the engine demonstrably does not use for this map class.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TileSetMismatch {
+    pub class: MapClass,
+    pub supplied: String,
+    pub expected: &'static str,
+}
+
+impl fmt::Display for TileSetMismatch {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} is a shipped tileset, but the engine reads a {} through {}: START.GS sets \
+             {} and it is never re-set. Pass {} instead, or a tileset of your own -- a \
+             modded name is accepted as-is",
+            self.supplied,
+            self.class.description(),
+            self.expected,
+            match self.class {
+                MapClass::Combat => "combattileset",
+                MapClass::World => "maptileset",
+            },
+            self.expected,
+        )
+    }
+}
+
+/// Whether a supplied tileset contradicts the engine's own assignment for a map.
+///
+/// `None` means proceed, and it means that in three distinct cases: the map's extension is not one
+/// the corpus classifies, the tileset is the engine's own for that class, or the tileset is not a
+/// shipped name at all and so is presumed modded. Only a *shipped* tileset paired with the *wrong*
+/// class is refused, because that is the only case where the engine's behaviour is known and the
+/// caller is contradicting it.
+pub fn tileset_mismatch(
+    map_path: &std::path::Path,
+    tile_set_path: &std::path::Path,
+) -> Option<TileSetMismatch> {
+    let class = MapClass::from_path(map_path)?;
+    let supplied = tile_set_path.file_name()?.to_str()?;
+    if !is_shipped_tileset(supplied) {
+        return None;
+    }
+    let expected = engine_tileset_member(class);
+    if supplied.eq_ignore_ascii_case(expected) {
+        return None;
+    }
+    Some(TileSetMismatch {
+        class,
+        supplied: supplied.to_owned(),
+        expected,
+    })
+}
+
 fn parse_pair(value: &str, line: usize, name: &str) -> Result<(u32, u32), TileError> {
     let fields = csv_fields(value, line)?;
     if fields.len() != 2 {
@@ -1101,5 +1269,115 @@ TILE= 2, 2, 2, 2, 2, 2, 2
             TileSetDefinition::parse(source).unwrap_err().to_string(),
             "tile 1 exceeds declared atlas capacity 1"
         );
+    }
+
+    /// The engine's own assignment, per class, including the **case split** the installed corpus
+    /// actually has.
+    ///
+    /// The `map/` directory ships 172 `.smp` and 165 `.SMP`. A case-sensitive classifier would
+    /// call 165 combat maps unknown and hand them the world tileset, so an uppercase input is the
+    /// input that makes this check fail, and it is here.
+    #[test]
+    fn the_engine_reads_combat_maps_through_tilesa01_and_world_maps_through_tilesb01() {
+        use super::{MapClass, engine_tileset_member};
+        use std::path::Path;
+
+        assert_eq!(MapClass::from_extension("smp"), Some(MapClass::Combat));
+        assert_eq!(MapClass::from_extension("SMP"), Some(MapClass::Combat));
+        assert_eq!(MapClass::from_extension("Smp"), Some(MapClass::Combat));
+        for lower in ["scn", "lgd", "map"] {
+            assert_eq!(MapClass::from_extension(lower), Some(MapClass::World));
+            assert_eq!(
+                MapClass::from_extension(&lower.to_uppercase()),
+                Some(MapClass::World)
+            );
+        }
+        assert_eq!(MapClass::from_extension("til"), None);
+        assert_eq!(MapClass::from_extension(""), None);
+
+        assert_eq!(
+            MapClass::from_path(Path::new("map/AIBLDG01.SMP")),
+            Some(MapClass::Combat)
+        );
+        assert_eq!(
+            MapClass::from_path(Path::new("map/aicave.smp")),
+            Some(MapClass::Combat)
+        );
+        assert_eq!(
+            MapClass::from_path(Path::new("map/URAK.scn")),
+            Some(MapClass::World)
+        );
+        assert_eq!(MapClass::from_path(Path::new("URAK")), None);
+
+        assert_eq!(engine_tileset_member(MapClass::Combat), "tilesa01.til");
+        assert_eq!(engine_tileset_member(MapClass::World), "tilesb01.til");
+    }
+
+    /// A shipped tileset paired with the wrong map class is refused; a modded one is not.
+    ///
+    /// The three inputs that must make this fail are all here: a combat map handed the world
+    /// tileset, a world map handed the combat tileset, and `aibldg01.til` handed to
+    /// `AIBLDG01.SMP` -- the name-match that reads as obviously right and is not the engine's.
+    #[test]
+    fn a_shipped_tileset_for_the_wrong_map_class_is_a_mismatch_and_a_modded_one_is_not() {
+        use super::{MapClass, tileset_mismatch};
+        use std::path::Path;
+
+        let mismatch = tileset_mismatch(
+            Path::new("map/aicave.smp"),
+            Path::new("til/tilesb01.til"),
+        )
+        .expect("the world tileset is not what the engine reads a combat map through");
+        assert_eq!(mismatch.class, MapClass::Combat);
+        assert_eq!(mismatch.supplied, "tilesb01.til");
+        assert_eq!(mismatch.expected, "tilesa01.til");
+        assert!(mismatch.to_string().contains("combattileset"));
+
+        // The name-match trap: AIBLDG01.SMP alongside aibldg01.til.
+        let named = tileset_mismatch(
+            Path::new("map/AIBLDG01.SMP"),
+            Path::new("til/aibldg01.til"),
+        )
+        .expect("a same-named building tileset is still not the combat tileset");
+        assert_eq!(named.expected, "tilesa01.til");
+
+        // A world map handed the combat tileset.
+        assert_eq!(
+            tileset_mismatch(Path::new("URAK.scn"), Path::new("tilesa01.til"))
+                .map(|mismatch| mismatch.expected),
+            Some("tilesb01.til")
+        );
+
+        // The engine's own pairings pass, in either case.
+        assert!(tileset_mismatch(Path::new("a.smp"), Path::new("tilesa01.til")).is_none());
+        assert!(tileset_mismatch(Path::new("A.SMP"), Path::new("TILESA01.TIL")).is_none());
+        assert!(tileset_mismatch(Path::new("a.scn"), Path::new("tilesb01.til")).is_none());
+
+        // A modded tileset is presumed deliberate and passes for either class.
+        assert!(tileset_mismatch(Path::new("a.smp"), Path::new("mymod.til")).is_none());
+        assert!(tileset_mismatch(Path::new("a.scn"), Path::new("mymod.til")).is_none());
+
+        // An unclassified extension has no rule to contradict.
+        assert!(tileset_mismatch(Path::new("a.dat"), Path::new("tilesb01.til")).is_none());
+    }
+
+    /// All 26 shipped names, and the three that the assignment turns on.
+    #[test]
+    fn the_shipped_tileset_names_are_recognised_case_insensitively() {
+        use super::{SHIPPED_TILESET_MEMBERS, is_shipped_tileset};
+
+        assert_eq!(SHIPPED_TILESET_MEMBERS.len(), 26);
+        // Sorted and unique, so a later edit cannot quietly duplicate or drop one.
+        let mut sorted = SHIPPED_TILESET_MEMBERS.to_vec();
+        sorted.sort_unstable();
+        assert_eq!(sorted.as_slice(), SHIPPED_TILESET_MEMBERS.as_slice());
+        sorted.dedup();
+        assert_eq!(sorted.len(), 26);
+
+        assert!(is_shipped_tileset("tilesa01.til"));
+        assert!(is_shipped_tileset("TilesB01.TIL"));
+        assert!(is_shipped_tileset("aibldg01.til"));
+        assert!(!is_shipped_tileset("mymod.til"));
+        assert!(!is_shipped_tileset("tilesa01"));
     }
 }

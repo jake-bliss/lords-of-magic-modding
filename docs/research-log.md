@@ -3084,3 +3084,126 @@ write-up claimed.
 Also closed: `MapTailLayout::footer_bytes` underflowed on `total_fixed_bytes: 0`, reachable because
 the struct's fields are `pub` — a debug panic and a release wrap to `usize::MAX - 3`. Saturating, with
 the input that would have caught it written down as a test.
+## Which tileset the 337 `.smp` battle maps use — `tilesa01.til`, from the engine's own startup script
+
+The question had been open since the tileset-driven paint landed: `--map-paint-terrain` needs an
+explicit `.til`, and for 337 of 365 installed maps this project could not name the right one. Two
+facts were in tension. Slot *declaration* fitted perfectly — `tilesa01.til` and `tilesb01.til` each
+declare 100% of the 308 atlas slots the `.smp` corpus uses, zero undeclared across all 778,240
+cells. Slot *semantics* fitted terribly — both score an identical 8.11% on the eight declared
+neighbour constraints, where shipped `.scn` maps score 94.11% against theirs.
+
+**Both halves were reproduced before anything was built on them.** The 8.11% came out of an
+independent Python re-implementation of the `.til` grammar and the neighbourhood check, and then a
+third time out of a committed Rust example. What makes it a statement about the corpus rather than
+about a scorer is the **control**: the same code scores `.scn` at 94.11%, reproducing the 5.9%
+violation rate this repository had already measured by a different route. A scorer that reported 8%
+on both classes would have been a broken scorer.
+
+### The constraint approach cannot answer it, and that is measurable
+
+Over the 308 slots the combat maps actually use, the two 624-slot tilesets disagree on **nothing** —
+0 `self` disagreements, 0 neighbour-constraint disagreements, neither declaring a slot the other
+does not. They differ at exactly eight slots, `464..=471`, which is `tilesb01.til`'s `tt_impassible`
+block; `tilesa01.til` stops at terrain 9 and no `.smp` cell reaches slot 464. Their identical 8.11%
+was therefore never a coincidence in need of an explanation — it is one rule set scored twice.
+*Agreement is not confirmation*, and here the agreement turned out to be literal file identity over
+the range in question.
+
+That is a real result on its own: **no measurement over `.smp` cells can prefer one of them**, so if
+the answer had to be a fit, there was no answer.
+
+### The answer is in the gamescript, not in a fit
+
+`lomse.exe` exports two operators, `maptileset` and `combattileset`. Across all 1,696 gamescript
+members of GS5R3's `gs.mpq`, `combattileset` appears **exactly once**:
+
+```text
+"til/tilesb01.til"dup /currenttileset exch def maptileset
+"til/tilesa01.til"combattileset
+```
+
+`START.GS` lines 74-75. It is never re-set, never parameterised, and takes no map argument, so the
+engine holds one world tileset and one combat tileset for the whole session and picks between them
+by the kind of map being drawn. `.smp` is the special/combat map; every one of the 337 is read
+through `tilesa01.til`. `maptileset` is re-set in four places and all four put `tilesb01.til` back
+on the way out to the menu. The terrain editor's `tileselector` feeds a user's pick to `maptileset`
+and nothing feeds anything to `combattileset` — which is what the other 24 `.til` members are for.
+
+### Three hypotheses refuted, with their numbers
+
+**A per-faith or per-location tileset chosen from the filename.** This was the most attractive
+hypothesis and it fits well. The 337 names decompose into an eight-faith prefix and a location
+token, `AIBLDG01.SMP` and `orcavmule.smp`, and the tilesets carry the same prefixes; for **236 of
+the 263** faith-prefixed maps the same-named `{faith}bldg01.til` declares 100% of that map's slots.
+It is nonetheless wrong, and the mechanism of the illusion is worth keeping: an individual `.smp` is
+small, and 52 of them stay under slot 64, 252 under 128, 30 under 256, and only 3 go further. The
+pooled range 0..439 is the union of maps that each use a fraction of one atlas. A per-map tileset
+would have explained both facts at once, which is exactly why it needed refuting rather than
+adopting.
+
+**A constant slot offset or bank.** Sweeping all 624 offsets over a stride-17 sample of 20 maps
+gives a broad hump, not a peak: maximum 47.88% at offset +336, offset 0 ranked 70th of 624, median
+2.77%. The hump has a cause and not a meaning — offsets near +336 push combat-map slots into the
+three `free move` blocks at `480..=623`, which carry 3.00 wildcard columns per tile against 1.92
+elsewhere and so accept nearly anything. *An explanation that fits the numbers may be your own
+tooling*, and naming the mechanism is what separates a refutation from a shrug.
+
+**The prior claim in this repository.** `docs/map-format.md` said *"no sampled tileset fits `.smp`;
+the best had 36% of cells undeclared"*. Wrong twice: the 15-tileset sample **excluded both 624-slot
+files**, which are the only ones whose atlas can hold the slots `.smp` uses, and the number was
+inverted — 35.41% is the fraction the two *worst* tilesets (`aibldg01`, `eabldg01`) **declare**, and
+they leave 64.59% undeclared. This is the second time in this repository that an unrepresentative
+validation set produced a confident wrong conclusion, and the reversed sense is an argument for
+printing a percentage with the noun it counts.
+
+### What is still open, and one new lead
+
+Knowing the tileset does not make `.smp` maps constraint-consistent. The honest statement is that
+**the slots are valid and the blend constraints do not apply**: 8.11% satisfaction, 7.48% with the
+map edge read closed, and violations spread evenly across all eight neighbour columns rather than
+concentrated in one, which is what a mistaken column order would look like. Combat maps were not
+authored the way world maps were.
+
+The lead is the line immediately after `combattileset`:
+
+```text
+"til/ttype01.lbm"
+"til/thite01.lbm"loadsubmappages
+```
+
+Both members are 320x624 8-bit images, and those dimensions factor onto the tile atlas exactly:
+624 = 39 rows x 16 and 320 = 16 columns x 20, giving each of the 624 atlas slots a **20x16 block**.
+The blocks hold terrain-type ids — 12 distinct values across the page — and they are coherent: slot
+392, water's interior tile, has a uniformly-water block, and 129 slots have a single-valued block.
+A per-atlas-slot terrain-type and height table for *submaps*, which is what a combat map is. Whether
+a combat map's terrain is read from there rather than from the `.til` `self` column is **untested**,
+and it is the first thing to try.
+
+### What landed
+
+`MapClass`, `engine_tileset_member` and `tileset_mismatch` in `tile.rs` record the assignment;
+`--map-tileset-for FILE` reports it for a map. The tileset stays a **required** argument to
+`--map-paint-terrain` — nothing is defaulted and no file is guessed at — but two things changed:
+omitting it now names the member the engine uses for that class, and supplying a *shipped* tileset
+the engine does not use for that class is **refused**. A name that is not one of the 26 shipped
+members is presumed modded and accepted untouched, which is also what keeps the existing fixture
+tests working. Classification is case-insensitive because the installed `map/` directory is split
+172 `.smp` to 165 `.SMP`, and a case-sensitive match would have handed 165 combat maps the world
+tileset; that is the input the mutation check confirmed the tests catch.
+
+`cargo run --release --example smp_tileset_fit -- MAP_DIR TIL_DIR` re-runs the measurement, so the
+numbers above are reproducible without committing a map or a tileset.
+
+### The blocker is actually lifted, and the 8.11% is not a prediction about paints
+
+`--map-paint-terrain` was unusable on 337 of 365 installed maps. With `tilesa01.til` named, it is
+not: sampling every 11th of the sorted 337 `.smp` files, on the same stride-8 grid of 3x3 plains
+paints the world-map survey used, **490 of 496 sites succeed and all 31 sampled maps accept at least
+one paint**. That is a higher rate than the world maps' 76%.
+
+The two figures are not in tension, and saying why matters because conflating them is how this
+document over-claimed once already. A paint needs candidates for the cells it *writes* — the region
+and its one-cell ring — and it re-selects those itself. The 8.11% counts cells whose currently
+stored tile does not satisfy its own declared constraints, which is a statement about how the map
+was authored, not about whether a new edit has a legal answer.
