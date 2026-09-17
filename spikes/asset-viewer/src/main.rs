@@ -31,7 +31,7 @@ use lom_asset_viewer::pbm::PbmImage;
 use lom_asset_viewer::png_export::{write_imp_frame_png, write_pbm_png, write_rgba_png};
 use lom_asset_viewer::tile::{
     Direction, MapClass, TileChoice, TileSelector, TileSetDefinition, TileSetResolution,
-    resolve_tileset, tileset_mismatch,
+    combat_tileset_array_candidates, resolve_tileset, tileset_mismatch,
 };
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
@@ -1414,6 +1414,28 @@ fn tile_set_for_map(path: &Path) -> Result<(), String> {
         class.description(),
         resolution.describe(),
     );
+    // The plural selector form: tilesets one encounter may reach at runtime beyond the declared
+    // one. Reported on its own line and explicitly as coarse, rather than folded into the answer
+    // above, because it resolves no additional map and widens most of the ones it touches across
+    // more than one tileset rule class.
+    let reachable = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(combat_tileset_array_candidates)
+        .unwrap_or(&[]);
+    if !reachable.is_empty() {
+        println!(
+            "also-reachable\t{}\tcoarse\t{}",
+            path.display(),
+            reachable.join(" ")
+        );
+        eprintln!(
+            "note: a `/tilesets` procedure in the gamescript may select any of those at runtime \
+             from a sprite's map location. That reading is coarse -- every tileset in the \
+             member's array is listed for every map in it, because the two arrays cannot be \
+             zipped positionally -- so treat them as reachable, not as this map's tileset."
+        );
+    }
     if matches!(resolution, TileSetResolution::CombatUnresolved) {
         eprintln!(
             "note: no gamescript encounter binds this combat map to a tileset, so this project \

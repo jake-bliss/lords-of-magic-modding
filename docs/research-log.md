@@ -3254,14 +3254,14 @@ or `cavelava.til`.
 | Bound by an encounter | **169** — 143 to one tileset, **26 to several** |
 | No binding found | **168** |
 
-The 26 multi-valued maps are a finding, not a gap. `chcave.smp` is drawn through `cavelava.til`,
+The multi-valued maps are a finding, not a gap. `chcave.smp` is drawn through `cavelava.til`,
 `chbldg01.til`, `cavewatr.til`, `ruins01.til` and `cavecrys.til` by five different encounters: three
 quest encounters use `ruins01`, `genbeast.gs` uses `cavewatr`. There is no single right answer, so
 `--map-tileset-for` reports `ambiguous:` with every candidate.
 
 | Scored against | Maps | Satisfied |
 | --- | ---: | ---: |
-| The gamescript's own tileset | 169 | **369,856 / 388,496 = 95.20%** |
+| The gamescript's own tileset | 169 | **370,254 / 388,910 = 95.20%** |
 | `tilesa01.til`, the retracted rule | 169 | **32,842 / 389,376 = 8.43%** |
 
 Script tileset wins on **166 of 169**. `aicave.smp` 84.3% against 3.3%; `licave.smp` 100% against
@@ -3319,8 +3319,8 @@ argument went through the same parser `--map-set-terrain` uses, whose ceiling is
 eleven types — so a combat terrain id refused with `21 is not one of the 11 terrain types`. Sampled
 paint success across the bound maps was **7.5%**. A paint's ceiling is now the supplied tileset,
 which `PaintRefusal::TerrainTypeNotInTileSet` was already enforcing anyway; the tileset-less verbs
-keep the eleven-type table because they have nothing else to check against. After the fix: **778 of
-912 sampled sites across 55 of 57 maps, 85.3%.** This is the measured consequence of "terrain ids
+keep the eleven-type table because they have nothing else to check against. After the fix: **784 of
+912 sampled sites across 55 of 57 maps, 86.0%.** This is the measured consequence of "terrain ids
 are tileset-local", which this project had recorded as a hazard without ever testing.
 
 ## Correction B: why nothing caught it, and what was built instead
@@ -3355,3 +3355,65 @@ the 41-versus-236 filename measurement — all of which were prose before.
 
 One run of that instrument would have caught the class-based rule. That is the only test here that
 could have.
+
+
+## Correction C: the runtime selector form, and comments
+
+Two further errors of mine, both found by review, neither changing the reversal.
+
+**The `/tilesets` selector form is live code and I recorded it as absent.** I searched for
+`/tilesets[` and found nothing. It ships as a procedure over a *separately named* array:
+
+```text
+/tilesets{ ... tiles 0 get ... currentterrainsprite getterrainspritelocation
+           8 mod 2 eq{pop tiles 2 get}if ... }/dummy currentdict replace
+/tiles["til/cavewatr.til" "til/cavecrys.til" "til/cavelava.til" "til/aibldg01.til"]replace bind def
+```
+
+41 members define `/tilesets`, 40 define `/tiles[`, 40 define `/maps[`. **One** encounter picks
+among up to four tilesets at runtime from a sprite's map location, which is a second and stronger
+reason a combat map has no single tileset. My singular-key reader used `/tileset\s*\{`, which cannot
+match `/tilesets {` — the `s` is in the way. A negative result from one spelling of a search is not
+absence, and I stated it as absence.
+
+What *is* absent is **randomised** selection. The `DUNGEONS5.gs` comment I cited is a 2025-06-12
+changelog entry recording that randomised mapfiles and tilesets were **removed** for multiplayer
+desync. That comment describes a deletion; citing it as evidence the mechanism does not exist was
+reading a changelog as a specification.
+
+**The extractor never stripped comments.** Gamescript members use bare `CR` line endings, so a `;`
+comments to end of line even though a whole procedure looks like a single line to anything splitting
+on `LF`. Seven members changed once comments were honoured — including `wilderness_land.gs` and
+`wilderness_sea.gs`, whose `chcave.smp`/`cavewatr.til` pair is commented out *because those are the
+outside-combat-encounter files*, the very members whose comment I quoted for the `combattileset`
+rule. Multi-valued maps drop 26 → **22**, undeclared cells 880 → **466**.
+
+### Why the selector form is recorded separately rather than merged
+
+The instruction I was given was to fold the array maps into the binding table under a coarse
+reading. Measuring first changed the answer, and this is the useful part:
+
+| | |
+| --- | ---: |
+| Distinct `.smp` named in any `/maps[...]` | 43 |
+| Of those, **not** already declared by a literal pair | **0** |
+| Coverage change | 169 → **169** |
+| Coarse sets crossing more than one tileset *rule class* | **42 of 43** |
+
+The predicted benefit was five new maps; there are none. So the merge buys no coverage and costs
+precision: it would stand `ruins01.til` (81.3% satisfaction on `demina.smp`) beside the declared
+`debldg01.til` (98.3%) as an equal.
+
+I also tested the positional zip the instruction warned against, because the arrays *look* parallel
+— `aimina.smp` sits at index 3 in four members and `aibldg01.til` at index 3 in all four. It is
+suggestive and not establishable: only **31 of 40** members have equal-length arrays and **5 of 40**
+disagree with their own literal pair at index 0. And scoring cannot adjudicate any of the three
+readings — mean best satisfaction 95.33% declared, 94.58% zipped, 95.57% crossed. I expected that
+to be because the array entries are rule-identical art variants; **that was wrong**, 42 of 43 cross
+rule classes, and I only know it because I checked instead of asserting it.
+
+So the resolution: two tables. `COMBAT_TILESET_BINDINGS` is what a map *is* read through and drives
+reporting; `COMBAT_TILESET_ARRAY_CANDIDATES` is what an encounter may *reach* and is consulted only
+so the paint gate never refuses it. **Reporting is precise; refusing is permissive.** Refusing the
+engine's own answer is the bug that shipped on this branch once already, and the permissive side of
+the gate is where that lesson lives.

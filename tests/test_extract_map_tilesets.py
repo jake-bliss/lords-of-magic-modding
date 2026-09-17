@@ -125,6 +125,103 @@ class BindingsInMemberTest(unittest.TestCase):
         self.assertEqual(extractor.bindings_in_member(source), [])
 
 
+class StripCommentsTest(unittest.TestCase):
+    """Gamescript members use bare ``CR`` line endings, which is the whole reason this is subtle."""
+
+    def test_a_comment_ends_at_a_bare_cr(self):
+        # Split only on LF and the entire rest of the "line" looks commented, which is how
+        # bindings got read out of disabled code.
+        text = '; /tileset"til/dead.til"def\r/tileset"til/live.til"def'
+        stripped = extractor.strip_comments(text)
+        self.assertNotIn("dead.til", stripped)
+        self.assertIn("live.til", stripped)
+
+    def test_handles_lf_and_crlf_too(self):
+        for ending in ("\n", "\r\n", "\r"):
+            text = "; gone%slive" % ending
+            self.assertNotIn("gone", extractor.strip_comments(text))
+            self.assertIn("live", extractor.strip_comments(text))
+
+    def test_a_semicolon_inside_a_string_is_not_a_comment(self):
+        text = '/tileset"til/a;b.til"def live'
+        self.assertEqual(extractor.strip_comments(text), text)
+
+    def test_line_structure_is_preserved_so_positions_stay_meaningful(self):
+        # Positional pairing depends on offsets, so stripping must not shift later text onto an
+        # earlier line or the nearest-following-tileset search changes answer.
+        text = 'a; comment\rb'
+        self.assertEqual(extractor.strip_comments(text), "a\rb")
+
+    def test_a_commented_binding_is_not_extracted(self):
+        # The real `wilderness_land.gs` shape: the pair is commented out precisely because that
+        # member is the outside-combat encounter.
+        text = '; /mapfile"map/chcave.smp"def ; /tileset"til/cavewatr.til"def'
+        self.assertEqual(
+            extractor.bindings_in_member(extractor.strip_comments(text)), []
+        )
+
+
+class ArrayFormTest(unittest.TestCase):
+    """The plural selector form: a ``/tilesets`` procedure over a separately-named ``/tiles[...]``."""
+
+    SOURCE = (
+        '/mapfiles{...}/dummy currentdict replace '
+        '/maps["map/waming.smp" "map/chming.smp"]replace bind def\r'
+        '/tilesets{...}/dummy currentdict replace '
+        '/tiles["til/cavewatr.til" "til/cavecrys.til"]replace bind def'
+    )
+
+    def test_reads_an_array_definition(self):
+        self.assertEqual(
+            extractor.array_definitions(self.SOURCE, "maps"),
+            [["waming.smp", "chming.smp"]],
+        )
+        self.assertEqual(
+            extractor.array_definitions(self.SOURCE, "tiles"),
+            [["cavewatr.til", "cavecrys.til"]],
+        )
+
+    def test_the_singular_key_does_not_match_the_plural_array(self):
+        # `/tileset` must not match `/tilesets`, or the singular reader would swallow the plural
+        # form -- and `/tilesets{` is exactly what an earlier `/tileset\s*\{` search missed.
+        self.assertEqual(extractor.array_definitions(self.SOURCE, "tileset"), [])
+        self.assertEqual(extractor.definitions(self.SOURCE, "tileset"), [])
+        self.assertEqual(extractor.definitions(self.SOURCE, "mapfile"), [])
+
+    def test_the_coarse_reading_is_the_full_cross_product(self):
+        # Deliberately 2x2 with four distinct values, so a positional zip and a cross product give
+        # different answers and this test can tell them apart.
+        self.assertEqual(
+            sorted(extractor.array_bindings_in_member(self.SOURCE)),
+            [
+                ("chming.smp", "cavecrys.til"),
+                ("chming.smp", "cavewatr.til"),
+                ("waming.smp", "cavecrys.til"),
+                ("waming.smp", "cavewatr.til"),
+            ],
+        )
+
+    def test_arrays_of_different_lengths_still_cross(self):
+        # 31 of 40 shipped members have equal-length arrays and 9 do not, so an implementation that
+        # zipped would silently drop the odd ones.
+        source = '/maps["map/a.smp" "map/b.smp"]def /tiles["til/x.til"]def'
+        self.assertEqual(
+            sorted(extractor.array_bindings_in_member(source)),
+            [("a.smp", "x.til"), ("b.smp", "x.til")],
+        )
+
+    def test_a_member_with_only_one_array_yields_nothing(self):
+        self.assertEqual(
+            extractor.array_bindings_in_member('/maps["map/a.smp"]def'), []
+        )
+        self.assertEqual(
+            extractor.array_bindings_in_member('/tiles["til/x.til"]def'), []
+        )
+
+    def test_an_unterminated_array_is_skipped_rather_than_raising(self):
+        self.assertEqual(extractor.array_definitions('/maps["map/a.smp"', "maps"), [])
+
+
 class ExtractTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.mkdtemp(prefix="lom-gs-")
@@ -144,18 +241,45 @@ class ExtractTest(unittest.TestCase):
         self.write("one.gs", '/mapfile"map/chcave.smp"def /tileset"til/ruins01.til"def')
         self.write("two.gs", '/mapfile"map/chcave.smp"def /tileset"til/cavewatr.til"def')
         self.write("three.gs", '/mapfile"map/aicave.smp"def /tileset"til/aibldg01.til"def')
-        table = extractor.extract(self.directory)
+        declared, coarse = extractor.extract(self.directory)
         self.assertEqual(
-            table,
+            declared,
             {
                 "aicave.smp": ["aibldg01.til"],
                 "chcave.smp": ["cavewatr.til", "ruins01.til"],
             },
         )
+        self.assertEqual(coarse, {})
+
+    def test_array_candidates_are_separate_and_exclude_the_declared_one(self):
+        # The two tables must be disjoint, or the "extra" framing is a lie and they double-count.
+        self.write(
+            "waming.gs",
+            '/mapfile"map/waming.smp"def /tileset"til/cavewatr.til"def\r'
+            '/maps["map/waming.smp"]def /tiles["til/cavewatr.til" "til/cavelava.til"]def',
+        )
+        declared, coarse = extractor.extract(self.directory)
+        self.assertEqual(declared, {"waming.smp": ["cavewatr.til"]})
+        self.assertEqual(coarse, {"waming.smp": ["cavelava.til"]})
+
+    def test_a_map_whose_array_candidates_are_all_declared_is_absent_from_the_coarse_table(self):
+        self.write(
+            "a.gs",
+            '/mapfile"map/a.smp"def /tileset"til/x.til"def\r'
+            '/maps["map/a.smp"]def /tiles["til/x.til"]def',
+        )
+        _, coarse = extractor.extract(self.directory)
+        self.assertEqual(coarse, {})
+
+    def test_comments_are_honoured_by_extract(self):
+        self.write("live.gs", '/mapfile"map/a.smp"def /tileset"til/x.til"def')
+        self.write("dead.gs", '; /mapfile"map/b.smp"def /tileset"til/y.til"def')
+        declared, _ = extractor.extract(self.directory)
+        self.assertEqual(declared, {"a.smp": ["x.til"]})
 
     def test_a_directory_with_no_bindings_extracts_nothing(self):
         self.write("empty.gs", "; just a comment\n")
-        self.assertEqual(extractor.extract(self.directory), {})
+        self.assertEqual(extractor.extract(self.directory), ({}, {}))
 
     def test_the_cli_fails_rather_than_emitting_an_empty_table(self):
         # An empty extraction is a failed extraction. Exiting 0 here is how a regeneration could
@@ -170,22 +294,34 @@ class ExtractTest(unittest.TestCase):
 
 
 class EmitRustTest(unittest.TestCase):
-    def test_emits_a_sorted_table_the_rust_binary_search_can_use(self):
+    def test_emits_both_sorted_tables_the_rust_binary_search_can_use(self):
         table = {
             "zzz.smp": ["beta.til"],
             "aaa.smp": ["alpha.til", "gamma.til"],
         }
-        emitted = extractor.emit_rust(table)
+        emitted = extractor.emit_rust(table, {"aaa.smp": ["delta.til"]})
         self.assertEqual(
             emitted,
             "pub static COMBAT_TILESET_BINDINGS: &[(&str, &[&str])] = &[\n"
             '    ("aaa.smp", &["alpha.til", "gamma.til"]),\n'
             '    ("zzz.smp", &["beta.til"]),\n'
+            "];\n"
+            "\n"
+            "pub static COMBAT_TILESET_ARRAY_CANDIDATES: &[(&str, &[&str])] = &[\n"
+            '    ("aaa.smp", &["delta.til"]),\n'
             "];\n",
         )
-        # The Rust side binary-searches this, so sortedness is load-bearing rather than cosmetic.
-        keys = [line.split('"')[1] for line in emitted.splitlines() if line.startswith('    ("')]
-        self.assertEqual(keys, sorted(keys))
+        # The second table must still be emitted when empty, or the Rust side stops compiling.
+        self.assertIn("COMBAT_TILESET_ARRAY_CANDIDATES", extractor.emit_rust(table))
+        # The Rust side binary-searches each table, so sortedness is load-bearing rather than
+        # cosmetic -- and each table must be sorted independently, not the concatenation.
+        for block in emitted.split("pub static ")[1:]:
+            keys = [
+                line.split('"')[1]
+                for line in block.splitlines()
+                if line.startswith('    ("')
+            ]
+            self.assertEqual(keys, sorted(keys), block)
 
 
 if __name__ == "__main__":

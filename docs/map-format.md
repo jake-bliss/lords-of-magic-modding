@@ -636,13 +636,13 @@ eleven-slot representative table could not:
 | --- | --- | --- | --- |
 | `.scn` world maps | 20 | 20 | 4,152 / 5,456 (76%) |
 | `.lgd` legend maps | 8 | 8 | 1,252 / 2,048 (61%) |
-| `.smp` battle maps, **bound** | 169 | 55 / 57 sampled | 778 / 912 (85.3%), each against its own gamescript tileset |
+| `.smp` battle maps, **bound** | 169 | 55 / 57 sampled | 784 / 912 (86.0%), each against its own gamescript tileset |
 | `.smp` battle maps, **unresolved** | 168 | — | refused: no tileset can be named |
 
 **The `.smp` rows are what this table could not previously fill.** The 169 bound battle maps are
 sampled every 3rd of the sorted list, so head and tail are both covered, and each is painted
 through **its own** gamescript tileset with a 3x3 rectangle of that map's own dominant terrain —
-terrain ids are tileset-local, so "plains" is not a thing a cave tileset has. 778 of 912 sites
+terrain ids are tileset-local, so "plains" is not a thing a cave tileset has. 784 of 912 sites
 succeed across 55 of the 57 sampled maps. The remaining refusals are the ordinary
 `no tile of terrain N accepts the neighbourhood` case that world maps also hit.
 
@@ -656,7 +656,7 @@ slots the map's real atlas cannot show.)*
 terrain argument was parsed by the same function `--map-set-terrain` uses, whose ceiling is
 `tilesb01.til`'s eleven types. Combat tilesets reach 42, so painting a battle map failed on
 `21 is not one of the 11 terrain types` for most of the corpus even with the right tileset in hand —
-the sampled success rate was **7.5%** before this and 85.3% after. A paint's ceiling is now the
+the sampled success rate was **7.5%** before this and 86.0% after. A paint's ceiling is now the
 supplied tileset, which `PaintRefusal::TerrainTypeNotInTileSet` was already enforcing; the
 tileset-less verbs keep the eleven-type table, because they have nothing else to check against.
 This is the concrete consequence of "terrain ids are tileset-local" that this document had recorded
@@ -716,16 +716,62 @@ yield `aibldg01.til`, and `genchaos.gs` writes a `terrainsprites`-keyed selector
 `tools/extract_map_tilesets.py --rust` regenerates it byte-identically, so it is derived data anyone
 can check rather than a list to be trusted.
 
-**Two binding forms the corpus does *not* have.** There is no `/tilesets[...]` randomised array: the
-only mention of the plural is a 2025-06-12 changelog comment in `DUNGEONS5.gs` recording that
-randomised mapfiles and tilesets were **removed**, *"because randomized tilesets do not play well in
-multi-player games, whereby a desync will occur"*. And the `getdungeonstrength`-keyed procedures are
-**degenerate**: `aimult.gs`, `chmult.gs`, `demult.gs` and `barrows.gs` each branch on dungeon
-strength and return the *same* tileset from every branch, so the conditional is vestigial and yields
-one answer. One dangling reference exists: `dwl.smp` is paired with `cavetile.til`, and neither the
-map nor the tileset ships.
+**Comments are honoured, and they matter.** Gamescript members use bare `CR` line endings, so a
+`;` really does comment to end of line even though a whole procedure looks like one line to a tool
+that splits on `LF` only. An earlier version of this extraction did not strip comments and read
+bindings out of **disabled code** in seven members — including `wilderness_land.gs` and
+`wilderness_sea.gs`, whose `chcave.smp`/`cavewatr.til` pair is commented out *precisely because*
+those are the outside-combat-encounter files. Honouring comments takes the multi-valued count from
+26 to **22** and the undeclared-cell count from 880 to **466**.
 
-**The same map may have several tilesets, and that is a finding rather than a gap.** 26 of the 172
+### A second binding form: the runtime selector
+
+**Observed in a local binary, 2026-09-17. An earlier version of this document said this form did
+not exist, which was wrong.** That search looked for `/tilesets[`; the form actually ships as a
+procedure plus a **separately named** array:
+
+```text
+/tilesets{ ... tiles 0 get ... currentterrainsprite getterrainspritelocation
+           8 mod 2 eq{pop tiles 2 get}if ... }/dummy currentdict replace
+/tiles["til/cavewatr.til" "til/cavecrys.til" "til/cavelava.til" "til/aibldg01.til"]replace bind def
+```
+
+41 members define `/tilesets`, 40 define `/tiles[`, 40 define `/maps[`. So **one** encounter selects
+among up to four tilesets at runtime from a sprite's map location — a second and independent reason
+a combat map has no single tileset, and a stronger one than the several-encounters case.
+
+**The read is coarse, and it is recorded separately rather than merged.** Every tileset in a
+member's `/tiles[...]` is listed for every map in its `/maps[...]`, minus anything already declared,
+in `COMBAT_TILESET_ARRAY_CANDIDATES`. The arrays cannot be zipped positionally with confidence: the
+`/mapfiles` and `/tilesets` procedures branch on *different* predicates — `4 mod 0`, `4 mod 2`,
+`8 mod 7` against `8 mod 2`, `8 mod 4`, `8 mod 6`, `8 mod 7` in `waming.gs`, with different branches
+commented out in each — only **31 of 40** members have equal-length arrays, and **5 of 40** disagree
+with their own literal pair at index 0. Evaluating the predicates needs
+`getterrainspritelocation`, a runtime value.
+
+**Why it is not folded into the declared bindings.** It would buy **no** coverage and cost
+precision. All 43 maps named in a `/maps[...]` array are *already* declared by a literal pair, so
+the coarse reading resolves **zero** additional maps; and it widens **42 of those 43** across more
+than one tileset *rule class*, standing `ruins01.til` (81.3% on `demina.smp`) beside the declared
+`debldg01.til` (98.3%) as an equal. Constraint scoring cannot adjudicate — mean best satisfaction is
+95.33% declared, 94.58% positionally zipped, 95.57% crossed, all within a point, largely because
+many array entries are rule-identical art variants. So this is a judgement, recorded as one.
+
+**Reporting is precise; refusing is permissive.** `--map-tileset-for` prints the declared binding
+and, on a separate `also-reachable` line, the coarse set marked as such. The paint gate tests
+against the **union**, because a tileset the engine may genuinely reach at runtime must not be
+*refused* — refusing the engine's own answer is the bug that shipped on this branch once already.
+
+**One form that really is absent, and one degeneracy.** There is no *randomised* selection left: the
+only mention of randomising is a 2025-06-12 changelog comment in `DUNGEONS5.gs` recording that it
+was **removed**, *"because randomized tilesets do not play well in multi-player games, whereby a
+desync will occur"* — that comment describes a deletion and is not evidence of a live form. And the
+`getdungeonstrength`-keyed procedures are **degenerate**: `aimult.gs`, `chmult.gs`, `demult.gs` and
+`barrows.gs` each branch on dungeon strength and return the *same* tileset from every branch, so the
+conditional is vestigial. One dangling reference exists: `dwl.smp` is paired with `cavetile.til`, and
+neither the map nor the tileset ships.
+
+**The same map may have several tilesets, and that is a finding rather than a gap.** 22 of the 172
 bound maps are multi-valued: `chcave.smp` is drawn through `cavelava.til`, `chbldg01.til`,
 `cavewatr.til`, `ruins01.til` and `cavecrys.til` by five different encounters — three quest
 encounters use `ruins01`, `genbeast.gs` uses `cavewatr`. There is no single right answer for such a
@@ -736,7 +782,7 @@ map, and `--map-tileset-for` reports `ambiguous:` with every candidate rather th
 | | Maps |
 | --- | ---: |
 | Installed `.smp` | 337 |
-| Bound by a gamescript encounter | **169** (143 single-valued, 26 multi-valued) |
+| Bound by a gamescript encounter | **169** (147 single-valued, 22 multi-valued) |
 | No binding found — **unresolved** | **168** |
 
 `--map-paint-terrain` refuses on an unresolved map rather than defaulting. **Scoring cannot rescue
@@ -749,7 +795,7 @@ a `.gs` member this extraction reads too narrowly.
 
 | Scored against | Maps | Satisfied |
 | --- | ---: | ---: |
-| The gamescript's own tileset | 169 | **369,856 / 388,496 = 95.20%** |
+| The gamescript's own tileset | 169 | **370,254 / 388,910 = 95.20%** |
 | `tilesa01.til`, the retracted rule | 169 | **32,842 / 389,376 = 8.43%** |
 
 Per-map spot checks: `aicave.smp` 84.3% against `aibldg01.til` versus 3.3% through `tilesa01.til`;
@@ -1487,8 +1533,11 @@ With a tile definition and atlas, the viewer starts in terrain-art mode. Press `
 - **Corrected:** the tileset parser, which read a `TILE=` line's slot and `self` column and threw its eight neighbour constraints away. The rule it was discarding was then measured in an attended engine run instead.
 - **Observed in a local binary (2026-09-17):** shipped world maps are **not** fully consistent with their own tileset -- 5.9% of `.scn` cells hold a tile that does not satisfy its declared constraints -- and the 337 `.smp` battle maps do not use `tilesb01.til` at all.
 - **Observed in a local binary (2026-09-17):** the engine reads `.scn`/`.lgd`/`.map` through `tilesb01.til`, set by `maptileset` in `START.GS`. `maptileset` occurs **10 times across the 1,700 `gs.mpq` members**: once there, six times as the same `"til/tilesb01.til"` restore on the way out to the menu, and three times as the terrain editor's `currenttileset exch maptileset`, which restores nothing.
-- **Observed in a local binary (2026-09-17):** a **combat** map's tileset is declared **per encounter**, as adjacent `/mapfile` and `/tileset` keys of the encounter's dictionary. 169 of the 337 installed `.smp` are bound this way (143 to one tileset, 26 to several); 168 have no binding and are **unresolved**. 15 distinct tilesets appear across the bindings. See [which tileset a map is read through](#which-tileset-a-map-is-read-through).
-- **Observed in a local binary (2026-09-17):** scored against the gamescript's own tileset the 169 bound combat maps satisfy **369,856 / 388,496 = 95.20%** of their cells' declared constraints, against **8.43%** through `tilesa01.til`, with the script tileset winning on 166 of 169. The same instrument prints `.scn` at 94.11% open-edge, reproducing this document's independently measured 5.9% violation rate.
+- **Observed in a local binary (2026-09-17):** a **combat** map's tileset is declared **per encounter**, as adjacent `/mapfile` and `/tileset` keys of the encounter's dictionary. 169 of the 337 installed `.smp` are bound this way (147 to one tileset, 22 to several); 168 have no binding and are **unresolved**. 15 distinct tilesets appear across the bindings. See [which tileset a map is read through](#which-tileset-a-map-is-read-through).
+- **Observed in a local binary (2026-09-17):** scored against the gamescript's own tileset the 169 bound combat maps satisfy **370,254 / 388,910 = 95.20%** of their cells' declared constraints, against **8.43%** through `tilesa01.til`, with the script tileset winning on 166 of 169. The same instrument prints `.scn` at 94.11% open-edge, reproducing this document's independently measured 5.9% violation rate.
+- **Observed in a local binary (2026-09-17):** a **second** binding form, the runtime selector: a `/tilesets` procedure over a separately named `/tiles[...]` array, in 41 members, letting **one** encounter pick among up to four tilesets from a sprite's map location. Recorded coarsely and **separately** in `COMBAT_TILESET_ARRAY_CANDIDATES`: it resolves **zero** additional maps -- all 43 maps it names are already declared -- while widening 42 of them across more than one rule class.
+- **Corrected (2026-09-17):** *"there is no `/tilesets[...]` randomised array anywhere in the corpus."* This project's own claim, and wrong: the search looked for `/tilesets[` where the form is `/tilesets{...}` plus a separately named `/tiles[...]`. What is genuinely absent is *randomised* selection, which a 2025-06-12 `DUNGEONS5.gs` changelog comment records as **removed**.
+- **Corrected (2026-09-17):** the binding extractor did not strip `;` comments, and gamescript members use bare `CR` line endings, so it read bindings out of **disabled code** in seven members -- including the `wilderness_*.gs` pair whose binding is commented out because those are the outside-combat files. Honouring comments takes multi-valued maps from 26 to 22 and undeclared cells from 880 to 466.
 - **Observed in a local binary (2026-09-17):** `combattileset` occurs **exactly once in all 1,700 `gs.mpq` members** and is `tilesa01.til`. Per a corpus comment in `wilderness_land.gs`, it is the default for an encounter that defines **neither** `mapfile` nor `tileset` -- engine-generated outside combat -- **not** the tileset of the shipped `.smp` files.
 - **Refuted (2026-09-17):** *"all 337 `.smp` are read through `tilesa01.til`."* This project's own claim, held for a few hours. The `combattileset`-occurs-once measurement was correct; the inference from it was not. Two reviewers reproduced every supporting percentage and endorsed it anyway.
 - **Refuted (2026-09-17):** *"no sampled tileset fits `.smp`; the best had 36% of cells undeclared."* The sample excluded both 624-slot tilesets, and the figure was inverted -- 35.41% is what the two **worst** tilesets *declare*.
