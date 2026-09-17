@@ -18,7 +18,8 @@ use lom_asset_viewer::imp::{
     ImpValidationException, imp_member_basename, normalize_imp_member,
 };
 use lom_asset_viewer::map::{
-    GENERATED_HEADER_WORD, MapAsset, PaintRefusal, ROAD_TERRAIN, TERRAIN_SPRITE_ARRAYS,
+    GENERATED_HEADER_WORD, MapAsset, MintProvenance, PaintRefusal, ROAD_TERRAIN,
+    TERRAIN_SPRITE_ARRAYS,
     TERRAIN_SPRITE_NAME_ONLY, TERRAIN_SPRITE_TYPES, TERRAIN_TYPES, TRANSITION_RING_OFFSETS,
     TerrainPaintPlan, interior_tile_family, road_background_ring, terrain_sprite_name,
     terrain_sprite_type, terrain_type_base_tile, transition_anchor, transition_ring,
@@ -1376,20 +1377,23 @@ fn describe_map(path: &Path) -> Result<(), String> {
     let bytes =
         fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let map = MapAsset::parse(&bytes).map_err(|error| error.to_string())?;
-    let section = map.placed_sprites_49.as_ref().ok_or_else(|| {
+    let section = map.placed_sprites.as_ref().ok_or_else(|| {
         format!(
-            "{} does not use the decoded 49-byte placed-sprite record family",
+            "{}'s trailing section is not one of the six decoded placed-sprite layouts",
             path.display()
         )
     })?;
 
     println!(
-        "map\t{}\t{}x{}\trecords:{}\tfooter:{}",
+        "map\t{}\t{}x{}\tlayout:{}\trecords:{}\tfooter:{}",
         clean_field(&path.display().to_string()),
         map.width,
         map.height,
+        section.layout,
         section.records.len(),
-        section.footer,
+        section
+            .footer
+            .map_or_else(|| "none".to_owned(), |footer| footer.to_string()),
     );
     println!(
         "record\tcell-index\tx\ty\tinstance-id\tattribute-bits\tattribute-code\tsprite-type\tprocedure-id-candidate\traw"
@@ -1403,7 +1407,9 @@ fn describe_map(path: &Path) -> Result<(), String> {
             record.attribute_bits,
             record.attribute_code_candidate(),
             record.sprite_type,
-            record.procedure_id_candidate,
+            record
+                .procedure_id_candidate()
+                .map_or_else(|| "none".to_owned(), |id| id.to_string()),
             hex_bytes(&record.raw),
         );
     }
@@ -1427,8 +1433,8 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
     let mut cell_tags = BTreeSet::<u32>::new();
     let mut tile_indexes = BTreeSet::<u32>::new();
     let mut high_flag_cells = 0_usize;
-    let mut placed_sprite_49_files = 0_usize;
-    let mut placed_sprite_49_records = 0_usize;
+    let mut placed_sprite_files = 0_usize;
+    let mut placed_sprite_records = 0_usize;
     let mut placed_sprite_types = BTreeSet::<u32>::new();
     let mut placed_sprite_attribute_codes = BTreeSet::<u8>::new();
     let mut finite_min = f32::INFINITY;
@@ -1467,23 +1473,27 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
             .or_insert((map.trailing_bytes(), map.trailing_bytes()));
         range.0 = range.0.min(map.trailing_bytes());
         range.1 = range.1.max(map.trailing_bytes());
-        let layouts = map.candidate_tail_layouts();
-        let layout = match layouts.as_slice() {
-            [] => "unknown".to_owned(),
-            [layout] => layout.to_string(),
-            layouts => format!(
-                "ambiguous:{}",
-                layouts
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("|")
+        // The layout the parser resolved, not the arithmetic candidates: a section whose length
+        // fits two layouts is common (four 48-byte records and four 47-byte records plus a footer
+        // are both 196 bytes) and reporting that as "ambiguous" hid which one was decoded.
+        let layout = match map.resolved_tail_layout() {
+            Some(layout) => layout.to_string(),
+            None => format!(
+                "undecoded:{}",
+                match map.candidate_tail_layouts().as_slice() {
+                    [] => "no-layout-fits".to_owned(),
+                    layouts => layouts
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("|"),
+                }
             ),
         };
         *tail_layout_counts.entry((kind, layout)).or_default() += 1;
-        if let Some(section) = &map.placed_sprites_49 {
-            placed_sprite_49_files += 1;
-            placed_sprite_49_records += section.records.len();
+        if let Some(section) = &map.placed_sprites {
+            placed_sprite_files += 1;
+            placed_sprite_records += section.records.len();
             for record in &section.records {
                 placed_sprite_types.insert(record.sprite_type);
                 placed_sprite_attribute_codes.insert(record.attribute_code_candidate());
@@ -1517,7 +1527,7 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
         println!("trailing-bytes\t{kind}\t{minimum}..{maximum}");
     }
     for ((kind, layout), count) in &tail_layout_counts {
-        println!("tail-layout-candidate\t{kind}\t{layout}\t{count}");
+        println!("tail-layout\t{kind}\t{layout}\t{count}");
     }
     println!("distinct-cell-tags\t{}", cell_tags.len());
     println!("distinct-tile-indexes\t{}", tile_indexes.len());
@@ -1525,8 +1535,8 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
         println!("tile-index-range\t{minimum}..{maximum}");
     }
     println!("high-flag-cells\t{high_flag_cells}");
-    println!("placed-sprite-49-files\t{placed_sprite_49_files}");
-    println!("placed-sprite-49-records\t{placed_sprite_49_records}");
+    println!("placed-sprite-files\t{placed_sprite_files}");
+    println!("placed-sprite-records\t{placed_sprite_records}");
     println!("placed-sprite-types\t{}", placed_sprite_types.len());
     println!(
         "placed-sprite-attribute-codes\t{}",
@@ -3628,12 +3638,12 @@ fn roundtrip_maps(path: &Path) -> Result<(), String> {
         };
         checked += 1;
 
-        // Each decoded record must rebuild its own 49 bytes from its typed fields alone. This is
+        // Each decoded record must rebuild its own bytes from its typed fields alone. This is
         // stricter than the file comparison and it is what makes an *edited* record trustworthy:
         // the file can round-trip through `trailing_raw` while a field is being written back wrong.
-        if let Some(section) = &map.placed_sprites_49 {
+        if let Some(section) = &map.placed_sprites {
             for (index, record) in section.records.iter().enumerate() {
-                if record.to_bytes() != record.raw {
+                if record.to_bytes().as_deref() != Ok(record.raw.as_slice()) {
                     failures.push(format!(
                         "{}: record {index} does not rebuild from its fields",
                         path.display()
@@ -3859,6 +3869,36 @@ fn apply_map_edit(
             let instance_id = map
                 .place_sprite(x, y, sprite_type)
                 .map_err(|error| error.to_string())?;
+            // A record minted into one of the four layouts the engine has never been watched
+            // writing is a different kind of output from one minted into the 49-byte layout, and it
+            // used to print identically. `--map-paint-terrain`, a few screens up, already emits a
+            // note for exactly this class of uncertainty; this is the same class and a stronger
+            // case, because a bad record here is a record the engine may reject outright.
+            // A record minted into a layout no engine run has been watched writing is a different
+            // kind of output from one minted into the 49-byte layout, and it used to print
+            // identically. Five of the six layouts are in that position, including the 47-byte one
+            // -- sharing the measured layout's tail shape is not the same as being it.
+            if let Some((layout, provenance)) = map
+                .resolved_tail_layout()
+                .map(|layout| (layout, layout.mint_provenance()))
+                .filter(|(_, provenance)| *provenance != MintProvenance::EngineObserved)
+            {
+                let basis = match provenance {
+                    MintProvenance::InferredProcedureTail =>
+                        "its attribute field at +24 is the 0x00000001 the engine was watched \
+                         writing into a 49-byte record -- a measured value carried across layouts",
+                    MintProvenance::InferredPlainTail | MintProvenance::EngineObserved =>
+                        "every value including the attribute field at +24 is this layout's own \
+                         corpus constant, and +24 is 0 because that is the only value all 4,003 \
+                         records of the three plain-tail layouts hold",
+                };
+                eprintln!(
+                    "note: this map uses the {layout} layout. The record just minted is Inferred: \
+                     {basis}. No engine run has been observed writing, or accepting, a record in \
+                     this layout; the one attended run wrote the 49-byte layout. Verify in the \
+                     game before shipping a map edited this way."
+                );
+            }
             // Name the type in the output. A bare id is what made these records unreadable in
             // the first place, and a caller who passed an id deserves to see what it resolved to.
             // A name, or an honest account of why there isn't one. Saying "unregistered" for an
@@ -4248,7 +4288,7 @@ fn verify_map_edit(
             let cell_index = map
                 .cell_index(x, y)
                 .ok_or_else(|| format!("refusing to write: ({x}, {y}) is outside the map"))?;
-            let present = map.placed_sprites_49.as_ref().is_some_and(|section| {
+            let present = map.placed_sprites.as_ref().is_some_and(|section| {
                 section
                     .records
                     .iter()
@@ -4261,7 +4301,7 @@ fn verify_map_edit(
             }
         }
         MapEdit::RemoveSprite { instance_id } => {
-            let present = map.placed_sprites_49.as_ref().is_some_and(|section| {
+            let present = map.placed_sprites.as_ref().is_some_and(|section| {
                 section
                     .records
                     .iter()
@@ -4438,7 +4478,7 @@ mod tests {
                     value: 50.0,
                 },
             ],
-            placed_sprites_49: None,
+            placed_sprites: None,
             trailing_raw: Vec::new(),
         };
 
@@ -4472,7 +4512,7 @@ mod tests {
                     value: 0.0,
                 })
                 .collect(),
-            placed_sprites_49: None,
+            placed_sprites: None,
             trailing_raw: Vec::new(),
         };
         let tile_set = TileSetDefinition {
@@ -5231,6 +5271,69 @@ mod tests {
         source
     }
 
+    /// An editable map in the **52-byte** record layout: header word 79, and a trailing section
+    /// that is a lone zero count with **no footer**.
+    ///
+    /// Four of the six layouts have no footer word at all, which `editable_map` -- a 49-byte-layout
+    /// fixture -- cannot exercise. Until 2026-09-17 a map shaped like this left its tail raw and
+    /// `--map-place-sprite` refused it, which was the state of 169 of the 365 installed maps.
+    fn editable_plain_map(width: u32, height: u32) -> Vec<u8> {
+        let mut source = Vec::new();
+        source.extend_from_slice(&79_u32.to_le_bytes());
+        source.extend_from_slice(&width.to_le_bytes());
+        source.extend_from_slice(&height.to_le_bytes());
+        source.extend_from_slice(&8_u32.to_le_bytes());
+        for _ in 0..width * height {
+            source.extend_from_slice(&15_u32.to_le_bytes());
+            source.extend_from_slice(&1.0_f32.to_bits().to_le_bytes());
+        }
+        source.extend_from_slice(&0_u32.to_le_bytes());
+        source
+    }
+
+    #[test]
+    fn placing_a_sprite_on_a_footerless_map_writes_that_layouts_record() {
+        let dir = scratch_dir("map-plain-place");
+        let input = dir.join("in.smp");
+        let output = dir.join("out.smp");
+        let removed = dir.join("removed.smp");
+        let source = editable_plain_map(5, 3);
+        fs::write(&input, &source).unwrap();
+
+        edit_map(
+            &input,
+            MapEdit::PlaceSprite { x: 3, y: 2, sprite_type: 105 },
+            &output,
+            None,
+        )
+        .unwrap();
+        let written_bytes = fs::read(&output).unwrap();
+        assert_eq!(
+            written_bytes.len(),
+            source.len() + 52,
+            "a 52-byte layout must grow by 52 bytes, and no footer may appear"
+        );
+        let written = MapAsset::parse(&written_bytes).unwrap();
+        let section = written.placed_sprites.as_ref().unwrap();
+        assert_eq!(section.layout.record_size, 52);
+        assert_eq!(section.footer, None);
+        let record = &section.records[0];
+        assert_eq!(record.size(), 52);
+        assert_eq!(record.sprite_type, 105);
+        assert_eq!(written.record_coordinates(record), (3, 2));
+
+        // And removing it leaves the file it started from, as the engine's own removal does.
+        edit_map(
+            &output,
+            MapEdit::RemoveSprite { instance_id: record.instance_id },
+            &removed,
+            None,
+        )
+        .unwrap();
+        assert_eq!(fs::read(&removed).unwrap(), source);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn terrain_types_are_accepted_by_number_and_by_script_name() {
         assert_eq!(parse_terrain_type("1").unwrap(), 1);
@@ -5750,7 +5853,7 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
         // It still round-trips -- that is the assertion. The tail is opaque, not dropped.
         assert!(roundtrip_maps(&input).is_ok());
         let map = MapAsset::parse(&source).unwrap();
-        assert!(map.placed_sprites_49.is_none());
+        assert!(map.placed_sprites.is_none());
         assert_eq!(map.to_bytes().unwrap(), source);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -5791,7 +5894,7 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
         )
         .unwrap();
         let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
-        assert_eq!(written.placed_sprites_49.as_ref().unwrap().records[0].sprite_type, 105);
+        assert_eq!(written.placed_sprites.as_ref().unwrap().records[0].sprite_type, 105);
         assert_eq!(terrain_sprite_name(105), None, "105 is a gap, not a name");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -5831,7 +5934,7 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
         .unwrap();
 
         let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
-        let record = &written.placed_sprites_49.as_ref().unwrap().records[0];
+        let record = &written.placed_sprites.as_ref().unwrap().records[0];
         assert_eq!(record.sprite_type, 0, "castle1 is type 0");
         assert_eq!(written.record_coordinates(record), (3, 2));
         assert_eq!(terrain_sprite_name(record.sprite_type), Some("castle1"));
@@ -5849,7 +5952,7 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
         assert_eq!(written.metadata, GENERATED_HEADER_WORD);
         assert!(written.cells.iter().all(|cell| cell.tile_index() == 15));
         assert!(written.cells.iter().all(|cell| !cell.high_flag_set()));
-        assert_eq!(written.placed_sprites_49.as_ref().unwrap().records.len(), 0);
+        assert_eq!(written.placed_sprites.as_ref().unwrap().records.len(), 0);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -6013,7 +6116,7 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
         .unwrap();
 
         let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
-        let section = written.placed_sprites_49.as_ref().unwrap();
+        let section = written.placed_sprites.as_ref().unwrap();
         assert_eq!(section.records.len(), 1);
         assert_eq!(section.records[0].cell_index, 2 * 5 + 3);
         assert_eq!(section.records[0].instance_id, 200);

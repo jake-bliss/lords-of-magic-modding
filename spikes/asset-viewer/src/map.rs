@@ -7,8 +7,17 @@ use crate::tile::{
 
 const HEADER_SIZE: usize = 16;
 const CELL_SIZE: usize = 8;
-const PLACED_SPRITE_RECORD_49_SIZE: usize = 49;
-const PLACED_SPRITE_SECTION_49_FIXED_BYTES: usize = 8;
+/// The head every trailing-record layout shares: eight `u32`s.
+///
+/// **Observed in a local binary, 2026-09-17.** All 21,117 records in all six layouts carry the same
+/// eight words here -- `record_kind` `1`, `record_version` `1`, `cell_index`, `0xffffffff`, `0`,
+/// `instance_id`, `attribute_bits`, `sprite_type` -- and the head's invariants hold per layout:
+/// `cell_index` is unique and in bounds in every file, and `instance_id` is unique and strictly
+/// increasing in every file. See [`PlacedSpriteTail`] for where the layouts diverge.
+const PLACED_SPRITE_HEAD_SIZE: usize = 32;
+
+/// The `u32` record count that leads every trailing section.
+const PLACED_SPRITE_COUNT_BYTES: usize = 4;
 
 /// Bit `0x00800000` of a cell tag. Its meaning is **Unknown**.
 ///
@@ -200,17 +209,148 @@ impl MapCell {
     }
 }
 
+/// One placed-object record's bytes past the 32-byte head, typed.
+///
+/// **Observed in a local binary, 2026-09-17.** The six trailing-record layouts the corpus contains
+/// share one 32-byte head and then split into exactly two tail shapes:
+///
+/// | tail shape | record sizes | files | records | bytes `+32..` |
+/// | --- | ---: | ---: | ---: | --- |
+/// | [`Procedure`](Self::Procedure) | 47, 49 | 205 | 17,114 | `ff 01`, a procedure id, `0`, `0xffffffff`, then 1 or 3 zero bytes |
+/// | [`Plain`](Self::Plain) | 48, 52, 53 | 159 | 4,003 | `0`, `0`, `0xffffffff`, `0`, optionally `0xffffffff`, optionally one zero byte |
+///
+/// The two shapes are **not** an alignment of each other: the `Procedure` shape's `0x01ff` marker
+/// is two bytes where the `Plain` shape has four zero bytes, and the trailing padding differs, so
+/// no single offset maps one onto the other. Both shapes cover every byte of their record, which
+/// is what lets `to_bytes` rebuild the record instead of carrying it over.
+///
+/// **What these fields mean is Unknown**, apart from the procedure id, which was already a
+/// candidate reading in the 49-byte layout. The names record offsets, not semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlacedSpriteRecord49 {
-    pub raw: [u8; PLACED_SPRITE_RECORD_49_SIZE],
+pub enum PlacedSpriteTail {
+    /// The 47- and 49-byte layouts: they carry the `0x01ff` marker and a procedure id.
+    Procedure {
+        marker_32: u16,
+        procedure_id_candidate: i32,
+        unknown_38: u32,
+        unknown_42: u32,
+        /// The record's trailing padding: **one** byte in the 47-byte layout and **three** in the
+        /// 49-byte one. Every such byte is zero in all 17,114 corpus records; the length is what
+        /// distinguishes the two layouts, so it is carried rather than assumed.
+        padding: Vec<u8>,
+    },
+    /// The 48-, 52- and 53-byte layouts: no marker and no procedure id, four or five words, and in
+    /// the 53-byte layout one extra byte.
+    Plain {
+        unknown_32: u32,
+        unknown_36: u32,
+        unknown_40: u32,
+        unknown_44: u32,
+        /// Present in the 52- and 53-byte layouts, absent in the 48-byte one. `0xffffffff` in all
+        /// 3,781 corpus records that have it.
+        unknown_48: Option<u32>,
+        /// Present only in the 53-byte layout. Zero in all 2,528 corpus records that have it.
+        unknown_52: Option<u8>,
+    },
+}
+
+impl PlacedSpriteTail {
+    /// The number of bytes this tail writes, which together with the 32-byte head is the record
+    /// size.
+    ///
+    /// The tail's own shape decides it -- padding length for `Procedure`, which optional words are
+    /// present for `Plain` -- so a record cannot disagree with its own size.
+    pub fn size(&self) -> usize {
+        match self {
+            Self::Procedure { padding, .. } => 14 + padding.len(),
+            Self::Plain {
+                unknown_48,
+                unknown_52,
+                ..
+            } => {
+                16 + unknown_48.map_or(0, |_| 4) + unknown_52.map_or(0, |_| 1)
+            }
+        }
+    }
+
+    /// Whether this tail is one of the six shapes the corpus contains.
+    ///
+    /// The types alone admit shapes no file holds -- a `Procedure` tail with two padding bytes, or
+    /// a `Plain` tail with `unknown_52` set but `unknown_48` absent, which would write 49 bytes
+    /// with the 53-byte layout's last byte. Both would produce a record whose size no layout in
+    /// [`OBSERVED_TAIL_LAYOUTS`] has, so the writer refuses them instead of emitting a file the
+    /// engine has never been shown.
+    fn shape_is_observed(&self) -> bool {
+        match self {
+            Self::Procedure { padding, .. } => matches!(padding.len(), 1 | 3),
+            Self::Plain {
+                unknown_48,
+                unknown_52,
+                ..
+            } => unknown_48.is_some() || unknown_52.is_none(),
+        }
+    }
+
+    fn write_into(&self, bytes: &mut Vec<u8>) {
+        match self {
+            Self::Procedure {
+                marker_32,
+                procedure_id_candidate,
+                unknown_38,
+                unknown_42,
+                padding,
+            } => {
+                bytes.extend_from_slice(&marker_32.to_le_bytes());
+                bytes.extend_from_slice(&procedure_id_candidate.to_le_bytes());
+                bytes.extend_from_slice(&unknown_38.to_le_bytes());
+                bytes.extend_from_slice(&unknown_42.to_le_bytes());
+                bytes.extend_from_slice(padding);
+            }
+            Self::Plain {
+                unknown_32,
+                unknown_36,
+                unknown_40,
+                unknown_44,
+                unknown_48,
+                unknown_52,
+            } => {
+                bytes.extend_from_slice(&unknown_32.to_le_bytes());
+                bytes.extend_from_slice(&unknown_36.to_le_bytes());
+                bytes.extend_from_slice(&unknown_40.to_le_bytes());
+                bytes.extend_from_slice(&unknown_44.to_le_bytes());
+                if let Some(word) = unknown_48 {
+                    bytes.extend_from_slice(&word.to_le_bytes());
+                }
+                if let Some(byte) = unknown_52 {
+                    bytes.push(*byte);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacedSpriteRecord {
+    /// This record exactly as it was read, or as [`to_bytes`](Self::to_bytes) would write it for a
+    /// record this crate minted.
+    pub raw: Vec<u8>,
     pub record_kind: u32,
     pub record_version: u32,
     pub cell_index: u32,
     pub unknown_12: u32,
     pub unknown_16: u32,
     /// **Observed in gameplay, 2026-09-17:** 200, 201, 202 for the three sprites placed on a fresh
-    /// map, so it is a sequential per-map instance id starting at 200 -- which matches the corpus
-    /// range of `200..1659`.
+    /// map, so it is a sequential per-map instance id starting at 200.
+    ///
+    /// **Observed in a local binary, 2026-09-17, corrected:** the corpus range is `100..1659`, not
+    /// `200..1659` as this said -- the ten files whose ids start at 100 are all in layouts this
+    /// project could not read until the other five were decoded. Per-file lowest ids across the 364
+    /// files that hold records are `{200: 353, 100: 10, 203: 1}`: 100 in all nine files of the
+    /// 48-byte layout and in one of the 52-byte layout, 203 in one more, and 200 in the rest. Ids
+    /// are unique and strictly increasing within every one of those files.
+    ///
+    /// The earlier figure here said "200 in 357 of the 364", which does not even add up against its
+    /// own total -- 357 + 10 + 1 is 368. It is 353.
     pub instance_id: u32,
     pub attribute_bits: u32,
     /// The terrain sprite type id.
@@ -219,14 +359,11 @@ pub struct PlacedSpriteRecord49 {
     /// of a type freshly minted by `addterrainspritetype` in the same keypress all wrote the id
     /// that operator returned, 470.
     pub sprite_type: u32,
-    pub marker_32: u16,
-    pub procedure_id_candidate: i32,
-    pub unknown_38: u32,
-    pub unknown_42: u32,
-    pub unknown_46: [u8; 3],
+    /// Everything past the 32-byte head, which is where the six layouts differ.
+    pub tail: PlacedSpriteTail,
 }
 
-impl PlacedSpriteRecord49 {
+impl PlacedSpriteRecord {
     /// The top nibble of `attribute_bits`, and a **suspect** reading of it.
     ///
     /// Every record the 2026-09-17 probe wrote carries `attribute_bits == 0x00000001`, for which
@@ -235,6 +372,27 @@ impl PlacedSpriteRecord49 {
     /// sprite type cannot distinguish the field's layout; read `attribute_bits` directly.
     pub fn attribute_code_candidate(&self) -> u8 {
         (self.attribute_bits >> 28) as u8
+    }
+
+    /// The procedure id, for the two layouts that carry one.
+    ///
+    /// `None` is not "no procedure" -- that is `Some(-1)`, which 14,196 of the 17,114 corpus records
+    /// with a procedure tail carry. It
+    /// means this record's layout has no such field at all, which is true of every record in the
+    /// 48-, 52- and 53-byte layouts.
+    pub fn procedure_id_candidate(&self) -> Option<i32> {
+        match self.tail {
+            PlacedSpriteTail::Procedure {
+                procedure_id_candidate,
+                ..
+            } => Some(procedure_id_candidate),
+            PlacedSpriteTail::Plain { .. } => None,
+        }
+    }
+
+    /// This record's size in the file: the 32-byte head plus its tail.
+    pub fn size(&self) -> usize {
+        PLACED_SPRITE_HEAD_SIZE + self.tail.size()
     }
 
     /// The `(x, y)` this record sits on, unpacked from `cell_index` the same way cells are.
@@ -246,18 +404,30 @@ impl PlacedSpriteRecord49 {
     }
 }
 
-/// The trailing section: `u32 record_count`, `record_count * 49` bytes of records, `u32 footer`.
+/// The trailing section: `u32 record_count`, `record_count * layout.record_size` bytes of records,
+/// then the `u32` footer the layout calls for, if any.
 ///
-/// **Observed in gameplay, 2026-09-17, by construction.** The corpus only showed that the section
-/// is `count * 49 + 8` bytes long; it could not say which four of those eight fixed bytes came
-/// first. Saving the same map with no sprites gave an 8-byte tail of `00000000 01000000`, and with
-/// three sprites a 155-byte tail of `03000000` + 147 + `01000000`. So the leading word is the
-/// count and the trailing word is a footer that did **not** move when three records were added --
-/// it is not a sprite-related count. Its meaning stays Unknown.
+/// **Observed in gameplay, 2026-09-17, by construction.** The corpus only showed that the 49-byte
+/// family's section is `count * 49 + 8` bytes long; it could not say which four of those eight
+/// fixed bytes came first. Saving the same map with no sprites gave an 8-byte tail of
+/// `00000000 01000000`, and with three sprites a 155-byte tail of `03000000` + 147 + `01000000`.
+/// So the leading word is the count and the trailing word is a footer that did **not** move when
+/// three records were added -- it is not a sprite-related count. Its meaning stays Unknown.
+///
+/// **Observed in a local binary, 2026-09-17:** four of the six layouts have **no footer at all**.
+/// Their sections are exactly `4 + count * record_size` bytes with nothing left over, and the one
+/// corpus file whose count is zero has a four-byte trailing section holding only that zero. The
+/// footer is therefore a property of the layout, not of the format.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlacedSpriteSection49 {
-    pub records: Vec<PlacedSpriteRecord49>,
-    pub footer: u32,
+pub struct PlacedSpriteSection {
+    /// The record size and footer width this section is written with. Every record must match it;
+    /// [`to_bytes`](Self::to_bytes) refuses rather than writing a section whose records and whose
+    /// count word disagree.
+    pub layout: MapTailLayout,
+    pub records: Vec<PlacedSpriteRecord>,
+    /// `Some` exactly when [`layout`](Self::layout) has a footer. Observed values are `0`, `1` and
+    /// `3`, and their meaning is Unknown.
+    pub footer: Option<u32>,
     /// The highest instance id this section has held **since it was parsed**.
     ///
     /// **This is not persisted, and it cannot be**: the format has no field for it, and inventing
@@ -284,7 +454,7 @@ pub struct MapAsset {
     pub height: u32,
     pub bits_per_pixel: u32,
     pub cells: Vec<MapCell>,
-    pub placed_sprites_49: Option<PlacedSpriteSection49>,
+    pub placed_sprites: Option<PlacedSpriteSection>,
     /// The trailing section exactly as it was read.
     ///
     /// Held so that a map whose tail this project does **not** understand -- the 52-byte and
@@ -296,7 +466,153 @@ pub struct MapAsset {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MapTailLayout {
     pub record_size: usize,
+    /// The section's bytes that are not records: the leading count word, plus the footer word when
+    /// the layout has one. `4` or `8`.
     pub total_fixed_bytes: usize,
+}
+
+/// Every trailing-record layout the installed corpus contains.
+///
+/// **Observed in a local binary, 2026-09-17.** Each of the 365 installed maps is uniform: one
+/// record size throughout its trailing section, with nothing left over. Exactly one of these six
+/// layouts fits each of the 364 files that hold at least one record, and the 365th holds none.
+///
+/// | layout | files | records | header word at `0x00` |
+/// | --- | ---: | ---: | --- |
+/// | 47-byte records, no footer | 6 | 434 | 98 |
+/// | 47-byte records, footer | 3 | 52 | 101 |
+/// | 48-byte records, no footer | 9 | 222 | 63, 73 |
+/// | 49-byte records, footer | 196 | 16,628 | 102, 105-111 |
+/// | 52-byte records, no footer | 144 | 1,253 | 76, 79, 81, 87, 89 |
+/// | 53-byte records, no footer | 6 | 2,528 | 96, 97 |
+///
+/// This supersedes the earlier reading in which 169 files were "52-/53-byte families" and 18 more
+/// were "unmatched tails". The 18 were not a separate phenomenon: nine are the 48-byte layout and
+/// nine the 47-byte one, and the reason they looked unmatched is that only three record sizes had
+/// been tried.
+pub const OBSERVED_TAIL_LAYOUTS: [MapTailLayout; 6] = [
+    MapTailLayout { record_size: 47, total_fixed_bytes: 4 },
+    MapTailLayout { record_size: 47, total_fixed_bytes: 8 },
+    MapTailLayout { record_size: 48, total_fixed_bytes: 4 },
+    MapTailLayout { record_size: 49, total_fixed_bytes: 8 },
+    MapTailLayout { record_size: 52, total_fixed_bytes: 4 },
+    MapTailLayout { record_size: 53, total_fixed_bytes: 4 },
+];
+
+/// Which header words at `0x00` were seen with which layout.
+///
+/// **Observed in a local binary, 2026-09-17:** across all 365 installed maps this word partitions
+/// the six layouts with **no overlap at all** -- no value appears with two layouts -- and the
+/// partition is ordered: 63-73, 76-89, 96-97, 98, 101, 102-111 for the 48-, 52-, 53-, 47-no-footer,
+/// 47-footer and 49-byte layouts respectively.
+///
+/// **Inferred:** that the word is a format version and that the engine's loader uses it to choose
+/// the record layout. The correlation is the observation; the causation is not, and an attended run
+/// already showed the engine rewrites this word from its own state on every save rather than
+/// reading back the one in the file.
+///
+/// Used for exactly one thing: choosing a layout for a section whose record count is **zero**,
+/// where the section's length cannot distinguish the layouts because no records are present. Only
+/// the values listed here resolve; anything else leaves such a section undecoded rather than
+/// guessing, because an interpolated version number is a fitted one.
+const OBSERVED_HEADER_WORD_LAYOUTS: [(u32, MapTailLayout); 19] = [
+    (63, MapTailLayout { record_size: 48, total_fixed_bytes: 4 }),
+    (73, MapTailLayout { record_size: 48, total_fixed_bytes: 4 }),
+    (76, MapTailLayout { record_size: 52, total_fixed_bytes: 4 }),
+    (79, MapTailLayout { record_size: 52, total_fixed_bytes: 4 }),
+    (81, MapTailLayout { record_size: 52, total_fixed_bytes: 4 }),
+    (87, MapTailLayout { record_size: 52, total_fixed_bytes: 4 }),
+    (89, MapTailLayout { record_size: 52, total_fixed_bytes: 4 }),
+    (96, MapTailLayout { record_size: 53, total_fixed_bytes: 4 }),
+    (97, MapTailLayout { record_size: 53, total_fixed_bytes: 4 }),
+    (98, MapTailLayout { record_size: 47, total_fixed_bytes: 4 }),
+    (101, MapTailLayout { record_size: 47, total_fixed_bytes: 8 }),
+    (102, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
+    (105, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
+    (106, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
+    (107, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
+    (108, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
+    (109, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
+    (110, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
+    (111, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
+];
+
+/// Where a freshly minted record's bytes come from, per layout. See
+/// [`MapTailLayout::mint_provenance`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MintProvenance {
+    /// The 49-byte layout: an attended engine run wrote records of this shape.
+    EngineObserved,
+    /// The 47-byte layouts: the tail shape is the measured one, but no engine run wrote this size,
+    /// so the attribute field is a measured value carried across layouts.
+    InferredProcedureTail,
+    /// The 48-, 52- and 53-byte layouts: every minted value is that layout's corpus constant and
+    /// nothing has been observed writing or accepting one.
+    InferredPlainTail,
+}
+
+impl MapTailLayout {
+    /// The section's footer width: `4` when it has one, `0` when it does not.
+    ///
+    /// Saturating, because this struct's fields are `pub` and nothing stops a caller writing
+    /// `MapTailLayout { record_size: 49, total_fixed_bytes: 0 }`, for which the subtraction
+    /// underflows -- a debug panic and a release wrap of `usize::MAX - 3`, which is the shape of
+    /// bug this repository has a standing lesson about. Such a layout is not one of the six and
+    /// [`to_bytes`](PlacedSpriteSection::to_bytes) rejects any section built on it; this only makes
+    /// sure asking it a question cannot panic first.
+    pub fn footer_bytes(&self) -> usize {
+        self.total_fixed_bytes
+            .saturating_sub(PLACED_SPRITE_COUNT_BYTES)
+    }
+
+    pub fn has_footer(&self) -> bool {
+        self.footer_bytes() == 4
+    }
+
+    /// The section length this layout implies for `count` records, or `None` on overflow.
+    pub fn section_bytes(&self, count: usize) -> Option<usize> {
+        count
+            .checked_mul(self.record_size)?
+            .checked_add(self.total_fixed_bytes)
+    }
+
+    /// Whether this layout carries the `0x01ff` marker and a procedure id.
+    ///
+    /// **Observed in a local binary:** record size decides it. The 47- and 49-byte records all
+    /// carry `ff 01` at `+32`; the 48-, 52- and 53-byte records all carry four zero bytes there.
+    fn has_procedure_tail(&self) -> bool {
+        matches!(self.record_size, 47 | 49)
+    }
+
+    /// Where the values [`PlacedSpriteRecord::new`] mints into this layout come from.
+    ///
+    /// **One layout has an engine-observed mint: the 49-byte one.** The 2026-09-17 probe watched
+    /// the engine write three fresh records and they were 49 bytes. Everything else is inference,
+    /// and it is inference of two different kinds, so callers can say which:
+    ///
+    /// - the 47-byte layout shares the procedure tail, so a fresh record there takes the *measured*
+    ///   `+24` of `0x00000001` -- a value carried across from a different layout, which is exactly
+    ///   the move this project warns against elsewhere;
+    /// - the 48-, 52- and 53-byte layouts take their own corpus constants, `+24` included, and no
+    ///   engine run has been watched writing or accepting one.
+    ///
+    /// **This is why `--map-place-sprite` notes the difference on five of the six layouts and not
+    /// on four**: sharing a tail shape with the measured layout is not the same as being it.
+    pub fn mint_provenance(&self) -> MintProvenance {
+        match self.record_size {
+            49 => MintProvenance::EngineObserved,
+            47 => MintProvenance::InferredProcedureTail,
+            _ => MintProvenance::InferredPlainTail,
+        }
+    }
+
+    /// The layout the corpus pairs with this header word, if any. See
+    /// [`OBSERVED_HEADER_WORD_LAYOUTS`] for why this is only a tie-break.
+    pub fn for_header_word(metadata: u32) -> Option<Self> {
+        OBSERVED_HEADER_WORD_LAYOUTS
+            .into_iter()
+            .find_map(|(word, layout)| (word == metadata).then_some(layout))
+    }
 }
 
 impl fmt::Display for MapTailLayout {
@@ -376,8 +692,8 @@ impl MapAsset {
             });
         }
         let trailing_bytes = source.len() - trailing_offset;
-        let placed_sprites_49 =
-            parse_placed_sprites_49(source, trailing_offset, trailing_bytes, cell_count)?;
+        let placed_sprites =
+            parse_placed_sprites(source, trailing_offset, trailing_bytes, cell_count, metadata)?;
         let trailing_raw = source[trailing_offset..].to_vec();
 
         Ok(Self {
@@ -386,7 +702,7 @@ impl MapAsset {
             height,
             bits_per_pixel,
             cells,
-            placed_sprites_49,
+            placed_sprites,
             trailing_raw,
         })
     }
@@ -409,12 +725,12 @@ impl MapAsset {
     /// Tests that exercise this must use a **non-square** map; a square fixture cannot fail.
     /// Where a placed-sprite record sits, taken from this map rather than a caller's guess.
     ///
-    /// `PlacedSpriteRecord49::coordinates` needs the map's **width**, and `map.height` compiles
+    /// `PlacedSpriteRecord::coordinates` needs the map's **width**, and `map.height` compiles
     /// just as well. That is not hypothetical: `--describe-map` was still passing `height` after
     /// the packing correction had landed everywhere else, and no test caught it, because a square
     /// map cannot tell the two apart -- the same reason the X-major reading survived for months.
     /// Going through the map removes the choice.
-    pub fn record_coordinates(&self, record: &PlacedSpriteRecord49) -> (u32, u32) {
+    pub fn record_coordinates(&self, record: &PlacedSpriteRecord) -> (u32, u32) {
         record.coordinates(self.width)
     }
 
@@ -434,25 +750,25 @@ impl MapAsset {
     /// bytes otherwise -- the same choice [`to_bytes`](Self::to_bytes) makes, deliberately, so the
     /// two can never disagree.
     pub fn trailing_section(&self) -> Result<Vec<u8>, MapError> {
-        match &self.placed_sprites_49 {
+        match &self.placed_sprites {
             Some(section) => section.to_bytes(),
             None => Ok(self.trailing_raw.clone()),
         }
     }
 
     pub fn trailing_bytes(&self) -> usize {
-        match &self.placed_sprites_49 {
-            Some(section) => {
-                PLACED_SPRITE_SECTION_49_FIXED_BYTES
-                    + section.records.len() * PLACED_SPRITE_RECORD_49_SIZE
-            }
+        match &self.placed_sprites {
+            Some(section) => section
+                .layout
+                .section_bytes(section.records.len())
+                .unwrap_or(usize::MAX),
             None => self.trailing_raw.len(),
         }
     }
 
     /// The first word of the trailing section, which in the decoded family is the record count.
     pub fn trailing_head_u32(&self) -> Option<u32> {
-        match &self.placed_sprites_49 {
+        match &self.placed_sprites {
             Some(section) => u32::try_from(section.records.len()).ok(),
             None => (self.trailing_raw.len() >= 4).then(|| {
                 u32::from_le_bytes(
@@ -478,6 +794,12 @@ impl MapAsset {
         self.cells.get(self.cell_index(x, y)?)
     }
 
+    /// Every layout whose section length matches this tail's, by arithmetic alone.
+    ///
+    /// **Arithmetic only, and reported as candidates for that reason.** With four records a
+    /// 196-byte section fits both the 47-byte-plus-footer and the 48-byte layouts, so more than one
+    /// candidate is a normal answer here. [`resolved_tail_layout`](Self::resolved_tail_layout) is
+    /// the one the parser actually decoded, after checking every record's head.
     pub fn candidate_tail_layouts(&self) -> Vec<MapTailLayout> {
         let Some(count) = self
             .trailing_head_u32()
@@ -485,84 +807,199 @@ impl MapAsset {
         else {
             return Vec::new();
         };
-        [(49, 8), (52, 4), (53, 4)]
+        OBSERVED_TAIL_LAYOUTS
             .into_iter()
-            .filter_map(|(record_size, total_fixed_bytes)| {
-                count
-                    .checked_mul(record_size)
-                    .and_then(|bytes| bytes.checked_add(total_fixed_bytes))
-                    .filter(|expected| *expected == self.trailing_bytes())
-                    .map(|_| MapTailLayout {
-                        record_size,
-                        total_fixed_bytes,
-                    })
-            })
+            .filter(|layout| layout.section_bytes(count) == Some(self.trailing_bytes()))
             .collect()
+    }
+
+    /// The layout this map's trailing section was decoded with, or `None` when it stayed raw.
+    pub fn resolved_tail_layout(&self) -> Option<MapTailLayout> {
+        self.placed_sprites.as_ref().map(|section| section.layout)
     }
 }
 
-fn parse_placed_sprites_49(
+/// Decode the trailing section, or leave it alone.
+///
+/// Returns `Ok(None)` -- meaning "this tail stays raw bytes" -- rather than an error whenever the
+/// layout cannot be pinned down. A tail this project cannot decode still has to survive a round
+/// trip untouched, so an undecodable tail is a normal outcome, not a parse failure.
+///
+/// **The length check is exact, and it is not sufficient on its own.** A wrong record size can
+/// divide a section evenly and produce a plausible count, so every candidate layout must account for
+/// the section's length to the byte -- `4 + count * record_size + footer` with nothing left over --
+/// and then **every one of its records** must pass [`record_head_matches`] at that stride. The tail
+/// stays raw only when two layouts are still standing *after* the head checks, or when none is.
+/// [`candidate_tail_layouts`](MapAsset::candidate_tail_layouts) reports the arithmetic candidates
+/// and so still shows both.
+///
+/// **There are exactly two lengths that two layouts fit**, over all record counts, and both are
+/// reachable:
+///
+/// | count | bytes | layouts that fit | what resolves it |
+/// | ---: | ---: | --- | --- |
+/// | 1 | 57 | `49 + footer`, `53 + none` | the **marker word alone**: the strides put both records at the same offset, so every other head field is byte-identical between the two readings |
+/// | 4 | 196 | `47 + footer`, `48 + none` | `record_kind` at the wrong stride: the 47-byte reading puts record 1's first word inside record 0's padding |
+///
+/// One installed map is the 196-byte case -- `CAVWAT02.SMP`, four 48-byte records -- and it is
+/// doubly determined, since its header word says 48 as well. **No** installed map has a count of 1,
+/// but one is three `--map-remove-sprite` calls away from any six-record map, so the count-1 case is
+/// reachable through this tool and is covered by
+/// `a_count_one_fifty_three_byte_section_is_resolved_by_the_marker_alone`.
+///
+/// Both collisions were enumerated rather than found: iterating every count against all six layouts
+/// yields these two for `count >= 1`, plus the degenerate `count == 0`, which the header word
+/// settles.
+fn parse_placed_sprites(
     source: &[u8],
     trailing_offset: usize,
     trailing_bytes: usize,
     cell_count: usize,
-) -> Result<Option<PlacedSpriteSection49>, MapError> {
-    if trailing_bytes < PLACED_SPRITE_SECTION_49_FIXED_BYTES {
+    metadata: u32,
+) -> Result<Option<PlacedSpriteSection>, MapError> {
+    if trailing_bytes < PLACED_SPRITE_COUNT_BYTES {
         return Ok(None);
     }
     let count = usize::try_from(read_u32(source, trailing_offset)?)
         .map_err(|_| MapError::new("placed-sprite record count exceeds platform limits"))?;
-    let expected = count
-        .checked_mul(PLACED_SPRITE_RECORD_49_SIZE)
-        .and_then(|bytes| bytes.checked_add(PLACED_SPRITE_SECTION_49_FIXED_BYTES))
-        .ok_or_else(|| MapError::new("placed-sprite section size overflow"))?;
-    if expected != trailing_bytes {
+    let records_offset = trailing_offset + PLACED_SPRITE_COUNT_BYTES;
+
+    let mut fitting = OBSERVED_TAIL_LAYOUTS.into_iter().filter(|layout| {
+        layout.section_bytes(count) == Some(trailing_bytes)
+            && (0..count).all(|index| {
+                record_head_matches(
+                    source,
+                    records_offset + index * layout.record_size,
+                    cell_count,
+                    *layout,
+                )
+            })
+    });
+    let Some(layout) = fitting.next() else {
         return Ok(None);
-    }
+    };
+    let layout = if fitting.next().is_some() {
+        // Several layouts fit to the byte. With no records that is unavoidable -- an empty section
+        // is a count and maybe a footer, and every layout of that footer width writes the same
+        // bytes -- so the header word breaks the tie, and only for a value the corpus pairs with
+        // one layout. With records it means a genuine ambiguity, and the tail stays raw.
+        if count != 0 {
+            return Ok(None);
+        }
+        match MapTailLayout::for_header_word(metadata)
+            .filter(|resolved| resolved.total_fixed_bytes == layout.total_fixed_bytes)
+        {
+            Some(resolved) => resolved,
+            None => return Ok(None),
+        }
+    } else {
+        layout
+    };
 
     let mut records = Vec::with_capacity(count);
-    let records_offset = trailing_offset + 4;
     for index in 0..count {
-        let offset = records_offset + index * PLACED_SPRITE_RECORD_49_SIZE;
-        let end = offset + PLACED_SPRITE_RECORD_49_SIZE;
-        let raw: [u8; PLACED_SPRITE_RECORD_49_SIZE] = source[offset..end]
-            .try_into()
-            .expect("placed-sprite record bounds were checked by the section size");
+        let offset = records_offset + index * layout.record_size;
+        let end = offset + layout.record_size;
+        let raw = source
+            .get(offset..end)
+            .ok_or_else(|| MapError::new("placed-sprite record is truncated"))?
+            .to_vec();
         let cell_index = read_u32(&raw, 8)?;
         if usize::try_from(cell_index).map_or(true, |cell_index| cell_index >= cell_count) {
             return Err(MapError::new(format!(
                 "placed-sprite record {index} references out-of-range cell {cell_index}"
             )));
         }
-        records.push(PlacedSpriteRecord49 {
-            raw,
-            record_kind: read_u32(source, offset)?,
-            record_version: read_u32(source, offset + 4)?,
+        let tail = if layout.has_procedure_tail() {
+            PlacedSpriteTail::Procedure {
+                marker_32: read_u16(&raw, 32)?,
+                procedure_id_candidate: read_i32(&raw, 34)?,
+                unknown_38: read_u32(&raw, 38)?,
+                unknown_42: read_u32(&raw, 42)?,
+                padding: raw[46..].to_vec(),
+            }
+        } else {
+            PlacedSpriteTail::Plain {
+                unknown_32: read_u32(&raw, 32)?,
+                unknown_36: read_u32(&raw, 36)?,
+                unknown_40: read_u32(&raw, 40)?,
+                unknown_44: read_u32(&raw, 44)?,
+                unknown_48: (layout.record_size >= 52)
+                    .then(|| read_u32(&raw, 48))
+                    .transpose()?,
+                unknown_52: (layout.record_size >= 53).then(|| raw[52]),
+            }
+        };
+        records.push(PlacedSpriteRecord {
+            record_kind: read_u32(&raw, 0)?,
+            record_version: read_u32(&raw, 4)?,
             cell_index,
-            unknown_12: read_u32(source, offset + 12)?,
-            unknown_16: read_u32(source, offset + 16)?,
-            instance_id: read_u32(source, offset + 20)?,
-            attribute_bits: read_u32(source, offset + 24)?,
-            sprite_type: read_u32(source, offset + 28)?,
-            marker_32: read_u16(source, offset + 32)?,
-            procedure_id_candidate: read_i32(source, offset + 34)?,
-            unknown_38: read_u32(source, offset + 38)?,
-            unknown_42: read_u32(source, offset + 42)?,
-            unknown_46: source[offset + 46..offset + 49]
-                .try_into()
-                .expect("placed-sprite suffix bounds were checked by the section size"),
+            unknown_12: read_u32(&raw, 12)?,
+            unknown_16: read_u32(&raw, 16)?,
+            instance_id: read_u32(&raw, 20)?,
+            attribute_bits: read_u32(&raw, 24)?,
+            sprite_type: read_u32(&raw, 28)?,
+            tail,
+            raw,
         });
     }
-    let footer = read_u32(
-        source,
-        records_offset + count * PLACED_SPRITE_RECORD_49_SIZE,
-    )?;
+    let footer = layout
+        .has_footer()
+        .then(|| read_u32(source, records_offset + count * layout.record_size))
+        .transpose()?;
     let instance_id_high_water = records.iter().map(|record| record.instance_id).max();
-    Ok(Some(PlacedSpriteSection49 {
+    Ok(Some(PlacedSpriteSection {
+        layout,
         records,
         footer,
         instance_id_high_water,
     }))
+}
+
+/// Whether a record head at `offset` carries the five values every corpus record carries, and the
+/// marker its layout's tail shape carries.
+///
+/// This is what stops a wrong record size from being believed, and **each half of it is the sole
+/// discriminator for one of the two colliding lengths**:
+///
+/// - **196 bytes, four records, `47 + footer` against `48 + none`:** the field checks do it. At the
+///   47-byte stride record 1's `record_kind` lands inside record 0's padding, which is zero.
+///   `a_section_two_layouts_fit_is_decoded_by_the_record_heads` covers one direction and
+///   `a_forty_seven_byte_section_of_four_records_rejects_the_forty_eight_byte_layout` the other.
+/// - **57 bytes, one record, `49 + footer` against `53 + none`:** the **marker check alone** does
+///   it. With a single record both strides put that record at the same offset, so every field this
+///   function checks besides the marker is byte-identical between the two readings. Delete the
+///   marker test and neither candidate can be eliminated: the tail then stays raw and
+///   `--map-place-sprite` refuses a map it used to edit. See
+///   `a_count_one_fifty_three_byte_section_is_resolved_by_the_marker_alone`.
+///
+/// The marker also rejects a section whose length says one tail shape and whose records carry the
+/// other's marker, which no installed map is.
+fn record_head_matches(
+    source: &[u8],
+    offset: usize,
+    cell_count: usize,
+    layout: MapTailLayout,
+) -> bool {
+    let Some(head) = source.get(offset..offset + PLACED_SPRITE_HEAD_SIZE + 4) else {
+        return false;
+    };
+    let word = |at: usize| u32::from_le_bytes(head[at..at + 4].try_into().expect("bounded"));
+    if word(0) != 1 || word(4) != 1 || word(12) != u32::MAX || word(16) != 0 {
+        return false;
+    }
+    if usize::try_from(word(8)).map_or(true, |cell_index| cell_index >= cell_count) {
+        return false;
+    }
+    // The marker word tells the two tail shapes apart, and it is constant per shape across all
+    // 21,117 corpus records. `record_kind` at the wrong stride, not this, is what resolves the
+    // 196-byte collision -- but this **is** the only thing that resolves the 57-byte one, where a
+    // single record sits at the same offset under both readings. See the doc block above.
+    if layout.has_procedure_tail() {
+        u16::from_le_bytes(head[32..34].try_into().expect("bounded")) == 0x01ff
+    } else {
+        word(32) == 0
+    }
 }
 
 fn read_u16(source: &[u8], offset: usize) -> Result<u16, MapError> {
@@ -606,7 +1043,7 @@ fn read_u32(source: &[u8], offset: usize) -> Result<u32, MapError> {
 //      test here could see.
 //
 //      **Placing a *new* sprite is the exception, and it necessarily mints.** A record that did not
-//      exist has to get bytes from somewhere. `PlacedSpriteRecord49::new` takes them from the one
+//      exist has to get bytes from somewhere. `PlacedSpriteRecord::new` takes them from the one
 //      run in which this project watched the engine write a fresh record, and one of them -- the
 //      `+24` attribute field -- *contradicts* the corpus reading of that field. That is stated at
 //      the constant, in `docs/map-format.md` and in the tool README, because a reader who believes
@@ -619,7 +1056,7 @@ fn read_u32(source: &[u8], offset: usize) -> Result<u32, MapError> {
 ///
 /// **Observed in gameplay, 2026-09-17.** All three probe records carried `0x00000001`. That
 /// *contradicts* the corpus reading of this field, in which only the upper nibble varies across
-/// 16,628 records -- see [`PlacedSpriteRecord49::attribute_code_candidate`]. The contradiction is
+/// 16,628 records -- see [`PlacedSpriteRecord::attribute_code_candidate`]. The contradiction is
 /// unresolved, so a newly minted record reproduces the one value that was actually observed being
 /// written rather than anything derived from the corpus.
 pub const FRESH_SPRITE_ATTRIBUTE_BITS: u32 = 1;
@@ -629,88 +1066,168 @@ pub const FRESH_SPRITE_ATTRIBUTE_BITS: u32 = 1;
 /// **Observed in gameplay, 2026-09-17:** three sprites placed on a fresh map got 200, 201, 202.
 pub const FIRST_SPRITE_INSTANCE_ID: u32 = 200;
 
-impl PlacedSpriteRecord49 {
-    /// A record of the shape the engine writes for a newly placed terrain sprite.
+/// The `attribute_bits` a newly minted record takes in the 48-, 52- and 53-byte layouts.
+///
+/// **Observed in a local binary, 2026-09-17:** every one of the 4,003 records in those three
+/// layouts carries zero here, low byte and upper nibble alike.
+///
+/// **Inferred, and unmeasured:** that a fresh record in those layouts should also carry zero. The
+/// engine run that watched a fresh record being written wrote a **49-byte** record and put
+/// [`FRESH_SPRITE_ATTRIBUTE_BITS`] in this field, so that measurement says nothing about the older
+/// layouts -- and it cannot simply be carried across, because `1` is a value no record in *any*
+/// layout was observed holding. Between a measured value from a different layout and the only value
+/// this layout has ever held, a new record takes the latter.
+pub const PLAIN_TAIL_FRESH_SPRITE_ATTRIBUTE_BITS: u32 = 0;
+
+impl PlacedSpriteRecord {
+    /// A record of the shape the engine writes for a newly placed terrain sprite, in `layout`.
     ///
-    /// **This mints.** Nine fields get values that were not copied from anything in the file being
+    /// **This mints.** Every field gets a value that was not copied from anything in the file being
     /// edited, so a placed sprite is the one place the writer's copy-never-mint rule does not hold.
     ///
-    /// Eight of the nine are invariant across all 16,628 corpus records, which is as close to safe
-    /// as this project can get: `record_kind` and `record_version` are `1`, `+12` and `+42` are
-    /// `0xffffffff`, `+16`, `+38` and `+46..49` are zero, and `marker_32` is `0x01ff`. The
-    /// procedure id is `-1`, the "no procedure" value the probe's sprites carried.
-    ///
-    /// The ninth is [`FRESH_SPRITE_ATTRIBUTE_BITS`], and it is **not** corpus-invariant -- it
+    /// For the 47- and 49-byte layouts the constants are invariant across all 17,114 records that
+    /// carry a procedure tail: `record_kind` and `record_version` are `1`, `+12` and `+42` are
+    /// `0xffffffff`, `+16`, `+38` and the padding are zero, and `marker_32` is `0x01ff`. The
+    /// procedure id is `-1`, the "no procedure" value the probe's sprites carried, and the
+    /// attribute field is [`FRESH_SPRITE_ATTRIBUTE_BITS`] -- which is **not** corpus-invariant and
     /// contradicts the corpus reading of `+24`. See that constant. Whether the engine accepts a
     /// record of this shape is unmeasured; only an attended engine run settles it.
-    pub fn new(cell_index: u32, instance_id: u32, sprite_type: u32) -> Self {
+    ///
+    /// For the 48-, 52- and 53-byte layouts every minted value is that layout's corpus constant --
+    /// `0`, `0`, `0xffffffff`, `0`, then `0xffffffff` and a zero byte where the layout has them --
+    /// and the attribute field is [`PLAIN_TAIL_FRESH_SPRITE_ATTRIBUTE_BITS`], where this project
+    /// has no engine measurement at all and says so.
+    pub fn new(
+        layout: MapTailLayout,
+        cell_index: u32,
+        instance_id: u32,
+        sprite_type: u32,
+    ) -> Result<Self, MapError> {
+        let (tail, attribute_bits) = if layout.has_procedure_tail() {
+            (
+                PlacedSpriteTail::Procedure {
+                    marker_32: 0x01ff,
+                    procedure_id_candidate: -1,
+                    unknown_38: 0,
+                    unknown_42: u32::MAX,
+                    padding: vec![0; layout.record_size - 46],
+                },
+                FRESH_SPRITE_ATTRIBUTE_BITS,
+            )
+        } else {
+            (
+                PlacedSpriteTail::Plain {
+                    unknown_32: 0,
+                    unknown_36: 0,
+                    unknown_40: u32::MAX,
+                    unknown_44: 0,
+                    unknown_48: (layout.record_size >= 52).then_some(u32::MAX),
+                    unknown_52: (layout.record_size >= 53).then_some(0),
+                },
+                PLAIN_TAIL_FRESH_SPRITE_ATTRIBUTE_BITS,
+            )
+        };
         let mut record = Self {
-            raw: [0; PLACED_SPRITE_RECORD_49_SIZE],
+            raw: Vec::new(),
             record_kind: 1,
             record_version: 1,
             cell_index,
             unknown_12: u32::MAX,
             unknown_16: 0,
             instance_id,
-            attribute_bits: FRESH_SPRITE_ATTRIBUTE_BITS,
+            attribute_bits,
             sprite_type,
-            marker_32: 0x01ff,
-            procedure_id_candidate: -1,
-            unknown_38: 0,
-            unknown_42: u32::MAX,
-            unknown_46: [0; 3],
+            tail,
         };
-        record.raw = record.to_bytes();
-        record
+        record.raw = record.to_bytes()?;
+        if record.raw.len() != layout.record_size {
+            return Err(MapError::new(format!(
+                "minted a {}-byte record for a {}-byte layout",
+                record.raw.len(),
+                layout.record_size
+            )));
+        }
+        Ok(record)
     }
 
-    /// The 49 bytes of this record, rebuilt from its typed fields.
+    /// This record's bytes, rebuilt from its typed fields.
     ///
-    /// The typed fields cover all 49 bytes with no gap -- `0..32` as eight `u32`s, `32..34` as the
-    /// marker, `34..38` as the procedure id, `38..42`, `42..46`, then the three-byte tail -- so
-    /// for a record that came from [`parse`](MapAsset::parse) this reproduces `raw` exactly and
-    /// nothing has to be carried over blindly. `roundtrips_every_corpus_record` asserts that over
-    /// the installed corpus rather than trusting the arithmetic.
-    pub fn to_bytes(&self) -> [u8; PLACED_SPRITE_RECORD_49_SIZE] {
-        let mut bytes = [0_u8; PLACED_SPRITE_RECORD_49_SIZE];
-        bytes[0..4].copy_from_slice(&self.record_kind.to_le_bytes());
-        bytes[4..8].copy_from_slice(&self.record_version.to_le_bytes());
-        bytes[8..12].copy_from_slice(&self.cell_index.to_le_bytes());
-        bytes[12..16].copy_from_slice(&self.unknown_12.to_le_bytes());
-        bytes[16..20].copy_from_slice(&self.unknown_16.to_le_bytes());
-        bytes[20..24].copy_from_slice(&self.instance_id.to_le_bytes());
-        bytes[24..28].copy_from_slice(&self.attribute_bits.to_le_bytes());
-        bytes[28..32].copy_from_slice(&self.sprite_type.to_le_bytes());
-        bytes[32..34].copy_from_slice(&self.marker_32.to_le_bytes());
-        bytes[34..38].copy_from_slice(&self.procedure_id_candidate.to_le_bytes());
-        bytes[38..42].copy_from_slice(&self.unknown_38.to_le_bytes());
-        bytes[42..46].copy_from_slice(&self.unknown_42.to_le_bytes());
-        bytes[46..49].copy_from_slice(&self.unknown_46);
-        bytes
+    /// The typed fields cover every byte with no gap -- `0..32` as eight `u32`s, then the tail,
+    /// whose own fields cover the rest in each of the six layouts -- so for a record that came from
+    /// [`parse`](MapAsset::parse) this reproduces `raw` exactly and nothing has to be carried over
+    /// blindly. `roundtrips_every_corpus_record` asserts that over the installed corpus rather than
+    /// trusting the arithmetic.
+    ///
+    /// Refuses a tail whose shape no corpus layout has; see
+    /// [`PlacedSpriteTail::shape_is_observed`].
+    pub fn to_bytes(&self) -> Result<Vec<u8>, MapError> {
+        if !self.tail.shape_is_observed() {
+            return Err(MapError::new(format!(
+                "a {}-byte placed-sprite record is not one of the six observed layouts",
+                self.size()
+            )));
+        }
+        let mut bytes = Vec::with_capacity(self.size());
+        bytes.extend_from_slice(&self.record_kind.to_le_bytes());
+        bytes.extend_from_slice(&self.record_version.to_le_bytes());
+        bytes.extend_from_slice(&self.cell_index.to_le_bytes());
+        bytes.extend_from_slice(&self.unknown_12.to_le_bytes());
+        bytes.extend_from_slice(&self.unknown_16.to_le_bytes());
+        bytes.extend_from_slice(&self.instance_id.to_le_bytes());
+        bytes.extend_from_slice(&self.attribute_bits.to_le_bytes());
+        bytes.extend_from_slice(&self.sprite_type.to_le_bytes());
+        self.tail.write_into(&mut bytes);
+        Ok(bytes)
     }
 }
 
-impl PlacedSpriteSection49 {
-    /// `u32 record_count`, the records, then the `u32` footer.
+impl PlacedSpriteSection {
+    /// `u32 record_count`, the records, then the `u32` footer if this layout has one.
     ///
-    /// **Observed in gameplay, 2026-09-17, by construction.** The corpus could only show that this
-    /// section is `count * 49 + 8` bytes; it could not say which four of the eight fixed bytes came
-    /// first. Two saves of the same map settled it -- see [`PlacedSpriteSection49`].
+    /// **Observed in gameplay, 2026-09-17, by construction.** The corpus could only show that the
+    /// 49-byte layout's section is `count * 49 + 8` bytes; it could not say which four of the eight
+    /// fixed bytes came first. Two saves of the same map settled it -- see [`PlacedSpriteSection`].
+    ///
+    /// Every record must be the layout's size and the footer must be present exactly when the
+    /// layout has one. Both are refused rather than written: a section whose count word and record
+    /// stride disagree is a file that parses and is wrong, which is the one outcome this module is
+    /// built to avoid.
     pub fn to_bytes(&self) -> Result<Vec<u8>, MapError> {
         // The count is a `u32` in the file. `as u32` would wrap silently and write a header that
-        // disagrees with the records behind it -- a map that parses and is wrong, which is the one
-        // outcome this whole module is built to avoid. Unreachable through the CLI (it would take
+        // disagrees with the records behind it. Unreachable through the CLI (it would take
         // hundreds of gigabytes of records) and cheap to make impossible anyway.
         let count = u32::try_from(self.records.len())
             .map_err(|_| MapError::new("placed-sprite record count exceeds the 32-bit field"))?;
+        if self.footer.is_some() != self.layout.has_footer() {
+            return Err(MapError::new(format!(
+                "a {} section {} a footer",
+                self.layout,
+                if self.layout.has_footer() {
+                    "needs"
+                } else {
+                    "has no"
+                }
+            )));
+        }
         let mut bytes = Vec::with_capacity(
-            PLACED_SPRITE_SECTION_49_FIXED_BYTES + self.records.len() * PLACED_SPRITE_RECORD_49_SIZE,
+            self.layout
+                .section_bytes(self.records.len())
+                .ok_or_else(|| MapError::new("placed-sprite section size overflow"))?,
         );
         bytes.extend_from_slice(&count.to_le_bytes());
         for record in &self.records {
-            bytes.extend_from_slice(&record.to_bytes());
+            if record.size() != self.layout.record_size {
+                return Err(MapError::new(format!(
+                    "a {}-byte record does not fit a {} section",
+                    record.size(),
+                    self.layout
+                )));
+            }
+            bytes.extend_from_slice(&record.to_bytes()?);
         }
-        bytes.extend_from_slice(&self.footer.to_le_bytes());
+        if let Some(footer) = self.footer {
+            bytes.extend_from_slice(&footer.to_le_bytes());
+        }
         Ok(bytes)
     }
 
@@ -1513,6 +2030,17 @@ pub const MAX_CREATED_DIMENSION: u32 = 1024;
 /// `00000000 01000000` — count `0`, footer `1`. Its meaning is Unknown; the value is not.
 pub const EMPTY_MAP_FOOTER: u32 = 1;
 
+/// The trailing-record layout [`MapAsset::create`] writes.
+///
+/// **Observed in gameplay:** the engine's own empty save is a 49-byte-record section with a footer,
+/// and [`GENERATED_HEADER_WORD`] is the header word it stamped alongside -- a value the corpus pairs
+/// with this layout and no other. A created map re-read through [`MapAsset::parse`] therefore
+/// resolves to this same layout, so placing a sprite on one is not a different code path.
+pub const GENERATED_MAP_TAIL_LAYOUT: MapTailLayout = MapTailLayout {
+    record_size: 49,
+    total_fixed_bytes: 8,
+};
+
 impl MapAsset {
     /// A new map of `width` x `height`, every cell painted with a terrain type's base tile.
     ///
@@ -1566,12 +2094,13 @@ impl MapAsset {
             };
             cell_count
         ];
-        let placed_sprites_49 = PlacedSpriteSection49 {
+        let placed_sprites = PlacedSpriteSection {
+            layout: GENERATED_MAP_TAIL_LAYOUT,
             records: Vec::new(),
-            footer: EMPTY_MAP_FOOTER,
+            footer: Some(EMPTY_MAP_FOOTER),
             instance_id_high_water: None,
         };
-        let trailing_raw = placed_sprites_49.to_bytes()?;
+        let trailing_raw = placed_sprites.to_bytes()?;
 
         Ok(Self {
             metadata: GENERATED_HEADER_WORD,
@@ -1579,7 +2108,7 @@ impl MapAsset {
             height,
             bits_per_pixel: 8,
             cells,
-            placed_sprites_49: Some(placed_sprites_49),
+            placed_sprites: Some(placed_sprites),
             trailing_raw,
         })
     }
@@ -1983,10 +2512,18 @@ impl MapAsset {
         Ok(())
     }
 
-    fn placed_sprites_mut(&mut self) -> Result<&mut PlacedSpriteSection49, MapError> {
-        self.placed_sprites_49.as_mut().ok_or_else(|| {
+    /// The decoded object section, or a refusal that says why there isn't one.
+    ///
+    /// The message used to say "not the decoded 49-byte placed-sprite family", which after the other
+    /// five layouts landed was wrong for the 169 maps that now edit fine. Four things actually reach
+    /// here, and none of them is a record size: an empty section whose header word the corpus never
+    /// showed, a section of mixed record sizes, a section whose length says one tail shape while its
+    /// records carry the other's marker, and a non-empty section two layouts still fit after the
+    /// head checks.
+    fn placed_sprites_mut(&mut self) -> Result<&mut PlacedSpriteSection, MapError> {
+        self.placed_sprites.as_mut().ok_or_else(|| {
             MapError::new(
-                "this map's trailing section is not the decoded 49-byte placed-sprite family, \
+                "this map's trailing section is not one of the six decoded placed-sprite layouts, \
                  so its objects cannot be edited",
             )
         })
@@ -1994,9 +2531,9 @@ impl MapAsset {
 
     /// Place a terrain sprite of `sprite_type` at `(x, y)`, returning its new instance id.
     ///
-    /// Refused when a sprite already occupies the cell: `cell_index` is unique across all 16,628
-    /// corpus records in every file, so duplicating one would write a record shape the engine has
-    /// never been observed to produce.
+    /// Refused when a sprite already occupies the cell: `cell_index` is unique **within every file**
+    /// across all 21,117 corpus records of all six layouts, so duplicating one would write a record
+    /// shape the engine has never been observed to produce.
     pub fn place_sprite(&mut self, x: u32, y: u32, sprite_type: u32) -> Result<u32, MapError> {
         let cell_index = u32::try_from(self.cell_index_checked(x, y)?)
             .map_err(|_| MapError::new("cell index exceeds the 32-bit record field"))?;
@@ -2014,9 +2551,10 @@ impl MapAsset {
             MapError::new("this map has used every instance id up to u32::MAX")
         })?;
         section.instance_id_high_water = Some(instance_id);
+        let layout = section.layout;
         section
             .records
-            .push(PlacedSpriteRecord49::new(cell_index, instance_id, sprite_type));
+            .push(PlacedSpriteRecord::new(layout, cell_index, instance_id, sprite_type)?);
         Ok(instance_id)
     }
 
@@ -2111,7 +2649,7 @@ mod tests {
         assert_eq!(map.trailing_offset(), 32);
         assert_eq!(map.trailing_bytes(), 6);
         assert_eq!(map.trailing_head_u32(), Some(3));
-        assert!(map.placed_sprites_49.is_none());
+        assert!(map.placed_sprites.is_none());
     }
 
     #[test]
@@ -2221,8 +2759,12 @@ mod tests {
         // Observed in gameplay, 2026-09-17: the same map saved with no sprites has an 8-byte tail
         // of `00000000 01000000`, and with three sprites a 155-byte tail of `03000000` + 147 +
         // `01000000`. The count leads, the footer trails, and the footer did not move.
+        // The header word is `GENERATED_HEADER_WORD` because an **empty** section cannot name its
+        // own layout -- there is no record to measure a stride against -- so the parser falls back
+        // to the header word for that one case. A fixture with an arbitrary word would leave the
+        // tail raw and this test would be asserting about `None`.
         let mut empty = Vec::new();
-        empty.extend_from_slice(&0_u32.to_le_bytes());
+        empty.extend_from_slice(&super::GENERATED_HEADER_WORD.to_le_bytes());
         empty.extend_from_slice(&5_u32.to_le_bytes());
         empty.extend_from_slice(&3_u32.to_le_bytes());
         empty.extend_from_slice(&8_u32.to_le_bytes());
@@ -2231,19 +2773,19 @@ mod tests {
         empty.extend_from_slice(&1_u32.to_le_bytes());
 
         let map = MapAsset::parse(&empty).unwrap();
-        let section = map.placed_sprites_49.as_ref().unwrap();
+        let section = map.placed_sprites.as_ref().unwrap();
 
         assert_eq!(map.trailing_bytes(), 8);
         assert!(section.records.is_empty());
-        assert_eq!(section.footer, 1);
+        assert_eq!(section.footer, Some(1));
 
         let populated = non_square_map_with_record(5, 3, 7);
         let map = MapAsset::parse(&populated).unwrap();
-        let section = map.placed_sprites_49.as_ref().unwrap();
+        let section = map.placed_sprites.as_ref().unwrap();
 
         assert_eq!(map.trailing_bytes(), 4 + 49 + 4);
         assert_eq!(section.records.len(), 1);
-        assert_eq!(section.footer, 1);
+        assert_eq!(section.footer, Some(1));
         assert_eq!(section.records[0].sprite_type, 470);
         assert_eq!(section.records[0].instance_id, 200);
     }
@@ -2275,7 +2817,7 @@ mod tests {
         // map wrote cell indexes 1940, 1941, 2004 -- `y * 64 + x`, not `x * 64 + y`.
         let source = non_square_map_with_record(5, 3, 11);
         let map = MapAsset::parse(&source).unwrap();
-        let record = &map.placed_sprites_49.as_ref().unwrap().records[0];
+        let record = &map.placed_sprites.as_ref().unwrap().records[0];
 
         assert_eq!(record.coordinates(map.width), (1, 2));
         assert_eq!(
@@ -2286,7 +2828,7 @@ mod tests {
         for index in 0..map.cells.len() as u32 {
             let source = non_square_map_with_record(5, 3, index);
             let map = MapAsset::parse(&source).unwrap();
-            let record = &map.placed_sprites_49.as_ref().unwrap().records[0];
+            let record = &map.placed_sprites.as_ref().unwrap().records[0];
             let (x, y) = record.coordinates(map.width);
             assert_eq!(map.cell_index(x, y), Some(index as usize));
         }
@@ -2317,7 +2859,7 @@ mod tests {
         source.extend_from_slice(&3_u32.to_le_bytes());
 
         let map = MapAsset::parse(&source).unwrap();
-        let section = map.placed_sprites_49.as_ref().unwrap();
+        let section = map.placed_sprites.as_ref().unwrap();
         let record = &section.records[0];
 
         assert_eq!(record.cell_index, 5);
@@ -2325,9 +2867,9 @@ mod tests {
         assert_eq!(record.instance_id, 207);
         assert_eq!(record.attribute_code_candidate(), 10);
         assert_eq!(record.sprite_type, 105);
-        assert_eq!(record.procedure_id_candidate, 12);
+        assert_eq!(record.procedure_id_candidate(), Some(12));
         assert_eq!(record.raw.len(), 49);
-        assert_eq!(section.footer, 3);
+        assert_eq!(section.footer, Some(3));
         assert_eq!(map.cell(2, 1), Some(&map.cells[5]));
         assert!(map.cell(3, 0).is_none());
     }
@@ -2340,7 +2882,7 @@ mod tests {
         // reviewer looked, and why this fixture is deliberately not square.
         let map = MapAsset::parse(&non_square_map_with_one_record(7)).expect("parse");
         let section = map
-            .placed_sprites_49
+            .placed_sprites
             .as_ref()
             .expect("the fixture writes one 49-byte record");
         let record = &section.records[0];
@@ -2426,7 +2968,7 @@ mod tests {
         let source = non_square_map_with_opaque_tail(3, 2);
         let map = MapAsset::parse(&source).unwrap();
         assert!(
-            map.placed_sprites_49.is_none(),
+            map.placed_sprites.is_none(),
             "the fixture must exercise the undecoded path"
         );
         assert_eq!(map.to_bytes().unwrap(), source);
@@ -2436,8 +2978,8 @@ mod tests {
     fn a_parsed_record_rebuilds_its_own_bytes_from_its_fields() {
         let source = non_square_map_with_record(5, 3, 7);
         let map = MapAsset::parse(&source).unwrap();
-        let record = &map.placed_sprites_49.as_ref().unwrap().records[0];
-        assert_eq!(record.to_bytes(), record.raw);
+        let record = &map.placed_sprites.as_ref().unwrap().records[0];
+        assert_eq!(record.to_bytes().unwrap(), record.raw);
     }
 
     /// The edit must land at `16 + (y * width + x) * 8`, checked as a byte offset rather than
@@ -2792,7 +3334,7 @@ mod tests {
         assert!(map.set_tile(63, 95, 392).is_err());
         assert_eq!(map.place_sprite(10, 20, 470).unwrap(), 200);
         let written = MapAsset::parse(&map.to_bytes().unwrap()).unwrap();
-        let record = &written.placed_sprites_49.as_ref().unwrap().records[0];
+        let record = &written.placed_sprites.as_ref().unwrap().records[0];
         assert_eq!(record.cell_index, 20 * 96 + 10);
         assert_eq!(written.record_coordinates(record), (10, 20));
         assert!(MapAsset::create(0, 64, 1).is_err());
@@ -2911,7 +3453,7 @@ mod tests {
             "the freed id returns across a write, which is the documented limitation"
         );
         let written = reparse(&map.to_bytes().unwrap());
-        let section = written.placed_sprites_49.as_ref().unwrap();
+        let section = written.placed_sprites.as_ref().unwrap();
         let reissued = section
             .records
             .iter()
@@ -2927,7 +3469,9 @@ mod tests {
     /// A map with a decoded but empty 49-byte section: `count` 0, then the footer.
     fn empty_record_map(width: u32, height: u32) -> Vec<u8> {
         let mut source = Vec::new();
-        source.extend_from_slice(&0_u32.to_le_bytes());
+        // See `reads_the_trailing_count_first_and_the_footer_last`: a section with no records
+        // needs the header word to pin its layout down.
+        source.extend_from_slice(&super::GENERATED_HEADER_WORD.to_le_bytes());
         source.extend_from_slice(&width.to_le_bytes());
         source.extend_from_slice(&height.to_le_bytes());
         source.extend_from_slice(&8_u32.to_le_bytes());
@@ -2938,6 +3482,508 @@ mod tests {
         source.extend_from_slice(&0_u32.to_le_bytes());
         source.extend_from_slice(&1_u32.to_le_bytes());
         source
+    }
+
+
+    /// A **non-square** map with `cell_indexes.len()` records written in `layout`.
+    ///
+    /// Non-square because every shipped map is square and that hid a transposed cell index for
+    /// months. The header word is the one the corpus pairs with `layout`, so a fixture whose
+    /// section is empty still resolves -- and so that a fixture cannot accidentally assert that the
+    /// header word is ignored when the parser does consult it for an empty section.
+    fn map_in_layout(layout: super::MapTailLayout, width: u32, height: u32, cell_indexes: &[u32]) -> Vec<u8> {
+        let header_word = super::OBSERVED_HEADER_WORD_LAYOUTS
+            .into_iter()
+            .find_map(|(word, candidate)| (candidate == layout).then_some(word))
+            .expect("every observed layout has an observed header word");
+        let mut source = Vec::new();
+        source.extend_from_slice(&header_word.to_le_bytes());
+        source.extend_from_slice(&width.to_le_bytes());
+        source.extend_from_slice(&height.to_le_bytes());
+        source.extend_from_slice(&8_u32.to_le_bytes());
+        for index in 0..width * height {
+            source.extend_from_slice(&index.to_le_bytes());
+            source.extend_from_slice(&0.0_f32.to_bits().to_le_bytes());
+        }
+        source.extend_from_slice(&u32::try_from(cell_indexes.len()).unwrap().to_le_bytes());
+        for (position, cell_index) in cell_indexes.iter().enumerate() {
+            source.extend_from_slice(&1_u32.to_le_bytes());
+            source.extend_from_slice(&1_u32.to_le_bytes());
+            source.extend_from_slice(&cell_index.to_le_bytes());
+            source.extend_from_slice(&u32::MAX.to_le_bytes());
+            source.extend_from_slice(&0_u32.to_le_bytes());
+            source.extend_from_slice(&(200 + u32::try_from(position).unwrap()).to_le_bytes());
+            // A corpus attribute value for each shape: the procedure tails carry upper-nibble
+            // codes, the plain tails carry zero in all 4,003 records.
+            let attribute: u32 = if matches!(layout.record_size, 47 | 49) { 0x3000_0000 } else { 0 };
+            source.extend_from_slice(&attribute.to_le_bytes());
+            source.extend_from_slice(&105_u32.to_le_bytes());
+            match layout.record_size {
+                47 | 49 => {
+                    source.extend_from_slice(&0x01ff_u16.to_le_bytes());
+                    source.extend_from_slice(&(-1_i32).to_le_bytes());
+                    source.extend_from_slice(&0_u32.to_le_bytes());
+                    source.extend_from_slice(&u32::MAX.to_le_bytes());
+                    source.extend_from_slice(&vec![0; layout.record_size - 46]);
+                }
+                _ => {
+                    source.extend_from_slice(&0_u32.to_le_bytes());
+                    source.extend_from_slice(&0_u32.to_le_bytes());
+                    source.extend_from_slice(&u32::MAX.to_le_bytes());
+                    source.extend_from_slice(&0_u32.to_le_bytes());
+                    if layout.record_size >= 52 {
+                        source.extend_from_slice(&u32::MAX.to_le_bytes());
+                    }
+                    if layout.record_size >= 53 {
+                        source.push(0);
+                    }
+                }
+            }
+        }
+        if layout.has_footer() {
+            source.extend_from_slice(&1_u32.to_le_bytes());
+        }
+        source
+    }
+
+    /// All six layouts parse, and each record rebuilds its own bytes from its typed fields.
+    ///
+    /// The 47-, 48-, 52- and 53-byte layouts are the ones this project could not decode until
+    /// 2026-09-17; before that four of the six left the tail raw, which is what made object
+    /// editing refuse on 169 of the 365 installed maps.
+    #[test]
+    fn every_observed_layout_parses_and_rebuilds_from_its_fields() {
+        for layout in super::OBSERVED_TAIL_LAYOUTS {
+            let source = map_in_layout(layout, 5, 3, &[4, 9]);
+            let map = MapAsset::parse(&source).unwrap();
+            let section = map
+                .placed_sprites
+                .as_ref()
+                .unwrap_or_else(|| panic!("{layout} stayed raw"));
+
+            assert_eq!(section.layout, layout);
+            assert_eq!(section.records.len(), 2, "{layout}");
+            assert_eq!(section.footer.is_some(), layout.has_footer(), "{layout}");
+            assert_eq!(
+                map.trailing_bytes(),
+                4 + 2 * layout.record_size + layout.footer_bytes(),
+                "{layout}"
+            );
+            for record in &section.records {
+                assert_eq!(record.size(), layout.record_size, "{layout}");
+                assert_eq!(record.raw.len(), layout.record_size, "{layout}");
+                assert_eq!(record.to_bytes().unwrap(), record.raw, "{layout}");
+                assert_eq!(record.sprite_type, 105, "{layout}");
+                assert_eq!(
+                    record.procedure_id_candidate(),
+                    matches!(layout.record_size, 47 | 49).then_some(-1),
+                    "{layout}"
+                );
+            }
+            assert_eq!(section.records[0].cell_index, 4, "{layout}");
+            assert_eq!(section.records[1].instance_id, 201, "{layout}");
+            assert_eq!(map.to_bytes().unwrap(), source, "{layout}");
+        }
+    }
+
+    /// The trap this whole parse is built against: a section length that divides evenly under two
+    /// record sizes.
+    ///
+    /// Four 48-byte records with no footer and four 47-byte records with one are both 196 bytes, so
+    /// arithmetic alone cannot choose, and it reports both. The record heads can: at the 47-byte
+    /// stride the second record's `record_kind` lands inside the first record's padding, which is
+    /// zero rather than `1`. Delete the head check from `parse_placed_sprites` and this fixture
+    /// decodes as 47-byte records, which is the failure it exists to catch.
+    #[test]
+    fn a_section_two_layouts_fit_is_decoded_by_the_record_heads() {
+        let forty_eight = super::MapTailLayout { record_size: 48, total_fixed_bytes: 4 };
+        let forty_seven_with_footer = super::MapTailLayout { record_size: 47, total_fixed_bytes: 8 };
+        let source = map_in_layout(forty_eight, 5, 3, &[0, 1, 2, 3]);
+        let map = MapAsset::parse(&source).unwrap();
+
+        assert_eq!(map.trailing_bytes(), 196);
+        assert_eq!(
+            map.candidate_tail_layouts(),
+            vec![forty_seven_with_footer, forty_eight],
+            "both layouts fit this length; arithmetic cannot choose"
+        );
+        assert_eq!(map.resolved_tail_layout(), Some(forty_eight));
+        assert_eq!(map.to_bytes().unwrap(), source);
+    }
+
+    /// A section whose records are not all one size is not a layout, and stays raw and intact.
+    ///
+    /// No installed map mixes sizes -- all 364 that hold records are uniform -- so this is a fixture
+    /// the corpus cannot supply. **What it is and is not evidence for, corrected after review:**
+    /// this 105-byte section matches no layout's length arithmetic at all, so it stays raw on the
+    /// length check alone, and were that check relaxed every candidate would still fail its head
+    /// check. It asserts the **default** outcome, which makes it a round-trip test for an undecoded
+    /// tail -- the half that does move when broken -- and not evidence that layout resolution
+    /// works. The collision fixtures above are that evidence.
+    #[test]
+    fn a_section_of_mixed_record_sizes_stays_raw_and_still_round_trips() {
+        let mut source = map_in_layout(
+            super::MapTailLayout { record_size: 49, total_fixed_bytes: 8 },
+            5,
+            3,
+            &[4],
+        );
+        // Splice a 52-byte record in beside the 49-byte one: drop the footer, bump the count and
+        // append a plain-tail record.
+        source.truncate(source.len() - 4);
+        let count_at = source.len() - 49 - 4;
+        source[count_at..count_at + 4].copy_from_slice(&2_u32.to_le_bytes());
+        let plain = map_in_layout(
+            super::MapTailLayout { record_size: 52, total_fixed_bytes: 4 },
+            5,
+            3,
+            &[9],
+        );
+        source.extend_from_slice(&plain[plain.len() - 52..]);
+
+        let map = MapAsset::parse(&source).unwrap();
+        assert!(
+            map.placed_sprites.is_none(),
+            "a mixed-size section is not one of the six layouts"
+        );
+        assert_eq!(map.to_bytes().unwrap(), source, "an undecoded tail still round-trips");
+    }
+
+    /// A section whose length says "procedure tail" and whose records carry the **plain** shape's
+    /// four zero bytes at `+32` is not a layout this project has seen, and stays raw.
+    ///
+    /// **Corrected after review.** This zeroed only two bytes, leaving `00 00 ff ff` at `+32..36`,
+    /// which is not the plain shape at all -- it is a corrupted procedure record, and without the
+    /// marker check its procedure id would read as `-1`, the commonest corpus value. That made the
+    /// docstring's rationale wrong even though the test did fail when the check was removed: the
+    /// fixture was shaped like the corpus where it needed to be shaped like the *other* layout.
+    /// Zeroing all four bytes builds what all 4,003 plain-tail records really carry, and then the
+    /// misreading the check prevents is a procedure id of `0` -- a value inside the field's range
+    /// that appears in **no** corpus record, and which nothing else here validates.
+    ///
+    /// The two-byte case is kept as a second scenario, because it is a different input: a record
+    /// that is neither shape.
+    ///
+    /// **It takes two records, and the first attempt at this test used one and failed** -- which is
+    /// itself the finding. At `count == 1` a 49-byte-sized section carrying the plain marker *is* a
+    /// valid single 53-byte record, byte for byte: 57 bytes fit both layouts, and with the marker
+    /// saying "plain" the 53-byte reading is the correct one, so the parser decodes it and is right
+    /// to. Two records put the length at 106, which only `49 + footer` fits, so the marker is then
+    /// the only thing that can refuse it.
+    #[test]
+    fn a_procedure_sized_section_carrying_the_plain_markers_stays_raw() {
+        let layout = super::MapTailLayout { record_size: 49, total_fixed_bytes: 8 };
+        let zero_the_marker_word = |source: &mut Vec<u8>, bytes: usize| {
+            for record in 0..2 {
+                let at = source.len() - 4 - (2 - record) * 49 + 32;
+                source[at..at + bytes].fill(0);
+            }
+        };
+
+        // The plain shape: `u32` zero at `+32`, which is `marker_32 == 0` and the low half of the
+        // procedure id zero too.
+        let mut plain_shaped = map_in_layout(layout, 5, 3, &[4, 9]);
+        zero_the_marker_word(&mut plain_shaped, 4);
+        let first_marker = plain_shaped.len() - 4 - 2 * 49 + 32;
+        assert_eq!(
+            &plain_shaped[first_marker..first_marker + 4],
+            &[0, 0, 0, 0],
+            "the fixture must carry the plain tail's four zero bytes, not two"
+        );
+        let map = MapAsset::parse(&plain_shaped).unwrap();
+        assert_eq!(
+            map.candidate_tail_layouts(),
+            vec![layout],
+            "at two records only this layout fits the length, so only the marker can refuse it"
+        );
+        assert!(map.placed_sprites.is_none());
+        assert_eq!(map.to_bytes().unwrap(), plain_shaped);
+
+        // Neither shape: `ff 01` replaced by two zeros, leaving the procedure id's `-1` intact.
+        let mut neither = map_in_layout(layout, 5, 3, &[4, 9]);
+        zero_the_marker_word(&mut neither, 2);
+        let map = MapAsset::parse(&neither).unwrap();
+        assert!(map.placed_sprites.is_none());
+        assert_eq!(map.to_bytes().unwrap(), neither);
+    }
+
+    /// The count-1 collision: 57 bytes fit `49 + footer` and `53 + none`, and only the marker
+    /// separates them.
+    ///
+    /// With one record the two strides put that record at the same offset, so `record_kind`,
+    /// `record_version`, `+12`, `+16` and `cell_index` are byte-identical between the two readings
+    /// and cannot choose. Name the input that makes the marker check fail: this one. Remove the
+    /// marker test and **both** candidates survive, the tail stays raw, and `--map-place-sprite`
+    /// refuses a map it could edit a moment earlier.
+    ///
+    /// No installed map has a count of 1 -- the per-layout minimums are 4, 4, 6, 6, 11 and 16 -- so
+    /// the corpus cannot supply this fixture. Three `--map-remove-sprite` calls on `fire.lgd`, a
+    /// six-record 53-byte map, reach it.
+    #[test]
+    fn a_count_one_fifty_three_byte_section_is_resolved_by_the_marker_alone() {
+        let fifty_three = super::MapTailLayout { record_size: 53, total_fixed_bytes: 4 };
+        let forty_nine = super::MapTailLayout { record_size: 49, total_fixed_bytes: 8 };
+        let source = map_in_layout(fifty_three, 5, 3, &[4]);
+        let map = MapAsset::parse(&source).unwrap();
+
+        assert_eq!(map.trailing_bytes(), 57);
+        assert_eq!(
+            map.candidate_tail_layouts(),
+            vec![forty_nine, fifty_three],
+            "both fit to the byte; arithmetic cannot choose"
+        );
+        assert_eq!(map.resolved_tail_layout(), Some(fifty_three));
+        let section = map.placed_sprites.as_ref().unwrap();
+        assert_eq!(section.records.len(), 1);
+        assert_eq!(section.records[0].size(), 53);
+        assert_eq!(section.footer, None, "the 53-byte layout has no footer");
+        assert_eq!(map.to_bytes().unwrap(), source);
+
+        // The other direction: one genuine 49-byte record must reject the 53-byte reading, whose
+        // marker test wants four zero bytes at `+32` where this record has `ff 01`.
+        let source = map_in_layout(forty_nine, 5, 3, &[4]);
+        let map = MapAsset::parse(&source).unwrap();
+        assert_eq!(map.trailing_bytes(), 57);
+        assert_eq!(map.candidate_tail_layouts(), vec![forty_nine, fifty_three]);
+        assert_eq!(map.resolved_tail_layout(), Some(forty_nine));
+        assert_eq!(map.placed_sprites.as_ref().unwrap().footer, Some(1));
+    }
+
+    /// The 196-byte collision from the other side: four genuine 47-byte records plus a footer must
+    /// reject the 48-byte layout.
+    ///
+    /// The corpus can only supply this collision as a 48-byte section -- `CAVWAT02.SMP` -- because
+    /// the 47-byte-with-footer layout's smallest file holds 16 records. Testing one direction and
+    /// calling the collision covered is how a discriminator that works on only one side ships.
+    #[test]
+    fn a_forty_seven_byte_section_of_four_records_rejects_the_forty_eight_byte_layout() {
+        let forty_seven = super::MapTailLayout { record_size: 47, total_fixed_bytes: 8 };
+        let forty_eight = super::MapTailLayout { record_size: 48, total_fixed_bytes: 4 };
+        let source = map_in_layout(forty_seven, 5, 3, &[0, 1, 2, 3]);
+        let map = MapAsset::parse(&source).unwrap();
+
+        assert_eq!(map.trailing_bytes(), 196);
+        assert_eq!(map.candidate_tail_layouts(), vec![forty_seven, forty_eight]);
+        assert_eq!(map.resolved_tail_layout(), Some(forty_seven));
+        assert_eq!(map.placed_sprites.as_ref().unwrap().records.len(), 4);
+        assert_eq!(map.to_bytes().unwrap(), source);
+    }
+
+    /// **Every** record's head is checked, not record zero's.
+    ///
+    /// Name the input: a two-record 48-byte section whose first head is perfect and whose second
+    /// carries `record_kind = 0`. Only the 48-byte layout fits its length, so nothing else can
+    /// reject it -- if the parser validated only the record at offset zero it would decode this and
+    /// hand out a record built from a word the format never holds. Every other fixture here stays
+    /// green under that regression, including the 196-byte one, whose record-zero marker already
+    /// eliminates the rival layout.
+    #[test]
+    fn a_section_whose_later_head_is_invalid_stays_raw() {
+        let layout = super::MapTailLayout { record_size: 48, total_fixed_bytes: 4 };
+        let mut source = map_in_layout(layout, 5, 3, &[0, 1]);
+        let second_record = source.len() - 48;
+        source[second_record..second_record + 4].copy_from_slice(&0_u32.to_le_bytes());
+
+        let map = MapAsset::parse(&source).unwrap();
+        assert_eq!(
+            map.candidate_tail_layouts(),
+            vec![layout],
+            "only one layout fits the length, so only the head checks can refuse this"
+        );
+        assert!(map.placed_sprites.is_none());
+        assert_eq!(map.to_bytes().unwrap(), source);
+    }
+
+    /// Exactly one layout's mint is engine-observed, and the 47-byte layout is **not** it.
+    ///
+    /// The 2026-09-17 probe wrote three fresh records and they were 49 bytes. The 47-byte layout
+    /// shares that layout's tail shape, so it is tempting to call its mint measured too -- and that
+    /// is the move this project warns against, since its `+24` would then be a value carried from a
+    /// different layout. Name the input that makes this fail: widen the `49` arm of
+    /// `mint_provenance` to `47 | 49` and the second assertion below fails, which is the whole
+    /// reason `--map-place-sprite` notes five layouts and not four.
+    #[test]
+    fn only_the_forty_nine_byte_layouts_mint_is_engine_observed() {
+        use super::MintProvenance::{EngineObserved, InferredPlainTail, InferredProcedureTail};
+
+        let provenance = |record_size, total_fixed_bytes| {
+            super::MapTailLayout { record_size, total_fixed_bytes }.mint_provenance()
+        };
+        assert_eq!(provenance(49, 8), EngineObserved);
+        assert_eq!(provenance(47, 4), InferredProcedureTail);
+        assert_eq!(provenance(47, 8), InferredProcedureTail);
+        assert_eq!(provenance(48, 4), InferredPlainTail);
+        assert_eq!(provenance(52, 4), InferredPlainTail);
+        assert_eq!(provenance(53, 4), InferredPlainTail);
+
+        // And every observed layout is accounted for, so a seventh layout cannot be added without
+        // a decision about where its minted bytes come from.
+        assert_eq!(
+            super::OBSERVED_TAIL_LAYOUTS
+                .iter()
+                .filter(|layout| layout.mint_provenance() == EngineObserved)
+                .count(),
+            1
+        );
+    }
+
+    /// A layout no constructor would produce cannot panic when asked its footer width.
+    ///
+    /// `MapTailLayout`'s fields are `pub`. `total_fixed_bytes: 0` underflows the subtraction
+    /// `footer_bytes` used to do -- a debug panic, a release wrap to `usize::MAX - 3`. This repo
+    /// has a standing lesson that a release wrap hides what a debug build traps, so the input that
+    /// would have made it fail is written down rather than assumed unreachable.
+    #[test]
+    fn a_layout_with_no_fixed_bytes_does_not_underflow() {
+        let broken = super::MapTailLayout { record_size: 49, total_fixed_bytes: 0 };
+        assert_eq!(broken.footer_bytes(), 0);
+        assert!(!broken.has_footer());
+    }
+
+    /// An empty section cannot name its own layout, so the header word does -- and only for the
+    /// words the corpus pairs with exactly one layout.
+    #[test]
+    fn an_empty_section_takes_the_layout_its_header_word_names() {
+        let fifty_two = super::MapTailLayout { record_size: 52, total_fixed_bytes: 4 };
+        let source = map_in_layout(fifty_two, 5, 3, &[]);
+        let mut map = MapAsset::parse(&source).unwrap();
+
+        assert_eq!(map.trailing_bytes(), 4, "count only: this layout has no footer");
+        assert_eq!(map.resolved_tail_layout(), Some(fifty_two));
+
+        // And the layout decides what a placed sprite is: 52 bytes, plain tail, no procedure id.
+        assert_eq!(map.place_sprite(1, 1, 105).unwrap(), 200);
+        let record = &map.placed_sprites.as_ref().unwrap().records[0];
+        assert_eq!(record.size(), 52);
+        assert_eq!(record.procedure_id_candidate(), None);
+        assert_eq!(
+            record.attribute_bits,
+            super::PLAIN_TAIL_FRESH_SPRITE_ATTRIBUTE_BITS
+        );
+        assert_eq!(map.to_bytes().unwrap().len(), source.len() + 52);
+    }
+
+    /// An empty section whose header word the corpus never showed stays raw rather than guessing.
+    #[test]
+    fn an_empty_section_with_an_unobserved_header_word_stays_raw() {
+        let mut source = map_in_layout(
+            super::MapTailLayout { record_size: 52, total_fixed_bytes: 4 },
+            5,
+            3,
+            &[],
+        );
+        // 0x2a is paired with no layout in the corpus. Nothing else about the file changes.
+        source[0..4].copy_from_slice(&0x2a_u32.to_le_bytes());
+        let mut map = MapAsset::parse(&source).unwrap();
+
+        assert!(map.placed_sprites.is_none());
+        assert_eq!(map.to_bytes().unwrap(), source);
+        // Assert the whole message, not its tail. The old assertion checked only
+        // "cannot be edited", so it went on passing while the head of the same sentence said
+        // "not the decoded 49-byte placed-sprite family" -- false for the 169 maps that edit fine,
+        // and this is the only test that reads it.
+        let error = map.place_sprite(1, 1, 105).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "this map's trailing section is not one of the six decoded placed-sprite layouts, \
+             so its objects cannot be edited"
+        );
+        assert!(
+            !error.contains("49-byte"),
+            "the refusal must not name a record size: none of its four causes is one"
+        );
+    }
+
+    /// Placing a sprite keeps the map's own record size, in every layout.
+    #[test]
+    fn a_placed_sprite_takes_the_maps_own_layout() {
+        for layout in super::OBSERVED_TAIL_LAYOUTS {
+            let source = map_in_layout(layout, 5, 3, &[4]);
+            let mut map = MapAsset::parse(&source).unwrap();
+            map.place_sprite(0, 0, 105).unwrap();
+            let written = map.to_bytes().unwrap();
+
+            assert_eq!(written.len(), source.len() + layout.record_size, "{layout}");
+            let reparsed = MapAsset::parse(&written).unwrap();
+            let section = reparsed.placed_sprites.as_ref().unwrap();
+            assert_eq!(section.layout, layout, "{layout}");
+            assert_eq!(section.records.len(), 2, "{layout}");
+            for record in &section.records {
+                assert_eq!(record.to_bytes().unwrap(), record.raw, "{layout}");
+            }
+        }
+    }
+
+    /// A tail shape the types admit but no layout has is refused instead of written.
+    ///
+    /// Both of these would produce a record whose size is not one of the six: a two-byte padding
+    /// gives 48 bytes with a procedure tail, and a `Plain` tail with the 53-byte layout's last byte
+    /// but not the 52-byte layout's word gives 49. Neither exists in any installed map.
+    #[test]
+    fn a_record_tail_no_observed_layout_has_is_refused() {
+        let source = map_in_layout(
+            super::MapTailLayout { record_size: 49, total_fixed_bytes: 8 },
+            5,
+            3,
+            &[4],
+        );
+        let map = MapAsset::parse(&source).unwrap();
+        let mut record = map.placed_sprites.as_ref().unwrap().records[0].clone();
+
+        record.tail = super::PlacedSpriteTail::Procedure {
+            marker_32: 0x01ff,
+            procedure_id_candidate: -1,
+            unknown_38: 0,
+            unknown_42: u32::MAX,
+            padding: vec![0; 2],
+        };
+        assert_eq!(record.size(), 48);
+        assert!(record.to_bytes().is_err(), "two padding bytes is not a layout");
+
+        record.tail = super::PlacedSpriteTail::Plain {
+            unknown_32: 0,
+            unknown_36: 0,
+            unknown_40: u32::MAX,
+            unknown_44: 0,
+            unknown_48: None,
+            unknown_52: Some(0),
+        };
+        assert_eq!(record.size(), 49);
+        assert!(
+            record.to_bytes().is_err(),
+            "the 53-byte layout's last byte without the 52-byte layout's word is not a layout"
+        );
+    }
+
+    /// A section refuses a record of another layout's size, and a footer it should not have.
+    ///
+    /// This is the check that keeps a count word and a record stride from disagreeing: writing a
+    /// 52-byte record into a 49-byte section would produce a file whose count says four records and
+    /// whose bytes hold three and a bit.
+    #[test]
+    fn a_section_refuses_a_record_or_footer_from_another_layout() {
+        let forty_nine = super::MapTailLayout { record_size: 49, total_fixed_bytes: 8 };
+        let fifty_two = super::MapTailLayout { record_size: 52, total_fixed_bytes: 4 };
+        let source = map_in_layout(forty_nine, 5, 3, &[4]);
+        let map = MapAsset::parse(&source).unwrap();
+        let mut section = map.placed_sprites.as_ref().unwrap().clone();
+
+        section
+            .records
+            .push(super::PlacedSpriteRecord::new(fifty_two, 9, 201, 105).unwrap());
+        let error = section.to_bytes().unwrap_err().to_string();
+        assert!(
+            error.contains("52-byte record"),
+            "the mismatch must name the record, said: {error}"
+        );
+
+        let mut section = map.placed_sprites.as_ref().unwrap().clone();
+        section.footer = None;
+        let error = section.to_bytes().unwrap_err().to_string();
+        assert!(
+            error.contains("needs a footer"),
+            "a footered layout must not write a footerless section, said: {error}"
+        );
     }
 
     #[test]

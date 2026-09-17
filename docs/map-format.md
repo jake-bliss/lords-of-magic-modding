@@ -2,13 +2,14 @@
 
 ## Status
 
-**Header, cell grid, terrain-atlas lookup, and dominant 49-byte record milestone complete.** The native Rust parser bounds-checks every installed `.scn`, `.smp`, and `.lgd` file without modifying it. It renders the standard world map from original terrain art and structurally decodes all files in the dominant trailing-record family. The 52-/53-byte families and exact meanings of several object fields remain under investigation.
+**Header, cell grid, terrain-atlas lookup, and the placed-object record section are complete.** The native Rust parser bounds-checks every installed `.scn`, `.smp`, and `.lgd` file without modifying it. It renders the standard world map from original terrain art and structurally decodes the trailing record section of **all 365** installed maps -- **21,117 records across six layouts**, each rebuilt from typed fields with no gap. Object editing works on all 365 maps rather than 196. The exact meanings of several object fields remain under investigation, and so does what the six layouts *are*: the corpus shows them as a version ladder, which is Inferred, not Observed.
 
 **An attended engine run on 2026-09-17 wrote maps with values chosen in advance and read them back.** It confirmed the tile-index reading by construction, produced the engine's terrain-type-to-tile table, and **refuted two claims this document previously asserted**: the cell storage order (it is packed y-major, not X-major) and the meaning of tag bit `0x00800000` (it does not mark a forced texture; its meaning is Unknown). Both refutations, and the reasoning that produced the wrong claims, are kept below.
 
 **A map writer landed on 2026-09-17, and the engine accepts what it writes.** Every installed map
-re-encodes to the exact bytes it was read from -- 365 of 365, with all 16,628 placed-sprite records
-rebuilt from their typed fields. An attended run then handed the running game seven maps and it
+re-encodes to the exact bytes it was read from -- 365 of 365, with all 21,117 placed-sprite records
+rebuilt from their typed fields (16,628 when the writer landed; the other five record layouts were
+decoded later the same day). An attended run then handed the running game seven maps and it
 loaded **all seven**: a shipped map re-encoded by this project, an edited one, one with a sprite
 placed, one created from nothing, and one that is **non-square**. The two created-from-nothing maps
 re-saved **byte-identically**. See [Writing maps](#writing-maps) and [Engine
@@ -82,19 +83,33 @@ A July 2026 community report describes the first word as *"a 4-byte compression 
 map ... basically just a version number and reserved space"* which *"disappears"* when a map exceeds
 the original maximum size, corrupting maps and saves and producing a `TRASHBIN` display.
 
-**Both halves are now refuted.** The "version number" reading was refuted by measurement across the
-corpus (below). The "disappears when oversized" reading was refuted on 2026-09-17 by generating a
-512x512 map in the running engine and parsing it — see [Oversized maps keep the
+**The "disappears when oversized" half is refuted**, on 2026-09-17, by generating a 512x512 map in
+the running engine and parsing it — see [Oversized maps keep the
 header](#oversized-maps-keep-the-header).
 
-**Measured on 2026-09-16, that reading does not survive.** Across all 365 installed map files the word
-takes more than twenty distinct values spanning `0x3f`-`0x6f`, and it is independent of geometry:
-`0x6f` occurs at 32x32, 48x48, 64x64, 128x128 and 256x256, while 48x48 files alone carry a dozen
-different values. A version number would not vary that way. The values instead cluster by file
+**The "version number" half was recorded as refuted too, and that was wrong. Corrected
+2026-09-17.** The argument below — that the word varies independently of geometry and clusters by
+file family, so "a version number would not vary that way" — does not follow: a version varies with
+*when a file was built*, which is independent of its geometry and does cluster by family. And there
+is now positive evidence for it. The word's 19 observed values partition the six placed-object
+record layouts **with no overlap at all**, in order, and the engine's own fresh save stamps the top
+of the range while writing the newest layout. That is the correlation, Observed across all 365 files;
+reading it as a version, and as the thing the loader uses to pick a layout, stays **Inferred**. See
+[the header word partitions the layouts](#the-header-word-partitions-the-layouts). What *is* refuted
+is the **tileset-selector** hypothesis the paragraph below prefers: the engine rewrites this word
+from its own state on every save, so it is not carrying a per-map tileset choice.
+
+**Measured on 2026-09-16, and the conclusion drawn from it has since been corrected — see above.**
+Across all 365 installed map files the word
+takes **19** distinct values spanning `0x3f`-`0x6f` (**corrected**: this said "more than twenty"; the
+count is 19, re-measured 2026-09-17), and it is independent of geometry: `0x6f` occurs at 32x32,
+48x48, 64x64, 128x128 and 256x256, while 48x48 files alone carry 15 different values. A version
+number would not vary that way — the 2026-09-16 conclusion, and the one now corrected. The values instead cluster by file
 family - every `ORLIBR*`, `ORTGIL*` and `FIVILG*` sub-map is `0x4f`, and world `.scn` files are
-`0x6c`-`0x6f` - which makes a **tileset or terrain-set selector** the better hypothesis, and would
-also close the separate "header-to-tileset selection" unknown recorded below. Neither reading is
-proven. The community claim's testable half is untouched: an oversized map should *omit* the field
+`0x6c`-`0x6f` - which was read in 2026-09-16 as making a **tileset or terrain-set
+selector** the better hypothesis. Both parts of that have since moved: the tileset reading is
+refuted, and the family clustering turned out to be the record-layout partition. Every value in this
+range is one of the 19 the layout partition accounts for. The community claim's testable half is untouched: an oversized map should *omit* the field
 and shift every later offset by four bytes. Recorded in [issue #22](https://github.com/jake-bliss/lords-of-magic-modding/issues/22) and in
 [community research](community-research.md).
 
@@ -301,17 +316,122 @@ Verified on 2026-09-12:
 | `.smp` map component | 337 | 48×48 (336), 64×64 (1) |
 | **Total** | **365** | **0 parse failures** |
 
-The trailing bytes begin immediately after the cell grid. The first trailing word is retained as `trailing_head_u32`; in many files it behaves like a record count. Exact-length comparisons identify these candidate families:
+The trailing bytes begin immediately after the cell grid, and the first trailing word is the record
+count. **Corrected 2026-09-17:** an earlier version of this document listed three candidate families
+-- 49-, 52- and 53-byte records -- plus 18 "unknown/ambiguous" tails, and the parser decoded only the
+49-byte one. There are **six** layouts, the 18 were not a separate phenomenon, and all 365 files are
+now decoded. See below.
 
-| Kind | 49-byte records + 8 fixed bytes | 52-byte records + 4 fixed bytes | 53-byte records + 4 fixed bytes | Unknown/ambiguous |
-| --- | ---: | ---: | ---: | ---: |
-| `.lgd` | 5 | 0 | 1 | 2 |
-| `.scn` | 15 | 0 | 5 | 0 |
-| `.smp` | 176 | 144 | 0 | 17 |
+## The six placed-object record layouts
 
-## Dominant 49-byte placed-sprite family
+**Observed in a local binary, 2026-09-17.** Every installed map's trailing section is uniform: one
+record size throughout, with nothing left over. The section is `u32 record_count`, then
+`count × record_size` bytes of records, then a `u32` footer **in two of the six layouts only**.
+Exactly one layout accounts for each of the 364 files that hold at least one record; the 365th holds
+none.
 
-The `49-byte records + 8 fixed bytes` family is now structurally decoded in 196 files containing 16,628 records. Every record retains its complete raw bytes.
+| Records | Footer | Files | Records | Header word at `0x00` | Extensions |
+| ---: | --- | ---: | ---: | --- | --- |
+| 47 bytes | none | 6 | 434 | 98 | 4 `.smp`, 2 `.lgd` |
+| 47 bytes | `u32` | 3 | 52 | 101 | 3 `.smp` |
+| 48 bytes | none | 9 | 222 | 63, 73 | 9 `.smp` |
+| 49 bytes | `u32` | 196 | 16,628 | 102, 105-111 | 176 `.smp`, 15 `.scn`, 5 `.lgd` |
+| 52 bytes | none | 144 | 1,253 | 76, 79, 81, 87, 89 | 144 `.smp` |
+| 53 bytes | none | 6 | 2,528 | 96, 97 | 5 `.scn`, 1 `.lgd` |
+| **Total** | | **364** | **21,117** | | |
+
+`chbldg01.smp` is the 365th: a four-byte trailing section holding a zero count, which is what a
+footerless layout writes for a map with no objects. Its header word is 76, which the corpus pairs
+only with the 52-byte layout, and that is the single place the parser consults the header word --
+see [the header word and the layout](#the-header-word-partitions-the-layouts).
+
+### Two lengths that two layouts fit, and what separates them
+
+**Observed in a local binary, 2026-09-17, by enumeration** -- every record count against all six
+layouts, not by search. For `count >= 1` there are exactly **two** collisions:
+
+| count | section bytes | layouts that fit | what separates them |
+| ---: | ---: | --- | --- |
+| 1 | 57 | `49 + footer`, `53 + none` | the **marker word alone**. With one record both strides put it at the same offset, so every other head field is byte-identical between the two readings |
+| 4 | 196 | `47 + footer`, `48 + none` | `record_kind` at the wrong stride: the 47-byte reading puts record 1's first word inside record 0's padding, where it is zero |
+
+`CAVWAT02.SMP` is the 196-byte case in the shipped corpus -- four 48-byte records -- and it is
+**doubly determined**: the stride head-check and the header word (73) agree independently. **No**
+installed map has a count of 1, and the per-layout minimum counts are 4, 4, 6, 6, 11 and 16, so the
+57-byte case cannot come from the corpus. It is three `--map-remove-sprite` calls away from any
+six-record 53-byte map such as `fire.lgd`, which is why the marker check is load-bearing rather than
+belt-and-braces: without it neither candidate can be eliminated, the tail stays raw, and the tool
+refuses a map it could edit a moment earlier.
+
+A third, degenerate collision is `count == 0`, where every layout of the same footer width writes
+identical bytes. That is the one the header word settles.
+
+**This resolves the "18 unmatched tails" open item.** Nine of the 18 are the 48-byte layout and nine
+are the 47-byte one. They looked unmatched because only three record sizes had ever been tried; the
+parser now tries all six and validates every record's head against the stride. The one "ambiguous
+file" was `chbldg01.smp`, above.
+
+**Where the layouts differ, and where they do not.** All six share a 32-byte head: eight `u32`s
+carrying the same eight fields in the same order in all 21,117 records, with the same invariants --
+`cell_index` unique and in bounds in every file, `instance_id` unique and strictly increasing in
+every file. Past `+32` they split into two shapes, and the split is **by record size**:
+
+| Shape | Sizes | Records | Bytes from `+32` |
+| --- | ---: | ---: | --- |
+| procedure tail | 47, 49 | 17,114 | `ff 01`, `u32` procedure id, `u32` `0`, `u32` `0xffffffff`, then **1** zero byte (47) or **3** (49) |
+| plain tail | 48, 52, 53 | 4,003 | `u32` `0`, `u32` `0`, `u32` `0xffffffff`, `u32` `0`, then `u32` `0xffffffff` (52, 53), then one zero byte (53) |
+
+The two shapes are **not** one shape at an offset. The procedure tail's two-byte `0x01ff` marker sits
+where the plain tail has four zero bytes, and their trailing padding differs, so no single shift maps
+one onto the other. The leading hypothesis before this measurement was "the 49-byte record plus three
+or four extra bytes", and that is **not** what the bytes are: two of the new layouts are *shorter*
+than 49, and the plain-tail layouts have no procedure id field at all rather than an extra field.
+
+**What the extra bytes mean is Unknown.** Every byte outside the eight head fields and the procedure
+id is constant within its layout across the whole corpus -- zero, or `0xffffffff` -- so there is
+nothing to correlate against sprite type, coordinates, footer value or map dimensions. They are
+decoded as named, typed, per-layout fields that round-trip exactly and assert nothing. `attribute_bits`
+at `+24` is the one head field that varies by shape: the procedure-tail layouts carry the upper-nibble
+codes, and all 4,003 plain-tail records carry zero.
+
+### The header word partitions the layouts
+
+**Observed in a local binary, 2026-09-17.** Across all 365 maps the header word at `0x00` partitions
+the six layouts with **no overlap at all** -- no value appears with two layouts -- and the partition
+is ordered: 63-73, 76-89, 96-97, 98, 101, 102-111 for the 48-, 52-, 53-, 47-no-footer, 47-footer and
+49-byte layouts. The engine's own fresh save stamps 111, the top of the range, and writes the 49-byte
+layout.
+
+**How thin parts of that partition are, stated rather than glossed.** Support is very uneven, and a
+third of the values rest on one file each:
+
+| Layout | Header words, with the number of files carrying each |
+| --- | --- |
+| 48 + none | 63 (**1**), 73 (8) |
+| 52 + none | 76 (2), 79 (140), 81 (**1**), 87 (**1**), 89 (**1**) |
+| 53 + none | 96 (5), 97 (**1**) |
+| 47 + none | 98 (6) |
+| 47 + footer | 101 (3) |
+| 49 + footer | 102 (5), 105 (27), 106 (109), 107 (31), 108 (**1**), 109 (**1**), 110 (5), 111 (17) |
+
+Seven of the 19 values -- 63, 81, 87, 89, 97, 108, 109 -- appear in exactly one file. And the
+tie-break that matters in practice, `chbldg01.smp`'s, rests on word 76, which occurs in two files,
+one of which is `chbldg01.smp` itself. So the partition has no counterexample across 365 files, which
+is worth keeping, and it is one file deep in seven places.
+
+**Inferred:** that the word is a format version and that the loader uses it to choose the record
+layout. The correlation is the observation; the causation is not. An attended run has already shown
+the engine rewrites this word from its own state on every save rather than carrying the file's, which
+is consistent with a version stamp but does not establish that the loader reads it. It is also
+consistent with the layouts simply being the output of successive editor builds, which would produce
+the same correlation without the loader consulting the word at all.
+
+Because it is Inferred, the parser uses it for exactly one thing: choosing a layout for a section
+whose record **count is zero**, where the section's length genuinely cannot distinguish the layouts.
+Only the 19 values the corpus pairs with one layout resolve; anything else leaves such a section raw
+rather than interpolating a version number.
+
+### The dominant 49-byte layout
 
 **Observed in gameplay, 2026-09-17, by construction:** the section is `u32 record_count`, then
 `record_count × 49` bytes of records, then a `u32` footer. The corpus could only show that the
@@ -323,30 +443,36 @@ Unknown.
 
 | Record offset | Size | Current name | Corpus evidence / confidence |
 | ---: | ---: | --- | --- |
-| `+0` | 4 | `record_kind` | Always `1` in 16,628 records; observed |
+| `+0` | 4 | `record_kind` | Always `1` in all 21,117 records of all six layouts; observed |
 | `+4` | 4 | `record_version` | Always `1`; observed |
 | `+8` | 4 | `cell_index` | Always unique and in bounds per file. **Corrected 2026-09-17:** unpacks as `y × width + x`, not X-major |
 | `+12` | 4 | `unknown_12` | Always `0xffffffff`; observed |
 | `+16` | 4 | `unknown_16` | Always `0`; observed |
-| `+20` | 4 | `instance_id` | Unique per file, range `200..1659`. **Observed in gameplay, 2026-09-17:** three sprites on a fresh map got 200, 201, 202 — sequential, starting at 200 |
+| `+20` | 4 | `instance_id` | Unique and strictly increasing per file, range `100..1659`. **Observed in gameplay, 2026-09-17:** three sprites on a fresh map got 200, 201, 202 — sequential, starting at 200. **Corrected 2026-09-17:** the range was recorded as `200..1659`, which the other five layouts falsify — ten files start at 100 (all nine of the 48-byte layout and one of the 52-byte), and one starts at 203. Per-file lowest ids across the 364 files holding records are `{200: 353, 100: 10, 203: 1}` |
 | `+24` | 4 | `attribute_bits` | Meaning unknown. **Observed in a local binary:** across 16,628 corpus records only the upper nibble varies, taking codes `0..11` and `15`. **Observed in gameplay, 2026-09-17:** all three probe records carry `0x00000001`, which has low bits set and so *violates* that corpus invariant. The contradiction is the finding. The likelier reading is that a freshly minted, procedure-less sprite writes a record shape the corpus does not contain — not that 16,628 records were misread — so the corpus measurement stands and `attribute_code_candidate()` is retained, flagged, and asserted of nothing |
 | `+28` | 4 | `sprite_type` | **Observed in gameplay, 2026-09-17:** all three probe records carry 470, the id `addterrainspritetype` returned in the same keypress. Promoted from `sprite_type_candidate` |
-| `+32` | 2 | `marker_32` | Always `0x01ff`; observed |
-| `+34` | 4 | `procedure_id_candidate` | `-1` or `0..717`; correlated with `setterrainspriteprocid` usage |
+| `+32` | 2 | `marker_32` | Always `0x01ff` in the 47- and 49-byte layouts, and four zero bytes at `+32` in the other three; observed. This is the field that tells the two tail shapes apart, and the parser checks it as a guard -- it is not what resolves a length two layouts fit |
+| `+34` | 4 | `procedure_id_candidate` | Present only in the 47- and 49-byte layouts. 273 distinct values across 17,114 records: `-1` in 14,196 of them and then `8..717`; correlated with `setterrainspriteprocid` usage. **Corrected 2026-09-17:** the range was recorded as `-1` or `0..717`; the lowest non-negative value is **8** and `0` appears in no record, which is what makes a marker-less record misread as a procedure tail silent |
 | `+38` | 4 | `unknown_38` | Always `0`; observed |
 | `+42` | 4 | `unknown_42` | Always `0xffffffff`; observed |
-| `+46` | 3 | `unknown_46` | Always zero; observed |
+| `+46` | 3 | `unknown_46` | Always zero; observed. **One byte, not three, in the 47-byte layout** -- the padding length is what distinguishes the two procedure-tail layouts |
 
-The footer values observed are `0`, `1`, and `3`. Their meaning is unknown. Record invariants and bounds are enforced by synthetic tests and were revalidated across the complete local map corpus. Candidate semantic names deliberately remain candidates until editor save diffs or runtime behavior prove them.
+The footer values observed are `0`, `1`, and `3`, in the two layouts that have one. Their meaning is unknown. Record invariants and bounds are enforced by synthetic tests and were revalidated across the complete local map corpus. Candidate semantic names deliberately remain candidates until editor save diffs or runtime behavior prove them.
 
 ### The `.scn` / `.smp` split is not a format difference
 
 **Observed in gameplay, 2026-09-17.** The probe saved one identical map state twice, once with
 `savescenariomap` and once with `savespecialmap`. The two files are **byte-identical** (sha256
 `7744b749…4a3c`). So the two operators are one writer, and the corpus's concentration of 52-byte
-trailing records in `.smp` files must be a **content** difference — different object kinds on those
-maps — rather than a different serializer. That redirects the remaining half of issue #4: look for
-what special maps *contain*, not for a second format.
+trailing records in `.smp` files is not a `.scn`-versus-`.smp` serializer difference.
+
+**Narrowed 2026-09-17, and the "content difference" reading was too strong.** The record layouts
+turn out to differ *structurally*, not in what they contain: the 48-, 52- and 53-byte records have
+no procedure-id field where the 47- and 49-byte records do. What the identical-bytes measurement
+actually established is that the **current** writer is one writer for both extensions. The six
+layouts partition by the header word at `0x00`, ordered, which reads as a version ladder, and the
+`.smp` concentration then follows from *when those files were built* rather than from what is on
+them. That is Inferred; see [the header word](#the-header-word-partitions-the-layouts).
 
 ### Placed sprites round-trip exactly
 
@@ -359,9 +485,14 @@ residue in the file, which is what makes a save-diff a trustworthy instrument he
 [GitHub issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4) now tracks:
 
 - **what tag bit `0x00800000` means** — `forcetexture` sets it and **`resetvisibility`** clears it, both measured; reading it as *visibility state* is an inference from the operator's name and is **not** established. What computes the perimeter ring the corpus carries, and whether a `.smp` load-and-save preserves it, are open;
-- **the 52-/53-byte record families** — now known to be a **content** difference, not a format one,
-  since both save operators write identical bytes;
-- **the 18 unmatched tails** and the one ambiguous file;
+- ~~**the 52-/53-byte record families**~~ — **decoded 2026-09-17.** There are six record layouts,
+  not three; all 365 maps decode, 21,117 records rebuild from typed fields, and object editing works
+  on all 365. What the extra bytes *mean* is still Unknown: every one of them is constant within its
+  layout, so there is nothing in the corpus to correlate them against. The earlier "content
+  difference" reading is narrowed above;
+- ~~**the 18 unmatched tails** and the one ambiguous file~~ — **resolved 2026-09-17**: nine are the
+  48-byte layout, nine the 47-byte one, and the ambiguous file is `chbldg01.smp`, whose section is
+  empty. They were never a separate phenomenon; only three record sizes had been tried;
 - ~~**the header word at `0x00`**~~ — **settled 2026-09-17**: the engine rewrites it from its own
   state on every save and never reads it back from the file, so whatever selects a tileset, it is
   not this word;
@@ -379,27 +510,45 @@ data rather than describing it, and it is built on one property:
 
 > **An unedited map re-encodes to the exact bytes it was read from.**
 
-`--map-roundtrip` asserts that over the installed corpus: **365 checked, 365 byte-identical, 16,628
+`--map-roundtrip` asserts that over the installed corpus: **365 checked, 365 byte-identical, 21,117
 placed-sprite records rebuilt from their typed fields, 0 failures.** Run it before trusting an edit.
+The record count rose from 16,628 on 2026-09-17 when the other five layouts were decoded; the 4,489
+newly counted records are the 47-, 48-, 52- and 53-byte layouts' 169 files, which until then
+round-tripped as raw bytes without any field being checked.
 
 Two rules make that possible while most of this format is still Unknown:
 
 1. **When editing existing data, fields whose meaning is unknown are copied, never minted.** The
    header word at `0x00`, the trailing footer, the record attribute field at `+24`, tag bit
-   `0x00800000` and the whole trailing section of every family this project has *not* decoded all
-   survive a round trip untouched. A writer that guessed at them would corrupt maps in ways no test
+   `0x00800000`, every constant word in a record tail, and the whole trailing section of any tail
+   this project cannot pin to one layout all survive a round trip untouched. A writer that guessed at them would corrupt maps in ways no test
    here could see.
 
-   **Placing a new sprite is the exception, and it mints nine fields.** A record that did not exist
-   has to get its bytes from somewhere. Eight of the nine are invariant across all 16,628 corpus
-   records. The ninth is the `+24` attribute field, written as `0x00000001` because that is what the
-   2026-09-17 probe watched the engine write for a fresh sprite — and it **contradicts** the corpus
-   reading of that field, in which only the upper nibble varies. Whether the engine accepts a record
-   of this shape is unmeasured. Editing an existing sprite mints nothing; placing a new one does.
-2. **Records rebuild from typed fields, not from carried-over bytes.** The decoded fields cover all
-   49 bytes of a placed-sprite record with no gap, so `PlacedSpriteRecord49::to_bytes` reproduces
-   the original exactly *and* an edited field actually lands. `--map-roundtrip` checks that record
-   by record, which is stricter than comparing whole files: a file can round-trip through its raw
+   **Placing a new sprite is the exception, and it mints every field.** A record that did not exist
+   has to get its bytes from somewhere, and **it is minted in the map's own layout** -- a 52-byte map
+   gets a 52-byte record, not a 49-byte one.
+
+   In the 47- and 49-byte layouts every minted value but one is invariant across all 17,114
+   procedure-tail corpus records. The exception is the `+24` attribute field, written as
+   `0x00000001` because that is what the 2026-09-17 probe watched the engine write for a fresh
+   sprite — and it **contradicts** the corpus reading of that field, in which only the upper nibble
+   varies. Whether the engine accepts a record of this shape is unmeasured.
+
+   In the 48-, 52- and 53-byte layouts every minted value **including** `+24` is that layout's
+   corpus constant, and `+24` is zero. That is **Inferred and unmeasured**: the engine run that
+   watched a fresh record being written wrote a 49-byte record, so it says nothing about the older
+   layouts, and `0x00000001` cannot simply be carried across because no record in any layout was
+   ever observed holding it. Between a measured value from a different layout and the only value
+   this layout has ever held, a new record takes the latter. An attended run on one of these maps is
+   what would settle it.
+
+   Editing an existing sprite mints nothing; placing a new one does.
+2. **Records rebuild from typed fields, not from carried-over bytes.** The decoded fields cover
+   every byte of a placed-sprite record with no gap, in all six layouts, so
+   `PlacedSpriteRecord::to_bytes` reproduces the original exactly *and* an edited field actually
+   lands. A record's own tail decides its size, so a record cannot disagree with itself, and a
+   section refuses a record of another layout's size rather than writing a count word and a stride
+   that disagree. `--map-roundtrip` checks that record by record, which is stricter than comparing whole files: a file can round-trip through its raw
    tail while a field is being written back wrong.
 
 ### What the editor can and cannot do
@@ -410,7 +559,7 @@ Two rules make that possible while most of this format is still Unknown:
 | Force a cell to a terrain type's base tile | Reproduces `forcetexture` with the measured terrain table |
 | Fill every cell with a terrain type | Reproduces `clearmap`, tile for tile — **including its habit of laying a constraint-violating field.** See below |
 | Set a cell's elevation word | Writes the word; its runtime units stay **Inferred** |
-| Place or remove a terrain sprite | Round-trips byte-exactly, as the engine's own does |
+| Place or remove a terrain sprite | Works on **all 365** installed maps, in whichever of the six layouts each one uses; round-trips byte-exactly, as the engine's own does. Exercised a file at a time through the CLI: place on a free cell, remove, and all 365 came back byte-identical |
 | **Paint a region and re-tile everything it disturbs** | Reproduces `setterrain` from the active `.til`'s declared constraints, except a region's randomly drawn interior. See below |
 | Create a map from nothing | **Not offered.** See below |
 
@@ -1123,14 +1272,14 @@ With a tile definition and atlas, the viewer starts in terrain-art mode. Press `
 
 ## Confidence
 
-- **Observed in a local binary:** all 365 files have a 16-byte prefix, declared 8-bit depth, a complete `width × height × 8` cell grid, and a bounded trailing section; all 196 exact 49-byte-family files and 16,628 records satisfy the decoded bounds and invariants.
+- **Observed in a local binary:** all 365 files have a 16-byte prefix, declared 8-bit depth, a complete `width × height × 8` cell grid, and a bounded trailing section; every one of the 365 trailing sections resolves to exactly one of six record layouts, and all 21,117 records satisfy the decoded bounds and invariants.
 - **Inferred (2026-09-17):** which operand is *x*. The capture shows the two paint operators agree with `map2screen` on axis order; it cannot fix `map2screen`'s own labelling. See the storage-order section.
 - **Observed in gameplay (2026-09-17):** the low tag bits are the tile-atlas slot exactly, for seven forced slots spanning `0..623`; cells are packed `second_operand × width + first_operand`; the terrain-type-to-tile table above; terrain type is derived from the tile through the tileset, not stored in the cell; `forcetexture` writes one cell while `setterrain` also blends its 8-neighbourhood; the trailing section is `count`, records, `footer`; `sprite_type` at `+28` is the terrain sprite type id; `instance_id` starts at 200 and increments; `savescenariomap` and `savespecialmap` write identical bytes; sprite placement and removal round-trip byte-exactly.
 - **Observed in gameplay (2026-09-17), earlier run:** a 512x512 map generated by the shipped engine carries the same 16-byte prefix as a 128, so the header does not disappear on oversized maps.
 - **Corrected:** cell and record coordinates, previously documented and implemented as X-major (`x × height + y`). Every shipped map is square, so the corpus could not falsify it.
 - **Refuted:** tag bit `0x00800000` as a forced-texture flag. Forcing textures into 4,096 cells set it in none of them.
 - **Inferred:** the second word is elevation; record `+34` is a procedure identifier.
-- **Observed in a local binary (2026-09-17):** every one of the 365 installed maps re-encodes to its input bytes, and all 16,628 placed-sprite records rebuild from their typed fields alone. Place-then-remove returns a shipped 128x128 map byte for byte.
+- **Observed in a local binary (2026-09-17):** every one of the 365 installed maps re-encodes to its input bytes, and all 21,117 placed-sprite records rebuild from their typed fields alone. Place-then-remove returns every one of the 365 installed maps byte for byte, exercised through the CLI a file at a time.
 - **Observed in gameplay (2026-09-17, mapload probe):** the engine loads maps this project wrote -- edited, sprite-placed, created from nothing, and non-square -- and the two created-from-nothing maps re-save byte-identically; the header word at `0x00` is rewritten from engine state on every save rather than carried from the file; tag bit `0x00800000` does not survive a load-and-save; `setterrain`'s transition ring is a direction table on the background, identical across nine of the eleven terrains.
 - **Observed in gameplay (2026-09-17, terrainrings):** `setterrain`'s transition ring, for all eleven backgrounds. It is one offset table plus a per-background anchor for the eight that blend; `tt_dirt` and `tt_impassible` blend nothing; `tt_road` as a background has its own measured edge table. A painted region's **interior** is a random draw from its terrain's `384 + 8k` family and cannot be reproduced by a writer.
 - **Not reproduced, permanently:** a painted region's interior. The same experiment run twice gave centre tiles 385 and 390 while the ring was byte-identical, so this is a property of the engine rather than a gap in the measurement.
@@ -1143,4 +1292,4 @@ With a tile definition and atlas, the viewer starts in terrain-art mode. Press `
 - **Observed in a local binary (2026-09-17):** all 4,043 `TILE=` rows and all 402 `TERRAINTYPE=` rows in all 26 shipped tilesets have exactly 11 fields, and none is incomplete. A parser comment justifying lenient short rows on the grounds that `tilesa01.til` "is already a different shape" was **wrong**: the two differ in row count, 609 against 617, not field shape.
 - **Observed in a local binary (2026-09-17):** terrain ids are **tileset-local**. `tilesb01.til` declares 0..10; `cavecry2.til` reaches 42. Atlases run 64, 128, 256 and 624 slots.
 - **Refuted (2026-09-17):** the header word at `0x00` as a value the engine *carries through a save*. `URAK.scn`'s `0x6c` came back as `0x6f`. Whether the **loader** reads it is untested -- that would take loading two maps differing only in that word -- and "from its own state" is equally consistent with "set by the last `newmap`".
-- **Unknown:** elevation units, what sets tag bit `0x00800000` in memory, the trailing footer's `1` vs `3`, the attribute field at `+24`, and what distinguishes the 52-/53-byte record variants. The writer copies all of them rather than minting them -- except a newly placed sprite, which mints `+24`, and that record has now been shown to survive the engine byte-exactly.
+- **Unknown:** elevation units, what sets tag bit `0x00800000` in memory, the trailing footer's `1` vs `3` and why four of the six layouts have no footer at all, the attribute field at `+24`, and what the six record layouts' constant tail words mean. **Inferred:** that the header word at `0x00` is a format version and is what selects a layout; the corpus partition is exact and ordered, but no engine measurement confirms the loader reads it. The writer copies all of them rather than minting them -- except a newly placed sprite, which mints `+24`, and that record has now been shown to survive the engine byte-exactly.

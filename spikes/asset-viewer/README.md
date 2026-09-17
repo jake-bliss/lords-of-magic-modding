@@ -87,13 +87,19 @@ target/release/lom-asset-viewer --map-remove-sprite IN.scn INSTANCE_ID     OUT.s
 
 Everything here rests on one property: **an unedited map re-encodes to the exact bytes it was read
 from.** `--map-roundtrip` asserts it over the installed corpus — 365 checked, 365 byte-identical,
-16,628 placed-sprite records rebuilt from their typed fields, 0 failures. Run it first.
+21,117 placed-sprite records rebuilt from their typed fields, 0 failures. Run it first.
 
 When **editing existing data**, fields whose meaning is still Unknown — the header word at `0x00`,
-the trailing footer, the record attribute field at `+24`, tag bit `0x00800000`, and the entire
-trailing section of every family this project has not decoded — are **copied, never minted**.
+the trailing footer, the record attribute field at `+24`, tag bit `0x00800000`, every constant word
+in a record tail, and the entire trailing section of any tail that cannot be pinned to one layout —
+are **copied, never minted**.
 Placing a *new* sprite is the exception: a record that did not exist has to get its bytes from
-somewhere, and one of the nine it mints (`+24`) contradicts the corpus reading of that field. See
+somewhere, and **it is minted in the map's own layout** — 12 fields for a 48-byte record, 13 for a
+52-byte one, 14 for a 53-byte one. In the 47- and 49-byte layouts the minted `+24` is `0x00000001`,
+which *contradicts* the corpus reading of that field; in the other three it is `0`, which **agrees**
+with all 4,003 of their corpus records but has no engine measurement behind it at all. Only the
+49-byte layout's mint was watched being written, so `--map-place-sprite` prints a note on the other
+five. See
 [map format](../../docs/map-format.md#writing-maps). That is what lets the writer be correct
 while the format is only partly solved, and it is also why there is no create-a-map-from-nothing
 mode: three of those fields would have to be invented. Generate in the shipped GS5R3 editor, which
@@ -202,7 +208,8 @@ Tested against the installed GS5R3 profile on 2026-09-11:
 | Remaining pairs, each a value-pinned exception | 5 |
 | Loose `.scn`/`.smp`/`.lgd` grids parsed | 365 / 365 |
 | Tile-set definitions parsed | 26 / 26 |
-| Dominant 49-byte map records decoded | 16,628 in 196 files |
+| Placed-object records decoded | 21,117 in 365 files, across six record layouts |
+| Maps `--map-place-sprite` / `--map-remove-sprite` accept | 365 / 365 |
 | Release-mode archive enumeration | ~0.20 s |
 | Release-mode full PBM scan/decode | ~1.0 s |
 
@@ -222,7 +229,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 
 - The rendering is not yet behaviorally equivalent to the game. A visible bright-green color in the atlas suggests an engine-level chroma-key rule that is not represented by the PBM header's masking field.
 - IMP rendering is not yet behaviorally equivalent to the game. The clean preview hides palette indices 0 and 1 as the inferred background and secondary-mask channels; the other viewer modes expose them. Placement is settled — see [hotspots](../../docs/hotspots.md). What still needs reference comparison is the shadow-index blend, the chroma-key rule, and sequence timing and facing direction ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)).
-- BMP/WAVE currently have metadata probes. Map/scenario/component grids, standard terrain lookup, and the dominant 49-byte trailing family are decoded; 52-/53-byte map records, fonts, and video are not decoded.
+- BMP/WAVE currently have metadata probes. Map/scenario/component grids, standard terrain lookup, and all six placed-object record layouts are decoded — but what the layouts' constant tail words *mean* is Unknown, and fonts and video are not decoded at all.
 - The viewer recreates its streaming texture while drawing; caching is a production optimization, not a spike requirement.
 - There is no thumbnail grid, search UI, batch/GUI export, or general asset reimport. IMP **placement** write-back exists (`--set-imp-placement`); pixel and frame reimport do not. MPQ member replacement is proven in `examples/mpq_replace.rs` but is not a supported CLI command.
 - A successful asset decoder does not reduce the much larger uncertainty in the GameScript host, simulation, AI, saves, or multiplayer.
@@ -232,7 +239,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/mpq.rs` — manual StormLib FFI and read-only archive/member ownership.
 - `src/pbm.rs` — bounded IFF chunk parsing, palette conversion, PBM row handling, and ByteRun1 decoding.
 - `src/imp.rs` — bounds-checked IMP tables, palette, RLE and packed-pixel decoding, hotspot and duplicate/repeated-frame structures, and generated-header validation.
-- `src/map.rs` — bounded common header/cell-grid parsing, packed `y * width + x` coordinates, terrain tags, the measured terrain-type-to-tile table, and 49-byte placed-sprite records for SCN/SMP/LGD files.
+- `src/map.rs` — bounded common header/cell-grid parsing, packed `y * width + x` coordinates, terrain tags, the measured terrain-type-to-tile table, and the six placed-object record layouts for SCN/SMP/LGD files.
 - `src/tile.rs` — parser for `.til` atlas geometry, terrain types, and the full eight-column neighbour constraints, plus the constraint matcher `--map-paint-terrain` re-tiles from.
 - `examples/parse_all_tilesets.rs` — parse every `.til` in a directory and report atlas size, terrain-id range and any row that fails to declare all eight constraints. Reading columns the parser used to discard can only *add* failure modes for `--view-map`, so this is the check that it has not: 26 parsed, 0 failed, 0 incomplete on the GS5R3 set. Takes a path, because no tileset is committed.
 - `src/gamescript.rs` — bounded GameScript lexer, procedure diagnostics, name inventory, and static `run` references.
