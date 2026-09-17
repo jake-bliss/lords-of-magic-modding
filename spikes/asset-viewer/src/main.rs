@@ -18,8 +18,10 @@ use lom_asset_viewer::imp::{
     ImpValidationException, imp_member_basename, normalize_imp_member,
 };
 use lom_asset_viewer::map::{
-    GENERATED_HEADER_WORD, MapAsset, TERRAIN_SPRITE_ARRAYS, TERRAIN_SPRITE_TYPES, TERRAIN_TYPES,
-    terrain_sprite_name, terrain_sprite_type, terrain_type_base_tile, transition_ring,
+    GENERATED_HEADER_WORD, MapAsset, ROAD_TERRAIN, TERRAIN_SPRITE_ARRAYS, TERRAIN_SPRITE_NAME_ONLY,
+    TERRAIN_SPRITE_TYPES, TERRAIN_TYPES, TRANSITION_RING_OFFSETS, interior_tile_family,
+    road_background_ring, terrain_sprite_name, terrain_sprite_type, terrain_type_base_tile,
+    transition_anchor, transition_ring,
 };
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
@@ -3292,10 +3294,6 @@ fn is_screaming_case(name: &str) -> bool {
         && !name.chars().any(|character| character.is_ascii_lowercase())
 }
 
-/// A terrain type, given either as its number `0..=10` or as one of its `gs\maplib.gs` names.
-///
-/// Names are accepted with or without the `tt_` prefix, because a modder reading `maplib.gs` sees
-/// `tt_water` and a modder reading a map dump sees `water`.
 /// Print the engine's terrain-sprite-type table.
 ///
 /// Profile-specific: these ids come from the working GS5R3 script set, assigned in script execution
@@ -3310,6 +3308,11 @@ fn sprite_types() -> Result<(), String> {
     for name in TERRAIN_SPRITE_ARRAYS {
         println!("array\t{name}\tper-faith table, not yet enumerated");
     }
+    for name in TERRAIN_SPRITE_NAME_ONLY {
+        println!("name-only\t{name}\tlogged a name, no usable value");
+    }
+    println!("dict-entries-counted-by-the-probe\t196");
+    println!("dict-entries-unresolved\t1\tcounted but never logged; unidentified");
     eprintln!(
         "note: these ids are assigned in script execution order and are specific to the profile \
          they were dumped from. Re-run the terrainrings probe against any profile whose maps you \
@@ -3318,30 +3321,82 @@ fn sprite_types() -> Result<(), String> {
     Ok(())
 }
 
-/// Print the measured `setterrain` transition ring for every background terrain.
+/// Print the measured `setterrain` transition behaviour for every background terrain.
 fn transition_rings() -> Result<(), String> {
-    println!("direction-offsets\tN:-13\tS:-14\tW:-11\tE:-12\tNW:3\tNE:4\tSW:2\tSE:1");
+    // Derived from the constant, not written out. A hand-typed header would silently disagree with
+    // the table the moment the table was regenerated, and this command exists to be trusted.
+    let header = TRANSITION_RING_OFFSETS
+        .iter()
+        .map(|entry| {
+            let name = match entry.direction {
+                (0, -1) => "N",
+                (0, 1) => "S",
+                (-1, 0) => "W",
+                (1, 0) => "E",
+                (-1, -1) => "NW",
+                (1, -1) => "NE",
+                (-1, 1) => "SW",
+                _ => "SE",
+            };
+            format!("{name}:{}", entry.offset)
+        })
+        .collect::<Vec<_>>()
+        .join("\t");
+    println!("direction-offsets\t{header}");
     for entry in TERRAIN_TYPES {
-        let terrain = entry.terrain_type;
-        match transition_ring(terrain) {
-            Some(ring) => println!(
-                "ring\t{terrain}\t{}\t{}",
-                entry.script_names[0],
-                ring.iter().map(u32::to_string).collect::<Vec<_>>().join("\t")
-            ),
-            None => println!(
-                "ring\t{terrain}\t{}\tno uniform ring (blends nothing, or depends on the painted terrain)",
-                entry.script_names[0]
-            ),
+        let background = entry.terrain_type;
+        let name = entry.script_names[0];
+        match transition_anchor(background) {
+            Some(anchor) => {
+                // Any painted terrain other than this one or road gives the same ring, which is
+                // the finding; pick the first such terrain rather than hard-coding one.
+                let painted = TERRAIN_TYPES
+                    .iter()
+                    .map(|other| other.terrain_type)
+                    .find(|painted| *painted != background && *painted != ROAD_TERRAIN)
+                    .unwrap_or(0);
+                let ring = transition_ring(background, painted)
+                    .ok_or("a blending background must yield a ring")?;
+                println!(
+                    "ring\t{background}\t{name}\tanchor:{anchor}\t{}",
+                    ring.iter().map(u32::to_string).collect::<Vec<_>>().join("\t")
+                );
+            }
+            None if background == ROAD_TERRAIN => {
+                println!("ring\t{background}\t{name}\tper-painted-terrain; corners keep the background");
+                for painted in TERRAIN_TYPES.iter().map(|other| other.terrain_type) {
+                    match road_background_ring(painted) {
+                        Some(ring) => println!(
+                            "road-ring\tpainted:{painted}\t{}",
+                            ring.iter().map(u32::to_string).collect::<Vec<_>>().join("\t")
+                        ),
+                        None => println!("road-ring\tpainted:{painted}\tno ring"),
+                    }
+                }
+            }
+            None => println!("ring\t{background}\t{name}\tblends nothing: the ring keeps the background tile"),
+        }
+    }
+    for entry in TERRAIN_TYPES {
+        if let Some((low, high)) = interior_tile_family(entry.terrain_type) {
+            println!(
+                "interior\t{}\t{}\t{low}..{high}\trandomised per paint",
+                entry.terrain_type, entry.script_names[0]
+            );
         }
     }
     eprintln!(
-        "note: measured for 3x3 regions on a forced background. tt_road is ragged along every \
-         edge as a painted terrain, and as a background it changes only the edges."
+        "note: rings measured for 3x3 regions on a forced uniform background. tt_road is ragged \
+         along every edge as a PAINTED terrain, so it has no per-direction ring. A region's \
+         interior is picked at random from its terrain's family and cannot be reproduced."
     );
     Ok(())
 }
 
+/// A terrain type, given either as its number `0..=10` or as one of its `gs\maplib.gs` names.
+///
+/// Names are accepted with or without the `tt_` prefix, because a modder reading `maplib.gs` sees
+/// `tt_water` and a modder reading a map dump sees `water`.
 fn parse_terrain_type(value: &str) -> Result<u32, String> {
     if let Ok(number) = value.parse::<u32>() {
         return terrain_type_base_tile(number)
@@ -3688,8 +3743,27 @@ fn apply_map_edit(map: &mut MapAsset, edit: MapEdit) -> Result<String, String> {
                 .map_err(|error| error.to_string())?;
             // Name the type in the output. A bare id is what made these records unreadable in
             // the first place, and a caller who passed an id deserves to see what it resolved to.
-            let named = terrain_sprite_name(sprite_type)
-                .map_or_else(|| "unregistered (runtime type?)".to_owned(), str::to_owned);
+            // A name, or an honest account of why there isn't one. Saying "unregistered" for an
+            // id inside the table's gaps told the user the opposite of the truth: those gaps are
+            // the per-faith types the arrays hold, and they are the commonest objects on a real
+            // map -- 31 distinct gap ids appear across the installed corpus.
+            let named = terrain_sprite_name(sprite_type).map_or_else(
+                || {
+                    let highest = TERRAIN_SPRITE_TYPES
+                        .iter()
+                        .map(|(_, id)| *id)
+                        .max()
+                        .unwrap_or(0);
+                    if sprite_type > highest {
+                        "above the dumped table: a runtime registration".to_owned()
+                    } else {
+                        "inside a gap in the dumped table: probably a per-faith type held by one \
+                         of the arrays"
+                            .to_owned()
+                    }
+                },
+                str::to_owned,
+            );
             Ok(format!(
                 "place-sprite\t({x}, {y})\ttype:{sprite_type}\tname:{named}\tinstance:{instance_id}"
             ))
@@ -3954,9 +4028,10 @@ impl MapCellTile for lom_asset_viewer::map::MapCell {
 #[cfg(test)]
 mod tests {
     use super::{
-        GENERATED_HEADER_WORD, MapEdit, create_map, edit_map, parse_coordinate, parse_dimension,
-        parse_elevation, parse_offset, parse_sprite_type, parse_terrain_type, roundtrip_maps,
-        set_imp_placement, terrain_sprite_name,
+        GENERATED_HEADER_WORD, MapEdit, TRANSITION_RING_OFFSETS, create_map, edit_map,
+        parse_coordinate, parse_dimension, parse_elevation, parse_offset, parse_sprite_type,
+        parse_terrain_type, roundtrip_maps, set_imp_placement, sprite_types, terrain_sprite_name,
+        transition_rings,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
@@ -5083,6 +5158,39 @@ mod tests {
     // shipped without CLI tests. A reviewer pointed out that the layer which actually touches the
     // game directory was the untested one, and that this is why the FlagRegion verification gap
     // was invisible.
+
+    /// The two listing verbs had no test at all, which the previous review already flagged as a
+    /// pattern on this project. They only print, so the risk is low -- but the header used to be a
+    /// hand-written literal that would have silently disagreed with the table.
+    #[test]
+    fn the_listing_verbs_run_and_derive_their_header_from_the_table() {
+        sprite_types().unwrap();
+        transition_rings().unwrap();
+        // The header is built from TRANSITION_RING_OFFSETS, so it cannot drift from it.
+        let offsets: Vec<i32> = TRANSITION_RING_OFFSETS.iter().map(|e| e.offset).collect();
+        assert_eq!(offsets, vec![-13, -14, -11, -12, 3, 4, 2, 1]);
+    }
+
+    #[test]
+    fn an_id_inside_a_table_gap_is_not_called_unregistered() {
+        let dir = scratch_dir("map-gapid");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+
+        // 105 sits inside the 95..118 gap, which the shipped corpus uses heavily -- those are the
+        // per-faith types the arrays hold, not runtime registrations.
+        edit_map(
+            &input,
+            MapEdit::PlaceSprite { x: 3, y: 2, sprite_type: 105 },
+            &output,
+        )
+        .unwrap();
+        let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(written.placed_sprites_49.as_ref().unwrap().records[0].sprite_type, 105);
+        assert_eq!(terrain_sprite_name(105), None, "105 is a gap, not a name");
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_sprite_type_can_be_named_or_numbered() {

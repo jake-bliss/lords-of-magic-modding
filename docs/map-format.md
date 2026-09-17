@@ -720,27 +720,38 @@ the constants exactly.
 lom-asset-viewer --map-transition-rings
 ```
 
-### And a qualification on the terrain-to-tile table
+### A painted region's interior is a random draw, not a base tile
 
-The same run shows `setterrain` picks its *core* tile from a family too. Painting terrain 6 onto a
-tile-15 background writes tiles in `385..391`, not 15 — while the original measurement, taken
-against a tile-392 background, gave 15.
+**Observed in gameplay, 2026-09-17.** `setterrain` picks a painted region's interior from an
+eight-member family, and picks it **randomly**.
 
-**Measured for one terrain on one background.** Terrain 6 is also the one case where the painted
-type equals the background type, so it is the least representative row to generalise from. What is
-established is that `base_tile` is not invariant *for terrain 6*; the other ten rows were each
-measured once, against a tile-392 background, and may well be fixed. The column is therefore
-labelled a **representative** tile rather than a guaranteed one — the weaker claim the evidence
-supports — and this is not a licence to assume every row varies.
+The family is `384 + 8k`, where `k` is the terrain's block index `(anchor − 15) / 48` — so terrain 6
+draws from `384..391`, water from `392..399`, desert from `400..407`, and so on in anchor order.
+Verified for all eight blending terrains on all eleven backgrounds.
 
-The reverse direction is unaffected **for the tiles that were measured**: the blend background, tile
-15, read back as terrain 6 exactly as predicted. The `385..391` family this paragraph is about was
-**never** read back — the probe calls `getterrain` only at `(0, 0)`, before any blob is painted — and
-`base_tile_terrain_type(385)` returns `None` in code, because only the eleven representative tiles
-are in the table. This is not a claim that the new family is type-resolvable.
+**The randomness is the load-bearing part.** The same experiment run twice — terrain 6 on a tile-15
+background, the same 3×3 at the same coordinates, two separate attended runs — gave centre tile
+**385** once and **390** the other time, while the transition ring was **byte-identical across both
+runs**. That double result is worth more than either half: the ring is confirmed by independent
+replication, and the interior is confirmed to be unreproducible.
 
-What this project's writer does with the table — forcing one representative tile of a type into one
-cell, which is `forcetexture` semantics — remains exactly right.
+So a writer cannot reproduce an interior, and should not try. Writing one representative tile is a
+legitimate, if less varied, choice — and it is what `--map-set-terrain` and `--map-paint-terrain` do.
+
+**This corrects two earlier claims of mine, both in the same direction.** An earlier section said
+`base_tile` was non-invariant "for terrain 6" and blamed the *background*, citing a tile-392
+background as the contrast. `zr1.scn` **is** a tile-392 background, and terrain 6's blob centre there
+is 391, not 15. `base_tile` is non-invariant for all nine blending terrains, and the variable is the
+painted region's **extent**, not the background: `TERRAIN_BASE_TILES` was measured with **single-cell**
+`setterrain`, which has no interior at all. The family was also written as `385..391`, which is wrong
+at both ends for the run it came from — 384 occurs and 385 does not in `zr6.scn`.
+
+A reviewer caught the contradiction by reading the committed artifacts. The run-to-run difference,
+which explains it, came out of checking that reviewer's numbers against my own.
+
+The reverse direction is unaffected: `getterrain` on a representative tile answers its type, and the
+blend background read back as expected on all eleven rows. What the writer does with the table —
+forcing one representative tile of a type into a cell — remains right.
 
 
 ## Commands
@@ -788,6 +799,7 @@ With a tile definition and atlas, the viewer starts in terrain-art mode. Press `
 - **Inferred:** the second word is elevation; record `+34` is a procedure identifier.
 - **Observed in a local binary (2026-09-17):** every one of the 365 installed maps re-encodes to its input bytes, and all 16,628 placed-sprite records rebuild from their typed fields alone. Place-then-remove returns a shipped 128x128 map byte for byte.
 - **Observed in gameplay (2026-09-17, mapload probe):** the engine loads maps this project wrote -- edited, sprite-placed, created from nothing, and non-square -- and the two created-from-nothing maps re-save byte-identically; the header word at `0x00` is rewritten from engine state on every save rather than carried from the file; tag bit `0x00800000` does not survive a load-and-save; `setterrain`'s transition ring is a direction table on the background, identical across nine of the eleven terrains.
-- **Partially reproduced:** `setterrain`'s transition blending. The ring is now measured for a tile-15 background (`LAND_TRANSITION_TILES`); the other ten backgrounds are not, so the writer still offers single-cell forcing rather than painting.
+- **Observed in gameplay (2026-09-17, terrainrings):** `setterrain`'s transition ring, for all eleven backgrounds. It is one offset table plus a per-background anchor for the eight that blend; `tt_dirt` and `tt_impassible` blend nothing; `tt_road` as a background has its own measured edge table. A painted region's **interior** is a random draw from its terrain's `384 + 8k` family and cannot be reproduced by a writer.
+- **Not reproduced, permanently:** a painted region's interior. The same experiment run twice gave centre tiles 385 and 390 while the ring was byte-identical, so this is a property of the engine rather than a gap in the measurement.
 - **Refuted (2026-09-17):** the header word at `0x00` as a value the engine *carries through a save*. `URAK.scn`'s `0x6c` came back as `0x6f`. Whether the **loader** reads it is untested -- that would take loading two maps differing only in that word -- and "from its own state" is equally consistent with "set by the last `newmap`".
 - **Unknown:** elevation units, what sets tag bit `0x00800000` in memory, the trailing footer's `1` vs `3`, the attribute field at `+24`, and what distinguishes the 52-/53-byte record variants. The writer copies all of them rather than minting them -- except a newly placed sprite, which mints `+24`, and that record has now been shown to survive the engine byte-exactly.

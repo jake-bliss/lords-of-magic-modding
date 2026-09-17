@@ -735,31 +735,14 @@ pub struct TransitionTile {
     pub tile: u32,
 }
 
-/// The tiles `setterrain` blends into the ring around a painted region, on a **tile-15 background**.
+/// Superseded by [`transition_ring`], and kept only because [`LAND_BACKGROUND_TILE`] reads better
+/// beside it.
 ///
-/// **Observed in gameplay, 2026-09-17 (mapload probe).** Eleven isolated 3x3 blobs, one per terrain
-/// type, painted onto a background forced to tile 15 with `clearmap`. The ring one cell outside each
-/// blob is this table -- and it is **byte-for-byte identical for nine of the eleven terrains**
-/// (0, 1, 2, 3, 4, 5, 7, 8, 10).
-///
-/// For those nine, a transition tile is chosen by the **background terrain and the direction of the
-/// boundary**. It is *not* a general law: `tt_road` is a counter-example on the same background, so
-/// the painted terrain can matter. Nine of ten sharing one table is what makes a painter tractable
-/// -- a full 11x11 pair matrix would have needed eleven times the measurement -- but a painter
-/// **must special-case road**, and must not assume this holds for a background it has not measured.
-/// This table applies to the nine only.
-///
-/// The two that differ:
-///
-/// - **Terrain 9** (`tt_road`): halo `384..390`, core `474` and `546..553`.
-/// - **Terrain 6** is the background's own type. Its halo is pure tile 15 -- no ring at all -- yet
-///   its **core** was rewritten to `385..391` rather than left at 15. So something was written and
-///   no transition appeared, and this project cannot yet say why. `384..391` turns up in *both*
-///   terrain 6's core and terrain 9's halo, which suggests it is a set belonging to the background
-///   rather than to the painted type. That is a hypothesis, not a finding.
-///
-/// This is **one background**. The structure generalises; the numbers do not. A complete painter
-/// needs the same measurement against each of the other ten backgrounds.
+/// This was the first measurement, taken against one background before the 11x11 matrix existed,
+/// and its doc block used to say "this is one background; a complete painter needs the same
+/// measurement against each of the other ten". That measurement has since been made. A test asserts
+/// this constant still agrees with `transition_ring(6, 1)`, because the repository already learned
+/// what two copies of one measured table cost.
 pub const LAND_TRANSITION_TILES: [TransitionTile; 8] = [
     TransitionTile { direction: (0, -1), tile: 2 },
     TransitionTile { direction: (0, 1), tile: 1 },
@@ -771,7 +754,6 @@ pub const LAND_TRANSITION_TILES: [TransitionTile; 8] = [
     TransitionTile { direction: (1, 1), tile: 16 },
 ];
 
-/// The background `LAND_TRANSITION_TILES` was measured against, and `tt_land`'s representative tile.
 pub const LAND_BACKGROUND_TILE: u32 = 15;
 
 /// The header word every map the shipped engine generated carries.
@@ -824,6 +806,13 @@ pub const GENERATED_HEADER_WORD: u32 = 0x6f;
 /// [`TRANSITION_BLOCK_STRIDE`], every one congruent to [`TRANSITION_ANCHOR_RESIDUE`] mod 48.
 /// Nothing in "anchor = SE - 1" imposes an arithmetic grid.
 ///
+/// **And for seven of the eight, the anchor simply *is* the terrain's representative tile** --
+/// `terrain_type_base_tile` gives 15, 111, 159, 207, 255, 303 and 351 for terrains 6, 2, 3, 4, 5, 7
+/// and 8. Water is the sole exception (anchor 63, representative tile 392). An earlier draft
+/// highlighted only that exception, which made the anchor look purely fitted when it is mostly
+/// predictable -- and being predictable is what lets someone compute an anchor for a background
+/// nobody measured. Use [`transition_anchor`] rather than either constant directly.
+///
 /// **What this does NOT establish** is that the whole atlas is partitioned into 48-tile terrain
 /// blocks. Eight transition motifs spaced 48 apart is a statement about those motifs. An atlas
 /// parser must not classify every 48-slot region as a terrain block on this evidence.
@@ -861,9 +850,14 @@ pub enum TransitionBehaviour {
     Blends { anchor: u32 },
     /// No transition tiles at all: every ring cell keeps the background tile.
     ///
-    /// True of `tt_dirt` (0) and `tt_impassible` (10), whose representative tiles are the two that
-    /// are **not** congruent to [`TRANSITION_ANCHOR_RESIDUE`] mod 48 -- 175 and 469 are 31 and 37.
-    /// That is suggestive rather than established: two cases is not a rule.
+    /// True of `tt_dirt` (0) and `tt_impassible` (10).
+    ///
+    /// An earlier version of this comment hinted that being **off** the 48-tile grid predicts not
+    /// blending, because 175 and 469 are 31 and 37 mod 48. **That is refuted, not merely
+    /// unestablished:** *four* representative tiles are off the grid -- 175 (31), 392 (8), 459 (27)
+    /// and 469 (37) -- and water's 392 is one of them while water blends perfectly normally. The
+    /// hedge "two cases is not a rule" did not cover the premise being false, and the
+    /// counter-example was two paragraphs away in the same document.
     NoTransition,
     /// The ring depends on the painted terrain, and only the edges change -- corners keep the
     /// background tile. Observed only for `tt_road` (9) as a background.
@@ -891,18 +885,40 @@ pub struct TerrainTransition {
     pub behaviour: TransitionBehaviour,
 }
 
-/// The transition ring for a background, in [`TRANSITION_RING_OFFSETS`] order.
+/// A terrain's blending anchor, when it has one.
 ///
-/// `None` when this background does not produce a uniform ring -- either it blends nothing, or the
-/// ring depends on the painted terrain. A painter must handle those three backgrounds separately
-/// rather than substituting a plausible table.
-pub fn transition_ring(background_terrain: u32) -> Option<[u32; 8]> {
-    let entry = TERRAIN_TRANSITIONS
+/// Seven of the eight are just `terrain_type_base_tile`; water is the exception. Going through this
+/// rather than either constant is what keeps a caller from anchoring water on 392.
+pub fn transition_anchor(terrain_type: u32) -> Option<u32> {
+    TERRAIN_TRANSITIONS
         .iter()
-        .find(|entry| entry.terrain_type == background_terrain)?;
-    let TransitionBehaviour::Blends { anchor } = entry.behaviour else {
+        .find(|entry| entry.terrain_type == terrain_type)
+        .and_then(|entry| match entry.behaviour {
+            TransitionBehaviour::Blends { anchor } => Some(anchor),
+            _ => None,
+        })
+}
+
+/// The ring `setterrain` writes around a region of `painted` laid on a field of `background`.
+///
+/// **Both terrains, deliberately.** An earlier signature took only the background, which made the
+/// function unable to express its own documented exceptions: `transition_ring(6)` handed a caller
+/// the land ring for painting **road** onto land, where the engine writes a ragged `384..390` run,
+/// and for painting **land onto land**, where the engine writes nothing at all. A measurement that
+/// can be misused into writing the wrong tiles is worth less than one that returns `None`.
+///
+/// `None` means "this project cannot give you a ring", for one of four reasons:
+///
+/// - `painted == background` -- the engine writes no ring; the region's own type already matches.
+/// - `painted == 9` (`tt_road`) -- ragged along every edge, so there is no per-direction tile.
+/// - the background blends nothing (`tt_dirt`, `tt_impassible`).
+/// - the background is `tt_road`, whose ring depends on the painted terrain -- use
+///   [`road_background_ring`], which is measured.
+pub fn transition_ring(background: u32, painted: u32) -> Option<[u32; 8]> {
+    if painted == background || painted == ROAD_TERRAIN {
         return None;
-    };
+    }
+    let anchor = transition_anchor(background)?;
     let mut ring = [0_u32; 8];
     for (slot, offset) in ring.iter_mut().zip(TRANSITION_RING_OFFSETS) {
         *slot = u32::try_from(i64::from(anchor) + i64::from(offset.offset)).ok()?;
@@ -910,26 +926,99 @@ pub fn transition_ring(background_terrain: u32) -> Option<[u32; 8]> {
     Some(ring)
 }
 
+/// `tt_road`'s terrain type.
+pub const ROAD_TERRAIN: u32 = 9;
+
+/// The ring around a region painted onto a **road** background.
+///
+/// **Observed in gameplay, 2026-09-17**, and measured for all eleven painted terrains: the four
+/// **corners keep the background tile 459**, and the edges are their own offset table around a
+/// per-painted-terrain base `a`:
+///
+/// ```text
+/// N = a      S = a - 2      W = a - 1      E = a + 1
+/// a = 456                 for painted tt_dirt (0)
+/// a = 488 + 16 * (T - 2)  for painted T in 2..=8
+/// no ring                 for painted tt_water (1), tt_road (9), tt_impassible (10)
+/// ```
+///
+/// Verified 11 of 11 against `zr9.scn`. This was left uncommitted in the first pass, with the
+/// documentation telling a painter it "must special-case road" and giving it nothing to use -- a
+/// reviewer pointed out the data was already in the artifacts.
+///
+/// Returns the eight ring tiles in [`TRANSITION_RING_OFFSETS`] order, corners included.
+pub fn road_background_ring(painted: u32) -> Option<[u32; 8]> {
+    let base = match painted {
+        0 => 456,
+        2..=8 => 488 + 16 * (painted - 2),
+        _ => return None,
+    };
+    let corner = terrain_type_base_tile(ROAD_TERRAIN)?;
+    let mut ring = [corner; 8];
+    for (slot, offset) in ring.iter_mut().zip(TRANSITION_RING_OFFSETS) {
+        *slot = match offset.direction {
+            (0, -1) => base,
+            (0, 1) => base - 2,
+            (-1, 0) => base - 1,
+            (1, 0) => base + 1,
+            _ => corner,
+        };
+    }
+    Some(ring)
+}
+
+/// The tile family a painted region's **interior** is filled from, and why it cannot be predicted.
+///
+/// **Observed in gameplay, 2026-09-17.** The centre of a painted 3x3 -- the only cell with no
+/// outside neighbour -- takes a tile from an eight-member family `384 + 8k`, where `k` is the
+/// background's block index `(anchor - 15) / 48`. Verified for all eight blending terrains on all
+/// eleven backgrounds.
+///
+/// **And it is randomised.** The same experiment run twice -- terrain 6 on a tile-15 background, the
+/// same 3x3 at the same coordinates -- produced centre tile **385** in one run and **390** in the
+/// other, while the ring was byte-identical across both. So the interior is decorative variation
+/// the engine picks per paint, and **no writer can reproduce it**; that is a property of the engine,
+/// not a gap in the measurement.
+///
+/// This corrects two earlier claims. The documentation said `base_tile` was non-invariant "for
+/// terrain 6" and blamed the *background*; it is non-invariant for all nine blending terrains and
+/// the variable is the painted region's extent -- `TERRAIN_BASE_TILES` was measured with
+/// **single-cell** `setterrain`, which has no interior. And the family was written as `385..391`,
+/// which is wrong at both ends for the run it came from.
+pub fn interior_tile_family(painted: u32) -> Option<(u32, u32)> {
+    let anchor = transition_anchor(painted)?;
+    let block = (anchor - TRANSITION_ANCHOR_RESIDUE) / TRANSITION_BLOCK_STRIDE;
+    let base = 384 + 8 * block;
+    Some((base, base + 7))
+}
+
 /// The engine's terrain-sprite-type table: the name a script registers, and the id it gets.
 ///
 /// **Observed in gameplay, 2026-09-17.** `terrainsprites` is a dict keyed by name -- shipped script
 /// reads `terrainsprites /barrow get` -- and `forall` enumerated **197** of its entries.
 ///
-/// **This table is 178 of those 197, and the accounting matters:**
+/// **This table is 178 of them, and the accounting matters:**
 ///
 /// | kind | count | recorded |
 /// | --- | ---: | --- |
 /// | plain name-to-id | 178 | here |
 /// | array-valued | 9 | [`TERRAIN_SPRITE_ARRAYS`] |
-/// | printed a name but no usable value | **10** | **nowhere** |
+/// | logged a name, no usable value | 8 | [`TERRAIN_SPRITE_NAME_ONLY`] |
+/// | **counted but never logged at all** | **1** | **unidentified** |
 ///
-/// Those ten logged a name with no value the probe could render -- `define_terrain_sprite`,
-/// `keep_ttype`, `vilg_ttype`, `leader_ttype`, `special_ttype`, `great_temple` and similar. They
-/// are almost certainly procedures, and `cvs` on a procedure prints nothing useful, but that is an
-/// inference; what is measured is that they exist and are not ids. **So this is not a complete dump
-/// of the dict** and a tool must not treat it as one. An earlier version of this comment said the
-/// remainder was "arrays and procedures, listed in `TERRAIN_SPRITE_ARRAYS`", which was false --
-/// only the arrays are listed, and a reviewer found the ten-entry gap by doing the arithmetic.
+/// 195 rows reached the log; the probe's own iteration counter said **196**. So one dict entry was
+/// enumerated and produced nothing -- a `cvs` failure on a key, or a key whose name printed empty.
+/// Identifying it needs another keypress. `tools/emit_terrain_tables.py --check` pins that gap at 1
+/// so a change becomes a failure.
+///
+/// The eight name-only entries are almost certainly procedures (`cvs` on a procedure prints nothing
+/// useful) but that is an inference; what is measured is that they exist and are not ids.
+/// **So this is not a complete dump of the dict** and a tool must not treat it as one.
+///
+/// Two earlier versions of this comment got the arithmetic wrong -- first claiming the remainder was
+/// all arrays, then saying "ten, and similar" off an unbounded log slice that counted two trailing
+/// lines as entries. Both were caught by reviewers doing the subtraction. The generator now bounds
+/// the slice at both ends and cross-checks against the probe's counter.
 ///
 /// **This is why a map's `sprite_type` field was unusable.** The id is assigned in script execution
 /// order across 536 `addterrainspritetype` call sites, so nothing in the file format says which id
@@ -1139,6 +1228,21 @@ pub const TERRAIN_SPRITE_ARRAYS: [&str; 9] = [
     "special_unit2",
     "terrainspritearray",
     "vilg_array",
+];
+
+/// Dict entries that logged a name with no value the probe could render.
+///
+/// Almost certainly procedures. Committed so the accounting above is checkable rather than a
+/// sentence, and so the next probe has a list to resolve.
+pub const TERRAIN_SPRITE_NAME_ONLY: [&str; 8] = [
+    "define_terrain_sprite",
+    "great_temple",
+    "keep_ttype",
+    "leader_ttype",
+    "special_ttype",
+    "special_utype",
+    "special_utype2",
+    "vilg_ttype",
 ];
 
 /// The type id a script-registered terrain sprite name carries.
@@ -1943,18 +2047,90 @@ mod tests {
             (8, [338, 337, 340, 339, 354, 355, 353, 352]),
         ];
         for (background, expected) in MEASURED {
+            // Any painted terrain other than this background and road gives the same ring -- that
+            // is the finding -- so assert it for every one of them rather than a favourite.
+            for painted in 0..=10 {
+                if painted == background || painted == super::ROAD_TERRAIN {
+                    continue;
+                }
+                assert_eq!(
+                    super::transition_ring(background, painted),
+                    Some(expected),
+                    "background {background} painted with {painted}"
+                );
+            }
+            // And the two exceptions must refuse rather than hand back a plausible ring.
+            assert_eq!(super::transition_ring(background, background), None, "diagonal");
             assert_eq!(
-                super::transition_ring(background),
-                Some(expected),
-                "background {background} is not reproduced by the offset table"
+                super::transition_ring(background, super::ROAD_TERRAIN),
+                None,
+                "road is ragged, so there is no per-direction ring"
             );
         }
-        // The three that do not produce a uniform ring must say so rather than returning a
-        // plausible one: dirt and impassible blend nothing, road depends on the painted terrain.
+        // The three backgrounds with no uniform ring: dirt and impassible blend nothing, road
+        // depends on the painted terrain and has its own measured table.
         for background in [0, 9, 10] {
-            assert_eq!(super::transition_ring(background), None, "{background}");
+            assert_eq!(super::transition_ring(background, 6), None, "{background}");
         }
-        assert_eq!(super::transition_ring(11), None, "not a terrain type");
+        assert_eq!(super::transition_ring(11, 6), None, "not a terrain type");
+    }
+
+    /// Road as a background is a second measured table, verified 11 of 11 against `zr9.scn`.
+    #[test]
+    fn the_road_background_ring_reproduces_its_measured_edges() {
+        // (painted terrain, N, S, W, E) read off zr9.scn; corners are always the background.
+        const MEASURED: [(u32, u32, u32, u32, u32); 8] = [
+            (0, 456, 454, 455, 457),
+            (2, 488, 486, 487, 489),
+            (3, 504, 502, 503, 505),
+            (4, 520, 518, 519, 521),
+            (5, 536, 534, 535, 537),
+            (6, 552, 550, 551, 553),
+            (7, 568, 566, 567, 569),
+            (8, 584, 582, 583, 585),
+        ];
+        let corner = terrain_type_base_tile(super::ROAD_TERRAIN).unwrap();
+        assert_eq!(corner, 459);
+        for (painted, north, south, west, east) in MEASURED {
+            let ring = super::road_background_ring(painted)
+                .unwrap_or_else(|| panic!("painted {painted} should have a road ring"));
+            assert_eq!(ring, [north, south, west, east, corner, corner, corner, corner]);
+        }
+        // Water, road and impassible produce no ring on a road background.
+        for painted in [1, 9, 10] {
+            assert_eq!(super::road_background_ring(painted), None, "{painted}");
+        }
+    }
+
+    /// The interior family, and the fact that it cannot be reproduced.
+    #[test]
+    fn the_interior_family_follows_the_block_index() {
+        // (painted terrain, family low) -- low = 384 + 8 * (anchor - 15) / 48.
+        for (painted, low) in [(6, 384), (1, 392), (2, 400), (3, 408), (4, 416), (5, 424), (7, 432), (8, 440)] {
+            assert_eq!(super::interior_tile_family(painted), Some((low, low + 7)), "{painted}");
+        }
+        // Non-blending terrains have no family, because they have no anchor.
+        for painted in [0, 9, 10, 11] {
+            assert_eq!(super::interior_tile_family(painted), None, "{painted}");
+        }
+        // The two runs that measured terrain 6 on a tile-15 background produced 385 and 390 for
+        // the same centre cell. Both are in the family; neither is predictable. A writer that
+        // claimed to reproduce an interior would be claiming to reproduce a random draw.
+        let (low, high) = super::interior_tile_family(6).unwrap();
+        for observed in [385_u32, 390] {
+            assert!((low..=high).contains(&observed), "{observed}");
+        }
+        assert_ne!(385, 390, "the point is that these differ between runs");
+    }
+
+    /// The first measured table must still agree with the general rule.
+    #[test]
+    fn the_land_constant_agrees_with_the_general_ring() {
+        let ring = super::transition_ring(6, 1).unwrap();
+        for (entry, tile) in super::LAND_TRANSITION_TILES.iter().zip(ring) {
+            assert_eq!(entry.tile, tile, "direction {:?}", entry.direction);
+        }
+        assert_eq!(super::LAND_BACKGROUND_TILE, terrain_type_base_tile(6).unwrap());
     }
 
     #[test]
@@ -1983,11 +2159,19 @@ mod tests {
                 + super::TRANSITION_BLOCK_STRIDE * u32::try_from(index).unwrap();
             assert_eq!(*anchor, expected);
         }
-        // Water's blending anchor is NOT its representative tile: 392 is 8 mod 48, not 15. The two
-        // are different things and conflating them would paint water transitions from the wrong
-        // block.
+        // Seven of the eight anchors ARE the terrain's representative tile; water is the sole
+        // exception, and conflating the two would paint water transitions from the wrong block.
+        let mut same = 0;
+        for entry in super::TERRAIN_TRANSITIONS {
+            if let Some(anchor) = super::transition_anchor(entry.terrain_type)
+                && terrain_type_base_tile(entry.terrain_type) == Some(anchor)
+            {
+                same += 1;
+            }
+        }
+        assert_eq!(same, 7, "seven anchors match the representative tile");
         assert_eq!(terrain_type_base_tile(1), Some(392));
-        assert_ne!(super::transition_ring(1).unwrap()[7] - 1, 392);
+        assert_eq!(super::transition_anchor(1), Some(63), "water is the exception");
     }
 
     #[test]
@@ -2030,24 +2214,34 @@ mod tests {
         assert_eq!(super::terrain_sprite_type("keep_array"), None);
     }
 
-    /// The probe placed sprite type 470 and the engine kept it; 470 is not in this table.
+    /// The table has gaps, shipped maps use them heavily, and that is not a misread.
     ///
-    /// That is not a contradiction and the distinction matters: the table holds the types the
-    /// shipped scripts register, and 470 was minted by the probe itself with
-    /// `addterrainspritetype` during the run. An id above the table's range is a runtime
-    /// registration, not a corrupt record.
+    /// An earlier version of this test carried a comment claiming every corpus sprite id was either
+    /// in the table or above its top, "never a gap inside it". A reviewer measured the installed
+    /// corpus: **31 distinct ids and 113 records land inside the gaps**, concentrated at 95..118 and
+    /// 135..141 -- which is exactly where the log shows `keep_array`, `vilg_array` and
+    /// `leader_ttype_array` sitting in enumeration order. The gaps are the **per-faith types the
+    /// arrays hold**, eight apiece, and they are the commonest objects on a real map.
+    ///
+    /// So a gap is expected, and an id inside one is a faith-specific object this dump did not
+    /// resolve -- not a corrupt record, and not a runtime registration either.
     #[test]
-    fn the_table_covers_the_shipped_types_not_runtime_registrations() {
-        let highest = super::TERRAIN_SPRITE_TYPES
-            .iter()
-            .map(|(_, id)| *id)
-            .max()
-            .unwrap();
+    fn the_table_has_gaps_where_the_per_faith_arrays_sit() {
+        let ids: std::collections::BTreeSet<u32> =
+            super::TERRAIN_SPRITE_TYPES.iter().map(|(_, id)| *id).collect();
+        let highest = *ids.last().unwrap();
         assert_eq!(highest, 237);
+        let gaps: Vec<u32> = (0..=highest).filter(|id| !ids.contains(id)).collect();
+        assert_eq!(gaps.len(), 60, "the gaps are real and must not be explained away");
+        // The two runs of gaps the shipped corpus actually uses.
+        for id in [95, 100, 118, 135, 141] {
+            assert!(gaps.contains(&id), "{id} should be a gap");
+            assert_eq!(super::terrain_sprite_name(id), None);
+        }
+        // 470 is above the top: that one really is a runtime registration, minted by the probe
+        // with `addterrainspritetype` during the run.
+        assert!(470 > highest);
         assert_eq!(super::terrain_sprite_name(470), None);
-        // And every corpus sprite id observed by `--scan-map-dir` (0..441) is either in the table
-        // or above its top, never a gap inside it that would suggest a misread.
-        assert!(super::terrain_sprite_type("lirock").is_some());
     }
 
     #[test]

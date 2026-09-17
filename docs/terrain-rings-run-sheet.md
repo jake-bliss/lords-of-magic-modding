@@ -8,8 +8,10 @@
 >   depends on the painted terrain as a background and is ragged along every edge as a foreground.
 > - **Section B:** **`resetvisibility`** clears tag bit `0x00800000` — not `rebuild3dmap`, which
 >   this sheet's own hypothesis named. The bit is visibility state.
-> - **Section C:** `forall` enumerated `terrainsprites`. **197 entries, 178 name-to-id pairs**, plus
->   nine per-faith arrays. `--map-place-sprite` now takes a name.
+> - **Section C:** `forall` enumerated `terrainsprites`. **195 rows logged against the probe's own
+>   count of 196** — 178 name-to-id pairs, 9 per-faith arrays, 8 name-only entries, and **one
+>   counted but never logged**. `--map-place-sprite` now takes a name. (An earlier write-up said
+>   "197 entries, 10 unaccounted" off an unbounded log slice; corrected.)
 >
 > Results in [the map format doc](map-format.md); reasoning in [the research log](research-log.md).
 > This sheet is kept as written, because it states what each outcome *would* mean and was written

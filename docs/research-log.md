@@ -2586,3 +2586,72 @@ to succeed is the one that moved the project furthest.
 One keypress, no crash. Sixteen maps and eleven captures written into the loose `map/` directory and
 removed afterwards; archives restored and verified against `MANIFEST.sha256`; `map/` back to its 366
 shipped files. Artifacts preserved at `artifacts/engine-probe-captures/terrainrings-20260917/`.
+
+### Post-review corrections, second pass
+
+Both reviewers were strong here and they diverged usefully. Codex went at the reasoning; the Claude
+pass went to the **committed run artifacts** and re-derived every claim, which is why it found things
+no amount of reading could have.
+
+**The correction that matters most came from checking a reviewer's numbers against my own.** The
+review said terrain 6's blob interior is `384..391` on every background, including the tile-392 one
+the docs cited as a contrast, and that `385..391` was wrong at the low end. Both true. But my earlier
+measurement of the *same* experiment had given a different set — because it was a different run.
+Comparing the two runs directly:
+
+| | core (3x3) | ring |
+| --- | --- | --- |
+| `mapload` `zb0.scn` | `388 390 386 391 385 388 388 390 389` | identical |
+| `terrainrings` `zr6.scn` | `388 390 387 384 390 386 387 390 391` | identical |
+
+**The ring is byte-identical across two independent attended runs; the interior is not.** The centre
+cell was 385 in one and 390 in the other. So the interior is a **random draw** from the terrain's
+eight-member `384 + 8k` family — verified for all eight blending terrains on all eleven backgrounds —
+and no writer can reproduce it. That is a property of the engine, not a gap in the measurement, and
+it is a better answer than either the docs or the review had.
+
+The double result is worth more than either half: independent replication confirms the ring, and the
+same comparison proves the interior unreproducible.
+
+**Claims that were wrong, not merely overstated:**
+
+- The generator's log slice was unbounded, so it counted two trailing lines as dict entries. Every
+  "197 entries / 10 unaccounted" figure was two too high, and `--check` validated the wrong number —
+  a checker confirming its own error. The truth is 195 rows logged, the probe's own counter said 196,
+  so 178 pairs + 9 arrays + 8 name-only, and **one entry enumerated without logging anything**. The
+  generator now bounds both ends, cross-checks the counter, and pins the silent gap at 1 so a change
+  fails rather than a known gap failing forever. This was the *second* correction to the same
+  arithmetic; the first was also a reviewer doing the subtraction.
+- "Every corpus sprite id is either in the table or above its top, never a gap inside it" — false.
+  The table has **60 gaps**, and 31 distinct ids across 113 records in the installed corpus land
+  inside them, concentrated at 95..118 and 135..141, exactly where the log shows `keep_array`,
+  `vilg_array` and `leader_ttype_array` in enumeration order. **The gaps are the per-faith types**,
+  and they are the commonest objects on a real map. `--map-place-sprite` was reporting them as
+  "unregistered (runtime type?)" — the opposite of the truth. It now distinguishes an id inside a gap
+  from one above the table's top.
+- "The two backgrounds whose representative tiles are off the 48-grid" — **four** are off it, and one
+  of them is water, which blends normally. So "off-grid implies no transition" is *refuted*, and the
+  counter-example was two paragraphs away in the same document. A hedge does not cover a false
+  premise.
+
+**Data I had and did not commit.** Road as a background is fully measured in the artifacts: corners
+keep 459, edges are `N=a, S=a−2, W=a−1, E=a+1` with `a = 456` for painted dirt and
+`a = 488 + 16(T−2)` for T in 2..8, no ring for water, road or impassible. Verified 11 of 11 and now
+`road_background_ring()`. The documentation had been telling a painter it "must special-case road"
+while withholding the table that lets it.
+
+**The framing was weaker than the evidence.** For **seven of the eight** blending backgrounds the
+anchor simply *is* `terrain_type_base_tile`; water is the sole exception. Highlighting only the
+exception made the anchor look fitted when it is mostly predictable — and predictability is what lets
+someone compute an anchor for a background nobody measured.
+
+**And an API that could be misused into writing wrong tiles.** `transition_ring` took only the
+background, so it handed out the land ring for painting *road* onto land (where the engine writes a
+ragged run) and for painting land onto land (where it writes nothing). It now takes both terrains and
+returns `None` for both cases. A measurement that can be misread into corrupting a map is worth less
+than one that refuses.
+
+Also fixed: a doc comment displaced onto the wrong function by an insertion, the handoff asserting
+the atlas-block claim this branch had already retracted, three stale test counts, README text saying
+the blend tiles were unmeasured, and the two listing verbs having no test at all — the same "the
+untested layer is the one that matters" note this log recorded one review earlier.
