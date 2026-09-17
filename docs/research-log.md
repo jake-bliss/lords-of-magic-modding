@@ -2172,3 +2172,64 @@ One keypress, a minute or so of game time. The map was the probe's own creation 
 was minted by the probe, so the cleanup could safely destroy by type and nothing shipped was at
 risk. No archive was modified; the four saved files are proprietary-derived and stay in ignored
 `artifacts/`.
+
+## 2026-09-17 — A map writer, and the property it rests on
+
+The first tool in this project that produces game data rather than describing it. It is a writer and
+a set of CLI editing verbs, not a GUI; the GUI is the layer that goes on top once the bytes are
+trustworthy.
+
+### The result
+
+`--map-roundtrip` over the installed `map/` directory: **365 checked, 365 byte-identical, 16,628
+placed-sprite records rebuilt from their typed fields, 0 failures.** On a real 128×128 shipped map,
+placing a terrain sprite and then removing it returns the file byte for byte — the same behaviour
+the 2026-09-17 engine probe observed from the game itself, now reproduced by a tool the game never
+ran.
+
+### Why it can be correct while the format is not solved
+
+Most of this format is still Unknown, so the writer never mints an unknown field. The header word at
+`0x00`, the trailing footer, the record attribute field at `+24`, tag bit `0x00800000` and the whole
+trailing section of every family this project has not decoded are all **copied**. What that buys is
+an editor today instead of after the remaining unknowns fall. What it costs is that there is no
+create-a-map-from-nothing mode, because three of those fields would have to be invented; the shipped
+GS5R3 editor already generates from 32 to 1024 in steps of 32, so generate there and edit here.
+
+Records are the exception, and deliberately: the decoded fields cover all 49 bytes with no gap, so a
+record is rebuilt from its typed fields rather than carried across as bytes. That is what makes an
+*edited* field land. `--map-roundtrip` checks it record by record, which is stricter than comparing
+files — a file can round-trip through its raw tail while a field is written back wrong.
+
+### What is deliberately not offered
+
+`setterrain`'s transition blending. The 2026-09-17 probe measured its *footprint* — a run painted
+along `y = 12` changed rows 11, 12 and 13 across `x = 7..29` — but not **which tiles** it blends in.
+Approximating it would put plausible-looking wrong tiles into a map, and no test here could tell.
+`--map-set-terrain` writes one cell, reproducing `forcetexture`, and says so on every run.
+
+### A test that bit
+
+`next_instance_id` was written to take the maximum live instance id and add one, with a doc comment
+claiming a removed id is never reissued. It reissued it immediately — remove the highest, place
+another, get the dead id back. The test that caught it was written from the doc comment rather than
+from the code, which is the only reason the two could disagree. Fixed with a high-water mark that is
+rebuilt at parse and never serialized. The argument for not reusing is not aesthetics: other files
+reference objects by id, so a reused id can silently re-point an outside reference at a different
+object.
+
+### Applying the fixture lesson from earlier the same day
+
+Every fixture here is **non-square** (5×3, 3×2, 11×3) and one is deliberately opaque-tailed, so the
+undecoded-tail path is exercised rather than assumed. The packing test asserts against a computed
+*byte offset*, not through `map.cell(x, y)` — going back through the same accessor the writer used
+would agree with an X-major writer just as happily. Mutating `cell_index` back to `x * height + y`
+fails three tests; that was checked rather than hoped for.
+
+### Safety
+
+The loose `map/` directory still has no backup. So: no in-place mode, an explicit output path on
+every command, refusal to write over the input by canonical path, `create_new` on the output, and a
+re-parse of the encoded bytes with the edit read back before anything reaches disk. A refused edit
+leaves no partial file. No game file was written during this work; all experiments ran on copies in
+a scratch directory.

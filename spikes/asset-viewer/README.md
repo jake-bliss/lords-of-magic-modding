@@ -70,6 +70,40 @@ the first differing byte of the trailing section with a hex window either side, 
 as raw bytes rather than as assumed records. They are the readback half of an engine probe: writing
 chosen values from the running game only proves something if they can be read out again.
 
+## Writing maps
+
+```sh
+target/release/lom-asset-viewer --map-roundtrip '/path/to/Lords of Magic Special Edition/English/map'
+target/release/lom-asset-viewer --map-set-tile      IN.scn X Y TILE_SLOT   OUT.scn
+target/release/lom-asset-viewer --map-set-terrain   IN.scn X Y TERRAIN     OUT.scn
+target/release/lom-asset-viewer --map-set-elevation IN.scn X Y VALUE       OUT.scn
+target/release/lom-asset-viewer --map-fill-terrain  IN.scn TERRAIN         OUT.scn
+target/release/lom-asset-viewer --map-place-sprite  IN.scn X Y SPRITE_TYPE OUT.scn
+target/release/lom-asset-viewer --map-remove-sprite IN.scn INSTANCE_ID     OUT.scn
+```
+
+Everything here rests on one property: **an unedited map re-encodes to the exact bytes it was read
+from.** `--map-roundtrip` asserts it over the installed corpus — 365 checked, 365 byte-identical,
+16,628 placed-sprite records rebuilt from their typed fields, 0 failures. Run it first.
+
+Fields whose meaning is still Unknown — the header word at `0x00`, the trailing footer, the record
+attribute field at `+24`, tag bit `0x00800000`, and the entire trailing section of every family this
+project has not decoded — are **copied, never minted**. That is what lets the writer be correct
+while the format is only partly solved, and it is also why there is no create-a-map-from-nothing
+mode: three of those fields would have to be invented. Generate in the shipped GS5R3 editor, which
+makes maps from 32 to 1024 in steps of 32, then edit here.
+
+`TERRAIN` is a number `0..10` or a `gs\maplib.gs` name with or without its `tt_` prefix, so `1`,
+`tt_water` and `water` are the same thing.
+
+`--map-set-terrain` reproduces the editor's `forcetexture`: **one cell**. The engine's `setterrain`
+also blends transition tiles into the 8-neighbourhood, and which tiles it blends is unmeasured, so
+that is not approximated here.
+
+The loose `map/` directory has no backup, so there is no in-place mode: every command takes an
+explicit output path, refuses to write over its input by canonical path, opens the output
+`create_new`, and re-parses the encoded bytes to read the edit back before anything reaches disk.
+
 ## Writing sprite placement
 
 The engine draws a frame as `top_left = anchor + placement - (width >> 1, height >> 1)`, measured in

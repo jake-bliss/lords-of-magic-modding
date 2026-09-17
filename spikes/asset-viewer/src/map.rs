@@ -215,6 +215,14 @@ impl PlacedSpriteRecord49 {
 pub struct PlacedSpriteSection49 {
     pub records: Vec<PlacedSpriteRecord49>,
     pub footer: u32,
+    /// The highest instance id this section has ever held, including ones since removed.
+    ///
+    /// Not serialized -- it is rebuilt from the records on every parse. It exists so that removing
+    /// a sprite and placing another does not hand the dead id straight back out. Whether the engine
+    /// reuses ids is unmeasured; what is known is that other files reference objects by id, so a
+    /// reused id would silently re-point an outside reference at a different object. Not reusing
+    /// cannot do that.
+    pub(crate) instance_id_high_water: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -228,6 +236,12 @@ pub struct MapAsset {
     pub trailing_bytes: usize,
     pub trailing_head_u32: Option<u32>,
     pub placed_sprites_49: Option<PlacedSpriteSection49>,
+    /// The trailing section exactly as it was read.
+    ///
+    /// Held so that a map whose tail this project does **not** understand -- the 52-byte and
+    /// 53-byte families, the 18 unmatched tails -- still writes back byte-for-byte. A writer that
+    /// can only round-trip the records it decoded is a writer that silently discards the rest.
+    pub trailing_raw: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -318,6 +332,7 @@ impl MapAsset {
             .transpose()?;
         let placed_sprites_49 =
             parse_placed_sprites_49(source, trailing_offset, trailing_bytes, cell_count)?;
+        let trailing_raw = source[trailing_offset..].to_vec();
 
         Ok(Self {
             metadata,
@@ -329,6 +344,7 @@ impl MapAsset {
             trailing_bytes,
             trailing_head_u32,
             placed_sprites_49,
+            trailing_raw,
         })
     }
 
@@ -452,7 +468,12 @@ fn parse_placed_sprites_49(
         source,
         records_offset + count * PLACED_SPRITE_RECORD_49_SIZE,
     )?;
-    Ok(Some(PlacedSpriteSection49 { records, footer }))
+    let instance_id_high_water = records.iter().map(|record| record.instance_id).max();
+    Ok(Some(PlacedSpriteSection49 {
+        records,
+        footer,
+        instance_id_high_water,
+    }))
 }
 
 fn read_u16(source: &[u8], offset: usize) -> Result<u16, MapError> {
@@ -481,6 +502,274 @@ fn read_u32(source: &[u8], offset: usize) -> Result<u32, MapError> {
         .try_into()
         .expect("map u32 slice length was checked");
     Ok(u32::from_le_bytes(bytes))
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+//
+// Everything below turns a parsed `MapAsset` back into bytes, and edits it in the terms the
+// engine itself uses. Two rules hold throughout, and both exist because most of this format is
+// still Unknown:
+//
+//   1. **Fields whose meaning is unknown are copied, never minted.** The header word at `0x00`,
+//      the trailing footer and the record attribute field at `+24` all survive a round trip
+//      untouched. A writer that guesses at them would corrupt maps in ways no test here could see.
+//   2. **An unedited map re-encodes to the exact input bytes.** That is asserted over the whole
+//      installed corpus, not just fixtures, by `--map-roundtrip`.
+// ---------------------------------------------------------------------------
+
+/// The `attribute_bits` value the engine wrote for a freshly placed terrain sprite.
+///
+/// **Observed in gameplay, 2026-09-17.** All three probe records carried `0x00000001`. That
+/// *contradicts* the corpus reading of this field, in which only the upper nibble varies across
+/// 16,628 records -- see [`PlacedSpriteRecord49::attribute_code_candidate`]. The contradiction is
+/// unresolved, so a newly minted record reproduces the one value that was actually observed being
+/// written rather than anything derived from the corpus.
+pub const FRESH_SPRITE_ATTRIBUTE_BITS: u32 = 1;
+
+/// The first `instance_id` the engine assigns on a map with no placed sprites.
+///
+/// **Observed in gameplay, 2026-09-17:** three sprites placed on a fresh map got 200, 201, 202.
+pub const FIRST_SPRITE_INSTANCE_ID: u32 = 200;
+
+impl PlacedSpriteRecord49 {
+    /// A record of the shape the engine writes for a newly placed terrain sprite.
+    ///
+    /// Every constant here is one this project observed in every record it has ever read:
+    /// `record_kind` and `record_version` are `1` in all 16,628 corpus records, `+12` and `+42`
+    /// are `0xffffffff`, `+16`, `+38` and `+46..49` are zero, and `marker_32` is `0x01ff`. The
+    /// procedure id is `-1`, the "no procedure" value, which is what the probe's sprites carried.
+    pub fn new(cell_index: u32, instance_id: u32, sprite_type: u32) -> Self {
+        let mut record = Self {
+            raw: [0; PLACED_SPRITE_RECORD_49_SIZE],
+            record_kind: 1,
+            record_version: 1,
+            cell_index,
+            unknown_12: u32::MAX,
+            unknown_16: 0,
+            instance_id,
+            attribute_bits: FRESH_SPRITE_ATTRIBUTE_BITS,
+            sprite_type,
+            marker_32: 0x01ff,
+            procedure_id_candidate: -1,
+            unknown_38: 0,
+            unknown_42: u32::MAX,
+            unknown_46: [0; 3],
+        };
+        record.raw = record.to_bytes();
+        record
+    }
+
+    /// The 49 bytes of this record, rebuilt from its typed fields.
+    ///
+    /// The typed fields cover all 49 bytes with no gap -- `0..32` as eight `u32`s, `32..34` as the
+    /// marker, `34..38` as the procedure id, `38..42`, `42..46`, then the three-byte tail -- so
+    /// for a record that came from [`parse`](MapAsset::parse) this reproduces `raw` exactly and
+    /// nothing has to be carried over blindly. `roundtrips_every_corpus_record` asserts that over
+    /// the installed corpus rather than trusting the arithmetic.
+    pub fn to_bytes(&self) -> [u8; PLACED_SPRITE_RECORD_49_SIZE] {
+        let mut bytes = [0_u8; PLACED_SPRITE_RECORD_49_SIZE];
+        bytes[0..4].copy_from_slice(&self.record_kind.to_le_bytes());
+        bytes[4..8].copy_from_slice(&self.record_version.to_le_bytes());
+        bytes[8..12].copy_from_slice(&self.cell_index.to_le_bytes());
+        bytes[12..16].copy_from_slice(&self.unknown_12.to_le_bytes());
+        bytes[16..20].copy_from_slice(&self.unknown_16.to_le_bytes());
+        bytes[20..24].copy_from_slice(&self.instance_id.to_le_bytes());
+        bytes[24..28].copy_from_slice(&self.attribute_bits.to_le_bytes());
+        bytes[28..32].copy_from_slice(&self.sprite_type.to_le_bytes());
+        bytes[32..34].copy_from_slice(&self.marker_32.to_le_bytes());
+        bytes[34..38].copy_from_slice(&self.procedure_id_candidate.to_le_bytes());
+        bytes[38..42].copy_from_slice(&self.unknown_38.to_le_bytes());
+        bytes[42..46].copy_from_slice(&self.unknown_42.to_le_bytes());
+        bytes[46..49].copy_from_slice(&self.unknown_46);
+        bytes
+    }
+}
+
+impl PlacedSpriteSection49 {
+    /// `u32 record_count`, the records, then the `u32` footer.
+    ///
+    /// **Observed in gameplay, 2026-09-17, by construction.** The corpus could only show that this
+    /// section is `count * 49 + 8` bytes; it could not say which four of the eight fixed bytes came
+    /// first. Two saves of the same map settled it -- see [`PlacedSpriteSection49`].
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(
+            PLACED_SPRITE_SECTION_49_FIXED_BYTES + self.records.len() * PLACED_SPRITE_RECORD_49_SIZE,
+        );
+        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        for record in &self.records {
+            bytes.extend_from_slice(&record.to_bytes());
+        }
+        bytes.extend_from_slice(&self.footer.to_le_bytes());
+        bytes
+    }
+
+    /// The id a newly placed sprite should take: one past the highest in use, or 200 on an empty
+    /// map.
+    ///
+    /// The maximum is taken over the live records *and* the high-water mark, so a removed id is
+    /// never handed back out -- see [`instance_id_high_water`](Self::instance_id_high_water). The
+    /// live records alone are not enough: removing the highest and placing another would reissue
+    /// the id that was just freed.
+    pub fn next_instance_id(&self) -> u32 {
+        self.records
+            .iter()
+            .map(|record| record.instance_id)
+            .chain(self.instance_id_high_water)
+            .max()
+            .map_or(FIRST_SPRITE_INSTANCE_ID, |highest| highest.saturating_add(1))
+    }
+}
+
+impl MapAsset {
+    /// This map as a complete file.
+    ///
+    /// The trailing section comes from the decoded records when this map is in the 49-byte family
+    /// and from [`trailing_raw`](Self::trailing_raw) otherwise, so the families this project has
+    /// not decoded still write back unchanged instead of being dropped.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(
+            HEADER_SIZE + self.cells.len() * CELL_SIZE + self.trailing_raw.len(),
+        );
+        bytes.extend_from_slice(&self.metadata.to_le_bytes());
+        bytes.extend_from_slice(&self.width.to_le_bytes());
+        bytes.extend_from_slice(&self.height.to_le_bytes());
+        bytes.extend_from_slice(&self.bits_per_pixel.to_le_bytes());
+        for cell in &self.cells {
+            bytes.extend_from_slice(&cell.tag.to_le_bytes());
+            bytes.extend_from_slice(&cell.value_bits.to_le_bytes());
+        }
+        match &self.placed_sprites_49 {
+            Some(section) => bytes.extend_from_slice(&section.to_bytes()),
+            None => bytes.extend_from_slice(&self.trailing_raw),
+        }
+        bytes
+    }
+
+    fn cell_index_checked(&self, x: u32, y: u32) -> Result<usize, MapError> {
+        self.cell_index(x, y).ok_or_else(|| {
+            MapError::new(format!(
+                "({x}, {y}) is outside this {}x{} map",
+                self.width, self.height
+            ))
+        })
+    }
+
+    /// Force the tile-atlas slot of one cell, the way the editor's `forcetexture` does.
+    ///
+    /// **This is `forcetexture`, not `setterrain`.** Exactly one cell changes. The engine's
+    /// `setterrain` additionally blends transition tiles into the cell's 8-neighbourhood, and this
+    /// project has **not** measured which tiles it blends in, so that operation is deliberately
+    /// not offered rather than approximated. See `docs/map-format.md`.
+    ///
+    /// Bit `0x00800000` of the existing tag is **preserved**. The 2026-09-17 probe showed
+    /// `forcetexture` never *sets* the bit -- zero of 4,096 forced cells -- but no probe cell had
+    /// it set beforehand, so whether the engine clears it is unmeasured. Its meaning is Unknown,
+    /// and preserving an unknown bit is the conservative half of an unmeasured choice.
+    pub fn set_tile(&mut self, x: u32, y: u32, tile_index: u32) -> Result<(), MapError> {
+        if tile_index & CELL_TAG_HIGH_FLAG != 0 {
+            return Err(MapError::new(format!(
+                "tile index {tile_index} overlaps tag bit 0x00800000"
+            )));
+        }
+        let index = self.cell_index_checked(x, y)?;
+        let cell = &mut self.cells[index];
+        cell.tag = (cell.tag & CELL_TAG_HIGH_FLAG) | tile_index;
+        Ok(())
+    }
+
+    /// Force one cell to a terrain type's base tile.
+    ///
+    /// The tile comes from the measured terrain-type-to-tile table, so the cell's terrain type
+    /// follows: a cell's type is derived from its tile through the tileset and is not stored in
+    /// the cell. Like [`set_tile`](Self::set_tile) this writes **one** cell and does not blend.
+    pub fn set_terrain(&mut self, x: u32, y: u32, terrain_type: u32) -> Result<(), MapError> {
+        let tile_index = terrain_type_base_tile(terrain_type).ok_or_else(|| {
+            MapError::new(format!("{terrain_type} is not one of the 11 terrain types"))
+        })?;
+        self.set_tile(x, y, tile_index)
+    }
+
+    /// Force every cell to a terrain type's base tile, the way `clearmap` does.
+    pub fn fill_terrain(&mut self, terrain_type: u32) -> Result<(), MapError> {
+        let tile_index = terrain_type_base_tile(terrain_type).ok_or_else(|| {
+            MapError::new(format!("{terrain_type} is not one of the 11 terrain types"))
+        })?;
+        for cell in &mut self.cells {
+            cell.tag = (cell.tag & CELL_TAG_HIGH_FLAG) | tile_index;
+        }
+        Ok(())
+    }
+
+    /// Set one cell's second word.
+    ///
+    /// That word is **Inferred** to be elevation, and its runtime units are Unknown; every corpus
+    /// value is a finite `f32` in `0..20`. Non-finite values are rejected because no corpus value
+    /// is non-finite and a `NaN` would defeat byte comparisons downstream.
+    pub fn set_elevation(&mut self, x: u32, y: u32, value: f32) -> Result<(), MapError> {
+        if !value.is_finite() {
+            return Err(MapError::new(format!("elevation {value} is not finite")));
+        }
+        let index = self.cell_index_checked(x, y)?;
+        let cell = &mut self.cells[index];
+        cell.value = value;
+        cell.value_bits = value.to_bits();
+        Ok(())
+    }
+
+    fn placed_sprites_mut(&mut self) -> Result<&mut PlacedSpriteSection49, MapError> {
+        self.placed_sprites_49.as_mut().ok_or_else(|| {
+            MapError::new(
+                "this map's trailing section is not the decoded 49-byte placed-sprite family, \
+                 so its objects cannot be edited",
+            )
+        })
+    }
+
+    /// Place a terrain sprite of `sprite_type` at `(x, y)`, returning its new instance id.
+    ///
+    /// Refused when a sprite already occupies the cell: `cell_index` is unique across all 16,628
+    /// corpus records in every file, so duplicating one would write a record shape the engine has
+    /// never been observed to produce.
+    pub fn place_sprite(&mut self, x: u32, y: u32, sprite_type: u32) -> Result<u32, MapError> {
+        let cell_index = u32::try_from(self.cell_index_checked(x, y)?)
+            .map_err(|_| MapError::new("cell index exceeds the 32-bit record field"))?;
+        let section = self.placed_sprites_mut()?;
+        if section
+            .records
+            .iter()
+            .any(|record| record.cell_index == cell_index)
+        {
+            return Err(MapError::new(format!(
+                "({x}, {y}) already holds a placed sprite"
+            )));
+        }
+        let instance_id = section.next_instance_id();
+        section.instance_id_high_water = Some(instance_id);
+        section
+            .records
+            .push(PlacedSpriteRecord49::new(cell_index, instance_id, sprite_type));
+        Ok(instance_id)
+    }
+
+    /// Remove the placed sprite with `instance_id`.
+    ///
+    /// **Observed in gameplay, 2026-09-17:** placing three sprites and then destroying all three
+    /// gave a file byte-identical to the one saved before any were placed, so removal really does
+    /// leave no residue and this is not an approximation of what the engine does.
+    pub fn remove_sprite(&mut self, instance_id: u32) -> Result<(), MapError> {
+        let section = self.placed_sprites_mut()?;
+        let before = section.records.len();
+        section
+            .records
+            .retain(|record| record.instance_id != instance_id);
+        if section.records.len() == before {
+            return Err(MapError::new(format!(
+                "no placed sprite has instance id {instance_id}"
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -829,5 +1118,209 @@ mod tests {
             value: f32::from_bits(0x7fc0_0001),
         };
         assert!(!quiet_nan.has_same_bytes(&other));
+    }
+
+    /// A map whose trailing section this project does **not** decode.
+    ///
+    /// Deliberately `3x2` and deliberately opaque-tailed: the writer must reproduce tails it never
+    /// understood, and a fixture that only exercises the decoded 49-byte family would never say so.
+    fn non_square_map_with_opaque_tail(width: u32, height: u32) -> Vec<u8> {
+        let mut source = Vec::new();
+        source.extend_from_slice(&0x6c_u32.to_le_bytes());
+        source.extend_from_slice(&width.to_le_bytes());
+        source.extend_from_slice(&height.to_le_bytes());
+        source.extend_from_slice(&8_u32.to_le_bytes());
+        for index in 0..width * height {
+            source.extend_from_slice(&(index | CELL_TAG_HIGH_FLAG).to_le_bytes());
+            source.extend_from_slice(&(index as f32).to_bits().to_le_bytes());
+        }
+        // Not a multiple of any known record size, with a leading word that is not a usable count.
+        source.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03]);
+        source
+    }
+
+    #[test]
+    fn an_unedited_map_re_encodes_to_the_input_bytes() {
+        let source = non_square_map_with_record(5, 3, 7);
+        let map = MapAsset::parse(&source).unwrap();
+        assert_eq!(map.to_bytes(), source);
+    }
+
+    #[test]
+    fn a_tail_this_project_cannot_decode_still_writes_back_unchanged() {
+        let source = non_square_map_with_opaque_tail(3, 2);
+        let map = MapAsset::parse(&source).unwrap();
+        assert!(
+            map.placed_sprites_49.is_none(),
+            "the fixture must exercise the undecoded path"
+        );
+        assert_eq!(map.to_bytes(), source);
+    }
+
+    #[test]
+    fn a_parsed_record_rebuilds_its_own_bytes_from_its_fields() {
+        let source = non_square_map_with_record(5, 3, 7);
+        let map = MapAsset::parse(&source).unwrap();
+        let record = &map.placed_sprites_49.as_ref().unwrap().records[0];
+        assert_eq!(record.to_bytes(), record.raw);
+    }
+
+    /// The edit must land at `16 + (y * width + x) * 8`, checked as a byte offset rather than
+    /// through the same `cell_index` the writer used.
+    ///
+    /// Non-square on purpose, and asserted against the *bytes*: going back through `map.cell(x, y)`
+    /// would agree with an X-major writer just as happily, which is exactly how the transposed
+    /// reading survived a full-corpus suite for months.
+    #[test]
+    fn an_edited_cell_lands_at_the_y_major_byte_offset() {
+        let width = 5;
+        let height = 3;
+        let (x, y) = (3, 2);
+        let source = non_square_map_with_record(width, height, 0);
+        let mut map = MapAsset::parse(&source).unwrap();
+        map.set_tile(x, y, 392).unwrap();
+        let bytes = map.to_bytes();
+
+        let expected_offset = 16 + ((y * width + x) as usize) * 8;
+        assert_eq!(
+            u32::from_le_bytes(bytes[expected_offset..expected_offset + 4].try_into().unwrap()),
+            392
+        );
+        let transposed_offset = 16 + ((x * height + y) as usize) * 8;
+        assert_ne!(
+            transposed_offset, expected_offset,
+            "the fixture must distinguish the two packings"
+        );
+        assert_ne!(
+            u32::from_le_bytes(
+                bytes[transposed_offset..transposed_offset + 4]
+                    .try_into()
+                    .unwrap()
+            ),
+            392
+        );
+    }
+
+    #[test]
+    fn forcing_a_tile_preserves_the_unknown_high_bit() {
+        let source = non_square_map_with_opaque_tail(3, 2);
+        let mut map = MapAsset::parse(&source).unwrap();
+        assert!(map.cell(1, 1).unwrap().high_flag_set());
+        map.set_tile(1, 1, 392).unwrap();
+        let cell = map.cell(1, 1).unwrap();
+        assert_eq!(cell.tile_index(), 392);
+        assert!(
+            cell.high_flag_set(),
+            "bit 0x00800000 means something unknown; an edit must not silently drop it"
+        );
+    }
+
+    #[test]
+    fn a_tile_index_that_collides_with_the_high_bit_is_rejected() {
+        let source = non_square_map_with_record(5, 3, 0);
+        let mut map = MapAsset::parse(&source).unwrap();
+        assert!(map.set_tile(0, 0, CELL_TAG_HIGH_FLAG | 1).is_err());
+    }
+
+    #[test]
+    fn every_terrain_type_writes_its_measured_base_tile() {
+        let source = non_square_map_with_record(11, 3, 0);
+        let mut map = MapAsset::parse(&source).unwrap();
+        for entry in TERRAIN_TYPES {
+            map.set_terrain(entry.terrain_type, 1, entry.terrain_type)
+                .unwrap();
+            assert_eq!(
+                map.cell(entry.terrain_type, 1).unwrap().tile_index(),
+                entry.base_tile
+            );
+        }
+        assert!(map.set_terrain(0, 0, 11).is_err());
+    }
+
+    #[test]
+    fn filling_writes_the_base_tile_into_every_cell() {
+        let source = non_square_map_with_record(5, 3, 0);
+        let mut map = MapAsset::parse(&source).unwrap();
+        map.fill_terrain(1).unwrap();
+        assert!(map.cells.iter().all(|cell| cell.tile_index() == 392));
+        assert_eq!(map.cells.len(), 15);
+    }
+
+    #[test]
+    fn elevation_rejects_values_no_corpus_cell_holds() {
+        let source = non_square_map_with_record(5, 3, 0);
+        let mut map = MapAsset::parse(&source).unwrap();
+        assert!(map.set_elevation(0, 0, f32::NAN).is_err());
+        assert!(map.set_elevation(0, 0, f32::INFINITY).is_err());
+        map.set_elevation(0, 0, 2.5).unwrap();
+        assert_eq!(map.cell(0, 0).unwrap().value_bits, 2.5_f32.to_bits());
+    }
+
+    #[test]
+    fn placing_and_removing_a_sprite_restores_the_original_bytes() {
+        let source = non_square_map_with_record(5, 3, 7);
+        let mut map = MapAsset::parse(&source).unwrap();
+        let instance = map.place_sprite(2, 2, 470).unwrap();
+        assert_ne!(map.to_bytes(), source);
+        map.remove_sprite(instance).unwrap();
+        assert_eq!(
+            map.to_bytes(),
+            source,
+            "the engine leaves no residue when a sprite is destroyed; neither may this"
+        );
+    }
+
+    #[test]
+    fn instance_ids_start_at_200_and_do_not_reuse_a_removed_id() {
+        // A map with no records at all: `count` 0, then the footer.
+        let mut source = Vec::new();
+        source.extend_from_slice(&0_u32.to_le_bytes());
+        source.extend_from_slice(&5_u32.to_le_bytes());
+        source.extend_from_slice(&3_u32.to_le_bytes());
+        source.extend_from_slice(&8_u32.to_le_bytes());
+        source.extend_from_slice(&[0; 5 * 3 * 8]);
+        source.extend_from_slice(&0_u32.to_le_bytes());
+        source.extend_from_slice(&1_u32.to_le_bytes());
+
+        let mut map = MapAsset::parse(&source).unwrap();
+        assert_eq!(map.place_sprite(0, 0, 470).unwrap(), 200);
+        assert_eq!(map.place_sprite(1, 0, 470).unwrap(), 201);
+        map.remove_sprite(201).unwrap();
+        assert_eq!(
+            map.place_sprite(2, 0, 470).unwrap(),
+            202,
+            "a freed id must not come back while the engine's reuse behaviour is unmeasured"
+        );
+    }
+
+    #[test]
+    fn a_second_sprite_on_one_cell_is_refused() {
+        let source = non_square_map_with_record(5, 3, 7);
+        let mut map = MapAsset::parse(&source).unwrap();
+        map.place_sprite(2, 2, 470).unwrap();
+        assert!(map.place_sprite(2, 2, 471).is_err());
+        assert!(map.remove_sprite(9_999).is_err());
+    }
+
+    #[test]
+    fn a_map_whose_tail_is_not_decoded_refuses_sprite_edits() {
+        let source = non_square_map_with_opaque_tail(3, 2);
+        let mut map = MapAsset::parse(&source).unwrap();
+        assert!(map.place_sprite(0, 0, 470).is_err());
+        assert!(map.remove_sprite(200).is_err());
+        // A cell edit is still fine, and must still write the tail back untouched.
+        map.set_tile(0, 0, 15).unwrap();
+        assert_eq!(&map.to_bytes()[map.trailing_offset..], &map.trailing_raw[..]);
+    }
+
+    #[test]
+    fn an_edit_outside_the_map_is_refused_on_both_axes() {
+        let source = non_square_map_with_record(5, 3, 0);
+        let mut map = MapAsset::parse(&source).unwrap();
+        // 4 and 2 are in range; swapping them is not, which a square fixture could not show.
+        map.set_tile(4, 2, 15).unwrap();
+        assert!(map.set_tile(2, 4, 15).is_err());
+        assert!(map.place_sprite(2, 4, 470).is_err());
+        assert!(map.set_elevation(2, 4, 1.0).is_err());
     }
 }
