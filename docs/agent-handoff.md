@@ -43,7 +43,7 @@ cargo clippy --all-targets -- -D warnings
 cargo build --release
 ```
 
-As of 2026-09-17, `cargo test` passes **105 library and 25 CLI/viewer tests**, `python3 -m unittest discover -s tests` passes **119**, and `cargo clippy --all-targets -- -D warnings` is clean. `--validate-imp` on the GS5R3 `imp.mpq` reports 1,800 pairs, 1,795 validated, 5 value-pinned exceptions, 2 value-pinned orphan notes, 0 failures. The full proprietary corpus was last scanned on 2026-09-12; rerun that scan on the user's installed GS5R3 archives before claiming a new corpus validation. The exact read-only inventory and viewer commands are in the [tool README](../spikes/asset-viewer/README.md). Current `build.rs` assumes Homebrew StormLib/SDL3 under `/opt/homebrew/opt`; portable discovery is still open.
+As of 2026-09-17, `cargo test` passes **119 library and 34 CLI/viewer tests**, `python3 -m unittest discover -s tests` passes **119**, and `cargo clippy --all-targets -- -D warnings` is clean. `--validate-imp` on the GS5R3 `imp.mpq` reports 1,800 pairs, 1,795 validated, 5 value-pinned exceptions, 2 value-pinned orphan notes, 0 failures. `--map-roundtrip` on the installed `map/` directory reports 365 checked, 365 byte-identical, 16,628 records rebuilt from their typed fields, 0 failures. The full proprietary corpus was last scanned on 2026-09-12; rerun that scan on the user's installed GS5R3 archives before claiming a new corpus validation. The exact read-only inventory and viewer commands are in the [tool README](../spikes/asset-viewer/README.md). Current `build.rs` assumes Homebrew StormLib/SDL3 under `/opt/homebrew/opt`; portable discovery is still open.
 
 ## Open work and safe order
 

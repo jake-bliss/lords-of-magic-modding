@@ -17,7 +17,7 @@ use lom_asset_viewer::imp::{
     IMP_ORPHAN_NOTES, IMP_VALIDATION_EXCEPTIONS, ImpHeaderStats, ImpOrphanNote, ImpSprite,
     ImpValidationException, imp_member_basename, normalize_imp_member,
 };
-use lom_asset_viewer::map::MapAsset;
+use lom_asset_viewer::map::{MapAsset, TERRAIN_TYPES, terrain_type_base_tile};
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
 use lom_asset_viewer::operator_arity;
@@ -34,6 +34,21 @@ const WINDOW_WIDTH: u32 = 1100;
 const WINDOW_HEIGHT: u32 = 800;
 const TERRAIN_PREVIEW_TILE_SIZE: u32 = 8;
 
+/// One edit applied to a map between reading it and writing a new file.
+///
+/// Every variant is expressed in the engine's own terms -- a tile-atlas slot, one of the eleven
+/// terrain types, a placed terrain sprite -- rather than in raw offsets, because the offsets are
+/// the part that was wrong twice.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MapEdit {
+    SetTile { x: u32, y: u32, tile_index: u32 },
+    SetTerrain { x: u32, y: u32, terrain_type: u32 },
+    SetElevation { x: u32, y: u32, value: f32 },
+    FillTerrain { terrain_type: u32 },
+    PlaceSprite { x: u32, y: u32, sprite_type: u32 },
+    RemoveSprite { instance_id: u32 },
+}
+
 enum Command {
     Catalog(Source),
     DescribeMap(PathBuf),
@@ -44,6 +59,12 @@ enum Command {
     DiffMaps {
         left: PathBuf,
         right: PathBuf,
+    },
+    RoundtripMaps(PathBuf),
+    EditMap {
+        input: PathBuf,
+        edit: MapEdit,
+        output: PathBuf,
     },
     DescribeImp {
         source: Source,
@@ -206,6 +227,12 @@ fn run() -> Result<(), String> {
         Command::DescribeMap(path) => describe_map(&path),
         Command::DumpMapCells { path, rect } => dump_map_cells(&path, rect),
         Command::DiffMaps { left, right } => diff_maps(&left, &right),
+        Command::RoundtripMaps(path) => roundtrip_maps(&path),
+        Command::EditMap {
+            input,
+            edit,
+            output,
+        } => edit_map(&input, edit, &output),
         Command::DescribeImp { source, member } => describe_imp(&source, &member),
         Command::ExportImpFrame {
             source,
@@ -325,6 +352,78 @@ fn parse_args() -> Result<Command, String> {
             Ok(Command::DiffMaps {
                 left: args[1].clone().into(),
                 right: args[2].clone().into(),
+            })
+        }
+        "--map-roundtrip" => {
+            require_len(&args, 2)?;
+            Ok(Command::RoundtripMaps(args[1].clone().into()))
+        }
+        "--map-set-tile" => {
+            require_len(&args, 6)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::SetTile {
+                    x: parse_u32(&args[2])?,
+                    y: parse_u32(&args[3])?,
+                    tile_index: parse_u32(&args[4])?,
+                },
+                output: args[5].clone().into(),
+            })
+        }
+        "--map-set-terrain" => {
+            require_len(&args, 6)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::SetTerrain {
+                    x: parse_u32(&args[2])?,
+                    y: parse_u32(&args[3])?,
+                    terrain_type: parse_terrain_type(&args[4])?,
+                },
+                output: args[5].clone().into(),
+            })
+        }
+        "--map-set-elevation" => {
+            require_len(&args, 6)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::SetElevation {
+                    x: parse_u32(&args[2])?,
+                    y: parse_u32(&args[3])?,
+                    value: parse_elevation(&args[4])?,
+                },
+                output: args[5].clone().into(),
+            })
+        }
+        "--map-fill-terrain" => {
+            require_len(&args, 4)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::FillTerrain {
+                    terrain_type: parse_terrain_type(&args[2])?,
+                },
+                output: args[3].clone().into(),
+            })
+        }
+        "--map-place-sprite" => {
+            require_len(&args, 6)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::PlaceSprite {
+                    x: parse_u32(&args[2])?,
+                    y: parse_u32(&args[3])?,
+                    sprite_type: parse_u32(&args[4])?,
+                },
+                output: args[5].clone().into(),
+            })
+        }
+        "--map-remove-sprite" => {
+            require_len(&args, 4)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::RemoveSprite {
+                    instance_id: parse_u32(&args[2])?,
+                },
+                output: args[3].clone().into(),
             })
         }
         "--describe-imp" => {
@@ -579,7 +678,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -3100,9 +3199,425 @@ fn is_screaming_case(name: &str) -> bool {
         && !name.chars().any(|character| character.is_ascii_lowercase())
 }
 
+/// A terrain type, given either as its number `0..=10` or as one of its `gs\maplib.gs` names.
+///
+/// Names are accepted with or without the `tt_` prefix, because a modder reading `maplib.gs` sees
+/// `tt_water` and a modder reading a map dump sees `water`.
+fn parse_terrain_type(value: &str) -> Result<u32, String> {
+    if let Ok(number) = value.parse::<u32>() {
+        return terrain_type_base_tile(number)
+            .map(|_| number)
+            .ok_or_else(|| format!("{number} is not one of the 11 terrain types"));
+    }
+    let wanted = value.to_ascii_lowercase();
+    TERRAIN_TYPES
+        .iter()
+        .find(|entry| {
+            entry.script_names.iter().any(|name| {
+                *name == wanted || name.strip_prefix("tt_") == Some(wanted.as_str())
+            })
+        })
+        .map(|entry| entry.terrain_type)
+        .ok_or_else(|| {
+            let names = TERRAIN_TYPES
+                .iter()
+                .map(|entry| entry.script_names[0])
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{value} is not a terrain type; expected 0..10 or one of: {names}")
+        })
+}
+
+fn parse_elevation(value: &str) -> Result<f32, String> {
+    let parsed = value
+        .parse::<f32>()
+        .map_err(|_| format!("{value} is not an elevation"))?;
+    if !parsed.is_finite() {
+        return Err(format!("elevation {value} is not finite"));
+    }
+    Ok(parsed)
+}
+
+/// Re-encode every map under `path` and compare the result to the bytes on disk.
+///
+/// This is the load-bearing test for everything else in this file. Editing a map is only safe if
+/// *not* editing it is a no-op at the byte level, across the families this project has decoded and
+/// the ones it has not. Run it against the installed `map/` directory before trusting an edit.
+fn roundtrip_maps(path: &Path) -> Result<(), String> {
+    let mut paths = Vec::new();
+    if path.is_dir() {
+        collect_map_paths(path, &mut paths)?;
+        paths.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
+    } else {
+        paths.push(path.to_path_buf());
+    }
+
+    let mut checked = 0_usize;
+    let mut identical = 0_usize;
+    let mut record_roundtrips = 0_usize;
+    let mut failures = Vec::new();
+
+    // `collect_map_paths` already filtered a directory walk down to map extensions. A path given
+    // explicitly is tried whatever it is called, so a file outside the naming convention -- a
+    // community map, a probe output -- can still be checked.
+    for path in &paths {
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                failures.push(format!("{}: could not read: {error}", path.display()));
+                continue;
+            }
+        };
+        let map = match MapAsset::parse(&bytes) {
+            Ok(map) => map,
+            Err(error) => {
+                failures.push(format!("{}: {error}", path.display()));
+                continue;
+            }
+        };
+        checked += 1;
+
+        // Each decoded record must rebuild its own 49 bytes from its typed fields alone. This is
+        // stricter than the file comparison and it is what makes an *edited* record trustworthy:
+        // the file can round-trip through `trailing_raw` while a field is being written back wrong.
+        if let Some(section) = &map.placed_sprites_49 {
+            for (index, record) in section.records.iter().enumerate() {
+                if record.to_bytes() != record.raw {
+                    failures.push(format!(
+                        "{}: record {index} does not rebuild from its fields",
+                        path.display()
+                    ));
+                } else {
+                    record_roundtrips += 1;
+                }
+            }
+        }
+
+        let encoded = map.to_bytes().map_err(|error| error.to_string())?;
+        match first_tail_difference(&bytes, &encoded) {
+            None => identical += 1,
+            Some(at) => {
+                // Distinguish "these bytes differ" from "one side ended here": at a length
+                // mismatch `first_tail_difference` returns the common length, and reporting a
+                // byte that does not exist as a value would be a wrong failure message on the one
+                // command whose whole job is to be believed.
+                let describe = |source: &[u8]| {
+                    source
+                        .get(at)
+                        .map_or_else(|| "end-of-file".to_owned(), |byte| format!("0x{byte:02x}"))
+                };
+                failures.push(format!(
+                    "{}: byte {at} differs (read {}, wrote {}; {} bytes in, {} bytes out)",
+                    path.display(),
+                    describe(&bytes),
+                    describe(&encoded),
+                    bytes.len(),
+                    encoded.len(),
+                ))
+            }
+        }
+    }
+
+    println!("checked\t{checked}");
+    println!("byte-identical\t{identical}");
+    println!("records-rebuilt-from-fields\t{record_roundtrips}");
+    println!("failures\t{}", failures.len());
+    for failure in &failures {
+        println!("failure\t{}", clean_field(failure));
+    }
+    if !failures.is_empty() {
+        return Err(format!("{} maps did not round-trip", failures.len()));
+    }
+    // Zero files checked is not a pass. This command is the load-bearing evidence for everything
+    // else here, and a mistyped-but-existing directory would otherwise print `failures 0` and exit
+    // 0 -- a green corpus validation that validated nothing.
+    if checked == 0 {
+        return Err(format!("no map files were checked under {}", path.display()));
+    }
+    Ok(())
+}
+
+/// Apply one edit and write a **new** file.
+///
+/// The shape of this deliberately matches `--set-imp-placement`: apply, re-parse the bytes that
+/// are about to be written, confirm the edit reads back, then `create_new`. The loose `map/`
+/// directory has no backup, so there is no in-place mode and no overwrite of an existing output.
+fn edit_map(input: &Path, edit: MapEdit, output: &Path) -> Result<(), String> {
+    if paths_are_same_file(input, output) {
+        return Err(format!(
+            "refusing to write to the input file {}; pass a different output path",
+            input.display()
+        ));
+    }
+    let source =
+        fs::read(input).map_err(|error| format!("could not read {}: {error}", input.display()))?;
+    let mut map = MapAsset::parse(&source).map_err(|error| error.to_string())?;
+    let map_before = MapAsset::parse(&source).map_err(|error| error.to_string())?;
+
+    let note = apply_map_edit(&mut map, edit)?;
+    let encoded = map.to_bytes().map_err(|error| error.to_string())?;
+
+    // Re-parse before writing: a map we cannot read back is a map we must not emit.
+    let reparsed = MapAsset::parse(&encoded).map_err(|error| {
+        format!("refusing to write: the edited map no longer parses: {error}")
+    })?;
+    verify_map_edit(&reparsed, &map_before, edit)?;
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    if let Err(error) = file.write_all(&encoded) {
+        // A short write leaves a truncated map behind, which the documented "a refused edit leaves
+        // no partial file" property does not allow. Drop the handle first so the removal is not
+        // racing an open descriptor.
+        drop(file);
+        let _ = fs::remove_file(output);
+        return Err(format!("could not write {}: {error}", output.display()));
+    }
+
+    let changed_cells = changed_cell_indexes(&map_before, &map).len();
+    println!("wrote\t{}\t{} bytes", output.display(), encoded.len());
+    println!("cells-changed\t{changed_cells}");
+    println!("{note}");
+    Ok(())
+}
+
+/// Whether two paths name the same file on disk.
+///
+/// Compares the **device and inode**, not canonical path strings. String comparison already caught
+/// `map/URAK.scn` versus `./map/../map/URAK.scn` and the macOS case-only variant, but it answers
+/// `false` for two hardlinks to one inode -- which is the same file by every meaning that matters
+/// to a writer. No overwrite is reachable through that gap, because `create_new` refuses an
+/// existing output whatever it is linked to; the function simply did not do what its name said,
+/// and a guard whose contract is wider than its implementation is how the next caller gets
+/// surprised.
+///
+/// An output that does not exist yet has no metadata to read, and that is the normal case -- it is
+/// also, by definition, not the input.
+fn paths_are_same_file(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (fs::metadata(left), fs::metadata(right)) {
+        (Ok(left), Ok(right)) => left.dev() == right.dev() && left.ino() == right.ino(),
+        _ => false,
+    }
+}
+
+fn apply_map_edit(map: &mut MapAsset, edit: MapEdit) -> Result<String, String> {
+    match edit {
+        MapEdit::SetTile { x, y, tile_index } => {
+            map.set_tile(x, y, tile_index)
+                .map_err(|error| error.to_string())?;
+            Ok(format!("set-tile\t({x}, {y})\ttile:{tile_index}"))
+        }
+        MapEdit::SetTerrain {
+            x,
+            y,
+            terrain_type,
+        } => {
+            map.set_terrain(x, y, terrain_type)
+                .map_err(|error| error.to_string())?;
+            let tile = terrain_type_base_tile(terrain_type).unwrap_or_default();
+            eprintln!(
+                "note: this writes one cell, like the editor's forcetexture. The engine's \
+                 setterrain also blends transition tiles into the 8-neighbourhood, and which \
+                 tiles it blends is unmeasured, so that is not reproduced here."
+            );
+            Ok(format!(
+                "set-terrain\t({x}, {y})\tterrain:{terrain_type}\ttile:{tile}"
+            ))
+        }
+        MapEdit::SetElevation { x, y, value } => {
+            map.set_elevation(x, y, value)
+                .map_err(|error| error.to_string())?;
+            Ok(format!("set-elevation\t({x}, {y})\tvalue:{value}"))
+        }
+        MapEdit::FillTerrain { terrain_type } => {
+            map.fill_terrain(terrain_type)
+                .map_err(|error| error.to_string())?;
+            let tile = terrain_type_base_tile(terrain_type).unwrap_or_default();
+            Ok(format!(
+                "fill-terrain\tterrain:{terrain_type}\ttile:{tile}\tcells:{}",
+                map.cells.len()
+            ))
+        }
+        MapEdit::PlaceSprite {
+            x,
+            y,
+            sprite_type,
+        } => {
+            let instance_id = map
+                .place_sprite(x, y, sprite_type)
+                .map_err(|error| error.to_string())?;
+            Ok(format!(
+                "place-sprite\t({x}, {y})\ttype:{sprite_type}\tinstance:{instance_id}"
+            ))
+        }
+        MapEdit::RemoveSprite { instance_id } => {
+            map.remove_sprite(instance_id)
+                .map_err(|error| error.to_string())?;
+            Ok(format!("remove-sprite\tinstance:{instance_id}"))
+        }
+    }
+}
+
+/// Read the edit back out of the bytes that are about to be written.
+///
+/// Applying an edit to an in-memory struct proves nothing about what lands on disk; only re-parsing
+/// the encoded bytes does. This is the same guard `--set-imp-placement` uses.
+/// The packed indexes whose eight bytes differ between two maps of the same shape.
+fn changed_cell_indexes(before: &MapAsset, after: &MapAsset) -> Vec<usize> {
+    before
+        .cells
+        .iter()
+        .zip(&after.cells)
+        .enumerate()
+        .filter(|(_, (before, after))| !after.has_same_bytes(before))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Check that a single-cell edit touched **exactly one** cell, and the one that was asked for.
+///
+/// This is the answer to a real weakness the review found: reading the edit back through
+/// `map.cell(x, y)` asks the same `cell_index` the setter used, so on the coordinate axis it is a
+/// tautology -- flip the packing in both and the check still passes. The cell *diff* is a second
+/// witness. It cannot make the packing formula independent of itself, and it is not claimed to:
+/// what it adds is that an edit which strayed to another cell, or to several, is caught, and that
+/// the byte that moved is the byte that was meant to. The packing itself is held by the byte-offset
+/// test in `map.rs`, which computes the offset without going through `cell_index` at all.
+fn verify_single_cell_edit(
+    before: &MapAsset,
+    after: &MapAsset,
+    x: u32,
+    y: u32,
+) -> Result<(), String> {
+    let expected = after
+        .cell_index(x, y)
+        .ok_or_else(|| format!("refusing to write: ({x}, {y}) is outside the map"))?;
+    match changed_cell_indexes(before, after).as_slice() {
+        [] => Ok(()),
+        [only] if *only == expected => Ok(()),
+        [only] => Err(format!(
+            "refusing to write: the edit landed on cell {only}, not the cell {expected} at ({x}, {y})"
+        )),
+        several => Err(format!(
+            "refusing to write: a single-cell edit changed {} cells: {:?}",
+            several.len(),
+            &several[..several.len().min(8)]
+        )),
+    }
+}
+
+fn verify_map_edit(map: &MapAsset, before: &MapAsset, edit: MapEdit) -> Result<(), String> {
+    let cell_tile = |x: u32, y: u32| -> Result<u32, String> {
+        map.cell(x, y)
+            .map(MapCellTile::tile)
+            .ok_or_else(|| format!("refusing to write: ({x}, {y}) is missing after the edit"))
+    };
+    match edit {
+        MapEdit::SetTile { x, y, tile_index } => {
+            verify_single_cell_edit(before, map, x, y)?;
+            let observed = cell_tile(x, y)?;
+            if observed != tile_index {
+                return Err(format!(
+                    "refusing to write: expected tile {tile_index} at ({x}, {y}) but read {observed}"
+                ));
+            }
+        }
+        MapEdit::SetTerrain {
+            x,
+            y,
+            terrain_type,
+        } => {
+            let expected = terrain_type_base_tile(terrain_type)
+                .ok_or_else(|| format!("{terrain_type} is not a terrain type"))?;
+            verify_single_cell_edit(before, map, x, y)?;
+            let observed = cell_tile(x, y)?;
+            if observed != expected {
+                return Err(format!(
+                    "refusing to write: expected tile {expected} at ({x}, {y}) but read {observed}"
+                ));
+            }
+        }
+        MapEdit::SetElevation { x, y, value } => {
+            verify_single_cell_edit(before, map, x, y)?;
+            let observed = map
+                .cell(x, y)
+                .ok_or_else(|| format!("refusing to write: ({x}, {y}) is missing after the edit"))?
+                .value_bits;
+            if observed != value.to_bits() {
+                return Err(format!(
+                    "refusing to write: elevation at ({x}, {y}) read back as {}",
+                    f32::from_bits(observed)
+                ));
+            }
+        }
+        MapEdit::FillTerrain { terrain_type } => {
+            let expected = terrain_type_base_tile(terrain_type)
+                .ok_or_else(|| format!("{terrain_type} is not a terrain type"))?;
+            if let Some(index) = map
+                .cells
+                .iter()
+                .position(|cell| cell.tile_index() != expected)
+            {
+                return Err(format!(
+                    "refusing to write: cell {index} did not take the fill tile {expected}"
+                ));
+            }
+        }
+        MapEdit::PlaceSprite { x, y, .. } => {
+            let cell_index = map
+                .cell_index(x, y)
+                .ok_or_else(|| format!("refusing to write: ({x}, {y}) is outside the map"))?;
+            let present = map.placed_sprites_49.as_ref().is_some_and(|section| {
+                section
+                    .records
+                    .iter()
+                    .any(|record| usize::try_from(record.cell_index) == Ok(cell_index))
+            });
+            if !present {
+                return Err(format!(
+                    "refusing to write: no placed sprite at ({x}, {y}) after the edit"
+                ));
+            }
+        }
+        MapEdit::RemoveSprite { instance_id } => {
+            let present = map.placed_sprites_49.as_ref().is_some_and(|section| {
+                section
+                    .records
+                    .iter()
+                    .any(|record| record.instance_id == instance_id)
+            });
+            if present {
+                return Err(format!(
+                    "refusing to write: instance {instance_id} is still present after removal"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A tiny shim so `verify_map_edit` can read a cell's tile through `Option::map`.
+trait MapCellTile {
+    fn tile(&self) -> u32;
+}
+
+impl MapCellTile for lom_asset_viewer::map::MapCell {
+    fn tile(&self) -> u32 {
+        self.tile_index()
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_coordinate, parse_dimension, parse_offset, set_imp_placement};
+    use super::{
+        MapEdit, edit_map, parse_coordinate, parse_dimension, parse_elevation, parse_offset,
+        parse_terrain_type, roundtrip_maps, set_imp_placement,
+    };
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
     use std::fs;
@@ -3199,6 +3714,7 @@ mod tests {
             trailing_bytes: 0,
             trailing_head_u32: None,
             placed_sprites_49: None,
+            trailing_raw: Vec::new(),
         };
 
         let tags = map_display_rgba(&map, MapDisplayMode::CellTags);
@@ -3235,6 +3751,7 @@ mod tests {
             trailing_bytes: 0,
             trailing_head_u32: None,
             placed_sprites_49: None,
+            trailing_raw: Vec::new(),
         };
         let tile_set = TileSetDefinition {
             atlas_member: "test.lbm".to_owned(),
@@ -3983,5 +4500,274 @@ mod tests {
         assert_eq!(super::first_tail_difference(b"ABCD", b"ABXD"), Some(2));
         assert_eq!(super::first_tail_difference(b"", b""), None);
         assert_eq!(super::first_tail_difference(b"", b"A"), Some(0));
+    }
+
+    // --- map editing ---------------------------------------------------------------------
+
+    /// A deliberately **non-square** map with one placed-sprite record, so a test that gets the
+    /// two coordinate axes the wrong way round cannot pass by symmetry.
+    fn editable_map(width: u32, height: u32) -> Vec<u8> {
+        let mut source = Vec::new();
+        source.extend_from_slice(&0x6c_u32.to_le_bytes());
+        source.extend_from_slice(&width.to_le_bytes());
+        source.extend_from_slice(&height.to_le_bytes());
+        source.extend_from_slice(&8_u32.to_le_bytes());
+        for _ in 0..width * height {
+            source.extend_from_slice(&15_u32.to_le_bytes());
+            source.extend_from_slice(&1.0_f32.to_bits().to_le_bytes());
+        }
+        source.extend_from_slice(&0_u32.to_le_bytes());
+        source.extend_from_slice(&1_u32.to_le_bytes());
+        source
+    }
+
+    #[test]
+    fn terrain_types_are_accepted_by_number_and_by_script_name() {
+        assert_eq!(parse_terrain_type("1").unwrap(), 1);
+        assert_eq!(parse_terrain_type("tt_water").unwrap(), 1);
+        assert_eq!(parse_terrain_type("water").unwrap(), 1);
+        assert_eq!(parse_terrain_type("WATER").unwrap(), 1);
+        // Both names of a two-named type reach the same type.
+        assert_eq!(parse_terrain_type("dirt").unwrap(), 0);
+        assert_eq!(parse_terrain_type("rough").unwrap(), 0);
+        assert!(parse_terrain_type("11").is_err());
+        assert!(parse_terrain_type("tt_nonsense").is_err());
+    }
+
+    #[test]
+    fn elevation_rejects_the_values_no_corpus_cell_holds() {
+        assert_eq!(parse_elevation("2.5").unwrap(), 2.5);
+        assert!(parse_elevation("nan").is_err());
+        assert!(parse_elevation("inf").is_err());
+        assert!(parse_elevation("high").is_err());
+    }
+
+    /// The loose `map/` directory has no backup, so writing over the file being read is the one
+    /// mistake that cannot be undone.
+    #[test]
+    fn editing_refuses_to_write_over_its_own_input() {
+        let dir = scratch_dir("map-in-place");
+        let input = dir.join("m.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+        let before = fs::read(&input).unwrap();
+
+        let error = edit_map(
+            &input,
+            MapEdit::SetTile {
+                x: 0,
+                y: 0,
+                tile_index: 392,
+            },
+            &input,
+        )
+        .unwrap_err();
+        assert!(error.contains("refusing to write to the input file"), "{error}");
+        assert_eq!(fs::read(&input).unwrap(), before);
+
+        // Reached by a different spelling of the same file, too.
+        let indirect = dir.join(".").join("m.scn");
+        // Assert the *message*, not just is_err: `create_new` also fails here, so a bare is_err
+        // would still pass with `paths_are_same_file` deleted outright -- the one test covering the
+        // guard's unique contribution could not fail on it.
+        let error = edit_map(
+            &indirect,
+            MapEdit::SetTile {
+                x: 0,
+                y: 0,
+                tile_index: 392,
+            },
+            &input,
+        )
+        .unwrap_err();
+        assert!(error.contains("refusing to write to the input file"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Two hardlinks to one inode are the same file, and the old canonical-path comparison said
+    /// they were not. No overwrite was reachable -- `create_new` refuses either way -- but the
+    /// guard did not do what its name claimed, which is the mismatch class this branch already got
+    /// caught on twice.
+    #[test]
+    fn two_hardlinks_to_one_inode_are_recognised_as_the_same_file() {
+        let dir = scratch_dir("map-hardlink");
+        let input = dir.join("in.scn");
+        let alias = dir.join("alias.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+        fs::hard_link(&input, &alias).unwrap();
+
+        assert!(super::paths_are_same_file(&input, &alias));
+        let error = edit_map(
+            &input,
+            MapEdit::SetTile {
+                x: 0,
+                y: 0,
+                tile_index: 392,
+            },
+            &alias,
+        )
+        .unwrap_err();
+        assert!(error.contains("refusing to write to the input file"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The cell diff is the verifier's second witness. A single-cell edit that strayed must be
+    /// refused before anything is written.
+    #[test]
+    fn a_single_cell_edit_that_touched_more_than_one_cell_is_refused() {
+        let source = editable_map(5, 3);
+        let before = MapAsset::parse(&source).unwrap();
+        let mut after = MapAsset::parse(&source).unwrap();
+        after.set_tile(3, 2, 392).unwrap();
+        // The edit that was asked for is fine.
+        super::verify_single_cell_edit(&before, &after, 3, 2).unwrap();
+        // A stray second write is not.
+        after.set_tile(0, 0, 392).unwrap();
+        let error = super::verify_single_cell_edit(&before, &after, 3, 2).unwrap_err();
+        assert!(error.contains("changed 2 cells"), "{error}");
+        // Nor is landing on the wrong cell.
+        let mut wrong = MapAsset::parse(&source).unwrap();
+        wrong.set_tile(0, 0, 392).unwrap();
+        let error = super::verify_single_cell_edit(&before, &wrong, 3, 2).unwrap_err();
+        assert!(error.contains("not the cell 13"), "{error}");
+    }
+
+    #[test]
+    fn editing_refuses_to_overwrite_an_existing_output() {
+        let dir = scratch_dir("map-overwrite");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+        fs::write(&output, b"precious").unwrap();
+
+        let error = edit_map(
+            &input,
+            MapEdit::SetTile {
+                x: 0,
+                y: 0,
+                tile_index: 392,
+            },
+            &output,
+        )
+        .unwrap_err();
+        assert!(error.contains("could not create"), "{error}");
+        assert_eq!(fs::read(&output).unwrap(), b"precious");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_written_map_reads_the_edit_back_at_the_right_cell() {
+        let dir = scratch_dir("map-write");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+
+        edit_map(
+            &input,
+            MapEdit::SetTerrain {
+                x: 3,
+                y: 2,
+                terrain_type: 1,
+            },
+            &output,
+        )
+        .unwrap();
+
+        let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(written.cell(3, 2).unwrap().tile_index(), 392);
+        // (2, 3) is off this 5x3 map entirely, which is the point of a non-square fixture.
+        assert!(written.cell(2, 3).is_none());
+        assert_eq!(
+            written.cells.iter().filter(|c| c.tile_index() == 392).count(),
+            1
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_refused_edit_leaves_no_output_file_behind() {
+        let dir = scratch_dir("map-refused");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+
+        assert!(
+            edit_map(
+                &input,
+                MapEdit::SetTile {
+                    x: 2,
+                    y: 4,
+                    tile_index: 392
+                },
+                &output,
+            )
+            .is_err()
+        );
+        assert!(
+            !output.exists(),
+            "an edit that could not be applied must not leave a partial file"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn round_tripping_a_directory_with_no_maps_is_not_a_pass() {
+        let dir = scratch_dir("map-roundtrip-empty");
+        let error = roundtrip_maps(&dir).unwrap_err();
+        assert!(error.contains("no map files were checked"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn round_tripping_an_untouched_map_reports_it_identical() {
+        let dir = scratch_dir("map-roundtrip");
+        let input = dir.join("in.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+        assert!(roundtrip_maps(&input).is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn round_tripping_reports_a_writer_that_does_not_reproduce_its_input() {
+        let dir = scratch_dir("map-roundtrip-bad");
+        let input = dir.join("in.scn");
+        // A map with a trailing byte the parser keeps but no decoder claims; if `to_bytes` ever
+        // stops emitting `trailing_raw`, this is what notices.
+        let mut source = editable_map(5, 3);
+        source.push(0x7f);
+        fs::write(&input, &source).unwrap();
+        // It still round-trips -- that is the assertion. The tail is opaque, not dropped.
+        assert!(roundtrip_maps(&input).is_ok());
+        let map = MapAsset::parse(&source).unwrap();
+        assert!(map.placed_sprites_49.is_none());
+        assert_eq!(map.to_bytes().unwrap(), source);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn placing_a_sprite_through_the_cli_writes_a_record_at_the_y_major_cell() {
+        let dir = scratch_dir("map-sprite");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+
+        edit_map(
+            &input,
+            MapEdit::PlaceSprite {
+                x: 3,
+                y: 2,
+                sprite_type: 470,
+            },
+            &output,
+        )
+        .unwrap();
+
+        let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
+        let section = written.placed_sprites_49.as_ref().unwrap();
+        assert_eq!(section.records.len(), 1);
+        assert_eq!(section.records[0].cell_index, 2 * 5 + 3);
+        assert_eq!(section.records[0].instance_id, 200);
+        assert_eq!(section.records[0].sprite_type, 470);
+        assert_eq!(written.record_coordinates(&section.records[0]), (3, 2));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

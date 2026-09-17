@@ -2172,3 +2172,111 @@ One keypress, a minute or so of game time. The map was the probe's own creation 
 was minted by the probe, so the cleanup could safely destroy by type and nothing shipped was at
 risk. No archive was modified; the four saved files are proprietary-derived and stay in ignored
 `artifacts/`.
+
+## 2026-09-17 — A map writer, and the property it rests on
+
+The first tool in this project that produces game data rather than describing it. It is a writer and
+a set of CLI editing verbs, not a GUI; the GUI is the layer that goes on top once the bytes are
+trustworthy.
+
+### The result
+
+`--map-roundtrip` over the installed `map/` directory: **365 checked, 365 byte-identical, 16,628
+placed-sprite records rebuilt from their typed fields, 0 failures.** On a real 128×128 shipped map,
+placing a terrain sprite and then removing it returns the file byte for byte — the same behaviour
+the 2026-09-17 engine probe observed from the game itself, now reproduced by a tool the game never
+ran.
+
+### Why it can be correct while the format is not solved
+
+Most of this format is still Unknown, so the writer never mints an unknown field. The header word at
+`0x00`, the trailing footer, the record attribute field at `+24`, tag bit `0x00800000` and the whole
+trailing section of every family this project has not decoded are all **copied**. What that buys is
+an editor today instead of after the remaining unknowns fall. What it costs is that there is no
+create-a-map-from-nothing mode, because three of those fields would have to be invented; the shipped
+GS5R3 editor already generates from 32 to 1024 in steps of 32, so generate there and edit here.
+
+Records are the exception, and deliberately: the decoded fields cover all 49 bytes with no gap, so a
+record is rebuilt from its typed fields rather than carried across as bytes. That is what makes an
+*edited* field land. `--map-roundtrip` checks it record by record, which is stricter than comparing
+files — a file can round-trip through its raw tail while a field is written back wrong.
+
+### What is deliberately not offered
+
+`setterrain`'s transition blending. The 2026-09-17 probe measured its *footprint* — a run painted
+along `y = 12` changed rows 11, 12 and 13 across `x = 7..29` — but not **which tiles** it blends in.
+Approximating it would put plausible-looking wrong tiles into a map, and no test here could tell.
+`--map-set-terrain` writes one cell, reproducing `forcetexture`, and says so on every run.
+
+### The same test bit twice, and the second time it was the test that was wrong
+
+`next_instance_id` was written to take the maximum live instance id and add one, with a doc comment
+claiming a removed id is never reissued. It reissued it immediately. Fixed with a high-water mark
+rebuilt at parse and never serialized, and a test that passed.
+
+**The review then showed the fix does not hold where it matters.** The high-water mark dies with the
+process, and the CLI edits exactly one file per process — so `place, place, remove, place` across
+four invocations reissues the freed id, now pointing at a different cell. Verified on the built
+binary. The test passed because it made all four edits against **one parsed map**, which is the only
+scope where the guarantee is true and is not the scope anyone uses.
+
+That is this project's own lesson landing on the person who wrote it down the same day: *a test that
+cannot fail on the axis it is named for*. The in-memory test never went through bytes, so it could
+not see the only thing that breaks the property.
+
+The mechanism is kept — it is correct within one parse, which is the scope a future interactive
+editor will have — but the guarantee is now documented as the limitation it is, in all three places
+that stated it, and a second test round-trips through bytes between every edit and asserts the freed
+id **does** come back. Pinning the real behaviour beats asserting the desired one. The format has
+nowhere to persist a high-water mark and inventing a field would break the copy-never-mint rule, so
+there is no fix available, only an honest statement.
+
+### What the two reviewers each saw
+
+Both independently found the instance-id reuse and the minted-fields overclaim, which is the
+strongest signal either produced — two models, two harnesses, same two defects. Beyond that they
+diverged, and the divergence was the useful part:
+
+- **Codex alone** named the read-back guard as **tautological**. `verify_map_edit` asked
+  `map.cell(x, y)`, which is the same `cell_index` the setter had just used, so on the coordinate
+  axis the check could not fail: flip the packing in both and the guard still passes. It was being
+  advertised as a safety property. The fix adds a second witness — the before/after cell diff, which
+  catches an edit that strayed to another cell or to several — and the doc now says plainly that
+  this does not make the packing formula independent of itself. That is held by the byte-offset test
+  instead, which never calls `cell_index`. Codex also caught `paths_are_same_file` comparing
+  canonical path *strings* rather than file identity, so two hardlinks to one inode read as
+  different files; no overwrite was reachable, because `create_new` refuses either way, but the
+  function did not do what its name said. It now compares device and inode.
+- **Claude alone** caught `--map-roundtrip` exiting 0 on a directory with no maps — a green result
+  from the command every other claim here leans on — and the unvalidated tile index, where a
+  fat-fingered `3920` for `392` went straight into the tag word.
+
+Neither list was usable as delivered. Codex's first report was a partial that found nothing and had
+to be read again when the real one arrived; Claude's verdict was right but its severity ordering put
+a doc-scope fix above a guard that could not fail.
+
+### An overclaim the review caught
+
+"Fields whose meaning is unknown are copied, never minted" was written in three files and is false
+on the `--map-place-sprite` path. A record that did not exist has to get its bytes from somewhere:
+`PlacedSpriteRecord49::new` mints nine fields, and one of them is `+24` — the very field the
+sentence lists as never-minted, written as `0x00000001` because that is what the probe watched the
+engine write, in direct contradiction of the corpus reading in which only the upper nibble varies.
+Eight of the nine are corpus-invariant; that one is not. All three copies of the claim now scope it
+to editing and name the exception.
+
+### Applying the fixture lesson from earlier the same day
+
+Every fixture here is **non-square** (5×3, 3×2, 11×3) and one is deliberately opaque-tailed, so the
+undecoded-tail path is exercised rather than assumed. The packing test asserts against a computed
+*byte offset*, not through `map.cell(x, y)` — going back through the same accessor the writer used
+would agree with an X-major writer just as happily. Mutating `cell_index` back to `x * height + y`
+fails three tests; that was checked rather than hoped for.
+
+### Safety
+
+The loose `map/` directory still has no backup. So: no in-place mode, an explicit output path on
+every command, refusal to write over the input by canonical path, `create_new` on the output, and a
+re-parse of the encoded bytes with the edit read back before anything reaches disk. A refused edit
+leaves no partial file. No game file was written during this work; all experiments ran on copies in
+a scratch directory.

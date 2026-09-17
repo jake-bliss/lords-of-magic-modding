@@ -6,6 +6,11 @@
 
 **An attended engine run on 2026-09-17 wrote maps with values chosen in advance and read them back.** It confirmed the tile-index reading by construction, produced the engine's terrain-type-to-tile table, and **refuted two claims this document previously asserted**: the cell storage order (it is packed y-major, not X-major) and the meaning of tag bit `0x00800000` (it does not mark a forced texture; its meaning is Unknown). Both refutations, and the reasoning that produced the wrong claims, are kept below.
 
+**A map writer landed on 2026-09-17.** Every installed map now re-encodes to the exact bytes it was
+read from -- 365 of 365, with all 16,628 placed-sprite records rebuilt from their typed fields --
+and the tool can force tiles, fill terrain, set elevation and place or remove terrain sprites
+without touching a single field whose meaning is still Unknown. See [Writing maps](#writing-maps).
+
 The corpus is the working GS5R3 profile, including its supplied custom maps. No original map data or rendered captures are stored in Git.
 
 ## Observed prefix
@@ -353,6 +358,135 @@ residue in the file, which is what makes a save-diff a trustworthy instrument he
 
 A controlled-save attempt reached the cloned Wine profile and launched the Map Editor integration, but macOS accessibility controls prevented reliable programmatic interaction with its Wine window. No map file was changed. The save-diff experiment remains parked rather than substituting guessed field meanings.
 
+## Writing maps
+
+**A map writer exists as of 2026-09-17.** It is the first tool in this project that produces game
+data rather than describing it, and it is built on one property:
+
+> **An unedited map re-encodes to the exact bytes it was read from.**
+
+`--map-roundtrip` asserts that over the installed corpus: **365 checked, 365 byte-identical, 16,628
+placed-sprite records rebuilt from their typed fields, 0 failures.** Run it before trusting an edit.
+
+Two rules make that possible while most of this format is still Unknown:
+
+1. **When editing existing data, fields whose meaning is unknown are copied, never minted.** The
+   header word at `0x00`, the trailing footer, the record attribute field at `+24`, tag bit
+   `0x00800000` and the whole trailing section of every family this project has *not* decoded all
+   survive a round trip untouched. A writer that guessed at them would corrupt maps in ways no test
+   here could see.
+
+   **Placing a new sprite is the exception, and it mints nine fields.** A record that did not exist
+   has to get its bytes from somewhere. Eight of the nine are invariant across all 16,628 corpus
+   records. The ninth is the `+24` attribute field, written as `0x00000001` because that is what the
+   2026-09-17 probe watched the engine write for a fresh sprite — and it **contradicts** the corpus
+   reading of that field, in which only the upper nibble varies. Whether the engine accepts a record
+   of this shape is unmeasured. Editing an existing sprite mints nothing; placing a new one does.
+2. **Records rebuild from typed fields, not from carried-over bytes.** The decoded fields cover all
+   49 bytes of a placed-sprite record with no gap, so `PlacedSpriteRecord49::to_bytes` reproduces
+   the original exactly *and* an edited field actually lands. `--map-roundtrip` checks that record
+   by record, which is stricter than comparing whole files: a file can round-trip through its raw
+   tail while a field is being written back wrong.
+
+### What the editor can and cannot do
+
+| Operation | Status |
+| --- | --- |
+| Force a cell's tile-atlas slot | Reproduces `forcetexture` exactly |
+| Force a cell to a terrain type's base tile | Reproduces `forcetexture` with the measured terrain table |
+| Fill every cell with a terrain type | Reproduces `clearmap` |
+| Set a cell's elevation word | Writes the word; its runtime units stay **Inferred** |
+| Place or remove a terrain sprite | Round-trips byte-exactly, as the engine's own does |
+| **Blend terrain transitions** | **Not offered.** See below |
+| Create a map from nothing | **Not offered.** See below |
+
+**`setterrain` is deliberately not reproduced.** The engine's `setterrain` writes the cell *and*
+blends transition tiles into its 8-neighbourhood; the 2026-09-17 probe measured the footprint —
+rows 11, 12 and 13 across `x = 7..29` for a run painted along `y = 12` — but **not which tiles it
+blends in**. Approximating that would put plausible-looking wrong tiles into a map and there is no
+test here that could tell. `--map-set-terrain` writes one cell, prints a note saying so, and the
+blend stays open on [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
+
+**There is no create-from-scratch mode**, because three fields would have to be invented rather than
+copied: the header word at `0x00` (our engine-generated maps say `0x6f`, shipped `URAK.scn` says
+`0x6c`, and the tileset-selector hypothesis is unproven), the trailing footer (`0`, `1` and `3` are
+observed and the meaning is Unknown), and the record attribute field at `+24`. Editing an existing
+map carries all three across untouched. The shipped GS5R3 editor already generates maps from 32 to
+1024 in steps of 32 — generate there, edit here.
+
+### Safety
+
+The loose `map/` directory has **no backup**, so:
+
+- every editing command takes an explicit output path and there is **no in-place mode**;
+- writing over the input is refused, by canonical path, so `m.scn` and `./m.scn` are both caught;
+- the output is opened `create_new`, so an existing file is never truncated;
+- the encoded bytes are **re-parsed and the edit read back** before anything is written, exactly as
+  `--set-imp-placement` does — a map that cannot be read back is a map that is not emitted;
+- a refused edit leaves no partial file behind.
+
+### Editing commands
+
+```sh
+lom-asset-viewer --map-roundtrip '/path/to/English/map'
+lom-asset-viewer --map-roundtrip MAP.scn
+
+lom-asset-viewer --map-set-tile      IN.scn X Y TILE_SLOT   OUT.scn
+lom-asset-viewer --map-set-terrain   IN.scn X Y TERRAIN     OUT.scn
+lom-asset-viewer --map-set-elevation IN.scn X Y VALUE       OUT.scn
+lom-asset-viewer --map-fill-terrain  IN.scn TERRAIN         OUT.scn
+lom-asset-viewer --map-place-sprite  IN.scn X Y SPRITE_TYPE OUT.scn
+lom-asset-viewer --map-remove-sprite IN.scn INSTANCE_ID     OUT.scn
+```
+
+`TERRAIN` is a number `0..10` or a `gs\maplib.gs` name with or without its `tt_` prefix, so
+`1`, `tt_water` and `water` are the same thing. `TILE_SLOT` is a raw atlas index. It is *not* range-checked against the **tileset**, because the
+atlas size comes from the active `.til` file and `tilesb01.til`'s 624 slots are one tileset's answer
+rather than the format's. It *is* range-checked against the **tag word**: corpus tag bits `10..22`
+are zero across all 1,258,496 cells, so an index of 1024 or more is refused — a fat-fingered `3920`
+for `392` is the realistic input, and it used to be written straight into the tag.
+
+A new sprite takes the next `instance_id` above every id in the file, starting at 200 on an empty
+map.
+
+**A removed id *is* reissued by the next invocation.** Each command reads one file and writes one
+file, so the high-water mark that holds a freed id back lives only as long as that process. In
+practice:
+
+```
+--map-place-sprite  a.scn 0 0 470 b.scn   -> instance:200
+--map-place-sprite  b.scn 1 0 470 c.scn   -> instance:201
+--map-remove-sprite c.scn 201       d.scn
+--map-place-sprite  d.scn 2 0 470 e.scn   -> instance:201   <- reissued, different cell
+```
+
+This is a limitation, not a bug to work around: the format has nowhere to persist a high-water mark,
+and inventing a field would break the copy-never-mint rule above. It matters because other files
+reference objects by id, so a reused id can silently re-point an outside reference at a different
+object. **If something outside the map references a sprite by instance id, do not remove-then-place.**
+
+### Worked example
+
+```sh
+$ lom-asset-viewer --map-set-terrain base.scn 10 20 water out.scn
+note: this writes one cell, like the editor's forcetexture. ...
+wrote	out.scn	159173 bytes
+cells-changed	1
+set-terrain	(10, 20)	terrain:1	tile:392
+
+$ lom-asset-viewer --diff-maps base.scn out.scn
+cell	10	20	2570	0x00000100	0x00000188	3	3
+cells	differing:1	of:16384
+tail	left:28085	right:28085	first-difference:none
+```
+
+Cell index 2570 is `20 x 128 + 10`, which is the corrected y-major packing arriving at the byte
+level rather than only in the parser.
+
+**Place-then-remove returns the original file byte for byte**, on a real 128x128 shipped map as
+well as in fixtures — which is the same behaviour the 2026-09-17 engine probe observed from the
+game itself, reproduced by a tool the game never ran.
+
 ## Commands
 
 ```sh
@@ -365,6 +499,13 @@ target/release/lom-asset-viewer --describe-map '/path/to/Lords of Magic Special 
 target/release/lom-asset-viewer --dump-map-cells MAP.scn
 target/release/lom-asset-viewer --dump-map-cells MAP.scn 8 8 20 8
 target/release/lom-asset-viewer --diff-maps BEFORE.scn AFTER.scn
+target/release/lom-asset-viewer --map-roundtrip '/path/to/Lords of Magic Special Edition/English/map'
+target/release/lom-asset-viewer --map-set-tile IN.scn 10 20 392 OUT.scn
+target/release/lom-asset-viewer --map-set-terrain IN.scn 10 20 water OUT.scn
+target/release/lom-asset-viewer --map-set-elevation IN.scn 10 20 2.5 OUT.scn
+target/release/lom-asset-viewer --map-fill-terrain IN.scn water OUT.scn
+target/release/lom-asset-viewer --map-place-sprite IN.scn 10 20 470 OUT.scn
+target/release/lom-asset-viewer --map-remove-sprite IN.scn 200 OUT.scn
 target/release/lom-asset-viewer --view-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
 target/release/lom-asset-viewer --view-map MAP.scn tilesb01.til tilesb01.lbm
 target/release/lom-asset-viewer --export-map-preview MAP.scn tilesb01.til tilesb01.lbm /tmp/map-preview.png
@@ -389,4 +530,6 @@ With a tile definition and atlas, the viewer starts in terrain-art mode. Press `
 - **Corrected:** cell and record coordinates, previously documented and implemented as X-major (`x × height + y`). Every shipped map is square, so the corpus could not falsify it.
 - **Refuted:** tag bit `0x00800000` as a forced-texture flag. Forcing textures into 4,096 cells set it in none of them.
 - **Inferred:** the second word is elevation; record `+34` is a procedure identifier; the header word at `0x00` is a tileset selector.
-- **Unknown:** the first header word, elevation units, the meaning of tag bit `0x00800000`, the trailing footer, the attribute field at `+24`, and the remaining record families.
+- **Observed in a local binary (2026-09-17):** every one of the 365 installed maps re-encodes to its input bytes, and all 16,628 placed-sprite records rebuild from their typed fields alone. Place-then-remove returns a shipped 128x128 map byte for byte.
+- **Not reproduced:** `setterrain`'s transition blending. Its footprint was measured; which tiles it blends in was not, so the writer does not approximate it.
+- **Unknown:** the first header word, elevation units, the meaning of tag bit `0x00800000`, the trailing footer, the attribute field at `+24`, and the remaining record families. The writer copies all of them rather than minting them, which is why it can be correct without them being solved.
