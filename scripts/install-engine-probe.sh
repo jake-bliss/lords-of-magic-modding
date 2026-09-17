@@ -12,8 +12,9 @@ artifacts_dir="${LOM_ARTIFACTS_DIR:-${project_dir}/artifacts}"
 backup_dir="${artifacts_dir}/experiment-backups/gs5r3-20260916"
 app_dir="${1:-${HOME}/Applications/Lords of Magic GS5R3.app}"
 # Which probe to install: "ladder" (the four-rung compositing diagnostic), "elevation",
-# "mapsize" (the oversized-map ladder, issue #22 -- now closed), or "flatground" (the built-mesh
-# probe that closes the map2screen y convention).
+# "mapsize" (the oversized-map ladder, issue #22 -- now closed), "flatground" (the built-mesh
+# probe that closes the map2screen y convention), or "maptag" (the cell-tag and trailing-record
+# probe for issue #4).
 probe="${LOM_PROBE:-ladder}"
 game_subpath='Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition/English'
 game_dir="${app_dir}/${game_subpath}"
@@ -176,6 +177,23 @@ if [[ "${probe}" == "flatground" ]]; then
   echo "same six cells three times -- flat, on a raised plateau, and on single-cell spikes --"
   echo "and removes every sprite it places. Nothing is saved and no game map is touched."
   echo "Expect three redraws and six captures. Do not save anything afterwards."
+elif [[ "${probe}" == "maptag" ]]; then
+  echo "Ready. Launch 'Lords of Magic GS5R3.app' and open the MAP EDITOR (not a game), then TAP z"
+  echo "once. The probe replaces the editor's map with a 64x64 one it builds itself, paints two"
+  echo "rows with known values -- one with forcetexture, one with setterrain -- and saves that"
+  echo "state as both a .scn and a .smp. It then places three terrain sprites, saves again,"
+  echo "removes them, and saves a third time. Four files in map/, all named zzt*, all collected"
+  echo "and deleted by the restore script."
+  echo
+  echo "Expect one redraw and two captures. The painted rows are at y 8 and y 12 and the camera"
+  echo "is on (16,16), so you should see two short bands of odd-looking terrain."
+  echo
+  echo "The three sprites are at (18,14), (19,14) and (18,15), which the projection puts inside"
+  echo "the frame. They SHOULD be visible. If you see no sprites appear, say so -- that is a real"
+  echo "result and not a normal outcome. An earlier run placed them off screen and the two"
+  echo "captures came back byte-identical, which cost a screenshot each and proved nothing."
+  echo
+  echo "Do not save anything yourself afterwards, and do not open one of the zzt maps in the editor."
 elif [[ "${probe}" == "mapsize" ]]; then
   echo "Ready. Launch 'Lords of Magic GS5R3.app' and open the MAP EDITOR (not a game), then TAP z"
   echo "once. It generates and saves a 128, a 256 and a 512 map in turn, which takes a while --"

@@ -55,10 +55,20 @@ target/release/lom-asset-viewer "$PIC_MPQ" 'LBM\ACTIONS5.lbm'
 target/release/lom-asset-viewer --scan-map-dir '/path/to/Lords of Magic Special Edition/English/map'
 target/release/lom-asset-viewer --inspect-file '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
 target/release/lom-asset-viewer --describe-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
+target/release/lom-asset-viewer --dump-map-cells MAP.scn
+target/release/lom-asset-viewer --dump-map-cells MAP.scn 8 8 20 8
+target/release/lom-asset-viewer --diff-maps BEFORE.scn AFTER.scn
 target/release/lom-asset-viewer --view-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
 target/release/lom-asset-viewer --view-map MAP.scn tilesb01.til tilesb01.lbm
 target/release/lom-asset-viewer --export-map-preview MAP.scn tilesb01.til tilesb01.lbm /tmp/map-preview.png
 ```
+
+`--dump-map-cells` prints one line per cell — `x`, `y`, packed index, raw tag, masked tile index,
+whether the unexplained `0x00800000` flag is set, and the elevation word — for the whole grid, or for
+an inclusive `X0 Y0 X1 Y1` rectangle. `--diff-maps` prints both headers, every differing cell, and
+the first differing byte of the trailing section with a hex window either side, comparing the tails
+as raw bytes rather than as assumed records. They are the readback half of an engine probe: writing
+chosen values from the running game only proves something if they can be read out again.
 
 ## Writing sprite placement
 
@@ -168,7 +178,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/mpq.rs` — manual StormLib FFI and read-only archive/member ownership.
 - `src/pbm.rs` — bounded IFF chunk parsing, palette conversion, PBM row handling, and ByteRun1 decoding.
 - `src/imp.rs` — bounds-checked IMP tables, palette, RLE and packed-pixel decoding, hotspot and duplicate/repeated-frame structures, and generated-header validation.
-- `src/map.rs` — bounded common header/cell-grid parsing, X-major coordinates, terrain tags, and 49-byte placed-sprite records for SCN/SMP/LGD files.
+- `src/map.rs` — bounded common header/cell-grid parsing, packed `y * width + x` coordinates, terrain tags, the measured terrain-type-to-tile table, and 49-byte placed-sprite records for SCN/SMP/LGD files.
 - `src/tile.rs` — parser for `.til` atlas geometry, terrain types, and tile relationships.
 - `src/gamescript.rs` — bounded GameScript lexer, procedure diagnostics, name inventory, and static `run` references.
 - `src/gamescript_vm.rs` — experimental bounded value stack, dictionaries, procedures, core operators, and structured execution failures.

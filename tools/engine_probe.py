@@ -321,15 +321,25 @@ def generate_call(width: int, height: int) -> str:
     return f"{width} {height} make_custom_random_map"
 
 
+def map_size_map_names() -> list[str]:
+    """Exactly the map files the mapsize probe writes, as `map/`-relative names."""
+    return [f"map/zz{size}.scn" for size in MAP_SIZES]
+
+
 def generated_map_names() -> list[str]:
-    """Exactly the map files the mapsize probe writes, as `map/`-relative names.
+    """Every map file any probe writes, as `map/`-relative names.
 
     The install and restore scripts clear and collect by this list rather than by a `zz*.scn`
     glob. A glob is a standing offer to delete somebody's `zzCustom.scn`, and the game's loose
     `map/` directory has no backup: the manifest covers `gs.mpq` and `imp.mpq` only. An exact
-    list can only ever match files this probe created.
+    list can only ever match files a probe created.
+
+    It is the union across probes on purpose. Cleanup has to cover every name any probe can
+    leave behind -- a previous run's leftovers are exactly what a later run must not collect as
+    its own -- while each probe's own test asserts its own list, so a name cannot drift between
+    the two without something failing.
     """
-    return [f"map/zz{size}.scn" for size in MAP_SIZES]
+    return map_size_map_names() + map_tag_map_names()
 
 
 def map_size_body() -> str:
@@ -603,11 +613,223 @@ def flat_ground_body() -> str:
     return "\n".join(lines) + "\n"
 
 
+# --- map cell tag probe ------------------------------------------------------------------------
+#
+# Issue #4. The 8-byte map cell is half decoded: the second word is a finite float that renders as
+# coherent world relief, and the first word is opaque. Masking `0x00800000` out of all 1,258,496
+# corpus cells leaves 603 distinct values in `0..623`, exactly the slot range of the 624-tile
+# atlas `tilesb01.til` declares, and rendering through those indices produces a correctly oriented
+# world. So "the low bits are a tile index" is already strong. What is *not* established is what
+# the `0x00800000` flag means, where the terrain TYPE lives, and why the shipped corpus only ever
+# sets that flag in `.smp` files.
+#
+# The editor has two separate paints, and that is the whole experiment:
+#
+#   setterrain   x y terrain    gs\rmg.gs        terrain type 0..10, engine picks the tile
+#   forcetexture x y texture    gs\maplib.gs     tile slot directly, engine picks nothing
+#
+# `forcetexture` arity was recovered from its four shipped call sites, not from the arity table.
+# `/clearmap{/temp_tex exch def mapw maph newmap 0 1 maph 1 sub{/y exch def 0 1 mapw 1 sub{y
+# temp_tex forcetexture}for}for}def` puts x on the stack from the inner `for`, so the order is
+# `x y texture`; `show_regions`'s `x y 2 copy regionatlocation 48 mul forcetexture` and
+# `mountain`'s `mtn_y add tempx exch 48 forcetexture` both agree.
+#
+# The prediction is therefore sharp enough to be wrong:
+#
+#   a forced cell   tag low bits == the exact slot we asked for, and `0x00800000` SET
+#   a terrained cell  `0x00800000` CLEAR, low bits == whatever tile the engine chose
+#
+# If the flag is set on both rows, or neither, "forced texture" is refuted and the flag is
+# something else. Nothing about this is inferred from the corpus: every cell is written to a value
+# this probe chose, so the file can be read back by construction rather than by correlation.
+#
+# `getterrain` is logged for the forced row as well, and that is the second result. `.til` declares
+# tile-to-terrain relationships, so if the engine reports a terrain type for a cell whose type was
+# never set, the type is derived from the tile index -- which is the only way the 8-byte cell can
+# hold both, since bits 10..22 of the tag are unused across the whole corpus. That also recovers
+# the engine's own tile-to-terrain table, which can be checked against our `.til` parse.
+MAPTAG_MAP = 64
+
+# `392` is the texture `gs\edit\generate.gs`'s `generate_simple_game` clears with, so the
+# background is a value the shipped scripts themselves use.
+MAPTAG_BASE_TEXTURE = 392
+
+# Slots spread across the atlas. `0`, `48` and `392` appear in shipped call sites; `623` is the
+# last slot `tilesb01.til` declares and the largest index observed in the corpus, so it is in range
+# but is the one most likely to fault. Each cell is logged after it is painted, so if the body dies
+# the last line in the log names the last slot the engine accepted.
+MAPTAG_TEXTURE_ROW = 8
+MAPTAG_TEXTURES = [0, 1, 2, 48, 96, 392, 623]
+
+# Every terrain type `gs\maplib.gs` defines, 0..10, in order. Two rows keeps the readback
+# unambiguous: a cell is painted by exactly one of the two operators, never both.
+MAPTAG_TERRAIN_ROW = 12
+MAPTAG_TERRAINS = list(range(11))
+
+# Cells are spaced two apart so a mistake in the x stride shows as a gap rather than as a
+# plausible-looking shift.
+MAPTAG_FIRST_X = 8
+MAPTAG_X_STRIDE = 2
+
+# Three cells, deliberately NOT collinear and NOT symmetric: (18,14) and (19,14) differ only in x,
+# (18,14) and (18,15) only in y. Packed `y*width+x` gives 914/915/978 and X-major `x*height+y` gives
+# 1166/1230/1167, so whichever the record holds, the three values identify the order. That is what
+# the 2026-09-17 run settled -- the records carried the packed values -- and keeping the asymmetry
+# means a future change to the parser still has to face a fixture that can tell them apart.
+#
+# They sit beside the camera because the first run's did not. Those were (20,30), (21,30), (20,31),
+# which the projection puts ~339 pixels left of centre and ~259 below it: off the left edge and
+# under the editor's panel. The sprites were placed -- the log counted them and the saved records
+# were right -- but the plate and the shot came back differing by zero bytes, so the capture pair
+# cost a screenshot each and proved nothing. `map_projection.is_in_frame` now decides this instead
+# of hope, and a test holds every placement cell to it.
+MAPTAG_SPRITE_CELLS = [(18, 14), (19, 14), (18, 15)]
+MAPTAG_SPRITE = '["imp/tree4e.imp"]cvx addterrainspritetype'
+
+# Camera. The painted rows at y 8 and 12 run off the frame at their far ends, so the capture never
+# shows all of both -- the saved bytes carry the terrain result. The sprites are a different matter:
+# they are placed beside the camera so they ARE in frame, and `map_projection.is_in_frame` holds
+# them to it. A capture pair around a placement nobody can see is two screenshots and no evidence.
+MAPTAG_CAMERA = (16, 16)
+
+# Own capture prefix, like every other probe. `zl*` ladder, `ze*` elevation, `zm*` mapsize,
+# `zf*` flatground, `zg*` here.
+MAPTAG_PLATE = "zg0.bmp"
+MAPTAG_SHOT = "zg1.bmp"
+
+
+def map_tag_map_names() -> list[str]:
+    """The four files this probe saves, in the order it writes them.
+
+    `zzt0.scn` and `zzt0.smp` are the same map state saved twice, and that pairing is the point:
+    the corpus's 52-byte trailing records occur almost entirely in `.smp` files and the 49-byte
+    ones almost entirely in `.scn`, which is either a format difference or a content difference
+    and cannot be told apart from shipped files alone. Saving one state both ways separates them.
+
+    `zzt1.scn` adds three sprites to that same state and `zzt2.scn` removes them again, so the
+    trailing bytes a placed sprite costs can be read off a diff instead of being pattern-matched.
+    """
+    return ["map/zzt0.scn", "map/zzt0.smp", "map/zzt1.scn", "map/zzt2.scn"]
+
+
+def _map_tag_cells(values: list[int], row: int) -> list[tuple[int, int, int]]:
+    """`(x, y, value)` for one painted row."""
+    return [
+        (MAPTAG_FIRST_X + index * MAPTAG_X_STRIDE, row, value)
+        for index, value in enumerate(values)
+    ]
+
+
+def _map_tag_count(emit, tag: str) -> None:
+    """Log how many sprites of the probe's own type are on the map right now."""
+    emit("\t/zn 0 def")
+    emit("\t{dup getterrainspritetype zt eq{/zn zn 1 add def}if pop}enumterrainsprites")
+    emit("\t" + _log(f'"count {tag} "zn'))
+
+
+def _map_tag_save(emit, operator: str, map_name: str, tag: str) -> None:
+    """Save, keep the result, log it, then cycle the log file.
+
+    All six shipped call sites of both `savescenariomap` and `savespecialmap` read
+    `... savescenariomap pop`, so each pushes exactly one value; keeping it is the only way to
+    learn that a save failed. The log is closed and reopened after every save for the same reason
+    the mapsize ladder does it -- a fault on a later write must not take the earlier results down
+    with it.
+    """
+    emit(f'\tzname"{map_name}"strcpy')
+    emit(f"\tzname {operator} /zok exch def")
+    # The filename is not interpolated: `zname` is a 100-byte buffer holding a short name, and
+    # whether `writestring` stops at the first padding byte or emits all of them, it is the result
+    # at the end of the line that would be lost. It is a constant here anyway.
+    emit("\t" + _log(f'"save {tag} {map_name} result "zok'))
+    emit("\tzlog closefile")
+    emit('\t"zprobe.log""abw"file /zlog exch def')
+
+
+def map_tag_body() -> str:
+    lines: list[str] = []
+    emit = lines.append
+
+    emit("; ---- BEGIN MAP CELL TAG PROBE (generated by tools/engine_probe.py) ----")
+    emit(f'ASCII_VAL"{HOTKEY}"0 get')
+    emit("{")
+    emit("userdict /zdone known not")
+    emit("\t{")
+    emit("\tuserdict begin")
+    emit("\t/zdone true def")
+    emit('\t"zprobe.log""abw"file /zlog exch def')
+    emit(f"\t/zname {MAP_NAME_BUFFER} string def")
+    emit("\t" + _log('"map cell tag probe start"'))
+
+    # Build the map. `clearmap` re-runs `mapw maph newmap` itself and then forcetextures every
+    # cell, so the background is a known slot AND, if the flag means what we think, every cell
+    # starts flagged. The two painted rows then have to clear it or set it differently.
+    emit(f"\t{MAPTAG_MAP} {MAPTAG_MAP} newmap {MAPTAG_BASE_TEXTURE} clearmap")
+    emit("\t" + _log(f'"map built "mapw" "maph" base {MAPTAG_BASE_TEXTURE}"'))
+
+    for cell_x, cell_y, texture in _map_tag_cells(MAPTAG_TEXTURES, MAPTAG_TEXTURE_ROW):
+        emit(f"\t/zx {cell_x} def /zy {cell_y} def")
+        emit(f"\tzx zy {texture} forcetexture")
+        # Read the terrain type back from a cell whose type was never set. If the engine reports
+        # one, it came from the tile index via the `.til` relationships -- and this line is the
+        # engine's own tile-to-terrain table, recovered without parsing the tileset.
+        emit("\tzx zy getterrain /zg exch def")
+        emit("\t" + _log(f'"forced cell "zx" "zy" texture {texture} terrain "zg'))
+
+    for cell_x, cell_y, terrain in _map_tag_cells(MAPTAG_TERRAINS, MAPTAG_TERRAIN_ROW):
+        emit(f"\t/zx {cell_x} def /zy {cell_y} def")
+        emit(f"\tzx zy {terrain} setterrain")
+        emit("\tzx zy getterrain /zg exch def")
+        emit("\t" + _log(f'"terrain cell "zx" "zy" set {terrain} terrain "zg'))
+
+    emit("\trebuild3dmap resetvisibility rendermap refreshdirty")
+    emit(f"\t{MAPTAG_CAMERA[0]} {MAPTAG_CAMERA[1]} centeron")
+    emit("\trendermap refreshdirty")
+    emit(f'\t"{MAPTAG_PLATE}"screencapture')
+
+    map_names = map_tag_map_names()
+    _map_tag_save(emit, "savescenariomap", map_names[0], "terrain-only scn")
+    _map_tag_save(emit, "savespecialmap", map_names[1], "terrain-only smp")
+
+    emit(f"\t{MAPTAG_SPRITE} /zt exch def")
+    emit("\t" + _log('"sprite type "zt'))
+    _map_tag_count(emit, "before")
+    for index, (cell_x, cell_y) in enumerate(MAPTAG_SPRITE_CELLS):
+        emit(f"\t/zx {cell_x} def /zy {cell_y} def")
+        emit("\tzx zy zt addterrainsprite")
+        _map_tag_count(emit, f"after {index} cell {cell_x} {cell_y}")
+    emit("\trendermap refreshdirty")
+    emit(f'\t"{MAPTAG_SHOT}"screencapture')
+    _map_tag_save(emit, "savescenariomap", map_names[2], "with sprites")
+
+    # Two sweeps. Destroying during an enumeration may advance past an entry, and a survivor
+    # would land in the "removed" save and make the diff read as "the record was never written".
+    # `zt` was minted by this keypress and the map is this probe's own creation, so a type-only
+    # sweep cannot reach anything the probe did not place.
+    for _ in range(2):
+        emit(
+            "\t{dup getterrainspritetype zt eq"
+            "{destroyterrainsprite}{pop}ifelse}enumterrainsprites"
+        )
+    _map_tag_count(emit, "after cleanup")
+    emit("\trendermap refreshdirty")
+    _map_tag_save(emit, "savescenariomap", map_names[3], "sprites removed")
+
+    emit("\t" + _log('"map cell tag probe done"'))
+    emit("\tzlog closefile")
+    emit("\tend")
+    emit("\t}if")
+    emit("}addhotkey")
+    emit("; ---- END MAP CELL TAG PROBE ----")
+    return "\n".join(lines) + "\n"
+
+
 PROBES = {
     "ladder": lambda: probe_body(),
     "elevation": elevation_body,
     "mapsize": map_size_body,
     "flatground": flat_ground_body,
+    "maptag": map_tag_body,
 }
 
 

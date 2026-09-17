@@ -113,9 +113,9 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 
 - **Observed:** all 26 recovered `.til` members parse as text definitions of an LBM atlas, grid dimensions, 32×32 tiles, terrain types, and tile-to-terrain relationships.
 - **Observed:** `tilesb01.til` declares a 16×39 atlas with 624 slots. After masking `0x00800000`, every map-cell tag falls in `0..623`; 603 distinct indices occur across 1,258,496 cells.
-- **Observed:** indexing `tilesb01.lbm` with `URAK.scn` produces a coherent, correctly oriented map with connected ocean, snow, forest/grass, and desert regions.
-- **Observed:** map cells are X-major (`index = x × height + y`). This agrees with placed-sprite cell coordinates and Map Editor script iteration; the diagnostic viewer's former transposition is corrected and regression-tested.
-- **Inferred:** tag bit `0x00800000` is the binary form of the editor's `forcetexture` operation. It occurs only in `.smp` files, and many 48×48 components flag exactly their 188 perimeter cells.
+- **Observed:** indexing `tilesb01.lbm` with `URAK.scn` produces a coherent map with connected ocean, snow, forest/grass, and desert regions. **[Corrected 2026-09-17: coherence is evidence that the masked tag indexes real terrain art rather than noise; it is NOT evidence of orientation. Transposing a world map yields another coherent world map, which is exactly why the X-major reading survived this check for months. Nothing in the repository establishes the render's orientation; the decisive test is comparing an exported preview against the game's own world map in an attended run.]**
+- **Observed:** map cells are X-major (`index = x × height + y`). This agrees with placed-sprite cell coordinates and Map Editor script iteration; the diagnostic viewer's former transposition is corrected and regression-tested. **[Refuted 2026-09-17: the packing is `y × width + x`. Every shipped map is square, so neither the corpus nor the square regression fixture could tell the two apart — see the map cell tag entry.]**
+- **Inferred:** tag bit `0x00800000` is the binary form of the editor's `forcetexture` operation. It occurs only in `.smp` files, and many 48×48 components flag exactly their 188 perimeter cells. **[Refuted 2026-09-17: an attended run forced a texture into all 4,096 cells of a fresh map with `clearmap` and seven more individually, and saved. No saved cell had the bit set. Forcing a texture does not set it. The bit's meaning is Unknown — see the map cell tag entry, and `CELL_TAG_HIGH_FLAG` in `spikes/asset-viewer/src/map.rs`, which keeps this reasoning so it is not re-derived from the same corpus shape.]**
 - **Observed:** the exact 49-byte tail family covers 196 files and 16,628 records. Every record has bounded, per-file-unique cell and instance identifiers; fixed words are stable across the full corpus.
 - **Inferred:** record offsets `+20`, `+28`, and `+34` are instance ID, terrain-sprite type, and procedure ID. Editor script names and default-world coordinate correlations support these names, but controlled editor save diffs are still required.
 - **Unknown:** the record attribute nibble and footer; header-to-tileset selection; 52-/53-byte record layouts; and exact runtime behavior of candidate sprite/procedure fields. These remain parked in issue #4.
@@ -1690,6 +1690,9 @@ They also carry two findings of their own:
   `cell_index = x * height + y` within bounds — record 0 of `zz512.scn` is cell 241,316 at
   (471, 164), and `471 * 512 + 164 = 241,316`. The convention was established on maps no larger
   than 256; it does not change when the index no longer fits in 16 bits.
+  **[Corrected 2026-09-17, see the map cell tag entry below: the packing is `y * width + x`. These
+  maps are square, so this rung could not distinguish the two and the arithmetic is unchanged; only
+  the axis labels swap, and record 0 sits at (164, 471).]**
 
 The three files carry an identical 24-record placement set at every size — same instance ids 200
 upward, same sprite-type sequence, only the cells differ. That is the random map generator placing a
@@ -2033,3 +2036,139 @@ dedup_below_header	1
 dedup_foreign_header_pairs	2
 failures	0
 ```
+
+## 2026-09-17 (map cell tags) — Two documented claims refuted, and the terrain table read out of the engine
+
+`LOM_PROBE=maptag`, one attended keypress, for [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
+Every finding below is **Observed in gameplay** on that run unless labelled otherwise, and every one
+was re-derived from the saved files with `--dump-map-cells` and `--diff-maps` before being written
+here.
+
+### What the probe did
+
+Built a 64x64 map and `392 clearmap`'ed it, which calls `forcetexture` on all 4,096 cells. Then:
+
+- row `y = 8`: `forcetexture` at `x = 8,10,…,20` with slots 0, 1, 2, 48, 96, 392, 623;
+- row `y = 12`: `setterrain` at `x = 8,10,…,28` with terrain types 0 through 10;
+- saved that state twice, as `.scn` (`savescenariomap`) and `.smp` (`savespecialmap`);
+- minted a terrain sprite type with `addterrainspritetype`, placed three of it at `(20,30)`,
+  `(21,30)`, `(20,31)`, and saved;
+- destroyed all three and saved again.
+
+Four files, plus two screen captures and a log. The values were all chosen **before** the run so
+that the competing readings of the format would disagree on them.
+
+### 1. The low tag bits are the tile-atlas slot, exactly
+
+All seven forced slots round-trip byte-exact, including 0 and 623, the two ends of the atlas. This
+was previously **Inferred** from the fact that masked corpus values happen to land inside the atlas;
+it is now **Observed by construction**.
+
+### 2. `0x00800000` is not a forced-texture flag — **Refuted**
+
+Zero cells in the saved map have the bit set: not the 4,096 that `clearmap` wrote with
+`forcetexture`, not the seven forced individually. The docs' "strong evidence that `0x00800000`
+means a forced texture" was corpus pattern-matching — the bit appears only in `.smp` files, often on
+exactly a map's perimeter — and the engine says no. **The meaning is Unknown again.** The accessor
+survives, renamed to `MapCell::high_flag_set()` over `CELL_TAG_HIGH_FLAG`, so the code no longer
+asserts a meaning; the masking survives too, because that part is independent and still holds.
+
+### 3. Cells are packed y-major — the X-major claim is **Refuted**
+
+`cell_index = y × width + x`. The three sprites were placed at coordinates chosen so the two
+candidate encodings share no value, and the records carry **1940, 1941, 2004** = `y × 64 + x`.
+X-major would have written 1310, 1374, 1311.
+
+Which operand is *x* could not come from the bytes, because operand order and storage order are
+exact transposes of each other. It came from `zg0.bmp`: `map2screen` gives screen-x proportional to
+`(x − y)` and screen-down proportional to `(x + y)`, so a run with the **first** operand varying
+must travel down-right and one with the second varying must travel down-left. Both painted bands run
+down-right. First operand is x.
+
+**Why this survived a full-corpus regression suite: every shipped map is square.** 128x128 world
+maps, 48x48 special maps — the transpose is undetectable from the corpus, and the test that was
+supposed to "prevent the earlier transposed rendering" had been fitted to a square 2x2 fixture that
+agreed with both readings. The Rust tests now use deliberately non-square synthetic maps, and say so
+in their names. *A fixture shaped like the corpus cannot catch a bug the corpus hides.* The rendered
+map preview transposes as a result; that is the correction, not a regression.
+
+### 4. `forcetexture` and `setterrain` differ in footprint
+
+`forcetexture` writes exactly one cell: the forced row changed seven cells at `y = 8` and nothing at
+`y = 7` or `y = 9`. `setterrain` writes the cell **plus blended transition tiles into its
+8-neighbourhood**: the painted run along `y = 12`, `x = 8..28` changed rows 11, 12 **and** 13 across
+`x = 7..29`, one cell beyond the run on every side. That is the actual semantic difference between
+the two editor operations, and why both exist.
+
+### 5. The terrain-type-to-tile table, both directions
+
+| Type | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Tile | 175 | 392 | 111 | 159 | 207 | 255 | 15 | 303 | 351 | 459 | 469 |
+
+Names are **Documented** in `gs\maplib.gs`: `tt_dirt`/`tt_rough` 0, `tt_water` 1,
+`tt_desert`/`tt_sand` 2, `tt_mountain` 3, `tt_happy`/`tt_meadow` 4, `tt_ice`/`tt_snow` 5,
+`tt_land`/`tt_plains` 6, `tt_swamp` 7, `tt_lava` 8, `tt_road` 9, `tt_impassible`/`tt_impassable` 10.
+
+The inverse direction, `getterrain` on a cell whose type was **never** set and only its tile forced:
+slot 0 → type 0, 1 → 6, 2 → 6, 48 → 0, 96 → 0, 392 → 1, 623 → 9. Two of those slots are not any
+type's painted base tile and still answer with a type.
+
+Both directions together establish that **terrain type is derived from the tile index via the
+tileset, not stored in the cell** — consistent with tag bits `10..22` being unused corpus-wide. The
+table is codified as data next to the map code with a unit test on the exact values, not as prose
+here.
+
+### 6. `savescenariomap` and `savespecialmap` write byte-identical files
+
+`zzt0.scn` and `zzt0.smp` share one sha256, `7744b749…4a3c`. The `.scn`/`.smp` split is therefore
+**not** a format difference, so the corpus's concentration of 52-byte trailing records in `.smp`
+files has to be a **content** difference — different object kinds on special maps — not a different
+writer. That redirects the remaining half of issue #4.
+
+### 7. The trailing section: count first, footer last
+
+`u32 record_count`, then `record_count × 49`, then a `u32` footer. Confirmed by construction: 0
+records → 8 bytes, `00000000 01000000`; 3 records → 155 bytes, `03000000` + 147 + `01000000`. The
+old description — "49-byte records plus eight fixed bytes" — was right about the total and did not
+know which four were which. **The footer was `1` in both files**, so it is not a sprite-related
+count. Meaning still Unknown.
+
+### 8. Record fields
+
+`sprite_type` at `+28` **is** the terrain sprite type id: all three records carry 470, the id
+`addterrainspritetype` returned in the same keypress. Promoted from `sprite_type_candidate`.
+`instance_id` at `+20` was 200, 201, 202 — sequential, starting at 200 on a fresh map, which matches
+the corpus range `200..1659`. `attribute_bits` at `+24` was `0x00000001` on all three, for which
+`attribute_code_candidate()` (`bits >> 28`) reports 0; that looks like a plain small integer being
+read as a top nibble, so **the nibble reading is flagged suspect**. One sprite type cannot
+distinguish the field's layout, so no replacement is asserted.
+
+### 9. Placement and removal round-trip exactly
+
+`zzt2.scn`, saved after destroying all three sprites, is byte-identical to `zzt0.scn`, saved before
+any were placed. Nothing is left behind in the file, which is what makes a save diff a trustworthy
+instrument on this format at all.
+
+### Still open on issue #4
+
+The meaning of `0x00800000`; the 52-/53-byte record families, now known to be a content rather than
+a format difference; the 18 unmatched tails; the header word at `0x00`, which our generated maps
+write as `0x6f` while shipped `URAK.scn` writes `0x6c`; the trailing footer; and the attribute field
+at `+24`.
+
+### What landed in code
+
+`MapAsset::cell_index` and `PlacedSpriteRecord49::coordinates` corrected to the packed order, with
+every call site — `--describe-map`, the terrain renderer, and the two new commands — following.
+`CELL_TAG_FORCED_TEXTURE` → `CELL_TAG_HIGH_FLAG`, `tile_index_candidate` → `tile_index`,
+`forced_texture_candidate` → `high_flag_set`, `sprite_type_candidate` → `sprite_type`. The terrain
+table and the observed `getterrain` samples as constants. `--dump-map-cells` and `--diff-maps` in the
+asset viewer, because reading a 16 KiB tail by eye is how a wrong record size gets believed.
+
+### Cost
+
+One keypress, a minute or so of game time. The map was the probe's own creation and the sprite type
+was minted by the probe, so the cleanup could safely destroy by type and nothing shipped was at
+risk. No archive was modified; the four saved files are proprietary-derived and stay in ignored
+`artifacts/`.

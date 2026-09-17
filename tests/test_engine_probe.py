@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 import engine_probe  # noqa: E402
 import gs_syntax  # noqa: E402
+import map_projection  # noqa: E402
 
 
 class SharedProbeSafetyTest(unittest.TestCase):
@@ -219,7 +220,7 @@ class MapSizeProbeTest(unittest.TestCase):
         somebody reintroduced a second copy.
         """
         names = re.findall(r'"(map/[^"]*)"', self.body)
-        self.assertEqual(names, engine_probe.generated_map_names())
+        self.assertEqual(names, engine_probe.map_size_map_names())
         self.assertEqual(names, [f"map/zz{size}.scn" for size in engine_probe.MAP_SIZES])
         self.assertEqual(len(set(names)), len(names), "two sizes share a filename")
 
@@ -611,6 +612,176 @@ class EngineProbeTest(unittest.TestCase):
         self.assertIn("\nfalse\n", engine_probe.disable_intro(source))
         with self.assertRaises(ValueError):
             engine_probe.disable_intro("nothing to patch")
+
+
+class MapTagProbeTest(unittest.TestCase):
+    """Issue #4's probe. Asserts ORDER, because presence is nearly free to satisfy by accident.
+
+    Every claim this probe can make rests on a sequence: the background has to be painted before
+    the rows, the rows before the first save, and the first save before a single sprite exists. A
+    test that only checks that each operator appears somewhere would pass on a body that did them
+    in any order at all, and the saved bytes would be uninterpretable.
+    """
+
+    def setUp(self) -> None:
+        self.body = engine_probe.map_tag_body()
+
+    def _at(self, needle: str) -> int:
+        index = self.body.find(needle)
+        self.assertNotEqual(index, -1, f"{needle!r} missing from the body")
+        return index
+
+    def _place_positions(self) -> list[int]:
+        return [
+            match.start()
+            for match in re.finditer(r"addterrainsprite(?!type)", self.body)
+        ]
+
+    def test_map_names_are_the_probes_own_list_in_order(self) -> None:
+        names = re.findall(r'"(map/[^"]*)"', self.body)
+        self.assertEqual(names, engine_probe.map_tag_map_names())
+        self.assertEqual(len(set(names)), len(names), "two saves share a filename")
+
+    def test_generated_map_names_is_exactly_the_union(self) -> None:
+        """Cleanup must cover every probe, and must not invent a name no probe writes.
+
+        The install and restore scripts delete by this list. A name in it that no probe writes is
+        an offer to delete a file the probe did not create, in a directory with no backup.
+        """
+        union = engine_probe.map_size_map_names() + engine_probe.map_tag_map_names()
+        self.assertEqual(engine_probe.generated_map_names(), union)
+        self.assertEqual(len(set(union)), len(union), "two probes share a map filename")
+
+    def test_background_is_painted_before_either_row(self) -> None:
+        """`clearmap` re-runs `newmap`, so anything painted before it is erased."""
+        clear = self._at(f"{engine_probe.MAPTAG_BASE_TEXTURE} clearmap")
+        self.assertLess(clear, self._at("forcetexture"))
+        self.assertLess(clear, self._at("setterrain"))
+
+    def test_the_two_rows_never_touch_the_same_cell(self) -> None:
+        """A cell painted by both operators cannot say which one set its tag."""
+        forced = {
+            (x, y)
+            for x, y, _ in engine_probe._map_tag_cells(
+                engine_probe.MAPTAG_TEXTURES, engine_probe.MAPTAG_TEXTURE_ROW
+            )
+        }
+        terrained = {
+            (x, y)
+            for x, y, _ in engine_probe._map_tag_cells(
+                engine_probe.MAPTAG_TERRAINS, engine_probe.MAPTAG_TERRAIN_ROW
+            )
+        }
+        self.assertEqual(forced & terrained, set())
+        self.assertEqual(len(forced), len(engine_probe.MAPTAG_TEXTURES))
+        self.assertEqual(len(terrained), len(engine_probe.MAPTAG_TERRAINS))
+
+    def test_every_terrain_type_is_covered(self) -> None:
+        """`gs\\maplib.gs` defines 0..10 and the probe has to ask for all of them.
+
+        A partial sweep would leave the tile the engine picks for the missing type unmeasured,
+        and that mapping is half of what the probe exists to recover.
+        """
+        self.assertEqual(engine_probe.MAPTAG_TERRAINS, list(range(11)))
+
+    def test_forced_row_spans_the_atlas(self) -> None:
+        """Slot 0 and the last declared slot both have to be asked for.
+
+        `tilesb01.til` declares 624 slots and the corpus never exceeds 623. If the tag were a
+        narrower field than the index, only a high slot would show it, so the high end is the
+        informative one and must not be quietly dropped.
+        """
+        self.assertIn(0, engine_probe.MAPTAG_TEXTURES)
+        self.assertEqual(max(engine_probe.MAPTAG_TEXTURES), 623)
+
+    def test_each_painted_cell_is_logged_after_it_is_painted(self) -> None:
+        """A log line before the write would survive a write that faulted."""
+        for x, y, texture in engine_probe._map_tag_cells(
+            engine_probe.MAPTAG_TEXTURES, engine_probe.MAPTAG_TEXTURE_ROW
+        ):
+            write = self._at(f"zx zy {texture} forcetexture")
+            self.assertLess(write, self._at(f'"forced cell "zx" "zy" texture {texture} '))
+        for x, y, terrain in engine_probe._map_tag_cells(
+            engine_probe.MAPTAG_TERRAINS, engine_probe.MAPTAG_TERRAIN_ROW
+        ):
+            write = self._at(f"zx zy {terrain} setterrain")
+            self.assertLess(write, self._at(f'"terrain cell "zx" "zy" set {terrain} '))
+
+    def test_the_scn_and_smp_pair_save_the_same_state(self) -> None:
+        """The 49-versus-52-byte question is only answerable if nothing changed between them."""
+        scn, smp, _, _ = engine_probe.map_tag_map_names()
+        between = self.body[self._at(f'"{scn}"') : self._at(f'"{smp}"')]
+        for mutation in ("forcetexture", "setterrain", "addterrainsprite", "clearmap", "newmap"):
+            self.assertNotIn(mutation, between, f"{mutation} runs between the two saves")
+
+    def test_terrain_only_saves_happen_before_any_sprite_exists(self) -> None:
+        _, smp, _, _ = engine_probe.map_tag_map_names()
+        self.assertLess(self._at(f'"{smp}"'), self._place_positions()[0])
+
+    def test_sprite_save_happens_after_every_placement(self) -> None:
+        _, _, with_sprites, _ = engine_probe.map_tag_map_names()
+        self.assertLess(max(self._place_positions()), self._at(f'"{with_sprites}"'))
+        self.assertEqual(len(self._place_positions()), len(engine_probe.MAPTAG_SPRITE_CELLS))
+
+    def test_removed_save_happens_after_both_sweeps(self) -> None:
+        """A survivor left standing writes a record into the file that is supposed to lack one."""
+        _, _, _, removed = engine_probe.map_tag_map_names()
+        sweeps = [m.start() for m in re.finditer("destroyterrainsprite", self.body)]
+        self.assertEqual(len(sweeps), 2)
+        self.assertLess(max(sweeps), self._at(f'"{removed}"'))
+        self.assertLess(self._at('"count after cleanup "'), self._at(f'"{removed}"'))
+
+    def test_sprite_cells_separate_packed_from_x_major(self) -> None:
+        """Three cells whose two candidate encodings cannot be confused.
+
+        Before the run, the corpus was read as X-major (`x * height + y`) while sprite *locations*
+        looked packed (`y * width + x`). The cells are chosen to give six distinct numbers rather
+        than to look tidy, which is the only reason the run could tell them apart. It did: the
+        saved records came back packed, and X-major is refuted. Keep the property -- the next probe
+        that places sprites needs it too.
+        """
+        cells = engine_probe.MAPTAG_SPRITE_CELLS
+        size = engine_probe.MAPTAG_MAP
+        packed = [y * size + x for x, y in cells]
+        x_major = [x * size + y for x, y in cells]
+        self.assertEqual(len(set(packed)), len(cells))
+        self.assertEqual(len(set(x_major)), len(cells))
+        self.assertEqual(set(packed) & set(x_major), set())
+
+    def test_every_placement_is_inside_the_frame_the_camera_gives(self) -> None:
+        """A capture pair around a placement nobody can see is two screenshots and no evidence.
+
+        The 2026-09-17 run proved this the expensive way: the plate and the shot differed by zero
+        bytes because the sprites landed off the left edge and under the editor panel. The shared
+        rule that a placing probe brackets its placements with captures is necessary and not
+        sufficient -- it cannot see whether the subject is in the picture. The projection is
+        decoded, so this is a check rather than a hope.
+        """
+        for cell in engine_probe.MAPTAG_SPRITE_CELLS:
+            offset = map_projection.screen_offset_from_camera(cell, engine_probe.MAPTAG_CAMERA)
+            self.assertTrue(
+                map_projection.is_in_frame(cell, engine_probe.MAPTAG_CAMERA),
+                f"{cell} projects to {offset} from the camera and would not be drawn in full",
+            )
+
+    def test_the_cells_that_photographed_nothing_would_now_fail(self) -> None:
+        """The guard has to reject the arrangement that actually failed, or it guards nothing."""
+        for cell in ((20, 30), (21, 30), (20, 31)):
+            self.assertFalse(map_projection.is_in_frame(cell, engine_probe.MAPTAG_CAMERA))
+
+    def test_the_capture_pair_brackets_the_placements(self) -> None:
+        first = self._place_positions()[0]
+        self.assertLess(self._at(f'"{engine_probe.MAPTAG_PLATE}"screencapture'), first)
+        self.assertGreater(
+            self._at(f'"{engine_probe.MAPTAG_SHOT}"screencapture'), max(self._place_positions())
+        )
+
+    def test_the_log_is_cycled_after_every_save(self) -> None:
+        """A fault on a later save must not take the earlier results down with it."""
+        saves = len(re.findall(r"save(?:scenario|special)map", self.body))
+        self.assertEqual(saves, len(engine_probe.map_tag_map_names()))
+        self.assertEqual(self.body.count('"zprobe.log""abw"file'), saves + 1)
+
 
 
 if __name__ == "__main__":

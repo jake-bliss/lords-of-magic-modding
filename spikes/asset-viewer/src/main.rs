@@ -37,6 +37,14 @@ const TERRAIN_PREVIEW_TILE_SIZE: u32 = 8;
 enum Command {
     Catalog(Source),
     DescribeMap(PathBuf),
+    DumpMapCells {
+        path: PathBuf,
+        rect: Option<(u32, u32, u32, u32)>,
+    },
+    DiffMaps {
+        left: PathBuf,
+        right: PathBuf,
+    },
     DescribeImp {
         source: Source,
         member: String,
@@ -196,6 +204,8 @@ fn run() -> Result<(), String> {
     match parse_args()? {
         Command::Catalog(source) => catalog_archive(&source),
         Command::DescribeMap(path) => describe_map(&path),
+        Command::DumpMapCells { path, rect } => dump_map_cells(&path, rect),
+        Command::DiffMaps { left, right } => diff_maps(&left, &right),
         Command::DescribeImp { source, member } => describe_imp(&source, &member),
         Command::ExportImpFrame {
             source,
@@ -293,6 +303,29 @@ fn parse_args() -> Result<Command, String> {
         "--describe-map" => {
             require_len(&args, 2)?;
             Ok(Command::DescribeMap(args[1].clone().into()))
+        }
+        "--dump-map-cells" => {
+            let rect = match args.len() {
+                2 => None,
+                6 => Some((
+                    parse_u32(&args[2])?,
+                    parse_u32(&args[3])?,
+                    parse_u32(&args[4])?,
+                    parse_u32(&args[5])?,
+                )),
+                _ => return Err(usage()),
+            };
+            Ok(Command::DumpMapCells {
+                path: args[1].clone().into(),
+                rect,
+            })
+        }
+        "--diff-maps" => {
+            require_len(&args, 3)?;
+            Ok(Command::DiffMaps {
+                left: args[1].clone().into(),
+                right: args[2].clone().into(),
+            })
         }
         "--describe-imp" => {
             require_len(&args, 3)?;
@@ -466,6 +499,12 @@ fn parse_coordinate(value: &str) -> Result<i32, String> {
         .map_err(|_| format!("screen coordinate must be an integer: {value}"))
 }
 
+fn parse_u32(value: &str) -> Result<u32, String> {
+    value
+        .parse::<u32>()
+        .map_err(|_| format!("{value} is not a map coordinate"))
+}
+
 fn parse_frame_index(value: &str) -> Result<usize, String> {
     value
         .parse()
@@ -540,7 +579,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -927,6 +966,158 @@ fn inspect_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Print the header and every requested cell of a map, one line per cell.
+///
+/// Prints `x`, `y`, the packed cell index, the raw tag, the masked tile index, whether the
+/// unexplained `0x00800000` flag is set, and the second word as a float. With no rect it dumps the
+/// whole grid; `X0 Y0 X1 Y1` bounds it inclusively, which is what makes a 64x64 probe map readable.
+///
+/// `--describe-map` only prints the trailing sprite records, and refuses a file whose tail is not
+/// the 49-byte family. The cells themselves -- the half of the format issue #4 is actually about
+/// -- had no way out of the parser at all. Writing a map from the engine with values chosen by
+/// the probe is only useful if those values can be read back, so this is the readback.
+fn dump_map_cells(path: &Path, rect: Option<(u32, u32, u32, u32)>) -> Result<(), String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let map = MapAsset::parse(&bytes).map_err(|error| error.to_string())?;
+    let (x0, y0, x1, y1) = rect.unwrap_or((0, 0, map.width - 1, map.height - 1));
+    if x1 >= map.width || y1 >= map.height || x0 > x1 || y0 > y1 {
+        return Err(format!(
+            "rect {x0},{y0}..{x1},{y1} is not inside a {}x{} map",
+            map.width, map.height
+        ));
+    }
+    println!(
+        "map\t{}\t{}x{}\tmetadata:0x{:08x}\tbpp:{}\ttrailing-offset:{}\ttrailing-bytes:{}\ttrailing-head:{}",
+        clean_field(&path.display().to_string()),
+        map.width,
+        map.height,
+        map.metadata,
+        map.bits_per_pixel,
+        map.trailing_offset,
+        map.trailing_bytes,
+        map.trailing_head_u32
+            .map_or_else(|| "-".to_owned(), |head| head.to_string()),
+    );
+    println!("cell\tx\ty\tindex\ttag\ttile-index\thigh-flag\televation");
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let index = map
+                .cell_index(x, y)
+                .ok_or_else(|| format!("map has no cell at ({x}, {y})"))?;
+            let cell = map.cells[index];
+            println!(
+                "cell\t{x}\t{y}\t{index}\t0x{:08x}\t{}\t{}\t{}",
+                cell.tag,
+                cell.tile_index(),
+                cell.high_flag_set(),
+                cell.value,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Report every difference between two maps: headers, differing cells, then the trailing section.
+///
+/// Prints one line per differing cell (`x`, `y`, index, both tags, both elevations), a count, and
+/// then the byte offset of the first difference in the trailing section with a hex window either
+/// side. The trailing sections are compared as raw bytes from their own starts, deliberately: the
+/// question being asked is what they contain, so assuming a record size would beg it.
+///
+/// The probe saves the same state four ways on purpose -- as a `.scn` and a `.smp`, then with
+/// three sprites added and removed again -- so that what a format choice costs and what a placed
+/// sprite costs can be read off a diff instead of pattern-matched out of shipped files. Doing that
+/// by eye over a 16 KiB trailing section is how a wrong record size gets believed.
+fn diff_maps(left: &Path, right: &Path) -> Result<(), String> {
+    let read = |path: &Path| -> Result<(Vec<u8>, MapAsset), String> {
+        let bytes = fs::read(path)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        let map = MapAsset::parse(&bytes).map_err(|error| error.to_string())?;
+        Ok((bytes, map))
+    };
+    let (left_bytes, left_map) = read(left)?;
+    let (right_bytes, right_map) = read(right)?;
+
+    println!(
+        "left\t{}\t{} bytes\t{}x{}\tmetadata:0x{:08x}\ttrailing-bytes:{}",
+        clean_field(&left.display().to_string()),
+        left_bytes.len(),
+        left_map.width,
+        left_map.height,
+        left_map.metadata,
+        left_map.trailing_bytes,
+    );
+    println!(
+        "right\t{}\t{} bytes\t{}x{}\tmetadata:0x{:08x}\ttrailing-bytes:{}",
+        clean_field(&right.display().to_string()),
+        right_bytes.len(),
+        right_map.width,
+        right_map.height,
+        right_map.metadata,
+        right_map.trailing_bytes,
+    );
+
+    if left_map.width != right_map.width || left_map.height != right_map.height {
+        println!("cells\tnot comparable\tdifferent dimensions");
+    } else {
+        let mut differing = 0usize;
+        for (index, (a, b)) in left_map.cells.iter().zip(&right_map.cells).enumerate() {
+            // Compare the bytes as stored, not the decoded float. `MapCell` derives `PartialEq`
+            // over an `f32`, and `NaN != NaN`, so two byte-identical cells holding a non-finite
+            // elevation would report as differing -- in a tool whose whole job is to say which
+            // bytes a save changed. The corpus is all finite today; a generated map need not be.
+            if a.tag == b.tag && a.value_bits == b.value_bits {
+                continue;
+            }
+            differing += 1;
+            // Packed, y-major: cells are `y * width + x`. Observed in gameplay, 2026-09-17.
+            let (x, y) = (index as u32 % left_map.width, index as u32 / left_map.width);
+            println!(
+                "cell\t{x}\t{y}\t{index}\t0x{:08x}\t0x{:08x}\t{}\t{}",
+                a.tag, b.tag, a.value, b.value
+            );
+        }
+        println!("cells\tdiffering:{differing}\tof:{}", left_map.cells.len());
+    }
+
+    let left_tail = &left_bytes[left_map.trailing_offset..];
+    let right_tail = &right_bytes[right_map.trailing_offset..];
+    let first_difference = first_tail_difference(left_tail, right_tail);
+    println!(
+        "tail\tleft:{}\tright:{}\tfirst-difference:{}",
+        left_tail.len(),
+        right_tail.len(),
+        first_difference.map_or_else(|| "none".to_owned(), |at| at.to_string()),
+    );
+    if let Some(at) = first_difference {
+        let window = 64;
+        let from = at.saturating_sub(16);
+        println!(
+            "tail-left\t{from}\t{}",
+            hex_bytes(&left_tail[from..(from + window).min(left_tail.len())])
+        );
+        println!(
+            "tail-right\t{from}\t{}",
+            hex_bytes(&right_tail[from..(from + window).min(right_tail.len())])
+        );
+    }
+    Ok(())
+}
+
+/// The first offset at which two trailing sections diverge, or `None` when they are identical.
+///
+/// A shared prefix with different lengths still diverges: one side ends where the other continues,
+/// so the divergence is at the end of the shorter. Scanning only the common range and reporting
+/// nothing would read as "the tails agree" -- which is exactly how a record appended at the very
+/// end would be missed, and appending a record is the main thing these diffs are used to watch.
+fn first_tail_difference(left: &[u8], right: &[u8]) -> Option<usize> {
+    let common = left.len().min(right.len());
+    (0..common)
+        .find(|at| left[*at] != right[*at])
+        .or((left.len() != right.len()).then_some(common))
+}
+
 fn describe_map(path: &Path) -> Result<(), String> {
     let bytes =
         fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
@@ -947,17 +1138,17 @@ fn describe_map(path: &Path) -> Result<(), String> {
         section.footer,
     );
     println!(
-        "record\tcell-index\tx\ty\tinstance-id\tattribute-bits\tattribute-code\tsprite-type-candidate\tprocedure-id-candidate\traw"
+        "record\tcell-index\tx\ty\tinstance-id\tattribute-bits\tattribute-code\tsprite-type\tprocedure-id-candidate\traw"
     );
     for (index, record) in section.records.iter().enumerate() {
-        let (x, y) = record.coordinates(map.height);
+        let (x, y) = map.record_coordinates(record);
         println!(
             "{index}\t{}\t{x}\t{y}\t{}\t0x{:08x}\t{}\t{}\t{}\t{}",
             record.cell_index,
             record.instance_id,
             record.attribute_bits,
             record.attribute_code_candidate(),
-            record.sprite_type_candidate,
+            record.sprite_type,
             record.procedure_id_candidate,
             hex_bytes(&record.raw),
         );
@@ -981,7 +1172,7 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
     let mut metadata_values = BTreeMap::<AssetKind, BTreeSet<u32>>::new();
     let mut cell_tags = BTreeSet::<u32>::new();
     let mut tile_indexes = BTreeSet::<u32>::new();
-    let mut forced_texture_cells = 0_usize;
+    let mut high_flag_cells = 0_usize;
     let mut placed_sprite_49_files = 0_usize;
     let mut placed_sprite_49_records = 0_usize;
     let mut placed_sprite_types = BTreeSet::<u32>::new();
@@ -1040,14 +1231,14 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
             placed_sprite_49_files += 1;
             placed_sprite_49_records += section.records.len();
             for record in &section.records {
-                placed_sprite_types.insert(record.sprite_type_candidate);
+                placed_sprite_types.insert(record.sprite_type);
                 placed_sprite_attribute_codes.insert(record.attribute_code_candidate());
             }
         }
         for cell in &map.cells {
             cell_tags.insert(cell.tag);
-            tile_indexes.insert(cell.tile_index_candidate());
-            forced_texture_cells += usize::from(cell.forced_texture_candidate());
+            tile_indexes.insert(cell.tile_index());
+            high_flag_cells += usize::from(cell.high_flag_set());
             if cell.value.is_finite() {
                 finite_min = finite_min.min(cell.value);
                 finite_max = finite_max.max(cell.value);
@@ -1079,7 +1270,7 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
     if let (Some(minimum), Some(maximum)) = (tile_indexes.first(), tile_indexes.last()) {
         println!("tile-index-range\t{minimum}..{maximum}");
     }
-    println!("forced-texture-cells\t{forced_texture_cells}");
+    println!("high-flag-cells\t{high_flag_cells}");
     println!("placed-sprite-49-files\t{placed_sprite_49_files}");
     println!("placed-sprite-49-records\t{placed_sprite_49_records}");
     println!("placed-sprite-types\t{}", placed_sprite_types.len());
@@ -2486,7 +2677,7 @@ fn terrain_preview_rgba(
             let cell = map
                 .cell(x, y)
                 .ok_or_else(|| format!("map has no cell at ({x}, {y})"))?;
-            let tile_index = cell.tile_index_candidate();
+            let tile_index = cell.tile_index();
             if tile_index >= tile_set.atlas_capacity() {
                 return Err(format!(
                     "map cell ({x}, {y}) references tile {tile_index}, outside atlas capacity {}",
@@ -2926,9 +3117,9 @@ mod tests {
     use lom_asset_viewer::tile::{TileDefinition, TileSetDefinition};
 
     use super::{
-        ImpCatalog, ImpDisplayMode, ImpValidationReport, MapDisplayMode, imp_display_rgba,
-        map_display_rgba, step_imp_facing, step_imp_frame, step_imp_sequence, terrain_preview_rgba,
-        validate_imp_members,
+        ImpCatalog, ImpDisplayMode, ImpValidationReport, MapDisplayMode,
+        TERRAIN_PREVIEW_TILE_SIZE, imp_display_rgba, map_display_rgba, step_imp_facing,
+        step_imp_frame, step_imp_sequence, terrain_preview_rgba, validate_imp_members,
     };
 
     #[test]
@@ -2962,11 +3153,14 @@ mod tests {
         assert_eq!(step_imp_sequence(&sprite, 4, -1).unwrap(), 0);
     }
 
+    /// Corrected 2026-09-17: cells are packed `y * width + x`, so consecutive cells are one
+    /// display *row*, not one column. The fixture is 3x2 because the old 2x2 one agreed with both
+    /// encodings -- it was fitted to square data and could not fail.
     #[test]
-    fn map_display_modes_convert_x_major_cells_to_display_rows() {
+    fn map_display_modes_lay_packed_cells_out_in_rows() {
         let map = MapAsset {
             metadata: 1,
-            width: 2,
+            width: 3,
             height: 2,
             bits_per_pixel: 8,
             cells: vec![
@@ -2990,8 +3184,18 @@ mod tests {
                     value_bits: 30.0_f32.to_bits(),
                     value: 30.0,
                 },
+                MapCell {
+                    tag: 8,
+                    value_bits: 40.0_f32.to_bits(),
+                    value: 40.0,
+                },
+                MapCell {
+                    tag: 9,
+                    value_bits: 50.0_f32.to_bits(),
+                    value: 50.0,
+                },
             ],
-            trailing_offset: 48,
+            trailing_offset: 64,
             trailing_bytes: 0,
             trailing_head_u32: None,
             placed_sprites_49: None,
@@ -3000,12 +3204,15 @@ mod tests {
         let tags = map_display_rgba(&map, MapDisplayMode::CellTags);
         let elevation = map_display_rgba(&map, MapDisplayMode::CandidateElevation);
 
-        assert_eq!(tags.len(), 16);
+        assert_eq!(tags.len(), 24);
         assert_ne!(&tags[0..3], &tags[4..7]);
+        // Row y=0 is cells 0..3 and row y=1 is cells 3..6; x-major would interleave them.
         assert_eq!(&elevation[0..4], &[0, 0, 0, 255]);
-        assert_eq!(&elevation[4..8], &[170, 170, 170, 255]);
-        assert_eq!(&elevation[8..12], &[85, 85, 85, 255]);
-        assert_eq!(&elevation[12..16], &[255, 255, 255, 255]);
+        assert_eq!(&elevation[4..8], &[51, 51, 51, 255]);
+        assert_eq!(&elevation[8..12], &[102, 102, 102, 255]);
+        assert_eq!(&elevation[12..16], &[153, 153, 153, 255]);
+        assert_eq!(&elevation[16..20], &[204, 204, 204, 255]);
+        assert_eq!(&elevation[20..24], &[255, 255, 255, 255]);
     }
 
     #[test]
@@ -3013,21 +3220,18 @@ mod tests {
         let map = MapAsset {
             metadata: 0,
             width: 2,
-            height: 1,
+            height: 3,
             bits_per_pixel: 8,
-            cells: vec![
-                MapCell {
-                    tag: 1,
+            // Packed `y * width + x`, and non-square with alternating tiles so that a row read as
+            // a column resolves different atlas pixels. A 2x1 fixture cannot tell them apart.
+            cells: (0..6)
+                .map(|index| MapCell {
+                    tag: index % 2,
                     value_bits: 0,
                     value: 0.0,
-                },
-                MapCell {
-                    tag: 0,
-                    value_bits: 0,
-                    value: 0.0,
-                },
-            ],
-            trailing_offset: 32,
+                })
+                .collect(),
+            trailing_offset: 64,
             trailing_bytes: 0,
             trailing_head_u32: None,
             placed_sprites_49: None,
@@ -3069,10 +3273,24 @@ mod tests {
         };
 
         let preview = terrain_preview_rgba(&map, &tile_set, &atlas).unwrap();
+        let preview_row = 2 * TERRAIN_PREVIEW_TILE_SIZE as usize;
+        let at = |x: usize, y: usize| {
+            let pixel = (y * TERRAIN_PREVIEW_TILE_SIZE as usize) * preview_row
+                + x * TERRAIN_PREVIEW_TILE_SIZE as usize;
+            &preview[pixel * 4..pixel * 4 + 4]
+        };
 
-        assert_eq!(&preview[0..4], &[200, 210, 220, 255]);
-        assert_eq!(&preview[7 * 4..8 * 4], &[200, 210, 220, 255]);
-        assert_eq!(&preview[8 * 4..9 * 4], &[10, 20, 30, 255]);
+        assert_eq!(
+            preview.len(),
+            preview_row * 3 * TERRAIN_PREVIEW_TILE_SIZE as usize * 4
+        );
+        assert_eq!(at(0, 0), &[10, 20, 30, 255]);
+        assert_eq!(at(1, 0), &[200, 210, 220, 255]);
+        // Cells 2 and 3 are the second row. Read X-major they would be (0,1) and (1,1) swapped.
+        assert_eq!(at(0, 1), &[10, 20, 30, 255]);
+        assert_eq!(at(1, 1), &[200, 210, 220, 255]);
+        assert_eq!(at(0, 2), &[10, 20, 30, 255]);
+        assert_eq!(at(1, 2), &[200, 210, 220, 255]);
     }
 
     // --- corpus validation: pairing and verdicts, with no archive -------------------------
@@ -3755,5 +3973,15 @@ mod tests {
 
         assert!(lines.contains(&"unknown-name-class\tengine-constant".to_owned()));
         assert!(!lines.iter().any(|line| line.starts_with("unknown-name-pops")));
+    }
+
+    #[test]
+    fn a_tail_that_is_a_prefix_of_the_other_differs_where_it_ends() {
+        assert_eq!(super::first_tail_difference(b"ABCD", b"ABCD"), None);
+        assert_eq!(super::first_tail_difference(b"ABCD", b"ABCDEF"), Some(4));
+        assert_eq!(super::first_tail_difference(b"ABCDEF", b"ABCD"), Some(4));
+        assert_eq!(super::first_tail_difference(b"ABCD", b"ABXD"), Some(2));
+        assert_eq!(super::first_tail_difference(b"", b""), None);
+        assert_eq!(super::first_tail_difference(b"", b"A"), Some(0));
     }
 }
