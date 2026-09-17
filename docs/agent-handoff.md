@@ -8,8 +8,9 @@ This is a working macOS setup plus a native Rust asset/MPQ viewer and an experim
 settled.** The rule, both storage forms, the reserved hotspot record, the type numbers and the writer commands all
 live in **[hotspots](hotspots.md)**, which is the single source of truth — link to it rather than restating it.
 Its "Still open" section lists what is left, and the next engine run should batch those: the shadow blend, the
-palette channel order, and the unit-anchor caveat. Beyond hotspots, `map2screen`'s y/z input convention is still
-wrong (its static contract is otherwise decoded — see the research log).
+palette channel order, and the unit-anchor caveat. `map2screen` is now fully closed, including the y convention:
+the drawn top is `output2 - 973.4` at slope 1, and the third input is the **interpolated mesh
+height**, not `getelevation` — see [map projection](../tools/map_projection.py) and the research log.
 
 A community research survey was completed on 2026-09-16 — see [community research](community-research.md). The surviving modding community is **live**, has a 2011 IMP specification that matches our decoder, and has a 2026 toolchain covering much of our Stage 1 scope. Read that document before trusting any community claim: two headline claims by the mod's own author about his own code were refuted by our corpus.
 
@@ -235,6 +236,18 @@ camera with `centeron`, and photographs **the same six cells three times**:
 | A `flat` | every cell 0 | calibrates drawn y against output 2 with no z term |
 | B `plateau` | a uniform block at 2.0 | cell elevation 2.0, neighbourhood also 2.0 |
 | C `spike` | only the six cells at 2.0 | cell elevation 2.0, neighbourhood 0 |
+
+**Run 2026-09-17, and it answered.** The renderer reads the interpolated mesh, not the cell: same
+cell elevation of 2.0, uniform neighbourhood gave an effective height of 2.004 and a clamped 1.0-1.5
+ring gave 1.395 — 12.6 pixels apart. The control sprite earned its place immediately: it showed the
+camera moving 40 pixels between phases, which is also what proved `map2screen`'s output 2 already
+contains the scroll. Results in the research log; the model is in `tools/map_projection.py`.
+
+Two things for the next probe that places sprites. `setelevation` is **clamped against a slope
+limit** — the spikes came back with a 1.0-1.5 ring rather than the 0 they were set to, which the
+per-cell survey caught and which every number in the result depends on. And one placement, cell
+(32, 32), the exact centre of the map, logged normally and drew nothing in all three phases; log
+`enumterrainsprites` counts either side of each placement and that question answers itself.
 
 **B against C is the experiment.** Identical `getelevation` at every placement cell, identical
 screen x, and the only difference is what surrounds them. If the drawn y moves, the renderer reads

@@ -1382,7 +1382,7 @@ Over all 81 cells, without exception:
 
 ```
 map2screen(x, y, z) -> ( 14.4 * (x + y) + K ,           output 1, independent of z
-                         output1 - 80 - 20.3625 * z ,   output 2
+                         output1 - 80 - 20.3625 * z ,   output 2  [see correction below]
                          33.941 * (x - y) + L )         output 3 = SCREEN X
 ```
 
@@ -1391,7 +1391,9 @@ map2screen(x, y, z) -> ( 14.4 * (x + y) + K ,           output 1, independent of
   the six placements — as it did for three placements in the earlier run.
 - **Output 1 is a function of `x + y` alone**, stepping 14.4 per isometric step, and `z` never moved
   it in any cell.
-- **Output 2 is exactly `output1 - 80`, less `20.3625` per unit of `z`.** The z coefficient held
+- **Output 2 is exactly `output1 - 80`, less `20.3625` per unit of `z`.** *Corrected 2026-09-17: the
+  `80` is this run's **camera scroll**, not a constant of the operator — see the last entry in this
+  log, where a control sprite on unchanging ground moved it 40 pixels.* The z coefficient held
   between 20.3600 and 20.3680 across all 69 cells with non-zero elevation.
 
 So **the third input is the elevation**, and `getelevation` is the operator that supplies it — which
@@ -1399,6 +1401,9 @@ answers the question this probe was built for. The constants are a plain isometr
 `33.941 = 24 * sqrt(2)` and `20.3625 ~ 14.4 * sqrt(2)`.
 
 ### The drawn y is *approximately* output 2, and that gap is unexplained
+
+*Corrected 2026-09-17: both the slope and these residuals are artefacts of fitting across cells with
+different neighbourhoods. The drawn top is `output2 - 973.4` at slope exactly 1 — see the last entry.*
 
 Fitting the six measured tops against output 2 gives `top = 0.9652 * output2 - 1822.09`, and the
 residuals are **up to 11 pixels**:
@@ -1695,3 +1700,95 @@ One keypress. The 512 took about two minutes of single-threaded script; the run 
 under five. Nothing was placed on a map that mattered, nothing was destroyed, and the three
 generated files were collected into `artifacts/` and removed from the game directory, which is back
 to its 366 shipped files.
+
+## 2026-09-17 (last) — The drawn y, closed: the renderer reads the mesh, not the cell
+
+**Evidence class: observed in gameplay.** One keypress. The probe built its own 64x64 map, wrote
+every elevation, pointed the camera with `centeron`, and photographed the same cells three times:
+flat, on a uniform raised plateau, and on single-cell spikes. Six captures and a 10 KB log.
+
+Three things came out, and the first two were not what the probe was built to find.
+
+### The `-80` in our own formula was never a constant
+
+A control sprite stood at (35, 41) on ground that is flat in all three phases. Its `map2screen`
+output 2, called with `z = 0` every time, moved anyway:
+
+| Phase | control `output2` | control drawn top | difference |
+| --- | ---: | ---: | ---: |
+| flat | 1258.4 | 285 | -973.4 |
+| plateau | 1298.4 | 325 | -973.4 |
+| spike | 1278.4 | 305 | -973.4 |
+
+Its elevation never changed and its output moved 40 pixels, so that term is the **camera's vertical
+scroll**, and `map2screen` already contains it. The `- 80` recorded on 2026-09-17 as part of
+`output2 = output1 - 80 - 20.3625 * z` was that run's scroll, not a property of the operator.
+
+### The drawn y is output 2 exactly, at slope 1
+
+The earlier fit was `top = 0.9652 * output2 - 1822.09`, with residuals to 11 pixels. Both the slope
+and the residuals were artefacts. Measured here, `top - output2` is **-973.4 in all three phases**,
+across a 40-pixel camera move, and on flat and plateau ground the eleven other observations run from
+-973.2 to -974.1 — under a pixel, with no scaling term at all.
+
+The old 0.9652 came from fitting a straight line across cells whose *neighbours* differed, which is
+the next section.
+
+### The renderer does not use `getelevation`
+
+The experiment. Six cells, identical `getelevation` of 2.0, identical screen x, two different
+surroundings. With the camera removed by subtracting the control:
+
+| Phase | cell elevation | neighbourhood | displacement from flat | implied `z` |
+| --- | ---: | --- | ---: | ---: |
+| plateau | 2.0 | uniform 2.0 | 41 px | **2.004** |
+| spike | 2.0 | 1.0-1.5 ring | 28.4 px | **1.395** |
+
+Same cell, same elevation, **12.6 pixels apart**. Where the neighbourhood is uniform the effective
+height *is* the cell's elevation, to three decimal places. Where it is not, it is not.
+
+So the third input to `map2screen` is the **interpolated mesh height**, and feeding `getelevation`
+into it is correct only on flat ground. That closes the y convention and explains the 11-pixel
+residuals: they were measured on a shipped world map where no two placements shared a neighbourhood.
+
+The five measurements were 29, 28, 28, 28, 29 pixels. The maximum of the cell's four corner means —
+each corner being the mean of the four cells meeting there — is 1.375, which is 28.0 pixels: three
+of five exactly, the other two within a pixel. The corner *mean*, 1.3125, predicts 26.7 and is
+excluded by the smallest measurement. **That is one rival ruled out on one neighbourhood shape, not
+a kernel established.** `tools/map_projection.py` carries the model with that caveat in its
+docstring.
+
+### `setelevation` is clamped, and the survey is why we know
+
+The spikes were meant to sit at 2.0 in a ring of 0. They did not:
+
+```
+1.0 1.0 1.0
+1.0 2.0 1.5      <- the ring the engine left behind
+1.0 1.0 1.0
+```
+
+The engine enforces a slope limit. The experiment survived — two different neighbourhoods at one
+cell elevation is still the comparison it needed — but the contrast was smaller than designed, and
+every number above rests on the ring being 1.0-1.5 rather than 0.
+
+**This is the probe's per-cell survey doing its job.** Without it the clamp would have been invisible
+and the write-up would have attributed the displacement to a neighbourhood of zeros. A reviewer
+flagged `maxslope` as something they could not settle from the corpus and noted that the survey
+would expose it. It did.
+
+### One sprite produced no pixels
+
+Place 2, cell (32, 32), logged normally in all three phases and contributed **zero changed pixels**
+every time. The other five and the control behaved identically to each other. (32, 32) is the exact
+centre of a 64x64 map, so the likeliest explanation is that something already occupies that cell and
+`addterrainsprite` declined — but that is a guess. The next probe to place sprites should log
+`enumterrainsprites` counts either side of each placement, which would settle it for free.
+
+Nothing else was anomalous: `cleanup left 0` after all three phases, so the doubled sweep worked and
+no sprite survived into the next phase's plate.
+
+### Cost
+
+One keypress, well under a minute of game time. The map was the probe's own creation, nothing was
+saved, and both archives verify against the manifest.
