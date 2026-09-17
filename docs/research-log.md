@@ -2280,3 +2280,47 @@ every command, refusal to write over the input by canonical path, `create_new` o
 re-parse of the encoded bytes with the edit read back before anything reaches disk. A refused edit
 leaves no partial file. No game file was written during this work; all experiments ran on copies in
 a scratch directory.
+
+## 2026-09-17 — The `mapload` probe, staged and not yet run
+
+Built, installed, awaiting one keypress. The run sheet is [docs/mapload-run-sheet.md]
+(mapload-run-sheet.md); it names what each outcome would mean before the run, so no result can be
+reinterpreted after the fact.
+
+### The gap it closes
+
+Round-trip identity over 365 of 365 installed maps shows this project's writer matches the engine's
+**writer**. It says nothing about the engine's **reader**, and no map this project produced has ever
+been loaded by the game. The map editor's whole value rests on a claim nobody has tested.
+
+`gs\hotkey.gs` turned out to supply the instrument outright: `loadscenariomap` takes a filename and
+**returns a boolean** that the shipped editor tests. Acceptance is a value the engine hands back, not
+something to be read off a screenshot. Finding that in the archive is what made this a one-keypress
+experiment rather than a session of squinting at renders.
+
+Each rung then saves the loaded map straight back out, so the offline diff of input against echo
+reports whether the engine **normalised** anything. Any field it rewrites — the `0x00` header word,
+the border bit, the `+24` attribute — shows up as a byte difference. One keypress, three unknowns.
+
+### Two bugs caught before the run, both of which would have wasted it
+
+**The blend background was laid with `setterrain`.** That is the operator under test, and it blends:
+sweeping it across the map lays transitions against the default terrain and then partly overwrites
+them, so the tiles around each blob could not be attributed to the blob. It uses `clearmap` now —
+which forcetextures and blends nothing — and a test asserts no `setterrain` runs before the
+background is down.
+
+**The install script deleted the probe's own input maps.** `generated_map_names()` is the exact list
+the install script clears as stale output, and adding `mapload`'s inputs to it meant the clearing
+step removed the six files whose presence the script's own prerequisite check had just confirmed,
+thirty lines earlier. Rungs 1 to 6 would each have loaded nothing, and the log would have read as
+six rejections — the engine refusing our maps — when the files were simply absent. That is the worst
+shape a probe bug can take: not a crash, but a plausible wrong answer.
+
+The fix splits the list in two. `generated_map_outputs()` is what install clears; `generated_map_inputs()`
+is what must already exist. Restore still removes both, or the probe's files outlive the probe.
+`zm0.scn` sits in *outputs* despite being loaded, because the engine writes it during the run and a
+leftover would replace rung 0's control.
+
+It was the regression test, written from the intent rather than the code, that made the second one
+obvious — the same shape of test that caught the instance-id reuse earlier the same day.

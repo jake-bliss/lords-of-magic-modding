@@ -156,13 +156,17 @@ rm -f "${game_dir}"/z*.bmp "${game_dir}"/zprobe.log
 # So this removes an EXACT list of names, taken from the probe generator itself, and never a glob.
 # A `zz*.scn` glob is a standing offer to delete somebody's own `zzCustom.scn`, and nothing could
 # bring it back. One source of truth means the list cannot drift from what the probe writes.
+#
+# OUTPUTS ONLY. The mapload probe's inputs are also probe-created files, and restore removes them,
+# but they must exist when the game starts -- clearing them here deleted the six maps whose presence
+# this script had just verified, which would have spent an attended session loading nothing.
 while IFS= read -r map_name; do
   stale="${game_dir}/${map_name}"
   [[ -e "${stale}" ]] || continue
   echo "  removing stale ${map_name}"
   rm -f "${stale}"
 done < <(PYTHONPATH="${project_dir}/tools" python3 -c \
-  'import engine_probe; print("\n".join(engine_probe.generated_map_names()))')
+  'import engine_probe; print("\n".join(engine_probe.generated_map_outputs()))')
 
 echo "== injecting =="
 writing=1

@@ -339,10 +339,27 @@ def generated_map_names() -> list[str]:
     its own -- while each probe's own test asserts its own list, so a name cannot drift between
     the two without something failing.
     """
+    return generated_map_outputs() + generated_map_inputs()
+
+
+def generated_map_inputs() -> list[str]:
+    """Map files a probe needs to ALREADY EXIST when the game starts.
+
+    Only `mapload` has any: its rungs load files built beforehand by
+    `scripts/build-mapload-inputs.sh`. They are separated from the outputs because the install
+    script clears stale output, and clearing these would delete the very files the run is about to
+    read -- which it did, once, after the prerequisite check had confirmed they were there. Restore
+    still removes them; install must not.
+    """
+    return [f"map/{name}" for name in mapload_prebuilt_names()]
+
+
+def generated_map_outputs() -> list[str]:
+    """Map files the probes WRITE. Safe to clear before a run; a leftover would be measured."""
     return (
         map_size_map_names()
         + map_tag_map_names()
-        + [f"map/{name}" for name in mapload_input_names() + mapload_output_names()]
+        + [f"map/{name}" for name in mapload_output_names()]
     )
 
 
@@ -932,8 +949,20 @@ def mapload_input_names() -> list[str]:
     return [name for name, _ in MAPLOAD_INPUTS]
 
 
+def mapload_prebuilt_names() -> list[str]:
+    """The inputs built offline, before the run, by `scripts/build-mapload-inputs.sh`.
+
+    `zm0.scn` is deliberately absent: the engine writes it during the keypress, so it is output
+    that also happens to get loaded. It must be *cleared* before a run, not supplied -- a leftover
+    would be loaded at rung 0 in place of a freshly saved one, which silently removes the control
+    the whole ladder rests on.
+    """
+    return [name for name, _ in MAPLOAD_INPUTS[1:]]
+
+
 def mapload_output_names() -> list[str]:
-    return MAPLOAD_ECHOES + [MAPLOAD_BLEND_SAVE]
+    """Everything the probe writes, including rung 0's engine-written control."""
+    return [MAPLOAD_INPUTS[0][0]] + MAPLOAD_ECHOES + [MAPLOAD_BLEND_SAVE]
 
 
 def _mapload_load(emit, index: int, name: str, label: str) -> None:

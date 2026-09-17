@@ -651,11 +651,8 @@ class MapTagProbeTest(unittest.TestCase):
         union = (
             engine_probe.map_size_map_names()
             + engine_probe.map_tag_map_names()
-            + [
-                f"map/{name}"
-                for name in engine_probe.mapload_input_names()
-                + engine_probe.mapload_output_names()
-            ]
+            + [f"map/{name}" for name in engine_probe.mapload_output_names()]
+            + [f"map/{name}" for name in engine_probe.mapload_prebuilt_names()]
         )
         self.assertEqual(engine_probe.generated_map_names(), union)
         self.assertEqual(len(set(union)), len(union), "two probes share a map filename")
@@ -966,9 +963,34 @@ class MapLoadProbeTest(unittest.TestCase):
         self.assertEqual(square[0], square[1])
         self.assertNotEqual(other[0], other[1], "the non-square rung must be non-square")
 
+    def test_install_time_clearing_never_touches_a_probe_input(self) -> None:
+        """Regression: the install script deleted the six input maps it had just verified.
+
+        `install-engine-probe.sh` clears stale probe *output* before a run, because a leftover from
+        a previous run would be measured as this run's result. It took that list from
+        `generated_map_names()`, which now also contains `mapload`'s inputs -- so the clearing step
+        removed the very files rungs 1 to 6 were about to load, after the prerequisite check had
+        confirmed they were present. It would have spent an attended session loading nothing.
+        """
+        inputs = set(engine_probe.generated_map_inputs())
+        outputs = set(engine_probe.generated_map_outputs())
+        self.assertEqual(inputs & outputs, set(), "a name cannot be both cleared and required")
+        self.assertEqual(
+            inputs,
+            {f"map/{name}" for name in engine_probe.mapload_prebuilt_names()},
+        )
+        # Rung 0's control is engine-written, so it must be cleared, never supplied.
+        self.assertIn("map/zm0.scn", outputs)
+        self.assertNotIn("map/zm0.scn", inputs)
+        # Restore must still remove both, or the probe's files outlive the probe.
+        self.assertEqual(
+            set(engine_probe.generated_map_names()),
+            inputs | outputs,
+        )
+
     def test_input_and_output_names_never_collide(self) -> None:
         """An echo landing on an input would overwrite the thing the next rung loads."""
-        inputs = set(engine_probe.mapload_input_names())
+        inputs = set(engine_probe.mapload_prebuilt_names())
         outputs = set(engine_probe.mapload_output_names())
         self.assertEqual(inputs & outputs, set())
         for name in inputs | outputs:
