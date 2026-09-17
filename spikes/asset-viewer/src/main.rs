@@ -28,7 +28,7 @@ use lom_asset_viewer::native_table;
 use lom_asset_viewer::operator_arity;
 use lom_asset_viewer::pbm::PbmImage;
 use lom_asset_viewer::png_export::{write_imp_frame_png, write_pbm_png, write_rgba_png};
-use lom_asset_viewer::tile::{TileChoice, TileSelector, TileSetDefinition};
+use lom_asset_viewer::tile::{Direction, TileChoice, TileSelector, TileSetDefinition};
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::pixels::{Color, PixelFormat};
@@ -3827,13 +3827,13 @@ fn apply_map_edit(
             // Which cells the engine would have drawn differently is the one thing the person
             // about to write this into a game directory cannot see in the output bytes, so say it
             // here rather than only in a document.
-            let ambiguous = paint.plan.ambiguous_cells();
-            if ambiguous > 0 {
+            let drawn = paint.plan.drawn_cells();
+            if drawn > 0 {
                 eprintln!(
-                    "note: {ambiguous} of the {} written cells matched several tiles equally. The \
-                     engine draws among them at random -- the same paint run twice gave centre \
-                     tiles 385 and 390 -- so those cells are a legal choice, not the engine's. \
-                     Pass --seed N for a different legal draw.",
+                    "note: {drawn} of the {} written cells were newly painted with several equally \
+                     valid tiles and none already in place. The engine draws among those at random \
+                     -- the same paint run twice gave centre tiles 385 and 390 -- so they are a \
+                     legal choice, not the engine's. Pass --seed N for a different legal draw.",
                     paint.plan.region.len() + paint.plan.ring.len()
                 );
             }
@@ -3999,17 +3999,24 @@ fn flag_region_cells(
 /// different facts and a caller cannot tell them apart from a count.
 /// The part of a paint's result line that describes what the tileset decided.
 fn paint_summary(plan: &TerrainPaintPlan) -> String {
+    // `reproducible` is Unique plus Kept. Reporting only Unique as "determined" understated the
+    // tool badly: a whole-map paint of one terrain is every cell Kept, which is exactly what the
+    // engine does, and it used to print `determined:0`.
     let unique = plan
         .cells()
         .filter(|cell| matches!(cell.choice, TileChoice::Unique(_)))
         .count();
+    let kept = plan
+        .cells()
+        .filter(|cell| matches!(cell.choice, TileChoice::Kept { .. }))
+        .count();
     let tiles: BTreeSet<u32> = plan.region.iter().map(|cell| cell.tile_index).collect();
     format!(
-        "region-cells:{}\tregion-tiles:{}\tring-cells:{}\tdetermined:{unique}\tambiguous:{}",
+        "region-cells:{}\tregion-tiles:{}\tring-cells:{}\tdetermined:{unique}\tkept:{kept}\tdrawn:{}",
         plan.region.len(),
         tiles.iter().map(u32::to_string).collect::<Vec<_>>().join(","),
         plan.ring.len(),
-        plan.ambiguous_cells(),
+        plan.drawn_cells(),
     )
 }
 
@@ -4078,62 +4085,163 @@ fn verify_map_edit(
         MapEdit::PaintTerrain {
             rect,
             terrain_type,
-            selector,
+            ..
         } => {
             let tile_set = tile_set.ok_or_else(|| {
                 format!("refusing to write: {}", PaintRefusal::TileSetUnknown)
             })?;
-            // Planned against `before`, deliberately: the plan reads every cell's terrain out of
-            // its tile, and after the paint those tiles have moved. Re-planning on the written map
-            // would ask a different question and answer it happily.
-            let plan = before
-                .plan_terrain_paint(rect, terrain_type, tile_set, selector)
-                .map_err(|refusal| format!("refusing to write: {refusal}"))?;
-            for cell in plan.cells() {
-                let observed = cell_tile(cell.x, cell.y)?;
-                if observed != cell.tile_index {
-                    let (x, y) = (cell.x, cell.y);
-                    return Err(format!(
-                        "refusing to write: expected tile {} at ({x}, {y}) but read {observed}",
-                        cell.tile_index
-                    ));
+            // **Nothing here calls the planner.** An earlier version of this arm re-ran
+            // `plan_terrain_paint` and compared the written map to its output, which is the same
+            // decision procedure the applier used: no planner defect could ever show up, because a
+            // wrong plan was compared against itself. The two loops that followed were worse than
+            // idle -- `tiles.get(&tile_index)` and `definition.terrain_type != cell.terrain_type`
+            // are both *guaranteed* by `candidates()`, which filters on `terrain_type` and yields
+            // keys of `tiles`, so they evaluated no neighbour constraint at all while the comment
+            // claimed they proved the plan legal by the tileset's own rules.
+            //
+            // This is the third verifier in this repository that could not fail. What follows is
+            // derived from the before/after maps and the tileset independently, and each check has
+            // a named input that breaks it:
+            //
+            // - the affected set: a paint that touches a cell it had no business touching;
+            // - the region's terrain: a tile of the wrong terrain written inside the rectangle;
+            // - **constraint satisfaction**: a tile of the *right* terrain whose own declared
+            //   constraints are violated by the neighbours actually written -- for example tile 15,
+            //   the plains shore tile, dropped into the middle of a plains field. Every earlier
+            //   version of this arm accepted that.
+            let (x0, y0, x1, y1) = rect;
+            if x0 > x1 || y0 > y1 || x1 >= before.width || y1 >= before.height {
+                return Err(format!(
+                    "refusing to write: ({x0}, {y0})..({x1}, {y1}) is not a rectangle inside this \
+                     {}x{} map",
+                    before.width, before.height
+                ));
+            }
+            let terrain_at = |source: &MapAsset, x: u32, y: u32| -> Result<u32, String> {
+                let tile = source
+                    .cell(x, y)
+                    .map(|cell| cell.tile_index())
+                    .ok_or_else(|| format!("refusing to write: ({x}, {y}) is outside the map"))?;
+                tile_set.terrain_type_of_tile(tile).ok_or_else(|| {
+                    format!(
+                        "refusing to write: tile {tile} at ({x}, {y}) is not declared by the \
+                         supplied tileset"
+                    )
+                })
+            };
+
+            // Which region cells changed terrain, read from `before` alone.
+            let mut moved: BTreeSet<(u32, u32)> = BTreeSet::new();
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    if terrain_at(before, x, y)? != terrain_type {
+                        moved.insert((x, y));
+                    }
                 }
             }
-            // And the tile that landed really does satisfy the tileset. The check above only says
-            // the writer did what it planned; this says the plan was legal by the .til's own
-            // constraints, read back out of the encoded map.
-            for cell in plan.cells() {
-                let Some(definition) = tile_set.tiles.get(&cell.tile_index) else {
+            // The cells this paint is allowed to have written: the rectangle, plus any cell outside
+            // it with a neighbour whose terrain moved.
+            let mut allowed: BTreeSet<(u32, u32)> = BTreeSet::new();
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    allowed.insert((x, y));
+                }
+            }
+            for &(cx, cy) in &moved {
+                for dy in -1_i64..=1 {
+                    for dx in -1_i64..=1 {
+                        let (Ok(x), Ok(y)) = (
+                            u32::try_from(i64::from(cx) + dx),
+                            u32::try_from(i64::from(cy) + dy),
+                        ) else {
+                            continue;
+                        };
+                        if x < map.width && y < map.height {
+                            allowed.insert((x, y));
+                        }
+                    }
+                }
+            }
+            let allowed_indexes: BTreeSet<usize> = allowed
+                .iter()
+                .filter_map(|(x, y)| map.cell_index(*x, *y))
+                .collect();
+            let changed: BTreeSet<usize> =
+                changed_cell_indexes(before, map).into_iter().collect();
+            if let Some(stray) = changed.difference(&allowed_indexes).next() {
+                return Err(format!(
+                    "refusing to write: cell {stray} changed but is neither in the painted \
+                     rectangle nor beside a cell whose terrain moved"
+                ));
+            }
+
+            // Every cell inside the rectangle now holds a tile of the painted terrain.
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let observed = terrain_at(map, x, y)?;
+                    if observed != terrain_type {
+                        return Err(format!(
+                            "refusing to write: ({x}, {y}) is inside the painted rectangle but \
+                             holds terrain {observed}, not {terrain_type}"
+                        ));
+                    }
+                }
+            }
+
+            // And every written tile satisfies its own declared constraints against the
+            // neighbourhood *as actually encoded*. Each of the eight columns is evaluated by name
+            // through `Direction::offset`, not through `Neighbourhood`/`TileDefinition::accepts`,
+            // so this is a second reading of the tileset rather than a second call to the first.
+            for &(x, y) in &allowed {
+                let Some(index) = map.cell_index(x, y) else {
+                    continue;
+                };
+                if !changed.contains(&index) {
+                    continue;
+                }
+                let tile = map
+                    .cell(x, y)
+                    .map(|cell| cell.tile_index())
+                    .ok_or_else(|| format!("refusing to write: ({x}, {y}) is outside the map"))?;
+                let Some(definition) = tile_set.tiles.get(&tile) else {
                     return Err(format!(
-                        "refusing to write: tile {} at ({}, {}) is not in the tileset",
-                        cell.tile_index, cell.x, cell.y
+                        "refusing to write: tile {tile} at ({x}, {y}) is not declared by the \
+                         supplied tileset"
                     ));
                 };
-                if definition.terrain_type != cell.terrain_type {
+                if !definition.constraints_are_complete() {
                     return Err(format!(
-                        "refusing to write: tile {} at ({}, {}) is terrain {}, not the {} that \
-                         was planned",
-                        cell.tile_index,
-                        cell.x,
-                        cell.y,
-                        definition.terrain_type,
-                        cell.terrain_type
+                        "refusing to write: tile {tile} at ({x}, {y}) does not declare all eight \
+                         neighbour constraints, so it cannot be painted"
                     ));
                 }
-            }
-            // And nothing outside the region and its ring moved. This is the check that catches a
-            // ring whose geometry strayed -- a wrapped edge, an off-by-one, a paint that blended
-            // into a background the engine leaves alone.
-            let wanted: std::collections::BTreeSet<usize> = plan
-                .cells()
-                .filter_map(|cell| map.cell_index(cell.x, cell.y))
-                .collect();
-            let changed: std::collections::BTreeSet<usize> =
-                changed_cell_indexes(before, map).into_iter().collect();
-            if let Some(stray) = changed.difference(&wanted).next() {
-                return Err(format!(
-                    "refusing to write: cell {stray} changed but is outside the painted region                      and its ring"
-                ));
+                let own = definition.terrain_type;
+                for direction in Direction::ALL {
+                    let (dx, dy) = direction.offset();
+                    let (Ok(nx), Ok(ny)) = (
+                        u32::try_from(i64::from(x) + i64::from(dx)),
+                        u32::try_from(i64::from(y) + i64::from(dy)),
+                    ) else {
+                        continue;
+                    };
+                    // Off the map on the high side too, and an off-map neighbour is read as this
+                    // cell's own terrain -- the closed reading the selector chose from. Verifying
+                    // against the open reading would accept the phantom coastline that reading
+                    // produces.
+                    let neighbour = if nx >= map.width || ny >= map.height {
+                        own
+                    } else {
+                        terrain_at(map, nx, ny)?
+                    };
+                    if !definition.neighbour(direction).accepts(Some(neighbour)) {
+                        return Err(format!(
+                            "refusing to write: tile {tile} at ({x}, {y}) requires {} {:?} of \
+                             itself, but the written map has terrain {neighbour} there",
+                            direction.column_name(),
+                            definition.neighbour(direction)
+                        ));
+                    }
+                }
             }
         }
         MapEdit::PlaceSprite { x, y, .. } => {
@@ -5325,11 +5433,12 @@ mod tests {
     /// is.
     const CLI_FIXTURE_TILESET: &[u8] = br#"
 LBM=fixture.lbm
-TILES= 10, 3
+TILES= 12, 3
 TILESIZE= 8, 8
 TERRAINTYPE= 1, 40, "grass",  0, 100, 200, 11, 12, 5, 13, 14
 TERRAINTYPE= 2, 41, "stone",  2, 300, 400, 21, 22, 9, 23, 24
 TERRAINTYPE= 3, 42, "path",   0, 0, 9999, 0, 0, 1, 0, 0
+TERRAINTYPE= 4, 43, "dust",   0, 0, 9999, 0, 0, 1, 0, 0
 ;         self, n,    ne,  e,    se,  s,    sw,  w,    nw,   index
 TILE=  0,    1, 1,    1,   1,    1,   1,    1,   1,    1,    99
 TILE=  1,    1, 1,    1,   1,    1,   1,    1,   1,    1,    99
@@ -5358,6 +5467,9 @@ TILE= 23,    2, 2,    2,   2,    1,   2,    2,   2,    2,    23
 TILE= 24,    2, 2,    2,   2,    2,   2,    1,   2,    2,    24
 TILE= 25,    2, 2,    1,   2,    2,   2,    2,   2,    2,    25
 TILE= 26,    2, 2,    2,   2,    2,   2,    2,   2,    1,    26
+TILE= 30,    4, *,    *,   *,    *,   *,    *,   *,    *,    30
+TILE= 31,    4, *,    *,   *,    *,   *,    *,   *,    *,    31
+TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
 "#;
 
     /// A map of uniform grass, so the CLI paint has a field the fixture tileset can read.
@@ -5492,11 +5604,17 @@ TILE= 26,    2, 2,    2,   2,    2,   2,    2,   2,    1,    26
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// The verification arm has to *verify*. The `FlagRegion` arm shipped empty on an earlier
-    /// branch with a comment claiming the edit checked itself, so the many-cell verbs get a test
-    /// that hands the verifier a wrong map directly.
+    /// The verification arm has to *verify*, and this is the third time in this repository that it
+    /// could not.
+    ///
+    /// The `FlagRegion` arm once shipped empty with a comment claiming the edit checked itself. The
+    /// paint arm then shipped re-running `plan_terrain_paint` and comparing the result to itself,
+    /// which no planner defect can fail, followed by two loops asserting things `candidates()`
+    /// already guarantees. So each case below names the input that breaks the check it stands for,
+    /// and **the last one is the case every earlier version accepted**: a tile of the right terrain,
+    /// present in the tileset, whose own declared constraints the written neighbourhood violates.
     #[test]
-    fn the_paint_verifier_catches_a_wrong_ring_tile_and_a_stray_cell() {
+    fn the_paint_verifier_rejects_a_tile_whose_own_constraints_the_map_violates() {
         let tile_set = TileSetDefinition::parse(CLI_FIXTURE_TILESET).unwrap();
         let source = grass_map(11, 5);
         let before = MapAsset::parse(&source).unwrap();
@@ -5514,35 +5632,68 @@ TILE= 26,    2, 2,    2,   2,    2,   2,    2,   2,    1,    26
 
         super::verify_map_edit(&painted(), &before, edit, Some(&tile_set)).unwrap();
 
-        // A ring tile that is not the one the tileset chose.
-        let mut wrong_ring = painted();
-        wrong_ring.set_tile(5, 1, 3).unwrap();
+        // **The check that could not fail before.** Tile 3 is grass, is in the tileset, and is what
+        // the old two loops tested for -- but it declares terrain 2 to its north, and the written
+        // map has grass there. Nothing about the terrain or the atlas is wrong; only the constraint
+        // is, which is exactly what a blend writer gets wrong.
+        let mut illegal = painted();
+        illegal.set_tile(5, 1, 3).unwrap();
         let error =
-            super::verify_map_edit(&wrong_ring, &before, edit, Some(&tile_set)).unwrap_err();
-        assert!(error.contains("expected tile 4 at (5, 1) but read 3"), "{error}");
+            super::verify_map_edit(&illegal, &before, edit, Some(&tile_set)).unwrap_err();
+        assert!(error.contains("tile 3 at (5, 1) requires n"), "{error}");
+        assert!(error.contains("terrain 1 there"), "{error}");
 
-        // A cell outside the region and its ring.
+        // A region cell holding a tile of the wrong terrain.
+        let mut wrong_terrain = painted();
+        wrong_terrain.set_tile(5, 2, 0).unwrap();
+        let error =
+            super::verify_map_edit(&wrong_terrain, &before, edit, Some(&tile_set)).unwrap_err();
+        assert!(
+            error.contains("(5, 2) is inside the painted rectangle but holds terrain 1"),
+            "{error}"
+        );
+
+        // A cell nowhere near anything whose terrain moved.
         let mut stray = painted();
         stray.set_tile(0, 0, 1).unwrap();
         let error = super::verify_map_edit(&stray, &before, edit, Some(&tile_set)).unwrap_err();
-        assert!(error.contains("outside the painted region"), "{error}");
+        assert!(error.contains("neither in the painted rectangle nor beside"), "{error}");
 
-        // A region cell that did not take the paint.
-        let mut unpainted = painted();
-        unpainted.set_tile(5, 2, 0).unwrap();
-        let error =
-            super::verify_map_edit(&unpainted, &before, edit, Some(&tile_set)).unwrap_err();
-        assert!(error.contains("expected tile 12 at (5, 2) but read 0"), "{error}");
-
-        // And the verifier will not pass a map whose tile is legal for the wrong terrain: tile 0
-        // is grass, where the plan called for stone.
-        let mut wrong_terrain = painted();
-        wrong_terrain.set_tile(5, 2, 0).unwrap();
-        assert!(super::verify_map_edit(&wrong_terrain, &before, edit, Some(&tile_set)).is_err());
+        // A tile the tileset does not declare at all.
+        let mut foreign = painted();
+        foreign.set_tile(5, 1, 28).unwrap();
+        let error = super::verify_map_edit(&foreign, &before, edit, Some(&tile_set)).unwrap_err();
+        assert!(error.contains("tile 28 at (5, 1) is not declared"), "{error}");
 
         // Verifying without the tileset the edit used refuses rather than passing vacuously.
         let error = super::verify_map_edit(&painted(), &before, edit, None).unwrap_err();
         assert!(error.contains("no tileset was supplied"), "{error}");
+    }
+
+    /// The verifier does not consult the planner, so a broken planner cannot verify itself.
+    ///
+    /// Hand it a map that is *internally* legal by the tileset but is not what a paint of this
+    /// rectangle would produce: the rectangle simply was not painted. A verifier that re-plans and
+    /// compares to its own plan reports nothing here, because it would find the same plan and the
+    /// same map. This one reports that the rectangle does not hold the painted terrain.
+    #[test]
+    fn the_paint_verifier_does_not_ask_the_planner_what_the_answer_was() {
+        let tile_set = TileSetDefinition::parse(CLI_FIXTURE_TILESET).unwrap();
+        let source = grass_map(11, 5);
+        let before = MapAsset::parse(&source).unwrap();
+        let edit = MapEdit::PaintTerrain {
+            rect: (5, 2, 5, 2),
+            terrain_type: 2,
+            selector: TileSelector::LowestSlot,
+        };
+        // Untouched: every cell is grass interior tile 0, which satisfies its own constraints
+        // everywhere, so no constraint check can object. Only "the rectangle is not terrain 2" can.
+        let untouched = MapAsset::parse(&source).unwrap();
+        let error = super::verify_map_edit(&untouched, &before, edit, Some(&tile_set)).unwrap_err();
+        assert!(
+            error.contains("(5, 2) is inside the painted rectangle but holds terrain 1, not 2"),
+            "{error}"
+        );
     }
 
     /// `--map-set-terrain` is not replaced. Painting is an addition, and the single-cell

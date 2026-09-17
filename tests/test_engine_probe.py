@@ -1355,5 +1355,90 @@ class DirectionConventionTest(unittest.TestCase):
         self.assertEqual(labels["SE"], rust["SouthEast"])
 
 
+class PaintRefusalReachabilityTest(unittest.TestCase):
+    """Every declared `PaintRefusal` must be reachable, and its message must be true.
+
+    Five variants shipped that nothing ever constructed -- `NotATerrainType`, `RegionCoversMap`,
+    `PaintedRoadIsRagged`, `RingDependsOnPaintedTerrain`, `DirectionMissingFromTable`. Dead code is
+    the lesser problem. `RegionCoversMap`'s `Display` was still telling users the operation was
+    refused after it had started succeeding and writing 81 cells, so the enum had become a set of
+    promises about behaviour that no longer existed, and the compiler cannot see that because the
+    variants are `pub`.
+
+    This is checked from Python because the whole point is that Rust will not complain.
+    """
+
+    SOURCES = ("map.rs", "main.rs")
+
+    def setUp(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "spikes" / "asset-viewer" / "src"
+        self.text = {name: (root / name).read_text() for name in self.SOURCES}
+        body = self.text["map.rs"]
+        start = body.index("pub enum PaintRefusal {")
+        self.enum = body[start : body.index("\n}\n", start)]
+
+    @staticmethod
+    def _without_test_module(source: str) -> str:
+        """`source` up to its `#[cfg(test)]`.
+
+        A variant only ever constructed by a test is unreachable in production, and a test that
+        names it proves only that it is spellable. Verified by mutation: redirecting a live variant's
+        real construction site elsewhere leaves the test module still naming it, and without this
+        the check passed.
+        """
+        marker = "#[cfg(test)]"
+        return source[: source.index(marker)] if marker in source else source
+
+    def _without_display_arms(self, source: str) -> str:
+        """`source` with the `Display for PaintRefusal` block removed.
+
+        **This exclusion is the test.** Every dead variant had a `Self::X =>` arm in `Display` --
+        that arm *was* the lie -- so counting those as construction sites makes the check vacuous
+        against exactly the five variants that prompted it. Verified by mutation: redirecting a live
+        variant's only real construction site elsewhere has to fail, and without this exclusion it
+        did not.
+        """
+        marker = "impl fmt::Display for PaintRefusal {"
+        if marker not in source:
+            return source
+        start = source.index(marker)
+        end = source.index("\n}\n", start)
+        return source[:start] + source[end:]
+
+    def test_every_declared_refusal_is_constructed_somewhere(self) -> None:
+        declared = set(re.findall(r"^    ([A-Z][A-Za-z]*)", self.enum, re.M))
+        self.assertTrue(declared, "found no variants; the enum was not located")
+        # And the enum declaration itself must not count as a use of its own names.
+        constructed = set()
+        for source in self.text.values():
+            body = self._without_test_module(source)
+            body = self._without_display_arms(body).replace(self.enum, "")
+            constructed |= set(re.findall(r"PaintRefusal::([A-Z][A-Za-z]*)", body))
+            constructed |= set(re.findall(r"Self::([A-Z][A-Za-z]*)", body))
+        unreachable = sorted(declared - constructed)
+        self.assertEqual(
+            unreachable,
+            [],
+            "these refusals are declared and never constructed, so their Display text is a "
+            "promise about behaviour nothing can produce",
+        )
+
+    def test_the_deleted_refusals_have_not_come_back(self) -> None:
+        """Named individually, because each one described a rule the paint no longer follows.
+
+        A whole-map paint is now a legitimate operation -- it is "fill with correct interior tiles"
+        -- and road is refused by the tileset having no boundary tile for it, not by a special case.
+        """
+        for gone in (
+            "RegionCoversMap",
+            "PaintedRoadIsRagged",
+            "RingDependsOnPaintedTerrain",
+            "DirectionMissingFromTable",
+            "NotATerrainType",
+        ):
+            for name, source in self.text.items():
+                self.assertNotIn(gone, source, f"{gone} reappeared in {name}")
+
+
 if __name__ == "__main__":
     unittest.main()

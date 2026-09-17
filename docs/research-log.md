@@ -2760,3 +2760,138 @@ sampled tileset fits `.smp` — the best still left 36% of cells undeclared. The
 record its tileset, so this is a real limit: editing a battle map needs the right `.til`, and which
 one that is has not been identified. It is also why the CLI takes the tileset as an argument and
 refuses without it instead of defaulting to the world one.
+
+## 2026-09-17 (review) — The tie-break was the whole operation, and it was wrong
+
+Two reviewers found the same defect from opposite ends, and it had one cause. An off-map neighbour
+was treated as satisfying every constraint, including a negated one. Along a map edge that lets the
+*one-sided boundary* tiles compete with the interior family on equal terms, and a lowest-slot
+tie-break then picks the most wrong legal option. Measured on 9x9 maps against `tilesb01.til`:
+
+- a whole-map **water** paint wrote a complete phantom coastline — row 0 all tile 49, which asserts
+  *land to the north*, row 8 tile 50, column 0 tile 51, column 8 tile 52, interior correctly 392;
+- a whole-map **road** paint wrote **nine different road tiles** (450..457, 459) for a uniform road
+  field;
+- a whole-map **impassable** paint wrote 464 everywhere, replacing the 469 already there.
+
+The fix is in the tie-break, not in a guard: candidates are taken with every off-map neighbour read
+as the cell's **own terrain** first, and the open reading is used only if closing leaves nothing.
+Closed candidates are provably a subset of open ones, so this narrows a tie and can never invent a
+tile. All three paints are now uniform and change zero cells.
+
+**A whole-map refusal was proposed and rejected.** Once the tie-break is principled, painting the
+whole map is a legitimate and useful operation — it is "fill with correct interior tiles" — and
+refusing it is worse than allowing it. The old `RegionCoversMap` variant was still telling users the
+operation was refused while it in fact succeeded and wrote 81 cells; it is deleted along with four
+other unreachable variants.
+
+### Nothing read the current tile, and `NoTransition` was sitting there saying it should
+
+`tt_dirt`'s six slots are `self = 0` with `*` in all eight columns, so every dirt cell has six
+equally valid candidates and the tileset forces none. A 3x3 plains paint therefore moved **all
+sixteen** ring cells from 175 to 31 — while `TERRAIN_TRANSITIONS[0] = NoTransition`, a saved-artifact
+measurement in the same file, recorded that the engine leaves them alone. Nothing consulted it.
+
+Worse, this document had already *asserted* the fix as though it were implemented: it said a dirt
+cell "matches whatever it already holds and is never re-selected", and that sentence was the stated
+justification for deleting the special case. It was false. Keeping a valid existing tile makes it
+true, with no special case, and the claim and the code now agree.
+
+### The 2,084 figure was right and its description was not
+
+The claim was "2,084 of 2,084 cells whose candidate set was a single tile". Re-measured: 1,888 have a
+single candidate; **196 have between two and sixteen** and are reproducible because the engine keeps
+what such a cell already holds — in `zr0.scn` a water blob painted onto dirt leaves ring cell
+`(13, 5)` at tile `175` although all six of `[31, 79, 127, 175, 223, 271]` match. The total and the
+zero-mismatch result stand; the description was wrong, and for one revision the figure had been
+measured with a keep-current rule the shipped code did not implement.
+
+A reviewer said exactly that and was overruled on the grounds that the claim was scoped to
+single-candidate cells and the dirt cells have six. The arithmetic decides it: 2,084 = 1,888 + 196,
+so the 196 multi-candidate cells are inside the figure and the scoping was inaccurate. **The reviewer
+was right.** The 253 genuinely drawn cells are unchanged and are not convertible by keeping — by
+construction they hold no valid candidate — so the acceptance number for the keep-current rule is
+196 of 196 reproduced, not a share of the 253.
+
+This also sharpens the random-interior story. A genuine draw is what happens when a cell is **newly**
+painted and several interiors match, not merely whenever the candidate set is larger than one. The
+looser reading is what produced the over-claim, and the outcome type now distinguishes `Kept` from
+`Drawn` so the two cannot be conflated again.
+
+### A verifier that could not fail, for the third time in this repository
+
+`verify_map_edit`'s paint arm re-ran `plan_terrain_paint` — the *same* planner the applier had used —
+and compared the written map to its output. No planner defect could ever surface, because a wrong
+plan was being compared against itself. The two loops that followed were worse than idle:
+`tiles.get(&tile_index)` and `definition.terrain_type != cell.terrain_type` are both *guaranteed* by
+`candidates()`, which filters on terrain and yields keys of `tiles`, so they evaluated **no neighbour
+constraint at all** while the comment claimed they proved the plan legal by the tileset's own rules.
+
+It now derives the affected set from the before/after maps and the tileset, without calling the
+planner, and for every written cell rebuilds the neighbourhood from the **encoded** map and checks
+each of the eight columns by name. Each check has a named breaking input, which is the standard this
+repository should have been holding all along:
+
+| check | input that fails it |
+| --- | --- |
+| affected set | a cell changed that is neither in the rectangle nor beside moved terrain |
+| region terrain | a tile of the wrong terrain inside the rectangle |
+| **constraint satisfaction** | a tile of the *right* terrain whose own constraints the written neighbours violate — tile 15, the plains shore tile, dropped into a plains field |
+| planner independence | a map where the rectangle simply was not painted, which a re-planning verifier reports as fine |
+
+The third row is the one every earlier version accepted. **Before calling any check done, state what
+input would make it fail; if you cannot name one, it is not a check.**
+
+### The ring was wider than the reason for it
+
+Any changed region cell caused the whole rectangular ring to be re-selected, so a ring cell whose
+eight neighbours had not moved was re-picked anyway. Reproduced: painting plains over a rectangle
+already half plains moved **tile 387 to 384 three columns away from the only cell whose terrain
+changed**. The affected set is now the rectangle plus any cell outside it with a neighbour whose
+terrain actually moved. Keeping a valid existing tile already neutralises the reported symptom; the
+narrowing still matters, because on a map whose tiling is *already* inconsistent — 5.9% of shipped
+`.scn` cells are — the old ring would silently rewrite unrelated cells the engine would not touch. It
+also consults fewer cells, so slightly fewer paints refuse: stride-8 sampling on world maps went from
+75% to 76% of sites succeeding, and `.lgd` from 60% to 61%.
+
+### The leniency had no shipped justification
+
+Truncated `TILE=` rows were padded with `*`, which made the tile a wildcard selectable for any
+neighbourhood — the opposite of what a missing declaration means. The code comment justified this by
+claiming `tilesa01.til` "is already a different shape from `tilesb01.til`". **That is factually
+wrong.** Counted across all 26 shipped tilesets: **4,043 `TILE=` rows and 402 `TERRAINTYPE=` rows,
+every one with exactly 11 fields, and not one incomplete tile.** The two world tilesets differ in row
+count — 609 against 617 — and not in field shape. Completeness is now explicit and an incomplete tile
+is excluded from selection, so a short row stays inspectable and can never be painted.
+
+The related risk is the reverse one: reading eight columns the parser used to discard means malformed
+*content* can now hard-error where it was previously ignored, and `--view-map` needs only a tile's
+slot and `self` column. So an unreadable neighbour column, trailing index or `TERRAINTYPE` attribute
+is recorded as **absent** and leaves the tile unpaintable, rather than failing the file. What stays a
+hard error is only what the renderer needs: the atlas name, grid dimensions, tile size, slot and
+`self`. All 26 shipped tilesets parse — `cargo run --example parse_all_tilesets` — and that example is
+committed so the claim is re-runnable.
+
+### Terrain ids are tileset-local
+
+Parsing all 26: atlases of 64, 128, 256 and 624 slots, 10 to 19 terrain types each, and ids reaching
+**42** in `cavecry2.til` where `tilesb01.til` stops at 10. The eleven-name table in `map.rs` is one
+tileset's vocabulary, not a global one. This independently reinforces that `.smp` battle maps need
+their own tileset, and that no terrain id should be hardcoded.
+
+### Left alone deliberately
+
+`--map-fill-terrain` and `--map-create` fill from `TERRAIN_TYPES.base_tile`, which for seven of the
+eleven terrains is the block's **shore** slot: `--map-create 9 9 6` writes 81 cells each declaring
+that none of its neighbours is plains, in a field that is entirely plains. Water only looks fine
+because its recorded base tile 392 happens to be the interior slot. This is not changed, because
+`fill_terrain` reproduces `clearmap` and `clearmap` really does force one tile everywhere — three
+probe tools depend on that equivalence to lay a known background, and "fixing" the fill would change
+what a probe measures. The follow-up is a separate `terrain_interior_tile()` accessor; meanwhile
+painting the same rectangle repairs the field, since a whole-map paint is "fill with correct interior
+tiles".
+
+`TERRAIN_BASE_TILES` also stays, for a reason neither the original write-up nor the review had: its
+only consumers want *a tile `getterrain` answers with this terrain* so `clearmap` can lay a
+background, and both 392 and 63 satisfy that. Changing water's 392 to its anchor 63 would make the
+probe's background a constraint-violating field — strictly worse.
