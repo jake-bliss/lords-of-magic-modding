@@ -1370,3 +1370,71 @@ isometric step. The obvious candidate is terrain elevation, which the probe pass
 is the remaining piece of the y convention and it now has a testable shape: place the same sprite on
 cells of known differing terrain height and see whether the residual tracks it.
 
+## 2026-09-17 (later) — `map2screen` decoded completely; the drawn y is close but not explained
+
+**Evidence class: observed in gameplay.** One keypress: an 81-cell survey calling `map2screen` twice
+per cell — once with `z = 0`, once with `z =` that cell's `getelevation` — plus six sprite placements
+to measure real anchors. Cleanup again left the screen pixel-identical to the plate.
+
+### The operator, in full
+
+Over all 81 cells, without exception:
+
+```
+map2screen(x, y, z) -> ( 14.4 * (x + y) + K ,           output 1, independent of z
+                         output1 - 80 - 20.3625 * z ,   output 2
+                         33.941 * (x - y) + L )         output 3 = SCREEN X
+```
+
+- **Output 3 is screen x**, and only that. It is a function of `x - y` alone, never moved with `z`
+  in any of the 81 cells, and predicted the drawn left edge exactly at 88, 190, 393 and 495 across
+  the six placements — as it did for three placements in the earlier run.
+- **Output 1 is a function of `x + y` alone**, stepping 14.4 per isometric step, and `z` never moved
+  it in any cell.
+- **Output 2 is exactly `output1 - 80`, less `20.3625` per unit of `z`.** The z coefficient held
+  between 20.3600 and 20.3680 across all 69 cells with non-zero elevation.
+
+So **the third input is the elevation**, and `getelevation` is the operator that supplies it — which
+answers the question this probe was built for. The constants are a plain isometric projection:
+`33.941 = 24 * sqrt(2)` and `20.3625 ~ 14.4 * sqrt(2)`.
+
+### The drawn y is *approximately* output 2, and that gap is unexplained
+
+Fitting the six measured tops against output 2 gives `top = 0.9652 * output2 - 1822.09`, and the
+residuals are **up to 11 pixels**:
+
+| # | cell | elevation | measured top | predicted | error |
+| --- | --- | --- | --- | --- | --- |
+| 1 | (60,70) | 1.0 | 73 | 73.19 | +0.19 |
+| 3 | (70,71) | 0.75 | 228 | 230.99 | +2.99 |
+| 5 | (64,68) | 2.0 | 88 | 81.33 | -6.67 |
+| 0 | (58,71) | 0.5 | 62 | 69.12 | +7.12 |
+| 4 | (64,74) | 2.0 | 157 | 164.72 | +7.72 |
+| 2 | (67,71) | 1.75 | 181 | 169.64 | -11.36 |
+
+Compare the x axis, which agrees to under a pixel. Eleven pixels is far outside that.
+
+The decisive pair is 2 and 4: **the same `x + y`, elevations 1.75 and 2.0, and tops 24 pixels
+apart.** Output 2 differs by only 5.09 between them, so no rescaling of output 2 can produce a
+24-pixel separation. Whatever vertical term the renderer uses, it is not the anchor cell's
+`getelevation` fed through output 2.
+
+The obvious candidate is that the renderer interpolates height across the terrain mesh rather than
+sampling the cell, and the three largest errors are indeed on the cells whose 3x3 neighbourhood
+departs most from the cell's own value (2.0 against a neighbourhood mean of 1.25 at placement 5, for
+instance). **But the signs do not line up** — placements 2 and 5 both sit above their neighbourhood
+mean and their errors have opposite signs — so this is a hypothesis with a counter-example in hand,
+not a finding.
+
+**Two honest caveats.** Two pairs of sprites shared a screen x, and the assignment within each pair
+was chosen by whichever permutation fit best; that is convenient reasoning, and a rerun should place
+six sprites at six *distinct* screen x values instead. And placements 0 and 3 fell outside the
+surveyed square, so their neighbourhoods are unknown.
+
+### The experiment that would settle it
+
+Place sprites only on cells whose 3x3 neighbourhood is **uniform**, which the survey can find before
+choosing where to place. If the residuals collapse to about a pixel on flat ground, the renderer
+interpolates and the y convention is closed; if they do not, the extra term is something else. Give
+each sprite its own screen x so no assignment is ever inferred.
+
