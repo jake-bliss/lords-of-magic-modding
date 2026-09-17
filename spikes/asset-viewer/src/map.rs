@@ -992,6 +992,220 @@ pub fn interior_tile_family(painted: u32) -> Option<(u32, u32)> {
     Some((base, base + 7))
 }
 
+/// The measured ring behaviour of one terrain as a background, or `None` if it is not a terrain.
+pub fn transition_behaviour(terrain_type: u32) -> Option<TransitionBehaviour> {
+    TERRAIN_TRANSITIONS
+        .iter()
+        .find(|entry| entry.terrain_type == terrain_type)
+        .map(|entry| entry.behaviour)
+}
+
+/// The transition tile for one direction, out of a ring in [`TRANSITION_RING_OFFSETS`] order.
+pub fn ring_tile(ring: &[u32; 8], direction: (i32, i32)) -> Option<u32> {
+    TRANSITION_RING_OFFSETS
+        .iter()
+        .position(|entry| entry.direction == direction)
+        .and_then(|index| ring.get(index).copied())
+}
+
+/// `-1`, `0` or `1`: which side of an inclusive span a coordinate falls on.
+fn step_towards(value: i64, low: i64, high: i64) -> i32 {
+    if value < low {
+        -1
+    } else if value > high {
+        1
+    } else {
+        0
+    }
+}
+/// Why a `setterrain`-style paint was refused.
+///
+/// Refusing is the point of this type. The measured rule covers a *uniform* background and nine of
+/// the eleven painted terrains; outside that the ring is not known, and a painter that guessed
+/// would put plausible-looking wrong tiles into a map with no test able to tell -- the same reason
+/// blending was withheld entirely until it was measured. Every variant here is a case the
+/// 2026-09-17 `terrainrings` run did **not** establish, or established as not being a direction
+/// table at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaintRefusal {
+    NotARectangle {
+        rect: (u32, u32, u32, u32),
+    },
+    OutsideMap {
+        rect: (u32, u32, u32, u32),
+        width: u32,
+        height: u32,
+    },
+    NotATerrainType {
+        terrain_type: u32,
+    },
+    /// The region is the whole map, so there is no ring to measure a background from.
+    RegionCoversMap,
+    /// `tt_road` as the **painted** terrain is ragged along every edge on all seven backgrounds
+    /// where it blends: the ring is not one tile per direction but varies along the run.
+    PaintedRoadIsRagged,
+    /// `tt_road` as the **background** picks its ring from the painted terrain, and only its edges
+    /// change. One offset table cannot express that.
+    RingDependsOnPaintedTerrain {
+        background_terrain: u32,
+    },
+    /// A cell in the ring or the region holds a tile that is not any terrain type's representative
+    /// tile, so this project cannot say what terrain the paint is landing on.
+    ///
+    /// Real maps are full of these -- the engine paints from tile *families* and only the eleven
+    /// representative slots are in [`TERRAIN_TYPES`] -- so this is the expected answer on shipped
+    /// content, not an edge case.
+    BackgroundTileUnrecognised {
+        at: (u32, u32),
+        tile_index: u32,
+    },
+    /// The 8-neighbourhood is not one terrain. The rule was measured against a uniform background
+    /// only; painting next to an existing boundary is unmeasured.
+    BackgroundNotUniform {
+        at: (u32, u32),
+        tile_index: u32,
+        terrain_type: u32,
+        background_terrain: u32,
+    },
+    /// A ring tile the table produced does not fit the cell tag's tile field. Cannot happen for the
+    /// eight measured anchors; it exists so a future anchor edit cannot silently truncate.
+    RingTileOutsideTagField {
+        tile_index: u32,
+    },
+    /// A ring direction is not in [`TRANSITION_RING_OFFSETS`]. All eight are, and a test holds
+    /// that; this variant is here so an edit that dropped one is reported rather than skipped.
+    DirectionMissingFromTable {
+        direction: (i32, i32),
+    },
+}
+
+impl fmt::Display for PaintRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotARectangle { rect: (x0, y0, x1, y1) } => write!(
+                formatter,
+                "({x0}, {y0})..({x1}, {y1}) is not a rectangle"
+            ),
+            Self::OutsideMap { rect: (x0, y0, x1, y1), width, height } => write!(
+                formatter,
+                "({x0}, {y0})..({x1}, {y1}) is outside this {width}x{height} map"
+            ),
+            Self::NotATerrainType { terrain_type } => {
+                write!(formatter, "{terrain_type} is not one of the 11 terrain types")
+            }
+            Self::RegionCoversMap => formatter.write_str(
+                "the region covers the whole map, so there is no ring and no background to read; \
+                 use fill_terrain, which reproduces clearmap",
+            ),
+            Self::PaintedRoadIsRagged => formatter.write_str(
+                "painting tt_road is refused: the 2026-09-17 run found its ring ragged along every \
+                 edge on all seven backgrounds where it blends, so it is not one tile per \
+                 direction and this table cannot express it",
+            ),
+            Self::RingDependsOnPaintedTerrain { background_terrain } => write!(
+                formatter,
+                "painting onto terrain {background_terrain} is refused: its ring depends on the \
+                 painted terrain and only its edges change, which one offset table cannot express"
+            ),
+            Self::BackgroundTileUnrecognised { at: (x, y), tile_index } => write!(
+                formatter,
+                "tile {tile_index} at ({x}, {y}) is not any terrain type's representative tile, so \
+                 the background terrain is unknown; the ring was measured against a known uniform \
+                 background only"
+            ),
+            Self::BackgroundNotUniform {
+                at: (x, y),
+                tile_index,
+                terrain_type,
+                background_terrain,
+            } => write!(
+                formatter,
+                "the neighbourhood is not uniform: ({x}, {y}) holds tile {tile_index}, terrain \
+                 {terrain_type}, against a background of terrain {background_terrain}. Painting \
+                 next to an existing boundary is unmeasured"
+            ),
+            Self::RingTileOutsideTagField { tile_index } => write!(
+                formatter,
+                "ring tile {tile_index} does not fit the cell tag's tile field"
+            ),
+            Self::DirectionMissingFromTable { direction: (dx, dy) } => write!(
+                formatter,
+                "direction ({dx}, {dy}) is not in the measured offset table"
+            ),
+        }
+    }
+}
+
+impl From<PaintRefusal> for MapError {
+    fn from(refusal: PaintRefusal) -> Self {
+        Self::new(refusal.to_string())
+    }
+}
+
+/// What the paint does to the ring one cell outside the region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RingOutcome {
+    /// The measured ring: `anchor(background) + offset(direction)`, one tile per direction.
+    Blended { tiles: [u32; 8] },
+    /// The painted terrain **is** the background terrain. The run's own control row -- terrain 6
+    /// onto a terrain 6 background -- produced a ring of pure background tile, no boundary and no
+    /// transition, so nothing is written outside the region.
+    SameTerrainAsBackground,
+    /// `tt_dirt` (0) and `tt_impassible` (10) blend nothing at all: every ring cell keeps the
+    /// background tile. Skipping the ring here is not a fallback, it is what the engine does.
+    BackgroundBlendsNothing,
+}
+
+/// One ring cell a paint will write: where it is, which direction it represents, and its tile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingCell {
+    pub x: u32,
+    pub y: u32,
+    /// `(dx, dy)` of this cell relative to the region, as in [`TRANSITION_RING_OFFSETS`].
+    pub direction: (i32, i32),
+    pub tile_index: u32,
+}
+
+/// A paint that has been decided against the map but not yet applied.
+///
+/// Planning is separate from applying so the CLI's pre-write verification can check the bytes it is
+/// about to emit against the *same* decision the edit made, the way `flag_region_cells` already is.
+/// Two copies of "which cells were meant" could disagree, and then the check would be confirming
+/// the wrong thing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerrainPaintPlan {
+    /// Inclusive `(x0, y0, x1, y1)`.
+    pub rect: (u32, u32, u32, u32),
+    pub terrain_type: u32,
+    /// The tile written inside the region.
+    ///
+    /// This is the terrain type's **representative** tile -- `forcetexture` semantics, the one
+    /// thing this writer's tile table is established for. The engine's own `setterrain` picks its
+    /// core tile from a family: painting terrain 6 onto a tile-15 background wrote tiles in
+    /// `385..391`, not 15. Which member it picks where is unmeasured, so the region here is
+    /// uniform where the engine's would be varied. The blend is reproduced; the core is not.
+    pub core_tile: u32,
+    pub background_terrain: u32,
+    /// The region cells, in packed row order.
+    pub region: Vec<(u32, u32)>,
+    /// The ring cells to write. Empty unless `ring_outcome` is
+    /// [`RingOutcome::Blended`], and clipped to the map, so a region against an
+    /// edge simply has fewer of them.
+    pub ring: Vec<RingCell>,
+    pub ring_outcome: RingOutcome,
+}
+
+/// What a paint actually did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerrainPaint {
+    pub plan: TerrainPaintPlan,
+    /// Cells whose eight bytes changed, region and ring together.
+    pub cells_changed: usize,
+    /// Ring cells written. Zero for the three backgrounds with no uniform ring, and for a paint of
+    /// the background's own terrain.
+    pub ring_cells_written: usize,
+}
+
 /// The engine's terrain-sprite-type table: the name a script registers, and the id it gets.
 ///
 /// **Observed in gameplay, 2026-09-17.** `terrainsprites` is a dict keyed by name -- shipped script
@@ -1452,6 +1666,199 @@ impl MapAsset {
             cell.tag = (cell.tag & CELL_TAG_HIGH_FLAG) | tile_index;
         }
         Ok(())
+    }
+
+    /// Decide a `setterrain`-style paint of a rectangular region, without touching the map.
+    ///
+    /// **This reproduces the measured half of `setterrain` and refuses the rest.** The
+    /// 2026-09-17 `terrainrings` run established one offset table plus a per-background anchor --
+    /// `N-13 S-14 W-11 E-12 NW+3 NE+4 SW+2 SE+1` -- for the eight blending backgrounds, and
+    /// established that three backgrounds do not produce a uniform ring at all. Everything outside
+    /// that is a [`PaintRefusal`] rather than a guess. In particular the background is read from
+    /// the ring cells themselves and must be one known terrain: on shipped maps, which are painted
+    /// from tile families, that will usually refuse, and refusing is the honest answer because the
+    /// rule was only ever measured against a uniform background.
+    pub fn plan_terrain_paint(
+        &self,
+        rect: (u32, u32, u32, u32),
+        terrain_type: u32,
+    ) -> Result<TerrainPaintPlan, PaintRefusal> {
+        let (x0, y0, x1, y1) = rect;
+        if x0 > x1 || y0 > y1 {
+            return Err(PaintRefusal::NotARectangle { rect });
+        }
+        if x1 >= self.width || y1 >= self.height {
+            return Err(PaintRefusal::OutsideMap {
+                rect,
+                width: self.width,
+                height: self.height,
+            });
+        }
+        let core_tile = terrain_type_base_tile(terrain_type)
+            .ok_or(PaintRefusal::NotATerrainType { terrain_type })?;
+        if core_tile >= TILE_INDEX_LIMIT {
+            return Err(PaintRefusal::RingTileOutsideTagField {
+                tile_index: core_tile,
+            });
+        }
+        // Road first, before any background is read: as a painted terrain it is ragged on every
+        // background, so no background makes it expressible.
+        if matches!(
+            transition_behaviour(terrain_type),
+            Some(TransitionBehaviour::PerPaintedTerrain)
+        ) {
+            return Err(PaintRefusal::PaintedRoadIsRagged);
+        }
+
+        // The ring is the perimeter of the region grown by one, clipped to the map. A region
+        // against an edge simply has fewer ring cells; there is nothing off-map to blend into.
+        let mut ring_positions: Vec<((u32, u32), (i32, i32))> = Vec::new();
+        for ny in (i64::from(y0) - 1)..=(i64::from(y1) + 1) {
+            for nx in (i64::from(x0) - 1)..=(i64::from(x1) + 1) {
+                let direction = (
+                    step_towards(nx, i64::from(x0), i64::from(x1)),
+                    step_towards(ny, i64::from(y0), i64::from(y1)),
+                );
+                if direction == (0, 0) {
+                    continue;
+                }
+                let (Ok(x), Ok(y)) = (u32::try_from(nx), u32::try_from(ny)) else {
+                    continue;
+                };
+                if x >= self.width || y >= self.height {
+                    continue;
+                }
+                ring_positions.push(((x, y), direction));
+            }
+        }
+        if ring_positions.is_empty() {
+            return Err(PaintRefusal::RegionCoversMap);
+        }
+
+        let region: Vec<(u32, u32)> = (y0..=y1)
+            .flat_map(|y| (x0..=x1).map(move |x| (x, y)))
+            .collect();
+
+        // The background comes from the ring, because the ring is what the transition tiles land
+        // in. The region is then held to the same terrain: the measurement painted onto a uniform
+        // background, and a region that already contains a boundary is a different experiment.
+        let ((first_x, first_y), _) = ring_positions[0];
+        let (background_terrain, _) = self.background_terrain_at(first_x, first_y)?;
+        for (x, y) in ring_positions.iter().map(|(at, _)| *at).chain(region.iter().copied()) {
+            let (terrain, tile_index) = self.background_terrain_at(x, y)?;
+            if terrain != background_terrain {
+                return Err(PaintRefusal::BackgroundNotUniform {
+                    at: (x, y),
+                    tile_index,
+                    terrain_type: terrain,
+                    background_terrain,
+                });
+            }
+        }
+
+        let ring_outcome = if terrain_type == background_terrain {
+            RingOutcome::SameTerrainAsBackground
+        } else {
+            match transition_behaviour(background_terrain) {
+                Some(TransitionBehaviour::Blends { .. }) => RingOutcome::Blended {
+                    tiles: transition_ring(background_terrain, terrain_type).ok_or(
+                        PaintRefusal::NotATerrainType {
+                            terrain_type: background_terrain,
+                        },
+                    )?,
+                },
+                Some(TransitionBehaviour::NoTransition) => RingOutcome::BackgroundBlendsNothing,
+                Some(TransitionBehaviour::PerPaintedTerrain) => {
+                    return Err(PaintRefusal::RingDependsOnPaintedTerrain {
+                        background_terrain,
+                    });
+                }
+                None => {
+                    return Err(PaintRefusal::NotATerrainType {
+                        terrain_type: background_terrain,
+                    });
+                }
+            }
+        };
+
+        let mut ring = Vec::new();
+        if let RingOutcome::Blended { tiles } = ring_outcome {
+            for ((x, y), direction) in ring_positions {
+                let tile_index = ring_tile(&tiles, direction)
+                    .ok_or(PaintRefusal::DirectionMissingFromTable { direction })?;
+                if tile_index >= TILE_INDEX_LIMIT {
+                    return Err(PaintRefusal::RingTileOutsideTagField { tile_index });
+                }
+                ring.push(RingCell {
+                    x,
+                    y,
+                    direction,
+                    tile_index,
+                });
+            }
+        }
+
+        Ok(TerrainPaintPlan {
+            rect,
+            terrain_type,
+            core_tile,
+            background_terrain,
+            region,
+            ring,
+            ring_outcome,
+        })
+    }
+
+    /// Paint a rectangular region and write the measured transition ring around it.
+    ///
+    /// Nothing is written on a refusal: the whole decision is made by
+    /// [`plan_terrain_paint`](Self::plan_terrain_paint) before the first cell is touched.
+    ///
+    /// The unknown fields are untouched, as everywhere else in this writer: only the tile field of
+    /// the tag moves, tag bit `0x00800000` is preserved per cell, and the elevation word and the
+    /// whole trailing section are left exactly as they were read.
+    pub fn paint_terrain(
+        &mut self,
+        rect: (u32, u32, u32, u32),
+        terrain_type: u32,
+    ) -> Result<TerrainPaint, MapError> {
+        let plan = self.plan_terrain_paint(rect, terrain_type)?;
+        let mut cells_changed = 0_usize;
+        let mut writes: Vec<(u32, u32, u32)> = plan
+            .region
+            .iter()
+            .map(|(x, y)| (*x, *y, plan.core_tile))
+            .collect();
+        writes.extend(plan.ring.iter().map(|cell| (cell.x, cell.y, cell.tile_index)));
+        for (x, y, tile_index) in &writes {
+            let index = self.cell_index_checked(*x, *y)?;
+            let before = self.cells[index].tag;
+            self.set_tile(*x, *y, *tile_index)?;
+            if self.cells[index].tag != before {
+                cells_changed += 1;
+            }
+        }
+        let ring_cells_written = plan.ring.len();
+        Ok(TerrainPaint {
+            plan,
+            cells_changed,
+            ring_cells_written,
+        })
+    }
+
+    /// The terrain type and tile of one cell, for background purposes.
+    fn background_terrain_at(&self, x: u32, y: u32) -> Result<(u32, u32), PaintRefusal> {
+        let tile_index = self
+            .cell(x, y)
+            .ok_or(PaintRefusal::OutsideMap {
+                rect: (x, y, x, y),
+                width: self.width,
+                height: self.height,
+            })?
+            .tile_index();
+        let terrain = base_tile_terrain_type(tile_index)
+            .ok_or(PaintRefusal::BackgroundTileUnrecognised { at: (x, y), tile_index })?;
+        Ok((terrain, tile_index))
     }
 
     /// Set or clear tag bit `0x00800000` on one cell.
@@ -2495,5 +2902,281 @@ mod tests {
         assert!(map.set_tile(2, 4, 15).is_err());
         assert!(map.place_sprite(2, 4, 470).is_err());
         assert!(map.set_elevation(2, 4, 1.0).is_err());
+    }
+
+    // --- setterrain-style painting -------------------------------------------------------
+
+    /// A **non-square** map every cell of which holds `tile`, with tag bit `0x00800000` set and a
+    /// per-cell elevation, so a paint that clobbered either is visible.
+    ///
+    /// Non-square because every shipped map is square and that hid a transposed index for months;
+    /// 11x3 also makes the N/S rows and the W/E columns different byte distances apart, so a paint
+    /// that swapped an axis cannot land on the right bytes by accident.
+    fn uniform_map(width: u32, height: u32, tile: u32) -> Vec<u8> {
+        let mut source = Vec::new();
+        source.extend_from_slice(&0x6c_u32.to_le_bytes());
+        source.extend_from_slice(&width.to_le_bytes());
+        source.extend_from_slice(&height.to_le_bytes());
+        source.extend_from_slice(&8_u32.to_le_bytes());
+        for index in 0..width * height {
+            source.extend_from_slice(&(tile | CELL_TAG_HIGH_FLAG).to_le_bytes());
+            source.extend_from_slice(&(index as f32).to_bits().to_le_bytes());
+        }
+        source.extend_from_slice(&0_u32.to_le_bytes());
+        source.extend_from_slice(&1_u32.to_le_bytes());
+        source
+    }
+
+    /// The tag word at `16 + (y * width + x) * 8`, read out of the encoded bytes.
+    ///
+    /// Deliberately not `map.cell(x, y)`: reading back through the accessor the writer used agrees
+    /// with a transposed writer just as happily.
+    fn tag_at(bytes: &[u8], width: u32, x: u32, y: u32) -> u32 {
+        let offset = 16 + ((y * width + x) as usize) * 8;
+        u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    fn elevation_at(bytes: &[u8], width: u32, x: u32, y: u32) -> f32 {
+        let offset = 16 + ((y * width + x) as usize) * 8 + 4;
+        f32::from_bits(u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()))
+    }
+
+    /// The whole measured rule, on a **water** background rather than the land one the first
+    /// measurement used: the ring tiles must come from water's anchor 63, not from land's 15, and
+    /// not from water's representative tile 392 either -- 392 is 8 mod 48 and is the wrong block.
+    ///
+    /// Asserted at computed byte offsets, direction by direction. `N` and `S` differ by one
+    /// (`-13` against `-14`) and so do `W` and `E`, which is what makes an axis flip or a sign flip
+    /// fail here rather than pass by symmetry.
+    #[test]
+    fn a_painted_blob_lands_the_measured_ring_at_computed_byte_offsets() {
+        let (width, height) = (11, 3);
+        let source = uniform_map(width, height, 392);
+        let mut map = MapAsset::parse(&source).unwrap();
+
+        // A 3x1 run of land in the middle row, far enough from every edge to have a full ring.
+        let paint = map.paint_terrain((4, 1, 6, 1), 6).unwrap();
+        assert_eq!(paint.plan.background_terrain, 1);
+        assert_eq!(paint.plan.core_tile, 15);
+        assert_eq!(
+            paint.plan.ring_outcome,
+            super::RingOutcome::Blended {
+                tiles: [50, 49, 52, 51, 66, 67, 65, 64]
+            }
+        );
+        assert_eq!(paint.ring_cells_written, 12);
+        assert_eq!(paint.cells_changed, 15);
+
+        let bytes = map.to_bytes().unwrap();
+        let flag = CELL_TAG_HIGH_FLAG;
+        // The region: the terrain's representative tile, and the unknown bit still set.
+        for x in 4..=6 {
+            assert_eq!(tag_at(&bytes, width, x, 1), 15 | flag, "region x={x}");
+        }
+        // North is the row above and south the row below, and they are *different* tiles.
+        for x in 4..=6 {
+            assert_eq!(tag_at(&bytes, width, x, 0), 50 | flag, "N x={x}");
+            assert_eq!(tag_at(&bytes, width, x, 2), 49 | flag, "S x={x}");
+        }
+        assert_eq!(tag_at(&bytes, width, 3, 1), 52 | flag, "W");
+        assert_eq!(tag_at(&bytes, width, 7, 1), 51 | flag, "E");
+        assert_eq!(tag_at(&bytes, width, 3, 0), 66 | flag, "NW");
+        assert_eq!(tag_at(&bytes, width, 7, 0), 67 | flag, "NE");
+        assert_eq!(tag_at(&bytes, width, 3, 2), 65 | flag, "SW");
+        assert_eq!(tag_at(&bytes, width, 7, 2), 64 | flag, "SE");
+        // Two cells out is background, so the paint's footprint is exactly the region plus one.
+        for y in 0..height {
+            for x in [0, 1, 2, 8, 9, 10] {
+                assert_eq!(tag_at(&bytes, width, x, y), 392 | flag, "({x}, {y})");
+            }
+        }
+        // Nothing but the tile field moved: elevations and the tail are as they were read.
+        for y in 0..height {
+            for x in 0..width {
+                assert_eq!(elevation_at(&bytes, width, x, y), (y * width + x) as f32);
+            }
+        }
+        assert_eq!(&bytes[map.trailing_offset()..], &source[source.len() - 8..]);
+    }
+
+    /// The ring is clipped to the map, not wrapped round it. A region in the corner has a ring on
+    /// two sides only, and on a non-square fixture a wrapped W would land in the row above.
+    #[test]
+    fn a_region_against_the_edge_has_its_ring_clipped_not_wrapped() {
+        let (width, height) = (5, 3);
+        let source = uniform_map(width, height, 15);
+        let mut map = MapAsset::parse(&source).unwrap();
+
+        let paint = map.paint_terrain((0, 0, 1, 0), 1).unwrap();
+        // Ring cells: E, SE and two S. No N, no W, no NW, no NE, no SW.
+        assert_eq!(paint.ring_cells_written, 4);
+        let bytes = map.to_bytes().unwrap();
+        let flag = CELL_TAG_HIGH_FLAG;
+        assert_eq!(tag_at(&bytes, width, 0, 0), 392 | flag);
+        assert_eq!(tag_at(&bytes, width, 1, 0), 392 | flag);
+        assert_eq!(tag_at(&bytes, width, 2, 0), 3 | flag, "E of a land background");
+        assert_eq!(tag_at(&bytes, width, 0, 1), 1 | flag, "S");
+        assert_eq!(tag_at(&bytes, width, 1, 1), 1 | flag, "S");
+        assert_eq!(tag_at(&bytes, width, 2, 1), 16 | flag, "SE");
+        // The far end of the first row, where a wrapped W would have landed, is untouched.
+        assert_eq!(tag_at(&bytes, width, 4, 0), 15 | flag);
+        assert_eq!(tag_at(&bytes, width, 3, 1), 15 | flag);
+    }
+
+    /// `tt_dirt` and `tt_impassible` blend nothing at all. The region is painted and the ring is
+    /// left alone -- which is what the engine does, not a fallback.
+    #[test]
+    fn the_two_backgrounds_that_blend_nothing_get_a_painted_region_and_no_ring() {
+        for (background_terrain, background_tile) in [(0_u32, 175_u32), (10, 469)] {
+            let (width, height) = (5, 3);
+            let source = uniform_map(width, height, background_tile);
+            let mut map = MapAsset::parse(&source).unwrap();
+            let paint = map.paint_terrain((2, 1, 3, 1), 1).unwrap();
+            assert_eq!(paint.plan.background_terrain, background_terrain);
+            assert_eq!(paint.plan.ring_outcome, super::RingOutcome::BackgroundBlendsNothing);
+            assert_eq!(paint.ring_cells_written, 0);
+            assert_eq!(paint.cells_changed, 2);
+            let bytes = map.to_bytes().unwrap();
+            let flag = CELL_TAG_HIGH_FLAG;
+            assert_eq!(tag_at(&bytes, width, 2, 1), 392 | flag);
+            assert_eq!(tag_at(&bytes, width, 3, 1), 392 | flag);
+            // Every neighbour keeps the background tile.
+            for (x, y) in [(1, 1), (4, 1), (2, 0), (3, 0), (2, 2), (3, 2), (1, 0), (4, 2)] {
+                assert_eq!(
+                    tag_at(&bytes, width, x, y),
+                    background_tile | flag,
+                    "terrain {background_terrain} must not blend at ({x}, {y})"
+                );
+            }
+        }
+    }
+
+    /// Painting a terrain onto itself: the run's own control row produced a ring of pure
+    /// background tile, so there is no ring to write and nothing changes at all.
+    #[test]
+    fn painting_a_terrain_onto_itself_writes_no_ring() {
+        let source = uniform_map(5, 3, 15);
+        let mut map = MapAsset::parse(&source).unwrap();
+        let paint = map.paint_terrain((2, 1, 3, 1), 6).unwrap();
+        assert_eq!(paint.plan.ring_outcome, super::RingOutcome::SameTerrainAsBackground);
+        assert_eq!(paint.ring_cells_written, 0);
+        assert_eq!(paint.cells_changed, 0);
+        assert_eq!(map.to_bytes().unwrap(), source);
+    }
+
+    /// The three cases the 2026-09-17 run measured as *not* a direction table, and the cases it
+    /// never measured at all. Each must refuse, and refuse without touching the map.
+    #[test]
+    fn the_unmeasured_and_ragged_cases_refuse_and_write_nothing() {
+        let land = uniform_map(11, 3, 15);
+        let expect_refusal = |source: &[u8], rect, terrain, expected: super::PaintRefusal| {
+            let mut map = MapAsset::parse(source).unwrap();
+            let before = map.to_bytes().unwrap();
+            assert_eq!(map.plan_terrain_paint(rect, terrain).unwrap_err(), expected);
+            let error = map.paint_terrain(rect, terrain).unwrap_err();
+            assert_eq!(error.to_string(), expected.to_string());
+            assert_eq!(
+                map.to_bytes().unwrap(),
+                before,
+                "a refused paint must leave the map untouched"
+            );
+        };
+
+        // Road as the painted terrain: ragged along every edge on all seven backgrounds.
+        expect_refusal(&land, (4, 1, 6, 1), 9, super::PaintRefusal::PaintedRoadIsRagged);
+        // Road as the background: the ring depends on the painted terrain.
+        let road = uniform_map(11, 3, 459);
+        expect_refusal(
+            &road,
+            (4, 1, 6, 1),
+            1,
+            super::PaintRefusal::RingDependsOnPaintedTerrain { background_terrain: 9 },
+        );
+        // A background tile that is not any type's representative tile: the transition tile 2, as
+        // an earlier paint would have left it. Repainting next to a boundary is unmeasured.
+        let mut blended = MapAsset::parse(&land).unwrap();
+        blended.set_tile(3, 0, 2).unwrap();
+        let blended = blended.to_bytes().unwrap();
+        expect_refusal(
+            &blended,
+            (4, 1, 6, 1),
+            1,
+            super::PaintRefusal::BackgroundTileUnrecognised { at: (3, 0), tile_index: 2 },
+        );
+        // A neighbourhood holding two known terrains: also unmeasured.
+        let mut boundary = MapAsset::parse(&land).unwrap();
+        boundary.set_tile(7, 1, 392).unwrap();
+        let boundary = boundary.to_bytes().unwrap();
+        expect_refusal(
+            &boundary,
+            (4, 1, 6, 1),
+            1,
+            super::PaintRefusal::BackgroundNotUniform {
+                at: (7, 1),
+                tile_index: 392,
+                terrain_type: 1,
+                background_terrain: 6,
+            },
+        );
+        // And the input checks, on both axes of a non-square map.
+        expect_refusal(
+            &land,
+            (4, 1, 4, 4),
+            1,
+            super::PaintRefusal::OutsideMap { rect: (4, 1, 4, 4), width: 11, height: 3 },
+        );
+        expect_refusal(
+            &land,
+            (6, 1, 4, 1),
+            1,
+            super::PaintRefusal::NotARectangle { rect: (6, 1, 4, 1) },
+        );
+        expect_refusal(&land, (4, 1, 6, 1), 11, super::PaintRefusal::NotATerrainType { terrain_type: 11 });
+        // A region covering the map has no ring, so there is no background to read.
+        expect_refusal(&land, (0, 0, 10, 2), 1, super::PaintRefusal::RegionCoversMap);
+    }
+
+    /// A paint whose region is wider than one cell blends per direction, not per cell: the whole
+    /// north edge takes one tile. This is what the measured table says and what a per-cell
+    /// neighbour count would get wrong.
+    #[test]
+    fn a_wide_region_takes_one_tile_per_direction_along_each_edge() {
+        let (width, height) = (11, 5);
+        let source = uniform_map(width, height, 111);
+        let mut map = MapAsset::parse(&source).unwrap();
+        let paint = map.paint_terrain((3, 2, 7, 2), 5).unwrap();
+        assert_eq!(paint.plan.background_terrain, 2);
+        let bytes = map.to_bytes().unwrap();
+        let flag = CELL_TAG_HIGH_FLAG;
+        // Desert anchor 111: N 98, S 97, W 100, E 99, NW 114, NE 115, SW 113, SE 112.
+        for x in 3..=7 {
+            assert_eq!(tag_at(&bytes, width, x, 1), 98 | flag, "N x={x}");
+            assert_eq!(tag_at(&bytes, width, x, 3), 97 | flag, "S x={x}");
+            assert_eq!(tag_at(&bytes, width, x, 2), 255 | flag, "core x={x}");
+        }
+        assert_eq!(tag_at(&bytes, width, 2, 1), 114 | flag, "NW");
+        assert_eq!(tag_at(&bytes, width, 8, 1), 115 | flag, "NE");
+        assert_eq!(tag_at(&bytes, width, 2, 3), 113 | flag, "SW");
+        assert_eq!(tag_at(&bytes, width, 8, 3), 112 | flag, "SE");
+        // Row 0 and row 4 are two cells out and untouched.
+        for x in 0..width {
+            assert_eq!(tag_at(&bytes, width, x, 0), 111 | flag);
+            assert_eq!(tag_at(&bytes, width, x, 4), 111 | flag);
+        }
+    }
+
+    /// The plan is the whole decision, and the caller can read it without the map being touched.
+    #[test]
+    fn planning_a_paint_changes_nothing() {
+        let source = uniform_map(11, 3, 392);
+        let map = MapAsset::parse(&source).unwrap();
+        let plan = map.plan_terrain_paint((4, 1, 6, 1), 6).unwrap();
+        assert_eq!(plan.region, vec![(4, 1), (5, 1), (6, 1)]);
+        assert_eq!(plan.ring.len(), 12);
+        // One cell per direction per ring position, and every direction represented.
+        let directions: std::collections::BTreeSet<(i32, i32)> =
+            plan.ring.iter().map(|cell| cell.direction).collect();
+        assert_eq!(directions.len(), 8);
+        assert_eq!(map.to_bytes().unwrap(), source);
     }
 }

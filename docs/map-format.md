@@ -401,15 +401,43 @@ Two rules make that possible while most of this format is still Unknown:
 | Fill every cell with a terrain type | Reproduces `clearmap` |
 | Set a cell's elevation word | Writes the word; its runtime units stay **Inferred** |
 | Place or remove a terrain sprite | Round-trips byte-exactly, as the engine's own does |
-| **Blend terrain transitions** | **Not offered.** See below |
+| **Paint a region and blend its transition ring** | Reproduces `setterrain`'s **ring** on a uniform, recognised background; refuses everything else. See below |
 | Create a map from nothing | **Not offered.** See below |
 
-**`setterrain` is deliberately not reproduced.** The engine's `setterrain` writes the cell *and*
-blends transition tiles into its 8-neighbourhood; the 2026-09-17 probe measured the footprint —
-rows 11, 12 and 13 across `x = 7..29` for a run painted along `y = 12` — but **not which tiles it
-blends in**. Approximating that would put plausible-looking wrong tiles into a map and there is no
-test here that could tell. `--map-set-terrain` writes one cell, prints a note saying so, and the
-blend stays open on [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
+**`setterrain`'s ring is now reproduced, and only its ring.** `--map-paint-terrain IN X0 Y0 X1 Y1
+TERRAIN OUT` paints a rectangle and writes the measured transition ring one cell outside it, from
+[the offset table](#setterrain-transition-tiles-one-offset-table-one-anchor-per-background): one
+tile per direction, `anchor(background) + offset(direction)`. What it does **not** reproduce is the
+*core*: the engine picks its core tile from a family — terrain 6 onto a tile-15 background wrote
+tiles in `385..391` — and the region here is filled with the type's representative tile instead,
+which is `forcetexture` semantics. The blend is measured; the core is not, and the command says so
+on stderr every time.
+
+Everything the run did not establish is **refused**, not approximated, because plausible-looking
+wrong tiles in a map are exactly what no test here could catch:
+
+| Case | Why |
+| --- | --- |
+| `tt_road` as the painted terrain | Ragged along every edge on all seven backgrounds where it blends — not one tile per direction |
+| `tt_road` as the background | Its ring depends on the painted terrain and only its edges change |
+| A background cell whose tile is not a type's representative tile | The background terrain is then unknown, and the rule was measured against a known background |
+| Two terrains in the 8-neighbourhood | Painting next to an existing boundary is unmeasured |
+| A region covering the whole map | No ring, so no background to read; that is `--map-fill-terrain` |
+
+`tt_dirt` (0) and `tt_impassible` (10) are not refused: the region is painted and **no** ring is
+written, which is what the engine does. Painting a terrain onto itself writes nothing at all — the
+run's own control row produced a ring of pure background tile.
+
+**On shipped maps this refuses almost everywhere, and that is the honest answer.** Real maps are
+painted from tile families, and only the eleven representative slots are in the terrain table, so
+`--map-paint-terrain` on `URAK.scn` reports `tile 31 at (39, 39) is not any terrain type's
+representative tile`. The command is usable on uniform ground — a `--map-create` map, or a
+`--map-fill-terrain` one — and says why it will not guess anywhere else.
+
+`--map-set-terrain` is unchanged and still offered: it writes one cell, `forcetexture`-style, and it
+is the only one of the two that works where the neighbourhood cannot be read. What remains open on
+[issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4) is the core-tile family,
+road in either role, and painting across an existing boundary.
 
 **There is a create-from-scratch mode, `--map-create`, and the engine accepts what it produces.**
 It was held back until the [`mapload` run](#engine-acceptance-measured) because three fields would
@@ -771,6 +799,7 @@ target/release/lom-asset-viewer --map-set-tile IN.scn 10 20 392 OUT.scn
 target/release/lom-asset-viewer --map-set-terrain IN.scn 10 20 water OUT.scn
 target/release/lom-asset-viewer --map-set-elevation IN.scn 10 20 2.5 OUT.scn
 target/release/lom-asset-viewer --map-fill-terrain IN.scn water OUT.scn
+target/release/lom-asset-viewer --map-paint-terrain IN.scn 10 20 14 22 water OUT.scn
 target/release/lom-asset-viewer --map-place-sprite IN.scn 10 20 470 OUT.scn
 target/release/lom-asset-viewer --map-remove-sprite IN.scn 200 OUT.scn
 target/release/lom-asset-viewer --view-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'

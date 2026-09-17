@@ -18,10 +18,10 @@ use lom_asset_viewer::imp::{
     ImpValidationException, imp_member_basename, normalize_imp_member,
 };
 use lom_asset_viewer::map::{
-    GENERATED_HEADER_WORD, MapAsset, ROAD_TERRAIN, TERRAIN_SPRITE_ARRAYS, TERRAIN_SPRITE_NAME_ONLY,
-    TERRAIN_SPRITE_TYPES, TERRAIN_TYPES, TRANSITION_RING_OFFSETS, interior_tile_family,
-    road_background_ring, terrain_sprite_name, terrain_sprite_type, terrain_type_base_tile,
-    transition_anchor, transition_ring,
+    GENERATED_HEADER_WORD, MapAsset, ROAD_TERRAIN, RingOutcome, TERRAIN_SPRITE_ARRAYS,
+    TERRAIN_SPRITE_NAME_ONLY, TERRAIN_SPRITE_TYPES, TERRAIN_TYPES, TRANSITION_RING_OFFSETS,
+    TerrainPaintPlan, interior_tile_family, road_background_ring, terrain_sprite_name,
+    terrain_sprite_type, terrain_type_base_tile, transition_anchor, transition_ring,
 };
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
@@ -50,6 +50,13 @@ enum MapEdit {
     SetTerrain { x: u32, y: u32, terrain_type: u32 },
     SetElevation { x: u32, y: u32, value: f32 },
     FillTerrain { terrain_type: u32 },
+    /// Paint a rectangular region and blend the measured transition ring around it.
+    ///
+    /// This is the reproduced half of `setterrain`. `SetTerrain` stays exactly what it was --
+    /// `forcetexture` on one cell -- because forcing a slot is a different operation, not a worse
+    /// one, and it is the only one that works on a map whose neighbourhood this project cannot
+    /// read.
+    PaintTerrain { rect: (u32, u32, u32, u32), terrain_type: u32 },
     PlaceSprite { x: u32, y: u32, sprite_type: u32 },
     RemoveSprite { instance_id: u32 },
     /// Parse and re-encode, changing nothing.
@@ -499,6 +506,22 @@ fn parse_args() -> Result<Command, String> {
                 output: args[3].clone().into(),
             })
         }
+        "--map-paint-terrain" => {
+            require_len(&args, 8)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::PaintTerrain {
+                    rect: (
+                        parse_u32(&args[2])?,
+                        parse_u32(&args[3])?,
+                        parse_u32(&args[4])?,
+                        parse_u32(&args[5])?,
+                    ),
+                    terrain_type: parse_terrain_type(&args[6])?,
+                },
+                output: args[7].clone().into(),
+            })
+        }
         "--map-place-sprite" => {
             require_len(&args, 6)?;
             Ok(Command::EditMap {
@@ -773,7 +796,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -3733,6 +3756,28 @@ fn apply_map_edit(map: &mut MapAsset, edit: MapEdit) -> Result<String, String> {
                 map.cells.len()
             ))
         }
+        MapEdit::PaintTerrain { rect, terrain_type } => {
+            let paint = map
+                .paint_terrain(rect, terrain_type)
+                .map_err(|error| error.to_string())?;
+            let (x0, y0, x1, y1) = rect;
+            // The blend is measured; the core tile is not. Say so here rather than only in a
+            // document, because the person about to write this into a game directory is the one
+            // who needs to know which half of `setterrain` this reproduces.
+            eprintln!(
+                "note: the ring is the measured one -- one offset table on the background's \
+                 anchor, from the 2026-09-17 terrainrings run. The region is filled with the \
+                 terrain's REPRESENTATIVE tile, which is forcetexture semantics; the engine's own \
+                 setterrain picks its core tile from a family (terrain 6 on a tile-15 background \
+                 wrote 385..391) and which member it picks where is unmeasured."
+            );
+            Ok(format!(
+                "paint-terrain\t({x0}, {y0})..({x1}, {y1})\tterrain:{terrain_type}\ttile:{}\t{}\tcells-changed:{}",
+                paint.plan.core_tile,
+                paint_ring_summary(&paint.plan),
+                paint.cells_changed,
+            ))
+        }
         MapEdit::PlaceSprite {
             x,
             y,
@@ -3874,6 +3919,30 @@ fn flag_region_cells(
         .collect())
 }
 
+/// How a paint's ring turned out, for the one line the CLI prints.
+///
+/// The three no-ring outcomes are named separately rather than reported as "0 cells", because
+/// "the engine blends nothing onto dirt" and "your rectangle was already that terrain" are
+/// different facts and a caller cannot tell them apart from a count.
+fn paint_ring_summary(plan: &TerrainPaintPlan) -> String {
+    let background = plan.background_terrain;
+    match plan.ring_outcome {
+        RingOutcome::Blended { tiles } => format!(
+            "background:{background}\tring:blended\tring-tiles:{}\tring-cells:{}",
+            tiles.iter().map(u32::to_string).collect::<Vec<_>>().join(","),
+            plan.ring.len()
+        ),
+        RingOutcome::SameTerrainAsBackground => format!(
+            "background:{background}\tring:none (the painted terrain is the background \
+             terrain)\tring-cells:0"
+        ),
+        RingOutcome::BackgroundBlendsNothing => format!(
+            "background:{background}\tring:none (this background blends nothing, as the engine \
+             does)\tring-cells:0"
+        ),
+    }
+}
+
 fn verify_map_edit(map: &MapAsset, before: &MapAsset, edit: MapEdit) -> Result<(), String> {
     let cell_tile = |x: u32, y: u32| -> Result<u32, String> {
         map.cell(x, y)
@@ -3928,6 +3997,52 @@ fn verify_map_edit(map: &MapAsset, before: &MapAsset, edit: MapEdit) -> Result<(
             {
                 return Err(format!(
                     "refusing to write: cell {index} did not take the fill tile {expected}"
+                ));
+            }
+        }
+        MapEdit::PaintTerrain { rect, terrain_type } => {
+            // Planned against `before`, deliberately: the plan reads the background out of the
+            // ring cells, and after the paint those cells hold transition tiles. Re-planning on
+            // the written map would ask a different question and answer it happily.
+            let plan = before
+                .plan_terrain_paint(rect, terrain_type)
+                .map_err(|refusal| format!("refusing to write: {refusal}"))?;
+            for (x, y) in &plan.region {
+                let observed = cell_tile(*x, *y)?;
+                if observed != plan.core_tile {
+                    return Err(format!(
+                        "refusing to write: expected tile {} at ({x}, {y}) in the painted region                          but read {observed}",
+                        plan.core_tile
+                    ));
+                }
+            }
+            for ring in &plan.ring {
+                let observed = cell_tile(ring.x, ring.y)?;
+                if observed != ring.tile_index {
+                    let (dx, dy) = ring.direction;
+                    let (x, y) = (ring.x, ring.y);
+                    return Err(format!(
+                        "refusing to write: expected the ({dx}, {dy}) transition tile {} at \
+                         ({x}, {y}) but read {observed}",
+                        ring.tile_index
+                    ));
+                }
+            }
+            // And nothing outside the region and its ring moved. This is the check that catches a
+            // ring whose geometry strayed -- a wrapped edge, an off-by-one, a paint that blended
+            // into a background the engine leaves alone.
+            let wanted: std::collections::BTreeSet<usize> = plan
+                .region
+                .iter()
+                .copied()
+                .chain(plan.ring.iter().map(|ring| (ring.x, ring.y)))
+                .filter_map(|(x, y)| map.cell_index(x, y))
+                .collect();
+            let changed: std::collections::BTreeSet<usize> =
+                changed_cell_indexes(before, map).into_iter().collect();
+            if let Some(stray) = changed.difference(&wanted).next() {
+                return Err(format!(
+                    "refusing to write: cell {stray} changed but is outside the painted region                      and its ring"
                 ));
             }
         }
@@ -5114,6 +5229,145 @@ mod tests {
         assert!(
             !output.exists(),
             "an edit that could not be applied must not leave a partial file"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The CLI is the layer that writes into a game directory with no backup, so the paint verb
+    /// gets its own end-to-end test and not only a library one.
+    ///
+    /// `editable_map` is uniform tile 15, which is `tt_land`, so the ring comes from land's
+    /// anchor 15: N 2, S 1, W 4, E 3, NW 18, NE 19, SW 17, SE 16. Read back at computed byte
+    /// offsets on a **non-square** 11x3 map.
+    #[test]
+    fn painting_through_the_cli_writes_the_measured_ring() {
+        let dir = scratch_dir("map-paint");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(11, 3)).unwrap();
+
+        edit_map(
+            &input,
+            MapEdit::PaintTerrain {
+                rect: (4, 1, 6, 1),
+                terrain_type: 1,
+            },
+            &output,
+        )
+        .unwrap();
+
+        let bytes = fs::read(&output).unwrap();
+        let tag_at = |x: u32, y: u32| {
+            let offset = 16 + ((y * 11 + x) as usize) * 8;
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+        };
+        for x in 4..=6 {
+            assert_eq!(tag_at(x, 1), 392, "region x={x}");
+            assert_eq!(tag_at(x, 0), 2, "N x={x}");
+            assert_eq!(tag_at(x, 2), 1, "S x={x}");
+        }
+        assert_eq!(tag_at(3, 1), 4, "W");
+        assert_eq!(tag_at(7, 1), 3, "E");
+        assert_eq!(tag_at(3, 0), 18, "NW");
+        assert_eq!(tag_at(7, 0), 19, "NE");
+        assert_eq!(tag_at(3, 2), 17, "SW");
+        assert_eq!(tag_at(7, 2), 16, "SE");
+        // Everything two cells out is still background.
+        for y in 0..3 {
+            for x in [0, 1, 2, 8, 9, 10] {
+                assert_eq!(tag_at(x, y), 15, "({x}, {y})");
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A refused paint must leave no file at all, like every other refused edit: the output
+    /// directory is the game's own `map/`.
+    #[test]
+    fn a_refused_paint_writes_no_file() {
+        let dir = scratch_dir("map-paint-refused");
+        let input = dir.join("in.scn");
+        fs::write(&input, editable_map(11, 3)).unwrap();
+
+        // Road as the painted terrain is ragged on every measured background.
+        let output = dir.join("road.scn");
+        let error = edit_map(
+            &input,
+            MapEdit::PaintTerrain { rect: (4, 1, 6, 1), terrain_type: 9 },
+            &output,
+        )
+        .unwrap_err();
+        assert!(error.contains("ragged"), "{error}");
+        assert!(!output.exists());
+
+        // A rectangle off the short axis of a non-square map.
+        let output = dir.join("outside.scn");
+        let error = edit_map(
+            &input,
+            MapEdit::PaintTerrain { rect: (1, 1, 1, 4), terrain_type: 1 },
+            &output,
+        )
+        .unwrap_err();
+        assert!(error.contains("outside this 11x3 map"), "{error}");
+        assert!(!output.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The verification arm has to *verify*. The `FlagRegion` arm shipped empty on an earlier
+    /// branch with a comment claiming the edit checked itself, so the many-cell verbs get a test
+    /// that hands the verifier a wrong map directly.
+    #[test]
+    fn the_paint_verifier_catches_a_wrong_ring_tile_and_a_stray_cell() {
+        let source = editable_map(11, 3);
+        let before = MapAsset::parse(&source).unwrap();
+        let edit = MapEdit::PaintTerrain { rect: (4, 1, 6, 1), terrain_type: 1 };
+
+        let mut good = MapAsset::parse(&source).unwrap();
+        good.paint_terrain((4, 1, 6, 1), 1).unwrap();
+        super::verify_map_edit(&good, &before, edit).unwrap();
+
+        // A ring tile that is not the measured one.
+        let mut wrong_ring = MapAsset::parse(&source).unwrap();
+        wrong_ring.paint_terrain((4, 1, 6, 1), 1).unwrap();
+        wrong_ring.set_tile(5, 0, 3).unwrap();
+        let error = super::verify_map_edit(&wrong_ring, &before, edit).unwrap_err();
+        assert!(error.contains("(0, -1) transition tile 2 at (5, 0)"), "{error}");
+
+        // A cell outside the region and its ring.
+        let mut stray = MapAsset::parse(&source).unwrap();
+        stray.paint_terrain((4, 1, 6, 1), 1).unwrap();
+        stray.set_tile(0, 0, 392).unwrap();
+        let error = super::verify_map_edit(&stray, &before, edit).unwrap_err();
+        assert!(error.contains("outside the painted region"), "{error}");
+
+        // A region cell that did not take the paint.
+        let mut unpainted = MapAsset::parse(&source).unwrap();
+        unpainted.paint_terrain((4, 1, 6, 1), 1).unwrap();
+        unpainted.set_tile(5, 1, 15).unwrap();
+        let error = super::verify_map_edit(&unpainted, &before, edit).unwrap_err();
+        assert!(error.contains("in the painted region"), "{error}");
+    }
+
+    /// `--map-set-terrain` is not replaced. Painting is an addition, and the single-cell
+    /// `forcetexture` behaviour is the only one that works where the background cannot be read.
+    #[test]
+    fn setting_one_cell_still_touches_exactly_one_cell() {
+        let dir = scratch_dir("map-set-terrain-unchanged");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(11, 3)).unwrap();
+
+        edit_map(
+            &input,
+            MapEdit::SetTerrain { x: 4, y: 1, terrain_type: 1 },
+            &output,
+        )
+        .unwrap();
+        let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(
+            written.cells.iter().filter(|cell| cell.tile_index() != 15).count(),
+            1,
+            "forcetexture semantics: one cell, no ring"
         );
         let _ = fs::remove_dir_all(&dir);
     }

@@ -78,6 +78,7 @@ target/release/lom-asset-viewer --map-set-tile      IN.scn X Y TILE_SLOT   OUT.s
 target/release/lom-asset-viewer --map-set-terrain   IN.scn X Y TERRAIN     OUT.scn
 target/release/lom-asset-viewer --map-set-elevation IN.scn X Y VALUE       OUT.scn
 target/release/lom-asset-viewer --map-fill-terrain  IN.scn TERRAIN         OUT.scn
+target/release/lom-asset-viewer --map-paint-terrain IN.scn X0 Y0 X1 Y1 TERRAIN OUT.scn
 target/release/lom-asset-viewer --map-place-sprite  IN.scn X Y SPRITE_TYPE OUT.scn
 target/release/lom-asset-viewer --map-sprite-types
 target/release/lom-asset-viewer --map-transition-rings
