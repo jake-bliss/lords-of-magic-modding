@@ -79,6 +79,8 @@ target/release/lom-asset-viewer --map-set-terrain   IN.scn X Y TERRAIN     OUT.s
 target/release/lom-asset-viewer --map-set-elevation IN.scn X Y VALUE       OUT.scn
 target/release/lom-asset-viewer --map-fill-terrain  IN.scn TERRAIN         OUT.scn
 target/release/lom-asset-viewer --map-place-sprite  IN.scn X Y SPRITE_TYPE OUT.scn
+target/release/lom-asset-viewer --map-sprite-types
+target/release/lom-asset-viewer --map-transition-rings
 target/release/lom-asset-viewer --map-remove-sprite IN.scn INSTANCE_ID     OUT.scn
 ```
 
@@ -99,9 +101,19 @@ makes maps from 32 to 1024 in steps of 32, then edit here.
 `TERRAIN` is a number `0..10` or a `gs\maplib.gs` name with or without its `tt_` prefix, so `1`,
 `tt_water` and `water` are the same thing.
 
-`--map-set-terrain` reproduces the editor's `forcetexture`: **one cell**. The engine's `setterrain`
-also blends transition tiles into the 8-neighbourhood, and which tiles it blends is unmeasured, so
-that is not approximated here.
+`SPRITE_TYPE` is likewise **a name or a raw id** — `castle1` works, and a near miss suggests
+alternatives. The names come from the engine's own `terrainsprites` dict, dumped on 2026-09-17, and
+are **profile-specific**: ids are assigned in script execution order, so a different script set
+shifts them. `--map-sprite-types` lists the table and both it and named placement say so.
+
+`--map-set-terrain` reproduces the editor's `forcetexture`: **one cell**, hard edge. The engine's
+`setterrain` also blends transition tiles into the 8-neighbourhood, and **that ring is now
+measured** for all eleven backgrounds — one offset table plus a per-background anchor. See
+[the transition rings](../../docs/map-format.md#setterrain-transition-tiles-one-offset-table-one-anchor-per-background)
+and `--map-transition-rings`.
+
+A painted region's **interior** is a random draw from its terrain's tile family and cannot be
+reproduced by any writer; the ring can.
 
 A removed `instance_id` **is** reissued by the next invocation — the high-water mark that holds it
 back cannot be persisted, because the format has nowhere to put one. If anything outside the map

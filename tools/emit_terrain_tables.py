@@ -27,6 +27,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import engine_probe
 from terrain_rings import DIRECTIONS, Grid, full_ring, ring
 
+# Entries the probe counted but that produced no log line, in the 2026-09-17 run.
+KNOWN_SILENT_ENTRIES = 1
+
 MAP_RS = (
     Path(__file__).resolve().parents[1]
     / "spikes"
@@ -72,10 +75,25 @@ def measured_rings(directory: Path) -> dict[int, list[int]]:
     return out
 
 
-def sprite_table(directory: Path) -> tuple[list[tuple[str, int]], list[str], int]:
+def sprite_table(directory: Path) -> tuple[list[tuple[str, int]], list[str], list[str], int, int]:
+    """The dumped table, plus the accounting that says how complete it is.
+
+    Returns `(pairs, arrays, name_only, records, counted)`.
+
+    The section is bounded at **both** ends. An earlier version sliced only from the start marker,
+    so the two trailing lines -- the probe's own count and the run's done line -- were tallied as
+    dict entries. That made every "197 entries / 10 unaccounted" figure in the documentation two too
+    high, and `--check` validated the wrong number, which is the opposite of what a checker is for.
+    The true figures are 195 logged records and a `zcount` of 196.
+
+    `counted` is that `zcount`, read back so the two can be compared. An empty dict and a failed
+    enumeration look identical without it, and nothing was reading it.
+    """
     log = directory / "zprobe.log"
     text = log.read_bytes().decode("latin-1")
-    section = text[text.find("sprite type table start") :]
+    start = text.find("sprite type table start")
+    end = text.find("sprite type table done")
+    section = text[start:end] if end > start else text[start:]
     pairs = sorted(
         ((name, int(value)) for value, name in re.findall(
             r"sprite type\s+(\d+)\s+name\s+/(\S+)", section
@@ -83,8 +101,19 @@ def sprite_table(directory: Path) -> tuple[list[tuple[str, int]], list[str], int
         key=lambda pair: pair[1],
     )
     arrays = sorted(set(re.findall(r"sprite type\s+<array>\s+name\s+/(\S+)", section)))
-    records = [row for row in section.split("\r") if row.strip()]
-    return pairs, arrays, len(records) - 1
+    records = [
+        row.strip()
+        for row in section.split("\r")
+        if row.strip() and row.strip() != "sprite type table start"
+    ]
+    name_only = sorted(
+        row.replace("name", "").replace("/", "").strip()
+        for row in records
+        if "<array>" not in row and not re.match(r"sprite type\s+\d+\s+name\s+/", row)
+    )
+    counted_match = re.search(r"sprite type table done count\s+(\d+)", text)
+    counted = int(counted_match.group(1)) if counted_match else -1
+    return pairs, arrays, name_only, len(records), counted
 
 
 def committed_rings() -> dict[int, list[int]]:
@@ -124,7 +153,7 @@ def main() -> int:
     directory = Path(args[0])
 
     rings = measured_rings(directory)
-    pairs, arrays, records = sprite_table(directory)
+    pairs, arrays, name_only, records, counted = sprite_table(directory)
 
     if check:
         problems: list[str] = []
@@ -144,10 +173,28 @@ def main() -> int:
                 if measured != stored:
                     problems.append(f"  first difference: measured {measured}, committed {stored}")
                     break
+        # The probe counted its own iterations. If that disagrees with the rows it managed to log,
+        # entries were enumerated and produced nothing -- which is a finding, not a rounding error.
+        # One entry enumerated without producing a line in the 2026-09-17 run -- possibly a `cvs`
+        # failure on one key, possibly a key whose name printed empty. Identifying it needs another
+        # keypress. It is pinned rather than merely reported, because a checker that fails on a
+        # known gap every time is a checker people stop running, while an unpinned gap is one that
+        # grows unnoticed.
+        silent = counted - records if counted >= 0 else 0
+        print(f"enumerated-without-logging\t{silent}")
+        if silent != KNOWN_SILENT_ENTRIES:
+            problems.append(
+                f"{silent} dict entries enumerated without logging; "
+                f"{KNOWN_SILENT_ENTRIES} is the known gap from the 2026-09-17 run"
+            )
         print(f"backgrounds-with-a-ring\t{len(rings)}")
         print(f"sprite-pairs\t{len(pairs)}")
         print(f"sprite-arrays\t{len(arrays)}")
+        print(f"sprite-name-only\t{len(name_only)}")
+        for name in name_only:
+            print(f"name-only\t{name}")
         print(f"dict-records-logged\t{records}")
+        print(f"probe-counted\t{counted}")
         print(f"unaccounted-records\t{records - len(pairs) - len(arrays)}")
         print(f"problems\t{len(problems)}")
         for problem in problems:
@@ -161,6 +208,8 @@ def main() -> int:
         print(f'    ("{name}", {value}),')
     for name in arrays:
         print(f'    "{name}",')
+    for name in name_only:
+        print(f'    "{name}",  // logged a name, no usable value')
     return 0
 
 
