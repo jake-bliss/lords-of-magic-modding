@@ -26,6 +26,8 @@ use lom_asset_viewer::map::{
 };
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
+use lom_asset_viewer::paths::paths_are_same_file;
+use lom_asset_viewer::server::{TileSetSource, serve};
 use lom_asset_viewer::operator_arity;
 use lom_asset_viewer::pbm::PbmImage;
 use lom_asset_viewer::png_export::{write_imp_frame_png, write_pbm_png, write_rgba_png};
@@ -116,6 +118,11 @@ enum Command {
         /// Positional and optional, following `--view-map`'s shape. Only `--map-paint-terrain`
         /// reads it, and without it that verb refuses rather than guessing a tileset.
         tile_set: Option<PathBuf>,
+    },
+    /// Run the local map-editor web UI.
+    Serve {
+        tile_set: TileSetSource,
+        port: u16,
     },
     DescribeImp {
         source: Source,
@@ -294,6 +301,7 @@ fn run() -> Result<(), String> {
             output,
             tile_set,
         } => edit_map(&input, edit, &output, tile_set.as_deref()),
+        Command::Serve { tile_set, port } => serve(tile_set, port),
         Command::DescribeImp { source, member } => describe_imp(&source, &member),
         Command::ExportImpFrame {
             source,
@@ -385,6 +393,14 @@ fn parse_args() -> Result<Command, String> {
                 .map_err(|_| format!("seed must be a nonnegative integer: {value}"))
         })
         .transpose()?;
+    let port = take_option(&mut args, "--port")?
+        .map(|value| {
+            value
+                .parse::<u16>()
+                .map_err(|_| format!("port must be a number from 0 to 65535: {value}"))
+        })
+        .transpose()?;
+    let pic = take_option(&mut args, "--pic")?.map(PathBuf::from);
     let stubs = take_repeated_option(&mut args, "--stub")
         .iter()
         .map(|specification| parse_native_stub(specification))
@@ -723,6 +739,31 @@ fn parse_args() -> Result<Command, String> {
                 frame,
             })
         }
+        "--serve" => {
+            // The tileset is named two ways and never defaulted: `--pic` lets the resolved member
+            // be read straight out of the archive, and the positional pair is `--view-map`'s own
+            // shape for loose files. Requiring exactly one keeps a run from silently preferring one
+            // over the other.
+            let tile_set = match (pic, args.len()) {
+                (Some(archive), 1) => TileSetSource::Archive(archive),
+                (None, 3) => TileSetSource::Loose {
+                    definition: args[1].clone().into(),
+                    atlas: args[2].clone().into(),
+                },
+                (Some(_), _) | (None, _) => {
+                    return Err(
+                        "--serve needs either --pic PIC.MPQ, and it will read the tileset the \
+                         gamescript binds each map to, or a loose TILESET.til TILE_ATLAS.lbm pair \
+                         -- not both and not neither"
+                            .to_owned(),
+                    );
+                }
+            };
+            Ok(Command::Serve {
+                tile_set,
+                port: port.unwrap_or(8731),
+            })
+        }
         "--view-map" => {
             if args.len() != 2 && args.len() != 4 {
                 return Err(usage());
@@ -844,7 +885,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -3925,26 +3966,6 @@ fn edit_map(
     println!("cells-changed\t{changed_cells}");
     println!("{note}");
     Ok(())
-}
-
-/// Whether two paths name the same file on disk.
-///
-/// Compares the **device and inode**, not canonical path strings. String comparison already caught
-/// `map/URAK.scn` versus `./map/../map/URAK.scn` and the macOS case-only variant, but it answers
-/// `false` for two hardlinks to one inode -- which is the same file by every meaning that matters
-/// to a writer. No overwrite is reachable through that gap, because `create_new` refuses an
-/// existing output whatever it is linked to; the function simply did not do what its name said,
-/// and a guard whose contract is wider than its implementation is how the next caller gets
-/// surprised.
-///
-/// An output that does not exist yet has no metadata to read, and that is the normal case -- it is
-/// also, by definition, not the input.
-fn paths_are_same_file(left: &Path, right: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    match (fs::metadata(left), fs::metadata(right)) {
-        (Ok(left), Ok(right)) => left.dev() == right.dev() && left.ino() == right.ino(),
-        _ => false,
-    }
 }
 
 /// Read and parse a `.til`.

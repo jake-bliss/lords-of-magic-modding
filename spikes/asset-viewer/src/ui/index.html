@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lords of Magic map editor</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>Lords of Magic map editor</h1>
+  <form id="open-form">
+    <label>Map file<input id="open-path" type="text" spellcheck="false" placeholder="/path/to/URAK.scn" size="60"></label>
+    <button type="submit">Open</button>
+  </form>
+  <div id="map-summary">No map open.</div>
+</header>
+
+<main>
+  <section id="left">
+    <h2>Terrain</h2>
+    <div id="palette" class="palette">Open a map to load its tileset's terrain list.</div>
+    <h2>Paint</h2>
+    <label>Seed
+      <input id="seed" type="text" spellcheck="false" placeholder="deterministic (lowest slot)" size="18">
+    </label>
+    <p class="hint">
+      Where several tiles match a cell equally and the cell held none of them, the engine draws at
+      random and that draw cannot be reproduced. Blank means the lowest matching slot; a seed gives
+      a different legal draw. Neither is the engine's.
+    </p>
+    <div class="row">
+      <button id="undo" type="button" disabled>Undo last paint</button>
+      <label>Zoom <input id="zoom" type="range" min="2" max="32" value="8"></label>
+    </div>
+    <h2>Save As</h2>
+    <form id="save-form">
+      <label>New file<input id="save-path" type="text" spellcheck="false" placeholder="/path/to/new.scn" size="40"></label>
+      <button type="submit">Save As</button>
+    </form>
+    <p class="hint">Always a new file. An existing path is refused, never overwritten.</p>
+  </section>
+
+  <section id="centre">
+    <div id="canvas-wrap">
+      <canvas id="map"></canvas>
+      <canvas id="overlay"></canvas>
+    </div>
+  </section>
+</main>
+
+<section id="log-panel">
+  <h2>Log</h2>
+  <div id="log"></div>
+</section>
+
+<script src="/app.js"></script>
+</body>
+</html>
