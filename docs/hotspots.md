@@ -38,6 +38,12 @@ swallowed 29 frame records across five files. A spot re-measurement over the 1,7
 sprites reads 15,677 and 28,800; that is a different population from the one above, so these totals
 are pending re-measurement rather than replaced. The split itself — which record kind a frame
 carries — is unaffected.
+
+**And the rule on this page is untouched.** Measured over all 1,800 sprites in the archive, exactly
+**five files and 29 frame records** were affected: `aicr3b`, `chcr3b`, `chwmmb`, `ficr3b` and
+`ficr5b`, which are precisely the five that were failing header validation. The validator was a
+complete detector of the bug. The placement measurements behind the rule were taken on frames of
+sprites that are not among those five, and the totals above are wrong by at most those 29 records.
 | — | duplicate / back-reference frames carry neither | 7,170 |
 
 A frame therefore carries **one form or the other, never both**. Hotspot records are 6 bytes
