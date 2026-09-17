@@ -1157,3 +1157,216 @@ The measurement itself is ready and needs only the proven hotkey path:
 Because all of this places through a terrain sprite type, it runs on the **world map of a real game**,
 which is where the unit-anchor check and the cell-to-screen fit also have to happen. One attended
 session with one keypress can therefore settle all three.
+
+## 2026-09-16 (later) — The attended run: a negative result, and two findings from its wreckage
+
+**Evidence class: observed in gameplay.** The prepared probe ran on the world map of a real
+single-player game. It did not answer the question it was built for, and it damaged the live map on
+the way. Both archives were restored byte-identical afterwards and nothing was saved, so the damage
+existed only in memory.
+
+### What failed
+
+`imp\zzpal.imp` — the donor with the authored palette — was injected, and
+`["imp/zzpal.imp"]cvx addterrainspritetype` returned a type id. `addterrainsprite` then reported
+success, and the cell it was placed on stayed occupied for the rest of the session, so **the sprite
+object was really created**. But no capture contains it. `zc3.bmp` is pixel-for-pixel identical to
+the plate, and `zc2.bmp` differs only by ordinary map animation; nothing anywhere is 72x76.
+
+**The art failed to load while the placement succeeded.** The probe had no control that could say
+why, which is the design fault worth recording: an invisible subject and a broken subject look the
+same, and the run could not tell them apart.
+
+### Two traps that were paid for here
+
+**`anythingat?` does not see terrain sprites.** The guard `x y anythingat? not` reported the cell
+empty while a village stood on it. Because the probe's own sprite was invisible,
+`x y terrainspriteat` then returned *the village*, and `destroyterrainsprite` deleted it. The
+captures show it exactly: a 34x38 building at screen (370,185), present in the plate and absent
+afterwards.
+
+> Never clean up a placed sprite by location. Match on `getterrainspritetype` and destroy only the
+> type the probe itself registered. `enumterrainsprites` supports this directly, and `tree2.gs`'s
+> `changeterrainspritetype` is the shipped example of the idiom.
+
+**The hotkey auto-repeats.** Holding `z` for a moment ran the body **nine times**, registering nine
+sprite types (470-478) and re-entering the placement logic eight times more than intended. Any probe
+body needs a fire-once flag in `userdict`.
+
+### Finding: `map2screen`'s third return value is the screen x coordinate
+
+`map2screen` returns three values; the last one is screen x, and the isometric step falls straight
+out of the log:
+
+| cell | third value |
+| --- | --- |
+| (63,70) | 320.412 |
+| (64,70) | 354.353 |
+| (65,70) | 388.294 |
+| (63,71) | 286.471 |
+| (63,72) | 252.530 |
+| (66,73) | 320.412 |
+
+That is **+33.941 per cell of x and -33.941 per cell of y**, so `screen_x = x0 + 33.941*(dx - dy)`,
+and the diagonal cell (66,73) returning the base value again confirms it. The remaining two values
+move by 14.4 per isometric step and differ from each other by a constant 80, so they are in different
+units and are not screen pixels. This is real progress on the y/z convention question left open by
+PR #29, though the y half is still unmeasured — it needs a sprite that actually renders.
+
+### Finding: `screencapture` writes R, G, B, not the BMP-standard B, G, R
+
+Decoding the captures per the BMP standard makes the interface stone blue and the terrain purple.
+Decoding the bytes in the order written makes the stone brown and the grass green. The interface
+frame is a fixed asset that is not subject to lighting, so this is not ambiguous.
+
+This matters out of proportion to its size. Every previous use of these captures was an *equality*
+difference, which is blind to channel order — so the error survived undetected. The next measurement
+scheduled to run through them is the **palette channel order**, where a reader that silently swaps
+red and blue would have produced a confident, exactly-wrong answer. `screencapture` is now known to
+be non-standard in two independent ways, since `bfOffBits` already reports 14 against a real offset
+of 54.
+
+`tools/probe_captures.py` is the reader that gets both right, and its tests pin them.
+
+### The rebuilt probe
+
+`tools/engine_probe.py` generates the replacement, `scripts/install-engine-probe.sh` installs it and
+`scripts/restore-game-archives.sh` undoes it. The probe is now a **diagnostic ladder** rather than a
+single measurement — four sprite types placed in one capture:
+
+| Type | Sprite | What its absence would mean |
+| --- | --- | --- |
+| shipped type, shipped art | `terrainsprites /orchard get` | the capture or the cell logic is wrong |
+| custom type, shipped art | `["imp/tree4e.imp"]cvx addterrainspritetype` | `addterrainspritetype` on a literal filename does not work |
+| custom type, injected copy | `["imp/zzctl.imp"]cvx addterrainspritetype` | the engine cannot read an added archive member |
+| custom type, authored palette | `["imp/zzpal.imp"]cvx addterrainspritetype` | the palette edit broke the file |
+
+`zzctl.imp` is byte-identical to `imp\tree4e.imp`, so the third and fourth rungs differ only by the
+twenty palette bytes. Whichever rung breaks names the cause, which is precisely what the failed run
+could not do.
+
+### A third cleanup trap, caught in review rather than in the game
+
+The rebuilt probe's first version cleaned up by sprite **type**, which is what the village incident
+seemed to teach. Cross-model review pointed out that rung 0's type is
+`terrainsprites /orchard get` — the *shipped* orchard type, shared with every orchard on the map — so
+the sweep would have destroyed all of them. The generated script confirms it: the id is looked up
+from the shipped `terrainsprites` dictionary, and the sweep was unqualified.
+
+The rule that actually holds is narrower than either version: **match on type and cell together, and
+only treat a type id as safe to sweep on its own when the probe minted it via
+`addterrainspritetype` during the same keypress.** A regression test asserts it and fails when the
+bug is reintroduced.
+
+Worth recording as a pattern: the fix for a destructive bug was itself destructive, in the same
+direction, because it generalised from one incident instead of from the invariant. The invariant is
+"destroy only what this keypress created", and neither location nor type alone expresses it.
+
+### Corrected: map locations are packed, and the arity table cannot settle operand order
+
+Cross-model review of the rebuilt probe found three operand-order errors in it, all the same
+mistake. **`anythinglocation` and `getterrainspritelocation` each return one packed location**,
+`y * map_width + x`, and **`findemptylocation` takes `(location, unittype)`** — two operands, not
+three. The shipped corpus is unambiguous: `anythinglocation xy_to_x_y` appears 31 times (you do not
+decompose an already decomposed pair), `unit_loc UNITTYPELAND findemptylocation` is the shipped
+call form, and `/temple_loc temple_id getterrainspritelocation def` stores a single scalar.
+
+**The failed run's own log confirms it and was misread at the time.** Its first line printed as
+`army    9152  base  63   70` — an *empty* x beside `9152`. At map width 128, `9152` is cell
+(64,71), one step from the `(63,70)` that `findemptylocation` returned. The x was empty because
+reading the packed value as a pair underflowed the stack. That line was read as a successful army
+lookup.
+
+This sharpens the standing warning in [hotspots](hotspots.md#do-not). The recovered arity table
+undercounts pops, and it also cannot express *what* the operands are. **Operand order comes from
+shipped call sites; the table is only a hint.** The previous session's probe got this right by
+copying `anythinglocation UNITTYPELAND findemptylocation` verbatim from working code — the rewrite
+"improved" it into a stack underflow.
+
+One more from the same review: `screencapture` refuses to overwrite, so **stale captures must be
+cleared from the game directory before each run** or a second attempt silently produces nothing and
+the old plate is collected as if it were fresh — which reads identically to "the sprite did not
+render", the very conclusion under test.
+
+## 2026-09-17 — The ladder run: the shadow blend and the palette channel order, both settled
+
+**Evidence class: observed in gameplay.** One keypress on the world map of a real single-player
+game. All four rungs rendered, `zs2.bmp` came back pixel-identical to the plate (so cleanup removed
+exactly what the probe placed and nothing else), and both open compositing questions are answered.
+
+Last night's failure was therefore **entirely** the stack underflow. The MPQ injection was fine and
+the palette edit was fine — rungs 2 and 3 are injected members and both drew. Had the first probe
+carried controls, that would have been visible immediately instead of costing a run.
+
+### Palette index 1 draws the background at half brightness
+
+| Copy | index-1 pixels that changed | exactly half | within one palette step | neither |
+| --- | --- | --- | --- | --- |
+| control, index 1 = shipped red | 903 | 122 (13.5%) | 781 (86.5%) | 0 |
+| authored, index 1 = magenta | 889 | 129 (14.5%) | 760 (85.5%) | 0 |
+
+**Not one pixel fell outside half-a-background.** The 86% that miss exact halving miss it by at most
+one palette step, which is what an *indexed* framebuffer forces: the blend is a 256-entry remap
+table, so the result snaps to the nearest available entry rather than being computed per pixel.
+
+The two copies are the same art with one palette entry differing, and they rendered **identically**.
+So "the RGB in slot 1 is incidental" is now a controlled result rather than an inference: the entry
+was rewritten to bright magenta and the engine ignored it.
+
+### Palette entries are stored blue, red, green, pad
+
+Every index in the frame was paired with the pixel the engine painted at the corresponding screen
+position. Fitting the six permutations of the stored triple:
+
+| Permutation | Fits |
+| --- | --- |
+| `(p1, p2, p0)` | **14 / 14** |
+| `(p2, p1, p0)` — the reversal we shipped | 4 / 14 |
+| the other four | 1-2 / 14 |
+
+The authored entries confirm it independently: raw `ff 00 00` rendered **blue**, `00 ff 00` rendered
+**red**, `00 00 ff` rendered **green**.
+
+`src/imp.rs` mapped `|bgra| [bgra[2], bgra[1], bgra[0], 255]`, a reversal, which **swaps red and
+green and leaves blue correct**. That is precisely the symptom this log has carried since the first
+capture — *"agree wherever red equals green and disagree where they differ"* — recorded accurately
+and left unexplained. Corrected to `|brg| [brg[1], brg[2], brg[0], 255]`; against the engine capture
+the old mapping scores 3/10 and the new one 10/10.
+
+Two consequences worth stating. Every PNG the viewer has exported has red and green swapped. And the
+community specification's "stored BGRA, swapped to RGB" is **refuted** — we had accepted it in
+[Stage 1](native-asset-stage.md) as confirmation, so a wrong claim was used to close a question our
+own evidence was already contradicting.
+
+**The off-by-one alternative was ruled out, not assumed away.** "Entries are `[R,G,B,pad]` and our
+palette offset is one byte early" predicts blue coming from the fourth byte. The fourth byte is zero
+for all 256 entries, while index 228 stores `(82, 49, 0)` and rendered blue 80. Blue comes from the
+first byte.
+
+### The BMP byte order, settled numerically
+
+`screencapture` writes pixels **R, G, B**, not the BMP-standard B, G, R. Judging this by eye is
+unsound, so it was measured on materials whose hue is not in question — the carved stone interface,
+its wooden portrait panel and parchment. Green is the middle byte under both candidate orders and
+cannot discriminate; only the warm/cool axis can:
+
+| Region | first byte dominant | last byte dominant |
+| --- | --- | --- |
+| interface stone, left of the portrait | 73.6% | 4.7% |
+| interface stone, right panel | 90.8% | 0.8% |
+| whole interface band | 62.1% | 2.4% |
+
+Stone, wood and parchment are not blue. The first byte is red.
+
+### Also confirmed, and one thing still open
+
+`map2screen`'s **third return value is screen x** to under a pixel: predicted anchors 456.177,
+252.530 and 184.648 against measured 456, 252 and 184. The placement rule held in a live game for
+all three measurable sprites.
+
+**Still open:** the measured anchor *y* is not linear in the cell — 156, 167, 230, 265 across cells
+60, 62, 66, 68 of one row — while `map2screen`'s first two values are perfectly linear at 14.4 per
+isometric step. The obvious candidate is terrain elevation, which the probe passed as `z = 0`. That
+is the remaining piece of the y convention and it now has a testable shape: place the same sprite on
+cells of known differing terrain height and see whether the residual tracks it.
+
