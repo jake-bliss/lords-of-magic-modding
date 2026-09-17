@@ -13,7 +13,10 @@ use lom_asset_viewer::gamescript_vm::{
     GameScriptVm, GameScriptVmError, Value as GameScriptValue,
 };
 use lom_asset_viewer::imp;
-use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
+use lom_asset_viewer::imp::{
+    IMP_ORPHAN_NOTES, IMP_VALIDATION_EXCEPTIONS, ImpHeaderStats, ImpOrphanNote, ImpSprite,
+    ImpValidationException, imp_member_basename, normalize_imp_member,
+};
 use lom_asset_viewer::map::MapAsset;
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
@@ -1560,69 +1563,425 @@ struct ImpPair {
     sprite: Option<String>,
 }
 
-fn validate_imp_archive(source: &Source) -> Result<(), String> {
-    let (archive, entries) = open_archive(source)?;
+/// How a `.imp` member found the `.h` it was validated against.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImpPairing {
+    /// The two members share a stem, e.g. `units\imp\aicr3b.imp` and `units\imp\aicr3b.h`.
+    Stem,
+    /// The stem had no counterpart, so the header's declared sequence name was used instead.
+    ///
+    /// Headers in this archive are routinely copied between members: 602 of the 1,800 declare a
+    /// sequence name other than their own stem, and 388 of them fall into 115 groups of
+    /// byte-identical files. Worse, 1,800 headers declare only 1,370 distinct sequence names:
+    /// 155 names are declared by more than one header, covering 585 headers, and `deaura` alone
+    /// is declared by 32. A declared name is therefore not a key. This fallback is consulted only
+    /// for a member that stem pairing left unmatched, it demands a *uniquely* supported match,
+    /// and the counterpart it finds may already be paired with somebody else.
+    DeclaredSequenceName,
+}
+
+/// The waiver tables a validation run is judged against.
+///
+/// Injected rather than read from the `imp` module's constants so the verdict logic can be tested
+/// against synthetic members: an exception is value-pinned to numbers only the real archive
+/// produces, so a test needs a table pinned to its own fixture instead.
+#[derive(Clone, Copy)]
+struct ImpCatalog<'a> {
+    exceptions: &'a [ImpValidationException],
+    orphans: &'a [ImpOrphanNote],
+}
+
+impl<'a> ImpCatalog<'a> {
+    fn exception(&self, member: &str) -> Option<&'a ImpValidationException> {
+        self.exceptions
+            .iter()
+            .find(|exception| exception.member == member)
+    }
+
+    fn orphan(&self, member: &str) -> Option<&'a ImpOrphanNote> {
+        self.orphans.iter().find(|note| note.member == member)
+    }
+}
+
+const ARCHIVE_CATALOG: ImpCatalog<'static> = ImpCatalog {
+    exceptions: IMP_VALIDATION_EXCEPTIONS,
+    orphans: IMP_ORPHAN_NOTES,
+};
+
+/// Everything a corpus validation run measures, with the archive I/O held at arm's length.
+#[derive(Default)]
+struct ImpValidationReport {
+    candidate_stems: usize,
+    matched_pairs: usize,
+    paired_by_stem: usize,
+    paired_by_declared_name: usize,
+    ambiguous_pairings: usize,
+    validated: usize,
+    excepted: usize,
+    documented_orphans: usize,
+    orphan_entries: usize,
+    validation_failures: usize,
+    /// Stem-paired members whose `.imp` and `.h` both parsed, i.e. the denominator of the two
+    /// counters below. Pairs that fail to parse are excluded and counted as failures instead;
+    /// they used to vanish from the comparison with nothing to show for it.
+    dedup_compared_stem_pairs: usize,
+    dedup_at_least_header: usize,
+    dedup_below_header: usize,
+    /// Pairs made by the declared-sequence-name fallback, excluded from the two counters above.
+    ///
+    /// Those pairs compare a sprite against a *foreign* header, so agreement between them says
+    /// nothing about whether a build tool's own header can undercount duplicates. They used to be
+    /// counted as confirmations.
+    dedup_foreign_header_pairs: usize,
+    notes: Vec<String>,
+    failures: Vec<String>,
+}
+
+/// The single candidate a pairing may use, or the reason there is not one.
+enum ImpCandidate<'a> {
+    One(&'a str),
+    None,
+    Ambiguous(Vec<&'a str>),
+}
+
+/// Pick the one candidate that a declared-sequence-name pairing may use.
+///
+/// A declared name is not unique in this archive, so "take the first" is a guess dressed as a
+/// result. Where several members answer to the name, one in `directory` wins — a header sitting
+/// beside its art is the only tie-break the archive's layout supports — and anything still
+/// ambiguous is reported rather than resolved.
+fn unique_candidate<'a>(candidates: &'a [String], directory: &str) -> ImpCandidate<'a> {
+    match candidates {
+        [] => ImpCandidate::None,
+        [only] => ImpCandidate::One(only),
+        many => {
+            let local: Vec<&str> = many
+                .iter()
+                .filter(|name| imp_member_directory(name) == directory)
+                .map(String::as_str)
+                .collect();
+            match local.as_slice() {
+                [only] => ImpCandidate::One(only),
+                _ => ImpCandidate::Ambiguous(many.iter().map(String::as_str).collect()),
+            }
+        }
+    }
+}
+
+/// The normalized directory part of a member name, `""` for a member at the archive root.
+fn imp_member_directory(name: &str) -> String {
+    let normalized = normalize_imp_member(name);
+    match normalized.rfind('/') {
+        Some(index) => normalized[..index].to_owned(),
+        None => String::new(),
+    }
+}
+
+/// Validate every `.imp`/`.h` pair among `members`, reading bytes through `read`.
+///
+/// Separated from the archive so the pairing and verdict rules are testable: every branch here
+/// used to be reachable only by running the shipped 3,600-member archive.
+fn validate_imp_members(
+    members: &[String],
+    read: &dyn Fn(&str) -> Result<Vec<u8>, String>,
+    catalog: ImpCatalog<'_>,
+) -> ImpValidationReport {
+    let mut report = ImpValidationReport::default();
     let mut pairs = BTreeMap::<String, ImpPair>::new();
 
-    for entry in &entries {
-        let lower_name = entry.name.to_ascii_lowercase();
+    for name in members {
+        let lower_name = name.to_ascii_lowercase();
         if let Some(stem) = lower_name.strip_suffix(".h") {
-            pairs.entry(stem.to_owned()).or_default().header = Some(entry.name.clone());
+            pairs.entry(stem.to_owned()).or_default().header = Some(name.clone());
         } else if let Some(stem) = lower_name.strip_suffix(".imp") {
-            pairs.entry(stem.to_owned()).or_default().sprite = Some(entry.name.clone());
+            pairs.entry(stem.to_owned()).or_default().sprite = Some(name.clone());
         }
     }
 
-    let mut validated = 0_usize;
-    let mut matched_pairs = 0_usize;
-    let mut orphan_entries = 0_usize;
-    let mut validation_failures = 0_usize;
-    let mut failures = Vec::new();
-    for (stem, pair) in &pairs {
-        let (Some(header_name), Some(sprite_name)) = (&pair.header, &pair.sprite) else {
-            let missing = if pair.header.is_none() { ".h" } else { ".imp" };
-            failures.push(format!("{stem}: missing {missing} counterpart"));
-            orphan_entries += 1;
+    // Sequence name a header declares -> every member name declaring it, and basename -> every
+    // sprite with that basename. Both are one-to-many: collapsing either to one entry is what
+    // made the fallback arbitrary.
+    //
+    // A header that cannot be read or parsed is left out of the index rather than reported here:
+    // every header is visited again below, either as half of a stem pair or on the orphan path,
+    // and that is where its error is collected. Reporting it twice would inflate the failure
+    // count.
+    let mut declared_by_name = BTreeMap::<String, Vec<String>>::new();
+    for pair in pairs.values() {
+        let Some(header_name) = &pair.header else {
             continue;
         };
-        matched_pairs += 1;
-        let result = (|| {
-            let header_bytes = archive
-                .read(header_name)
-                .map_err(|error| error.to_string())?;
-            let sprite_bytes = archive
-                .read(sprite_name)
-                .map_err(|error| error.to_string())?;
+        let Ok(bytes) = read(header_name) else {
+            continue;
+        };
+        let Ok(stats) = ImpHeaderStats::parse(&bytes) else {
+            continue;
+        };
+        declared_by_name
+            .entry(stats.sequence_name.to_ascii_lowercase())
+            .or_default()
+            .push(header_name.clone());
+    }
+    let mut sprite_by_basename = BTreeMap::<String, Vec<String>>::new();
+    for (stem, pair) in &pairs {
+        if let Some(sprite) = &pair.sprite {
+            sprite_by_basename
+                .entry(imp_member_basename(stem).to_owned())
+                .or_default()
+                .push(sprite.clone());
+        }
+    }
+    let stem_paired: BTreeSet<&String> = pairs
+        .values()
+        .filter(|pair| pair.header.is_some() && pair.sprite.is_some())
+        .flat_map(|pair| [pair.header.as_ref(), pair.sprite.as_ref()])
+        .flatten()
+        .collect();
+
+    report.candidate_stems = pairs.len();
+
+    for (stem, pair) in &pairs {
+        let resolved = match (&pair.header, &pair.sprite) {
+            (Some(header), Some(sprite)) => Some((header.clone(), sprite.clone(), ImpPairing::Stem)),
+            (Some(header), None) => {
+                // A header with no `.imp` of its own may still describe a sequence that ships.
+                // A read or parse error here used to abort the whole run, or be discarded.
+                let bytes = match read(header) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        report.validation_failures += 1;
+                        report.failures.push(format!("{stem}: {error}"));
+                        continue;
+                    }
+                };
+                let stats = match ImpHeaderStats::parse(&bytes) {
+                    Ok(stats) => stats,
+                    Err(error) => {
+                        report.validation_failures += 1;
+                        report.failures.push(format!("{stem}: {error}"));
+                        continue;
+                    }
+                };
+                let declared = stats.sequence_name.to_ascii_lowercase();
+                let candidates = sprite_by_basename.get(&declared);
+                match unique_candidate(
+                    candidates.map_or(&[][..], Vec::as_slice),
+                    &imp_member_directory(header),
+                ) {
+                    ImpCandidate::One(sprite) => Some((
+                        header.clone(),
+                        sprite.to_owned(),
+                        ImpPairing::DeclaredSequenceName,
+                    )),
+                    ImpCandidate::None => None,
+                    ImpCandidate::Ambiguous(names) => {
+                        report.ambiguous_pairings += 1;
+                        report.failures.push(format!(
+                            "{stem}: declares sequence {declared}, which {} members answer to ({}); refusing to guess",
+                            names.len(),
+                            names.join(", ")
+                        ));
+                        continue;
+                    }
+                }
+            }
+            (None, Some(sprite)) => {
+                // A sprite with no `.h` of its own may be named by somebody else's header.
+                let basename = imp_member_basename(stem);
+                let candidates = declared_by_name.get(basename);
+                match unique_candidate(
+                    candidates.map_or(&[][..], Vec::as_slice),
+                    &imp_member_directory(sprite),
+                ) {
+                    ImpCandidate::One(header) => Some((
+                        header.to_owned(),
+                        sprite.clone(),
+                        ImpPairing::DeclaredSequenceName,
+                    )),
+                    ImpCandidate::None => None,
+                    ImpCandidate::Ambiguous(names) => {
+                        report.ambiguous_pairings += 1;
+                        report.failures.push(format!(
+                            "{stem}: sequence {basename} is declared by {} headers ({}); refusing to guess",
+                            names.len(),
+                            names.join(", ")
+                        ));
+                        continue;
+                    }
+                }
+            }
+            (None, None) => None,
+        };
+
+        let Some((header_name, sprite_name, pairing)) = resolved else {
+            // The member that exists, not the one that is missing: the catalog note names it.
+            let present = match (&pair.header, &pair.sprite) {
+                (Some(header), None) => header.clone(),
+                (None, Some(sprite)) => sprite.clone(),
+                _ => unreachable!("a stem with both halves always resolves"),
+            };
+            let member = normalize_imp_member(&present);
+            match catalog.orphan(&member) {
+                Some(note) => {
+                    // Read and re-measure it. Accepting the note on the member's *name* let a
+                    // truncated or substituted file pass the corpus run without being parsed.
+                    let verified = read(&present)
+                        .and_then(|bytes| note.verify(&bytes).map_err(|error| error.to_string()));
+                    match verified {
+                        Ok(()) => {
+                            report.documented_orphans += 1;
+                            report
+                                .notes
+                                .push(format!("orphan\t{member}\t{}", note.reason));
+                        }
+                        Err(error) => {
+                            report.validation_failures += 1;
+                            report.failures.push(format!("{stem}: {error}"));
+                        }
+                    }
+                }
+                None => {
+                    report.orphan_entries += 1;
+                    let missing = if pair.header.is_none() { ".h" } else { ".imp" };
+                    report
+                        .failures
+                        .push(format!("{stem}: no {missing} counterpart and no catalog note"));
+                }
+            }
+            continue;
+        };
+
+        report.matched_pairs += 1;
+        match pairing {
+            ImpPairing::Stem => report.paired_by_stem += 1,
+            ImpPairing::DeclaredSequenceName => {
+                report.paired_by_declared_name += 1;
+                let reuse = if stem_paired.contains(&header_name) || stem_paired.contains(&sprite_name)
+                {
+                    "reuses_a_stem_paired_member"
+                } else {
+                    "partner_is_otherwise_unpaired"
+                };
+                report.notes.push(format!(
+                    "paired_by_declared_sequence\t{stem}\t{}\t{}\t{reuse}",
+                    clean_field(&header_name),
+                    clean_field(&sprite_name)
+                ));
+            }
+        }
+
+        let measured = (|| {
+            let header_bytes = read(&header_name)?;
+            let sprite_bytes = read(&sprite_name)?;
             let stats = ImpHeaderStats::parse(&header_bytes).map_err(|error| error.to_string())?;
             let sprite = ImpSprite::parse(&sprite_bytes).map_err(|error| error.to_string())?;
-            sprite
-                .validate_against(&stats)
-                .map_err(|error| error.to_string())
+            Ok::<_, String>((sprite, stats))
         })();
-        match result {
-            Ok(()) => validated += 1,
+        let (sprite, stats) = match measured {
+            Ok(measured) => measured,
             Err(error) => {
-                validation_failures += 1;
-                failures.push(format!("{stem}: {error}"));
+                report.validation_failures += 1;
+                report.failures.push(format!("{stem}: {error}"));
+                continue;
+            }
+        };
+
+        // With the frame-table fix in place this no longer tests a hypothesis: binary and header
+        // duplicate tallies now agree on every pair but the five catalogued ones. It is kept as
+        // the instrument behind one recorded claim — that `units/imp/orcr4b` is the archive's
+        // only pair whose file holds fewer duplicates than its header claims — and it is only
+        // meaningful over stem pairs, where the header is the file's own.
+        match pairing {
+            ImpPairing::DeclaredSequenceName => report.dedup_foreign_header_pairs += 1,
+            ImpPairing::Stem => {
+                report.dedup_compared_stem_pairs += 1;
+                if sprite.duplicate_frame_count >= stats.duplicate_frame_count {
+                    report.dedup_at_least_header += 1;
+                } else {
+                    report.dedup_below_header += 1;
+                    report.notes.push(format!(
+                        "dedup_below_header\t{stem}\tbinary={}\theader={}",
+                        sprite.duplicate_frame_count, stats.duplicate_frame_count
+                    ));
+                }
+            }
+        }
+
+        let found = sprite.disagreements(&stats);
+        if found.is_empty() {
+            report.validated += 1;
+            continue;
+        }
+        let member = normalize_imp_member(stem);
+        match catalog
+            .exception(&member)
+            .filter(|exception| exception.covers(&found))
+        {
+            Some(exception) => {
+                report.excepted += 1;
+                report.notes.push(format!(
+                    "exception\t{member}\t{:?}\t{}",
+                    exception.class,
+                    clean_field(exception.reason)
+                ));
+            }
+            None => {
+                report.validation_failures += 1;
+                report.failures.push(format!(
+                    "{stem}: {}",
+                    sprite.validate_against(&stats).unwrap_err()
+                ));
             }
         }
     }
 
-    println!("candidate_stems\t{}", pairs.len());
-    println!("matched_pairs\t{matched_pairs}");
-    println!("validated\t{validated}");
-    println!("validation_failures\t{validation_failures}");
-    println!("orphan_entries\t{orphan_entries}");
-    println!("failures\t{}", failures.len());
-    for failure in &failures {
+    report
+}
+
+fn validate_imp_archive(source: &Source) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let members: Vec<String> = entries.iter().map(|entry| entry.name.clone()).collect();
+    let report = validate_imp_members(
+        &members,
+        &|name| archive.read(name).map_err(|error| error.to_string()),
+        ARCHIVE_CATALOG,
+    );
+
+    println!("candidate_stems\t{}", report.candidate_stems);
+    println!("matched_pairs\t{}", report.matched_pairs);
+    println!("paired_by_stem\t{}", report.paired_by_stem);
+    println!("paired_by_declared_sequence\t{}", report.paired_by_declared_name);
+    println!("ambiguous_pairings\t{}", report.ambiguous_pairings);
+    println!("validated\t{}", report.validated);
+    println!("validated_with_exception\t{}", report.excepted);
+    println!("validation_failures\t{}", report.validation_failures);
+    println!("documented_orphans\t{}", report.documented_orphans);
+    println!("orphan_entries\t{}", report.orphan_entries);
+    println!(
+        "dedup_compared_stem_pairs\t{}",
+        report.dedup_compared_stem_pairs
+    );
+    println!("dedup_at_least_header\t{}", report.dedup_at_least_header);
+    println!("dedup_below_header\t{}", report.dedup_below_header);
+    println!(
+        "dedup_foreign_header_pairs\t{}",
+        report.dedup_foreign_header_pairs
+    );
+    println!("failures\t{}", report.failures.len());
+    // Notes are already tab-delimited; only their trailing field can need scrubbing, and each
+    // one is scrubbed where it is built.
+    for note in &report.notes {
+        println!("{note}");
+    }
+    for failure in &report.failures {
         println!("failure\t{}", clean_field(failure));
     }
-    if failures.is_empty() {
+    if report.failures.is_empty() {
         Ok(())
     } else {
         Err(format!(
             "{} IMP validations or catalog pairings failed",
-            failures.len()
+            report.failures.len()
         ))
     }
 }
@@ -2553,19 +2912,23 @@ fn is_screaming_case(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{parse_coordinate, parse_dimension, parse_offset, set_imp_placement};
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::env;
     use std::fs;
     use std::path::PathBuf;
 
-    use lom_asset_viewer::imp::{ImpFacing, ImpFrame, ImpSequence, ImpSprite};
+    use lom_asset_viewer::imp::{
+        ImpDisagreement, ImpExceptionClass, ImpFacing, ImpFrame, ImpOrphanFacts, ImpOrphanNote,
+        ImpSequence, ImpSprite, ImpStatistic, ImpValidationException,
+    };
     use lom_asset_viewer::map::{MapAsset, MapCell};
     use lom_asset_viewer::pbm::PbmImage;
     use lom_asset_viewer::tile::{TileDefinition, TileSetDefinition};
 
     use super::{
-        ImpDisplayMode, MapDisplayMode, imp_display_rgba, map_display_rgba, step_imp_facing,
-        step_imp_frame, step_imp_sequence, terrain_preview_rgba,
+        ImpCatalog, ImpDisplayMode, ImpValidationReport, MapDisplayMode, imp_display_rgba,
+        map_display_rgba, step_imp_facing, step_imp_frame, step_imp_sequence, terrain_preview_rgba,
+        validate_imp_members,
     };
 
     #[test]
@@ -2710,6 +3073,372 @@ mod tests {
         assert_eq!(&preview[0..4], &[200, 210, 220, 255]);
         assert_eq!(&preview[7 * 4..8 * 4], &[200, 210, 220, 255]);
         assert_eq!(&preview[8 * 4..9 * 4], &[10, 20, 30, 255]);
+    }
+
+    // --- corpus validation: pairing and verdicts, with no archive -------------------------
+
+    /// A generated `.h` whose statistics match [`minimal_imp`] unless a caller perturbs them.
+    fn generated_header(sequence: &str, frames: usize, raw: u64, stored: u64) -> Vec<u8> {
+        format!(
+            "// Sprite headers for sequence {sequence}\r\n\
+             // Total number of 'Sequences': 1\r\n\
+             // Total number of 'Frames': {frames}\r\n\
+             // Duplicate bitmaps found : 0\r\n\
+             // Bitmap raw memory usage : {raw}\r\n\
+             // Hotspot raw memory usage : 0\r\n\
+             // Bitmap RLE memory usage : {stored}\r\n"
+        )
+        .into_bytes()
+    }
+
+    fn matching_header(sequence: &str) -> Vec<u8> {
+        generated_header(sequence, 1, 2, 2)
+    }
+
+    /// A stand-in archive: named members, plus names whose read fails.
+    struct FakeArchive {
+        members: BTreeMap<String, Vec<u8>>,
+        unreadable: BTreeSet<String>,
+    }
+
+    impl FakeArchive {
+        fn new(members: &[(&str, Vec<u8>)]) -> Self {
+            Self {
+                members: members
+                    .iter()
+                    .map(|(name, bytes)| ((*name).to_owned(), bytes.clone()))
+                    .collect(),
+                unreadable: BTreeSet::new(),
+            }
+        }
+
+        fn unreadable(mut self, name: &str) -> Self {
+            self.members.entry(name.to_owned()).or_default();
+            self.unreadable.insert(name.to_owned());
+            self
+        }
+
+        fn names(&self) -> Vec<String> {
+            self.members.keys().cloned().collect()
+        }
+
+        fn run(&self, catalog: ImpCatalog<'_>) -> ImpValidationReport {
+            validate_imp_members(
+                &self.names(),
+                &|name| {
+                    if self.unreadable.contains(name) {
+                        return Err(format!("could not read {name}"));
+                    }
+                    self.members
+                        .get(name)
+                        .cloned()
+                        .ok_or_else(|| format!("archive has no member named {name}"))
+                },
+                catalog,
+            )
+        }
+    }
+
+    const EMPTY_CATALOG: ImpCatalog<'static> = ImpCatalog {
+        exceptions: &[],
+        orphans: &[],
+    };
+
+    /// A waiver pinned to the fixture's numbers. The shipped table is pinned to values only the
+    /// real archive produces, so the verdict logic can only be tested against a table of its own.
+    const FIXTURE_EXCEPTIONS: &[ImpValidationException] = &[ImpValidationException {
+        member: "units/imp/stale",
+        class: ImpExceptionClass::HeaderPredatesArtRevision,
+        reason: "fixture waiver: the header declares 99 pixel bytes where the file stores 2",
+        waived: &[
+            ImpDisagreement {
+                statistic: ImpStatistic::RawPixelBytes,
+                binary: 2,
+                header: 99,
+            },
+            ImpDisagreement {
+                statistic: ImpStatistic::StoredPixelBytes,
+                binary: 2,
+                header: 99,
+            },
+        ],
+    }];
+
+    const FIXTURE_ORPHANS: &[ImpOrphanNote] = &[ImpOrphanNote {
+        member: "imp/lonely.imp",
+        reason: "fixture note: art with no header of its own, pinned to what it measures",
+        facts: ImpOrphanFacts::Sprite {
+            sequence_count: 1,
+            frame_count: 1,
+            duplicate_frame_count: 0,
+            raw_pixel_bytes: 2,
+            hotspot_bytes: 0,
+            stored_pixel_bytes: 2,
+        },
+    }];
+
+    #[test]
+    fn a_stem_pair_that_agrees_validates() {
+        let archive = FakeArchive::new(&[
+            ("units\\imp\\a.imp", minimal_imp()),
+            ("units\\imp\\a.h", matching_header("a")),
+        ]);
+        let report = archive.run(EMPTY_CATALOG);
+
+        assert_eq!(report.failures, Vec::<String>::new());
+        assert_eq!(report.matched_pairs, 1);
+        assert_eq!(report.paired_by_stem, 1);
+        assert_eq!(report.validated, 1);
+        assert_eq!(report.dedup_compared_stem_pairs, 1);
+        assert_eq!(report.dedup_at_least_header, 1);
+    }
+
+    #[test]
+    fn a_uniquely_declared_sequence_name_pairs_a_member_with_no_stem_counterpart() {
+        let archive = FakeArchive::new(&[
+            ("units\\imp\\b.imp", minimal_imp()),
+            ("units\\imp\\other.h", matching_header("b")),
+        ]);
+        let report = archive.run(EMPTY_CATALOG);
+
+        assert_eq!(report.failures, Vec::<String>::new());
+        assert_eq!(report.paired_by_declared_name, 2);
+        assert_eq!(report.validated, 2);
+        assert_eq!(report.ambiguous_pairings, 0);
+        // A foreign header is not evidence about a build tool's own header, so it stays out of
+        // the duplicate-tally counters entirely.
+        assert_eq!(report.dedup_compared_stem_pairs, 0);
+        assert_eq!(report.dedup_foreign_header_pairs, 2);
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("partner_is_otherwise_unpaired")),
+            "{:?}",
+            report.notes
+        );
+    }
+
+    /// 155 sequence names in the shipped archive are declared by more than one header, `deaura`
+    /// by 32. Taking the first was arbitrary wherever it mattered.
+    #[test]
+    fn a_sequence_name_several_headers_declare_is_reported_not_guessed() {
+        let archive = FakeArchive::new(&[
+            ("far\\b.imp", minimal_imp()),
+            ("one\\p.h", matching_header("b")),
+            ("two\\q.h", matching_header("b")),
+        ]);
+        let report = archive.run(EMPTY_CATALOG);
+
+        assert_eq!(report.ambiguous_pairings, 1);
+        // Each header still finds the one sprite answering to `b`; it is the sprite that cannot
+        // say which of the two headers describes it.
+        assert_eq!(report.paired_by_declared_name, 2);
+        assert!(
+            report
+                .failures
+                .iter()
+                .any(|failure| failure.contains("declared by 2 headers")
+                    && failure.contains("refusing to guess")),
+            "{:?}",
+            report.failures
+        );
+    }
+
+    #[test]
+    fn a_candidate_in_the_members_own_directory_settles_an_otherwise_ambiguous_name() {
+        let archive = FakeArchive::new(&[
+            ("near\\b.imp", minimal_imp()),
+            ("near\\p.h", matching_header("b")),
+            ("far\\q.h", matching_header("b")),
+        ]);
+        let report = archive.run(EMPTY_CATALOG);
+
+        assert_eq!(report.ambiguous_pairings, 0);
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("near\\p.h") && note.contains("near\\b.imp")),
+            "{:?}",
+            report.notes
+        );
+    }
+
+    /// Both fallback pairs in the shipped archive take a partner that is already stem-paired, so
+    /// the pairing is a second opinion about that sprite rather than a new pair. Say so.
+    #[test]
+    fn a_fallback_pairing_says_when_its_partner_is_already_stem_paired() {
+        let archive = FakeArchive::new(&[
+            ("units\\imp\\c.imp", minimal_imp()),
+            ("units\\imp\\c.h", matching_header("c")),
+            ("units\\imp\\alias.h", matching_header("c")),
+        ]);
+        let report = archive.run(EMPTY_CATALOG);
+
+        assert_eq!(report.paired_by_stem, 1);
+        assert_eq!(report.paired_by_declared_name, 1);
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("reuses_a_stem_paired_member")),
+            "{:?}",
+            report.notes
+        );
+    }
+
+    #[test]
+    fn a_catalogued_orphan_is_read_and_re_measured() {
+        let archive = FakeArchive::new(&[("imp\\lonely.imp", minimal_imp())]);
+        let catalog = ImpCatalog {
+            exceptions: &[],
+            orphans: FIXTURE_ORPHANS,
+        };
+        let report = archive.run(catalog);
+
+        assert_eq!(report.failures, Vec::<String>::new());
+        assert_eq!(report.documented_orphans, 1);
+    }
+
+    /// The validator used to accept an orphan by name without ever reading it, so a truncated
+    /// replacement at the catalogued name exited 0.
+    #[test]
+    fn a_malformed_member_at_a_catalogued_orphan_name_still_fails() {
+        let mut truncated = minimal_imp();
+        truncated.truncate(16);
+        let archive = FakeArchive::new(&[("imp\\lonely.imp", truncated)]);
+        let catalog = ImpCatalog {
+            exceptions: &[],
+            orphans: FIXTURE_ORPHANS,
+        };
+        let report = archive.run(catalog);
+
+        assert_eq!(report.documented_orphans, 0);
+        assert_eq!(report.validation_failures, 1);
+        assert!(
+            report.failures[0].contains("truncated") || report.failures[0].contains("catalog note"),
+            "{:?}",
+            report.failures
+        );
+    }
+
+    /// A member that parses but measures something else must re-fail: the note asserts values,
+    /// not just a name.
+    #[test]
+    fn a_different_but_parseable_member_at_an_orphan_name_re_fails() {
+        let mut other = minimal_imp();
+        // Widen the frame from 2x1 to 1x1 so it measures one raw byte instead of two.
+        other[56 + 2..56 + 4].copy_from_slice(&1_u16.to_le_bytes());
+        other[56 + 6..56 + 8].copy_from_slice(&1_u16.to_le_bytes());
+        let archive = FakeArchive::new(&[("imp\\lonely.imp", other)]);
+        let catalog = ImpCatalog {
+            exceptions: &[],
+            orphans: FIXTURE_ORPHANS,
+        };
+        let report = archive.run(catalog);
+
+        assert_eq!(report.documented_orphans, 0);
+        assert_eq!(report.validation_failures, 1);
+        assert!(
+            report.failures[0].contains("does not match its catalog note"),
+            "{:?}",
+            report.failures
+        );
+    }
+
+    #[test]
+    fn an_uncatalogued_orphan_is_a_failure() {
+        let archive = FakeArchive::new(&[("imp\\nobody.imp", minimal_imp())]);
+        let report = archive.run(EMPTY_CATALOG);
+
+        assert_eq!(report.orphan_entries, 1);
+        assert!(
+            report.failures[0].contains("no .h counterpart and no catalog note"),
+            "{:?}",
+            report.failures
+        );
+    }
+
+    #[test]
+    fn an_exception_that_matches_exactly_is_waived_and_reported() {
+        let archive = FakeArchive::new(&[
+            ("units\\imp\\stale.imp", minimal_imp()),
+            ("units\\imp\\stale.h", generated_header("stale", 1, 99, 99)),
+        ]);
+        let catalog = ImpCatalog {
+            exceptions: FIXTURE_EXCEPTIONS,
+            orphans: &[],
+        };
+        let report = archive.run(catalog);
+
+        assert_eq!(report.failures, Vec::<String>::new());
+        assert_eq!(report.excepted, 1);
+        assert_eq!(report.validated, 0);
+        assert!(
+            report.notes.iter().any(|note| note
+                .starts_with("exception\tunits/imp/stale\tHeaderPredatesArtRevision")),
+            "{:?}",
+            report.notes
+        );
+    }
+
+    /// The waiver is of specific numbers. A file that disagrees by a different amount is a new
+    /// finding, not a known one.
+    #[test]
+    fn an_exception_does_not_cover_a_different_measurement() {
+        let archive = FakeArchive::new(&[
+            ("units\\imp\\stale.imp", minimal_imp()),
+            ("units\\imp\\stale.h", generated_header("stale", 1, 98, 99)),
+        ]);
+        let catalog = ImpCatalog {
+            exceptions: FIXTURE_EXCEPTIONS,
+            orphans: &[],
+        };
+        let report = archive.run(catalog);
+
+        assert_eq!(report.excepted, 0);
+        assert_eq!(report.validation_failures, 1);
+        assert!(
+            report.failures[0].contains("raw pixel bytes mismatch"),
+            "{:?}",
+            report.failures
+        );
+    }
+
+    #[test]
+    fn an_unexplained_disagreement_is_a_failure_that_names_every_statistic() {
+        let archive = FakeArchive::new(&[
+            ("units\\imp\\d.imp", minimal_imp()),
+            ("units\\imp\\d.h", generated_header("d", 4, 99, 99)),
+        ]);
+        let report = archive.run(EMPTY_CATALOG);
+
+        assert_eq!(report.validation_failures, 1);
+        let failure = &report.failures[0];
+        assert!(failure.contains("frame count mismatch"), "{failure}");
+        assert!(failure.contains("raw pixel bytes mismatch"), "{failure}");
+        assert!(failure.contains("stored pixel bytes mismatch"), "{failure}");
+    }
+
+    /// One unreadable member used to abort the run with `?`, printing nothing at all about the
+    /// other 3,599.
+    #[test]
+    fn an_unreadable_member_is_a_failure_line_and_the_run_continues() {
+        let archive = FakeArchive::new(&[
+            ("units\\imp\\a.imp", minimal_imp()),
+            ("units\\imp\\a.h", matching_header("a")),
+        ])
+        .unreadable("imp\\broken.h");
+        let report = archive.run(EMPTY_CATALOG);
+
+        assert_eq!(report.validated, 1);
+        assert_eq!(report.validation_failures, 1);
+        assert!(
+            report.failures[0].contains("could not read"),
+            "{:?}",
+            report.failures
+        );
     }
 
     /// A minimal single-frame IMP with an origin pair, built here because the library's own
