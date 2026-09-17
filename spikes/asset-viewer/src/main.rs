@@ -18,7 +18,8 @@ use lom_asset_viewer::imp::{
     ImpValidationException, imp_member_basename, normalize_imp_member,
 };
 use lom_asset_viewer::map::{
-    GENERATED_HEADER_WORD, MapAsset, TERRAIN_TYPES, terrain_type_base_tile,
+    GENERATED_HEADER_WORD, MapAsset, TERRAIN_SPRITE_ARRAYS, TERRAIN_SPRITE_TYPES, TERRAIN_TYPES,
+    terrain_sprite_name, terrain_sprite_type, terrain_type_base_tile, transition_ring,
 };
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
@@ -76,6 +77,8 @@ enum Command {
         right: PathBuf,
     },
     RoundtripMaps(PathBuf),
+    SpriteTypes,
+    TransitionRings,
     CreateMap {
         width: u32,
         height: u32,
@@ -249,6 +252,8 @@ fn run() -> Result<(), String> {
         Command::DumpMapCells { path, rect } => dump_map_cells(&path, rect),
         Command::DiffMaps { left, right } => diff_maps(&left, &right),
         Command::RoundtripMaps(path) => roundtrip_maps(&path),
+        Command::SpriteTypes => sprite_types(),
+        Command::TransitionRings => transition_rings(),
         Command::CreateMap {
             width,
             height,
@@ -385,6 +390,14 @@ fn parse_args() -> Result<Command, String> {
             require_len(&args, 2)?;
             Ok(Command::RoundtripMaps(args[1].clone().into()))
         }
+        "--map-sprite-types" => {
+            require_len(&args, 1)?;
+            Ok(Command::SpriteTypes)
+        }
+        "--map-transition-rings" => {
+            require_len(&args, 1)?;
+            Ok(Command::TransitionRings)
+        }
         "--map-create" => {
             require_len(&args, 5)?;
             Ok(Command::CreateMap {
@@ -491,7 +504,7 @@ fn parse_args() -> Result<Command, String> {
                 edit: MapEdit::PlaceSprite {
                     x: parse_u32(&args[2])?,
                     y: parse_u32(&args[3])?,
-                    sprite_type: parse_u32(&args[4])?,
+                    sprite_type: parse_sprite_type(&args[4])?,
                 },
                 output: args[5].clone().into(),
             })
@@ -758,7 +771,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -3283,6 +3296,52 @@ fn is_screaming_case(name: &str) -> bool {
 ///
 /// Names are accepted with or without the `tt_` prefix, because a modder reading `maplib.gs` sees
 /// `tt_water` and a modder reading a map dump sees `water`.
+/// Print the engine's terrain-sprite-type table.
+///
+/// Profile-specific: these ids come from the working GS5R3 script set, assigned in script execution
+/// order, so a different mod shifts every one of them. That warning is printed with the table
+/// rather than buried in a document, because the table is most useful to somebody about to write an
+/// id into a file.
+fn sprite_types() -> Result<(), String> {
+    println!("sprite-types\t{}", TERRAIN_SPRITE_TYPES.len());
+    for (name, id) in TERRAIN_SPRITE_TYPES {
+        println!("sprite\t{id}\t{name}");
+    }
+    for name in TERRAIN_SPRITE_ARRAYS {
+        println!("array\t{name}\tper-faith table, not yet enumerated");
+    }
+    eprintln!(
+        "note: these ids are assigned in script execution order and are specific to the profile \
+         they were dumped from. Re-run the terrainrings probe against any profile whose maps you \
+         intend to edit."
+    );
+    Ok(())
+}
+
+/// Print the measured `setterrain` transition ring for every background terrain.
+fn transition_rings() -> Result<(), String> {
+    println!("direction-offsets\tN:-13\tS:-14\tW:-11\tE:-12\tNW:3\tNE:4\tSW:2\tSE:1");
+    for entry in TERRAIN_TYPES {
+        let terrain = entry.terrain_type;
+        match transition_ring(terrain) {
+            Some(ring) => println!(
+                "ring\t{terrain}\t{}\t{}",
+                entry.script_names[0],
+                ring.iter().map(u32::to_string).collect::<Vec<_>>().join("\t")
+            ),
+            None => println!(
+                "ring\t{terrain}\t{}\tno uniform ring (blends nothing, or depends on the painted terrain)",
+                entry.script_names[0]
+            ),
+        }
+    }
+    eprintln!(
+        "note: measured for 3x3 regions on a forced background. tt_road is ragged along every \
+         edge as a painted terrain, and as a background it changes only the edges."
+    );
+    Ok(())
+}
+
 fn parse_terrain_type(value: &str) -> Result<u32, String> {
     if let Ok(number) = value.parse::<u32>() {
         return terrain_type_base_tile(number)
@@ -3306,6 +3365,40 @@ fn parse_terrain_type(value: &str) -> Result<u32, String> {
                 .join(", ");
             format!("{value} is not a terrain type; expected 0..10 or one of: {names}")
         })
+}
+
+/// A terrain sprite type, given either as its name or as a raw id.
+///
+/// Names come from the engine's own `terrainsprites` dict, dumped by the 2026-09-17 probe. This is
+/// the thing that makes object placement usable: `sprite_type` is assigned in script execution
+/// order, so a raw id says nothing about what it is, and until the table existed a caller had no
+/// way to ask for a keep rather than a number.
+///
+/// A raw id is still accepted, and deliberately not range-checked against the table: ids above it
+/// are runtime registrations by `addterrainspritetype`, which is how the probe's own type 470 came
+/// to exist, and refusing those would refuse a legitimate record shape.
+fn parse_sprite_type(value: &str) -> Result<u32, String> {
+    if let Ok(id) = value.parse::<u32>() {
+        return Ok(id);
+    }
+    terrain_sprite_type(value).ok_or_else(|| {
+        let mut close: Vec<&str> = TERRAIN_SPRITE_TYPES
+            .iter()
+            .map(|(name, _)| *name)
+            .filter(|name| {
+                let needle = value.to_ascii_lowercase();
+                name.contains(&needle) || needle.contains(*name)
+            })
+            .collect();
+        close.sort_unstable();
+        close.truncate(8);
+        let hint = if close.is_empty() {
+            "run --map-sprite-types for the full list".to_owned()
+        } else {
+            format!("did you mean: {}", close.join(", "))
+        };
+        format!("{value} is not a known terrain sprite type; {hint}")
+    })
 }
 
 fn parse_flag(value: &str) -> Result<bool, String> {
@@ -3583,8 +3676,12 @@ fn apply_map_edit(map: &mut MapAsset, edit: MapEdit) -> Result<String, String> {
             let instance_id = map
                 .place_sprite(x, y, sprite_type)
                 .map_err(|error| error.to_string())?;
+            // Name the type in the output. A bare id is what made these records unreadable in
+            // the first place, and a caller who passed an id deserves to see what it resolved to.
+            let named = terrain_sprite_name(sprite_type)
+                .map_or_else(|| "unregistered (runtime type?)".to_owned(), str::to_owned);
             Ok(format!(
-                "place-sprite\t({x}, {y})\ttype:{sprite_type}\tinstance:{instance_id}"
+                "place-sprite\t({x}, {y})\ttype:{sprite_type}\tname:{named}\tinstance:{instance_id}"
             ))
         }
         MapEdit::RemoveSprite { instance_id } => {
@@ -3848,7 +3945,8 @@ impl MapCellTile for lom_asset_viewer::map::MapCell {
 mod tests {
     use super::{
         GENERATED_HEADER_WORD, MapEdit, create_map, edit_map, parse_coordinate, parse_dimension,
-        parse_elevation, parse_offset, parse_terrain_type, roundtrip_maps, set_imp_placement,
+        parse_elevation, parse_offset, parse_sprite_type, parse_terrain_type, roundtrip_maps,
+        set_imp_placement, terrain_sprite_name,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
@@ -4975,6 +5073,47 @@ mod tests {
     // shipped without CLI tests. A reviewer pointed out that the layer which actually touches the
     // game directory was the untested one, and that this is why the FlagRegion verification gap
     // was invisible.
+
+    #[test]
+    fn a_sprite_type_can_be_named_or_numbered() {
+        assert_eq!(parse_sprite_type("castle1").unwrap(), 0);
+        assert_eq!(parse_sprite_type("CASTLE1").unwrap(), 0);
+        // A raw id is still accepted, and NOT range-checked: ids above the table are runtime
+        // registrations by addterrainspritetype, which is how the probe's own 470 exists.
+        assert_eq!(parse_sprite_type("470").unwrap(), 470);
+        assert_eq!(parse_sprite_type("0").unwrap(), 0);
+        // A near miss suggests, a miss points at the listing.
+        let error = parse_sprite_type("castl").unwrap_err();
+        assert!(error.contains("castle1"), "{error}");
+        let error = parse_sprite_type("zzzz").unwrap_err();
+        assert!(error.contains("--map-sprite-types"), "{error}");
+    }
+
+    #[test]
+    fn placing_a_sprite_by_name_writes_the_registered_id() {
+        let dir = scratch_dir("map-spritename");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+
+        edit_map(
+            &input,
+            MapEdit::PlaceSprite {
+                x: 3,
+                y: 2,
+                sprite_type: parse_sprite_type("castle1").unwrap(),
+            },
+            &output,
+        )
+        .unwrap();
+
+        let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
+        let record = &written.placed_sprites_49.as_ref().unwrap().records[0];
+        assert_eq!(record.sprite_type, 0, "castle1 is type 0");
+        assert_eq!(written.record_coordinates(record), (3, 2));
+        assert_eq!(terrain_sprite_name(record.sprite_type), Some("castle1"));
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn creating_a_map_writes_a_file_the_parser_accepts() {

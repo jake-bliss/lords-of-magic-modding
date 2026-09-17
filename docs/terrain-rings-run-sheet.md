@@ -1,5 +1,23 @@
 # `terrainrings` run sheet
 
+> **RUN 2026-09-17. All three sections delivered.**
+>
+> - **Section A:** the ring is **one offset table** — `N−13 S−14 W−11 E−12 NW+3 NE+4 SW+2 SE+1` —
+>   relative to a per-background anchor, and the anchors are `15 + 48k` for k=0..7. Eight of eight
+>   blending backgrounds reproduce exactly. `tt_dirt` and `tt_impassible` blend nothing; `tt_road`
+>   depends on the painted terrain as a background and is ragged along every edge as a foreground.
+> - **Section B:** **`resetvisibility`** clears tag bit `0x00800000` — not `rebuild3dmap`, which
+>   this sheet's own hypothesis named. The bit is visibility state.
+> - **Section C:** `forall` enumerated `terrainsprites`. **197 entries, 178 name-to-id pairs**, plus
+>   nine per-faith arrays. `--map-place-sprite` now takes a name.
+>
+> Results in [the map format doc](map-format.md); reasoning in [the research log](research-log.md).
+> This sheet is kept as written, because it states what each outcome *would* mean and was written
+> before the run. Note that its Section B table predicted `rebuild3dmap` as the likely culprit and
+> was wrong — which is the point of writing predictions down.
+>
+> No crash this run.
+
 One attended keypress. It finishes the terrain half of the CLI editor and carries two riders.
 
 ## The gap it closes

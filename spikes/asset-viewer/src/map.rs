@@ -781,6 +781,354 @@ pub const LAND_BACKGROUND_TILE: u32 = 15;
 /// created with `0x6f` re-saves byte-identically.
 pub const GENERATED_HEADER_WORD: u32 = 0x6f;
 
+
+// ---------------------------------------------------------------------------
+// `setterrain` transition tiles, and the sprite-type table
+//
+// Both measured by the 2026-09-17 `terrainrings` probe: eleven terrains painted onto eleven
+// backgrounds, 121 rings, plus a dump of the engine's own `terrainsprites` dict. The tables below
+// are GENERATED from that run's saved maps rather than transcribed, because a hand-copied
+// measurement is a measurement with an extra failure mode.
+// ---------------------------------------------------------------------------
+
+/// The offset from a background's **anchor** tile to the transition tile in each direction.
+///
+/// **Observed in gameplay, 2026-09-17.** This is the whole rule. The earlier `mapload` run measured
+/// one background and produced an eight-tile table; this run measured all eleven and the eight
+/// tables turn out to be *one* table plus a per-background anchor:
+///
+/// ```text
+/// background anchor   ring (N S W E NW NE SW SE)
+///     6        15      2   1   4   3  18  19  17  16
+///     2       111     98  97 100  99 114 115 113 112
+///     3       159    146 145 148 147 162 163 161 160
+///     ...
+/// ```
+///
+/// Subtract the anchor and every row is identical: `N-13 S-14 W-11 E-12 NW+3 NE+4 SW+2 SE+1`,
+/// for **eight of eight** blending backgrounds, exactly. And the anchors are
+/// `15, 63, 111, 159, 207, 255, 303, 351` — an arithmetic run of stride
+/// [`TRANSITION_BLOCK_STRIDE`], every one congruent to [`TRANSITION_ANCHOR_RESIDUE`] mod 48. The
+/// atlas is laid out in 48-tile terrain blocks and blending indexes within a block.
+///
+/// This is far stronger than eleven independent tables, and much more likely to be right: eleven
+/// tables could each be a coincidence, one table that reproduces all eleven cannot.
+pub const TRANSITION_RING_OFFSETS: [TransitionOffset; 8] = [
+    TransitionOffset { direction: (0, -1), offset: -13 },
+    TransitionOffset { direction: (0, 1), offset: -14 },
+    TransitionOffset { direction: (-1, 0), offset: -11 },
+    TransitionOffset { direction: (1, 0), offset: -12 },
+    TransitionOffset { direction: (-1, -1), offset: 3 },
+    TransitionOffset { direction: (1, -1), offset: 4 },
+    TransitionOffset { direction: (-1, 1), offset: 2 },
+    TransitionOffset { direction: (1, 1), offset: 1 },
+];
+
+/// One direction of a transition ring, as an offset from the background's anchor tile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransitionOffset {
+    /// `(dx, dy)` of the ring cell relative to the painted region.
+    pub direction: (i32, i32),
+    pub offset: i32,
+}
+
+/// The stride between terrain blocks in the tile atlas.
+pub const TRANSITION_BLOCK_STRIDE: u32 = 48;
+
+/// Every blending anchor is congruent to this modulo [`TRANSITION_BLOCK_STRIDE`].
+pub const TRANSITION_ANCHOR_RESIDUE: u32 = 15;
+
+/// What `setterrain` does to the ring around a region painted onto this background.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransitionBehaviour {
+    /// A ring of [`TRANSITION_RING_OFFSETS`] relative to `anchor`, for nine of the eleven painted
+    /// terrains. The two that differ are the background's own type -- painting a terrain onto
+    /// itself produces no ring at all -- and `tt_road`, which is ragged along every edge.
+    Blends { anchor: u32 },
+    /// No transition tiles at all: every ring cell keeps the background tile.
+    ///
+    /// True of `tt_dirt` (0) and `tt_impassible` (10), whose representative tiles are the two that
+    /// are **not** congruent to [`TRANSITION_ANCHOR_RESIDUE`] mod 48 -- 175 and 469 are 31 and 37.
+    /// That is suggestive rather than established: two cases is not a rule.
+    NoTransition,
+    /// The ring depends on the painted terrain, and only the edges change -- corners keep the
+    /// background tile. Observed only for `tt_road` (9) as a background.
+    PerPaintedTerrain,
+}
+
+/// Per-background transition behaviour, generated from the 2026-09-17 run.
+pub const TERRAIN_TRANSITIONS: [TerrainTransition; 11] = [
+    TerrainTransition { terrain_type: 0, behaviour: TransitionBehaviour::NoTransition },
+    TerrainTransition { terrain_type: 1, behaviour: TransitionBehaviour::Blends { anchor: 63 } },
+    TerrainTransition { terrain_type: 2, behaviour: TransitionBehaviour::Blends { anchor: 111 } },
+    TerrainTransition { terrain_type: 3, behaviour: TransitionBehaviour::Blends { anchor: 159 } },
+    TerrainTransition { terrain_type: 4, behaviour: TransitionBehaviour::Blends { anchor: 207 } },
+    TerrainTransition { terrain_type: 5, behaviour: TransitionBehaviour::Blends { anchor: 255 } },
+    TerrainTransition { terrain_type: 6, behaviour: TransitionBehaviour::Blends { anchor: 15 } },
+    TerrainTransition { terrain_type: 7, behaviour: TransitionBehaviour::Blends { anchor: 303 } },
+    TerrainTransition { terrain_type: 8, behaviour: TransitionBehaviour::Blends { anchor: 351 } },
+    TerrainTransition { terrain_type: 9, behaviour: TransitionBehaviour::PerPaintedTerrain },
+    TerrainTransition { terrain_type: 10, behaviour: TransitionBehaviour::NoTransition },
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerrainTransition {
+    pub terrain_type: u32,
+    pub behaviour: TransitionBehaviour,
+}
+
+/// The transition ring for a background, in [`TRANSITION_RING_OFFSETS`] order.
+///
+/// `None` when this background does not produce a uniform ring -- either it blends nothing, or the
+/// ring depends on the painted terrain. A painter must handle those three backgrounds separately
+/// rather than substituting a plausible table.
+pub fn transition_ring(background_terrain: u32) -> Option<[u32; 8]> {
+    let entry = TERRAIN_TRANSITIONS
+        .iter()
+        .find(|entry| entry.terrain_type == background_terrain)?;
+    let TransitionBehaviour::Blends { anchor } = entry.behaviour else {
+        return None;
+    };
+    let mut ring = [0_u32; 8];
+    for (slot, offset) in ring.iter_mut().zip(TRANSITION_RING_OFFSETS) {
+        *slot = u32::try_from(i64::from(anchor) + i64::from(offset.offset)).ok()?;
+    }
+    Some(ring)
+}
+
+/// The engine's terrain-sprite-type table: the name a script registers, and the id it gets.
+///
+/// **Observed in gameplay, 2026-09-17.** `terrainsprites` is a dict keyed by name -- shipped script
+/// reads `terrainsprites /barrow get` -- and `forall` enumerated all 197 of its entries. 178 are a
+/// plain name-to-id pair and are recorded here; the rest are arrays and procedures, listed in
+/// [`TERRAIN_SPRITE_ARRAYS`].
+///
+/// **This is why a map's `sprite_type` field was unusable.** The id is assigned in script execution
+/// order across 536 `addterrainspritetype` call sites, so nothing in the file format says which id
+/// is a keep and which is a tree. This table is the missing half, and it makes
+/// `--map-place-sprite` able to take a name.
+///
+/// It is **profile-specific.** These ids come from the working GS5R3 script set; a different mod
+/// registers different types in a different order and every id here shifts. Re-run the probe
+/// against any profile whose maps you intend to edit.
+///
+/// These are identifiers from the game's own scripts, the same class of measurement as the operator
+/// and terrain-type names already recorded in this repository -- not shipped content.
+pub const TERRAIN_SPRITE_TYPES: [(&str, u32); 178] = [
+    ("castle1", 0),
+    ("castle2", 1),
+    ("castled", 2),
+    ("castlel", 3),
+    ("catsku", 4),
+    ("cave", 5),
+    ("crystb", 6),
+    ("crystp", 7),
+    ("crystr", 8),
+    ("crysty", 9),
+    ("dirtpil", 10),
+    ("dtree", 11),
+    ("horns", 12),
+    ("arms", 13),
+    ("ice1", 14),
+    ("ice", 15),
+    ("livil", 16),
+    ("minec", 17),
+    ("mineg", 18),
+    ("minei", 19),
+    ("minem", 20),
+    ("mtreep", 21),
+    ("palm1", 22),
+    ("palm", 23),
+    ("pine1", 24),
+    ("pine", 25),
+    ("ribs", 26),
+    ("rock2", 27),
+    ("rock4", 28),
+    ("rock", 29),
+    ("rocks1", 30),
+    ("rocks3", 31),
+    ("spine", 32),
+    ("statue1", 33),
+    ("statue2", 34),
+    ("statue3", 35),
+    ("statue4", 36),
+    ("steersk", 37),
+    ("teeth", 38),
+    ("tempd", 39),
+    ("tempf", 40),
+    ("templ", 41),
+    ("tempw", 42),
+    ("tower1", 43),
+    ("tower2", 44),
+    ("tower3", 45),
+    ("tree1", 46),
+    ("tree2", 47),
+    ("tree3", 48),
+    ("warock", 49),
+    ("wavil", 50),
+    ("tree4", 54),
+    ("tree5", 55),
+    ("tree6", 56),
+    ("tree7", 57),
+    ("rock1", 58),
+    ("rock3", 60),
+    ("statue8", 61),
+    ("statue9", 62),
+    ("eemush1", 63),
+    ("eemush2", 64),
+    ("eemush3", 65),
+    ("eebush1", 66),
+    ("eemush4", 67),
+    ("eemush5", 68),
+    ("aarock1", 70),
+    ("aarock2", 71),
+    ("aarock3", 72),
+    ("rockw1", 73),
+    ("rockw2", 74),
+    ("rockw3", 75),
+    ("listat1", 76),
+    ("listat2", 77),
+    ("listat3", 78),
+    ("livase0", 79),
+    ("livase1", 80),
+    ("libnch0", 81),
+    ("statue", 82),
+    ("ruwood", 84),
+    ("ruvase", 85),
+    ("rustat2", 86),
+    ("rurug", 87),
+    ("rustat", 88),
+    ("orchard", 89),
+    ("orchrd", 90),
+    ("atkinf", 91),
+    ("atkmis", 92),
+    ("definf", 93),
+    ("defmis", 94),
+    ("front_wall", 119),
+    ("side_wall", 120),
+    ("corner_wall", 121),
+    ("front_ladder", 122),
+    ("side_ladder", 123),
+    ("fitrch1", 124),
+    ("fipitt1", 125),
+    ("fichns1", 126),
+    ("choven1", 127),
+    ("chtabl1", 128),
+    ("chhide1", 129),
+    ("chbrls1", 130),
+    ("orbust1", 131),
+    ("ortabl1", 132),
+    ("orbook1", 133),
+    ("orarmr1", 134),
+    ("detort1", 143),
+    ("deskll1", 144),
+    ("defntn1", 145),
+    ("wavase1", 146),
+    ("wafntn1", 147),
+    ("waflwr1", 148),
+    ("llwtcht", 149),
+    ("ddwtcht", 150),
+    ("statue5", 151),
+    ("fish", 152),
+    ("wwvil", 153),
+    ("lmill", 154),
+    ("mill", 155),
+    ("wwmrkt", 156),
+    ("cryst", 157),
+    ("cryst1", 158),
+    ("cryst2", 159),
+    ("brew", 160),
+    ("esp03", 161),
+    ("hammer", 162),
+    ("cart", 163),
+    ("atkcmp1", 164),
+    ("atkcmp2", 165),
+    ("atkcmp3", 166),
+    ("defcmp1", 167),
+    ("defcmp2", 168),
+    ("defcmp3", 169),
+    ("airspcr1", 178),
+    ("waterspcr1", 179),
+    ("barrow", 180),
+    ("bridge1", 181),
+    ("bridge2", 182),
+    ("conwich", 183),
+    ("cyccave", 184),
+    ("drgcave", 185),
+    ("fount", 186),
+    ("hbarrow", 187),
+    ("hlygrail", 188),
+    ("lchcase", 189),
+    ("sdung1", 190),
+    ("sdung2", 191),
+    ("spdrweb", 192),
+    ("trllcave", 193),
+    ("watower", 194),
+    ("stup1", 209),
+    ("stdn1", 210),
+    ("arch1se", 211),
+    ("arch1ne", 212),
+    ("arch2se", 213),
+    ("arch2ne", 214),
+    ("arcj3ne", 215),
+    ("arch3se", 216),
+    ("cave1", 217),
+    ("cave2", 218),
+    ("orc", 219),
+    ("hermit", 220),
+    ("ship", 221),
+    ("limrkt", 222),
+    ("ddmrkt", 223),
+    ("ffmrkt", 224),
+    ("cave3", 225),
+    ("cave4", 226),
+    ("fleemark", 227),
+    ("mines", 228),
+    ("agx06", 229),
+    ("mtreeo", 230),
+    ("mtreef", 231),
+    ("mtreea", 232),
+    ("llvil", 233),
+    ("ffvil", 234),
+    ("wwhut", 235),
+    ("devil", 236),
+    ("lirock", 237),
+];
+
+/// Entries of `terrainsprites` whose value is an array or a procedure rather than a single id.
+///
+/// The arrays are the per-faith tables -- `keep_array`, `vilg_array`, `great_temple_array` and
+/// `leader_ttype_array` are eight entries each, one per faith, which is exactly the set the random
+/// map generator was observed placing. Enumerating them is the obvious next probe and would
+/// complete the table.
+pub const TERRAIN_SPRITE_ARRAYS: [&str; 9] = [
+    "combatterrainspritearray",
+    "great_temple_array",
+    "keep_array",
+    "leader_ttype_array",
+    "special_array",
+    "special_unit",
+    "special_unit2",
+    "terrainspritearray",
+    "vilg_array",
+];
+
+/// The type id a script-registered terrain sprite name carries.
+pub fn terrain_sprite_type(name: &str) -> Option<u32> {
+    TERRAIN_SPRITE_TYPES
+        .iter()
+        .find(|(entry, _)| entry.eq_ignore_ascii_case(name))
+        .map(|(_, id)| *id)
+}
+
+/// The name registered for a type id, when exactly one name holds it.
+pub fn terrain_sprite_name(type_id: u32) -> Option<&'static str> {
+    TERRAIN_SPRITE_TYPES
+        .iter()
+        .find(|(_, id)| *id == type_id)
+        .map(|(name, _)| *name)
+}
+
 /// The largest side length [`MapAsset::create`] will produce.
 ///
 /// `gs\edit\mapgen.gs` offers presets up to 1024 and works in units of 32; the engine was observed
@@ -1540,6 +1888,132 @@ mod tests {
     /// fixture that actually has the bit set -- otherwise the duplicated line can be deleted and
     /// the suite stays green.
     /// The halo is a direction table, and the probe measured all eight directions exactly once.
+    /// The one table must reproduce every measured ring, or it is not the rule.
+    ///
+    /// These eight rings came off the 2026-09-17 saved maps. Reproducing all eight from a single
+    /// offset table plus an anchor is the entire claim -- eight independent tables could each be a
+    /// coincidence; one table that regenerates all eight cannot.
+    #[test]
+    fn one_offset_table_reproduces_every_measured_ring() {
+        // (background terrain, the ring as read from zr{n}.scn, in N S W E NW NE SW SE order)
+        const MEASURED: [(u32, [u32; 8]); 8] = [
+            (1, [50, 49, 52, 51, 66, 67, 65, 64]),
+            (2, [98, 97, 100, 99, 114, 115, 113, 112]),
+            (3, [146, 145, 148, 147, 162, 163, 161, 160]),
+            (4, [194, 193, 196, 195, 210, 211, 209, 208]),
+            (5, [242, 241, 244, 243, 258, 259, 257, 256]),
+            (6, [2, 1, 4, 3, 18, 19, 17, 16]),
+            (7, [290, 289, 292, 291, 306, 307, 305, 304]),
+            (8, [338, 337, 340, 339, 354, 355, 353, 352]),
+        ];
+        for (background, expected) in MEASURED {
+            assert_eq!(
+                super::transition_ring(background),
+                Some(expected),
+                "background {background} is not reproduced by the offset table"
+            );
+        }
+        // The three that do not produce a uniform ring must say so rather than returning a
+        // plausible one: dirt and impassible blend nothing, road depends on the painted terrain.
+        for background in [0, 9, 10] {
+            assert_eq!(super::transition_ring(background), None, "{background}");
+        }
+        assert_eq!(super::transition_ring(11), None, "not a terrain type");
+    }
+
+    #[test]
+    fn every_blending_anchor_sits_on_the_atlas_block_grid() {
+        let anchors: Vec<u32> = super::TERRAIN_TRANSITIONS
+            .iter()
+            .filter_map(|entry| match entry.behaviour {
+                super::TransitionBehaviour::Blends { anchor } => Some(anchor),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(anchors.len(), 8, "eight backgrounds blend");
+        for anchor in &anchors {
+            assert_eq!(
+                anchor % super::TRANSITION_BLOCK_STRIDE,
+                super::TRANSITION_ANCHOR_RESIDUE,
+                "anchor {anchor} is off the block grid"
+            );
+        }
+        let mut sorted = anchors.clone();
+        sorted.sort_unstable();
+        // A contiguous run of blocks 0..7, which is what makes "the atlas is laid out in 48-tile
+        // terrain blocks" a statement about the atlas rather than about eight loose numbers.
+        for (index, anchor) in sorted.iter().enumerate() {
+            let expected = super::TRANSITION_ANCHOR_RESIDUE
+                + super::TRANSITION_BLOCK_STRIDE * u32::try_from(index).unwrap();
+            assert_eq!(*anchor, expected);
+        }
+        // Water's blending anchor is NOT its representative tile: 392 is 8 mod 48, not 15. The two
+        // are different things and conflating them would paint water transitions from the wrong
+        // block.
+        assert_eq!(terrain_type_base_tile(1), Some(392));
+        assert_ne!(super::transition_ring(1).unwrap()[7] - 1, 392);
+    }
+
+    #[test]
+    fn the_offset_table_covers_every_neighbour_exactly_once() {
+        let directions: std::collections::BTreeSet<(i32, i32)> = super::TRANSITION_RING_OFFSETS
+            .iter()
+            .map(|entry| entry.direction)
+            .collect();
+        let expected: std::collections::BTreeSet<(i32, i32)> = (-1..=1)
+            .flat_map(|dy| (-1..=1).map(move |dx| (dx, dy)))
+            .filter(|(dx, dy)| *dx != 0 || *dy != 0)
+            .collect();
+        assert_eq!(directions, expected);
+        let offsets: std::collections::BTreeSet<i32> =
+            super::TRANSITION_RING_OFFSETS.iter().map(|e| e.offset).collect();
+        assert_eq!(offsets.len(), 8, "eight directions, eight distinct offsets");
+    }
+
+    #[test]
+    fn the_sprite_type_table_resolves_names_in_both_directions() {
+        assert_eq!(super::terrain_sprite_type("castle1"), Some(0));
+        assert_eq!(super::terrain_sprite_type("CASTLE1"), Some(0), "case-insensitive");
+        assert_eq!(super::terrain_sprite_name(0), Some("castle1"));
+        assert_eq!(super::terrain_sprite_type("not_a_sprite"), None);
+        // Ids are unique, names are unique: 178 of each, which is what the run reported.
+        let ids: std::collections::BTreeSet<u32> =
+            super::TERRAIN_SPRITE_TYPES.iter().map(|(_, id)| *id).collect();
+        let names: std::collections::BTreeSet<&str> =
+            super::TERRAIN_SPRITE_TYPES.iter().map(|(name, _)| *name).collect();
+        assert_eq!(ids.len(), 178);
+        assert_eq!(names.len(), 178);
+        // Every id round-trips through its own name.
+        for (name, id) in super::TERRAIN_SPRITE_TYPES {
+            assert_eq!(super::terrain_sprite_type(name), Some(id));
+            assert_eq!(super::terrain_sprite_name(id), Some(name));
+        }
+        // The arrays are listed but deliberately not resolved -- they are per-faith tables and
+        // enumerating them is a separate probe.
+        assert!(super::TERRAIN_SPRITE_ARRAYS.contains(&"keep_array"));
+        assert_eq!(super::terrain_sprite_type("keep_array"), None);
+    }
+
+    /// The probe placed sprite type 470 and the engine kept it; 470 is not in this table.
+    ///
+    /// That is not a contradiction and the distinction matters: the table holds the types the
+    /// shipped scripts register, and 470 was minted by the probe itself with
+    /// `addterrainspritetype` during the run. An id above the table's range is a runtime
+    /// registration, not a corrupt record.
+    #[test]
+    fn the_table_covers_the_shipped_types_not_runtime_registrations() {
+        let highest = super::TERRAIN_SPRITE_TYPES
+            .iter()
+            .map(|(_, id)| *id)
+            .max()
+            .unwrap();
+        assert_eq!(highest, 237);
+        assert_eq!(super::terrain_sprite_name(470), None);
+        // And every corpus sprite id observed by `--scan-map-dir` (0..441) is either in the table
+        // or above its top, never a gap inside it that would suggest a misread.
+        assert!(super::terrain_sprite_type("lirock").is_some());
+    }
+
     #[test]
     fn the_land_transition_halo_covers_every_direction_once() {
         let table = super::LAND_TRANSITION_TILES;
