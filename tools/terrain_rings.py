@@ -14,6 +14,7 @@ the repository -- point it at the ignored artifacts directory.
 
 from __future__ import annotations
 
+import re
 import struct
 import sys
 from pathlib import Path
@@ -97,16 +98,75 @@ def edge_spread(grid: Grid, origin: tuple[int, int], size: int) -> dict[str, set
     return spread
 
 
+def full_ring(grid: Grid, origin: tuple[int, int], size: int) -> dict[str, set[int]]:
+    """Every tile at every ring position, grouped by direction.
+
+    `ring()` samples one cell per direction, which is what a painter needs. This is what a *claim*
+    about the ring needs: an edge that is not uniform must not be collapsible to a single value.
+    """
+    x0, y0 = origin
+    out: dict[str, set[int]] = {}
+    for dx in range(-1, size + 1):
+        for dy in range(-1, size + 1):
+            if 0 <= dx < size and 0 <= dy < size:
+                continue
+            if dx == -1 and dy == -1:
+                key = "NW"
+            elif dx == size and dy == -1:
+                key = "NE"
+            elif dx == -1 and dy == size:
+                key = "SW"
+            elif dx == size and dy == size:
+                key = "SE"
+            elif dy == -1:
+                key = "N"
+            elif dy == size:
+                key = "S"
+            elif dx == -1:
+                key = "W"
+            else:
+                key = "E"
+            out.setdefault(key, set()).add(grid.tile(x0 + dx, y0 + dy))
+    return out
+
+
 def core(grid: Grid, origin: tuple[int, int], size: int) -> set[int]:
     x0, y0 = origin
     return {grid.tile(x0 + dx, y0 + dy) for dy in range(size) for dx in range(size)}
 
 
+def background_readbacks(log: Path) -> dict[int, tuple[int, int]]:
+    """`background N tile T reads terrain G expected N` lines from the probe's log.
+
+    The far-field check below compares saved tiles against the tile the probe was *told* to force,
+    which cannot catch a base tile that resolves to a different terrain type than intended -- the
+    exact failure that would void a whole row while every tile looked right. The engine's own
+    `getterrain` answer is the only thing that can, so it is read from the log when the log is
+    there, and its absence is reported rather than passed over.
+    """
+    if not log.is_file():
+        return {}
+    text = log.read_bytes().decode("latin-1")
+    out: dict[int, tuple[int, int]] = {}
+    for background, _tile, got, expected in re.findall(
+        r"background\s+(\d+)\s+tile\s+(\d+)\s+reads terrain\s+(\d+)\s+expected\s+(\d+)", text
+    ):
+        out[int(background)] = (int(got), int(expected))
+    return out
+
+
 def report(directory: Path, verbose: bool) -> int:
     size = engine_probe.RINGS_BLOB
     names = engine_probe.rings_map_names()
+    readbacks = background_readbacks(directory / "zprobe.log")
+    if not readbacks:
+        print(
+            "note\tno zprobe.log beside the maps: the engine's own getterrain readback cannot be "
+            "checked, so a row whose background resolved to the wrong terrain type would pass"
+        )
     failures: list[str] = []
     rows: dict[int, dict[int, dict[str, int]]] = {}
+    grids: dict[int, Grid] = {}
 
     for background in engine_probe.RINGS_TERRAINS:
         path = directory / Path(names[background]).name
@@ -114,6 +174,7 @@ def report(directory: Path, verbose: bool) -> int:
             failures.append(f"missing {path.name}")
             continue
         grid = Grid(path)
+        grids[background] = grid
         rows[background] = {}
         base = engine_probe.TERRAIN_BASE_TILES[background]
         # The far field must still be the forced background tile. If it is not, the row was
@@ -125,6 +186,15 @@ def report(directory: Path, verbose: bool) -> int:
                 f"{path.name}: far field is {sorted(far)}, expected [{base}] -- "
                 "the background is not what this row assumes"
             )
+        if background in readbacks:
+            got, expected = readbacks[background]
+            if got != expected:
+                failures.append(
+                    f"{path.name}: the engine read this background as terrain {got}, not "
+                    f"{expected} -- every ring in this row is against the wrong background"
+                )
+        elif readbacks:
+            failures.append(f"{path.name}: no getterrain readback for background {background}")
         print(f"background {background}  tile {base}  {grid.width}x{grid.height}  {path.name}")
         for index, terrain in enumerate(engine_probe.RINGS_TERRAINS):
             origin = engine_probe.rings_blob_origin(index)
@@ -153,7 +223,15 @@ def report(directory: Path, verbose: bool) -> int:
     for background, row in sorted(rows.items()):
         groups: dict[tuple[int, ...], list[int]] = {}
         for terrain, values in row.items():
-            key = tuple(values[name] for _, name in DIRECTIONS)
+            # Key on EVERY ring cell, not the eight midpoints. Keying on midpoints alone would put
+            # two rings with matching midpoints and differing outer cells in the same group, and
+            # this summary is exactly what the "one offset table" conclusion leans on -- a grouping
+            # that can't see raggedness could manufacture support for it.
+            origin = engine_probe.rings_blob_origin(terrain)
+            full = full_ring(grids[background], origin, size)
+            key = tuple(values[name] for _, name in DIRECTIONS) + ("|",) + tuple(
+                tile for name in sorted(full) for tile in sorted(full[name])
+            )
             groups.setdefault(key, []).append(terrain)
         biggest = max(groups.values(), key=len)
         odd = sorted(t for group in groups.values() if group is not biggest for t in group)

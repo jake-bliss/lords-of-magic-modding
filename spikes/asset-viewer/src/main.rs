@@ -3381,8 +3381,19 @@ fn parse_sprite_type(value: &str) -> Result<u32, String> {
     if let Ok(id) = value.parse::<u32>() {
         return Ok(id);
     }
-    terrain_sprite_type(value).ok_or_else(|| {
-        let mut close: Vec<&str> = TERRAIN_SPRITE_TYPES
+    if let Some(id) = terrain_sprite_type(value) {
+        // The dangerous path, and it used to be the silent one. `--map-sprite-types` warned that
+        // the table is profile-specific; resolving a name for an actual write did not, so on a
+        // modded profile this would quietly put GS5R3's id into a file where it means something
+        // else. The warning belongs where the id gets written, not only where it gets listed.
+        eprintln!(
+            "note: {value} is type {id} in the GS5R3 script set this table was dumped from. Ids \
+             are assigned in script execution order, so a profile with different scripts assigns \
+             them differently -- re-run the terrainrings probe against the profile you are editing."
+        );
+        return Ok(id);
+    }
+    let mut close: Vec<&str> = TERRAIN_SPRITE_TYPES
             .iter()
             .map(|(name, _)| *name)
             .filter(|name| {
@@ -3392,13 +3403,12 @@ fn parse_sprite_type(value: &str) -> Result<u32, String> {
             .collect();
         close.sort_unstable();
         close.truncate(8);
-        let hint = if close.is_empty() {
-            "run --map-sprite-types for the full list".to_owned()
-        } else {
-            format!("did you mean: {}", close.join(", "))
-        };
-        format!("{value} is not a known terrain sprite type; {hint}")
-    })
+    let hint = if close.is_empty() {
+        "run --map-sprite-types for the full list".to_owned()
+    } else {
+        format!("did you mean: {}", close.join(", "))
+    };
+    Err(format!("{value} is not a known terrain sprite type; {hint}"))
 }
 
 fn parse_flag(value: &str) -> Result<bool, String> {
