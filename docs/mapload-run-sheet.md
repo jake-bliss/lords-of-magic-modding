@@ -1,5 +1,17 @@
 # `mapload` run sheet
 
+> **RUN 2026-09-17. All seven rungs passed.** The engine loads maps this project wrote, including
+> edited, sprite-placed, created-from-nothing and **non-square** maps, and the two created-from-
+> nothing maps re-saved byte-identically. The run also settled the header word at `0x00`, showed tag
+> bit `0x00800000` is not durable map data, and recovered `setterrain`'s transition ring. Results are
+> in [the map format doc](map-format.md#engine-acceptance-measured); the log and its reasoning are in
+> [the research log](research-log.md). This sheet is kept as written, because it states what each
+> outcome *would* mean — and it was written before the run, so none of it is hindsight.
+>
+> One note for a rerun: the game **crashed on exit**, after the probe had logged `map load probe
+> done`. Nothing was lost; every artifact was already on disk. Whether that is the probe or Wine on
+> shutdown is untested.
+
 One attended keypress. It answers the cheapest unknown left in the map work and two others at the
 same time.
 

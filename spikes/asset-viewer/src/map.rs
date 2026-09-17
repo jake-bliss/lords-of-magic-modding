@@ -15,6 +15,22 @@ const PLACED_SPRITE_SECTION_49_FIXED_BYTES: usize = 8;
 /// bit set.** Forcing a texture does not set it, so it does not mean "forced texture". The
 /// reasoning is kept here so nobody re-derives it from the same corpus shape.
 ///
+/// **Observed in gameplay, 2026-09-17 (mapload probe): this bit is not durable map data.** The
+/// engine *clears* it when it saves a map it loaded. Sixteen interior cells flagged by this project
+/// came back cleared with their tiles untouched, and -- the stronger half -- a 64x64 map the engine
+/// itself wrote had the bit set on **all 4,096** cells, which loading and re-saving cleared on all
+/// 4,096. It is written on save from in-memory state that a load does not repopulate.
+///
+/// That the engine's own `clearmap` save had the bit set on every cell **appears to contradict** the
+/// earlier finding that `forcetexture` never sets it (0 of 4,096). The two runs differ in one step:
+/// the mapload control saved *immediately* after `clearmap`, before any `rebuild3dmap`, while the
+/// earlier probe rebuilt and rendered first. `rebuild3dmap` clearing the bit reconciles both
+/// observations without either being wrong, and is testable. Until it is tested, neither reading is
+/// promoted.
+///
+/// A writer must therefore treat this bit as **cosmetic**: preserving it costs nothing and loses
+/// nothing, and setting it achieves nothing the engine will keep.
+///
 /// It is still masked out of [`MapCell::tile_index`], which is independent of what it means: with
 /// the mask every corpus cell indexes a tile in `0..623`, and without it the flagged cells do not.
 pub const CELL_TAG_HIGH_FLAG: u32 = 0x0080_0000;
@@ -36,6 +52,15 @@ pub struct TerrainTypeInfo {
 /// Together with [`OBSERVED_TILE_TERRAIN_TYPES`] this establishes that a cell's terrain *type* is
 /// derived from its tile index through the tileset rather than stored in the cell, which is why
 /// tag bits `10..22` are unused across the whole corpus.
+///
+/// **Qualified 2026-09-17 by the mapload probe: `base_tile` is a *representative* tile of each
+/// type, not the tile `setterrain` would write in an arbitrary neighbourhood.** The original
+/// measurement painted onto a background forced to tile 392; painting onto a tile-15 background
+/// instead makes `setterrain 6` write tiles in `385..391` rather than 15. `setterrain` picks from a
+/// family according to the local neighbourhood -- see [`LAND_TRANSITION_TILES`]. The reverse
+/// direction is unaffected: `getterrain` on any of these tiles answers the type, and
+/// `base_tile_terrain_type` round-trips. What this project's writer does with the table --
+/// forcing one representative tile of a type into one cell -- remains exactly right.
 pub const TERRAIN_TYPES: [TerrainTypeInfo; 11] = [
     TerrainTypeInfo {
         terrain_type: 0,
@@ -651,12 +676,59 @@ impl PlacedSpriteSection49 {
     }
 }
 
+/// One direction of a `setterrain` transition halo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransitionTile {
+    /// `(dx, dy)` of the halo cell relative to the painted region: `-1` is outside the low edge,
+    /// `+1` outside the high edge.
+    pub direction: (i32, i32),
+    pub tile: u32,
+}
+
+/// The tiles `setterrain` blends into the ring around a painted region, on a **tile-15 background**.
+///
+/// **Observed in gameplay, 2026-09-17 (mapload probe).** Eleven isolated 3x3 blobs, one per terrain
+/// type, painted onto a background forced to tile 15 with `clearmap`. The ring one cell outside each
+/// blob is this table -- and it is **byte-for-byte identical for nine of the eleven terrains**
+/// (0, 1, 2, 3, 4, 5, 7, 8, 10).
+///
+/// So a transition tile is chosen by the **background terrain and the direction of the boundary**,
+/// not by which terrain is on the other side. That is the finding; it is what makes a terrain
+/// painter possible at all, because the alternative -- a full 11x11 pair table -- would have needed
+/// eleven times the measurement.
+///
+/// Two exceptions, both informative:
+///
+/// - **Terrain 6** is the background's own type. Its halo is all tile 15: no boundary, no
+///   transition. That is the control which proves the other ten rows are measuring something.
+/// - **Terrain 9** (`tt_road`) has a completely different halo, tiles `384..390`. Roads blend as
+///   their own family.
+///
+/// This is **one background**. The structure generalises; the numbers do not. A complete painter
+/// needs the same measurement against each of the other ten backgrounds.
+pub const LAND_TRANSITION_TILES: [TransitionTile; 8] = [
+    TransitionTile { direction: (0, -1), tile: 2 },
+    TransitionTile { direction: (0, 1), tile: 1 },
+    TransitionTile { direction: (-1, 0), tile: 4 },
+    TransitionTile { direction: (1, 0), tile: 3 },
+    TransitionTile { direction: (-1, -1), tile: 18 },
+    TransitionTile { direction: (1, -1), tile: 19 },
+    TransitionTile { direction: (-1, 1), tile: 17 },
+    TransitionTile { direction: (1, 1), tile: 16 },
+];
+
+/// The background `LAND_TRANSITION_TILES` was measured against, and `tt_land`'s representative tile.
+pub const LAND_BACKGROUND_TILE: u32 = 15;
+
 /// The header word every map the shipped engine generated carries.
 ///
 /// **Observed in gameplay.** Engine-generated maps wrote `0x6f` at 32, 48, 64, 128, 256 **and**
 /// 512, so the word is independent of geometry. Shipped world `.scn` files occupy `0x6c..0x6f`.
-/// Its *meaning* is Unknown — the tileset-selector hypothesis is unproven — but this is a value the
-/// engine itself produced, which is the whole basis on which a map may be created from nothing.
+/// **Observed in gameplay, 2026-09-17 (mapload probe): the engine rewrites this word on every
+/// save, and does not preserve what it read.** `URAK.scn` carries `0x6c`; loading it and saving it
+/// straight back out produced `0x6f`. So the word is written from engine state, not carried from the
+/// map -- which retires the "stored tileset selector" reading in that form, and is also why a map
+/// created with `0x6f` re-saves byte-identically.
 pub const GENERATED_HEADER_WORD: u32 = 0x6f;
 
 /// The footer the engine wrote for a map with no placed sprites.
@@ -1405,6 +1477,40 @@ mod tests {
     /// `fill_terrain` repeats `set_tile`'s high-bit preservation, so it needs its own test on a
     /// fixture that actually has the bit set -- otherwise the duplicated line can be deleted and
     /// the suite stays green.
+    /// The halo is a direction table, and the probe measured all eight directions exactly once.
+    #[test]
+    fn the_land_transition_halo_covers_every_direction_once() {
+        let table = super::LAND_TRANSITION_TILES;
+        let directions: std::collections::BTreeSet<(i32, i32)> =
+            table.iter().map(|entry| entry.direction).collect();
+        let expected: std::collections::BTreeSet<(i32, i32)> = (-1..=1)
+            .flat_map(|dy| (-1..=1).map(move |dx| (dx, dy)))
+            .filter(|(dx, dy)| *dx != 0 || *dy != 0)
+            .collect();
+        assert_eq!(directions, expected, "all eight neighbours, and no centre");
+        // The four edges and the four corners come from separate tile runs, which is what makes
+        // this a direction table rather than a single blended value.
+        let edges: Vec<u32> = table
+            .iter()
+            .filter(|e| e.direction.0 == 0 || e.direction.1 == 0)
+            .map(|e| e.tile)
+            .collect();
+        let corners: Vec<u32> = table
+            .iter()
+            .filter(|e| e.direction.0 != 0 && e.direction.1 != 0)
+            .map(|e| e.tile)
+            .collect();
+        assert_eq!(edges.len(), 4);
+        assert_eq!(corners.len(), 4);
+        assert!(edges.iter().all(|tile| (1..=4).contains(tile)), "{edges:?}");
+        assert!(corners.iter().all(|tile| (16..=19).contains(tile)), "{corners:?}");
+        // Every tile distinct: eight directions, eight tiles.
+        let tiles: std::collections::BTreeSet<u32> = table.iter().map(|e| e.tile).collect();
+        assert_eq!(tiles.len(), 8);
+        // And the background itself is a tile of tt_land.
+        assert_eq!(base_tile_terrain_type(super::LAND_BACKGROUND_TILE), Some(6));
+    }
+
     #[test]
     fn a_created_map_composes_only_observed_byte_patterns() {
         let map = MapAsset::create(96, 64, 1).unwrap();

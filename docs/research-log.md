@@ -2324,3 +2324,100 @@ leftover would replace rung 0's control.
 
 It was the regression test, written from the intent rather than the code, that made the second one
 obvious — the same shape of test that caught the instance-id reuse earlier the same day.
+
+## 2026-09-17 — The `mapload` run: the engine accepts what we write
+
+One keypress. All seven rungs passed, and it settled more than it was designed to ask.
+
+### The question it closed
+
+Every claim this project made about writing maps rested on round-trip identity — 365 of 365
+installed maps re-encode to their input bytes. That shows this writer matches the engine's
+**writer**. It says nothing about the engine's **reader**, and no map this project produced had ever
+been loaded by the game.
+
+`gs\hotkey.gs` supplied the instrument outright: `loadscenariomap` takes a filename and **returns a
+boolean** the shipped editor tests. Finding that in the archive is what turned a session of
+squinting at renders into a one-keypress experiment with a machine-readable verdict.
+
+| Rung | Loaded | Engine reported | Echo vs input |
+| ---: | :---: | --- | --- |
+| 0 engine's own save (control) | yes | 64x64 | 4,096 cells |
+| 1 our re-encode of `URAK.scn` | yes | 128x128 | 1 byte |
+| 2 our terrain edit | yes | 128x128 | 1 byte |
+| 3 our placed sprite | yes | 128x128 | 1 byte |
+| 4 interior border bit | yes | 128x128 | 17 bytes |
+| 5 created from nothing, 64x64 | yes | 64x64 | **identical** |
+| 6 created from nothing, **96x64** | yes | **96x64** | **identical** |
+
+Rung 2's three edited cells read back as terrain 1, 8 and 5 — water, lava, snow, exactly what was
+written. The engine did not merely accept the file; it read the edits correctly. Rung 3 is the one
+that mattered most for the writer's single honest compromise: the placed-sprite record, minted `+24`
+and all, survived byte-exactly.
+
+### The design decision that paid for itself
+
+Each rung **saved the loaded map straight back out**. That was added because acceptance alone is a
+thin result, and the echo diff turned out to answer two questions the probe was not built to ask.
+
+**The header word at `0x00` is engine output, not map input.** `URAK.scn` carries `0x6c`; the echo
+carries `0x6f`, which is what the engine writes for everything. That single byte is the entire
+difference in rungs 1 through 4, and it retires the "stored tileset selector" reading — the engine
+overwrites the word from its own state and never reads it back. It is also why the two
+created-from-nothing maps came back identical: they were already written with `0x6f`.
+
+**Tag bit `0x00800000` is not durable map data.** Rung 4's sixteen interior-flagged cells came back
+cleared with their tiles untouched. The stronger half is rung 0, the engine's *own* map: a `clearmap`
+save had the bit set on all 4,096 cells, and loading and re-saving cleared all 4,096. It is written
+on save from in-memory state that a load does not repopulate, which makes it cosmetic to a writer.
+
+That last result **appears to contradict** the earlier finding that `forcetexture` never sets the bit
+(0 of 4,096). The two runs differ in exactly one step: this control saved *immediately* after
+`clearmap`, before any `rebuild3dmap`, while the earlier probe rebuilt and rendered first.
+`rebuild3dmap` clearing the bit reconciles both without either being wrong. It is testable and
+untested, so neither reading is promoted — what is recorded is that the bit does not survive a
+load-and-save. Two measurements that disagree are a finding about the *sequence*, not a reason to
+retract the earlier one.
+
+### The blend ring has structure, and the structure is the result
+
+Eleven isolated 3x3 blobs on a background forced to tile 15:
+
+```
+  18   2   2   2  19
+   4  57  49  58   3
+   4  51 398  52   3
+   4  55  50  56   3
+  17   1   1   1  16
+```
+
+N=2, S=1, W=4, E=3, NW=18, NE=19, SW=17, SE=16 — and that ring is **byte-for-byte identical for nine
+of the eleven terrains**. A transition tile is chosen by the background and the direction of the
+boundary, not by which terrain is on the other side. That is what makes a painter tractable: the
+alternative, a full 11x11 pair table, would have cost eleven times the measurement.
+
+Terrain 6 — the background's own type — has a ring of pure tile 15. No boundary, no transition. That
+control is what proves the other rows measure something rather than reporting noise.
+Terrain 9 (`tt_road`) has its own family, `384..390`.
+
+One background only. The structure generalises; the numbers do not.
+
+### A table that turned out to be conditional
+
+The same map shows `setterrain` picking its *core* tile from a family too: terrain 6 onto a tile-15
+background writes `385..391`, where the original measurement — against a tile-392 background — gave
+15. So the terrain-to-tile table's `base_tile` column is a **representative** tile, not the tile
+`setterrain` writes in an arbitrary neighbourhood.
+
+Nothing downstream breaks. The reverse direction still holds, the blend background read back as
+terrain 6 exactly as predicted, and what the writer does with the table — force one representative
+tile into one cell, which is `forcetexture` semantics — was always right. But the column had been
+carrying a stronger claim than the measurement supported, which is the third time in one day that a
+recorded fact turned out to be narrower than its wording.
+
+### Cost
+
+One keypress. The game **crashed on exit**, after the probe had logged `map load probe done` — every
+artifact was already on disk and nothing was lost. Whether that is the probe or Wine on shutdown is
+untested. Archives restored and verified against `MANIFEST.sha256`; `map/` back to its 366 shipped
+files with no leftovers.
