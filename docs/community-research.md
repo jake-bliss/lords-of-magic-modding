@@ -111,9 +111,10 @@ for the dword at `+8` is that it is **overloaded**: when the count is zero those
 [the hotspot mechanism](#the-hotspot-mechanism-thread-2176) below and [hotspots](hotspots.md).
 
 **Palette index 1 is the shadow.** This resolves our open "secondary mask" question. Our own
-observation of *"a separate pure-red index for a 1,651-pixel silhouette beneath the creature"*
-independently corroborates it. Compositing is keyed by palette **index**, not by colour; the green
-and red RGB values in slots 0 and 1 are incidental art-tool choices. This retires the "not a single
+observation of *"a separate index for a 1,651-pixel silhouette beneath the creature"*
+independently corroborates it. Compositing is keyed by palette **index**, not by colour, and the RGB in slots 0 and 1 is ignored
+outright — proved by rewriting index 1 to magenta and rendering it unchanged. Index 0 holds pure
+**red** and index 1 pure **green**. This retires the "not a single
 universal chroma key" framing.
 
 **Our "cycle" is a facing — a direction — and facings are ordered clockwise.** Clockwise ordering is
@@ -258,6 +259,94 @@ ozz's reading of the frame record, which matches ours field for field:
 
 He also notes that **snv's `imp.c` hotspot struct is wrong**: it hardcodes two hotspot sets when the
 count is variable. That defect is inherited by every tool ported from it.
+
+### Threads 2012 and 2086, read 2026-09-17
+
+Two threads the earlier survey missed. Both bear on things we had already concluded.
+
+**Thread 2012 — snv's RLE and header spec, August 2011.** The algorithm matches our decoder exactly,
+including the bias:
+
+```c
+if (C<0) { C = -C; while(C--) O[L++] = *I++; }
+else     { C = C + 3; while(C--) O[L++] = *I; P++; }
+```
+
+Its palette declaration is `u1 Palette[256*4]; // RGBA palette:`. The entry **size** is right and the
+**order is wrong**: entries are stored blue, red, green, pad — see [hotspots](hotspots.md). Note that
+this thread never says "BGRA"; that wording came from IMP Studio's help text, which we credited with
+confirming our channel order. Two community sources, two different orders, and neither matches the
+engine.
+
+The same post says: *"index 0 used for transparency, index 1 is shadow index 0xff is RLE special
+value"*. Read as a claim that palette index 255 is reserved, it is **refuted**: index 255 carries
+ordinary pixel data in **164 of 1,800 files, 7,070 frames and 6.25 million pixels**, spread across
+units (94 files), buildings (29), terrain (13), interface (11), auras (10) and missiles (7). If snv
+meant the RLE *control* byte, `0xff` is simply a one-byte literal run and nothing about it is
+special. Either way, do not treat index 255 as reserved.
+
+**Thread 2086 — IMPs converted to PCX, 2012 to 2023.** Boaster, 4 November 2023:
+
+> *"Pure Red and Pure Green in the palettes are for translucent and transparencies. I forget which
+> order, but those have to be the first two colors in the palette in order for all of those features
+> to work well."*
+
+We can answer the order, and correct the requirement.
+
+**Where the convention holds, index 0 is pure red (transparency) and index 1 is pure green
+(translucency)** — and *translucent* is the better word, because it is measured as the background
+drawn at half brightness, not a black shadow. Both orderings look like "red and green", so his
+uncertainty was not resolvable from the files alone; it needed the engine.
+
+But *"those have to be the first two colors in the palette in order for all of those features to work
+well"* is **not a requirement**, measured across all 1,800 shipped IMPs:
+
+| Slots 0 and 1 | Files |
+| --- | --- |
+| pure red then pure green | 1,542 (85.7%) |
+| black then `(8,8,8)` | 167 |
+| pure red then a cyan | 56 |
+| other | 35 |
+
+258 shipped files break the convention and work fine, because **the engine keys on the index and
+ignores the colour entirely** — which we proved directly by rewriting index 1 to magenta and seeing
+no change in the render. The convention is an art-pipeline habit, not an engine constraint. This
+matters practically: anyone repainting a palette does not need to preserve those two colours, only
+those two *indices*.
+
+**IMP Studio has the same red/green swap we did**, verified by reading its code rather than its
+documentation. Its palette accessor is:
+
+```js
+return [p[i*4+2], p[i*4+1], p[i*4]];
+```
+
+a reversal, where the engine's layout requires `[p[i*4+1], p[i*4+2], p[i*4]]`. So every colour that
+tool has ever displayed or exported has red and green transposed, exactly as ours did. That is worth
+telling the board, and it explains how the wrong order survived: the tool and our decoder agreed with
+each other, and agreement was mistaken for confirmation.
+
+**Hexdragon's `LOM_Sprite_Tool`, November 2023, is described as handling placement correctly** — and
+that alone qualifies our headline framing. This is a **community claim, not verified here**: the tool
+has not been obtained or run, and what follows is Hexdragon's own description of it. Its frame-data
+notes say:
+
+> *"Frame HSP Type: Taken from original IMP file"*
+> *"HSP Offset/DspX/DspY: Adjusted upon accumulated change in RLE sizes (except when HSP Type = 0)"*
+> *"HotSpot structure data: Taken from original imp file"*
+
+That describes the overloaded `+8` dword independently and, if accurate, correctly: adjust it as a
+file offset when the count is non-zero, and leave it alone when the count is zero because it is then
+a displacement pair, not a pointer. Confirming it would mean running the tool on a known input and
+diffing the bytes, which has not been done. The community calls that pair **`DspX`/`DspY`**; we have been calling it the origin
+pair, and their name is better.
+
+So "`lomut` writes no hotspot data" remains true **of `lomut`**, but "community tools lose placement"
+has been false since November 2023. What Hexdragon's tool does is *preserve* placement; what nobody
+has is the rule saying what placement a **re-cropped** frame should now carry. Taking `DspX`/`DspY`
+from the original is exactly right when the pixels do not move and exactly wrong when they do — which
+is the case every time someone crops art to fix the wobble. That gap is what the measured rule and
+`--set-imp-placement` fill.
 
 ### Verified here
 

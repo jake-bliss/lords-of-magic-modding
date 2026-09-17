@@ -122,6 +122,11 @@ checksum** — `artifacts/experiment-backups/` holds the manifest pattern used o
 
 ### Engine probe harness — this is the reusable part
 
+**Two probes exist.** `LOM_PROBE=ladder` (the default) is the four-rung compositing diagnostic that
+settled the shadow blend and the palette order. `LOM_PROBE=elevation` surveys `getelevation` beside
+`map2screen` called with `z = 0` and with `z =` the cell's own elevation, then places six sprites to
+measure real anchors — that is the open half of the y convention.
+
 **Run it with the two scripts, not by hand.** `scripts/install-engine-probe.sh` verifies both
 archives against the recorded originals, injects the sprites and the generated hotkey, disables the
 intro movies and checks every write reads back byte-identical.

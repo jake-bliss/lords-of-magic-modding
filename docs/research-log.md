@@ -80,8 +80,8 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 ## 2026-09-12 — IMP presentation channels
 
 - **Observed:** native SDL3 presentation produces recognizable 8-bit unit art and stable frame scaling.
-- **Observed:** one inspected creature frame uses green palette index 0 for 8,576 background pixels and a separate pure-red index for a 1,651-pixel silhouette beneath the creature.
-- **Observed:** an inspected 1-bit aura asset uses bright green and red as its two palette colors, confirming that blindly deleting both colors destroys meaningful mask data.
+- **Observed:** one inspected creature frame uses palette index 0 for 8,576 background pixels and a separate index for a 1,651-pixel silhouette beneath the creature. (Those colour names were recorded through the old decoder, which swapped red and green. Corrected 2026-09-17: index 0 is pure **red** and index 1 is pure **green**.)
+- **Observed:** an inspected 1-bit aura asset uses bright red and green as its two palette colors, confirming that blindly deleting both colors destroys meaningful mask data.
 - **Inferred:** green is a background channel in the inspected frames, while red is a separate shadow, translucency, recoloring, or other compositor input.
 - **Implemented:** the viewer defaults to a clean preview while `C` facings through visible-mask and untouched raw-palette modes. The decoder itself preserves every source index and palette color.
 - **Corrected:** sampling the top-left pixel as a chroma key failed when frame 156 of `chcr5a.imp` touched that corner and removed gold artwork. Viewer channels are now selected by palette index 0 (background) and index 1 (secondary mask), preserving the same colors when they occur at other indices.
@@ -1369,4 +1369,105 @@ all three measurable sprites.
 isometric step. The obvious candidate is terrain elevation, which the probe passed as `z = 0`. That
 is the remaining piece of the y convention and it now has a testable shape: place the same sprite on
 cells of known differing terrain height and see whether the residual tracks it.
+
+## 2026-09-17 (later) — `map2screen` decoded completely; the drawn y is close but not explained
+
+**Evidence class: observed in gameplay.** One keypress: an 81-cell survey calling `map2screen` twice
+per cell — once with `z = 0`, once with `z =` that cell's `getelevation` — plus six sprite placements
+to measure real anchors. Cleanup again left the screen pixel-identical to the plate.
+
+### The operator, in full
+
+Over all 81 cells, without exception:
+
+```
+map2screen(x, y, z) -> ( 14.4 * (x + y) + K ,           output 1, independent of z
+                         output1 - 80 - 20.3625 * z ,   output 2
+                         33.941 * (x - y) + L )         output 3 = SCREEN X
+```
+
+- **Output 3 is screen x**, and only that. It is a function of `x - y` alone, never moved with `z`
+  in any of the 81 cells, and predicted the drawn left edge exactly at 88, 190, 393 and 495 across
+  the six placements — as it did for three placements in the earlier run.
+- **Output 1 is a function of `x + y` alone**, stepping 14.4 per isometric step, and `z` never moved
+  it in any cell.
+- **Output 2 is exactly `output1 - 80`, less `20.3625` per unit of `z`.** The z coefficient held
+  between 20.3600 and 20.3680 across all 69 cells with non-zero elevation.
+
+So **the third input is the elevation**, and `getelevation` is the operator that supplies it — which
+answers the question this probe was built for. The constants are a plain isometric projection:
+`33.941 = 24 * sqrt(2)` and `20.3625 ~ 14.4 * sqrt(2)`.
+
+### The drawn y is *approximately* output 2, and that gap is unexplained
+
+Fitting the six measured tops against output 2 gives `top = 0.9652 * output2 - 1822.09`, and the
+residuals are **up to 11 pixels**:
+
+| # | cell | elevation | measured top | predicted | error |
+| --- | --- | --- | --- | --- | --- |
+| 1 | (60,70) | 1.0 | 73 | 73.19 | +0.19 |
+| 3 | (70,71) | 0.75 | 228 | 230.99 | +2.99 |
+| 5 | (64,68) | 2.0 | 88 | 81.33 | -6.67 |
+| 0 | (58,71) | 0.5 | 62 | 69.12 | +7.12 |
+| 4 | (64,74) | 2.0 | 157 | 164.72 | +7.72 |
+| 2 | (67,71) | 1.75 | 181 | 169.64 | -11.36 |
+
+Compare the x axis, which agrees to under a pixel. Eleven pixels is far outside that.
+
+The decisive pair is 2 and 4: **the same `x + y`, elevations 1.75 and 2.0, and tops 24 pixels
+apart.** Output 2 differs by only 5.09 between them, so no rescaling of output 2 can produce a
+24-pixel separation. Whatever vertical term the renderer uses, it is not the anchor cell's
+`getelevation` fed through output 2.
+
+The obvious candidate is that the renderer interpolates height across the terrain mesh rather than
+sampling the cell, and the three largest errors are indeed on the cells whose 3x3 neighbourhood
+departs most from the cell's own value (2.0 against a neighbourhood mean of 1.25 at placement 5, for
+instance). **But the signs do not line up** — placements 2 and 5 both sit above their neighbourhood
+mean and their errors have opposite signs — so this is a hypothesis with a counter-example in hand,
+not a finding.
+
+**Two honest caveats.** Two pairs of sprites shared a screen x, and the assignment within each pair
+was chosen by whichever permutation fit best; that is convenient reasoning, and a rerun should place
+six sprites at six *distinct* screen x values instead. And placements 0 and 3 fell outside the
+surveyed square, so their neighbourhoods are unknown.
+
+### The experiment that would settle it
+
+Place sprites only on cells whose 3x3 neighbourhood is **uniform**, which the survey can find before
+choosing where to place. If the residuals collapse to about a pixel on flat ground, the renderer
+interpolates and the y convention is closed; if they do not, the extra term is something else. Give
+each sprite its own screen x so no assignment is ever inferred.
+
+### Checking the community threads rather than relaying them
+
+Four claims from impz threads 2012 and 2086 were tested here instead of being taken on trust. Three
+survived in part, one did not, and one of our own statements needed narrowing.
+
+| Claim | Source | Outcome |
+| --- | --- | --- |
+| The RLE algorithm, with the `+3` bias | snv, 2011 | **Confirmed** — matches `decode_rle_packet` line for line |
+| `u1 Palette[256*4]; // RGBA palette` | snv, 2011 | Size confirmed, **order refuted**: stored blue, red, green, pad |
+| "index 0xff is RLE special value" | snv, 2011 | **Refuted** as a palette claim: index 255 is ordinary pixel data in 164 of 1,800 files, 7,070 frames, 6.25M pixels, across every asset category |
+| "Pure Red and Pure Green... have to be the first two colors" | Boaster, 2023 | **Order answered, requirement refuted** — see below |
+| `LOM_Sprite_Tool` preserves and adjusts placement | Hexdragon, 2023 | **Unverified.** The tool has not been obtained or run; recorded as a community claim |
+
+**Boaster's ordering, measured across all 1,800 shipped IMPs:** 1,542 files (85.7%) do hold pure red
+at index 0 and pure green at index 1. The other 258 do not — 167 hold black and `(8,8,8)`, 56 hold
+pure red and a cyan, 35 something else. They render correctly anyway, because the engine keys on the
+**index** and ignores the colour, which the magenta test proved directly. So the convention is an
+art-pipeline habit, not an engine constraint: repainting a palette must preserve those two *indices*,
+not those two colours.
+
+**IMP Studio carries the same red/green swap**, established by reading its code rather than its
+documentation:
+
+```js
+return [p[i*4+2], p[i*4+1], p[i*4]];
+```
+
+The engine's layout requires `[p[i*4+1], p[i*4+2], p[i*4]]`. Every colour that tool has displayed or
+exported has red and green transposed, exactly as ours did — and that is how the wrong order
+survived scrutiny here. Our decoder and the community tool agreed with each other, and
+**agreement between two implementations was mistaken for confirmation from evidence.** Neither had
+been checked against the engine until now.
 

@@ -15,6 +15,89 @@ import engine_probe  # noqa: E402
 import gs_syntax  # noqa: E402
 
 
+class SharedProbeSafetyTest(unittest.TestCase):
+    """Properties that must hold for EVERY probe body, checked against each in turn.
+
+    Each of these corresponds to something that has actually gone wrong in a run: an unbalanced
+    procedure, a key that auto-repeated, a cleanup that destroyed somebody else's building, and a
+    packed location read as a coordinate pair.
+    """
+
+    def bodies(self):
+        return {name: builder() for name, builder in engine_probe.PROBES.items()}
+
+    def test_braces_and_brackets_balance(self) -> None:
+        for name, body in self.bodies().items():
+            tokens = list(gs_syntax.tokens(body))
+            for opener, closer, what in (("{", "}", "braces"), ("[", "]", "brackets")):
+                depth = 0
+                for token in tokens:
+                    if token == opener:
+                        depth += 1
+                    elif token == closer:
+                        depth -= 1
+                        self.assertGreaterEqual(depth, 0, f"{name}: {closer} precedes {opener}")
+                self.assertEqual(depth, 0, f"{name}: {what} do not balance")
+
+    def test_fires_once_per_launch(self) -> None:
+        for name, body in self.bodies().items():
+            guard = body.index("userdict /zdone known not")
+            flag = body.index("/zdone true def")
+            first_effect = min(body.index("screencapture"), body.index("addterrainsprite"))
+            self.assertLess(guard, flag, name)
+            self.assertLess(flag, first_effect, f"{name}: acts before the fire-once flag")
+
+    def test_never_cleans_up_by_location_alone(self) -> None:
+        for name, body in self.bodies().items():
+            self.assertNotIn("terrainspriteat", body, name)
+
+    def test_packed_locations_are_never_read_as_a_pair(self) -> None:
+        for name, body in self.bodies().items():
+            self.assertIn("anythinglocation /zaloc exch def", body, name)
+            self.assertIn("zaloc xy_to_x_y /zay0 exch def /zax0 exch def", body, name)
+            self.assertNotIn("anythinglocation /zay0", body, name)
+            # findemptylocation takes (location, unittype); three operands strands the x.
+            self.assertNotIn("add UNITTYPELAND findemptylocation", body.replace(
+                "x_y_to_xy UNITTYPELAND findemptylocation", ""), name)
+
+    def test_reports_when_no_army_was_found(self) -> None:
+        for name, body in self.bodies().items():
+            self.assertIn("no army found", body, name)
+
+    def test_every_body_captures_a_plate_and_a_result(self) -> None:
+        for name, body in self.bodies().items():
+            for capture in ('"zp0.bmp"screencapture', '"zs1.bmp"screencapture'):
+                self.assertIn(capture, body, name)
+
+
+class ElevationProbeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.body = engine_probe.elevation_body()
+
+    def test_calls_map2screen_both_ways_for_every_surveyed_cell(self) -> None:
+        """The whole point: z = 0 beside z = the cell's own elevation, same cell, same call."""
+        self.assertIn("zcx zcy getelevation /ze exch def", self.body)
+        self.assertIn("zcx zcy 0 map2screen", self.body)
+        self.assertIn("zcx zcy ze map2screen", self.body)
+
+    def test_survey_places_nothing(self) -> None:
+        survey = self.body[self.body.index("/zdy exch def"):self.body.index("addterrainspritetype")]
+        self.assertNotIn("addterrainsprite", survey)
+
+    def test_placements_are_distinct_on_screen(self) -> None:
+        """Screen x moves by 33.941*(dx-dy) and the frame is 72 wide, so equal x needs unequal y."""
+        seen = set()
+        for dx, dy in engine_probe.PLACEMENT_OFFSETS:
+            key = (dx - dy, dx + dy)
+            self.assertNotIn(key, seen, f"({dx},{dy}) lands on an earlier placement")
+            seen.add(key)
+
+    def test_uses_one_freshly_registered_type(self) -> None:
+        # A shipped type id would make the type-only sweep destroy the game's own sprites.
+        self.assertIn("addterrainspritetype", engine_probe.ELEVATION_SPRITE)
+        self.assertEqual(self.body.count("addterrainspritetype"), 1)
+
+
 class EngineProbeTest(unittest.TestCase):
     def setUp(self) -> None:
         self.body = engine_probe.probe_body()
