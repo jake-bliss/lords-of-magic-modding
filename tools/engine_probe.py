@@ -360,6 +360,7 @@ def generated_map_outputs() -> list[str]:
         map_size_map_names()
         + map_tag_map_names()
         + [f"map/{name}" for name in mapload_output_names()]
+        + rings_generated_names()
     )
 
 
@@ -1063,6 +1064,205 @@ def mapload_body() -> str:
     emit("; ---- END MAP LOAD PROBE ----")
     return "\n".join(lines) + "\n"
 
+
+# --- terrainrings: the full 11x11 transition matrix, and two riders ---------------------------
+#
+# The `mapload` run measured `setterrain`'s transition ring against ONE background (tile 15,
+# tt_land) and found it identical for nine of the eleven painted terrains. That made a terrain
+# painter tractable but not possible: the structure generalises, the numbers do not, and a painter
+# that applied the land ring to a water or desert background would write plausible-looking wrong
+# tiles with nothing to catch it.
+#
+# This probe paints every terrain onto every background: 11 maps, 11 blobs each, 121 measurements
+# in one keypress. That is what turns `--map-set-terrain` from forcing one cell into painting.
+#
+# Two riders ride along, ordered LAST so that a failure in either cannot cost the matrix:
+#
+#   B. Which renderer call clears tag bit 0x00800000. The mapload run bracketed it between "no
+#      renderer calls" (set) and "rebuild3dmap resetvisibility rendermap refreshdirty" (clear)
+#      without isolating which of the four does it. Five fresh maps, one call each.
+#
+#   C. The sprite-type table. `terrainsprites` is a dict keyed by name -- shipped script reads
+#      `terrainsprites /barrow get` -- and `forall` enumerates dicts in this dialect, with the body
+#      receiving key then value (`spell_help_text_dict{kill pop}forall`,
+#      `memory_dict{exch pop exec ...}forall`). If it works, this dumps name -> type id for every
+#      registered terrain sprite, which is the one thing blocking a content builder rather than a
+#      terrain editor: `sprite_type` is a script-assigned index, so a map's object ids mean nothing
+#      without this table. It is the most speculative part of the run and therefore goes last.
+
+# The terrain-type-to-tile table, mirrored from `spikes/asset-viewer/src/map.rs`.
+#
+# `clearmap` takes a TILE, not a terrain type, and forcing one tile everywhere is the only way to
+# lay a background that `setterrain` has not already blended -- see the mapload write-up for why a
+# `setterrain` sweep cannot be used for this. `map.rs` is the source of truth; a test parses these
+# values back out of it so the two cannot drift.
+TERRAIN_BASE_TILES = {
+    0: 175,
+    1: 392,
+    2: 111,
+    3: 159,
+    4: 207,
+    5: 255,
+    6: 15,
+    7: 303,
+    8: 351,
+    9: 459,
+    10: 469,
+}
+
+RINGS_MAP = 64
+RINGS_TERRAINS = list(range(11))
+# Same geometry the mapload blend rung used and whose separation is already proven: 3x3 blobs on an
+# 8-cell stride, so a one-cell halo cannot reach a neighbour's.
+RINGS_BLOB = 3
+RINGS_STRIDE = 8
+RINGS_ORIGIN = 6
+RINGS_PER_ROW = 6
+
+
+def rings_blob_origin(index: int) -> tuple[int, int]:
+    return (
+        RINGS_ORIGIN + (index % RINGS_PER_ROW) * RINGS_STRIDE,
+        RINGS_ORIGIN + (index // RINGS_PER_ROW) * RINGS_STRIDE,
+    )
+
+
+def rings_map_names() -> list[str]:
+    """One saved map per background terrain."""
+    return [f"map/zr{background}.scn" for background in RINGS_TERRAINS]
+
+
+def rings_shot_names() -> list[str]:
+    """One capture per background.
+
+    The tiles are read out of the saved files, so these are not the measurement -- they are the
+    check that the row is worth reading at all. A background whose blobs did not paint, or that
+    rendered as a flat sheet, is a different result from one with eleven visible patches, and only
+    a frame separates them.
+    """
+    return [f"zr{background}.bmp" for background in RINGS_TERRAINS]
+
+
+# Rider B. Each call gets a FRESH map, because once the bit is cleared it stays cleared and a
+# second call on the same map would measure nothing.
+FLAG_ISOLATION_CALLS = [
+    ("control", ""),
+    ("rebuild3dmap", "rebuild3dmap"),
+    ("resetvisibility", "resetvisibility"),
+    ("rendermap", "rendermap"),
+    ("refreshdirty", "refreshdirty"),
+]
+
+
+def flag_isolation_map_names() -> list[str]:
+    return [f"map/zf{index}.scn" for index in range(len(FLAG_ISOLATION_CALLS))]
+
+
+def rings_generated_names() -> list[str]:
+    return rings_map_names() + flag_isolation_map_names()
+
+
+def _rings_paint_blob(emit, index: int, terrain: int) -> None:
+    origin_x, origin_y = rings_blob_origin(index)
+    emit(f"\t/zx0 {origin_x} def /zy0 {origin_y} def")
+    emit(
+        f"\tzy0 1 zy0 {RINGS_BLOB - 1} add{{/zy exch def "
+        f"zx0 1 zx0 {RINGS_BLOB - 1} add{{zy {terrain} setterrain}}for}}for"
+    )
+
+
+def _rings_cycle_log(emit) -> None:
+    emit("\tzlog closefile")
+    emit('\t"zprobe.log""abw"file /zlog exch def')
+
+
+def terrain_rings_body() -> str:
+    lines: list[str] = []
+    emit = lines.append
+
+    emit("; ---- BEGIN TERRAIN RING PROBE (generated by tools/engine_probe.py) ----")
+    emit(f'ASCII_VAL"{HOTKEY}"0 get')
+    emit("{")
+    emit("userdict /zdone known not")
+    emit("\t{")
+    emit("\tuserdict begin")
+    emit("\t/zdone true def")
+    emit('\t"zprobe.log""abw"file /zlog exch def')
+    emit(f"\t/zname {MAP_NAME_BUFFER} string def")
+    emit("\t" + _log('"terrain ring probe start"'))
+
+    # --- Section A: the 11x11 matrix ---------------------------------------------------------
+    for background in RINGS_TERRAINS:
+        base_tile = TERRAIN_BASE_TILES[background]
+        emit(f"\t{RINGS_MAP} {RINGS_MAP} newmap {base_tile} clearmap")
+        # Read the background type back BEFORE painting anything. If the forced tile does not
+        # answer the terrain type we meant, every ring measured on this map is against the wrong
+        # background and the whole row is uninterpretable -- better to know from the log than to
+        # discover it while fitting a table.
+        emit("\t0 0 getterrain /zg exch def")
+        emit(
+            "\t"
+            + _log(
+                f'"background {background} tile {base_tile} reads terrain "zg'
+                f'" expected {background} size "mapw" "maph'
+            )
+        )
+        for index, terrain in enumerate(RINGS_TERRAINS):
+            _rings_paint_blob(emit, index, terrain)
+            emit("\t" + _log(f'"bg {background} blob {index} terrain {terrain} at "zx0" "zy0'))
+        emit("\trebuild3dmap resetvisibility rendermap refreshdirty")
+        emit(f"\t{RINGS_MAP // 2} {RINGS_MAP // 2} centeron")
+        emit("\trendermap refreshdirty")
+        emit(f'\t"{rings_shot_names()[background]}"screencapture')
+        emit(f'\tzname"{rings_map_names()[background]}"strcpy')
+        emit("\tzname savescenariomap /zs exch def")
+        emit("\t" + _log(f'"bg {background} saved {rings_map_names()[background]} result "zs'))
+        _rings_cycle_log(emit)
+
+    # --- Section B: which renderer call clears 0x00800000 ------------------------------------
+    emit("\t" + _log('"flag isolation start"'))
+    base_tile = TERRAIN_BASE_TILES[6]
+    for index, (label, call) in enumerate(FLAG_ISOLATION_CALLS):
+        # A fresh map every time. The bit does not come back once something clears it, so reusing
+        # one map would make every call after the first measure the previous call's result.
+        emit(f"\t{RINGS_MAP} {RINGS_MAP} newmap {base_tile} clearmap")
+        if call:
+            emit(f"\t{call}")
+        emit(f'\tzname"{flag_isolation_map_names()[index]}"strcpy')
+        emit("\tzname savescenariomap /zs exch def")
+        emit(
+            "\t"
+            + _log(
+                f'"flag isolation {index} {label} saved '
+                f'{flag_isolation_map_names()[index]} result "zs'
+            )
+        )
+        _rings_cycle_log(emit)
+
+    # --- Section C: the sprite-type table ----------------------------------------------------
+    #
+    # Last on purpose. `forall` over a dict is read out of the shipped scripts rather than
+    # documented anywhere, and `cvs` on a name key is the part most likely to misbehave, so this
+    # section risks only itself. Everything above it is already saved and its log already flushed.
+    emit("\t" + _log('"sprite type table start"'))
+    emit("\t/zcount 0 def")
+    emit(f"\t/zkey {MAP_NAME_BUFFER} string def")
+    # `forall` pushes key then value, so the value is on top: `/zv exch def` binds it, leaving the
+    # key for `/zk exch def`.
+    emit("\tterrainsprites{/zv exch def /zk exch def")
+    emit("\t\t/zcount zcount 1 add def")
+    emit("\t\t" + _log('"sprite type "zv" name "zk zkey cvs'))
+    emit("\t}forall")
+    emit("\t" + _log('"sprite type table done count "zcount'))
+
+    emit("\t" + _log('"terrain ring probe done"'))
+    emit("\tzlog closefile")
+    emit("\tend")
+    emit("\t}if")
+    emit("}addhotkey")
+    emit("; ---- END TERRAIN RING PROBE ----")
+    return "\n".join(lines) + "\n"
+
 PROBES = {
     "ladder": lambda: probe_body(),
     "elevation": elevation_body,
@@ -1070,6 +1270,7 @@ PROBES = {
     "flatground": flat_ground_body,
     "maptag": map_tag_body,
     "mapload": mapload_body,
+    "terrainrings": terrain_rings_body,
 }
 
 
