@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 import engine_probe  # noqa: E402
 import gs_syntax  # noqa: E402
+import map_projection  # noqa: E402
 
 
 class SharedProbeSafetyTest(unittest.TestCase):
@@ -746,6 +747,27 @@ class MapTagProbeTest(unittest.TestCase):
         self.assertEqual(len(set(packed)), len(cells))
         self.assertEqual(len(set(x_major)), len(cells))
         self.assertEqual(set(packed) & set(x_major), set())
+
+    def test_every_placement_is_inside_the_frame_the_camera_gives(self) -> None:
+        """A capture pair around a placement nobody can see is two screenshots and no evidence.
+
+        The 2026-09-17 run proved this the expensive way: the plate and the shot differed by zero
+        bytes because the sprites landed off the left edge and under the editor panel. The shared
+        rule that a placing probe brackets its placements with captures is necessary and not
+        sufficient -- it cannot see whether the subject is in the picture. The projection is
+        decoded, so this is a check rather than a hope.
+        """
+        for cell in engine_probe.MAPTAG_SPRITE_CELLS:
+            offset = map_projection.screen_offset_from_camera(cell, engine_probe.MAPTAG_CAMERA)
+            self.assertTrue(
+                map_projection.is_in_frame(cell, engine_probe.MAPTAG_CAMERA),
+                f"{cell} projects to {offset} from the camera and would not be drawn in full",
+            )
+
+    def test_the_cells_that_photographed_nothing_would_now_fail(self) -> None:
+        """The guard has to reject the arrangement that actually failed, or it guards nothing."""
+        for cell in ((20, 30), (21, 30), (20, 31)):
+            self.assertFalse(map_projection.is_in_frame(cell, engine_probe.MAPTAG_CAMERA))
 
     def test_the_capture_pair_brackets_the_placements(self) -> None:
         first = self._place_positions()[0]

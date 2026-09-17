@@ -671,11 +671,19 @@ MAPTAG_TERRAINS = list(range(11))
 MAPTAG_FIRST_X = 8
 MAPTAG_X_STRIDE = 2
 
-# Three cells, deliberately NOT collinear and NOT symmetric: (20,30) and (21,30) differ only in x,
-# (20,30) and (20,31) only in y. Packed `y*width+x` gives 1940/1941/1984 and X-major `x*height+y`
-# gives 1310/1374/1311, so whichever the record holds, the three values identify the order. The
-# corpus says X-major; this is the chance to see it written rather than inferred.
-MAPTAG_SPRITE_CELLS = [(20, 30), (21, 30), (20, 31)]
+# Three cells, deliberately NOT collinear and NOT symmetric: (18,14) and (19,14) differ only in x,
+# (18,14) and (18,15) only in y. Packed `y*width+x` gives 914/915/978 and X-major `x*height+y` gives
+# 1166/1230/1167, so whichever the record holds, the three values identify the order. That is what
+# the 2026-09-17 run settled -- the records carried the packed values -- and keeping the asymmetry
+# means a future change to the parser still has to face a fixture that can tell them apart.
+#
+# They sit beside the camera because the first run's did not. Those were (20,30), (21,30), (20,31),
+# which the projection puts ~339 pixels left of centre and ~259 below it: off the left edge and
+# under the editor's panel. The sprites were placed -- the log counted them and the saved records
+# were right -- but the plate and the shot came back differing by zero bytes, so the capture pair
+# cost a screenshot each and proved nothing. `map_projection.is_in_frame` now decides this instead
+# of hope, and a test holds every placement cell to it.
+MAPTAG_SPRITE_CELLS = [(18, 14), (19, 14), (18, 15)]
 MAPTAG_SPRITE = '["imp/tree4e.imp"]cvx addterrainspritetype'
 
 # Camera. The painted rows are at y 8 and 12 and the sprites at y 30, so nothing frames all of it;

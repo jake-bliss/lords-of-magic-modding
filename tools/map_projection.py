@@ -96,3 +96,56 @@ def effective_elevation(neighbourhood: dict[tuple[int, int], float]) -> float:
 def is_uniform(neighbourhood: dict[tuple[int, int], float]) -> bool:
     """True when `getelevation` on the centre cell is safe to feed straight into `map2screen`."""
     return len(set(neighbourhood.values())) == 1
+
+
+# --- is a cell going to be in the picture? -------------------------------------------------------
+#
+# The 2026-09-17 map-tag run placed three sprites and photographed the map before and after. The two
+# captures differed by ZERO bytes. Nothing was wrong with the placement -- the log counted the
+# sprites appearing one by one and the saved records were correct -- but with the camera on (16,16)
+# and the sprites on (20,30), the projection puts them about 339 pixels left of centre and 259 below
+# it, which is off the left edge and underneath the editor's panel.
+#
+# The shared probe test already required a capture before and after the first placement. That is
+# necessary and not sufficient: it cannot tell whether the thing being photographed is in the
+# picture, so it passed a probe whose capture pair could not carry information. The projection is
+# decoded, so this is checkable rather than hopeable.
+#
+# Measured from `zg0.bmp`: the capture is 640x480 and the editor's panel begins at y=375, so the map
+# occupies 640x375. The engine draws a sprite from its top-left corner, and the donor frame used by
+# the probes (`imp/tree4e.imp`) is 72x104.
+CAPTURE_WIDTH = 640
+CAPTURE_HEIGHT = 480
+EDITOR_PANEL_TOP = 375
+PROBE_SPRITE_WIDTH = 72
+PROBE_SPRITE_HEIGHT = 104
+
+
+def screen_offset_from_camera(cell: tuple[int, int], camera: tuple[int, int]) -> tuple[float, float]:
+    """Pixels from the camera cell to `cell`, on flat ground.
+
+    Only the difference is returned, because `map2screen`'s K and L are not known independently --
+    they absorb the camera. A difference needs neither.
+    """
+    (x, y), (cx, cy) = cell, camera
+    return (
+        SCREEN_X_PER_STEP * ((x - y) - (cx - cy)),
+        X_PER_ISO_STEP * ((x + y) - (cx + cy)),
+    )
+
+
+def is_in_frame(cell: tuple[int, int], camera: tuple[int, int]) -> bool:
+    """True when a probe sprite on `cell` would be drawn wholly inside the map viewport.
+
+    The assumption -- stated rather than hidden -- is that `centeron` puts the camera cell at the
+    centre of the map area. That is what the operator's name claims and what the captures look
+    like, but this repository has not measured the projection's origin, so treat this as a bound on
+    "cannot be off screen the way the 2026-09-17 run was", not as a pixel-accurate prediction.
+    """
+    offset_x, offset_y = screen_offset_from_camera(cell, camera)
+    half_width = CAPTURE_WIDTH / 2
+    half_height = EDITOR_PANEL_TOP / 2
+    return (
+        abs(offset_x) + PROBE_SPRITE_WIDTH <= half_width
+        and abs(offset_y) + PROBE_SPRITE_HEIGHT <= half_height
+    )
