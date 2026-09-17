@@ -1288,3 +1288,85 @@ cleared from the game directory before each run** or a second attempt silently p
 the old plate is collected as if it were fresh — which reads identically to "the sprite did not
 render", the very conclusion under test.
 
+## 2026-09-17 — The ladder run: the shadow blend and the palette channel order, both settled
+
+**Evidence class: observed in gameplay.** One keypress on the world map of a real single-player
+game. All four rungs rendered, `zs2.bmp` came back pixel-identical to the plate (so cleanup removed
+exactly what the probe placed and nothing else), and both open compositing questions are answered.
+
+Last night's failure was therefore **entirely** the stack underflow. The MPQ injection was fine and
+the palette edit was fine — rungs 2 and 3 are injected members and both drew. Had the first probe
+carried controls, that would have been visible immediately instead of costing a run.
+
+### Palette index 1 draws the background at half brightness
+
+| Copy | index-1 pixels that changed | exactly half | within one palette step | neither |
+| --- | --- | --- | --- | --- |
+| control, index 1 = shipped red | 903 | 122 (13.5%) | 781 (86.5%) | 0 |
+| authored, index 1 = magenta | 889 | 129 (14.5%) | 760 (85.5%) | 0 |
+
+**Not one pixel fell outside half-a-background.** The 86% that miss exact halving miss it by at most
+one palette step, which is what an *indexed* framebuffer forces: the blend is a 256-entry remap
+table, so the result snaps to the nearest available entry rather than being computed per pixel.
+
+The two copies are the same art with one palette entry differing, and they rendered **identically**.
+So "the RGB in slot 1 is incidental" is now a controlled result rather than an inference: the entry
+was rewritten to bright magenta and the engine ignored it.
+
+### Palette entries are stored blue, red, green, pad
+
+Every index in the frame was paired with the pixel the engine painted at the corresponding screen
+position. Fitting the six permutations of the stored triple:
+
+| Permutation | Fits |
+| --- | --- |
+| `(p1, p2, p0)` | **14 / 14** |
+| `(p2, p1, p0)` — the reversal we shipped | 4 / 14 |
+| the other four | 1-2 / 14 |
+
+The authored entries confirm it independently: raw `ff 00 00` rendered **blue**, `00 ff 00` rendered
+**red**, `00 00 ff` rendered **green**.
+
+`src/imp.rs` mapped `|bgra| [bgra[2], bgra[1], bgra[0], 255]`, a reversal, which **swaps red and
+green and leaves blue correct**. That is precisely the symptom this log has carried since the first
+capture — *"agree wherever red equals green and disagree where they differ"* — recorded accurately
+and left unexplained. Corrected to `|brg| [brg[1], brg[2], brg[0], 255]`; against the engine capture
+the old mapping scores 3/10 and the new one 10/10.
+
+Two consequences worth stating. Every PNG the viewer has exported has red and green swapped. And the
+community specification's "stored BGRA, swapped to RGB" is **refuted** — we had accepted it in
+[Stage 1](native-asset-stage.md) as confirmation, so a wrong claim was used to close a question our
+own evidence was already contradicting.
+
+**The off-by-one alternative was ruled out, not assumed away.** "Entries are `[R,G,B,pad]` and our
+palette offset is one byte early" predicts blue coming from the fourth byte. The fourth byte is zero
+for all 256 entries, while index 228 stores `(82, 49, 0)` and rendered blue 80. Blue comes from the
+first byte.
+
+### The BMP byte order, settled numerically
+
+`screencapture` writes pixels **R, G, B**, not the BMP-standard B, G, R. Judging this by eye is
+unsound, so it was measured on materials whose hue is not in question — the carved stone interface,
+its wooden portrait panel and parchment. Green is the middle byte under both candidate orders and
+cannot discriminate; only the warm/cool axis can:
+
+| Region | first byte dominant | last byte dominant |
+| --- | --- | --- |
+| interface stone, left of the portrait | 73.6% | 4.7% |
+| interface stone, right panel | 90.8% | 0.8% |
+| whole interface band | 62.1% | 2.4% |
+
+Stone, wood and parchment are not blue. The first byte is red.
+
+### Also confirmed, and one thing still open
+
+`map2screen`'s **third return value is screen x** to under a pixel: predicted anchors 456.177,
+252.530 and 184.648 against measured 456, 252 and 184. The placement rule held in a live game for
+all three measurable sprites.
+
+**Still open:** the measured anchor *y* is not linear in the cell — 156, 167, 230, 265 across cells
+60, 62, 66, 68 of one row — while `map2screen`'s first two values are perfectly linear at 14.4 per
+isometric step. The obvious candidate is terrain elevation, which the probe passed as `z = 0`. That
+is the remaining piece of the y convention and it now has a testable shape: place the same sprite on
+cells of known differing terrain height and see whether the residual tracks it.
+

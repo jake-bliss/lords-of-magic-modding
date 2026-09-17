@@ -88,7 +88,7 @@ sprites palette slot 0 never occurs in the pixel data while the key index is the
 value. We were hardcoding 0 and rendering those backgrounds opaque. Fixed; see
 [native asset stage](native-asset-stage.md). This is the single most valuable thing the survey found.
 
-**The palette is stored BGRA and swapped to RGB on load.** Confirms our channel order, which we had
+**The palette is stored BGRA and swapped to RGB on load.** **Refuted 2026-09-17** — entries are stored **blue, red, green, pad**, measured in the running engine. We accepted this claim, so our decoder inherited the same red/green swap. It had appeared to confirm our channel order, which we had
 been unable to test.
 
 **Frame type 4 with size 0 is also a duplicate**, pointing back at a shared bitmap. Matches our

@@ -108,22 +108,23 @@ what the commands above are for.
 
 ## Still open
 
-- **The shadow blend.** Palette index 1 is the shadow for most art (1,223 of 1,800 files, 32,784 of
-  41,344 frames, typical `palette[1] = [8, 8, 8]`), but the sprite used for the placement captures is
-  one of the exceptions and contains no index-1 pixels, so the captures on hand cannot answer it.
-  **The measurement is built and installed** — donor `imp\tree4e.imp` with an authored palette, see
-  the research log — and needs one attended run. An unattended version was tried and does not work; do
-  not retry it by appending to `START.GS`. The first attended attempt on 2026-09-16 **failed**: the
-  custom sprite type registered and placed, but its art never rendered, and the probe had no control
-  that could say why. The rebuilt probe places four sprite types in one capture so that whichever rung
-  fails names the cause.
-- **A channel-order discrepancy.** Decoded palette entries and rendered pixels agree wherever red
-  equals green and disagree where they differ. This bears on the "palette is BGRA, swapped to RGB"
-  claim in [Stage 1](native-asset-stage.md). One frame against one background cannot separate a
-  decoder bug from a BMP-reader bug, so it is unresolved. **Half of the reader side is now settled:**
-  `screencapture` writes its pixel bytes as R, G, B rather than the BMP-standard B, G, R, so any
-  analysis that runs them through a standards-compliant reader has red and blue swapped. Use
-  `tools/probe_captures.py`.
+- ~~The shadow blend.~~ **Answered 2026-09-17: palette index 1 draws the background at half
+  brightness.** Of 903 index-1 pixels in the control and 889 in a copy whose index-1 entry had been
+  rewritten to magenta, **100%** rendered within one palette step of exactly half the background, and
+  the two copies rendered identically. The spread is the snap to the nearest entry in an indexed
+  framebuffer, so the blend is a palette remap rather than per-pixel arithmetic — and the entry's own
+  RGB really is ignored, now by controlled test rather than inference.
+- ~~A channel-order discrepancy.~~ **Answered 2026-09-17: palette entries are stored blue, red,
+  green, pad.** Pairing every index in a frame against the pixel the engine painted, `(p1, p2, p0)`
+  fits 14 of 14 sampled indices and the next best permutation fits 4; writing raw `ff 00 00`,
+  `00 ff 00` and `00 00 ff` rendered blue, red and green respectively. Our decoder reversed the
+  triple, which **swapped red and green and left blue correct** — exactly the "agree where red equals
+  green" symptom this entry used to describe. Fixed in `imp.rs`; against the capture the old mapping
+  scored 3/10 and the new one 10/10. It also refutes the community specification's "BGRA, swapped to
+  RGB" claim, which we had accepted.
+- Related, on the reader side: `screencapture` writes its pixel bytes as R, G, B rather than the
+  BMP-standard B, G, R. Confirmed numerically on known materials — carved stone, wood and parchment
+  come out first-byte-dominant 62-91% against 0.8-2.4%. Use `tools/probe_captures.py`.
 - **A unit-path caveat.** Record 0 was confirmed by placing a unit IMP through the *terrain sprite*
   draw path. The sign, the centre-relative form and the choice of record 0 are settled; a
   unit-specific constant in the *anchor* is not ruled out.

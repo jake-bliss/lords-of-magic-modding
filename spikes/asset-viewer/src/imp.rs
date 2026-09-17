@@ -164,9 +164,20 @@ impl ImpSprite {
         )?;
         require_range(source, palette_offset, 1, PALETTE_BYTES, "palette")?;
 
+        // Palette entries are stored **blue, red, green, pad** -- not BGRA, and not RGBA.
+        // Measured in the running engine on 2026-09-17: a frame was placed twice, once with five
+        // entries rewritten as raw bytes, and the rendered pixels were paired with the file bytes
+        // for every index in the frame. `(p1, p2, p0)` fits 14 of 14 sampled indices; the next
+        // best permutation fits 4. Writing raw `ff 00 00` renders blue, `00 ff 00` renders red and
+        // `00 00 ff` renders green, which confirms it independently.
+        //
+        // The previous reversal swapped red and green, which is why decoded entries and rendered
+        // pixels agreed wherever red equalled green and disagreed where they differed -- a symptom
+        // this repository recorded for weeks without the cause. It also refutes the community
+        // specification's "stored BGRA, swapped to RGB" claim.
         let palette: Vec<[u8; 4]> = source[palette_offset..palette_offset + PALETTE_BYTES]
             .chunks_exact(4)
-            .map(|bgra| [bgra[2], bgra[1], bgra[0], 255])
+            .map(|brg| [brg[1], brg[2], brg[0], 255])
             .collect();
         let mut facing_count = 0_usize;
         let mut frame_count = 0_usize;
@@ -1057,7 +1068,9 @@ mod tests {
         assert_eq!(sprite.frame_location(0).unwrap(), (0, 0, 0));
         assert_eq!(sprite.raw_pixel_bytes, 2);
         assert_eq!(sprite.stored_pixel_bytes, 2);
-        assert_eq!(sprite.palette[0], [1, 2, 3, 255]);
+        // Stored blue, red, green, pad -- so file bytes [3, 2, 1] render as red 2, green 1,
+        // blue 3. Measured in the engine, see the research log for 2026-09-17.
+        assert_eq!(sprite.palette[0], [2, 1, 3, 255]);
     }
 
     #[test]

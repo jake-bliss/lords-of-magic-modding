@@ -2353,7 +2353,8 @@ fn imp_display_rgba(
             let mut pixel: [u8; 4] = rgba.try_into().expect("RGBA chunks have four bytes");
             // Compositing is keyed by palette INDEX, not by colour: the header's colour
             // key marks transparency and slot 1 is the shadow silhouette. The RGB values
-            // those slots hold (often green and red) are incidental art-tool choices.
+            // those slots hold are incidental art-tool choices, confirmed by experiment:
+            // rewriting slot 1 to magenta rendered identically to the untouched copy.
             let background = *palette_index == color_key;
             let shadow = *palette_index == 1;
             if background || matches!(mode, ImpDisplayMode::Preview) && shadow {
