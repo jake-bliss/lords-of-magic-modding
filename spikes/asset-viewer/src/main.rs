@@ -29,7 +29,10 @@ use lom_asset_viewer::native_table;
 use lom_asset_viewer::operator_arity;
 use lom_asset_viewer::pbm::PbmImage;
 use lom_asset_viewer::png_export::{write_imp_frame_png, write_pbm_png, write_rgba_png};
-use lom_asset_viewer::tile::{Direction, TileChoice, TileSelector, TileSetDefinition};
+use lom_asset_viewer::tile::{
+    Direction, MapClass, TileChoice, TileSelector, TileSetDefinition, TileSetResolution,
+    combat_tileset_array_candidates, resolve_tileset, tileset_mismatch,
+};
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::pixels::{Color, PixelFormat};
@@ -85,6 +88,8 @@ enum MapEdit {
 enum Command {
     Catalog(Source),
     DescribeMap(PathBuf),
+    /// Report which shipped `.til` the engine reads this map through.
+    TileSetForMap(PathBuf),
     DumpMapCells {
         path: PathBuf,
         rect: Option<(u32, u32, u32, u32)>,
@@ -271,6 +276,7 @@ fn run() -> Result<(), String> {
     match parse_args()? {
         Command::Catalog(source) => catalog_archive(&source),
         Command::DescribeMap(path) => describe_map(&path),
+        Command::TileSetForMap(path) => tile_set_for_map(&path),
         Command::DumpMapCells { path, rect } => dump_map_cells(&path, rect),
         Command::DiffMaps { left, right } => diff_maps(&left, &right),
         Command::RoundtripMaps(path) => roundtrip_maps(&path),
@@ -392,6 +398,10 @@ fn parse_args() -> Result<Command, String> {
         "--describe-map" => {
             require_len(&args, 2)?;
             Ok(Command::DescribeMap(args[1].clone().into()))
+        }
+        "--map-tileset-for" => {
+            require_len(&args, 2)?;
+            Ok(Command::TileSetForMap(args[1].clone().into()))
         }
         "--dump-map-cells" => {
             let rect = match args.len() {
@@ -551,7 +561,7 @@ fn parse_args() -> Result<Command, String> {
                         parse_u32(&args[4])?,
                         parse_u32(&args[5])?,
                     ),
-                    terrain_type: parse_terrain_type(&args[6])?,
+                    terrain_type: parse_paint_terrain_type(&args[6])?,
                     selector: seed.map_or(TileSelector::LowestSlot, TileSelector::Seeded),
                 },
                 output: args[7].clone().into(),
@@ -834,7 +844,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -1371,6 +1381,70 @@ fn first_tail_difference(left: &[u8], right: &[u8]) -> Option<usize> {
     (0..common)
         .find(|at| left[*at] != right[*at])
         .or((left.len() != right.len()).then_some(common))
+}
+
+/// Report the `.til` the gamescript reads this map through, or say plainly that it does not say.
+///
+/// A world map has one answer, `tilesb01.til`, from `maptileset`. A combat map's answer belongs to
+/// the **encounter** that loads it, so it comes from the per-encounter `mapfile`/`tileset` pairs in
+/// `gs.mpq` -- see [`lom_asset_viewer::tile::COMBAT_TILESET_BINDINGS`]. That means three possible
+/// outcomes for a `.smp`: one tileset, several (different encounters, different art), or none
+/// recorded. **The none case prints `unresolved` and does not fall back to a class default.** The
+/// map is parsed before answering, so this cannot report a tileset for something that is not a map.
+fn tile_set_for_map(path: &Path) -> Result<(), String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let map = MapAsset::parse(&bytes).map_err(|error| error.to_string())?;
+    let class = MapClass::from_path(path).ok_or_else(|| {
+        format!(
+            "{} parses as a map but its extension is not one the corpus classifies, so which \
+             tileset the engine would read it through is unknown; the known classes are .smp \
+             (combat) and .scn/.lgd/.map (world)",
+            path.display()
+        )
+    })?;
+    let resolution = resolve_tileset(path).ok_or_else(|| {
+        format!("could not resolve a tileset for {}", path.display())
+    })?;
+    println!(
+        "tileset-for\t{}\t{}x{}\t{}\t{}",
+        path.display(),
+        map.width,
+        map.height,
+        class.description(),
+        resolution.describe(),
+    );
+    // The plural selector form: tilesets one encounter may reach at runtime beyond the declared
+    // one. Reported on its own line and explicitly as coarse, rather than folded into the answer
+    // above, because it resolves no additional map and widens most of the ones it touches across
+    // more than one tileset rule class.
+    let reachable = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(combat_tileset_array_candidates)
+        .unwrap_or(&[]);
+    if !reachable.is_empty() {
+        println!(
+            "also-reachable\t{}\tcoarse\t{}",
+            path.display(),
+            reachable.join(" ")
+        );
+        eprintln!(
+            "note: a `/tilesets` procedure in the gamescript may select any of those at runtime \
+             from a sprite's map location. That reading is coarse -- every tileset in the \
+             member's array is listed for every map in it, because the two arrays cannot be \
+             zipped positionally -- so treat them as reachable, not as this map's tileset."
+        );
+    }
+    if matches!(resolution, TileSetResolution::CombatUnresolved) {
+        eprintln!(
+            "note: no gamescript encounter binds this combat map to a tileset, so this project \
+             does not know which one it uses and will not guess. 168 of the 337 installed .smp \
+             files are in this position. Scoring cannot settle it either: the 26 shipped tilesets \
+             collapse to 16 distinct rule sets, and most unbound maps have sixteen of them tied."
+        );
+    }
+    Ok(())
 }
 
 fn describe_map(path: &Path) -> Result<(), String> {
@@ -3467,6 +3541,29 @@ fn transition_rings() -> Result<(), String> {
 ///
 /// Names are accepted with or without the `tt_` prefix, because a modder reading `maplib.gs` sees
 /// `tt_water` and a modder reading a map dump sees `water`.
+/// A terrain type for `--map-paint-terrain`, whose ceiling is the **supplied tileset** and not the
+/// eleven-name world table.
+///
+/// **Found by measurement, 2026-09-17.** `parse_terrain_type` rejects any numeric id above 10
+/// because `terrain_type_base_tile` only knows `tilesb01.til`'s eleven types. That is right for
+/// `--map-set-terrain` and `--map-fill-terrain`, which have no tileset and really do depend on that
+/// table. It is wrong for a paint, which is handed a `.til` and asks it for candidates: terrain ids
+/// are **tileset-local** and the combat tilesets reach 42, so the eleven-type ceiling refused every
+/// terrain the shipped battle maps are actually made of. Painting a sampled grid over the 169 bound
+/// combat maps succeeded at 7.5% of sites before this and fails almost entirely on
+/// `21 is not one of the 11 terrain types`.
+///
+/// Nothing is loosened downstream: [`PaintRefusal::TerrainTypeNotInTileSet`] already refuses a
+/// terrain the supplied tileset declares no tiles for, which is the check that should have been
+/// deciding this all along. Names still resolve through the world table, because a name is only
+/// meaningful in a vocabulary and that is the only vocabulary this project has one for.
+fn parse_paint_terrain_type(value: &str) -> Result<u32, String> {
+    if let Ok(number) = value.parse::<u32>() {
+        return Ok(number);
+    }
+    parse_terrain_type(value)
+}
+
 fn parse_terrain_type(value: &str) -> Result<u32, String> {
     if let Ok(number) = value.parse::<u32>() {
         return terrain_type_base_tile(number)
@@ -3715,6 +3812,82 @@ fn edit_map(
             input.display()
         ));
     }
+    // **The output path decides what the edited map will be loaded as, so it has to agree with the
+    // input.** A reviewer found `--map-paint-terrain realm.scn ... battle.smp tilesb01.til`
+    // accepted: a world map painted through the world tileset and written under a name the tool
+    // itself then reports as a combat map read through something else. Only the input path was
+    // ever classified. Both are now, and a paint across the classes is refused.
+    if matches!(edit, MapEdit::PaintTerrain { .. }) {
+        let input_class = MapClass::from_path(input);
+        let output_class = MapClass::from_path(output);
+        if input_class != output_class {
+            return Err(format!(
+                "refusing to paint {} into {}: {} and {} are read through different tilesets, so \
+                 writing one under the other's extension produces a map the game will draw with \
+                 the wrong art. Use a matching extension",
+                input.display(),
+                output.display(),
+                input_class.map_or_else(
+                    || "an unclassified extension".to_owned(),
+                    |class| format!("a {}", class.description())
+                ),
+                output_class.map_or_else(
+                    || "an unclassified extension".to_owned(),
+                    |class| format!("a {}", class.description())
+                ),
+            ));
+        }
+    }
+
+    // A shipped tileset the gamescript does not bind this map to is refused before anything is
+    // read. The binding is per encounter, so this consults the extracted `mapfile`/`tileset`
+    // table and not a rule about map class. Two cases deliberately do **not** refuse: a tileset
+    // name that is not one of the 26 shipped members is presumed modded, and a map with no
+    // recorded binding has nothing to be measured against. An earlier version refused on class
+    // alone and so rejected `aicave.smp` + `aibldg01.til` -- the gamescript's own pairing --
+    // while accepting `tilesa01.til`, which writes slot 392 into a map whose atlas has 64 slots.
+    if let Some(path) = tile_set_path
+        && let Some(mismatch) = tileset_mismatch(input, path)
+    {
+        return Err(format!(
+            "refusing to edit {}: {mismatch}",
+            input.display()
+        ));
+    }
+
+    // The tileset stays a required argument in effect -- nothing is defaulted and no file is
+    // guessed at -- but the refusal now *names* the one the engine uses, which is the difference
+    // between "supply a tileset" and "supply this tileset". The `.til` lives inside `pic.mpq`, so
+    // only the member name can be resolved here; the caller still has to extract it and say where
+    // it is.
+    if tile_set_path.is_none()
+        && matches!(edit, MapEdit::PaintTerrain { .. })
+        && let Some(resolution) = resolve_tileset(input)
+    {
+        let advice = match &resolution {
+            TileSetResolution::World(members) | TileSetResolution::Combat(members) => format!(
+                "the gamescript reads it through {}. Extract that member from pic.mpq and pass \
+                 its path as the trailing argument",
+                members[0]
+            ),
+            TileSetResolution::CombatAmbiguous(members) => format!(
+                "different encounters read it through {}, so there is no single answer -- pick \
+                 the one matching the encounter you are editing and pass its path",
+                members.join(" or ")
+            ),
+            TileSetResolution::CombatUnresolved => "no gamescript encounter binds this combat map \
+                 to a tileset, so this project cannot name one and will not guess"
+                .to_owned(),
+        };
+        return Err(format!(
+            "no tileset was supplied. {} is a {}, and the map file does not record its tileset: \
+             {advice}",
+            input.display(),
+            MapClass::from_path(input)
+                .map_or("map", MapClass::description),
+        ));
+    }
+
     let source =
         fs::read(input).map_err(|error| format!("could not read {}: {error}", input.display()))?;
     let mut map = MapAsset::parse(&source).map_err(|error| error.to_string())?;
@@ -5334,6 +5507,62 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// A paint's terrain ceiling is the **tileset**, not the eleven-name world table.
+    ///
+    /// Terrain ids are tileset-local and the combat tilesets reach 42, so the shared parser's
+    /// `0..10` ceiling refused every terrain the shipped battle maps are made of. Id 21 is the
+    /// input that makes this fail: it is a real `chbldg01.til` terrain and an error for
+    /// `--map-set-terrain`. The other half matters too -- the narrow parser must **keep** its
+    /// ceiling, because the verbs using it have no tileset to check against.
+    #[test]
+    fn a_paint_accepts_a_tileset_local_terrain_id_that_the_world_table_rejects() {
+        use super::parse_paint_terrain_type;
+
+        for id in [11_u32, 18, 21, 25, 42] {
+            assert_eq!(parse_paint_terrain_type(&id.to_string()).unwrap(), id);
+            assert!(
+                parse_terrain_type(&id.to_string()).is_err(),
+                "{id} must still be refused by the tileset-less parser"
+            );
+        }
+        // Ids the world table does know are unchanged in both.
+        for id in [0_u32, 6, 10] {
+            assert_eq!(parse_paint_terrain_type(&id.to_string()).unwrap(), id);
+            assert_eq!(parse_terrain_type(&id.to_string()).unwrap(), id);
+        }
+        // Names still go through the world vocabulary, and nonsense is still nonsense.
+        assert_eq!(parse_paint_terrain_type("water").unwrap(), 1);
+        assert!(parse_paint_terrain_type("tt_nonsense").is_err());
+        assert!(parse_paint_terrain_type("-1").is_err());
+    }
+
+    /// A paint of a terrain the supplied tileset does not declare is still refused -- the ceiling
+    /// moved to the tileset, it did not disappear.
+    #[test]
+    fn a_paint_of_a_terrain_the_tileset_does_not_declare_is_still_refused() {
+        let dir = scratch_dir("map-paint-terrainceiling");
+        let input = dir.join("in.scn");
+        let tileset = dir.join("fixture.til");
+        fs::write(&input, grass_map(11, 5)).unwrap();
+        fs::write(&tileset, CLI_FIXTURE_TILESET).unwrap();
+
+        let output = dir.join("out.scn");
+        let error = edit_map(
+            &input,
+            MapEdit::PaintTerrain {
+                rect: (5, 2, 5, 2),
+                terrain_type: 37,
+                selector: TileSelector::LowestSlot,
+            },
+            &output,
+            Some(&tileset),
+        )
+        .unwrap_err();
+        assert!(error.contains("no tiles for terrain type 37"), "{error}");
+        assert!(!output.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn terrain_types_are_accepted_by_number_and_by_script_name() {
         assert_eq!(parse_terrain_type("1").unwrap(), 1);
@@ -5704,6 +5933,246 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
         .unwrap_err();
         assert!(error.contains("outside this 11x5 map"), "{error}");
         assert!(!output.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The gamescript pairing is enforced by **map name**, and the same bytes under three tileset
+    /// names get three answers.
+    ///
+    /// The map is called `aicave.smp` because the scripts pair that map with `aibldg01.til`. So
+    /// the fixture tileset is written three times -- as `aibldg01.til` (the pairing), as
+    /// `tilesa01.til` (what the previous version of this code recommended, and a real mismatch),
+    /// and as `mymod.til` (unshipped, presumed deliberate). Only the *name* differs, so nothing
+    /// but the pairing table can decide the outcome.
+    ///
+    /// **The two accepted outputs are asserted byte-identical to each other.** Without that, a
+    /// paint that silently did nothing, or did something different, would still pass -- which was
+    /// the defect in the version of this test that shipped.
+    #[test]
+    fn a_combat_map_accepts_its_paired_tileset_refuses_another_shipped_one_and_allows_a_modded_one()
+    {
+        let dir = scratch_dir("map-paint-pairing");
+        let input = dir.join("aicave.smp");
+        fs::write(&input, grass_map(11, 5)).unwrap();
+
+        let paint = |tileset: &std::path::Path, output: &std::path::Path| {
+            edit_map(
+                &input,
+                MapEdit::PaintTerrain {
+                    rect: (5, 2, 5, 2),
+                    terrain_type: 2,
+                    selector: TileSelector::LowestSlot,
+                },
+                output,
+                Some(tileset),
+            )
+        };
+
+        // The gamescript's own pairing: accepted. This is the case the shipped version refused.
+        let paired = dir.join("aibldg01.til");
+        fs::write(&paired, CLI_FIXTURE_TILESET).unwrap();
+        let paired_out = dir.join("paired.smp");
+        paint(&paired, &paired_out).unwrap();
+
+        // A different shipped tileset: refused, nothing written.
+        let wrong = dir.join("tilesa01.til");
+        fs::write(&wrong, CLI_FIXTURE_TILESET).unwrap();
+        let wrong_out = dir.join("wrong.smp");
+        let error = paint(&wrong, &wrong_out).unwrap_err();
+        assert!(error.contains("tilesa01.til is a shipped tileset"), "{error}");
+        assert!(error.contains("aibldg01.til"), "{error}");
+        assert!(!wrong_out.exists(), "a refused paint must leave no file");
+
+        // An unshipped name: accepted, not second-guessed.
+        let modded = dir.join("mymod.til");
+        fs::write(&modded, CLI_FIXTURE_TILESET).unwrap();
+        let modded_out = dir.join("modded.smp");
+        paint(&modded, &modded_out).unwrap();
+
+        // Identical tileset bytes under two accepted names must produce identical maps, and the
+        // paint must actually have changed something.
+        let paired_bytes = fs::read(&paired_out).unwrap();
+        let modded_bytes = fs::read(&modded_out).unwrap();
+        assert_eq!(
+            paired_bytes, modded_bytes,
+            "the same tileset under two accepted names must paint identically"
+        );
+        assert_ne!(
+            paired_bytes,
+            grass_map(11, 5),
+            "the paint must change the map, or this test cannot fail on the paint being a no-op"
+        );
+        let tag_at = |bytes: &[u8], x: u32, y: u32| {
+            let offset = 16 + ((y * 11 + x) as usize) * 8;
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+        };
+        assert_eq!(tag_at(&paired_bytes, 5, 2), 12, "region");
+        assert_eq!(tag_at(&paired_bytes, 5, 1), 4, "N");
+
+        // An **unbound** combat map accepts any shipped tileset, because nothing is known about it.
+        let unbound = dir.join("aibrks0.smp");
+        fs::write(&unbound, grass_map(11, 5)).unwrap();
+        let unbound_out = dir.join("unbound.smp");
+        edit_map(
+            &unbound,
+            MapEdit::PaintTerrain {
+                rect: (5, 2, 5, 2),
+                terrain_type: 2,
+                selector: TileSelector::LowestSlot,
+            },
+            &unbound_out,
+            Some(&wrong),
+        )
+        .unwrap();
+        assert_eq!(fs::read(&unbound_out).unwrap(), paired_bytes);
+
+        // A world map still refuses a shipped combat tileset.
+        let world = dir.join("world.scn");
+        fs::write(&world, grass_map(11, 5)).unwrap();
+        let world_out = dir.join("world-out.scn");
+        let error = edit_map(
+            &world,
+            MapEdit::PaintTerrain {
+                rect: (5, 2, 5, 2),
+                terrain_type: 2,
+                selector: TileSelector::LowestSlot,
+            },
+            &world_out,
+            Some(&wrong),
+        )
+        .unwrap_err();
+        assert!(error.contains("world map"), "{error}");
+        assert!(error.contains("tilesb01.til"), "{error}");
+        assert!(!world_out.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A paint whose **output** path is a different map class than its input is refused.
+    ///
+    /// Found by review: `--map-paint-terrain realm.scn ... battle.smp tilesb01.til` was accepted,
+    /// writing a world map under a name the tool itself then reported as a combat map read through
+    /// something else. Only the input was classified. The `.smp`-to-`.scn` direction is asserted
+    /// too, so a check that only looked one way fails here.
+    #[test]
+    fn painting_across_map_classes_is_refused_on_the_output_extension() {
+        let dir = scratch_dir("map-paint-crossclass");
+        let tileset = dir.join("fixture.til");
+        fs::write(&tileset, CLI_FIXTURE_TILESET).unwrap();
+        let edit = MapEdit::PaintTerrain {
+            rect: (5, 2, 5, 2),
+            terrain_type: 2,
+            selector: TileSelector::LowestSlot,
+        };
+
+        let world = dir.join("realm.scn");
+        fs::write(&world, grass_map(11, 5)).unwrap();
+        let combat_out = dir.join("battle.smp");
+        let error = edit_map(&world, edit, &combat_out, Some(&tileset)).unwrap_err();
+        assert!(error.contains("refusing to paint"), "{error}");
+        assert!(error.contains("world map"), "{error}");
+        assert!(error.contains("combat map"), "{error}");
+        assert!(!combat_out.exists());
+
+        // And the other direction.
+        let combat = dir.join("battle2.smp");
+        fs::write(&combat, grass_map(11, 5)).unwrap();
+        let world_out = dir.join("realm2.scn");
+        let error = edit_map(&combat, edit, &world_out, Some(&tileset)).unwrap_err();
+        assert!(error.contains("refusing to paint"), "{error}");
+        assert!(!world_out.exists());
+
+        // An unclassified output extension is refused against a classified input too.
+        let junk_out = dir.join("out.dat");
+        let error = edit_map(&world, edit, &junk_out, Some(&tileset)).unwrap_err();
+        assert!(error.contains("unclassified extension"), "{error}");
+        assert!(!junk_out.exists());
+
+        // Matching classes still paint.
+        let same_out = dir.join("realm3.scn");
+        edit_map(&world, edit, &same_out, Some(&tileset)).unwrap();
+        assert!(same_out.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Omitting the tileset refuses, and the refusal says what the gamescript says -- including
+    /// when the gamescript says nothing.
+    ///
+    /// Three different messages for three resolution states, on real table entries. A rule that
+    /// resolved every combat map to one tileset could not pass this.
+    #[test]
+    fn the_missing_tileset_refusal_reports_the_gamescript_binding_or_says_it_is_unresolved() {
+        let dir = scratch_dir("map-paint-noset");
+        let edit = MapEdit::PaintTerrain {
+            rect: (5, 2, 5, 2),
+            terrain_type: 2,
+            selector: TileSelector::LowestSlot,
+        };
+
+        // A single-valued binding is named.
+        let bound = dir.join("aicave.smp");
+        fs::write(&bound, grass_map(11, 5)).unwrap();
+        let output = dir.join("a.smp");
+        let error = edit_map(&bound, edit, &output, None).unwrap_err();
+        assert!(error.contains("combat map"), "{error}");
+        assert!(error.contains("aibldg01.til"), "{error}");
+        assert!(!error.contains("tilesa01.til"), "{error}");
+        assert!(!output.exists());
+
+        // An ambiguous map says so, and names every candidate.
+        let ambiguous = dir.join("licave.smp");
+        fs::write(&ambiguous, grass_map(11, 5)).unwrap();
+        let output = dir.join("b.smp");
+        let error = edit_map(&ambiguous, edit, &output, None).unwrap_err();
+        assert!(error.contains("no single answer"), "{error}");
+        assert!(error.contains("libldg01.til"), "{error}");
+        assert!(error.contains("wabldg01.til"), "{error}");
+        assert!(!output.exists());
+
+        // An unbound map refuses without naming any tileset at all.
+        let unbound = dir.join("aibrks0.SMP");
+        fs::write(&unbound, grass_map(11, 5)).unwrap();
+        let output = dir.join("c.smp");
+        let error = edit_map(&unbound, edit, &output, None).unwrap_err();
+        assert!(error.contains("cannot name one and will not guess"), "{error}");
+        assert!(!error.contains(".til"), "no tileset may be suggested: {error}");
+        assert!(!output.exists());
+
+        // World maps name theirs.
+        let world = dir.join("realm.scn");
+        fs::write(&world, grass_map(11, 5)).unwrap();
+        let output = dir.join("d.scn");
+        let error = edit_map(&world, edit, &output, None).unwrap_err();
+        assert!(error.contains("world map"), "{error}");
+        assert!(error.contains("tilesb01.til"), "{error}");
+        assert!(!output.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `--map-tileset-for` parses the map before answering, so it cannot name a tileset for a file
+    /// that is not a map, and refuses an extension the corpus does not classify.
+    #[test]
+    fn the_tileset_for_verb_requires_a_parsable_map_and_a_classified_extension() {
+        let dir = scratch_dir("map-tileset-for");
+
+        let combat = dir.join("battle.SMP");
+        fs::write(&combat, grass_map(11, 5)).unwrap();
+        super::tile_set_for_map(&combat).unwrap();
+
+        let world = dir.join("realm.scn");
+        fs::write(&world, grass_map(11, 5)).unwrap();
+        super::tile_set_for_map(&world).unwrap();
+
+        // A real map under an extension with no recorded class: answered with a refusal, not with
+        // a default.
+        let unknown = dir.join("realm.dat");
+        fs::write(&unknown, grass_map(11, 5)).unwrap();
+        let error = super::tile_set_for_map(&unknown).unwrap_err();
+        assert!(error.contains("not one the corpus classifies"), "{error}");
+
+        // Not a map at all.
+        let junk = dir.join("notes.smp");
+        fs::write(&junk, b"not a map").unwrap();
+        assert!(super::tile_set_for_map(&junk).is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -3084,3 +3084,336 @@ write-up claimed.
 Also closed: `MapTailLayout::footer_bytes` underflowed on `total_fixed_bytes: 0`, reachable because
 the struct's fields are `pub` — a debug panic and a release wrap to `usize::MAX - 3`. Saturating, with
 the input that would have caught it written down as a test.
+## Which tileset the 337 `.smp` battle maps use — `tilesa01.til`, from the engine's own startup script
+
+> **RETRACTED 2026-09-17.** The central conclusion of this entry is wrong. `.smp` maps are **not**
+> all read through `tilesa01.til`; each combat map's tileset is declared by the *encounter* that
+> loads it. The `combattileset`-occurs-once measurement below is correct and the inference from it
+> is not. The entry is kept unedited because how it survived review is the useful part; the
+> correction is [the next section](#correction-a-combat-maps-tileset-belongs-to-its-encounter).
+> Specifically wrong below: the headline; "the answer is in the gamescript, not in a fit" (it is in
+> the gamescript, but in the 169 per-encounter pairings rather than in `START.GS`); the refutation
+> of the filename hypothesis; "the other 24 `.til` members are the terrain editor's palette"; the
+> 8.11% "residue" and the `loadsubmappages` lead offered to explain it; the 3.00/1.92 wildcard
+> figures; "`maptileset` is re-set in four places"; and the 490/496 paint survey.
+
+
+The question had been open since the tileset-driven paint landed: `--map-paint-terrain` needs an
+explicit `.til`, and for 337 of 365 installed maps this project could not name the right one. Two
+facts were in tension. Slot *declaration* fitted perfectly — `tilesa01.til` and `tilesb01.til` each
+declare 100% of the 308 atlas slots the `.smp` corpus uses, zero undeclared across all 778,240
+cells. Slot *semantics* fitted terribly — both score an identical 8.11% on the eight declared
+neighbour constraints, where shipped `.scn` maps score 94.11% against theirs.
+
+**Both halves were reproduced before anything was built on them.** The 8.11% came out of an
+independent Python re-implementation of the `.til` grammar and the neighbourhood check, and then a
+third time out of a committed Rust example. What makes it a statement about the corpus rather than
+about a scorer is the **control**: the same code scores `.scn` at 94.11%, reproducing the 5.9%
+violation rate this repository had already measured by a different route. A scorer that reported 8%
+on both classes would have been a broken scorer.
+
+### The constraint approach cannot answer it, and that is measurable
+
+Over the 308 slots the combat maps actually use, the two 624-slot tilesets disagree on **nothing** —
+0 `self` disagreements, 0 neighbour-constraint disagreements, neither declaring a slot the other
+does not. They differ at exactly eight slots, `464..=471`, which is `tilesb01.til`'s `tt_impassible`
+block; `tilesa01.til` stops at terrain 9 and no `.smp` cell reaches slot 464. Their identical 8.11%
+was therefore never a coincidence in need of an explanation — it is one rule set scored twice.
+*Agreement is not confirmation*, and here the agreement turned out to be literal file identity over
+the range in question.
+
+That is a real result on its own: **no measurement over `.smp` cells can prefer one of them**, so if
+the answer had to be a fit, there was no answer.
+
+### The answer is in the gamescript, not in a fit
+
+`lomse.exe` exports two operators, `maptileset` and `combattileset`. Across all 1,696 gamescript
+members of GS5R3's `gs.mpq`, `combattileset` appears **exactly once**:
+
+```text
+"til/tilesb01.til"dup /currenttileset exch def maptileset
+"til/tilesa01.til"combattileset
+```
+
+`START.GS` lines 74-75. It is never re-set, never parameterised, and takes no map argument, so the
+engine holds one world tileset and one combat tileset for the whole session and picks between them
+by the kind of map being drawn. `.smp` is the special/combat map; every one of the 337 is read
+through `tilesa01.til`. `maptileset` is re-set in four places and all four put `tilesb01.til` back
+on the way out to the menu. The terrain editor's `tileselector` feeds a user's pick to `maptileset`
+and nothing feeds anything to `combattileset` — which is what the other 24 `.til` members are for.
+
+### Three hypotheses refuted, with their numbers
+
+**A per-faith or per-location tileset chosen from the filename.** This was the most attractive
+hypothesis and it fits well. The 337 names decompose into an eight-faith prefix and a location
+token, `AIBLDG01.SMP` and `orcavmule.smp`, and the tilesets carry the same prefixes; for **236 of
+the 263** faith-prefixed maps the same-named `{faith}bldg01.til` declares 100% of that map's slots.
+It is nonetheless wrong, and the mechanism of the illusion is worth keeping: an individual `.smp` is
+small, and 52 of them stay under slot 64, 252 under 128, 30 under 256, and only 3 go further. The
+pooled range 0..439 is the union of maps that each use a fraction of one atlas. A per-map tileset
+would have explained both facts at once, which is exactly why it needed refuting rather than
+adopting.
+
+**A constant slot offset or bank.** Sweeping all 624 offsets over a stride-17 sample of 20 maps
+gives a broad hump, not a peak: maximum 47.88% at offset +336, offset 0 ranked 70th of 624, median
+2.77%. The hump has a cause and not a meaning — offsets near +336 push combat-map slots into the
+three `free move` blocks at `480..=623`, which carry 3.00 wildcard columns per tile against 1.92
+elsewhere and so accept nearly anything. *An explanation that fits the numbers may be your own
+tooling*, and naming the mechanism is what separates a refutation from a shrug.
+
+**The prior claim in this repository.** `docs/map-format.md` said *"no sampled tileset fits `.smp`;
+the best had 36% of cells undeclared"*. Wrong twice: the 15-tileset sample **excluded both 624-slot
+files**, which are the only ones whose atlas can hold the slots `.smp` uses, and the number was
+inverted — 35.41% is the fraction the two *worst* tilesets (`aibldg01`, `eabldg01`) **declare**, and
+they leave 64.59% undeclared. This is the second time in this repository that an unrepresentative
+validation set produced a confident wrong conclusion, and the reversed sense is an argument for
+printing a percentage with the noun it counts.
+
+### What is still open, and one new lead
+
+Knowing the tileset does not make `.smp` maps constraint-consistent. The honest statement is that
+**the slots are valid and the blend constraints do not apply**: 8.11% satisfaction, 7.48% with the
+map edge read closed, and violations spread evenly across all eight neighbour columns rather than
+concentrated in one, which is what a mistaken column order would look like. Combat maps were not
+authored the way world maps were.
+
+The lead is the line immediately after `combattileset`:
+
+```text
+"til/ttype01.lbm"
+"til/thite01.lbm"loadsubmappages
+```
+
+Both members are 320x624 8-bit images, and those dimensions factor onto the tile atlas exactly:
+624 = 39 rows x 16 and 320 = 16 columns x 20, giving each of the 624 atlas slots a **20x16 block**.
+The blocks hold terrain-type ids — 12 distinct values across the page — and they are coherent: slot
+392, water's interior tile, has a uniformly-water block, and 129 slots have a single-valued block.
+A per-atlas-slot terrain-type and height table for *submaps*, which is what a combat map is. Whether
+a combat map's terrain is read from there rather than from the `.til` `self` column is **untested**,
+and it is the first thing to try.
+
+### What landed
+
+`MapClass`, `engine_tileset_member` and `tileset_mismatch` in `tile.rs` record the assignment;
+`--map-tileset-for FILE` reports it for a map. The tileset stays a **required** argument to
+`--map-paint-terrain` — nothing is defaulted and no file is guessed at — but two things changed:
+omitting it now names the member the engine uses for that class, and supplying a *shipped* tileset
+the engine does not use for that class is **refused**. A name that is not one of the 26 shipped
+members is presumed modded and accepted untouched, which is also what keeps the existing fixture
+tests working. Classification is case-insensitive because the installed `map/` directory is split
+172 `.smp` to 165 `.SMP`, and a case-sensitive match would have handed 165 combat maps the world
+tileset; that is the input the mutation check confirmed the tests catch.
+
+`cargo run --release --example smp_tileset_fit -- MAP_DIR TIL_DIR` re-runs the measurement, so the
+numbers above are reproducible without committing a map or a tileset.
+
+### The blocker is actually lifted, and the 8.11% is not a prediction about paints
+
+`--map-paint-terrain` was unusable on 337 of 365 installed maps. With `tilesa01.til` named, it is
+not: sampling every 11th of the sorted 337 `.smp` files, on the same stride-8 grid of 3x3 plains
+paints the world-map survey used, **490 of 496 sites succeed and all 31 sampled maps accept at least
+one paint**. That is a higher rate than the world maps' 76%.
+
+The two figures are not in tension, and saying why matters because conflating them is how this
+document over-claimed once already. A paint needs candidates for the cells it *writes* — the region
+and its one-cell ring — and it re-selects those itself. The 8.11% counts cells whose currently
+stored tile does not satisfy its own declared constraints, which is a statement about how the map
+was authored, not about whether a new edit has a legal answer.
+
+
+## Correction A: a combat map's tileset belongs to its encounter
+
+The previous entry concluded that all 337 `.smp` files are read through `tilesa01.til`, because
+`combattileset` is set to it once in `START.GS` and never again. That measurement is right. The
+inference is wrong, and the scripts say so directly:
+
+```text
+/mapfile"map/aicave.smp"def   /tileset"til/aibldg01.til"def
+/mapfile"map/fienc1.smp"def   /tileset"til/cavelava.til"def
+```
+
+Each **encounter** dictionary defines `mapfile` and `tileset` as adjacent keys, so the tileset is a
+property of the encounter, not of the map. `lomse.exe` exports `setterrainspritemapfileproc`
+alongside `setterrainspritetilesetproc` — the engine asks the script for both, per encounter. And a
+corpus comment in `wilderness_land.gs` gives the rule for `combattileset` outright: *"WHEN 'mapfile'
+AND 'tileset' ARE UNDEFINED, YOU GET AN OUTSIDE COMBAT ENCOUNTER."* It is the default for
+engine-generated open-field combat, not the tileset of the shipped battle maps.
+
+### What the corpus says, measured
+
+Extracted from all 1,700 `gs.mpq` members (1,699 extractable, the other being the archive's own
+`(listfile)`; zero extraction failures) by taking every `/mapfile` definition and the `/tileset`
+definition nearest it in the same member, with **procedure bodies included** — `aimult.gs` writes
+`/tileset{dungeon_id getdungeonstrength 3 le{...}...}` whose three branches all yield
+`aibldg01.til`, and `genchaos.gs` writes a `terrainsprites`-keyed selector yielding `chbldg01.til`
+or `cavelava.til`.
+
+| | Maps |
+| --- | ---: |
+| Installed `.smp` | 337 |
+| Bound by an encounter | **169** — 143 to one tileset, **26 to several** |
+| No binding found | **168** |
+
+The multi-valued maps are a finding, not a gap. `chcave.smp` is drawn through `cavelava.til`,
+`chbldg01.til`, `cavewatr.til`, `ruins01.til` and `cavecrys.til` by five different encounters: three
+quest encounters use `ruins01`, `genbeast.gs` uses `cavewatr`. There is no single right answer, so
+`--map-tileset-for` reports `ambiguous:` with every candidate.
+
+| Scored against | Maps | Satisfied |
+| --- | ---: | ---: |
+| The gamescript's own tileset | 169 | **370,254 / 388,910 = 95.20%** |
+| `tilesa01.til`, the retracted rule | 169 | **32,842 / 389,376 = 8.43%** |
+
+Script tileset wins on **166 of 169**. `aicave.smp` 84.3% against 3.3%; `licave.smp` 100% against
+13.4%; `decave.smp` 94.1% against 21.3%. The control needing no scoring: `aicave.smp` uses exactly
+slots `0..63` and `aibldg01.til` declares `TILES=16,4` — a 64-slot atlas — while `tilesa01.til`
+declares 624. And `pathwoods.smp`, one of three maps the scripts really do pair with `tilesa01.til`,
+scores 98.5% against it, so the table is not merely "never `tilesa01`".
+
+### The 168 unresolved maps, and why scoring cannot rescue them
+
+Best-fit scoring is not discriminating here: **110 of the 168** have *sixteen* tilesets tied within
+one percentage point of the best, because the 26 shipped tilesets collapse to only **16 distinct
+rule sets** — all seven `*bldg01.til` files are byte-identical in rule and differ only in which
+`.lbm` they point at. Faith prefixes do not help either (below). So these maps are reported
+`unresolved` and the paint verb refuses on them. What would settle it is a binding form this
+extraction reads too narrowly.
+
+### The filename rule: corrected in both directions
+
+The previous entry filed a per-faith/per-location filename rule as **Refuted**, on the grounds that
+its fit was an artifact of atlas size. That refutation is wrong — combat maps really do each have
+their own tileset — and a wrong refutation is worse than an open question, because it stops the next
+reader looking. But the filename is still not the selector:
+
+| Over the 263 faith-prefixed `.smp` | Count |
+| --- | ---: |
+| `{faith}bldg01.til` merely *declares* every slot the map uses | 236 |
+| `{faith}bldg01.til` *is* what the gamescript pairs the map with | **41** |
+
+The 236 figure — the one published — measures declaration coverage, not the pairing, and conflating
+the two is exactly what made the rule look causal. The scripts cross the faiths freely:
+`licave.smp` pairs with `libldg01.til` **and** `wabldg01.til`; `eacave.smp` with `libldg01.til` and
+`ruins01.til`. A faith rule would be wrong about 222 of 263.
+
+### Three published numbers that do not reproduce
+
+- **Wildcard density.** Published as 3.00 `*` columns per `TILE=` row for slots `480..=623` against
+  1.92 elsewhere. Measured: **2.33** (336/144) against **1.67** (776/465) in `tilesa01.til`, and
+  2.33 against 1.64 in `tilesb01.til`. Two independent measurements agree on the correction. The
+  conclusion — that the +336 offset hump is a permissive region of the atlas rather than an
+  alignment — survives; the arithmetic was not checked.
+- **`maptileset` is re-set in four places and all four restore `tilesb01.til`.** Wrong in both
+  halves. Ten occurrences across seven members: one in `START.GS`, the `tilesb01.til` restore in
+  **six**, and **three** `currenttileset exch maptileset` editor calls that restore nothing.
+- **The `loadsubmappages` lead.** Offered as the likely explanation for combat maps satisfying only
+  8.11% of their tileset's constraints. There is no such residue — that figure was scoring against
+  the wrong tileset, and the real one is 95.20%. **Withdrawn as an explanation.** The two 320x624
+  pages are still real and their geometry still factors onto the atlas as a 20x16 block per slot;
+  that stays recorded as an unexplained observation with no claim attached.
+
+### A second blocker, behind the first
+
+With the right tileset in hand, painting a battle map still failed. `--map-paint-terrain`'s terrain
+argument went through the same parser `--map-set-terrain` uses, whose ceiling is `tilesb01.til`'s
+eleven types — so a combat terrain id refused with `21 is not one of the 11 terrain types`. Sampled
+paint success across the bound maps was **7.5%**. A paint's ceiling is now the supplied tileset,
+which `PaintRefusal::TerrainTypeNotInTileSet` was already enforcing anyway; the tileset-less verbs
+keep the eleven-type table because they have nothing else to check against. After the fix: **784 of
+912 sampled sites across 55 of 57 maps, 86.0%.** This is the measured consequence of "terrain ids
+are tileset-local", which this project had recorded as a hazard without ever testing.
+
+## Correction B: why nothing caught it, and what was built instead
+
+This is the part worth keeping. Two independent reviewers reproduced **every** published percentage
+— 35.41%, 236/263, 47.88% at +336, rank 70 of 624, 8.11%, 94.11% — verified the scorer's column
+order and its `~`/`|` handling, verified the 26-name shipped tileset list against the files,
+extracted all 1,696 `.gs` members with zero failures, confirmed the single `combattileset`
+occurrence — and endorsed the wrong conclusion. Four independent mutations each killed tests. CI was
+green throughout.
+
+**The reason is structural: every assertion was against a hardcoded literal.** No test in the suite
+could fail on *the rule being wrong*, only on the code disagreeing with the constant. A clever test
+that writes one fixture tileset under three names and checks three outcomes tests the plumbing
+perfectly and says nothing about whether the names are right.
+
+Two lessons, both already in this repository in other words:
+
+- *Agreement is not confirmation* — and reproducing a figure is not even agreement about what the
+  figure means. Both reviewers and the author shared one assumption, and checking the arithmetic
+  downstream of it could not surface that.
+- *An empty review is not a clean review*, and neither is an instrument that cannot fail.
+
+What was built in response: `examples/smp_tileset_fit.rs` scores the **installed corpus** against
+the resolution rule and now **exits non-zero** when it scores no maps, when a map class is absent
+entirely, or when any group's satisfaction falls below a 60% floor — which the retracted rule's
+8.43% trips. The previous version reported `self-disagreements:0` on an empty directory and exited
+0, certifying perfect agreement on no data. It also emits **per-extension** rows, so the `.scn`
+94.11% open-edge control that the "not a broken scorer" argument rests on is *printed output* rather
+than a prose claim, and it emits the coverage counts, the atlas buckets, the ambiguity spread and
+the 41-versus-236 filename measurement — all of which were prose before.
+
+One run of that instrument would have caught the class-based rule. That is the only test here that
+could have.
+
+
+## Correction C: the runtime selector form, and comments
+
+Two further errors of mine, both found by review, neither changing the reversal.
+
+**The `/tilesets` selector form is live code and I recorded it as absent.** I searched for
+`/tilesets[` and found nothing. It ships as a procedure over a *separately named* array:
+
+```text
+/tilesets{ ... tiles 0 get ... currentterrainsprite getterrainspritelocation
+           8 mod 2 eq{pop tiles 2 get}if ... }/dummy currentdict replace
+/tiles["til/cavewatr.til" "til/cavecrys.til" "til/cavelava.til" "til/aibldg01.til"]replace bind def
+```
+
+41 members define `/tilesets`, 40 define `/tiles[`, 40 define `/maps[`. **One** encounter picks
+among up to four tilesets at runtime from a sprite's map location, which is a second and stronger
+reason a combat map has no single tileset. My singular-key reader used `/tileset\s*\{`, which cannot
+match `/tilesets {` — the `s` is in the way. A negative result from one spelling of a search is not
+absence, and I stated it as absence.
+
+What *is* absent is **randomised** selection. The `DUNGEONS5.gs` comment I cited is a 2025-06-12
+changelog entry recording that randomised mapfiles and tilesets were **removed** for multiplayer
+desync. That comment describes a deletion; citing it as evidence the mechanism does not exist was
+reading a changelog as a specification.
+
+**The extractor never stripped comments.** Gamescript members use bare `CR` line endings, so a `;`
+comments to end of line even though a whole procedure looks like a single line to anything splitting
+on `LF`. Seven members changed once comments were honoured — including `wilderness_land.gs` and
+`wilderness_sea.gs`, whose `chcave.smp`/`cavewatr.til` pair is commented out *because those are the
+outside-combat-encounter files*, the very members whose comment I quoted for the `combattileset`
+rule. Multi-valued maps drop 26 → **22**, undeclared cells 880 → **466**.
+
+### Why the selector form is recorded separately rather than merged
+
+The instruction I was given was to fold the array maps into the binding table under a coarse
+reading. Measuring first changed the answer, and this is the useful part:
+
+| | |
+| --- | ---: |
+| Distinct `.smp` named in any `/maps[...]` | 43 |
+| Of those, **not** already declared by a literal pair | **0** |
+| Coverage change | 169 → **169** |
+| Coarse sets crossing more than one tileset *rule class* | **42 of 43** |
+
+The predicted benefit was five new maps; there are none. So the merge buys no coverage and costs
+precision: it would stand `ruins01.til` (81.3% satisfaction on `demina.smp`) beside the declared
+`debldg01.til` (98.3%) as an equal.
+
+I also tested the positional zip the instruction warned against, because the arrays *look* parallel
+— `aimina.smp` sits at index 3 in four members and `aibldg01.til` at index 3 in all four. It is
+suggestive and not establishable: only **31 of 40** members have equal-length arrays and **5 of 40**
+disagree with their own literal pair at index 0. And scoring cannot adjudicate any of the three
+readings — mean best satisfaction 95.33% declared, 94.58% zipped, 95.57% crossed. I expected that
+to be because the array entries are rule-identical art variants; **that was wrong**, 42 of 43 cross
+rule classes, and I only know it because I checked instead of asserting it.
+
+So the resolution: two tables. `COMBAT_TILESET_BINDINGS` is what a map *is* read through and drives
+reporting; `COMBAT_TILESET_ARRAY_CANDIDATES` is what an encounter may *reach* and is consulted only
+so the paint gate never refuses it. **Reporting is precise; refusing is permissive.** Refusing the
+engine's own answer is the bug that shipped on this branch once already, and the permissive side of
+the gate is where that lesson lives.
