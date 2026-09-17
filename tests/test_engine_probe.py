@@ -733,9 +733,11 @@ class MapTagProbeTest(unittest.TestCase):
     def test_sprite_cells_separate_packed_from_x_major(self) -> None:
         """Three cells whose two candidate encodings cannot be confused.
 
-        The corpus says cells are stored X-major (`x * height + y`) while sprite *locations* are
-        packed (`y * width + x`). Reading one as the other has already cost an attended run, so
-        the cells are chosen to give six distinct numbers rather than to look tidy.
+        Before the run, the corpus was read as X-major (`x * height + y`) while sprite *locations*
+        looked packed (`y * width + x`). The cells are chosen to give six distinct numbers rather
+        than to look tidy, which is the only reason the run could tell them apart. It did: the
+        saved records came back packed, and X-major is refuted. Keep the property -- the next probe
+        that places sprites needs it too.
         """
         cells = engine_probe.MAPTAG_SPRITE_CELLS
         size = engine_probe.MAPTAG_MAP

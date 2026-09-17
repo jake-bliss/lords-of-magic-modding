@@ -164,16 +164,9 @@ fn probe_tile_set(bytes: &[u8]) -> Result<AssetInfo, String> {
 fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
     let map = MapAsset::parse(bytes).map_err(|error| error.to_string())?;
     let distinct_tags: BTreeSet<u32> = map.cells.iter().map(|cell| cell.tag).collect();
-    let distinct_tile_indexes: BTreeSet<u32> = map
-        .cells
-        .iter()
-        .map(|cell| cell.tile_index_candidate())
-        .collect();
-    let forced_texture_cells = map
-        .cells
-        .iter()
-        .filter(|cell| cell.forced_texture_candidate())
-        .count();
+    let distinct_tile_indexes: BTreeSet<u32> =
+        map.cells.iter().map(|cell| cell.tile_index()).collect();
+    let high_flag_cells = map.cells.iter().filter(|cell| cell.high_flag_set()).count();
     let mut finite_min = f32::INFINITY;
     let mut finite_max = f32::NEG_INFINITY;
     let mut nonfinite_values = 0_usize;
@@ -211,7 +204,7 @@ fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
             let types = section
                 .records
                 .iter()
-                .map(|record| record.sprite_type_candidate)
+                .map(|record| record.sprite_type)
                 .collect::<BTreeSet<_>>()
                 .len();
             (
@@ -224,7 +217,7 @@ fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
     Ok(AssetInfo::new(
         kind,
         format!(
-            "metadata={};width={};height={};bits-per-pixel={};cells={};distinct-cell-tags={};distinct-tile-indexes={};forced-texture-cells={forced_texture_cells};candidate-value-range={value_range};nonfinite-values={nonfinite_values};trailing-bytes={};trailing-head-u32={trailing_head};tail-layout-candidates={tail_layouts};placed-sprites-49={placed_sprite_count};placed-sprite-types={placed_sprite_types};placed-sprite-footer={placed_sprite_footer}",
+            "metadata={};width={};height={};bits-per-pixel={};cells={};distinct-cell-tags={};distinct-tile-indexes={};high-flag-cells={high_flag_cells};candidate-value-range={value_range};nonfinite-values={nonfinite_values};trailing-bytes={};trailing-head-u32={trailing_head};tail-layout-candidates={tail_layouts};placed-sprites-49={placed_sprite_count};placed-sprite-types={placed_sprite_types};placed-sprite-footer={placed_sprite_footer}",
             map.metadata,
             map.width,
             map.height,

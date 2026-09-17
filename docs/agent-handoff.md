@@ -50,7 +50,7 @@ As of 2026-09-17, `cargo test` passes **98 library and 24 CLI/viewer tests**, `p
 1. **[#1 IMP presentation](https://github.com/jake-bliss/lords-of-magic-modding/issues/1) — closed.** See [hotspots](hotspots.md); the residual questions are listed there, not here.
 2. [#5 GameScript VM](https://github.com/jake-bliss/lords-of-magic-modding/issues/5): **mostly resolved.** The engine's operator tables are recovered (1,906 natives with entry points), arity is recovered by disassembly, and the VM classifies any name it stops on as operator / engine-constant / unresolved with a signature. What remains is loading a *second* engine-light module end to end.
 3. **[#22 Oversized map header](https://github.com/jake-bliss/lords-of-magic-modding/issues/22) — closed 2026-09-17, refuted.** A 512x512 map was generated in the running engine and parsed: the four-byte word at `0x00` is present and holds the same `0x6f` as the 128 and 256 controls. See [map format](map-format.md#oversized-maps-keep-the-header).
-4. [#4 Map variants](https://github.com/jake-bliss/lords-of-magic-modding/issues/4): 52-/53-byte tails and object-field semantics. The Map Editor save diff is parked because Wine-window automation was blocked by macOS accessibility controls; ask the user for a manual export if needed.
+4. [#4 Map variants](https://github.com/jake-bliss/lords-of-magic-modding/issues/4): **the save-diff half is done** — the `maptag` probe ran attended on 2026-09-17 and settled the cell tag, the storage order, the terrain table, the section layout and several record fields (see [map format](map-format.md)). Still open: the meaning of tag bit `0x00800000`, the 52-/53-byte record families (now known to be a **content** difference, since both save operators write identical bytes), the 18 unmatched tails, the header word at `0x00` (generated maps say `0x6f`, shipped `URAK.scn` says `0x6c`), the trailing footer, and the attribute field at `+24`.
 5. [#2 timing/direction](https://github.com/jake-bliss/lords-of-magic-modding/issues/2) and [#3 validation exceptions](https://github.com/jake-bliss/lords-of-magic-modding/issues/3): original-game comparison and lossless decoder exceptions.
 6. [#6 Difficulty/AI gameplay proof](https://github.com/jake-bliss/lords-of-magic-modding/issues/6): static side closed; controlled gameplay measurement holding `insane_mode?` constant remains open.
 
@@ -123,13 +123,16 @@ checksum** — `artifacts/experiment-backups/` holds the manifest pattern used o
 
 ### Engine probe harness — this is the reusable part
 
-**Four probes exist.** `LOM_PROBE=ladder` (the default) is the four-rung compositing diagnostic that
+**Five probes exist.** `LOM_PROBE=ladder` (the default) is the four-rung compositing diagnostic that
 settled the shadow blend and the palette order. `LOM_PROBE=elevation` surveys `getelevation` beside
 `map2screen` called with `z = 0` and with `z =` the cell's own elevation, then places six sprites to
 measure real anchors — that is the open half of the y convention. `LOM_PROBE=mapsize` generates and
 saves a 128, a 256 and a 512 map for [issue #22](https://github.com/jake-bliss/lords-of-magic-modding/issues/22);
 it places no sprites, destroys nothing, and is the only probe run from the **Map Editor** rather than
-from a game.
+from a game. `LOM_PROBE=flatground` builds its own mesh to settle `map2screen`'s y convention.
+`LOM_PROBE=maptag` builds a 64x64 map, writes chosen tiles, terrain types and sprites into it, and
+saves it four ways for [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4) —
+**run 2026-09-17, and it refuted two documented claims**; see below.
 
 **The mapsize probe writes outside the archives, and that needs care.** The game directory has a
 loose `map/` folder holding 366 shipped files, and **no backup here covers it** — the manifest covers
@@ -286,6 +289,45 @@ frame* — not just its anchor — is on screen once the camera offset is accoun
 *sequence*, because a substring search cannot tell one block write from another — that the spike
 phase lowers the plateau before raising its cells.
 
+### Write the map, then read it back — `LOM_PROBE=maptag`
+
+Run 2026-09-17, attended, and it produced the map-format results that
+[map format](map-format.md) now carries. The shape worth reusing: **choose the values before the
+run so that the candidate readings disagree on them.**
+
+The probe builds a 64x64 map, `392 clearmap`s it, forces seven tile slots spanning the whole atlas
+range along one row, `setterrain`s all eleven terrain types along another, saves as `.scn` and
+`.smp`, places three terrain sprites of a type it minted itself, saves, destroys them, and saves
+again. Four files, each a diff against its neighbour.
+
+What that bought, all **Observed in gameplay**:
+
+- the low tag bits *are* the tile slot, byte-exact at both ends of `0..623`;
+- `0x00800000` is **not** a forced-texture flag — 4,096 forced cells, none flagged;
+- cells are packed `y × width + x`; the documented X-major reading is **refuted**;
+- `forcetexture` writes one cell, `setterrain` also blends the 8-neighbourhood;
+- the engine's terrain-type-to-tile table, both directions;
+- `savescenariomap` and `savespecialmap` write **identical bytes**, so the `.scn`/`.smp` record-size
+  split is a content difference, not a format one;
+- the trailing section is `count`, records, `footer`, in that order;
+- `sprite_type` at `+28` and the sequential `instance_id` at `+20`.
+
+**The three sprite cells are the whole coordinate result, and they were chosen for it.** `(20,30)`,
+`(21,30)` and `(20,31)` give six distinct numbers under the two candidate encodings, so the saved
+records could only match one. A tidier choice on the diagonal would have proved nothing. The
+byte data still cannot say which operand is *x* — operand order and storage order are exact
+transposes — so that came from the screen capture: `map2screen` puts screen-x on `(x − y)`, so a run
+varying the first operand travels down-**right**, and both painted bands do.
+
+**Why this was not caught years ago, and the lesson to carry:** every shipped map is square, so
+X-major and y-major are indistinguishable across the entire corpus, and the regression test that was
+supposed to prevent a transposed render had been fitted to a square 2x2 fixture. The Rust tests now
+use deliberately **non-square** synthetic maps. A fixture shaped like the corpus cannot catch a bug
+the corpus hides.
+
+Read the four files back with `--dump-map-cells` and `--diff-maps` in the asset viewer rather than by
+eye; a 16 KiB tail read by hand is how a wrong record size gets believed.
+
 ### Captures are per-probe and per-run, and this was paid for
 
 `ladder` and `elevation` both wrote `zp0`/`zs1`/`zs2`, and `scripts/restore-game-archives.sh`
@@ -293,7 +335,7 @@ collected them into one flat directory. **On 2026-09-17 that destroyed the eleva
 log** — the raw data behind the `map2screen` decode — when the mapsize run reused `zprobe.log`.
 The conclusions survive in this log; the raw file does not.
 
-Two fixes, both in place. Every probe now owns a capture prefix (`zl`, `ze`, `zm`, `zf`) and a test
+Two fixes, both in place. Every probe now owns a capture prefix (`zl`, `ze`, `zm`, `zf`, `zg`) and a test
 fails if two probes share a name. And the restore script files each run in its own
 `run-YYYYmmdd-HHMMSS/` directory, refusing to start if that directory already exists. An attended
 run costs a human a game session; its output is not something to overwrite.

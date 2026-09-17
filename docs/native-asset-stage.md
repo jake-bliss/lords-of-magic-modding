@@ -305,7 +305,7 @@ export, where the key is a header field and is nonzero in 94 of 300 sampled spri
 
 ## Map/scenario findings
 
-The loose installed map corpus contains 20 `.scn`, 337 `.smp`, and eight `.lgd` files. All 365 pass the bounded parser. Each file declares width, height, an observed depth of 8, and one eight-byte record per cell in X-major order. Treating the second word as little-endian `f32` yields finite values from 0 to 20 and coherent relief. The first word resolves to an original tile-atlas index plus an observed `0x00800000` forced-texture flag; `URAK.scn` now renders as a coherent, correctly oriented world through `tilesb01.til` and `tilesb01.lbm`.
+The loose installed map corpus contains 20 `.scn`, 337 `.smp`, and eight `.lgd` files. All 365 pass the bounded parser. Each file declares width, height, an observed depth of 8, and one eight-byte record per cell in packed y-major order (`y × width + x`, corrected 2026-09-17 from X-major). Treating the second word as little-endian `f32` yields finite values from 0 to 20 and coherent relief. The first word resolves to an original tile-atlas index — confirmed by forcing seven slots in the running engine on 2026-09-17 — plus a `0x00800000` flag whose meaning is Unknown (the forced-texture reading was refuted by the same run); `URAK.scn` now renders as a coherent, correctly oriented world through `tilesb01.til` and `tilesb01.lbm`.
 
 All 26 recovered `.til` definitions parse and explicitly bind atlas geometry, 32×32 tile dimensions, terrain types, and tile indices. The dominant trailing family is also decoded structurally: 196 files contain 16,628 exact 49-byte placed-sprite records. Cell indices are bounded and unique per file, and candidate instance, sprite-type, and procedure fields are exposed without discarding raw bytes. The 52-/53-byte families and exact object-field behavior remain open. See the [map-format record](map-format.md) and [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
 
@@ -349,7 +349,7 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [x] Generated-header parser and corpus cross-validator.
 - [x] Typed IMP origin/hotspot candidates and shared-pixel records inside facings.
 - [x] Bounded header/cell-grid parser and diagnostic elevation viewer for all 365 loose map files.
-- [x] Decode X-major map coordinates, standard tile-atlas indices, and the forced-texture tag candidate.
+- [x] Decode packed map coordinates, standard tile-atlas indices, and the `0x00800000` tag flag (meaning still Unknown).
 - [x] Parse all 26 recovered `.til` definitions and render/export original-art terrain overviews.
 - [x] Structurally decode and validate all 16,628 records in the dominant 49-byte placed-sprite family.
 
