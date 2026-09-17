@@ -1157,3 +1157,90 @@ The measurement itself is ready and needs only the proven hotkey path:
 Because all of this places through a terrain sprite type, it runs on the **world map of a real game**,
 which is where the unit-anchor check and the cell-to-screen fit also have to happen. One attended
 session with one keypress can therefore settle all three.
+
+## 2026-09-16 (later) — The attended run: a negative result, and two findings from its wreckage
+
+**Evidence class: observed in gameplay.** The prepared probe ran on the world map of a real
+single-player game. It did not answer the question it was built for, and it damaged the live map on
+the way. Both archives were restored byte-identical afterwards and nothing was saved, so the damage
+existed only in memory.
+
+### What failed
+
+`imp\zzpal.imp` — the donor with the authored palette — was injected, and
+`["imp/zzpal.imp"]cvx addterrainspritetype` returned a type id. `addterrainsprite` then reported
+success, and the cell it was placed on stayed occupied for the rest of the session, so **the sprite
+object was really created**. But no capture contains it. `zc3.bmp` is pixel-for-pixel identical to
+the plate, and `zc2.bmp` differs only by ordinary map animation; nothing anywhere is 72x76.
+
+**The art failed to load while the placement succeeded.** The probe had no control that could say
+why, which is the design fault worth recording: an invisible subject and a broken subject look the
+same, and the run could not tell them apart.
+
+### Two traps that were paid for here
+
+**`anythingat?` does not see terrain sprites.** The guard `x y anythingat? not` reported the cell
+empty while a village stood on it. Because the probe's own sprite was invisible,
+`x y terrainspriteat` then returned *the village*, and `destroyterrainsprite` deleted it. The
+captures show it exactly: a 34x38 building at screen (370,185), present in the plate and absent
+afterwards.
+
+> Never clean up a placed sprite by location. Match on `getterrainspritetype` and destroy only the
+> type the probe itself registered. `enumterrainsprites` supports this directly, and `tree2.gs`'s
+> `changeterrainspritetype` is the shipped example of the idiom.
+
+**The hotkey auto-repeats.** Holding `z` for a moment ran the body **nine times**, registering nine
+sprite types (470-478) and re-entering the placement logic eight times more than intended. Any probe
+body needs a fire-once flag in `userdict`.
+
+### Finding: `map2screen`'s third return value is the screen x coordinate
+
+`map2screen` returns three values; the last one is screen x, and the isometric step falls straight
+out of the log:
+
+| cell | third value |
+| --- | --- |
+| (63,70) | 320.412 |
+| (64,70) | 354.353 |
+| (65,70) | 388.294 |
+| (63,71) | 286.471 |
+| (63,72) | 252.530 |
+| (66,73) | 320.412 |
+
+That is **+33.941 per cell of x and -33.941 per cell of y**, so `screen_x = x0 + 33.941*(dx - dy)`,
+and the diagonal cell (66,73) returning the base value again confirms it. The remaining two values
+move by 14.4 per isometric step and differ from each other by a constant 80, so they are in different
+units and are not screen pixels. This is real progress on the y/z convention question left open by
+PR #29, though the y half is still unmeasured — it needs a sprite that actually renders.
+
+### Finding: `screencapture` writes R, G, B, not the BMP-standard B, G, R
+
+Decoding the captures per the BMP standard makes the interface stone blue and the terrain purple.
+Decoding the bytes in the order written makes the stone brown and the grass green. The interface
+frame is a fixed asset that is not subject to lighting, so this is not ambiguous.
+
+This matters out of proportion to its size. Every previous use of these captures was an *equality*
+difference, which is blind to channel order — so the error survived undetected. The next measurement
+scheduled to run through them is the **palette channel order**, where a reader that silently swaps
+red and blue would have produced a confident, exactly-wrong answer. `screencapture` is now known to
+be non-standard in two independent ways, since `bfOffBits` already reports 14 against a real offset
+of 54.
+
+`tools/probe_captures.py` is the reader that gets both right, and its tests pin them.
+
+### The rebuilt probe
+
+`tools/engine_probe.py` generates the replacement, `scripts/install-engine-probe.sh` installs it and
+`scripts/restore-game-archives.sh` undoes it. The probe is now a **diagnostic ladder** rather than a
+single measurement — four sprite types placed in one capture:
+
+| Type | Sprite | What its absence would mean |
+| --- | --- | --- |
+| shipped type, shipped art | `terrainsprites /orchard get` | the capture or the cell logic is wrong |
+| custom type, shipped art | `["imp/tree4e.imp"]cvx addterrainspritetype` | `addterrainspritetype` on a literal filename does not work |
+| custom type, injected copy | `["imp/zzctl.imp"]cvx addterrainspritetype` | the engine cannot read an added archive member |
+| custom type, authored palette | `["imp/zzpal.imp"]cvx addterrainspritetype` | the palette edit broke the file |
+
+`zzctl.imp` is byte-identical to `imp\tree4e.imp`, so the third and fourth rungs differ only by the
+twenty palette bytes. Whichever rung breaks names the cause, which is precisely what the failed run
+could not do.
