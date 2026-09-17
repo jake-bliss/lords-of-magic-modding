@@ -2280,3 +2280,219 @@ every command, refusal to write over the input by canonical path, `create_new` o
 re-parse of the encoded bytes with the edit read back before anything reaches disk. A refused edit
 leaves no partial file. No game file was written during this work; all experiments ran on copies in
 a scratch directory.
+
+## 2026-09-17 — The `mapload` probe, staged and not yet run
+
+Built, installed, awaiting one keypress. The run sheet is [docs/mapload-run-sheet.md]
+(mapload-run-sheet.md); it names what each outcome would mean before the run, so no result can be
+reinterpreted after the fact.
+
+### The gap it closes
+
+Round-trip identity over 365 of 365 installed maps shows this project's writer matches the engine's
+**writer**. It says nothing about the engine's **reader**, and no map this project produced has ever
+been loaded by the game. The map editor's whole value rests on a claim nobody has tested.
+
+`gs\hotkey.gs` turned out to supply the instrument outright: `loadscenariomap` takes a filename and
+**returns a boolean** that the shipped editor tests. Acceptance is a value the engine hands back, not
+something to be read off a screenshot. Finding that in the archive is what made this a one-keypress
+experiment rather than a session of squinting at renders.
+
+Each rung then saves the loaded map straight back out, so the offline diff of input against echo
+reports whether the engine **normalised** anything. Any field it rewrites — the `0x00` header word,
+the border bit, the `+24` attribute — shows up as a byte difference. One keypress, three unknowns.
+
+### Two bugs caught before the run, both of which would have wasted it
+
+**The blend background was laid with `setterrain`.** That is the operator under test, and it blends:
+sweeping it across the map lays transitions against the default terrain and then partly overwrites
+them, so the tiles around each blob could not be attributed to the blob. It uses `clearmap` now —
+which forcetextures and blends nothing — and a test asserts no `setterrain` runs before the
+background is down.
+
+**The install script deleted the probe's own input maps.** `generated_map_names()` is the exact list
+the install script clears as stale output, and adding `mapload`'s inputs to it meant the clearing
+step removed the six files whose presence the script's own prerequisite check had just confirmed,
+thirty lines earlier. Rungs 1 to 6 would each have loaded nothing, and the log would have read as
+six rejections — the engine refusing our maps — when the files were simply absent. That is the worst
+shape a probe bug can take: not a crash, but a plausible wrong answer.
+
+The fix splits the list in two. `generated_map_outputs()` is what install clears; `generated_map_inputs()`
+is what must already exist. Restore still removes both, or the probe's files outlive the probe.
+`zm0.scn` sits in *outputs* despite being loaded, because the engine writes it during the run and a
+leftover would replace rung 0's control.
+
+It was the regression test, written from the intent rather than the code, that made the second one
+obvious — the same shape of test that caught the instance-id reuse earlier the same day.
+
+## 2026-09-17 — The `mapload` run: the engine accepts what we write
+
+One keypress. All seven rungs passed, and it settled more than it was designed to ask.
+
+### The question it closed
+
+Every claim this project made about writing maps rested on round-trip identity — 365 of 365
+installed maps re-encode to their input bytes. That shows this writer matches the engine's
+**writer**. It says nothing about the engine's **reader**, and no map this project produced had ever
+been loaded by the game.
+
+`gs\hotkey.gs` supplied the instrument outright: `loadscenariomap` takes a filename and **returns a
+boolean** the shipped editor tests. Finding that in the archive is what turned a session of
+squinting at renders into a one-keypress experiment with a machine-readable verdict.
+
+| Rung | Loaded | Engine reported | Echo vs input |
+| ---: | :---: | --- | --- |
+| 0 engine's own save (control) | yes | 64x64 | 4,096 cells |
+| 1 our re-encode of `URAK.scn` | yes | 128x128 | 1 byte |
+| 2 our terrain edit | yes | 128x128 | 1 byte |
+| 3 our placed sprite | yes | 128x128 | 1 byte |
+| 4 interior border bit | yes | 128x128 | 17 bytes |
+| 5 created from nothing, 64x64 | yes | 64x64 | **identical** |
+| 6 created from nothing, **96x64** | yes | **96x64** | **identical** |
+
+Rung 2's three edited cells read back as terrain 1, 8 and 5 — water, lava, snow, exactly what was
+written. The engine did not merely accept the file; it read the edits correctly. Rung 3 is the one
+that mattered most for the writer's single honest compromise: the placed-sprite record, minted `+24`
+and all, survived byte-exactly.
+
+### The design decision that paid for itself
+
+Each rung **saved the loaded map straight back out**. That was added because acceptance alone is a
+thin result, and the echo diff turned out to answer two questions the probe was not built to ask.
+
+**The header word at `0x00` is engine output, not map input.** `URAK.scn` carries `0x6c`; the echo
+carries `0x6f`, which is what the engine writes for everything. That single byte is the entire
+difference in rungs 1 through 4, and it retires the "stored tileset selector" reading — the engine
+overwrites the word from its own state and never reads it back. It is also why the two
+created-from-nothing maps came back identical: they were already written with `0x6f`.
+
+**Tag bit `0x00800000` is not durable map data.** Rung 4's sixteen interior-flagged cells came back
+cleared with their tiles untouched. The stronger half is rung 0, the engine's *own* map: a `clearmap`
+save had the bit set on all 4,096 cells, and loading and re-saving cleared all 4,096. It is written
+on save from in-memory state that a load does not repopulate, which makes it cosmetic to a writer.
+
+That last result **appears to contradict** the earlier finding that `forcetexture` never sets the bit
+(0 of 4,096) — and the reconciliation is that `forcetexture` *does* set it and something on the
+render path clears it, because this control saved with no renderer call while the earlier probe
+rebuilt and rendered first. Two measurements that disagree turned out to be a finding about the
+*sequence*, not a reason to retract either.
+
+**Both reviewers then showed the write-up of this was confounded, and they were right.** Two
+separate claims were wrong:
+
+- "the engine clears it when it saves a map it loaded" — every echo save in this run happens
+  *after* the renderer block inside the same rung, so the sixteen cleared interior cells are
+  equally explained by the renderer. Load and save were never isolated.
+- "the two runs differ in exactly one step" — they differ by seven paint operators and four
+  renderer calls. `resetvisibility`, `rendermap` and `refreshdirty` are as much candidates as
+  `rebuild3dmap`, and the next probe should save between each.
+
+The corrected write-up also flips the writer guidance. "Treat it as cosmetic" was the wrong
+conclusion to draw from a confounded measurement: the corpus shows this bit living on disk in
+exactly one place — 27,448 cells across 146 `.smp` files, precisely their perimeters — and this
+probe never exercised the `.smp` path at all. **Preserve the bit.** An editor that dropped it on the
+strength of "the engine doesn't keep it" could be destroying the only real occurrence of it.
+
+### The blend ring has structure, and the structure is the result
+
+Eleven isolated 3x3 blobs on a background forced to tile 15:
+
+```
+  18   2   2   2  19
+   4  57  49  58   3
+   4  51 398  52   3
+   4  55  50  56   3
+  17   1   1   1  16
+```
+
+N=2, S=1, W=4, E=3, NW=18, NE=19, SW=17, SE=16 — and that ring is **byte-for-byte identical for nine
+of the eleven terrains**. A transition tile is chosen by the background and the direction of the
+boundary, not by which terrain is on the other side. That is what makes a painter tractable: the
+alternative, a full 11x11 pair table, would have cost eleven times the measurement.
+
+Terrain 6 — the background's own type — has a ring of pure tile 15. No boundary, no transition. That
+control is what proves the other rows measure something rather than reporting noise.
+Terrain 9 (`tt_road`) has its own family, `384..390`.
+
+One background only. The structure generalises; the numbers do not.
+
+### A table that turned out to be conditional
+
+The same map shows `setterrain` picking its *core* tile from a family too: terrain 6 onto a tile-15
+background writes `385..391`, where the original measurement — against a tile-392 background — gave
+15. So the terrain-to-tile table's `base_tile` column is a **representative** tile, not the tile
+`setterrain` writes in an arbitrary neighbourhood.
+
+Nothing downstream breaks. The reverse direction still holds, the blend background read back as
+terrain 6 exactly as predicted, and what the writer does with the table — force one representative
+tile into one cell, which is `forcetexture` semantics — was always right. But the column had been
+carrying a stronger claim than the measurement supported, which is the third time in one day that a
+recorded fact turned out to be narrower than its wording.
+
+### Cost
+
+One keypress. The game **crashed on exit**, after the probe had logged `map load probe done` — every
+artifact was already on disk and nothing was lost. Whether that is the probe or Wine on shutdown is
+untested. Archives restored and verified against `MANIFEST.sha256`; `map/` back to its 366 shipped
+files with no leftovers.
+
+### Post-review corrections to the run's write-up
+
+Both reviewers converged on the confound above; each then found things the other missed, which is
+the whole argument for running two.
+
+**The reviewers between them caught eight claims that outran their evidence**, and the pattern in
+all eight is the same: a single observation written as a general law.
+
+- The header word was refuted on the **write** side and the wording claimed the **read** side. All
+  seven rungs loaded successfully and nothing distinguished tileset behaviour between a `0x6c` map
+  and a `0x6f` one. Worse, the confidence list still carried "the header word is a tileset
+  selector" as *Inferred* four lines above the bullet refuting it — the canonical known/unknown
+  block an agent reads first, self-contradicting.
+- "A transition tile is chosen by the background and direction, **not** by which terrain is on the
+  other side" is refuted by the same paragraph's own road row. Nine of ten is a useful regularity,
+  not a law, and `LAND_TRANSITION_TILES` carried neither a road row nor anything to refuse one.
+- The terrain-6 "control" was not a control. Its ring is pure background, but its *core* was
+  rewritten to `385..391` rather than left at the background tile — so something was written and no
+  ring appeared, which the "no boundary, no transition" story does not explain.
+- The `385..391` family was said to round-trip through `getterrain`. The probe never reads
+  `getterrain` on a blob cell, and `base_tile_terrain_type(385)` returns `None` in our own code.
+
+One reviewer suspected the terrain-6 numbers were a transcription mix-up with terrain 9 and could
+not check, because `restore-game-archives.sh` had removed the artifacts from the game directory. The
+copies in the scratch directory survived: re-measured, blob 6 sits at (6,14) with core
+`385..391` and an all-15 ring, blob 9 at (30,14) with core `474`/`546..553` and ring `384..390`, and
+the far field is clean tile 15. **No transcription error** — but the reviewer was right that the
+*reasoning* did not hold, and right that the artifacts should have been checkable.
+
+**Two real code defects**, both in the verbs added to build the probe's inputs:
+
+- `--map-flag-rect` and `--map-flag-border` had an **empty verification arm carrying a comment that
+  claimed the edit verified itself**. It did not: only out-of-range errors propagated. A mask bug in
+  `set_high_flag` that clobbered the tile field would have been encoded, reparsed and written into a
+  directory with no backup, while every other verb refused. These are the only verbs that write many
+  cells at once, which made it the worst one to leave unchecked. Now verified cell by cell, plus an
+  assertion that nothing outside the region moved — and mutation-checked by making `set_high_flag`
+  clobber the tile, which the new test catches.
+- `MapAsset::create` allocated before bounding its dimensions, so `--map-create 100000 100000` died
+  in the allocator instead of being refused like every other bad input.
+
+**Three tests that could not fail on what they were named for:**
+
+- The renderer-guard test checked that *something* appeared earlier in the file. The control's
+  `clearmap` made that unconditionally true, so moving the rebuild outside its `zok` guard left the
+  suite green — reintroducing exactly the crash the run sheet says would take every later rung with
+  it. It now asserts indentation depth, and moving the line fails it.
+- Two tests pinned constants that **only the tests referenced**. The real values were hardcoded in
+  `build-mapload-inputs.sh`, so changing the script to flag `0 0 3 3` left
+  `test_the_interior_flag_rectangle_is_nowhere_near_an_edge` passing while rung 4 measured the
+  border it was designed to avoid. Both now read the values out of the script and assert the script
+  and the constants agree.
+- And the input-list regression test asserted a Python set relationship while the two shell scripts
+  that decide the list hardcoded `zm1..zm6`. Both scripts now read `mapload_prebuilt_names()`, and a
+  test greps them to keep it that way. That matters because this is the same class as the bug
+  already recorded above: a rung added but not built would log as *the engine rejected our map*.
+
+Five new CLI verbs also shipped with no CLI-level tests, while every pre-existing edit verb had
+four. The untested layer was the one that writes into the game directory, and that is precisely why
+the `FlagRegion` gap was invisible.

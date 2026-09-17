@@ -17,7 +17,9 @@ use lom_asset_viewer::imp::{
     IMP_ORPHAN_NOTES, IMP_VALIDATION_EXCEPTIONS, ImpHeaderStats, ImpOrphanNote, ImpSprite,
     ImpValidationException, imp_member_basename, normalize_imp_member,
 };
-use lom_asset_viewer::map::{MapAsset, TERRAIN_TYPES, terrain_type_base_tile};
+use lom_asset_viewer::map::{
+    GENERATED_HEADER_WORD, MapAsset, TERRAIN_TYPES, terrain_type_base_tile,
+};
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
 use lom_asset_viewer::operator_arity;
@@ -47,6 +49,19 @@ enum MapEdit {
     FillTerrain { terrain_type: u32 },
     PlaceSprite { x: u32, y: u32, sprite_type: u32 },
     RemoveSprite { instance_id: u32 },
+    /// Parse and re-encode, changing nothing.
+    ///
+    /// Not a no-op: the output is bytes *this writer produced*, which is a different claim from
+    /// the bytes on disk even when the two are equal. The `mapload` probe needs exactly that
+    /// distinction -- its control rung asks whether the engine accepts a file we wrote, and a `cp`
+    /// would test the filesystem instead.
+    Rewrite,
+    SetHighFlag { x: u32, y: u32, set: bool },
+    /// Set tag bit `0x00800000` on the perimeter, or on an interior rectangle.
+    ///
+    /// Interior is the interesting one: the corpus only ever flags the border ring, so an interior
+    /// flag is a shape the engine has never been given.
+    FlagRegion { border: bool, rect: Option<(u32, u32, u32, u32)> },
 }
 
 enum Command {
@@ -61,6 +76,12 @@ enum Command {
         right: PathBuf,
     },
     RoundtripMaps(PathBuf),
+    CreateMap {
+        width: u32,
+        height: u32,
+        terrain_type: u32,
+        output: PathBuf,
+    },
     EditMap {
         input: PathBuf,
         edit: MapEdit,
@@ -228,6 +249,12 @@ fn run() -> Result<(), String> {
         Command::DumpMapCells { path, rect } => dump_map_cells(&path, rect),
         Command::DiffMaps { left, right } => diff_maps(&left, &right),
         Command::RoundtripMaps(path) => roundtrip_maps(&path),
+        Command::CreateMap {
+            width,
+            height,
+            terrain_type,
+            output,
+        } => create_map(width, height, terrain_type, &output),
         Command::EditMap {
             input,
             edit,
@@ -357,6 +384,59 @@ fn parse_args() -> Result<Command, String> {
         "--map-roundtrip" => {
             require_len(&args, 2)?;
             Ok(Command::RoundtripMaps(args[1].clone().into()))
+        }
+        "--map-create" => {
+            require_len(&args, 5)?;
+            Ok(Command::CreateMap {
+                width: parse_u32(&args[1])?,
+                height: parse_u32(&args[2])?,
+                terrain_type: parse_terrain_type(&args[3])?,
+                output: args[4].clone().into(),
+            })
+        }
+        "--map-rewrite" => {
+            require_len(&args, 3)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::Rewrite,
+                output: args[2].clone().into(),
+            })
+        }
+        "--map-set-high-flag" => {
+            require_len(&args, 6)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::SetHighFlag {
+                    x: parse_u32(&args[2])?,
+                    y: parse_u32(&args[3])?,
+                    set: parse_flag(&args[4])?,
+                },
+                output: args[5].clone().into(),
+            })
+        }
+        "--map-flag-border" => {
+            require_len(&args, 3)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::FlagRegion { border: true, rect: None },
+                output: args[2].clone().into(),
+            })
+        }
+        "--map-flag-rect" => {
+            require_len(&args, 7)?;
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::FlagRegion {
+                    border: false,
+                    rect: Some((
+                        parse_u32(&args[2])?,
+                        parse_u32(&args[3])?,
+                        parse_u32(&args[4])?,
+                        parse_u32(&args[5])?,
+                    )),
+                },
+                output: args[6].clone().into(),
+            })
         }
         "--map-set-tile" => {
             require_len(&args, 6)?;
@@ -678,7 +758,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -1093,9 +1173,9 @@ fn dump_map_cells(path: &Path, rect: Option<(u32, u32, u32, u32)>) -> Result<(),
         map.height,
         map.metadata,
         map.bits_per_pixel,
-        map.trailing_offset,
-        map.trailing_bytes,
-        map.trailing_head_u32
+        map.trailing_offset(),
+        map.trailing_bytes(),
+        map.trailing_head_u32()
             .map_or_else(|| "-".to_owned(), |head| head.to_string()),
     );
     println!("cell\tx\ty\tindex\ttag\ttile-index\thigh-flag\televation");
@@ -1145,7 +1225,7 @@ fn diff_maps(left: &Path, right: &Path) -> Result<(), String> {
         left_map.width,
         left_map.height,
         left_map.metadata,
-        left_map.trailing_bytes,
+        left_map.trailing_bytes(),
     );
     println!(
         "right\t{}\t{} bytes\t{}x{}\tmetadata:0x{:08x}\ttrailing-bytes:{}",
@@ -1154,7 +1234,7 @@ fn diff_maps(left: &Path, right: &Path) -> Result<(), String> {
         right_map.width,
         right_map.height,
         right_map.metadata,
-        right_map.trailing_bytes,
+        right_map.trailing_bytes(),
     );
 
     if left_map.width != right_map.width || left_map.height != right_map.height {
@@ -1180,8 +1260,8 @@ fn diff_maps(left: &Path, right: &Path) -> Result<(), String> {
         println!("cells\tdiffering:{differing}\tof:{}", left_map.cells.len());
     }
 
-    let left_tail = &left_bytes[left_map.trailing_offset..];
-    let right_tail = &right_bytes[right_map.trailing_offset..];
+    let left_tail = &left_bytes[left_map.trailing_offset()..];
+    let right_tail = &right_bytes[right_map.trailing_offset()..];
     let first_difference = first_tail_difference(left_tail, right_tail);
     println!(
         "tail\tleft:{}\tright:{}\tfirst-difference:{}",
@@ -1309,9 +1389,9 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
             .insert(map.metadata);
         let range = trailing_ranges
             .entry(kind)
-            .or_insert((map.trailing_bytes, map.trailing_bytes));
-        range.0 = range.0.min(map.trailing_bytes);
-        range.1 = range.1.max(map.trailing_bytes);
+            .or_insert((map.trailing_bytes(), map.trailing_bytes()));
+        range.0 = range.0.min(map.trailing_bytes());
+        range.1 = range.1.max(map.trailing_bytes());
         let layouts = map.candidate_tail_layouts();
         let layout = match layouts.as_slice() {
             [] => "unknown".to_owned(),
@@ -3228,6 +3308,59 @@ fn parse_terrain_type(value: &str) -> Result<u32, String> {
         })
 }
 
+fn parse_flag(value: &str) -> Result<bool, String> {
+    match value {
+        "0" | "false" | "clear" => Ok(false),
+        "1" | "true" | "set" => Ok(true),
+        other => Err(format!("{other} is not 0 or 1")),
+    }
+}
+
+/// Create a map from nothing, composing only byte patterns the engine was observed writing.
+///
+/// The engine has never been asked to load a map this project created, and no map anywhere has
+/// ever been non-square, so both are warned about at the point of use rather than only in a
+/// document nobody reads at the terminal.
+fn create_map(width: u32, height: u32, terrain_type: u32, output: &Path) -> Result<(), String> {
+    let map = MapAsset::create(width, height, terrain_type).map_err(|error| error.to_string())?;
+    let encoded = map.to_bytes().map_err(|error| error.to_string())?;
+    let reparsed = MapAsset::parse(&encoded)
+        .map_err(|error| format!("refusing to write: the new map does not parse: {error}"))?;
+    if (reparsed.width, reparsed.height) != (width, height) {
+        return Err("refusing to write: the new map read back with different dimensions".to_owned());
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    if let Err(error) = file.write_all(&encoded) {
+        drop(file);
+        let _ = fs::remove_file(output);
+        return Err(format!("could not write {}: {error}", output.display()));
+    }
+
+    eprintln!(
+        "note: the engine loaded a map created this way on 2026-09-17 and re-saved it \
+         byte-identically, at 64x64 and at 96x64. Header word \
+         0x{GENERATED_HEADER_WORD:02x} and the empty trailing section are values the engine itself \
+         wrote; the engine rewrites the header word on save regardless."
+    );
+    if width != height {
+        eprintln!(
+            "note: {width}x{height} is non-square. No shipped or engine-generated map is; the \
+             engine loaded a 96x64 created this way on 2026-09-17 and reported its size back \
+             correctly. Other non-square shapes are still untested."
+        );
+    }
+    println!("wrote\t{}\t{} bytes", output.display(), encoded.len());
+    println!(
+        "created\t{width}x{height}\tterrain:{terrain_type}\ttile:{}\theader:0x{GENERATED_HEADER_WORD:02x}",
+        terrain_type_base_tile(terrain_type).unwrap_or_default()
+    );
+    Ok(())
+}
+
 fn parse_elevation(value: &str) -> Result<f32, String> {
     let parsed = value
         .parse::<f32>()
@@ -3459,6 +3592,26 @@ fn apply_map_edit(map: &mut MapAsset, edit: MapEdit) -> Result<String, String> {
                 .map_err(|error| error.to_string())?;
             Ok(format!("remove-sprite\tinstance:{instance_id}"))
         }
+        MapEdit::Rewrite => Ok("rewrite\tno edit applied".to_owned()),
+        MapEdit::SetHighFlag { x, y, set } => {
+            map.set_high_flag(x, y, set)
+                .map_err(|error| error.to_string())?;
+            eprintln!(
+                "note: bit 0x00800000's meaning is Unknown. Across the 146 corpus files that carry \
+                 it, the flagged cells are exactly the perimeter ring in 146 of 146 -- so an \
+                 interior flag is a shape the engine has never been given."
+            );
+            Ok(format!("set-high-flag\t({x}, {y})\tset:{set}"))
+        }
+        MapEdit::FlagRegion { border, rect } => {
+            let cells = flag_region_cells(map, border, rect)?;
+            for (x, y) in &cells {
+                map.set_high_flag(*x, *y, true)
+                    .map_err(|error| error.to_string())?;
+            }
+            let what = if border { "border" } else { "interior" };
+            Ok(format!("flag-region\t{what}\tcells:{}", cells.len()))
+        }
     }
 }
 
@@ -3508,6 +3661,36 @@ fn verify_single_cell_edit(
             &several[..several.len().min(8)]
         )),
     }
+}
+
+/// The cells a `FlagRegion` edit targets.
+///
+/// Shared by the edit and its verification on purpose: two copies of this could disagree about
+/// which cells were meant, and then the check would be confirming the wrong thing.
+fn flag_region_cells(
+    map: &MapAsset,
+    border: bool,
+    rect: Option<(u32, u32, u32, u32)>,
+) -> Result<Vec<(u32, u32)>, String> {
+    if border {
+        return Ok((0..map.height)
+            .flat_map(|y| (0..map.width).map(move |x| (x, y)))
+            .filter(|(x, y)| *x == 0 || *y == 0 || *x == map.width - 1 || *y == map.height - 1)
+            .collect());
+    }
+    let (x0, y0, x1, y1) = rect.ok_or("a rectangle is required")?;
+    if x0 > x1 || y0 > y1 {
+        return Err(format!("({x0}, {y0})..({x1}, {y1}) is not a rectangle"));
+    }
+    if x1 >= map.width || y1 >= map.height {
+        return Err(format!(
+            "({x1}, {y1}) is outside this {}x{} map",
+            map.width, map.height
+        ));
+    }
+    Ok((y0..=y1)
+        .flat_map(|y| (x0..=x1).map(move |x| (x, y)))
+        .collect())
 }
 
 fn verify_map_edit(map: &MapAsset, before: &MapAsset, edit: MapEdit) -> Result<(), String> {
@@ -3596,6 +3779,55 @@ fn verify_map_edit(map: &MapAsset, before: &MapAsset, edit: MapEdit) -> Result<(
                 ));
             }
         }
+        MapEdit::Rewrite => {
+            if !changed_cell_indexes(before, map).is_empty() {
+                return Err("refusing to write: a rewrite changed cells".to_owned());
+            }
+        }
+        MapEdit::SetHighFlag { x, y, set } => {
+            verify_single_cell_edit(before, map, x, y)?;
+            let observed = map
+                .cell(x, y)
+                .ok_or_else(|| format!("refusing to write: ({x}, {y}) is missing after the edit"))?
+                .high_flag_set();
+            if observed != set {
+                return Err(format!(
+                    "refusing to write: the flag at ({x}, {y}) read back as {observed}"
+                ));
+            }
+        }
+        MapEdit::FlagRegion { border, rect } => {
+            // This arm used to be empty, with a comment claiming the edit verified itself. It did
+            // not: `apply_map_edit` only propagated out-of-range errors, so a mask bug in
+            // `set_high_flag` that clobbered the tile field would have been encoded, reparsed and
+            // written into a directory with no backup, while every other verb refused. It is the
+            // only verb that writes many cells at once, which makes it the worst one to leave
+            // unchecked.
+            let region = flag_region_cells(map, border, rect)?;
+            let wanted: std::collections::BTreeSet<usize> = region
+                .iter()
+                .filter_map(|(x, y)| map.cell_index(*x, *y))
+                .collect();
+            for (x, y) in &region {
+                let cell = map.cell(*x, *y).ok_or_else(|| {
+                    format!("refusing to write: ({x}, {y}) is missing after the edit")
+                })?;
+                if !cell.high_flag_set() {
+                    return Err(format!(
+                        "refusing to write: the flag at ({x}, {y}) did not take"
+                    ));
+                }
+            }
+            // And nothing outside the region moved. The tile field lives in the same word as the
+            // flag, so a bad mask shows up here as a changed cell that was never targeted.
+            let changed: std::collections::BTreeSet<usize> =
+                changed_cell_indexes(before, map).into_iter().collect();
+            if let Some(stray) = changed.difference(&wanted).next() {
+                return Err(format!(
+                    "refusing to write: cell {stray} changed but is outside the flagged region"
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -3615,8 +3847,8 @@ impl MapCellTile for lom_asset_viewer::map::MapCell {
 #[cfg(test)]
 mod tests {
     use super::{
-        MapEdit, edit_map, parse_coordinate, parse_dimension, parse_elevation, parse_offset,
-        parse_terrain_type, roundtrip_maps, set_imp_placement,
+        GENERATED_HEADER_WORD, MapEdit, create_map, edit_map, parse_coordinate, parse_dimension,
+        parse_elevation, parse_offset, parse_terrain_type, roundtrip_maps, set_imp_placement,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
@@ -3710,9 +3942,6 @@ mod tests {
                     value: 50.0,
                 },
             ],
-            trailing_offset: 64,
-            trailing_bytes: 0,
-            trailing_head_u32: None,
             placed_sprites_49: None,
             trailing_raw: Vec::new(),
         };
@@ -3747,9 +3976,6 @@ mod tests {
                     value: 0.0,
                 })
                 .collect(),
-            trailing_offset: 64,
-            trailing_bytes: 0,
-            trailing_head_u32: None,
             placed_sprites_49: None,
             trailing_raw: Vec::new(),
         };
@@ -4740,6 +4966,164 @@ mod tests {
         let map = MapAsset::parse(&source).unwrap();
         assert!(map.placed_sprites_49.is_none());
         assert_eq!(map.to_bytes().unwrap(), source);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // --- the verbs added for the mapload probe -------------------------------------------
+    //
+    // These write into the game's no-backup map/ directory like every other edit verb, and they
+    // shipped without CLI tests. A reviewer pointed out that the layer which actually touches the
+    // game directory was the untested one, and that this is why the FlagRegion verification gap
+    // was invisible.
+
+    #[test]
+    fn creating_a_map_writes_a_file_the_parser_accepts() {
+        let dir = scratch_dir("map-create");
+        let output = dir.join("new.scn");
+        create_map(96, 64, 6, &output).unwrap();
+
+        let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!((written.width, written.height), (96, 64));
+        assert_eq!(written.metadata, GENERATED_HEADER_WORD);
+        assert!(written.cells.iter().all(|cell| cell.tile_index() == 15));
+        assert!(written.cells.iter().all(|cell| !cell.high_flag_set()));
+        assert_eq!(written.placed_sprites_49.as_ref().unwrap().records.len(), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn creating_a_map_refuses_bad_input_and_an_existing_output() {
+        let dir = scratch_dir("map-create-refuse");
+        let output = dir.join("new.scn");
+        assert!(create_map(0, 64, 6, &output).is_err());
+        assert!(create_map(64, 64, 11, &output).is_err());
+        // Bounded rather than allocating: this used to die in the allocator.
+        assert!(create_map(100_000, 100_000, 6, &output).is_err());
+        assert!(!output.exists(), "a refused create must leave no file");
+
+        fs::write(&output, b"precious").unwrap();
+        let error = create_map(64, 64, 6, &output).unwrap_err();
+        assert!(error.contains("could not create"), "{error}");
+        assert_eq!(fs::read(&output).unwrap(), b"precious");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rewriting_reproduces_the_input_bytes_without_changing_a_cell() {
+        let dir = scratch_dir("map-rewrite");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        let source = editable_map(5, 3);
+        fs::write(&input, &source).unwrap();
+
+        edit_map(&input, MapEdit::Rewrite, &output).unwrap();
+        assert_eq!(fs::read(&output).unwrap(), source, "a rewrite must be byte-exact");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn setting_the_high_flag_through_the_cli_keeps_the_tile() {
+        let dir = scratch_dir("map-highflag");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+
+        edit_map(
+            &input,
+            MapEdit::SetHighFlag { x: 3, y: 2, set: true },
+            &output,
+        )
+        .unwrap();
+        let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
+        let cell = written.cell(3, 2).unwrap();
+        assert!(cell.high_flag_set());
+        assert_eq!(cell.tile_index(), 15, "the tile must survive the flag");
+        assert_eq!(
+            written.cells.iter().filter(|c| c.high_flag_set()).count(),
+            1,
+            "exactly one cell may change"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The region verbs are the only ones that write many cells at once, and their verification
+    /// arm was empty with a comment claiming otherwise. This is the test that arm needed.
+    #[test]
+    fn flagging_a_rectangle_touches_exactly_that_rectangle() {
+        let dir = scratch_dir("map-flagrect");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+
+        edit_map(
+            &input,
+            MapEdit::FlagRegion {
+                border: false,
+                rect: Some((1, 1, 2, 1)),
+            },
+            &output,
+        )
+        .unwrap();
+
+        let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
+        for y in 0..3 {
+            for x in 0..5 {
+                let flagged = written.cell(x, y).unwrap().high_flag_set();
+                let inside = y == 1 && (1..=2).contains(&x);
+                assert_eq!(flagged, inside, "({x}, {y}) flagged={flagged}");
+                assert_eq!(written.cell(x, y).unwrap().tile_index(), 15);
+            }
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn flagging_the_border_hits_the_ring_and_nothing_inside_it() {
+        let dir = scratch_dir("map-flagborder");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+
+        edit_map(
+            &input,
+            MapEdit::FlagRegion { border: true, rect: None },
+            &output,
+        )
+        .unwrap();
+
+        let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
+        // On a 5x3 map only (1,1), (2,1) and (3,1) are interior.
+        assert_eq!(written.border_ring().len(), 12);
+        for x in 1..=3 {
+            assert!(!written.cell(x, 1).unwrap().high_flag_set(), "({x}, 1)");
+        }
+        assert_eq!(
+            written.cells.iter().filter(|c| c.high_flag_set()).count(),
+            12
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_rectangle_outside_the_map_is_refused_and_writes_nothing() {
+        let dir = scratch_dir("map-flagbad");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+
+        // Reversed, and off the map on the axis a square fixture would hide.
+        for rect in [(2, 1, 1, 1), (0, 0, 4, 4), (0, 0, 9, 2)] {
+            assert!(
+                edit_map(
+                    &input,
+                    MapEdit::FlagRegion { border: false, rect: Some(rect) },
+                    &output,
+                )
+                .is_err(),
+                "{rect:?} should have been refused"
+            );
+            assert!(!output.exists(), "{rect:?} left a file behind");
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 

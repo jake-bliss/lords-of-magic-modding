@@ -339,7 +339,28 @@ def generated_map_names() -> list[str]:
     its own -- while each probe's own test asserts its own list, so a name cannot drift between
     the two without something failing.
     """
-    return map_size_map_names() + map_tag_map_names()
+    return generated_map_outputs() + generated_map_inputs()
+
+
+def generated_map_inputs() -> list[str]:
+    """Map files a probe needs to ALREADY EXIST when the game starts.
+
+    Only `mapload` has any: its rungs load files built beforehand by
+    `scripts/build-mapload-inputs.sh`. They are separated from the outputs because the install
+    script clears stale output, and clearing these would delete the very files the run is about to
+    read -- which it did, once, after the prerequisite check had confirmed they were there. Restore
+    still removes them; install must not.
+    """
+    return [f"map/{name}" for name in mapload_prebuilt_names()]
+
+
+def generated_map_outputs() -> list[str]:
+    """Map files the probes WRITE. Safe to clear before a run; a leftover would be measured."""
+    return (
+        map_size_map_names()
+        + map_tag_map_names()
+        + [f"map/{name}" for name in mapload_output_names()]
+    )
 
 
 def map_size_body() -> str:
@@ -824,12 +845,231 @@ def map_tag_body() -> str:
     return "\n".join(lines) + "\n"
 
 
+
+# --- mapload: does the engine accept a map this project wrote? -------------------------------
+#
+# Every claim this project makes about writing maps rests on round-trip identity, which shows that
+# our writer matches the engine's *writer*. It says nothing about the engine's *reader*. No map this
+# project produced has ever been loaded by the game. That is the question this probe exists to
+# answer, and it is the cheapest unknown left.
+#
+# `gs\hotkey.gs` gives the instrument: `loadscenariomap` and `loadspecialmap` each take a filename
+# and **return a boolean**, which the shipped editor tests --
+#
+#     ... mapfilename loadscenariomap not{T_PHRASE_failed_to_load_map ...}if
+#         set_sprite_mode_for_current_zoom rebuild3dmap resetvisibility rendermap
+#
+# -- so acceptance is a value the engine hands back, not something to be inferred from a screenshot.
+#
+# Each rung loads a file, logs the boolean, and then **saves the loaded map back out**. The offline
+# diff of input against output is the strongest readback available: it shows not only that the file
+# was accepted but whether the engine *normalised* anything on the way through. Any field the engine
+# rewrites -- the header word, the border bit, the `+24` attribute -- appears as a byte difference.
+# That is how one run attacks three unknowns at once.
+#
+# The rungs are ordered so that a failure names itself. Controls first:
+#
+#   0  engine generates a map and loads its own save     -> is `loadscenariomap` usable at all?
+#   1  load OUR byte-identical round-trip of that save   -> is delivery working? (bytes are equal,
+#                                                           so anything but success is the harness)
+#   2  load a map we edited                              -> THE question
+#   3  load a map we placed a sprite on                  -> exercises the minted `+24` field
+#   4  load a map with the border bit on the INTERIOR    -> the shape the engine has never been given
+#   5  load a map we created from nothing                -> composition, never verified
+#   6  load a NON-SQUARE created map                     -> no map anywhere has ever been non-square
+#   7  blend table: fill, `setterrain`, save             -> which transition tiles does it choose?
+#
+# If rung 0 fails, nothing after it means anything and the run should be read as "instrument broken",
+# not "our writer is bad". That distinction is the entire reason rung 0 exists.
+
+# Rung 0's file is written by the engine during this same keypress, so it cannot be prepared
+# offline. Rungs 1-6 are built before the run by `scripts/build-mapload-inputs.sh`, which is why
+# rung 1 copies a *shipped* map rather than rung 0's output: nothing offline can round-trip a file
+# that does not exist yet, and `URAK.scn` is a map the engine certainly loads.
+MAPLOAD_INPUTS = [
+    ("zm0.scn", "engine-written control"),
+    ("zm1.scn", "our byte-identical copy of URAK.scn"),
+    ("zm2.scn", "our terrain edit of URAK.scn"),
+    ("zm3.scn", "our sprite placement on URAK.scn"),
+    ("zm4.scn", "our interior border bit on URAK.scn"),
+    ("zm5.scn", "created from nothing, square"),
+    ("zm6.scn", "created from nothing, non-square"),
+]
+
+# The shipped map rungs 1-4 are derived from. Read-only; it is copied, never written.
+MAPLOAD_DONOR = "URAK.scn"
+MAPLOAD_CREATED_SIZE = (64, 64)
+MAPLOAD_CREATED_NON_SQUARE = (96, 64)
+MAPLOAD_CREATED_TERRAIN = 6
+
+# Where each loaded map is saved back to, for the offline normalisation diff.
+MAPLOAD_ECHOES = [f"zn{index}.scn" for index in range(len(MAPLOAD_INPUTS))]
+
+# One capture per rung, plus one of the blend map.
+MAPLOAD_SHOTS = [f"zs{index}.bmp" for index in range(len(MAPLOAD_INPUTS))]
+MAPLOAD_BLEND_SHOT = "zsb.bmp"
+
+MAPLOAD_CONTROL_SIZE = 64
+MAPLOAD_CONTROL_TERRAIN = 392
+
+# Cells the offline generator edits in zm2.scn, read back here so a load that "succeeded" but
+# dropped the content cannot pass unnoticed.
+MAPLOAD_PROBE_CELLS = [(10, 20), (11, 20), (10, 21)]
+
+# The interior cells zm4.scn flags. Far from any edge, so nothing can confuse them with the ring.
+MAPLOAD_INTERIOR_FLAG = (30, 30, 33, 33)
+
+MAPLOAD_BLEND_BACKGROUND = 6          # tt_land, the most common shipped background
+# The background is laid with `clearmap`, which forcetextures every cell, NOT with `setterrain`.
+# `setterrain` is the operator under test and it blends: sweeping it across the whole map would lay
+# transitions against the default terrain and then partly overwrite them, so the tiles around each
+# blob could not be attributed to the blob. `clearmap` writes one tile everywhere and blends
+# nothing, which is the only clean background for measuring a blend. This is tile 15, tt_land's
+# measured base tile -- the same value `setterrain 6` would paint, reached without blending.
+MAPLOAD_BLEND_BASE_TILE = 15
+MAPLOAD_BLEND_TYPES = list(range(11))
+MAPLOAD_BLEND_MAP = 64
+# Blobs are 3x3 and 8 cells apart, so a blend that reaches one cell out -- the measured footprint --
+# cannot touch its neighbour. Eleven blobs on one map means one save, not eleven.
+MAPLOAD_BLEND_STRIDE = 8
+MAPLOAD_BLEND_ORIGIN = 6
+MAPLOAD_BLEND_SAVE = "zb0.scn"
+
+
+def _mapload_blob_origin(index: int) -> tuple[int, int]:
+    """Top-left of blob `index`, laid out in a grid that fits a 64x64 map."""
+    per_row = 6
+    return (
+        MAPLOAD_BLEND_ORIGIN + (index % per_row) * MAPLOAD_BLEND_STRIDE,
+        MAPLOAD_BLEND_ORIGIN + (index // per_row) * MAPLOAD_BLEND_STRIDE,
+    )
+
+
+def mapload_input_names() -> list[str]:
+    return [name for name, _ in MAPLOAD_INPUTS]
+
+
+def mapload_prebuilt_names() -> list[str]:
+    """The inputs built offline, before the run, by `scripts/build-mapload-inputs.sh`.
+
+    `zm0.scn` is deliberately absent: the engine writes it during the keypress, so it is output
+    that also happens to get loaded. It must be *cleared* before a run, not supplied -- a leftover
+    would be loaded at rung 0 in place of a freshly saved one, which silently removes the control
+    the whole ladder rests on.
+    """
+    return [name for name, _ in MAPLOAD_INPUTS[1:]]
+
+
+def mapload_output_names() -> list[str]:
+    """Everything the probe writes, including rung 0's engine-written control."""
+    return [MAPLOAD_INPUTS[0][0]] + MAPLOAD_ECHOES + [MAPLOAD_BLEND_SAVE]
+
+
+def _mapload_load(emit, index: int, name: str, label: str) -> None:
+    """Load one file, log the engine's own verdict, read the shape back, then echo it to disk."""
+    emit(f'\tzname"map/{name}"strcpy')
+    emit("\tzname loadscenariomap /zok exch def")
+    emit("\t" + _log(f'"rung {index} {label} {name} loaded "zok'))
+    # Only touch the renderer when the load reported success. Rebuilding the 3D map from a state the
+    # engine has just rejected is the most likely way to lose the whole run to a crash, and it would
+    # take every later rung's result with it.
+    emit("\tzok")
+    emit("\t\t{")
+    emit("\t\tset_sprite_mode_for_current_zoom rebuild3dmap resetvisibility rendermap refreshdirty")
+    emit("\t\t" + _log(f'"rung {index} size "mapw" "maph'))
+    for cell_x, cell_y in MAPLOAD_PROBE_CELLS:
+        emit(f"\t\t/zx {cell_x} def /zy {cell_y} def")
+        emit("\t\tzx zy getterrain /zg exch def")
+        emit("\t\t" + _log(f'"rung {index} cell "zx" "zy" terrain "zg'))
+    emit(f'\t\tzname"map/{MAPLOAD_ECHOES[index]}"strcpy')
+    emit("\t\tzname savescenariomap /zs exch def")
+    emit("\t\t" + _log(f'"rung {index} echoed {MAPLOAD_ECHOES[index]} result "zs'))
+    # One frame per rung. `loadscenariomap` returning true says the engine parsed the file; it does
+    # not say the map drew. A rung that loaded and rendered nothing is a different finding from a
+    # rung that was rejected, and only a capture separates them.
+    emit(f'\t\t"{MAPLOAD_SHOTS[index]}"screencapture')
+    emit("\t\t}if")
+    emit("\tzlog closefile")
+    emit('\t"zprobe.log""abw"file /zlog exch def')
+
+
+def mapload_body() -> str:
+    lines: list[str] = []
+    emit = lines.append
+
+    emit("; ---- BEGIN MAP LOAD PROBE (generated by tools/engine_probe.py) ----")
+    emit(f'ASCII_VAL"{HOTKEY}"0 get')
+    emit("{")
+    emit("userdict /zdone known not")
+    emit("\t{")
+    emit("\tuserdict begin")
+    emit("\t/zdone true def")
+    emit('\t"zprobe.log""abw"file /zlog exch def')
+    emit(f"\t/zname {MAP_NAME_BUFFER} string def")
+    emit("\t" + _log('"map load probe start"'))
+
+    # Rung 0's control file is written by the engine during this same keypress, so the file the
+    # engine loads at rung 0 is unambiguously its own work. The offline generator cannot supply it.
+    emit(
+        f"\t{MAPLOAD_CONTROL_SIZE} {MAPLOAD_CONTROL_SIZE} newmap "
+        f"{MAPLOAD_CONTROL_TERRAIN} clearmap"
+    )
+    emit("\t" + _log(f'"control map built "mapw" "maph'))
+    emit(f'\tzname"map/{MAPLOAD_INPUTS[0][0]}"strcpy')
+    emit("\tzname savescenariomap /zs exch def")
+    emit("\t" + _log(f'"control saved {MAPLOAD_INPUTS[0][0]} result "zs'))
+    emit("\tzlog closefile")
+    emit('\t"zprobe.log""abw"file /zlog exch def')
+
+    for index, (name, label) in enumerate(MAPLOAD_INPUTS):
+        _mapload_load(emit, index, name, label)
+
+    # The blend table. `setterrain` blends transition tiles into the 8-neighbourhood; the footprint
+    # was measured on 2026-09-17, the tiles were not. One background, eleven isolated 3x3 blobs, one
+    # save: the tiles are read out of the saved file offline, where every cell can be inspected
+    # rather than logged one line at a time.
+    emit(
+        f"\t{MAPLOAD_BLEND_MAP} {MAPLOAD_BLEND_MAP} newmap {MAPLOAD_BLEND_BASE_TILE} clearmap"
+    )
+    emit(
+        "\t" + _log(
+            f'"blend background tile {MAPLOAD_BLEND_BASE_TILE} terrain '
+            f'{MAPLOAD_BLEND_BACKGROUND} laid "mapw" "maph'
+        )
+    )
+    # Confirm the forced background really reads back as the intended terrain type before any blob
+    # is painted. If it does not, every transition tile measured afterwards is against the wrong
+    # background and the whole rung is uninterpretable.
+    emit("\t0 0 getterrain /zg exch def")
+    emit("\t" + _log(f'"blend background terrain reads "zg" expected {MAPLOAD_BLEND_BACKGROUND}"'))
+    for index, terrain in enumerate(MAPLOAD_BLEND_TYPES):
+        origin_x, origin_y = _mapload_blob_origin(index)
+        emit(f"\t/zx0 {origin_x} def /zy0 {origin_y} def")
+        emit(f"\tzy0 1 zy0 2 add{{/zy exch def zx0 1 zx0 2 add{{zy {terrain} setterrain}}for}}for")
+        emit("\t" + _log(f'"blob {index} terrain {terrain} at "zx0" "zy0'))
+    emit("\trebuild3dmap resetvisibility rendermap refreshdirty")
+    emit(f"\t{MAPLOAD_BLEND_MAP // 2} {MAPLOAD_BLEND_MAP // 2} centeron")
+    emit("\trendermap refreshdirty")
+    emit(f'\t"{MAPLOAD_BLEND_SHOT}"screencapture')
+    emit(f'\tzname"map/{MAPLOAD_BLEND_SAVE}"strcpy')
+    emit("\tzname savescenariomap /zs exch def")
+    emit("\t" + _log(f'"blend saved {MAPLOAD_BLEND_SAVE} result "zs'))
+
+    emit("\t" + _log('"map load probe done"'))
+    emit("\tzlog closefile")
+    emit("\tend")
+    emit("\t}if")
+    emit("}addhotkey")
+    emit("; ---- END MAP LOAD PROBE ----")
+    return "\n".join(lines) + "\n"
+
 PROBES = {
     "ladder": lambda: probe_body(),
     "elevation": elevation_body,
     "mapsize": map_size_body,
     "flatground": flat_ground_body,
     "maptag": map_tag_body,
+    "mapload": mapload_body,
 }
 
 

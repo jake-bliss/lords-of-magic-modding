@@ -13,8 +13,12 @@ backup_dir="${artifacts_dir}/experiment-backups/gs5r3-20260916"
 app_dir="${1:-${HOME}/Applications/Lords of Magic GS5R3.app}"
 # Which probe to install: "ladder" (the four-rung compositing diagnostic), "elevation",
 # "mapsize" (the oversized-map ladder, issue #22 -- now closed), "flatground" (the built-mesh
-# probe that closes the map2screen y convention), or "maptag" (the cell-tag and trailing-record
-# probe for issue #4).
+# probe that closes the map2screen y convention), "maptag" (the cell-tag and trailing-record probe
+# for issue #4), or "mapload" (does the engine accept a map THIS PROJECT wrote?).
+#
+# "mapload" is the only probe with prerequisites: its rungs 1-6 load files that must already be in
+# the game's map/ directory, built by scripts/build-mapload-inputs.sh. Installing it without them
+# would spend the user's attended session loading files that are not there, so this script refuses.
 probe="${LOM_PROBE:-ladder}"
 game_subpath='Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition/English'
 game_dir="${app_dir}/${game_subpath}"
@@ -55,6 +59,36 @@ for path in "${game_dir}/gs.mpq" "${game_dir}/imp.mpq" "${backup_dir}/gs.mpq.ori
             "${backup_dir}/imp.mpq.orig" "${listfile}"; do
   [[ -f "${path}" ]] || { echo "missing: ${path}" >&2; exit 1; }
 done
+
+if [[ "${probe}" == "mapload" ]]; then
+  echo "== the mapload probe needs its input maps in place first =="
+  # Read from the probe generator, never inline: see build-mapload-inputs.sh for what drifting
+  # copies of this list would cost.
+  mapfile -t input_names < <(PYTHONPATH="${project_dir}/tools" python3 -c \
+    'import engine_probe; print("\n".join(engine_probe.mapload_prebuilt_names()))')
+  (( ${#input_names[@]} > 0 )) || { echo "probe input list is empty" >&2; exit 1; }
+  missing=0
+  for name in "${input_names[@]}"; do
+    if [[ ! -f "${game_dir}/map/${name}" ]]; then
+      echo "   MISSING: ${game_dir}/map/${name}" >&2
+      missing=1
+    fi
+  done
+  if (( missing )); then
+    echo "" >&2
+    echo "Run this first, then install again:" >&2
+    echo "  scripts/build-mapload-inputs.sh '${app_dir}'" >&2
+    exit 1
+  fi
+  # zm0 is the engine's own control, written during the run. A leftover from a previous run would
+  # be loaded at rung 0 instead of a freshly saved one, which silently removes the control.
+  if [[ -e "${game_dir}/map/zm0.scn" ]]; then
+    echo "refusing to install: ${game_dir}/map/zm0.scn already exists." >&2
+    echo "Rung 0's control must be written by the engine during the run, not left over." >&2
+    exit 1
+  fi
+  echo "   all ${#input_names[@]} input maps present, and no stale zm0.scn"
+fi
 
 echo "== verifying the backups against MANIFEST.sha256 =="
 verify_backups "${backup_dir}"
@@ -127,13 +161,17 @@ rm -f "${game_dir}"/z*.bmp "${game_dir}"/zprobe.log
 # So this removes an EXACT list of names, taken from the probe generator itself, and never a glob.
 # A `zz*.scn` glob is a standing offer to delete somebody's own `zzCustom.scn`, and nothing could
 # bring it back. One source of truth means the list cannot drift from what the probe writes.
+#
+# OUTPUTS ONLY. The mapload probe's inputs are also probe-created files, and restore removes them,
+# but they must exist when the game starts -- clearing them here deleted the six maps whose presence
+# this script had just verified, which would have spent an attended session loading nothing.
 while IFS= read -r map_name; do
   stale="${game_dir}/${map_name}"
   [[ -e "${stale}" ]] || continue
   echo "  removing stale ${map_name}"
   rm -f "${stale}"
 done < <(PYTHONPATH="${project_dir}/tools" python3 -c \
-  'import engine_probe; print("\n".join(engine_probe.generated_map_names()))')
+  'import engine_probe; print("\n".join(engine_probe.generated_map_outputs()))')
 
 echo "== injecting =="
 writing=1

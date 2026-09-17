@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 
 import engine_probe  # noqa: E402
 import gs_syntax  # noqa: E402
@@ -648,7 +649,12 @@ class MapTagProbeTest(unittest.TestCase):
         The install and restore scripts delete by this list. A name in it that no probe writes is
         an offer to delete a file the probe did not create, in a directory with no backup.
         """
-        union = engine_probe.map_size_map_names() + engine_probe.map_tag_map_names()
+        union = (
+            engine_probe.map_size_map_names()
+            + engine_probe.map_tag_map_names()
+            + [f"map/{name}" for name in engine_probe.mapload_output_names()]
+            + [f"map/{name}" for name in engine_probe.mapload_prebuilt_names()]
+        )
         self.assertEqual(engine_probe.generated_map_names(), union)
         self.assertEqual(len(set(union)), len(union), "two probes share a map filename")
 
@@ -782,6 +788,276 @@ class MapTagProbeTest(unittest.TestCase):
         self.assertEqual(saves, len(engine_probe.map_tag_map_names()))
         self.assertEqual(self.body.count('"zprobe.log""abw"file'), saves + 1)
 
+
+
+class MapLoadProbeTest(unittest.TestCase):
+    """The probe that asks whether the engine will load a map this project wrote.
+
+    Everything here is about ORDER and about the controls. The run is only readable if a failure
+    names the step that failed: rung 0 has to prove `loadscenariomap` works at all before any of
+    our own bytes are handed over, and rung 1 has to prove delivery with bytes that are *equal* to
+    a file the engine certainly loads. If those two are not first, a rejection at rung 2 cannot be
+    told apart from a broken instrument.
+    """
+
+    def setUp(self) -> None:
+        self.body = engine_probe.mapload_body()
+
+    def _at(self, needle: str) -> int:
+        index = self.body.find(needle)
+        self.assertNotEqual(index, -1, f"{needle!r} missing from the body")
+        return index
+
+    def test_the_controls_come_before_anything_of_ours_is_loaded(self) -> None:
+        control = self._at('"map/zm0.scn"strcpy\n\tzname loadscenariomap')
+        identical = self._at('"map/zm1.scn"strcpy')
+        first_edit = self._at('"map/zm2.scn"strcpy')
+        created = self._at('"map/zm5.scn"strcpy')
+        non_square = self._at('"map/zm6.scn"strcpy')
+        self.assertLess(control, identical, "the instrument must be proven before delivery")
+        self.assertLess(identical, first_edit, "delivery must be proven before an edited map")
+        self.assertLess(first_edit, created, "an edit is a smaller claim than a created map")
+        self.assertLess(created, non_square, "square must be proven before non-square")
+
+    def test_the_control_file_is_written_by_the_engine_in_this_keypress(self) -> None:
+        """Rung 0 only means something if the engine wrote the file it loads.
+
+        If the control were prepared offline it would be testing our writer, which is the very
+        thing it exists to hold constant.
+        """
+        saved = self._at('"map/zm0.scn"strcpy\n\tzname savescenariomap')
+        loaded = self._at('"map/zm0.scn"strcpy\n\tzname loadscenariomap')
+        self.assertLess(saved, loaded)
+        self.assertLess(self._at("newmap"), saved, "the control map is built before it is saved")
+
+    def test_every_rung_loads_exactly_one_input_in_order(self) -> None:
+        loads = re.findall(r'zname"map/(z[^"]*)"strcpy\n\tzname loadscenariomap', self.body)
+        self.assertEqual(loads, engine_probe.mapload_input_names())
+
+    def test_every_rung_keeps_the_engines_verdict(self) -> None:
+        """A load whose boolean is discarded is a load that cannot be reported.
+
+        All the shipped call sites read `... loadscenariomap not{...}if`, so the operator pushes one
+        value. Dropping it would make the whole probe unreadable -- and `pop` is the easy mistake.
+        """
+        loads = self.body.count("loadscenariomap")
+        self.assertEqual(self.body.count("loadscenariomap /zok exch def"), loads)
+        self.assertNotIn("loadscenariomap pop", self.body)
+        self.assertEqual(self.body.count('loaded "zok'), loads)
+
+    def test_the_renderer_is_only_touched_after_a_successful_load(self) -> None:
+        """Rebuilding the 3D map from a rejected state is the likeliest way to lose the whole run.
+
+        A crash at rung 2 would take rungs 3 to 6 with it, so every rebuild sits inside the `zok`
+        guard rather than after it.
+        """
+        rebuilds = self.body.count("rebuild3dmap")
+        guards = self.body.count("\tzok\n\t\t{\n")
+        self.assertEqual(guards, len(engine_probe.mapload_input_names()))
+        # One rebuild per guarded rung, plus the blend map's own rebuild, which follows no load.
+        self.assertEqual(rebuilds, guards + 1)
+
+        # Assert PLACEMENT, not existence. The previous version of this checked that *something*
+        # appeared earlier in the file -- `max(preceding, blend) > -1` -- which the control's
+        # `clearmap` made unconditionally true, so moving the rebuild outside the guard left the
+        # suite green. Indentation is the guard: emitted lines inside `\tzok\n\t\t{` carry two
+        # tabs, everything at rung level carries one.
+        guarded = 0
+        for line in self.body.split("\n"):
+            if "rebuild3dmap" not in line:
+                continue
+            if line.startswith("\t\t"):
+                guarded += 1
+            else:
+                # The only ungrated rebuild is the blend map's, which follows no load at all.
+                self.assertIn(
+                    "rebuild3dmap resetvisibility rendermap refreshdirty",
+                    line,
+                    f"unexpected ungrated rebuild: {line!r}",
+                )
+                self.assertTrue(
+                    line.startswith("\t") and not line.startswith("\t\t"),
+                    f"rebuild at unexpected depth: {line!r}",
+                )
+        self.assertEqual(
+            guarded,
+            guards,
+            "every per-rung rebuild must sit inside its `zok` guard",
+        )
+
+    def test_each_load_is_echoed_back_to_its_own_file(self) -> None:
+        """The offline diff of input against echo is the strongest readback available.
+
+        It reports not only that the file was accepted but whether the engine *normalised*
+        anything -- the header word, the border bit, the `+24` attribute all show up as byte
+        differences. Two rungs sharing an echo name would destroy that.
+        """
+        echoes = re.findall(r'zname"map/(zn[^"]*)"strcpy', self.body)
+        self.assertEqual(echoes, engine_probe.MAPLOAD_ECHOES)
+        self.assertEqual(len(set(echoes)), len(echoes))
+
+    def test_the_log_is_cycled_after_every_rung(self) -> None:
+        """A fault in a later rung must not take the earlier rungs' results down with it."""
+        rungs = len(engine_probe.mapload_input_names())
+        # One open at the start, one after the control save, one after each rung.
+        self.assertEqual(self.body.count('"zprobe.log""abw"file'), rungs + 2)
+
+    def test_every_rung_captures_a_frame(self) -> None:
+        """`loadscenariomap` returning true says the file parsed, not that the map drew."""
+        shots = re.findall(r'"(z[^"]*\.bmp)"screencapture', self.body)
+        self.assertEqual(
+            shots,
+            engine_probe.MAPLOAD_SHOTS + [engine_probe.MAPLOAD_BLEND_SHOT],
+        )
+        self.assertEqual(len(set(shots)), len(shots), "two rungs share a capture filename")
+
+    def test_the_blend_background_is_forced_not_painted(self) -> None:
+        """`setterrain` is the operator under test and it blends.
+
+        Sweeping it across the map would lay transitions against the default terrain and then
+        partly overwrite them, so the tiles around each blob could not be attributed to the blob.
+        """
+        background = self._at(f"{engine_probe.MAPLOAD_BLEND_BASE_TILE} clearmap")
+        first_blob = self._at('"blob 0 terrain 0')
+        self.assertLess(background, first_blob)
+        # No setterrain may run before the background is down.
+        self.assertGreater(self.body.find("setterrain"), background)
+
+    def test_the_background_terrain_is_read_back_before_any_blob(self) -> None:
+        readback = self._at('"blend background terrain reads "')
+        self.assertLess(readback, self._at('"blob 0 terrain 0'))
+
+    def test_the_blobs_cannot_blend_into_each_other(self) -> None:
+        """The measured blend footprint is one cell beyond the painted run on every side.
+
+        A 3x3 blob therefore influences a 5x5 area. Adjacent blobs must be more than 5 apart or a
+        transition tile could belong to either of them.
+        """
+        origins = [
+            engine_probe._mapload_blob_origin(index)
+            for index in range(len(engine_probe.MAPLOAD_BLEND_TYPES))
+        ]
+        self.assertEqual(len(set(origins)), len(origins))
+        for left in range(len(origins)):
+            for right in range(left + 1, len(origins)):
+                (ax, ay), (bx, by) = origins[left], origins[right]
+                self.assertGreater(
+                    max(abs(ax - bx), abs(ay - by)),
+                    5,
+                    f"blobs {left} and {right} are close enough to blend together",
+                )
+        # And every blob, plus its one-cell halo, is inside the map.
+        for x, y in origins:
+            self.assertGreater(x, 0)
+            self.assertGreater(y, 0)
+            self.assertLess(x + 3, engine_probe.MAPLOAD_BLEND_MAP - 1)
+            self.assertLess(y + 3, engine_probe.MAPLOAD_BLEND_MAP - 1)
+
+    def test_every_terrain_type_gets_a_blob(self) -> None:
+        self.assertEqual(engine_probe.MAPLOAD_BLEND_TYPES, list(range(11)))
+        painted = [int(value) for value in re.findall(r'"blob \d+ terrain (\d+) at ', self.body)]
+        self.assertEqual(painted, engine_probe.MAPLOAD_BLEND_TYPES)
+
+    def test_the_interior_flag_rectangle_is_nowhere_near_an_edge(self) -> None:
+        """The corpus only ever flags the perimeter, in 146 of 146 files.
+
+        The point of the rung is to hand the engine an interior flag, so the rectangle has to be
+        unmistakably interior on the 128x128 donor -- otherwise a result could be read as the
+        engine merely rebuilding a border.
+
+        This reads the rectangle out of **the shell script that actually decides it**. The
+        constants in `engine_probe` are referenced by nothing else, so asserting on them alone was
+        false assurance: the script could be changed to `0 0 3 3` and this test would still pass
+        while rung 4 measured exactly the border it was designed to avoid.
+        """
+        script = SCRIPTS_DIR.joinpath("build-mapload-inputs.sh").read_text()
+        match = re.search(r"--map-flag-rect \S+ (\d+) (\d+) (\d+) (\d+)", script)
+        self.assertIsNotNone(match, "the script no longer flags a rectangle")
+        x0, y0, x1, y1 = (int(value) for value in match.groups())
+        self.assertEqual(
+            (x0, y0, x1, y1),
+            engine_probe.MAPLOAD_INTERIOR_FLAG,
+            "the script and the documented constant disagree",
+        )
+        self.assertLessEqual(x0, x1)
+        self.assertLessEqual(y0, y1)
+        for value in (x0, y0):
+            self.assertGreater(value, 8, "too close to a border to be read as interior")
+        for value in (x1, y1):
+            self.assertLess(value, 119, "too close to a border to be read as interior")
+
+    def test_the_probe_cells_distinguish_the_two_packings(self) -> None:
+        """Read-back cells must not be symmetric under transposition."""
+        for x, y in engine_probe.MAPLOAD_PROBE_CELLS:
+            self.assertNotEqual(x, y, f"({x}, {y}) reads the same under either packing")
+
+    def test_created_maps_cover_square_and_non_square(self) -> None:
+        """Read from the script, for the same reason as the rectangle above."""
+        script = SCRIPTS_DIR.joinpath("build-mapload-inputs.sh").read_text()
+        created = [
+            (int(w), int(h))
+            for w, h in re.findall(r"--map-create (\d+) (\d+) ", script)
+        ]
+        self.assertEqual(
+            created,
+            [engine_probe.MAPLOAD_CREATED_SIZE, engine_probe.MAPLOAD_CREATED_NON_SQUARE],
+            "the script and the documented constants disagree",
+        )
+        square, other = created
+        self.assertEqual(square[0], square[1])
+        self.assertNotEqual(other[0], other[1], "the non-square rung must be non-square")
+
+    def test_the_shell_scripts_take_their_name_lists_from_this_module(self) -> None:
+        """The scripts are what run; a Python-only assertion cannot see them.
+
+        `restore-game-archives.sh` already derives its list from `generated_map_names()`. The two
+        mapload scripts hardcoded `zm1..zm6`, so adding a rung would have left the build script not
+        creating it and the install check not looking for it -- and the probe would then have logged
+        a missing file as an engine rejection, which is the worst shape a probe bug can take.
+        """
+        build = SCRIPTS_DIR.joinpath("build-mapload-inputs.sh").read_text()
+        install = SCRIPTS_DIR.joinpath("install-engine-probe.sh").read_text()
+        restore = SCRIPTS_DIR.joinpath("restore-game-archives.sh").read_text()
+        self.assertIn("mapload_prebuilt_names", build)
+        self.assertIn("mapload_prebuilt_names", install)
+        self.assertIn("generated_map_outputs", install)
+        self.assertIn("generated_map_names", restore)
+        # And no script may carry the list inline any more.
+        for name, text in (("build", build), ("install", install)):
+            self.assertNotRegex(
+                text,
+                r"zm1 zm2 zm3",
+                f"{name} still hardcodes the input list",
+            )
+
+    def test_install_time_clearing_never_touches_a_probe_input(self) -> None:
+        """Regression: the install script deleted the six input maps it had just verified.
+
+        `install-engine-probe.sh` clears stale probe *output* before a run, because a leftover from
+        a previous run would be measured as this run's result. It took that list from
+        `generated_map_names()`, which now also contains `mapload`'s inputs -- so the clearing step
+        removed the very files rungs 1 to 6 were about to load, after the prerequisite check had
+        confirmed they were present. It would have spent an attended session loading nothing.
+        """
+        inputs = set(engine_probe.generated_map_inputs())
+        outputs = set(engine_probe.generated_map_outputs())
+        self.assertEqual(inputs & outputs, set(), "a name cannot be both cleared and required")
+        # Rung 0's control is engine-written, so it must be cleared, never supplied.
+        self.assertIn("map/zm0.scn", outputs)
+        self.assertNotIn("map/zm0.scn", inputs)
+        # Restore must still remove both, or the probe's files outlive the probe.
+        self.assertEqual(
+            set(engine_probe.generated_map_names()),
+            inputs | outputs,
+        )
+
+    def test_input_and_output_names_never_collide(self) -> None:
+        """An echo landing on an input would overwrite the thing the next rung loads."""
+        inputs = set(engine_probe.mapload_prebuilt_names())
+        outputs = set(engine_probe.mapload_output_names())
+        self.assertEqual(inputs & outputs, set())
+        for name in inputs | outputs:
+            self.assertTrue(name.startswith("z"), f"{name} is outside the probe's namespace")
 
 
 if __name__ == "__main__":

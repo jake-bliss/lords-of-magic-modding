@@ -184,7 +184,7 @@ fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
         format!("{finite_min}..{finite_max}")
     };
     let trailing_head = map
-        .trailing_head_u32
+        .trailing_head_u32()
         .map_or_else(|| "none".to_owned(), |count| count.to_string());
     let tail_layouts = map
         .candidate_tail_layouts()
@@ -225,7 +225,7 @@ fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
             map.cells.len(),
             distinct_tags.len(),
             distinct_tile_indexes.len(),
-            map.trailing_bytes,
+            map.trailing_bytes(),
         ),
     ))
 }

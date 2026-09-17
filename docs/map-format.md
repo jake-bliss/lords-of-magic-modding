@@ -6,10 +6,13 @@
 
 **An attended engine run on 2026-09-17 wrote maps with values chosen in advance and read them back.** It confirmed the tile-index reading by construction, produced the engine's terrain-type-to-tile table, and **refuted two claims this document previously asserted**: the cell storage order (it is packed y-major, not X-major) and the meaning of tag bit `0x00800000` (it does not mark a forced texture; its meaning is Unknown). Both refutations, and the reasoning that produced the wrong claims, are kept below.
 
-**A map writer landed on 2026-09-17.** Every installed map now re-encodes to the exact bytes it was
-read from -- 365 of 365, with all 16,628 placed-sprite records rebuilt from their typed fields --
-and the tool can force tiles, fill terrain, set elevation and place or remove terrain sprites
-without touching a single field whose meaning is still Unknown. See [Writing maps](#writing-maps).
+**A map writer landed on 2026-09-17, and the engine accepts what it writes.** Every installed map
+re-encodes to the exact bytes it was read from -- 365 of 365, with all 16,628 placed-sprite records
+rebuilt from their typed fields. An attended run then handed the running game seven maps and it
+loaded **all seven**: a shipped map re-encoded by this project, an edited one, one with a sprite
+placed, one created from nothing, and one that is **non-square**. The two created-from-nothing maps
+re-saved **byte-identically**. See [Writing maps](#writing-maps) and [Engine
+acceptance](#engine-acceptance-measured).
 
 The corpus is the working GS5R3 profile, including its supplied custom maps. No original map data or rendered captures are stored in Git.
 
@@ -345,12 +348,13 @@ residue in the file, which is what makes a save-diff a trustworthy instrument he
 
 [GitHub issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4) now tracks:
 
-- **the meaning of tag bit `0x00800000`** — Unknown again, after "forced texture" was refuted;
+- **what sets tag bit `0x00800000` in memory, and which operation clears it** — `forcetexture` sets it and something on the render path clears it, but which call is not isolated, and whether a `.smp` load-and-save preserves the corpus's perimeter ring is unmeasured;
 - **the 52-/53-byte record families** — now known to be a **content** difference, not a format one,
   since both save operators write identical bytes;
 - **the 18 unmatched tails** and the one ambiguous file;
-- **the header word at `0x00`** — our engine-generated maps say `0x6f`, shipped `URAK.scn` says
-  `0x6c`; the tileset-selector hypothesis is unproven;
+- ~~**the header word at `0x00`**~~ — **settled 2026-09-17**: the engine rewrites it from its own
+  state on every save and never reads it back from the file, so whatever selects a tileset, it is
+  not this word;
 - **the trailing footer**, which stayed `1` across an empty and a populated save and so is not a
   count of anything the probe changed;
 - **the attribute field at `+24`**, whose upper-nibble reading is suspect;
@@ -407,12 +411,16 @@ blends in**. Approximating that would put plausible-looking wrong tiles into a m
 test here that could tell. `--map-set-terrain` writes one cell, prints a note saying so, and the
 blend stays open on [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
 
-**There is no create-from-scratch mode**, because three fields would have to be invented rather than
-copied: the header word at `0x00` (our engine-generated maps say `0x6f`, shipped `URAK.scn` says
-`0x6c`, and the tileset-selector hypothesis is unproven), the trailing footer (`0`, `1` and `3` are
-observed and the meaning is Unknown), and the record attribute field at `+24`. Editing an existing
-map carries all three across untouched. The shipped GS5R3 editor already generates maps from 32 to
-1024 in steps of 32 — generate there, edit here.
+**There is a create-from-scratch mode, `--map-create`, and the engine accepts what it produces.**
+It was held back until the [`mapload` run](#engine-acceptance-measured) because three fields would
+otherwise have to be invented; instead it composes only byte patterns the engine was observed
+writing — header word `0x6f` (engine-written at six sizes, and rewritten by the engine on every save
+anyway) and the exact eight-byte empty trailing section an empty save produced. It mints nothing.
+The engine loaded both a 64x64 and a 96x64 created this way and re-saved them **byte-identically**.
+
+The shipped GS5R3 editor still generates richer maps, from 32 to 1024 in steps of 32, and generating
+there and editing here remains the better route for anything with content in it — `--map-create`
+makes a uniform grid, not a world.
 
 ### Safety
 
@@ -487,6 +495,162 @@ level rather than only in the parser.
 well as in fixtures — which is the same behaviour the 2026-09-17 engine probe observed from the
 game itself, reproduced by a tool the game never ran.
 
+## Engine acceptance, measured
+
+**Observed in gameplay, 2026-09-17 (the `mapload` probe).** Round-trip identity shows this
+project's writer matches the engine's *writer*. It says nothing about the engine's *reader*, and
+until this run no map this project produced had ever been loaded by the game.
+
+`gs\hotkey.gs` supplied the instrument: `loadscenariomap` takes a filename and **returns a
+boolean** which the shipped editor tests. Acceptance is a value the engine hands back.
+
+| Rung | File | Loaded | Engine reported | Echo vs input |
+| ---: | --- | :---: | --- | --- |
+| 0 | engine's own save (control) | yes | 64x64 | 4,096 cells differ — see below |
+| 1 | our re-encode of `URAK.scn`, byte-identical to it | yes | 128x128 | 1 byte |
+| 2 | that map with three terrain cells changed | yes | 128x128 | 1 byte |
+| 3 | that map with a sprite placed | yes | 128x128 | 1 byte |
+| 4 | that map with the border bit on an interior 4x4 | yes | 128x128 | 17 bytes |
+| 5 | created from nothing, 64x64 | yes | 64x64 | **identical** |
+| 6 | created from nothing, **96x64** | yes | **96x64** | **identical** |
+
+Rung 2's three edited cells read back as terrain **1, 8 and 5** — water, lava and snow, exactly what
+was written. The engine did not merely accept the file, it read the edits correctly.
+
+Rung 3 matters most for the writer's one honest compromise: the placed-sprite record, including the
+minted `+24` attribute whose value contradicts the corpus reading, survived **byte-exactly**.
+
+Rungs 0 and 1 are the controls that make the rest readable. Rung 0 proves `loadscenariomap` works at
+all — without it, a rejection at rung 2 could not be told from a broken instrument. Rung 1's bytes
+are *equal* to a shipped map's, so anything but success there would have been the harness.
+
+**Non-square maps work.** No shipped or engine-generated map has ever been non-square; the engine
+loaded a 96x64 and reported its dimensions back correctly.
+
+### The header word at `0x00` is engine output, not map input
+
+**Observed in gameplay, 2026-09-17.** `URAK.scn` carries `0x6c`. Loading it and saving it straight
+back out produced `0x6f` — and `0x6f` is what the engine writes for everything. It does not preserve
+what it read.
+
+That is the single differing byte in rungs 1 through 4, and it **retires the "stored tileset
+selector" reading in that form**: whatever selects a tileset, it is not this word being carried
+through a save. It is also why the created-from-nothing maps came back identical — they were already
+written with `0x6f`.
+
+**Sample: one transition, from one editor state.** `0x6c → 0x6f` four times (rungs 1–4, all derived
+from `URAK.scn`) and `0x6f → 0x6f` three times (rungs 0, 5, 6). What is established is that the
+engine does not preserve what it read. What is **not** separated is whether it always writes `0x6f`
+or writes whatever tileset the editor currently holds — nor whether it *reads* `0x6c` to configure
+itself and merely serialises a canonical value. The separating experiment is one rung: load a `0x4f`
+sub-map, save, and see whether the echo tracks the source.
+
+### `forcetexture` sets tag bit `0x00800000`; the renderer path clears it
+
+**Observed in gameplay, 2026-09-17.** The two runs bracket the behaviour:
+
+| sequence | the bit, across all 4,096 cells of a 64x64 map |
+| --- | --- |
+| `clearmap` then save, **no renderer calls** | **set** |
+| `clearmap`, paints, then `rebuild3dmap resetvisibility rendermap refreshdirty`, then save | **clear** |
+
+So `forcetexture` — which `clearmap` calls on every cell — *does* set the bit, and something on the
+render path clears it. **There was never a contradiction** with the earlier "0 of 4,096" reading:
+that run was measuring the state after a rebuild.
+
+Two things this does **not** establish, both of which an earlier draft of this section got wrong:
+
+- **Which** operation clears it. The two runs differ by more than one step — the earlier probe also
+  ran seven paint operators and four renderer calls — so `rebuild3dmap`, `resetvisibility`,
+  `rendermap` and `refreshdirty` are all still candidates. The next probe should save between each.
+- **Whether a load or a save touches the bit at all.** Every echo save in the `mapload` run happens
+  *after* the renderer block inside the same rung, so rung 4's sixteen interior cells coming back
+  cleared (`0x008001a8 -> 0x000001a8`, tile 424 both sides) is equally explained by the renderer.
+  Separating them needs a rung that loads and saves with **no** renderer call in between.
+
+The [refutation of the forced-texture flag](#tag-bit-0x00800000--refuted-as-a-forced-texture-flag)
+above still stands, but on different evidence than it was written with: the bit does not mean "this
+cell's texture was forced", because the shipped corpus carries it on exactly the border ring and on
+no interior cell. The "`forcetexture` never sets it" step in that argument was an artefact of
+operation order and should not be relied on.
+
+**Writer guidance: preserve the bit, never clear it.** The corpus shows it living on disk in one
+place — 27,448 cells across 146 `.smp` files, exactly their perimeters — and the probe only ever
+used `loadscenariomap`/`savescenariomap`, never the `.smp` path. Whether a `.smp` load-and-save
+preserves the ring is **unmeasured**, so an editor that dropped it could be destroying real data.
+
+### `setterrain` transition tiles
+
+**Observed in gameplay, 2026-09-17.** Eleven isolated 3x3 blobs, one per terrain type, painted onto
+a background forced to tile 15 with `clearmap`. The ring one cell outside each blob:
+
+```
+  18   2   2   2  19
+   4  57  49  58   3
+   4  51 398  52   3
+   4  55  50  56   3
+  17   1   1   1  16
+```
+
+| Direction | Tile |  | Direction | Tile |
+| --- | ---: | --- | --- | ---: |
+| N | 2 | | NW | 18 |
+| S | 1 | | NE | 19 |
+| W | 4 | | SW | 17 |
+| E | 3 | | SE | 16 |
+
+**That ring is byte-for-byte identical for nine of the eleven terrains** — 0, 1, 2, 3, 4, 5, 7, 8 and
+10. For those nine, a transition tile is chosen by the **background terrain and the direction of the
+boundary**, and not by which terrain is on the other side.
+
+**That is not a general law, and terrain 9 is the counter-example**: road produces a different ring
+on the same background, so the foreground *can* matter. The finding is that it usually does not,
+which is what makes a painter tractable — nine of eleven share one table instead of needing a full
+11x11 pair matrix — but a painter must special-case road, and must not assume the pattern holds for
+a background it has not measured.
+
+The two that differ:
+
+- **Terrain 9** (`tt_road`): ring `384..390`, core `474` and `546..553`. Roads blend as their own
+  family.
+- **Terrain 6** is the background's own type, and it is **not** the clean control this section first
+  called it. Its ring is pure tile 15 — no transition at all — yet its *core* was rewritten to
+  `385..391` rather than left at 15. Something was written and no ring appeared, and why is unknown.
+  Note that `384..391` turns up in **both** terrain 6's core and terrain 9's ring, which suggests it
+  belongs to the background rather than to the painted type. That is a hypothesis.
+
+  Re-measured from the preserved `zb0.scn` after a reviewer suspected a transcription mix-up between
+  blobs 6 and 9: the numbers are as stated, the blobs sit at (6,14) and (30,14), and the far field
+  is clean tile 15.
+
+The table lives in `spikes/asset-viewer/src/map.rs` as `LAND_TRANSITION_TILES`, with a unit test on
+the direction coverage. **It is one background.** The structure generalises; the numbers do not. A
+complete painter needs the same measurement against each of the other ten backgrounds, which is one
+more keypress of the same shape.
+
+### And a qualification on the terrain-to-tile table
+
+The same run shows `setterrain` picks its *core* tile from a family too. Painting terrain 6 onto a
+tile-15 background writes tiles in `385..391`, not 15 — while the original measurement, taken
+against a tile-392 background, gave 15.
+
+**Measured for one terrain on one background.** Terrain 6 is also the one case where the painted
+type equals the background type, so it is the least representative row to generalise from. What is
+established is that `base_tile` is not invariant *for terrain 6*; the other ten rows were each
+measured once, against a tile-392 background, and may well be fixed. The column is therefore
+labelled a **representative** tile rather than a guaranteed one — the weaker claim the evidence
+supports — and this is not a licence to assume every row varies.
+
+The reverse direction is unaffected **for the tiles that were measured**: the blend background, tile
+15, read back as terrain 6 exactly as predicted. The `385..391` family this paragraph is about was
+**never** read back — the probe calls `getterrain` only at `(0, 0)`, before any blob is painted — and
+`base_tile_terrain_type(385)` returns `None` in code, because only the eleven representative tiles
+are in the table. This is not a claim that the new family is type-resolvable.
+
+What this project's writer does with the table — forcing one representative tile of a type into one
+cell, which is `forcetexture` semantics — remains exactly right.
+
+
 ## Commands
 
 ```sh
@@ -529,7 +693,9 @@ With a tile definition and atlas, the viewer starts in terrain-art mode. Press `
 - **Observed in gameplay (2026-09-17), earlier run:** a 512x512 map generated by the shipped engine carries the same 16-byte prefix as a 128, so the header does not disappear on oversized maps.
 - **Corrected:** cell and record coordinates, previously documented and implemented as X-major (`x × height + y`). Every shipped map is square, so the corpus could not falsify it.
 - **Refuted:** tag bit `0x00800000` as a forced-texture flag. Forcing textures into 4,096 cells set it in none of them.
-- **Inferred:** the second word is elevation; record `+34` is a procedure identifier; the header word at `0x00` is a tileset selector.
+- **Inferred:** the second word is elevation; record `+34` is a procedure identifier.
 - **Observed in a local binary (2026-09-17):** every one of the 365 installed maps re-encodes to its input bytes, and all 16,628 placed-sprite records rebuild from their typed fields alone. Place-then-remove returns a shipped 128x128 map byte for byte.
-- **Not reproduced:** `setterrain`'s transition blending. Its footprint was measured; which tiles it blends in was not, so the writer does not approximate it.
-- **Unknown:** the first header word, elevation units, the meaning of tag bit `0x00800000`, the trailing footer, the attribute field at `+24`, and the remaining record families. The writer copies all of them rather than minting them, which is why it can be correct without them being solved.
+- **Observed in gameplay (2026-09-17, mapload probe):** the engine loads maps this project wrote -- edited, sprite-placed, created from nothing, and non-square -- and the two created-from-nothing maps re-save byte-identically; the header word at `0x00` is rewritten from engine state on every save rather than carried from the file; tag bit `0x00800000` does not survive a load-and-save; `setterrain`'s transition ring is a direction table on the background, identical across nine of the eleven terrains.
+- **Partially reproduced:** `setterrain`'s transition blending. The ring is now measured for a tile-15 background (`LAND_TRANSITION_TILES`); the other ten backgrounds are not, so the writer still offers single-cell forcing rather than painting.
+- **Refuted (2026-09-17):** the header word at `0x00` as a value the engine *carries through a save*. `URAK.scn`'s `0x6c` came back as `0x6f`. Whether the **loader** reads it is untested -- that would take loading two maps differing only in that word -- and "from its own state" is equally consistent with "set by the last `newmap`".
+- **Unknown:** elevation units, what sets tag bit `0x00800000` in memory, the trailing footer's `1` vs `3`, the attribute field at `+24`, and what distinguishes the 52-/53-byte record variants. The writer copies all of them rather than minting them -- except a newly placed sprite, which mints `+24`, and that record has now been shown to survive the engine byte-exactly.

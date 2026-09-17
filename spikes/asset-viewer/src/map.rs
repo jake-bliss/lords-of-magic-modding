@@ -15,6 +15,31 @@ const PLACED_SPRITE_SECTION_49_FIXED_BYTES: usize = 8;
 /// bit set.** Forcing a texture does not set it, so it does not mean "forced texture". The
 /// reasoning is kept here so nobody re-derives it from the same corpus shape.
 ///
+/// **Observed in gameplay, 2026-09-17: `rebuild3dmap` clears this bit.** Two probe runs form a
+/// controlled pair differing in exactly one operation:
+///
+/// | sequence | bit, across all 4,096 cells of a 64x64 map |
+/// | --- | --- |
+/// | `clearmap` then save | **set** |
+/// | `clearmap` then `rebuild3dmap` then save | **clear** |
+///
+/// So `forcetexture` (which `clearmap` calls on every cell) *does* set it, and rebuilding the mesh
+/// clears it. There was never a contradiction between the two runs; they are a matched pair, and
+/// the earlier "0 of 4,096" reading was measuring the state after a rebuild.
+///
+/// **What is NOT established:** whether loading or saving independently touches the bit. Every
+/// echo save in the mapload probe happens *after* a `rebuild3dmap` inside the same rung, so the
+/// sixteen interior cells that came back cleared are equally explained by the rebuild. An earlier
+/// draft of this comment claimed "the engine clears it when it saves a map it loaded"; that was
+/// confounded, and a reviewer caught it. Separating load from rebuild needs one more rung that
+/// loads and saves with no rebuild between.
+///
+/// Either way a writer should treat the bit as **cosmetic**: preserving it costs nothing, and
+/// setting it survives only until something rebuilds the mesh.
+///
+/// A writer must therefore treat this bit as **cosmetic**: preserving it costs nothing and loses
+/// nothing, and setting it achieves nothing the engine will keep.
+///
 /// It is still masked out of [`MapCell::tile_index`], which is independent of what it means: with
 /// the mask every corpus cell indexes a tile in `0..623`, and without it the flagged cells do not.
 pub const CELL_TAG_HIGH_FLAG: u32 = 0x0080_0000;
@@ -36,6 +61,15 @@ pub struct TerrainTypeInfo {
 /// Together with [`OBSERVED_TILE_TERRAIN_TYPES`] this establishes that a cell's terrain *type* is
 /// derived from its tile index through the tileset rather than stored in the cell, which is why
 /// tag bits `10..22` are unused across the whole corpus.
+///
+/// **Qualified 2026-09-17 by the mapload probe: `base_tile` is a *representative* tile of each
+/// type, not the tile `setterrain` would write in an arbitrary neighbourhood.** The original
+/// measurement painted onto a background forced to tile 392; painting onto a tile-15 background
+/// instead makes `setterrain 6` write tiles in `385..391` rather than 15. `setterrain` picks from a
+/// family according to the local neighbourhood -- see [`LAND_TRANSITION_TILES`]. The reverse
+/// direction is unaffected: `getterrain` on any of these tiles answers the type, and
+/// `base_tile_terrain_type` round-trips. What this project's writer does with the table --
+/// forcing one representative tile of a type into one cell -- remains exactly right.
 pub const TERRAIN_TYPES: [TerrainTypeInfo; 11] = [
     TerrainTypeInfo {
         terrain_type: 0,
@@ -241,9 +275,6 @@ pub struct MapAsset {
     pub height: u32,
     pub bits_per_pixel: u32,
     pub cells: Vec<MapCell>,
-    pub trailing_offset: usize,
-    pub trailing_bytes: usize,
-    pub trailing_head_u32: Option<u32>,
     pub placed_sprites_49: Option<PlacedSpriteSection49>,
     /// The trailing section exactly as it was read.
     ///
@@ -336,9 +367,6 @@ impl MapAsset {
             });
         }
         let trailing_bytes = source.len() - trailing_offset;
-        let trailing_head_u32 = (trailing_bytes >= 4)
-            .then(|| read_u32(source, trailing_offset))
-            .transpose()?;
         let placed_sprites_49 =
             parse_placed_sprites_49(source, trailing_offset, trailing_bytes, cell_count)?;
         let trailing_raw = source[trailing_offset..].to_vec();
@@ -349,9 +377,6 @@ impl MapAsset {
             height,
             bits_per_pixel,
             cells,
-            trailing_offset,
-            trailing_bytes,
-            trailing_head_u32,
             placed_sprites_49,
             trailing_raw,
         })
@@ -384,6 +409,52 @@ impl MapAsset {
         record.coordinates(self.width)
     }
 
+    /// Where the trailing section starts: immediately after the cell grid.
+    ///
+    /// **Derived, not stored.** This and the three below used to be fields set at parse time, and
+    /// they went stale the moment `place_sprite` or `remove_sprite` ran -- `trailing_bytes` would
+    /// still report the pre-edit tail length while `to_bytes` wrote the new one. No caller was
+    /// wrong yet, which is exactly why it was worth removing: the next one would have been.
+    pub fn trailing_offset(&self) -> usize {
+        HEADER_SIZE + self.cells.len() * CELL_SIZE
+    }
+
+    /// The trailing section as it will be written.
+    ///
+    /// Comes from the decoded records when this map is in the 49-byte family and from the verbatim
+    /// bytes otherwise -- the same choice [`to_bytes`](Self::to_bytes) makes, deliberately, so the
+    /// two can never disagree.
+    pub fn trailing_section(&self) -> Result<Vec<u8>, MapError> {
+        match &self.placed_sprites_49 {
+            Some(section) => section.to_bytes(),
+            None => Ok(self.trailing_raw.clone()),
+        }
+    }
+
+    pub fn trailing_bytes(&self) -> usize {
+        match &self.placed_sprites_49 {
+            Some(section) => {
+                PLACED_SPRITE_SECTION_49_FIXED_BYTES
+                    + section.records.len() * PLACED_SPRITE_RECORD_49_SIZE
+            }
+            None => self.trailing_raw.len(),
+        }
+    }
+
+    /// The first word of the trailing section, which in the decoded family is the record count.
+    pub fn trailing_head_u32(&self) -> Option<u32> {
+        match &self.placed_sprites_49 {
+            Some(section) => u32::try_from(section.records.len()).ok(),
+            None => (self.trailing_raw.len() >= 4).then(|| {
+                u32::from_le_bytes(
+                    self.trailing_raw[0..4]
+                        .try_into()
+                        .expect("length was just checked"),
+                )
+            }),
+        }
+    }
+
     pub fn cell_index(&self, x: u32, y: u32) -> Option<usize> {
         if x >= self.width || y >= self.height {
             return None;
@@ -400,7 +471,7 @@ impl MapAsset {
 
     pub fn candidate_tail_layouts(&self) -> Vec<MapTailLayout> {
         let Some(count) = self
-            .trailing_head_u32
+            .trailing_head_u32()
             .and_then(|count| usize::try_from(count).ok())
         else {
             return Vec::new();
@@ -411,7 +482,7 @@ impl MapAsset {
                 count
                     .checked_mul(record_size)
                     .and_then(|bytes| bytes.checked_add(total_fixed_bytes))
-                    .filter(|expected| *expected == self.trailing_bytes)
+                    .filter(|expected| *expected == self.trailing_bytes())
                     .map(|_| MapTailLayout {
                         record_size,
                         total_fixed_bytes,
@@ -651,6 +722,150 @@ impl PlacedSpriteSection49 {
     }
 }
 
+/// One direction of a `setterrain` transition halo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransitionTile {
+    /// `(dx, dy)` of the halo cell relative to the painted region: `-1` is outside the low edge,
+    /// `+1` outside the high edge.
+    pub direction: (i32, i32),
+    pub tile: u32,
+}
+
+/// The tiles `setterrain` blends into the ring around a painted region, on a **tile-15 background**.
+///
+/// **Observed in gameplay, 2026-09-17 (mapload probe).** Eleven isolated 3x3 blobs, one per terrain
+/// type, painted onto a background forced to tile 15 with `clearmap`. The ring one cell outside each
+/// blob is this table -- and it is **byte-for-byte identical for nine of the eleven terrains**
+/// (0, 1, 2, 3, 4, 5, 7, 8, 10).
+///
+/// For those nine, a transition tile is chosen by the **background terrain and the direction of the
+/// boundary**. It is *not* a general law: `tt_road` is a counter-example on the same background, so
+/// the painted terrain can matter. Nine of ten sharing one table is what makes a painter tractable
+/// -- a full 11x11 pair matrix would have needed eleven times the measurement -- but a painter
+/// **must special-case road**, and must not assume this holds for a background it has not measured.
+/// This table applies to the nine only.
+///
+/// The two that differ:
+///
+/// - **Terrain 9** (`tt_road`): halo `384..390`, core `474` and `546..553`.
+/// - **Terrain 6** is the background's own type. Its halo is pure tile 15 -- no ring at all -- yet
+///   its **core** was rewritten to `385..391` rather than left at 15. So something was written and
+///   no transition appeared, and this project cannot yet say why. `384..391` turns up in *both*
+///   terrain 6's core and terrain 9's halo, which suggests it is a set belonging to the background
+///   rather than to the painted type. That is a hypothesis, not a finding.
+///
+/// This is **one background**. The structure generalises; the numbers do not. A complete painter
+/// needs the same measurement against each of the other ten backgrounds.
+pub const LAND_TRANSITION_TILES: [TransitionTile; 8] = [
+    TransitionTile { direction: (0, -1), tile: 2 },
+    TransitionTile { direction: (0, 1), tile: 1 },
+    TransitionTile { direction: (-1, 0), tile: 4 },
+    TransitionTile { direction: (1, 0), tile: 3 },
+    TransitionTile { direction: (-1, -1), tile: 18 },
+    TransitionTile { direction: (1, -1), tile: 19 },
+    TransitionTile { direction: (-1, 1), tile: 17 },
+    TransitionTile { direction: (1, 1), tile: 16 },
+];
+
+/// The background `LAND_TRANSITION_TILES` was measured against, and `tt_land`'s representative tile.
+pub const LAND_BACKGROUND_TILE: u32 = 15;
+
+/// The header word every map the shipped engine generated carries.
+///
+/// **Observed in gameplay.** Engine-generated maps wrote `0x6f` at 32, 48, 64, 128, 256 **and**
+/// 512, so the word is independent of geometry. Shipped world `.scn` files occupy `0x6c..0x6f`.
+/// **Observed in gameplay, 2026-09-17 (mapload probe): the engine rewrites this word on every
+/// save, and does not preserve what it read.** `URAK.scn` carries `0x6c`; loading it and saving it
+/// straight back out produced `0x6f`. So the word is written from engine state, not carried from the
+/// map -- which retires the "stored tileset selector" reading in that form, and is also why a map
+/// created with `0x6f` re-saves byte-identically.
+pub const GENERATED_HEADER_WORD: u32 = 0x6f;
+
+/// The largest side length [`MapAsset::create`] will produce.
+///
+/// `gs\edit\mapgen.gs` offers presets up to 1024 and works in units of 32; the engine was observed
+/// accepting 512. Nothing larger has evidence behind it, and an unbounded value dies in the
+/// allocator instead of being refused.
+pub const MAX_CREATED_DIMENSION: u32 = 1024;
+
+/// The footer the engine wrote for a map with no placed sprites.
+///
+/// **Observed in gameplay:** an empty save's entire trailing section is the eight bytes
+/// `00000000 01000000` — count `0`, footer `1`. Its meaning is Unknown; the value is not.
+pub const EMPTY_MAP_FOOTER: u32 = 1;
+
+impl MapAsset {
+    /// A new map of `width` x `height`, every cell painted with a terrain type's base tile.
+    ///
+    /// **This mints nothing.** Every byte pattern it writes is one the engine itself was observed
+    /// writing: the header word (see [`GENERATED_HEADER_WORD`]), a cell grid whose encoding is
+    /// measured by construction, and the exact eight-byte empty trailing section the engine saved
+    /// for a sprite-less map. "Create from scratch" here means *compose observed patterns*, not
+    /// *invent values* — which is why it is possible while three fields' meanings are still Unknown.
+    ///
+    /// Two things it cannot promise, both of which the attended `mapload` probe exists to settle:
+    ///
+    /// - **The engine has never been asked to load a map this project created.** Round-trip
+    ///   identity shows this writer matches the engine's *writer*; it says nothing about its
+    ///   *reader*.
+    /// - **No map, shipped or engine-generated, has ever been non-square.** A non-square map is the
+    ///   first artifact here that no observation covers.
+    ///
+    /// Elevation is `0.0` everywhere, which is inside the corpus range and is flat by any reading
+    /// of a word whose units are Inferred.
+    pub fn create(width: u32, height: u32, terrain_type: u32) -> Result<Self, MapError> {
+        if width == 0 || height == 0 {
+            return Err(MapError::new("map dimensions must be nonzero"));
+        }
+        // Bounded before anything is allocated. Without this, `--map-create 100000 100000 land`
+        // asks for ~1.2 TB and dies in the allocator, losing the refusal message every other bad
+        // input here gets.
+        if width > MAX_CREATED_DIMENSION || height > MAX_CREATED_DIMENSION {
+            return Err(MapError::new(format!(
+                "{width}x{height} exceeds {MAX_CREATED_DIMENSION} per side; the shipped editor \
+                 generates up to {MAX_CREATED_DIMENSION} and nothing larger has been observed"
+            )));
+        }
+        let tile_index = terrain_type_base_tile(terrain_type).ok_or_else(|| {
+            MapError::new(format!("{terrain_type} is not one of the 11 terrain types"))
+        })?;
+        check_tile_index(tile_index)?;
+        let cell_count = usize::try_from(width)
+            .ok()
+            .and_then(|width| {
+                usize::try_from(height)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .ok_or_else(|| MapError::new("map cell count overflow"))?;
+
+        let cells = vec![
+            MapCell {
+                tag: tile_index,
+                value_bits: 0.0_f32.to_bits(),
+                value: 0.0,
+            };
+            cell_count
+        ];
+        let placed_sprites_49 = PlacedSpriteSection49 {
+            records: Vec::new(),
+            footer: EMPTY_MAP_FOOTER,
+            instance_id_high_water: None,
+        };
+        let trailing_raw = placed_sprites_49.to_bytes()?;
+
+        Ok(Self {
+            metadata: GENERATED_HEADER_WORD,
+            width,
+            height,
+            bits_per_pixel: 8,
+            cells,
+            placed_sprites_49: Some(placed_sprites_49),
+            trailing_raw,
+        })
+    }
+}
+
 /// Reject a tile index that no corpus cell could hold.
 ///
 /// The tileset's own capacity is deliberately *not* checked -- `tilesb01.til` declares 624 slots,
@@ -692,10 +907,7 @@ impl MapAsset {
             bytes.extend_from_slice(&cell.tag.to_le_bytes());
             bytes.extend_from_slice(&cell.value_bits.to_le_bytes());
         }
-        match &self.placed_sprites_49 {
-            Some(section) => bytes.extend_from_slice(&section.to_bytes()?),
-            None => bytes.extend_from_slice(&self.trailing_raw),
-        }
+        bytes.extend_from_slice(&self.trailing_section()?);
         Ok(bytes)
     }
 
@@ -715,10 +927,13 @@ impl MapAsset {
     /// project has **not** measured which tiles it blends in, so that operation is deliberately
     /// not offered rather than approximated. See `docs/map-format.md`.
     ///
-    /// Bit `0x00800000` of the existing tag is **preserved**. The 2026-09-17 probe showed
-    /// `forcetexture` never *sets* the bit -- zero of 4,096 forced cells -- but no probe cell had
-    /// it set beforehand, so whether the engine clears it is unmeasured. Its meaning is Unknown,
-    /// and preserving an unknown bit is the conservative half of an unmeasured choice.
+    /// Bit `0x00800000` of the existing tag is **preserved**, and that is now the
+    /// measured-correct choice rather than only the conservative one. `forcetexture` *does* set the
+    /// bit -- a `clearmap` save carried it on all 4,096 cells -- and the renderer path clears it.
+    /// Sixteen cells handed to the engine with the bit already set came back cleared, but through a
+    /// save that also rebuilt the mesh, so which step cleared them is not separated. See
+    /// [`CELL_TAG_HIGH_FLAG`]. Preserving a bit whose lifetime this project does not control is the
+    /// only option that cannot destroy data.
     pub fn set_tile(&mut self, x: u32, y: u32, tile_index: u32) -> Result<(), MapError> {
         check_tile_index(tile_index)?;
         let index = self.cell_index_checked(x, y)?;
@@ -749,6 +964,38 @@ impl MapAsset {
             cell.tag = (cell.tag & CELL_TAG_HIGH_FLAG) | tile_index;
         }
         Ok(())
+    }
+
+    /// Set or clear tag bit `0x00800000` on one cell.
+    ///
+    /// **This exists to run an experiment, not because the bit is understood.** Its meaning is
+    /// Unknown; what is measured is its placement, and that measurement is total: across the 146
+    /// corpus files that carry it, the flagged cells are *exactly* the perimeter ring — every edge
+    /// cell, no interior cell, zero mismatches in 146 of 146 files. That makes "map border" the
+    /// obvious reading and gives a sharp test the corpus cannot run: set it on an **interior** cell,
+    /// hand the map to the engine, and see what the engine does with it.
+    ///
+    /// No ordinary edit calls this. `set_tile` preserves whatever the bit already was.
+    pub fn set_high_flag(&mut self, x: u32, y: u32, set: bool) -> Result<(), MapError> {
+        let index = self.cell_index_checked(x, y)?;
+        let cell = &mut self.cells[index];
+        cell.tag = if set {
+            cell.tag | CELL_TAG_HIGH_FLAG
+        } else {
+            cell.tag & !CELL_TAG_HIGH_FLAG
+        };
+        Ok(())
+    }
+
+    /// The packed indexes of this map's perimeter ring.
+    pub fn border_ring(&self) -> Vec<usize> {
+        (0..self.height)
+            .flat_map(|y| (0..self.width).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                *x == 0 || *y == 0 || *x == self.width - 1 || *y == self.height - 1
+            })
+            .filter_map(|(x, y)| self.cell_index(x, y))
+            .collect()
     }
 
     /// Set one cell's second word.
@@ -885,9 +1132,9 @@ mod tests {
         assert_eq!(map.cells[0].tag, 7);
         assert_eq!(map.cells[0].value, 1.5);
         assert_eq!(map.cells[1].value_bits, (-2.0_f32).to_bits());
-        assert_eq!(map.trailing_offset, 32);
-        assert_eq!(map.trailing_bytes, 6);
-        assert_eq!(map.trailing_head_u32, Some(3));
+        assert_eq!(map.trailing_offset(), 32);
+        assert_eq!(map.trailing_bytes(), 6);
+        assert_eq!(map.trailing_head_u32(), Some(3));
         assert!(map.placed_sprites_49.is_none());
     }
 
@@ -1010,7 +1257,7 @@ mod tests {
         let map = MapAsset::parse(&empty).unwrap();
         let section = map.placed_sprites_49.as_ref().unwrap();
 
-        assert_eq!(map.trailing_bytes, 8);
+        assert_eq!(map.trailing_bytes(), 8);
         assert!(section.records.is_empty());
         assert_eq!(section.footer, 1);
 
@@ -1018,7 +1265,7 @@ mod tests {
         let map = MapAsset::parse(&populated).unwrap();
         let section = map.placed_sprites_49.as_ref().unwrap();
 
-        assert_eq!(map.trailing_bytes, 4 + 49 + 4);
+        assert_eq!(map.trailing_bytes(), 4 + 49 + 4);
         assert_eq!(section.records.len(), 1);
         assert_eq!(section.footer, 1);
         assert_eq!(section.records[0].sprite_type, 470);
@@ -1292,6 +1539,97 @@ mod tests {
     /// `fill_terrain` repeats `set_tile`'s high-bit preservation, so it needs its own test on a
     /// fixture that actually has the bit set -- otherwise the duplicated line can be deleted and
     /// the suite stays green.
+    /// The halo is a direction table, and the probe measured all eight directions exactly once.
+    #[test]
+    fn the_land_transition_halo_covers_every_direction_once() {
+        let table = super::LAND_TRANSITION_TILES;
+        let directions: std::collections::BTreeSet<(i32, i32)> =
+            table.iter().map(|entry| entry.direction).collect();
+        let expected: std::collections::BTreeSet<(i32, i32)> = (-1..=1)
+            .flat_map(|dy| (-1..=1).map(move |dx| (dx, dy)))
+            .filter(|(dx, dy)| *dx != 0 || *dy != 0)
+            .collect();
+        assert_eq!(directions, expected, "all eight neighbours, and no centre");
+        // The four edges and the four corners come from separate tile runs, which is what makes
+        // this a direction table rather than a single blended value.
+        let edges: Vec<u32> = table
+            .iter()
+            .filter(|e| e.direction.0 == 0 || e.direction.1 == 0)
+            .map(|e| e.tile)
+            .collect();
+        let corners: Vec<u32> = table
+            .iter()
+            .filter(|e| e.direction.0 != 0 && e.direction.1 != 0)
+            .map(|e| e.tile)
+            .collect();
+        assert_eq!(edges.len(), 4);
+        assert_eq!(corners.len(), 4);
+        assert!(edges.iter().all(|tile| (1..=4).contains(tile)), "{edges:?}");
+        assert!(corners.iter().all(|tile| (16..=19).contains(tile)), "{corners:?}");
+        // Every tile distinct: eight directions, eight tiles.
+        let tiles: std::collections::BTreeSet<u32> = table.iter().map(|e| e.tile).collect();
+        assert_eq!(tiles.len(), 8);
+        // And the background itself is a tile of tt_land.
+        assert_eq!(base_tile_terrain_type(super::LAND_BACKGROUND_TILE), Some(6));
+    }
+
+    #[test]
+    fn a_created_map_composes_only_observed_byte_patterns() {
+        let map = MapAsset::create(96, 64, 1).unwrap();
+        let bytes = map.to_bytes().unwrap();
+        // Header word, dimensions, depth -- all values the engine was observed writing.
+        assert_eq!(&bytes[0..4], &super::GENERATED_HEADER_WORD.to_le_bytes());
+        assert_eq!(&bytes[4..8], &96_u32.to_le_bytes());
+        assert_eq!(&bytes[8..12], &64_u32.to_le_bytes());
+        assert_eq!(&bytes[12..16], &8_u32.to_le_bytes());
+        // The exact eight-byte empty tail the engine saved for a sprite-less map.
+        assert_eq!(&bytes[bytes.len() - 8..], &[0, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(bytes.len(), 16 + 96 * 64 * 8 + 8);
+        // It parses, and re-encodes to itself.
+        let reparsed = MapAsset::parse(&bytes).unwrap();
+        assert_eq!(reparsed.to_bytes().unwrap(), bytes);
+        assert_eq!(reparsed.cells.iter().filter(|c| c.tile_index() == 392).count(), 96 * 64);
+        assert!(reparsed.cells.iter().all(|c| !c.high_flag_set()));
+    }
+
+    #[test]
+    fn a_created_map_is_editable_and_addressed_the_same_way() {
+        let mut map = MapAsset::create(96, 64, 6).unwrap();
+        // Non-square, so an index error cannot hide: (95, 63) is valid and (63, 95) is not.
+        map.set_tile(95, 63, 392).unwrap();
+        assert!(map.set_tile(63, 95, 392).is_err());
+        assert_eq!(map.place_sprite(10, 20, 470).unwrap(), 200);
+        let written = MapAsset::parse(&map.to_bytes().unwrap()).unwrap();
+        let record = &written.placed_sprites_49.as_ref().unwrap().records[0];
+        assert_eq!(record.cell_index, 20 * 96 + 10);
+        assert_eq!(written.record_coordinates(record), (10, 20));
+        assert!(MapAsset::create(0, 64, 1).is_err());
+        assert!(MapAsset::create(96, 64, 11).is_err());
+    }
+
+    /// The border ring is what the corpus flags, in 146 of 146 files, with zero exceptions. An
+    /// interior flag is the shape the engine has never been given, and the probe's whole question.
+    #[test]
+    fn the_high_flag_can_be_set_on_the_border_and_on_the_interior() {
+        let mut map = MapAsset::create(5, 3, 6).unwrap();
+        for index in map.border_ring() {
+            let (x, y) = (index as u32 % 5, index as u32 / 5);
+            map.set_high_flag(x, y, true).unwrap();
+        }
+        // On a 5x3 map every cell except (1,1), (2,1), (3,1) is on the ring.
+        assert_eq!(map.border_ring().len(), 12);
+        assert!(!map.cell(2, 1).unwrap().high_flag_set());
+        assert!(map.cell(0, 0).unwrap().high_flag_set());
+        assert!(map.cell(4, 2).unwrap().high_flag_set());
+
+        map.set_high_flag(2, 1, true).unwrap();
+        assert!(map.cell(2, 1).unwrap().high_flag_set());
+        assert_eq!(map.cell(2, 1).unwrap().tile_index(), 15, "the tile must survive");
+        map.set_high_flag(2, 1, false).unwrap();
+        assert!(!map.cell(2, 1).unwrap().high_flag_set());
+        assert!(map.set_high_flag(9, 9, true).is_err());
+    }
+
     #[test]
     fn filling_also_preserves_the_unknown_high_bit() {
         let source = non_square_map_with_opaque_tail(3, 2);
@@ -1441,7 +1779,7 @@ mod tests {
         assert!(map.remove_sprite(200).is_err());
         // A cell edit is still fine, and must still write the tail back untouched.
         map.set_tile(0, 0, 15).unwrap();
-        assert_eq!(&map.to_bytes().unwrap()[map.trailing_offset..], &map.trailing_raw[..]);
+        assert_eq!(&map.to_bytes().unwrap()[map.trailing_offset()..], &map.trailing_raw[..]);
     }
 
     #[test]
