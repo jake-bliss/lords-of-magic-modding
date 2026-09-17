@@ -17,8 +17,11 @@ palette edit. `zzctl.imp` is byte-identical to `imp\\tree4e.imp`, so zt1 versus 
 Two hazards the previous run walked into, both fixed here:
 
 - `anythingat?` does **not** see terrain sprites, so a cell can read empty and still hold a
-  village. Cleanup therefore matches on `getterrainspritetype` and never uses
-  `terrainspriteat`, which handed back somebody else's outpost and deleted it.
+  village. `terrainspriteat` then handed back somebody else's outpost and it was destroyed, so
+  cleanup never matches on location alone. It does not match on **type** alone either: rung 0
+  reuses the *shipped* orchard type, and destroying by that type would delete every orchard the
+  map generator placed. Cleanup requires type **and** cell; only the freshly registered ids get
+  a second type-only sweep, since nothing else on the map can be carrying them.
 - The hotkey auto-repeats while the key is held. A `zdone` flag in `userdict` makes the body
   fire exactly once per launch.
 """
@@ -38,6 +41,16 @@ SPRITE_TYPES: list[tuple[str, str]] = [
 SEED_OFFSETS: list[tuple[int, int]] = [(2, 0), (-2, 0), (0, 2), (0, -2)]
 
 HOTKEY = "z"
+
+
+def is_freshly_registered(index: int) -> bool:
+    """True when the type id is minted by this keypress rather than reused from the game.
+
+    Only a freshly registered id is safe to clean up by type alone: no sprite the probe did not
+    place can be carrying it. Rung 0 deliberately reuses a shipped type, and is therefore the one
+    rung that must always be matched by cell as well.
+    """
+    return "addterrainspritetype" in SPRITE_TYPES[index][1]
 
 
 def _log(text: str) -> str:
@@ -91,15 +104,26 @@ def probe_body() -> str:
     emit("\trendermap refreshdirty")
     emit('\t"zs1.bmp"screencapture')
 
-    # Cleanup matches on type, never on location, so nothing of the game's is ever destroyed.
-    # Two passes per type: destroying during an enumeration may skip entries, and a stale sprite
-    # left behind would poison the next run's plate.
-    for _pass in range(2):
-        for index in range(len(SPRITE_TYPES)):
-            emit(
-                f"\t{{dup getterrainspritetype zt{index} eq"
-                "{destroyterrainsprite}{pop}ifelse}enumterrainsprites"
-            )
+    # Cleanup must match the type *and* the cell the probe placed it on. Matching on location alone
+    # destroyed a village; matching on type alone is worse, because rung 0 reuses the **shipped**
+    # orchard type and would delete every orchard the map generator placed.
+    for index in range(len(SPRITE_TYPES)):
+        emit(
+            f"\t{{dup getterrainspritetype zt{index} eq"
+            f"{{dup getterrainspritelocation zy{index} eq exch zx{index} eq and"
+            "{destroyterrainsprite}{pop}ifelse}"
+            "{pop}ifelse}enumterrainsprites"
+        )
+    # A second, type-only pass for the three freshly registered types. Their ids were minted by this
+    # keypress, so nothing else on the map can carry them, and it catches anything the first pass
+    # skipped -- destroying during an enumeration may advance past an entry.
+    for index in range(len(SPRITE_TYPES)):
+        if not is_freshly_registered(index):
+            continue
+        emit(
+            f"\t{{dup getterrainspritetype zt{index} eq"
+            "{destroyterrainsprite}{pop}ifelse}enumterrainsprites"
+        )
     emit("\trendermap refreshdirty")
     emit('\t"zs2.bmp"screencapture')
     emit("\t" + _log('"cleanup done"'))

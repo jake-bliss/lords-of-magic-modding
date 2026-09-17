@@ -15,18 +15,37 @@ game_subpath='Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/st
 game_dir="${app_dir}/${game_subpath}"
 viewer_dir="${project_dir}/spikes/asset-viewer"
 listfile="${artifacts_dir}/reference-listfiles/lords-of-magic.txt"
+# shellcheck source=scripts/lib-game-archives.sh
+source "${project_dir}/scripts/lib-game-archives.sh"
+
 work_dir="$(mktemp -d)"
-trap 'rm -rf "${work_dir}"' EXIT
+# Injection is not atomic: gs.mpq and imp.mpq are written by four separate calls. Anything that
+# fails after the first write would otherwise leave the game half-modified while reporting failure,
+# so the exit trap rolls both archives back unless the script reached the end.
+installed=0
+cleanup() {
+  local status=$?
+  if (( status != 0 )) && (( installed == 0 )); then
+    echo "install failed; rolling the archives back" >&2
+    restore_archives "${backup_dir}" "${game_dir}" >&2 || true
+  fi
+  rm -rf "${work_dir}"
+  exit "${status}"
+}
+trap cleanup EXIT
 
 for path in "${game_dir}/gs.mpq" "${game_dir}/imp.mpq" "${backup_dir}/gs.mpq.orig" \
             "${backup_dir}/imp.mpq.orig" "${listfile}"; do
   [[ -f "${path}" ]] || { echo "missing: ${path}" >&2; exit 1; }
 done
 
+echo "== verifying the backups against MANIFEST.sha256 =="
+verify_backups "${backup_dir}"
+
 echo "== verifying the archives are pristine =="
-for archive in gs imp; do
-  live="$(shasum -a 256 "${game_dir}/${archive}.mpq" | cut -d' ' -f1)"
-  original="$(shasum -a 256 "${backup_dir}/${archive}.mpq.orig" | cut -d' ' -f1)"
+for archive in "${ARCHIVE_NAMES[@]}"; do
+  live="$(file_hash "${game_dir}/${archive}.mpq")"
+  original="$(file_hash "${backup_dir}/${archive}.mpq.orig")"
   if [[ "${live}" != "${original}" ]]; then
     echo "${archive}.mpq does not match the recorded original; restore before installing." >&2
     exit 1
@@ -48,6 +67,9 @@ echo "== preparing sprites =="
   --listfile "${listfile}" >/dev/null
 cp "${work_dir}/tree4e.imp" "${work_dir}/zzctl.imp"
 "${author_palette}" "${work_dir}/tree4e.imp" "${work_dir}/zzpal.imp"
+mkdir -p "${artifacts_dir}"
+# The index map records which frame pixels carry each authored palette entry, so the capture
+# can be read without guessing which blob is which colour.
 cp "${work_dir}/zzpal.imp.map" "${artifacts_dir}/zzpal-index-map.txt"
 
 echo "== preparing scripts =="
@@ -89,6 +111,8 @@ echo "  scripts read back byte-identical"
   "${game_dir}/imp.mpq" 'imp\zzctl.imp')
 (cd "${viewer_dir}" && cargo run --release --quiet --example read_member -- \
   "${game_dir}/imp.mpq" 'imp\zzpal.imp')
+
+installed=1
 
 echo
 echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map,"

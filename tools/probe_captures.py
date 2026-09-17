@@ -54,17 +54,35 @@ class Component:
 
 def read_capture(path: Path | str) -> Capture:
     data = Path(path).read_bytes()
+    if len(data) < PIXEL_OFFSET:
+        raise ValueError(f"{path}: truncated before the pixel data ({len(data)} bytes)")
     if data[:2] != b"BM":
         raise ValueError(f"{path}: not a BMP")
     width, height = struct.unpack_from("<ii", data, 18)
     bits = struct.unpack_from("<H", data, 28)[0]
     if bits != 24:
         raise ValueError(f"{path}: expected 24-bit pixels, found {bits}")
+    if width <= 0:
+        raise ValueError(f"{path}: non-positive width {width}")
+    if height == 0:
+        raise ValueError(f"{path}: zero height")
+
+    # A negative height means the rows are stored top-down. The engine writes positive heights, but
+    # honouring the sign costs nothing and a silently mirrored capture would invert every y
+    # coordinate the probe reports.
+    top_down = height < 0
     height = abs(height)
     stride = (width * 3 + 3) // 4 * 4
+    required = PIXEL_OFFSET + stride * height
+    if len(data) < required:
+        raise ValueError(
+            f"{path}: pixel data truncated, need {required} bytes and have {len(data)}"
+        )
+
     rows = []
     for y in range(height):
-        base = PIXEL_OFFSET + (height - 1 - y) * stride  # BMP rows are stored bottom-up
+        row_index = y if top_down else height - 1 - y
+        base = PIXEL_OFFSET + row_index * stride
         rows.append(
             [
                 (data[base + x * 3], data[base + x * 3 + 1], data[base + x * 3 + 2])

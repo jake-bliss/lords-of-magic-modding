@@ -15,6 +15,9 @@ game_subpath='Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/st
 game_dir="${app_dir}/${game_subpath}"
 capture_dir="${2:-${artifacts_dir}/engine-probe-captures}"
 
+# shellcheck source=scripts/lib-game-archives.sh
+source "${project_dir}/scripts/lib-game-archives.sh"
+
 if pgrep -f 'lomse.exe' >/dev/null 2>&1; then
   echo "lomse.exe is still running; quit the game first." >&2
   exit 1
@@ -30,19 +33,10 @@ if (( ${#captures[@]} )); then
   rm -f "${captures[@]}"
 fi
 
-cp "${backup_dir}/gs.mpq.orig" "${game_dir}/gs.mpq"
-cp "${backup_dir}/imp.mpq.orig" "${game_dir}/imp.mpq"
+# Preflight every backup before copying any of them, so a missing or corrupt second backup cannot
+# leave one archive restored and the other still modified.
+echo "== verifying the backups against MANIFEST.sha256 =="
+verify_backups "${backup_dir}"
 
-echo "== restored, verifying =="
-status=0
-for archive in gs imp; do
-  live="$(shasum -a 256 "${game_dir}/${archive}.mpq" | cut -d' ' -f1)"
-  original="$(shasum -a 256 "${backup_dir}/${archive}.mpq.orig" | cut -d' ' -f1)"
-  if [[ "${live}" == "${original}" ]]; then
-    echo "  ${archive}.mpq ${live}  OK"
-  else
-    echo "  ${archive}.mpq ${live}  MISMATCH (expected ${original})" >&2
-    status=1
-  fi
-done
-exit "${status}"
+echo "== restoring =="
+restore_archives "${backup_dir}" "${game_dir}"

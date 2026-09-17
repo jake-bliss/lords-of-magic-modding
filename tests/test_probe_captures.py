@@ -85,6 +85,55 @@ class ProbeCapturesTest(unittest.TestCase):
                 probe_captures.read_capture(small), probe_captures.read_capture(large)
             )
 
+    def test_top_down_rows_are_not_mirrored(self) -> None:
+        """A negative height means top-down storage; mirroring it would invert every y report."""
+        pixels = [row[:] for row in self.blank]
+        pixels[0][0] = (255, 0, 0)
+        bottom_up = self.directory / "bottom_up.bmp"
+        top_down = self.directory / "top_down.bmp"
+        write_capture(bottom_up, self.width, self.height, pixels)
+        write_capture(top_down, self.width, self.height, pixels)
+        raw = bytearray(top_down.read_bytes())
+        struct.pack_into("<i", raw, 22, -self.height)  # same rows, declared top-down
+        # Re-lay the payload in top-down order so the file is internally consistent.
+        stride = (self.width * 3 + 3) // 4 * 4
+        body = bytearray()
+        for y in range(self.height):
+            row = bytearray()
+            for x in range(self.width):
+                row += bytes(pixels[y][x])
+            row += b"\x00" * (stride - len(row))
+            body += row
+        raw[probe_captures.PIXEL_OFFSET:] = body
+        top_down.write_bytes(bytes(raw))
+
+        self.assertEqual(
+            probe_captures.read_capture(top_down).pixels,
+            probe_captures.read_capture(bottom_up).pixels,
+        )
+
+    def test_truncated_pixel_data_is_rejected(self) -> None:
+        path = self.directory / "short.bmp"
+        write_capture(path, self.width, self.height, self.blank)
+        path.write_bytes(path.read_bytes()[:-20])
+        with self.assertRaises(ValueError):
+            probe_captures.read_capture(path)
+
+    def test_non_positive_dimensions_are_rejected(self) -> None:
+        path = self.directory / "wide.bmp"
+        write_capture(path, self.width, self.height, self.blank)
+        raw = bytearray(path.read_bytes())
+        struct.pack_into("<i", raw, 18, -self.width)
+        path.write_bytes(bytes(raw))
+        with self.assertRaises(ValueError):
+            probe_captures.read_capture(path)
+
+    def test_header_shorter_than_the_pixel_offset_is_rejected(self) -> None:
+        path = self.directory / "stub.bmp"
+        path.write_bytes(b"BM" + b"\x00" * 10)
+        with self.assertRaises(ValueError):
+            probe_captures.read_capture(path)
+
     def test_non_bmp_is_rejected(self) -> None:
         path = self.directory / "not.bmp"
         path.write_bytes(b"nope")

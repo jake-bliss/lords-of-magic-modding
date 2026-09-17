@@ -20,35 +20,77 @@ class EngineProbeTest(unittest.TestCase):
         self.body = engine_probe.probe_body()
         self.tokens = list(gs_syntax.tokens(self.body))
 
-    def test_braces_and_brackets_balance(self) -> None:
+    def _depth_is_balanced(self, opener: str, closer: str, what: str) -> None:
+        """Counting alone would accept `][`, so track the depth and never let it go negative."""
         depth = 0
-        lowest = 0
         for token in self.tokens:
-            if token == "{":
+            if token == opener:
                 depth += 1
-            elif token == "}":
+            elif token == closer:
                 depth -= 1
-                lowest = min(lowest, depth)
-        self.assertEqual(depth, 0, "procedure braces do not balance")
-        self.assertEqual(lowest, 0, "a closing brace precedes its opening brace")
-        self.assertEqual(
-            self.tokens.count("["), self.tokens.count("]"), "array brackets do not balance"
-        )
+                self.assertGreaterEqual(depth, 0, f"{what}: {closer} precedes its {opener}")
+        self.assertEqual(depth, 0, f"{what} do not balance")
+
+    def test_braces_balance(self) -> None:
+        self._depth_is_balanced("{", "}", "procedure braces")
+
+    def test_brackets_balance(self) -> None:
+        self._depth_is_balanced("[", "]", "array brackets")
 
     def test_fires_once_per_launch(self) -> None:
-        # The key auto-repeats while held; the 2026-09-16 run fired nine times.
-        self.assertIn("userdict /zdone known not", self.body)
-        self.assertIn("/zdone true def", self.body)
+        # The key auto-repeats while held; the 2026-09-16 run fired nine times. The guard is only
+        # worth anything if the whole body sits inside it, so check the ordering, not the presence.
+        guard = self.body.index("userdict /zdone known not")
+        flag = self.body.index("/zdone true def")
+        first_effect = min(
+            self.body.index("screencapture"),
+            self.body.index("addterrainsprite"),
+        )
+        self.assertLess(guard, flag)
+        self.assertLess(flag, first_effect, "the body can act before the fire-once flag is set")
 
-    def test_cleanup_never_matches_on_location(self) -> None:
+    def test_cleanup_never_matches_on_location_alone(self) -> None:
         # `terrainspriteat` returned a village the probe had not placed, and it was destroyed.
         self.assertNotIn("terrainspriteat", self.body)
-        self.assertIn("getterrainspritetype", self.body)
 
-    def test_ladder_covers_every_rung(self) -> None:
-        for label, _expression in engine_probe.SPRITE_TYPES:
-            self.assertIn(label, self.body)
+    def test_cleanup_never_destroys_a_shipped_type_by_type_alone(self) -> None:
+        """The regression that mattered: rung 0 reuses the shipped orchard type.
+
+        A type-only sweep over it would destroy every orchard the map generator placed, which is
+        the same defect as the village, only wider. Every destroy must be guarded by a cell check
+        unless its type id was minted by this keypress.
+        """
+        for index, (_label, expression) in enumerate(engine_probe.SPRITE_TYPES):
+            if engine_probe.is_freshly_registered(index):
+                continue
+            self.assertNotIn("addterrainspritetype", expression)
+            bare_sweep = (
+                f"{{dup getterrainspritetype zt{index} eq"
+                "{destroyterrainsprite}{pop}ifelse}enumterrainsprites"
+            )
+            self.assertNotIn(
+                bare_sweep,
+                self.body,
+                f"rung {index} reuses a shipped type and must be cleaned up by cell as well",
+            )
+            self.assertIn(f"getterrainspritelocation zy{index} eq", self.body)
+
+    def test_every_rung_is_registered_placed_and_cleaned_up(self) -> None:
+        for index, (label, expression) in enumerate(engine_probe.SPRITE_TYPES):
+            self.assertIn(label, self.body, f"rung {index} is not logged")
+            self.assertIn(f"{expression} /zt{index} exch def", self.body)
+            self.assertIn(f"zx{index} zy{index} zt{index} addterrainsprite", self.body)
+            self.assertIn(f"getterrainspritetype zt{index} eq", self.body)
         self.assertEqual(len(engine_probe.SPRITE_TYPES), len(engine_probe.SEED_OFFSETS))
+
+    def test_exactly_one_rung_reuses_a_shipped_type(self) -> None:
+        # The control that proves the placement and capture path works at all.
+        reused = [
+            index
+            for index in range(len(engine_probe.SPRITE_TYPES))
+            if not engine_probe.is_freshly_registered(index)
+        ]
+        self.assertEqual(reused, [0])
 
     def test_seeds_are_distinct(self) -> None:
         self.assertEqual(
