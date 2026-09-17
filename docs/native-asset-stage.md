@@ -152,6 +152,15 @@ header's declared sequence name resolves two of the four, and both then validate
 | `imp\fleemark.h` | declares `UNMRKA`; validates against `imp\unmrka.imp` |
 | `units\imp\dewmhb.imp` | named by `units\imp\chwmcbm.h`, which declares `DEWMHB` |
 
+Both fallback pairs reuse a partner that already has a stem pair of its own: `imp\unmrka.imp` also
+pairs with `imp\unmrka.h`, and `units\imp\chwmcbm.h` also pairs with `units\imp\chwmcbm.imp`. The
+fallback did not find these two an unclaimed partner, because there is none — it identified which
+*existing* member each one describes. That is why `matched_pairs` counts 1,800 while the archive
+holds 3,600 members: every member is still accounted for exactly once as a stem pair, a fallback
+pair, or an orphan, and two members serve in two pairs each. The near-duplicate art makes this
+consistent rather than contradictory — `chwmcbm.imp` and `dewmhb.imp` measure identically, as do
+`unmrka.imp` and `fleemarka.imp` — so one header describes both members of each pair truthfully.
+
 The other two cannot pair and carry catalog notes in `IMP_ORPHAN_NOTES` instead. `aura\lsp01ea.h`
 declares `SPL01EA`, which has no `.imp` in the archive, and is byte-identical to `aura\fsp03aa.h`
 whose `.imp` matches its statistics exactly — a stray header copy. `imp\fleemarka.imp` measures
