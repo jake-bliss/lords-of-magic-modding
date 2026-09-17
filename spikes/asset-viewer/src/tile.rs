@@ -718,40 +718,342 @@ impl MapClass {
     }
 }
 
-/// The `.til` member the shipped engine reads this class of map through.
+/// The `.til` member the engine reads a **world** map through.
 ///
-/// **Observed in a local binary, 2026-09-17, and this closes "which tileset each `.smp` uses".**
-/// The engine does not derive a combat map's tileset from the file, from its name, or from its
-/// terrain: it sets one globally at startup and never changes it. `START.GS` lines 74-75 of the
-/// GS5R3 `gs.mpq` read
+/// **Observed in a local binary, 2026-09-17.** `START.GS` line 74 sets `maptileset` to
+/// `til/tilesb01.til`, and every other `maptileset` call in `gs.mpq` either restores that same
+/// value on the way out to the menu or passes whatever the terrain editor's `tileselector`
+/// currently holds. So a `.scn`, `.lgd` or `.map` is read through `tilesb01.til`.
+///
+/// **There is deliberately no combat equivalent of this constant.** See
+/// [`COMBAT_TILESET_BINDINGS`]: a combat map's tileset is a property of the *encounter* that loads
+/// it, declared per encounter in the gamescript, and it cannot be derived from the map at all.
+pub const WORLD_TILESET_MEMBER: &str = "tilesb01.til";
+
+/// The `.til` the engine falls back to for combat it generates rather than loads.
+///
+/// `START.GS` line 75 is `"til/tilesa01.til"combattileset`, and `combattileset` appears **exactly
+/// once in all 1,700 `gs.mpq` members** -- verified by extracting every one of them. That much is
+/// measured and is not in doubt.
+///
+/// **What it is not: the tileset of the 337 shipped `.smp` files.** A corpus comment in
+/// `wilderness_land.gs` and `wilderness_sea.gs` states the rule outright -- *"WHEN 'mapfile' AND
+/// 'tileset' ARE UNDEFINED, YOU GET AN OUTSIDE COMBAT ENCOUNTER"* -- so `combattileset` is the
+/// default for an encounter that names **no** map, which is the engine generating open-field
+/// combat. An encounter that names a `.smp` names a tileset beside it. This constant is recorded
+/// because it is real; it must not be used to resolve a `.smp`.
+pub const GENERATED_COMBAT_TILESET_MEMBER: &str = "tilesa01.til";
+
+/// Every `(combat map, tileset)` binding the shipped gamescript declares.
+///
+/// **Observed in a local binary, 2026-09-17, and this is the corrected answer to "which tileset
+/// does a `.smp` use".** The engine does not derive it and neither can this code: each *encounter*
+/// script defines `mapfile` and `tileset` as adjacent keys of its own dictionary, so the tileset
+/// belongs to the encounter, not to the map file. Two encounters may load the same `.smp` through
+/// different tilesets, and 26 of these entries do exactly that.
 ///
 /// ```text
-/// "til/tilesb01.til"dup /currenttileset exch def maptileset
-/// "til/tilesa01.til"combattileset
+/// /mapfile"map/aicave.smp"def   /tileset"til/aibldg01.til"def
+/// /mapfile"map/fienc1.smp"def   /tileset"til/cavelava.til"def
 /// ```
 ///
-/// and `combattileset` appears **exactly once in all 1,696 gamescript members** -- it is never
-/// re-set, never parameterised, and takes no map argument. So every one of the 337 `.smp` files is
-/// read through `tilesa01.til` and every `.scn`, `.lgd` and `.map` through `tilesb01.til`.
+/// Extracted from all 1,700 `gs.mpq` members (1,699 extractable, one being the archive's own
+/// `(listfile)`), by taking every `/mapfile` definition and the `/tileset` definition nearest it
+/// in the same member. A definition may be a string literal or a **procedure**, and procedure
+/// bodies are included: `aimult.gs` writes `/tileset{dungeon_id getdungeonstrength 3 le{...}...}`
+/// whose three branches all yield `aibldg01.til`, and `genchaos.gs` writes a `terrainsprites`-keyed
+/// selector that yields `chbldg01.til` or `cavelava.til`. Both forms are folded in here, which is
+/// why a map may carry several candidates.
 ///
-/// The other 24 `.til` members are the **terrain editor's** interactive tile palette: `terredit`'s
-/// `tileselector` feeds whatever the user picks to `maptileset`, and nothing in the corpus feeds
-/// any of them to `combattileset`. A per-faith or per-location rule read off the `.smp` filenames
-/// -- `AIBLDG01.SMP` against `aibldg01.til` -- fits 236 of the 263 faith-prefixed maps and is
-/// nonetheless **wrong**; see `docs/map-format.md`.
-pub const fn engine_tileset_member(class: MapClass) -> &'static str {
-    match class {
-        MapClass::World => "tilesb01.til",
-        MapClass::Combat => "tilesa01.til",
+/// Values are lowercase basenames and lookups are **case-insensitive**, because the scripts are
+/// not consistent -- `/tileset"til/LIBLDG01.til"` occurs in uppercase, and the installed `map/`
+/// directory is split 172 `.smp` to 165 `.SMP`.
+///
+/// **Coverage is partial and is not padded.** 169 of the 337 installed `.smp` files appear here;
+/// 168 do not, and for those this code answers *unresolved* rather than guessing. Best-fit scoring
+/// cannot rescue them: 110 of the 168 have **sixteen** tilesets tied within one percentage point of
+/// the best, because the shipped tilesets collapse to only 16 distinct rule sets. See
+/// `docs/map-format.md`.
+///
+/// Three entries name maps the corpus does not install (`dwl.smp`, `dwlcry.smp`,
+/// `tutorialmult.smp`) and one names a tileset `pic.mpq` does not ship (`cavetile.til`). They are
+/// kept because the table records what the scripts say, not what resolves.
+#[rustfmt::skip]
+pub static COMBAT_TILESET_BINDINGS: &[(&str, &[&str])] = &[
+    ("91gauntlet.smp", &["ruins01.til"]),
+    ("aibldg01.smp", &["aibldg01.til"]),
+    ("aicave.smp", &["aibldg01.til"]),
+    ("aicavmule.smp", &["aibldg01.til"]),
+    ("aicavmulh.smp", &["aibldg01.til"]),
+    ("aicavmulm.smp", &["aibldg01.til"]),
+    ("aidung.smp", &["aibldg01.til"]),
+    ("aigtem1.smp", &["aibldg01.til"]),
+    ("aimina.smp", &["aibldg01.til"]),
+    ("aiminc.smp", &["cavecrys.til"]),
+    ("aiming.smp", &["aibldg01.til"]),
+    ("aistat.smp", &["aibldg01.til"]),
+    ("aitowe.smp", &["aibldg01.til"]),
+    ("aivilg1.smp", &["aibldg01.til"]),
+    ("animalcave.smp", &["cavewatr.til"]),
+    ("barrow3.smp", &["debldg01.til"]),
+    ("barrowl1.smp", &["debldg01.til"]),
+    ("barrowl2.smp", &["debldg01.til"]),
+    ("bridge.smp", &["jeff01.til"]),
+    ("castle.smp", &["libldg01.til", "ruins01.til"]),
+    ("cavea1.smp", &["cavewatr.til"]),
+    ("caveb1.smp", &["cavewatr.til"]),
+    ("caveb2.smp", &["cavewatr.til"]),
+    ("cavlav03.smp", &["cavelava.til"]),
+    ("chapelin.smp", &["jeff01.til", "libldg01.til"]),
+    ("chapelout.smp", &["jeff01.til"]),
+    ("chcave.smp", &["cavecrys.til", "cavelava.til", "cavewatr.til", "chbldg01.til", "ruins01.til"]),
+    ("chcavmule.smp", &["cavewatr.til"]),
+    ("chcavmulh.smp", &["cavewatr.til"]),
+    ("chcavmulm.smp", &["cavewatr.til"]),
+    ("chdung.smp", &["chbldg01.til", "ruins01.til"]),
+    ("chgtem1.smp", &["chbldg01.til"]),
+    ("chmina.smp", &["chbldg01.til"]),
+    ("chminc.smp", &["cavecrys.til"]),
+    ("chming.smp", &["cavelava.til"]),
+    ("chstat.smp", &["chbldg01.til", "ruins01.til"]),
+    ("chtgil3.smp", &["ruins01.til"]),
+    ("chtowe.smp", &["cavelava.til", "chbldg01.til", "ruins01.til"]),
+    ("debrks0.smp", &["cavewatr.til"]),
+    ("debrks1.smp", &["ruins01.til"]),
+    ("debrks2.smp", &["ruins01.til"]),
+    ("debrks3.smp", &["ruins01.til"]),
+    ("decave.smp", &["cavelava.til"]),
+    ("decavmule.smp", &["cavewatr.til"]),
+    ("decavmulh.smp", &["cavewatr.til"]),
+    ("decavmulm.smp", &["cavewatr.til"]),
+    ("dedung.smp", &["cavelava.til", "debldg01.til"]),
+    ("deepcave.smp", &["cavewatr.til"]),
+    ("degtem1.smp", &["debldg01.til"]),
+    ("demina.smp", &["debldg01.til"]),
+    ("deminc.smp", &["cavecrys.til"]),
+    ("deming.smp", &["cavelava.til"]),
+    ("destat.smp", &["debldg01.til"]),
+    ("detgil1.smp", &["ruins01.til"]),
+    ("detgil3.smp", &["ruins01.til"]),
+    ("detowe.smp", &["debldg01.til", "ruins01.til"]),
+    ("devilg0.smp", &["cavelava.til"]),
+    ("dragonduel.smp", &["jeff01.til"]),
+    ("dwl.smp", &["cavetile.til"]),
+    ("dwlcry.smp", &["cavecrys.til"]),
+    ("eacave.smp", &["libldg01.til", "ruins01.til"]),
+    ("eacavmule.smp", &["debldg01.til", "libldg01.til"]),
+    ("eacavmulh.smp", &["debldg01.til", "libldg01.til"]),
+    ("eacavmulm.smp", &["debldg01.til", "libldg01.til"]),
+    ("eadung.smp", &["cavelava.til", "cavewatr.til", "chbldg01.til", "libldg01.til"]),
+    ("eagtem1.smp", &["eabldg01.til"]),
+    ("eamina.smp", &["libldg01.til"]),
+    ("eaminc.smp", &["cavecrys.til"]),
+    ("eaming.smp", &["cavelava.til"]),
+    ("eamul2.smp", &["debldg01.til"]),
+    ("eastat.smp", &["eabldg01.til"]),
+    ("eatgil3.smp", &["eabldg01.til"]),
+    ("eatowe.smp", &["libldg01.til", "ruins01.til"]),
+    ("elvenfort.smp", &["jeff01.til"]),
+    ("ficave.smp", &["cavelava.til", "cavewatr.til", "fibldg01.til"]),
+    ("ficavmule.smp", &["cavewatr.til"]),
+    ("ficavmulh.smp", &["cavewatr.til"]),
+    ("ficavmulm.smp", &["cavewatr.til"]),
+    ("fidung.smp", &["fibldg01.til"]),
+    ("fienc1.smp", &["cavelava.til"]),
+    ("fienc2.smp", &["cavelava.til"]),
+    ("fienc4.smp", &["cavecrys.til"]),
+    ("fienc4a.smp", &["cavewatr.til"]),
+    ("fienc4b.smp", &["cavewatr.til"]),
+    ("fienc4c.smp", &["cavecrys.til"]),
+    ("fienc5.smp", &["libldg01.til"]),
+    ("fienc6.smp", &["ruins01.til"]),
+    ("fienc8.smp", &["cavecrys.til"]),
+    ("figtem1.smp", &["fibldg01.til"]),
+    ("fimina.smp", &["fibldg01.til"]),
+    ("fiminc.smp", &["cavecrys.til"]),
+    ("fiming.smp", &["cavelava.til"]),
+    ("fistat.smp", &["fibldg01.til"]),
+    ("fitowe.smp", &["cavelava.til", "chbldg01.til", "fibldg01.til", "ruins01.til"]),
+    ("fivilg0.smp", &["cavelava.til"]),
+    ("gatehouse.smp", &["jeff01.til"]),
+    ("gauntlet1.smp", &["jeff01.til"]),
+    ("gauntlet2.smp", &["jeff01.til"]),
+    ("greathall.smp", &["chbldg01.til"]),
+    ("guindoel1.smp", &["ruins01.til"]),
+    ("hamlet.smp", &["jeff01.til"]),
+    ("hamlet2.smp", &["jeff01.til"]),
+    ("hamlet3.smp", &["jeff01.til"]),
+    ("hamlet3a.smp", &["jeff01.til"]),
+    ("hermodl1.smp", &["debldg01.til"]),
+    ("hermodl2.smp", &["debldg01.til"]),
+    ("hienc7.smp", &["chbldg01.til"]),
+    ("home.smp", &["libldg01.til"]),
+    ("lances.smp", &["ruins01.til"]),
+    ("laroche1.smp", &["jeff01.til"]),
+    ("librks0.smp", &["libldg01.til"]),
+    ("licave.smp", &["libldg01.til", "wabldg01.til"]),
+    ("licavmule.smp", &["jeff01.til"]),
+    ("licavmulh.smp", &["jeff01.til"]),
+    ("licavmulm.smp", &["jeff01.til"]),
+    ("licha.smp", &["ruins01.til"]),
+    ("lichb.smp", &["ruins01.til"]),
+    ("lidung.smp", &["libldg01.til"]),
+    ("ligtem1.smp", &["libldg01.til"]),
+    ("limina.smp", &["libldg01.til"]),
+    ("liminc.smp", &["cavecrys.til"]),
+    ("liming.smp", &["cavewatr.til"]),
+    ("limul2.smp", &["debldg01.til", "jeff01.til"]),
+    ("listat.smp", &["libldg01.til"]),
+    ("litowe.smp", &["libldg01.til"]),
+    ("livilg0.smp", &["libldg01.til"]),
+    ("livilg1.smp", &["libldg01.til"]),
+    ("marsh.smp", &["tilesa01.til"]),
+    ("mercguild.smp", &["jeff01.til"]),
+    ("niceinside.smp", &["libldg01.til"]),
+    ("orbrks2.smp", &["libldg01.til"]),
+    ("orbrks3.smp", &["libldg01.til", "orbldg01.til"]),
+    ("orcave.smp", &["orbldg01.til"]),
+    ("orcavmule.smp", &["jeff01.til"]),
+    ("orcavmulh.smp", &["jeff01.til"]),
+    ("orcavmulm.smp", &["jeff01.til"]),
+    ("orcbarracks.smp", &["chbldg01.til"]),
+    ("orccity3.smp", &["jeff01.til"]),
+    ("ordung.smp", &["orbldg01.til", "ruins01.til"]),
+    ("orgtem1.smp", &["libldg01.til", "orbldg01.til"]),
+    ("ormina.smp", &["orbldg01.til"]),
+    ("orminc.smp", &["cavecrys.til"]),
+    ("orming.smp", &["cavewatr.til"]),
+    ("orstat.smp", &["orbldg01.til"]),
+    ("ortowe.smp", &["libldg01.til", "orbldg01.til"]),
+    ("pathwoods.smp", &["tilesa01.til"]),
+    ("recwiztow.smp", &["chbldg01.til", "debldg01.til", "orbldg01.til", "ruins01.til"]),
+    ("redcity1.smp", &["libldg01.til"]),
+    ("ruinedfort.smp", &["jeff01.til"]),
+    ("ruinedhall2.smp", &["ruins01.til"]),
+    ("ship.smp", &["jeff01.til"]),
+    ("swordnstn.smp", &["libldg01.til"]),
+    ("tutorialmult.smp", &["jeff01.til"]),
+    ("vortigrn.smp", &["libldg01.til", "ruins01.til"]),
+    ("vortreal.smp", &["libldg01.til"]),
+    ("wacave.smp", &["cavewatr.til", "ruins01.til"]),
+    ("wacavmule.smp", &["jeff01.til"]),
+    ("wacavmulh.smp", &["jeff01.til"]),
+    ("wacavmulm.smp", &["jeff01.til"]),
+    ("wadung.smp", &["wabldg01.til"]),
+    ("wagtem1.smp", &["wabldg01.til"]),
+    ("wamina.smp", &["wabldg01.til"]),
+    ("waminc.smp", &["cavecrys.til"]),
+    ("waming.smp", &["cavewatr.til"]),
+    ("wamul2.smp", &["wabldg01.til"]),
+    ("wastat.smp", &["wabldg01.til"]),
+    ("watowe.smp", &["wabldg01.til"]),
+    ("wavilg1.smp", &["debldg01.til", "wabldg01.til"]),
+    ("web1.smp", &["debldg01.til"]),
+    ("web2.smp", &["libldg01.til"]),
+    ("web3.smp", &["debldg01.til"]),
+    ("wodensford.smp", &["tilesa01.til"]),
+];
+
+/// What the gamescript says a map should be read through.
+///
+/// Every resolving variant carries a **slice**, because ambiguity is a real outcome here rather
+/// than an error case: a combat map may legitimately have several tilesets, so "the answer" is a
+/// set and the single-answer case is just a set of one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TileSetResolution {
+    /// A world map: one answer, from `maptileset`.
+    World(&'static [&'static str]),
+    /// A combat map the scripts bind to exactly one tileset.
+    Combat(&'static [&'static str]),
+    /// A combat map different encounters load through different tilesets.
+    ///
+    /// **This is a finding, not a gap.** `chcave.smp` is drawn through `cavelava.til`,
+    /// `chbldg01.til`, `cavewatr.til`, `ruins01.til` and `cavecrys.til` by five different
+    /// encounters. There is no single right answer, and a writer must be told so rather than
+    /// handed the first one.
+    CombatAmbiguous(&'static [&'static str]),
+    /// A combat map no gamescript binding covers. **Unresolved, and not defaulted.**
+    CombatUnresolved,
+}
+
+/// The one-element candidate list every world map resolves to.
+static WORLD_TILESETS: &[&str] = &[WORLD_TILESET_MEMBER];
+
+impl TileSetResolution {
+    /// The single tileset this resolves to, or `None` when it does not resolve to exactly one.
+    pub const fn unique(&self) -> Option<&'static str> {
+        match self {
+            Self::World(members) | Self::Combat(members) => Some(members[0]),
+            Self::CombatAmbiguous(_) | Self::CombatUnresolved => None,
+        }
+    }
+
+    /// Every tileset this map may legitimately be read through, empty when unresolved.
+    pub const fn candidates(&self) -> &'static [&'static str] {
+        match self {
+            Self::World(members) | Self::Combat(members) | Self::CombatAmbiguous(members) => {
+                members
+            }
+            Self::CombatUnresolved => &[],
+        }
+    }
+
+    /// Whether `member` is a tileset this map may be read through.
+    pub fn accepts(&self, member: &str) -> bool {
+        self.candidates()
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(member))
+    }
+
+    /// A one-line description for the CLI, naming every candidate.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::World(members) | Self::Combat(members) => members[0].to_owned(),
+            Self::CombatAmbiguous(members) => {
+                format!("ambiguous: {}", members.join(" or "))
+            }
+            Self::CombatUnresolved => "unresolved".to_owned(),
+        }
+    }
+}
+
+/// The tilesets the gamescript binds `map_file_name` to, case-insensitively.
+///
+/// `None` when no binding exists. The table is sorted by map name, so this is a binary search.
+pub fn combat_tileset_bindings(map_file_name: &str) -> Option<&'static [&'static str]> {
+    COMBAT_TILESET_BINDINGS
+        .binary_search_by(|(name, _)| {
+            // The table is lowercase and sorted by it, so compare on a lowercase view of the
+            // needle rather than case-insensitively against an arbitrary-case key.
+            name.cmp(&map_file_name.to_ascii_lowercase().as_str())
+        })
+        .ok()
+        .map(|index| COMBAT_TILESET_BINDINGS[index].1)
+}
+
+/// What the engine reads the map at `path` through.
+///
+/// `None` only when the extension is not one the corpus classifies. A `.smp` always resolves to
+/// *something*, but that something may be [`TileSetResolution::CombatUnresolved`].
+pub fn resolve_tileset(path: &std::path::Path) -> Option<TileSetResolution> {
+    let class = MapClass::from_path(path)?;
+    if class == MapClass::World {
+        return Some(TileSetResolution::World(WORLD_TILESETS));
+    }
+    let name = path.file_name()?.to_str()?;
+    match combat_tileset_bindings(name) {
+        Some(bound) if bound.len() == 1 => Some(TileSetResolution::Combat(bound)),
+        Some(several) => Some(TileSetResolution::CombatAmbiguous(several)),
+        None => Some(TileSetResolution::CombatUnresolved),
     }
 }
 
 /// The 26 `.til` members shipped in GS5R3 `pic.mpq`, lowercase, sorted.
 ///
 /// Only the **names** are recorded; no tileset is committed. This exists so a supplied tileset can
-/// be told apart from a modded one: a caller who passes a shipped tileset the engine does not use
-/// for that map class has made a mistake worth refusing, while a caller who passes `mymod.til`
-/// has not, and must keep working.
+/// be told apart from a modded one: a caller who passes a shipped tileset the scripts demonstrably
+/// do not use for that map has made a mistake worth refusing, while a caller who passes
+/// `mymod.til` has not, and must keep working.
 pub const SHIPPED_TILESET_MEMBERS: [&str; 26] = [
     "aibldg01.til",
     "cavecry2.til",
@@ -788,40 +1090,38 @@ pub fn is_shipped_tileset(file_name: &str) -> bool {
         .any(|member| member.eq_ignore_ascii_case(file_name))
 }
 
-/// A supplied tileset that the engine demonstrably does not use for this map class.
+/// A supplied tileset that the gamescript demonstrably does not use for this map.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TileSetMismatch {
     pub class: MapClass,
     pub supplied: String,
-    pub expected: &'static str,
+    /// Every tileset the scripts do bind this map to. Never empty: a mismatch is only raised when
+    /// there is something concrete to name instead.
+    pub expected: &'static [&'static str],
 }
 
 impl fmt::Display for TileSetMismatch {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "{} is a shipped tileset, but the engine reads a {} through {}: START.GS sets \
-             {} and it is never re-set. Pass {} instead, or a tileset of your own -- a \
-             modded name is accepted as-is",
+            "{} is a shipped tileset, but the gamescript reads this {} through {}. Pass one of \
+             those, or a tileset of your own -- a modded name is accepted as-is",
             self.supplied,
             self.class.description(),
-            self.expected,
-            match self.class {
-                MapClass::Combat => "combattileset",
-                MapClass::World => "maptileset",
-            },
-            self.expected,
+            self.expected.join(" or "),
         )
     }
 }
 
-/// Whether a supplied tileset contradicts the engine's own assignment for a map.
+/// Whether a supplied tileset contradicts what the gamescript binds this map to.
 ///
-/// `None` means proceed, and it means that in three distinct cases: the map's extension is not one
-/// the corpus classifies, the tileset is the engine's own for that class, or the tileset is not a
-/// shipped name at all and so is presumed modded. Only a *shipped* tileset paired with the *wrong*
-/// class is refused, because that is the only case where the engine's behaviour is known and the
-/// caller is contradicting it.
+/// `None` means proceed, and it means that in four distinct cases: the map's extension is not one
+/// the corpus classifies; the tileset is one the scripts do bind this map to; the tileset is not a
+/// shipped name at all and so is presumed modded; or **the map has no binding**, in which case
+/// nothing is known and nothing may be refused on. That last case is 168 of the 337 installed
+/// combat maps, and silence there is deliberate -- an earlier version of this function refused the
+/// gamescript's own answer and steered callers towards `tilesa01.til`, which writes slots a
+/// 64-slot-atlas battle map cannot show.
 pub fn tileset_mismatch(
     map_path: &std::path::Path,
     tile_set_path: &std::path::Path,
@@ -831,8 +1131,9 @@ pub fn tileset_mismatch(
     if !is_shipped_tileset(supplied) {
         return None;
     }
-    let expected = engine_tileset_member(class);
-    if supplied.eq_ignore_ascii_case(expected) {
+    let resolution = resolve_tileset(map_path)?;
+    let expected = resolution.candidates();
+    if expected.is_empty() || resolution.accepts(supplied) {
         return None;
     }
     Some(TileSetMismatch {
@@ -1271,15 +1572,13 @@ TILE= 2, 2, 2, 2, 2, 2, 2
         );
     }
 
-    /// The engine's own assignment, per class, including the **case split** the installed corpus
-    /// actually has.
+    /// Map classification, including the **case split** the installed corpus actually has.
     ///
     /// The `map/` directory ships 172 `.smp` and 165 `.SMP`. A case-sensitive classifier would
-    /// call 165 combat maps unknown and hand them the world tileset, so an uppercase input is the
-    /// input that makes this check fail, and it is here.
+    /// call 165 combat maps unknown, so an uppercase input is the input that makes this fail.
     #[test]
-    fn the_engine_reads_combat_maps_through_tilesa01_and_world_maps_through_tilesb01() {
-        use super::{MapClass, engine_tileset_member};
+    fn map_class_follows_the_extension_case_insensitively() {
+        use super::MapClass;
         use std::path::Path;
 
         assert_eq!(MapClass::from_extension("smp"), Some(MapClass::Combat));
@@ -1300,65 +1599,229 @@ TILE= 2, 2, 2, 2, 2, 2, 2
             Some(MapClass::Combat)
         );
         assert_eq!(
-            MapClass::from_path(Path::new("map/aicave.smp")),
-            Some(MapClass::Combat)
-        );
-        assert_eq!(
             MapClass::from_path(Path::new("map/URAK.scn")),
             Some(MapClass::World)
         );
         assert_eq!(MapClass::from_path(Path::new("URAK")), None);
-
-        assert_eq!(engine_tileset_member(MapClass::Combat), "tilesa01.til");
-        assert_eq!(engine_tileset_member(MapClass::World), "tilesb01.til");
     }
 
-    /// A shipped tileset paired with the wrong map class is refused; a modded one is not.
+    /// The binding table's own invariants, which are what make the binary search correct and the
+    /// data reviewable.
     ///
-    /// The three inputs that must make this fail are all here: a combat map handed the world
-    /// tileset, a world map handed the combat tileset, and `aibldg01.til` handed to
-    /// `AIBLDG01.SMP` -- the name-match that reads as obviously right and is not the engine's.
+    /// **This is the test that a regenerated table has to pass.** The table is extracted from
+    /// `gs.mpq` by a script, so the thing that can go wrong is not a typo in one entry but a
+    /// malformed regeneration: unsorted keys, an uppercase key the case-insensitive lookup would
+    /// then miss, a duplicate map, an empty candidate list, or a candidate list that is itself
+    /// unsorted or duplicated.
     #[test]
-    fn a_shipped_tileset_for_the_wrong_map_class_is_a_mismatch_and_a_modded_one_is_not() {
-        use super::{MapClass, tileset_mismatch};
+    fn the_binding_table_is_sorted_lowercase_and_free_of_empty_or_duplicate_entries() {
+        use super::COMBAT_TILESET_BINDINGS;
+
+        assert!(
+            !COMBAT_TILESET_BINDINGS.is_empty(),
+            "an empty binding table would make every map resolve as unresolved, which is exactly \
+             the silent-pass failure this table exists to prevent"
+        );
+        let mut previous: Option<&str> = None;
+        for (map, tilesets) in COMBAT_TILESET_BINDINGS {
+            assert_eq!(
+                *map,
+                map.to_ascii_lowercase(),
+                "table keys must be lowercase: {map}"
+            );
+            assert!(map.ends_with(".smp"), "a binding key must be a .smp: {map}");
+            if let Some(previous) = previous {
+                assert!(
+                    previous < *map,
+                    "table must be strictly sorted for the binary search: {previous} then {map}"
+                );
+            }
+            previous = Some(map);
+
+            assert!(
+                !tilesets.is_empty(),
+                "{map} has an empty candidate list; a map with no candidates must be absent from \
+                 the table, not present with nothing in it"
+            );
+            let mut sorted = tilesets.to_vec();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(
+                sorted.as_slice(),
+                *tilesets,
+                "{map}'s candidates must be sorted and unique"
+            );
+            for tileset in *tilesets {
+                assert_eq!(
+                    *tileset,
+                    tileset.to_ascii_lowercase(),
+                    "candidate must be lowercase: {tileset}"
+                );
+                assert!(
+                    tileset.ends_with(".til"),
+                    "candidate must be a .til: {tileset}"
+                );
+            }
+        }
+    }
+
+    /// Resolution is by **map name**, from the gamescript table -- never by map class.
+    ///
+    /// The four outcomes are all asserted on real table entries, and the pairings chosen are the
+    /// ones that a class rule or a faith-name rule gets *wrong*: `aicave.smp` pairs with
+    /// `aibldg01.til` and not `tilesa01.til`; `licave.smp` pairs with `libldg01.til` **and**
+    /// `wabldg01.til`, neither of which a "li" prefix predicts on its own; `pathwoods.smp` really
+    /// does pair with `tilesa01.til`, so the table is not merely "never tilesa01".
+    #[test]
+    fn combat_tilesets_resolve_by_map_name_from_the_gamescript_table() {
+        use super::{TileSetResolution, WORLD_TILESET_MEMBER, resolve_tileset};
         use std::path::Path;
 
-        let mismatch = tileset_mismatch(
-            Path::new("map/aicave.smp"),
-            Path::new("til/tilesb01.til"),
-        )
-        .expect("the world tileset is not what the engine reads a combat map through");
-        assert_eq!(mismatch.class, MapClass::Combat);
-        assert_eq!(mismatch.supplied, "tilesb01.til");
-        assert_eq!(mismatch.expected, "tilesa01.til");
-        assert!(mismatch.to_string().contains("combattileset"));
-
-        // The name-match trap: AIBLDG01.SMP alongside aibldg01.til.
-        let named = tileset_mismatch(
-            Path::new("map/AIBLDG01.SMP"),
-            Path::new("til/aibldg01.til"),
-        )
-        .expect("a same-named building tileset is still not the combat tileset");
-        assert_eq!(named.expected, "tilesa01.til");
-
-        // A world map handed the combat tileset.
+        // A single-valued binding, and one a class rule would get wrong.
+        let resolution = resolve_tileset(Path::new("map/aicave.smp")).unwrap();
+        assert_eq!(resolution.unique(), Some("aibldg01.til"));
+        assert!(resolution.accepts("aibldg01.til"));
+        assert!(!resolution.accepts("tilesa01.til"));
+        // Case-insensitive on the map name, because `map/` is split .smp/.SMP.
         assert_eq!(
-            tileset_mismatch(Path::new("URAK.scn"), Path::new("tilesa01.til"))
-                .map(|mismatch| mismatch.expected),
-            Some("tilesb01.til")
+            resolve_tileset(Path::new("map/AICAVE.SMP")).unwrap().unique(),
+            Some("aibldg01.til")
         );
 
-        // The engine's own pairings pass, in either case.
-        assert!(tileset_mismatch(Path::new("a.smp"), Path::new("tilesa01.til")).is_none());
-        assert!(tileset_mismatch(Path::new("A.SMP"), Path::new("TILESA01.TIL")).is_none());
-        assert!(tileset_mismatch(Path::new("a.scn"), Path::new("tilesb01.til")).is_none());
+        // A multi-valued binding: several encounters, several tilesets, no single answer.
+        let resolution = resolve_tileset(Path::new("licave.smp")).unwrap();
+        assert!(matches!(resolution, TileSetResolution::CombatAmbiguous(_)));
+        assert_eq!(resolution.unique(), None);
+        assert!(resolution.accepts("libldg01.til"));
+        assert!(resolution.accepts("wabldg01.til"));
+        assert!(!resolution.accepts("tilesa01.til"));
+        assert!(resolution.describe().starts_with("ambiguous:"));
 
-        // A modded tileset is presumed deliberate and passes for either class.
-        assert!(tileset_mismatch(Path::new("a.smp"), Path::new("mymod.til")).is_none());
-        assert!(tileset_mismatch(Path::new("a.scn"), Path::new("mymod.til")).is_none());
+        // `tilesa01.til` is a legitimate answer for the few maps the scripts pair with it.
+        assert_eq!(
+            resolve_tileset(Path::new("pathwoods.smp")).unwrap().unique(),
+            Some("tilesa01.til")
+        );
+
+        // A combat map with no binding: unresolved, with no candidates and no default.
+        let resolution = resolve_tileset(Path::new("aibrks0.smp")).unwrap();
+        assert_eq!(resolution, TileSetResolution::CombatUnresolved);
+        assert_eq!(resolution.unique(), None);
+        assert!(resolution.candidates().is_empty());
+        assert!(!resolution.accepts("tilesa01.til"));
+        assert!(!resolution.accepts("aibldg01.til"));
+        assert_eq!(resolution.describe(), "unresolved");
+
+        // World maps keep their single answer.
+        let resolution = resolve_tileset(Path::new("URAK.scn")).unwrap();
+        assert_eq!(resolution.unique(), Some(WORLD_TILESET_MEMBER));
+        assert_eq!(WORLD_TILESET_MEMBER, "tilesb01.til");
+        assert!(resolution.accepts("TILESB01.TIL"));
+
+        // An unclassified extension has no answer at all.
+        assert!(resolve_tileset(Path::new("notes.txt")).is_none());
+    }
+
+    /// A shipped tileset the scripts do not bind to this map is a mismatch; three other cases are
+    /// deliberately not.
+    ///
+    /// **The regression this pins is the one that shipped.** The previous version refused
+    /// `aicave.smp` + `aibldg01.til` -- the gamescript's own pairing -- and accepted
+    /// `tilesa01.til`, whose slots a 64-slot atlas cannot show. Both directions are asserted here,
+    /// so a return to a class rule fails rather than passing.
+    #[test]
+    fn a_mismatch_is_raised_only_against_a_recorded_binding() {
+        use super::tileset_mismatch;
+        use std::path::Path;
+
+        // The gamescript's own pairing must NOT be a mismatch. This is the inverted refusal.
+        assert!(
+            tileset_mismatch(Path::new("map/aicave.smp"), Path::new("til/aibldg01.til")).is_none(),
+            "the gamescript pairs aicave.smp with aibldg01.til; refusing it is the bug that shipped"
+        );
+
+        // And the tileset the old rule recommended must now be the mismatch.
+        let mismatch =
+            tileset_mismatch(Path::new("map/aicave.smp"), Path::new("til/tilesa01.til")).unwrap();
+        assert_eq!(mismatch.supplied, "tilesa01.til");
+        assert_eq!(mismatch.expected, ["aibldg01.til"]);
+        assert!(mismatch.to_string().contains("aibldg01.til"));
+        assert!(
+            !mismatch.to_string().contains("Pass tilesa01.til instead"),
+            "the old advice must not survive: {mismatch}"
+        );
+
+        // Either candidate of an ambiguous map is accepted; a third shipped tileset is not.
+        assert!(
+            tileset_mismatch(Path::new("licave.smp"), Path::new("libldg01.til")).is_none()
+        );
+        assert!(
+            tileset_mismatch(Path::new("licave.smp"), Path::new("wabldg01.til")).is_none()
+        );
+        let mismatch = tileset_mismatch(Path::new("licave.smp"), Path::new("ruins01.til")).unwrap();
+        assert_eq!(mismatch.expected, ["libldg01.til", "wabldg01.til"]);
+        assert!(mismatch.to_string().contains("libldg01.til or wabldg01.til"));
+
+        // An **unresolved** map cannot produce a mismatch: nothing is known, so nothing is refused.
+        for tileset in ["tilesa01.til", "tilesb01.til", "aibldg01.til", "jeff01.til"] {
+            assert!(
+                tileset_mismatch(Path::new("aibrks0.smp"), Path::new(tileset)).is_none(),
+                "{tileset} on an unbound map must pass: the table says nothing about it"
+            );
+        }
+
+        // World maps still refuse a shipped combat tileset.
+        let mismatch = tileset_mismatch(Path::new("URAK.scn"), Path::new("tilesa01.til")).unwrap();
+        assert_eq!(mismatch.expected, ["tilesb01.til"]);
+
+        // A modded tileset is presumed deliberate, for every class and every resolution state.
+        for map in ["aicave.smp", "licave.smp", "aibrks0.smp", "URAK.scn"] {
+            assert!(tileset_mismatch(Path::new(map), Path::new("mymod.til")).is_none());
+        }
 
         // An unclassified extension has no rule to contradict.
         assert!(tileset_mismatch(Path::new("a.dat"), Path::new("tilesb01.til")).is_none());
+    }
+
+    /// `combattileset` is recorded, and is deliberately **not** the resolver for `.smp`.
+    ///
+    /// Measured and not in doubt: it occurs exactly once in `gs.mpq`. What was wrong was the
+    /// inference. This test pins the distinction so the constant cannot quietly become the
+    /// fallback again.
+    #[test]
+    fn the_generated_combat_tileset_is_not_what_any_shipped_smp_resolves_to_by_default() {
+        use super::{
+            COMBAT_TILESET_BINDINGS, GENERATED_COMBAT_TILESET_MEMBER, TileSetResolution,
+            resolve_tileset,
+        };
+        use std::path::Path;
+
+        assert_eq!(GENERATED_COMBAT_TILESET_MEMBER, "tilesa01.til");
+
+        // Exactly three table entries name it, and they are pairings, not a default.
+        let naming: Vec<&str> = COMBAT_TILESET_BINDINGS
+            .iter()
+            .filter(|(_, tilesets)| {
+                tilesets.contains(&GENERATED_COMBAT_TILESET_MEMBER)
+            })
+            .map(|(map, _)| *map)
+            .collect();
+        assert!(
+            naming.contains(&"pathwoods.smp"),
+            "pathwoods.smp is the control: the scripts really do pair it with tilesa01.til"
+        );
+        assert!(
+            naming.len() < COMBAT_TILESET_BINDINGS.len() / 10,
+            "tilesa01.til is a rare pairing, not the rule; it names {} of {} entries",
+            naming.len(),
+            COMBAT_TILESET_BINDINGS.len()
+        );
+
+        // An unbound map does not fall back to it.
+        assert_eq!(
+            resolve_tileset(Path::new("aibrks0.smp")).unwrap(),
+            TileSetResolution::CombatUnresolved
+        );
     }
 
     /// All 26 shipped names, and the three that the assignment turns on.
