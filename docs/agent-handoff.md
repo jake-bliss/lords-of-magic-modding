@@ -132,10 +132,25 @@ from a game.
 
 **The mapsize probe writes outside the archives, and that needs care.** The game directory has a
 loose `map/` folder holding 366 shipped files, and **no backup here covers it** — the manifest covers
-`gs.mpq` and `imp.mpq` only. Both scripts are anchored on this probe's own `zz` prefix: the installer
-clears only `map/zz*.scn`, and the restore script collects each generated map, compares the copy, and
-only then removes the original. A unit test asserts that no probe body names a written file that does
-not start with `z`. If a probe ever needs to write elsewhere, back that directory up first.
+`gs.mpq` and `imp.mpq` only.
+
+Both scripts therefore work from an **exact list of names**, `engine_probe.generated_map_names()`,
+and never from a glob. `map/zz*.scn` would have been a standing offer to delete somebody's own
+`zzCustom.scn`, with nothing to restore it from. One source of truth means the cleanup list cannot
+drift from what the probe writes, and a test asserts that every `map/` name in a probe body is on
+that list — which is stricter than "starts with `z`", because `map/zURAK.scn` would satisfy the
+loose rule and then never be cleaned up at all.
+
+The restore script hashes each generated map **before** copying it and compares after. Comparing a
+copy against the file it was just copied from proves nothing, and the original is about to be
+deleted. If a probe ever needs to write elsewhere under `map/`, back that directory up first.
+
+**Where `make_custom_random_map` comes from.** `START.GS:106` runs `gs\edit\TERREDIT5.gs`, whose
+first lines are `userdict begin "gs/rmg.gs"run "gs/edit/mapgen.gs"run end`. So the generator is
+defined in **userdict** at startup and is reachable from a hotkey anywhere, editor or not. The probe
+does not call `clearmap` first — the editor does, but only to blank a map it already has loaded, and
+`make_random_map` opens with `mw mh newmap` itself. Requiring a map to already exist would be a
+precondition the probe does not need.
 
 Its ladder is 128, 256, then 512, in that order and for a reason: 128 and 256 both exist in the
 shipped corpus, so a generated one can be compared against a file the game itself wrote. If the

@@ -59,7 +59,6 @@ class SharedProbeSafetyTest(unittest.TestCase):
             ]
             self.assertTrue(effects, f"{name}: body has no observable effect at all")
             self.assertLess(guard, flag, name)
-            self.assertLess(min(effects), len(body), name)
             self.assertLess(flag, min(effects), f"{name}: acts before the fire-once flag")
 
     def test_never_cleans_up_by_location_alone(self) -> None:
@@ -78,11 +77,23 @@ class SharedProbeSafetyTest(unittest.TestCase):
         archive backup covers, because the backups cover `gs.mpq` and `imp.mpq`, not `map/`.
         """
         written = (".bmp", ".log", ".scn", ".smp", ".sav")
+        owned_maps = set(engine_probe.generated_map_names())
         for name, body in self.bodies().items():
             for quoted in re.findall(r'"([^"]*)"', body):
                 if not quoted.lower().endswith(written):
                     continue  # `.imp` and `.gs` names are read, and reads harm nothing
                 stem = quoted.rsplit("/", 1)[-1]
+                if quoted.lower().startswith("map/"):
+                    # Anything under map/ has to be a name the cleanup path actually knows about.
+                    # A `map/zURAK.scn` starts with `z` and would satisfy a looser rule, but the
+                    # install and restore scripts work from `generated_map_names()`, so it would
+                    # be written into an unbacked-up directory and left there for ever.
+                    self.assertIn(
+                        quoted,
+                        owned_maps,
+                        f"{name}: writes {quoted!r}, which the cleanup path would not remove",
+                    )
+                    continue
                 self.assertTrue(
                     stem.startswith("z"),
                     f"{name}: writes {quoted!r}, which the probe does not own",
@@ -127,9 +138,15 @@ class MapSizeProbeTest(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
 
     def test_operand_order_is_width_then_height(self) -> None:
-        """From the only shipped call site, gs\\edit\\mapgen.gs:306 -- width is pushed first."""
+        """From the only shipped call site, gs\\edit\\mapgen.gs:306 -- width is pushed first.
+
+        Asserted with UNEQUAL arguments. Every size in the ladder is square, so an assertion made
+        against the ladder alone would pass just as happily with the operands transposed, and the
+        whole point of this order is that the arity table could not settle it.
+        """
+        self.assertEqual(engine_probe.generate_call(512, 256), "512 256 make_custom_random_map")
         for size in engine_probe.MAP_SIZES:
-            self.assertIn(f"{size} {size} make_custom_random_map", self.body)
+            self.assertIn(engine_probe.generate_call(size, size), self.body)
 
     def test_logs_the_engines_own_view_of_the_size(self) -> None:
         """A silent clamp would otherwise look exactly like a successful oversized generation."""
@@ -141,7 +158,13 @@ class MapSizeProbeTest(unittest.TestCase):
         self.assertNotIn("savescenariomap pop", self.body)
 
     def test_every_size_saves_to_its_own_new_file(self) -> None:
+        """The names in the body and the names the scripts clean up must be the same list.
+
+        They are read from one function so they cannot drift, and this is what would catch it if
+        somebody reintroduced a second copy.
+        """
         names = re.findall(r'"(map/[^"]*)"', self.body)
+        self.assertEqual(names, engine_probe.generated_map_names())
         self.assertEqual(names, [f"map/zz{size}.scn" for size in engine_probe.MAP_SIZES])
         self.assertEqual(len(set(names)), len(names), "two sizes share a filename")
 

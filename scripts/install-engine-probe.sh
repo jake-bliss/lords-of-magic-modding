@@ -119,14 +119,19 @@ PY
 # "the sprite did not render", which is the exact conclusion this probe exists to test.
 echo "== clearing stale probe output =="
 rm -f "${game_dir}"/z*.bmp "${game_dir}"/zprobe.log
-# The mapsize probe writes into the game's loose map/ directory, which holds 366 shipped files that
-# no backup here covers. Only this probe's own zz-prefixed names are ever removed, and the glob is
-# spelled so that a directory with none of them expands to nothing rather than to a literal.
-for stale in "${game_dir}"/map/zz*.sc[n]; do
+# The mapsize probe writes into the game's loose map/ directory, which holds 366 shipped files and
+# no backup here covers it -- the manifest covers gs.mpq and imp.mpq only.
+#
+# So this removes an EXACT list of names, taken from the probe generator itself, and never a glob.
+# A `zz*.scn` glob is a standing offer to delete somebody's own `zzCustom.scn`, and nothing could
+# bring it back. One source of truth means the list cannot drift from what the probe writes.
+while IFS= read -r map_name; do
+  stale="${game_dir}/${map_name}"
   [[ -e "${stale}" ]] || continue
-  echo "  removing stale ${stale##*/}"
+  echo "  removing stale ${map_name}"
   rm -f "${stale}"
-done
+done < <(PYTHONPATH="${project_dir}/tools" python3 -c \
+  'import engine_probe; print("\n".join(engine_probe.generated_map_names()))')
 
 echo "== injecting =="
 writing=1

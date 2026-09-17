@@ -279,12 +279,31 @@ automatically. Point it at an extracted corpus:
 PYTHONPATH=tools python3 tools/gs_callsites.py /tmp/gsx addterrainsprite
 ```
 
-It groups call sites by the token window before the operator, cites each with `file:line:column`
-(shipped lines run to thousands of characters, so the column is not optional), and classifies every
-name in the window against the corpus's own definitions. Any name that resolves to a **procedure**
-is listed separately, because a procedure in an operand window means the token count is not the
-operand count. Run on `addterrainsprite` it flags `keep_ttype`, `leader_ttype`, `great_temple`,
-`terrainsprites` and `polar` without being told about any of them.
+It groups call sites by the token window before the operator and cites each with
+`file:line:column` — shipped lines run to thousands of characters, so the column is not optional.
+
+Three things it does that a `grep` cannot, each of which was getting a real answer wrong:
+
+- **A procedure literal is an operand.** `currentplayer{...}enumplayerarmies` takes two operands.
+  Stopping the window at the `}` reported a blank one, which reads as "takes none" — for an
+  operator two of our probes are built on. The walk matches the brace, prints the procedure as
+  `{...}`, and carries on to the operand in front of it.
+- **A cut window says so.** A window that hit the token limit rather than a real boundary is
+  printed with a leading `...` and a warning. Before that, the `make_custom_random_map` call site
+  this repository's operand order rests on printed with `map_width` silently missing.
+- **Names are classified against the corpus, in both directions.** Names defined as procedures are
+  listed, because a procedure in an operand window means the token count is not the operand count.
+  Names defined *nowhere* are listed too, because those are engine operators with stack effects of
+  their own: `terrainsprites /tower3 get` is three tokens and **one** operand, and only flagging
+  corpus-defined procedures left that case silent.
+
+A `/name` counts as a definition only when a `def` follows within a few tokens. `/sprite_type get`
+looks up a dictionary key and a dictionary literal is full of `key{procedure}` pairs; recording
+those as definitions makes a name look known and stops it being reported as an unresolved operator.
+
+Run on `addterrainsprite` it flags `keep_ttype`, `leader_ttype`, `great_temple`, `polar` and
+`terrainsprites` as procedures, and `get`, `begin`, `add`, `copy` and `xy_to_x_y` as engine
+operators, without being told about any of them.
 
 ### Other operand orders read from shipped call sites
 
@@ -293,8 +312,8 @@ All **Observed in the archive**, each with its call site:
 | Operator | Operands | Call site |
 | --- | --- | --- |
 | `newmap` | `width height` | `gs\generate.gs` — `64 64 newmap`; `gs\maplib.gs` — `mapw maph newmap` |
-| `savescenariomap` | `filename` | `gs\hotkey.gs` 562 — writes `.scn` |
-| `savespecialmap` | `filename` | `gs\hotkey.gs` 562 — writes `.smp` |
+| `savescenariomap` | `filename` → result | `gs\hotkey.gs` 562 — writes `.scn`; 6 of 6 sites read `savescenariomap pop`, so it pushes exactly one value. The operand is `mapfilename`, a `100 string` buffer |
+| `savespecialmap` | `filename` → result | `gs\hotkey.gs` 562 — writes `.smp`; same shape, also 6 of 6 `pop` |
 | `make_custom_random_map` | `width height` | `gs\edit\mapgen.gs` 306 (defined in `gs\rmg.gs`, pops height first) |
 | `paintelevation` | `x y terrain elevation` | `gs\rmg.gs` — `tx ty tt e paintelevation` |
 | `setelevation` | `x y elevation` | `gs\rmg.gs` — `x dx add y dy add 0 setelevation` |
@@ -304,7 +323,6 @@ All **Observed in the archive**, each with its call site:
 | `setterrainwithradius` | `x y radius terrain` | `gs\rmg.gs` — `... 3 5 singlerand tt setterrainwithradius` |
 | `maxslope` | `slope` | `gs\rmg.gs` — `0.7 maxslope` |
 | `addcapitol` | `x y faith faith` | `gs\generate.gs` — `16 16 LIFE LIFE addcapitol` |
-| `savescenariomap` | `filename` | 6 of 6 call sites pass `mapfilename`, a `100 string` buffer |
 | `clearmap` | `texture` | `gs\maplib.gs` — re-runs `mapw maph newmap` at the current size |
 | `addunit` | `x y unittype player ?` | `gs\generate.gs` — `20 16 liinf 1 -1 addunit`, inside `unittypedict begin ... end` |
 

@@ -31,12 +31,15 @@ from pathlib import Path
 
 from gs_syntax import tokens_with_offsets
 
-# How many tokens before the operator to show. Six covers every operand order observed so far and
-# still fits a terminal line.
-DEFAULT_WINDOW = 6
+# How many tokens before the operator to show. The module's own motivating example --
+# `cx cy f terrainsprites begin keep_ttype end addterrainsprite` -- is seven tokens, so a window of
+# six silently cut the very case this exists to explain. Ten leaves headroom and still fits a line.
+DEFAULT_WINDOW = 10
 
-# Tokens that end an operand window early: nothing before them can be an operand of this call.
-BOUNDARIES = frozenset({"{", "}", "def", "if", "ifelse", "for", "forall", "repeat"})
+# Tokens that end an operand window: nothing before them can be an operand of this call. `}` is
+# deliberately NOT here -- a procedure literal is an operand, and walking back over it to its `{`
+# is what keeps the operand in front of it visible.
+BOUNDARIES = frozenset({"def", "if", "ifelse", "for", "forall", "repeat"})
 
 
 class Definitions:
@@ -51,16 +54,55 @@ class Definitions:
         self.procedures: set[str] = set()
         self.values: set[str] = set()
 
+    # How far after a `/name` to look for the `def` that makes it a definition. The shipped closure
+    # idiom puts several tokens in between: `/great_temple{...}/dummy great_temple_array replace
+    # bind def` needs five.
+    DEFINITION_LOOKAHEAD = 8
+
     def add_file(self, file_tokens: list[str]) -> None:
         for index, token in enumerate(file_tokens):
             if len(token) < 2 or not token.startswith("/"):
                 continue
-            name = token[1:]
-            following = file_tokens[index + 1] if index + 1 < len(file_tokens) else ""
-            if following == "{":
-                self.procedures.add(name)
+            kind = self._definition_kind(file_tokens, index)
+            if kind == "procedure":
+                self.procedures.add(token[1:])
+            elif kind == "value":
+                self.values.add(token[1:])
+
+    @classmethod
+    def _definition_kind(cls, file_tokens: list[str], index: int) -> str | None:
+        """Whether `/name` at `index` is defining something, and as what.
+
+        A `/name` is not a definition merely because a `{` follows it. `/sprite_type get exec`
+        looks up a dictionary key, and a dictionary literal is full of `key {procedure}` pairs.
+        Treating those as definitions makes the classifier confidently wrong in the one direction
+        that matters: a name wrongly recorded as a known `value` stops being reported as an
+        unresolved engine operator. A definition is a `/name` with a `def` close behind it.
+        """
+        position = index + 1
+        if position >= len(file_tokens):
+            return None
+        opener = file_tokens[position]
+        kind = "value"
+        if opener in ("{", "["):
+            closer = "}" if opener == "{" else "]"
+            kind = "procedure" if opener == "{" else "value"
+            depth = 0
+            while position < len(file_tokens):
+                if file_tokens[position] == opener:
+                    depth += 1
+                elif file_tokens[position] == closer:
+                    depth -= 1
+                    if depth == 0:
+                        position += 1
+                        break
+                position += 1
             else:
-                self.values.add(name)
+                return None
+        limit = min(len(file_tokens), position + cls.DEFINITION_LOOKAHEAD)
+        if "def" in file_tokens[position:limit]:
+            return kind
+        return None
 
     def classify(self, token: str) -> str:
         """One of `number`, `string`, `procedure`, `value`, `literal-name`, or `unknown`."""
@@ -82,20 +124,71 @@ class Definitions:
 
 
 class CallSite:
-    def __init__(self, path: Path, line: int, column: int, window: list[str]) -> None:
+    def __init__(
+        self,
+        path: Path,
+        line: int,
+        column: int,
+        window: list[str],
+        truncated: bool = False,
+    ) -> None:
         self.path = path
         self.line = line
         self.column = column
         self.window = window
+        # The window hit the token limit rather than a real boundary, so operands may be missing.
+        self.truncated = truncated
 
     @property
     def pattern(self) -> str:
-        return " ".join(self.window)
+        """A blank pattern must never be the answer, and a cut window must never look complete."""
+        parts = list(self.window)
+        if self.truncated:
+            parts.insert(0, "...")
+        return " ".join(parts) if parts else "(no operands)"
 
     @property
     def where(self) -> str:
         """Line and column. Lines here run to thousands of characters; the column is not optional."""
         return f"{self.path.name}:{self.line}:{self.column}"
+
+
+def _operand_window(names: list[str], index: int, window: int) -> tuple[list[str], bool]:
+    """Walk back from a call, collecting operand tokens, and return them with a truncation flag.
+
+    A procedure literal is one operand, so a closing `}` is not the end of the window -- the walk
+    finds its matching `{` and carries on. Reporting `enumplayerarmies` as taking nothing, or as
+    taking only a procedure, would both be wrong: it takes a player and a procedure.
+    """
+    collected: list[str] = []
+    position = index - 1
+    while position >= 0 and len(collected) < window:
+        token = names[position]
+        if token in BOUNDARIES:
+            return list(reversed(collected)), False
+        if token == "}":
+            depth = 0
+            while position >= 0:
+                if names[position] == "}":
+                    depth += 1
+                elif names[position] == "{":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                position -= 1
+            if position < 0:
+                # Unbalanced: the procedure starts before the file does. Stop rather than guess.
+                return list(reversed(collected)), True
+            collected.append("{...}")
+            position -= 1
+            continue
+        if token == "{":
+            # An unmatched opener: this call is inside a procedure and the window has reached its
+            # start, so there is nothing further back that could be an operand.
+            return list(reversed(collected)), False
+        collected.append(token)
+        position -= 1
+    return list(reversed(collected)), position >= 0
 
 
 def scan(corpus: Path, operator: str, window: int = DEFAULT_WINDOW) -> tuple[list[CallSite], Definitions]:
@@ -120,19 +213,17 @@ def scan(corpus: Path, operator: str, window: int = DEFAULT_WINDOW) -> tuple[lis
         for index, token in enumerate(names):
             if token != operator:
                 continue
-            # A `/name` immediately before is a definition of the operator's own name, not a call.
-            if index and names[index - 1] == f"/{operator}":
-                continue
-            start = max(0, index - window)
-            chunk = names[start:index]
-            for offset in range(len(chunk) - 1, -1, -1):
-                if chunk[offset] in BOUNDARIES:
-                    chunk = chunk[offset + 1:]
-                    break
-            byte_offset = located[index][1]
-            line = source.count("\n", 0, byte_offset) + 1
-            column = byte_offset - (source.rfind("\n", 0, byte_offset) + 1) + 1
-            sites.append(CallSite(path, line, column, chunk))
+            # No special case for a preceding `/name` here. It was written to skip a definition of
+            # the operator itself, but `/myop` and `myop` are different tokens, so a definition
+            # never produces the pattern it looked for -- while `/myop myop`, which is a literal
+            # name followed by a real call, was silently dropped. The `token != operator` test
+            # above already excludes every literal form.
+            chunk, truncated = _operand_window(names, index, window)
+            # A character offset, not a byte offset: these are indices into a `str`.
+            offset = located[index][1]
+            line = source.count("\n", 0, offset) + 1
+            column = offset - (source.rfind("\n", 0, offset) + 1) + 1
+            sites.append(CallSite(path, line, column, chunk, truncated))
     return sites, definitions
 
 
@@ -151,23 +242,41 @@ def report(sites: list[CallSite], definitions: Definitions, operator: str) -> st
         lines.append(f"  {len(members):4d}  {pattern}")
         lines.append(f"        e.g. {example.where}")
 
-    suspicious = {
-        token
-        for site in sites
-        for token in site.window
-        if definitions.classify(token) == "procedure"
-    }
-    if suspicious:
+    by_class: dict[str, set[str]] = collections.defaultdict(set)
+    for site in sites:
+        for token in site.window:
+            by_class[definitions.classify(token)].add(token)
+
+    if by_class["procedure"]:
         lines.append("")
         lines.append(
-            "These names in the operand windows are PROCEDURES, so the token count is not the"
+            "These names in the operand windows are PROCEDURES defined in the corpus, so the token"
         )
         lines.append(
-            "operand count -- each may consume or produce operands. Read their definitions before"
+            "count is not the operand count -- each may consume or produce operands. Read their"
         )
-        lines.append("concluding anything about arity:")
-        for name in sorted(suspicious):
+        lines.append("definitions before concluding anything about arity:")
+        for name in sorted(by_class["procedure"]):
             lines.append(f"  {name}")
+
+    if by_class["unknown"]:
+        lines.append("")
+        lines.append(
+            "These are not defined anywhere in the corpus, so they are engine operators with stack"
+        )
+        lines.append(
+            "effects of their own -- `terrainsprites /tower3 get` is three tokens and ONE operand."
+        )
+        lines.append("Check each against the recovered operator table before counting operands:")
+        for name in sorted(by_class["unknown"]):
+            lines.append(f"  {name}")
+
+    if any(site.truncated for site in sites):
+        lines.append("")
+        lines.append(
+            f"A window shown with a leading `...` hit the {DEFAULT_WINDOW}-token limit rather than a"
+        )
+        lines.append("real boundary; operands are missing from it. Re-run with a larger --window.")
     return "\n".join(lines) + "\n"
 
 

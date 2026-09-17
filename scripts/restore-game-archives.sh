@@ -36,25 +36,35 @@ fi
 # The mapsize probe writes generated maps into the game's loose map/ directory. They are the
 # result, so they are collected before being removed.
 #
-# That directory holds 366 shipped map files and no backup here covers it, so the pattern is
-# anchored on this probe's own `zz` prefix and nothing else is ever matched. Collect, then delete
-# exactly what was collected -- never a second glob, which could widen between the two steps.
-generated=("${game_dir}"/map/zz*.sc[n])
+# That directory holds 366 shipped map files and no backup here covers it, so this works from an
+# EXACT list of names taken from the probe generator itself, never from a glob. A pattern that
+# could match a file this probe did not create has no place in a delete path with no undo.
+generated=()
+while IFS= read -r map_name; do
+  # Spelled as an if rather than `[[ ]] &&` so its exit status can never interact with `set -e`.
+  if [[ -e "${game_dir}/${map_name}" ]]; then
+    generated+=("${game_dir}/${map_name}")
+  fi
+done < <(PYTHONPATH="${project_dir}/tools" python3 -c \
+  'import engine_probe; print("\n".join(engine_probe.generated_map_names()))')
+
 if (( ${#generated[@]} )); then
   mkdir -p "${capture_dir}"
-  cp "${generated[@]}" "${capture_dir}/"
-  echo "collected ${#generated[@]} generated map(s) into ${capture_dir}"
+  echo "collecting ${#generated[@]} generated map(s) into ${capture_dir}"
   for path in "${generated[@]}"; do
     base="${path##*/}"
-    if [[ "${base}" != zz*.scn ]]; then
-      echo "refusing to remove ${base}: not a probe-generated name" >&2
+    # The source is hashed BEFORE the copy and the copy is hashed after. Comparing the copy against
+    # the file it was just copied from proves nothing, and the original is about to be deleted --
+    # this is the only moment at which a bad copy can still be caught.
+    before="$(file_hash "${path}")"
+    cp "${path}" "${capture_dir}/${base}"
+    after="$(file_hash "${capture_dir}/${base}")"
+    if [[ "${before}" != "${after}" ]]; then
+      echo "keeping ${base}: the collected copy does not match the original" >&2
       continue
     fi
-    cmp -s "${path}" "${capture_dir}/${base}" || {
-      echo "refusing to remove ${base}: the collected copy does not match" >&2
-      continue
-    }
     rm -f "${path}"
+    echo "  ${base} ${after}"
   done
 fi
 

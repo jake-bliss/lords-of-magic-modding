@@ -310,6 +310,28 @@ MAP_SIZES: list[int] = [128, 256, 512]
 MAP_NAME_BUFFER = 100
 
 
+def generate_call(width: int, height: int) -> str:
+    """The generator call, width first.
+
+    Factored out so the operand order can be tested with unequal arguments. Every size in the
+    ladder is square, so a test written against the ladder alone would pass just as happily with
+    the operands transposed -- and this is exactly the kind of order the arity table cannot settle
+    and a shipped call site had to (`gs\\edit\\mapgen.gs:306`).
+    """
+    return f"{width} {height} make_custom_random_map"
+
+
+def generated_map_names() -> list[str]:
+    """Exactly the map files the mapsize probe writes, as `map/`-relative names.
+
+    The install and restore scripts clear and collect by this list rather than by a `zz*.scn`
+    glob. A glob is a standing offer to delete somebody's `zzCustom.scn`, and the game's loose
+    `map/` directory has no backup: the manifest covers `gs.mpq` and `imp.mpq` only. An exact
+    list can only ever match files this probe created.
+    """
+    return [f"map/zz{size}.scn" for size in MAP_SIZES]
+
+
 def map_size_body() -> str:
     lines: list[str] = []
     emit = lines.append
@@ -325,22 +347,33 @@ def map_size_body() -> str:
     emit(f"\t/zname {MAP_NAME_BUFFER} string def")
     emit("\t" + _log('"map size ladder start"'))
 
-    for size in MAP_SIZES:
-        # `0 clearmap` before generating is what the editor's own generate branch does; clearmap
-        # re-runs `mapw maph newmap` at the current size, so the generator never starts from a
-        # half-torn map.
+    for size, map_name in zip(MAP_SIZES, generated_map_names()):
+        # The log is closed and reopened around every rung. `savescenariomap` on a 512 is the rung
+        # most likely to fault or hang -- it is the one the editor itself warns about -- and an
+        # unflushed buffer would take the 128 and 256 control results down with it. The ladder is
+        # worth nothing if a failure on the subject erases the controls. "abw" appends.
         emit("\t" + _log(f'"gen begin "{size}'))
-        emit("\t0 clearmap")
-        emit(f"\t{size} {size} make_custom_random_map")
+        # No `clearmap` here. The editor's generate branch calls `0 clearmap` first, but only to
+        # blank a map it already has loaded; `make_random_map` opens with `mw mh newmap` itself
+        # (gs\rmg.gs), so clearmap is redundant -- and it reads `mapw`/`maph`, which makes it a
+        # precondition on there already being a map. The probe should not need one.
+        emit("\t" + generate_call(size, size))
         emit("\tresetvisibility rendermap")
         # `mapw`/`maph` are the engine's own view of the live map. If the engine silently clamped
         # the request, this is where it shows, and it separates "the generator refused" from "the
         # file is written differently".
         emit("\t" + _log(f'"gen done "{size}" mapw "mapw" maph "maph'))
-        emit(f'\tzname"map/zz{size}.scn"strcpy')
+        emit(f'\tzname"{map_name}"strcpy')
+        # All six shipped call sites read `savescenariomap pop`, so it pushes exactly one value.
+        # Keeping it rather than popping it is the only way to learn that a save failed.
         emit("\tzname savescenariomap /zok exch def")
-        emit("\t" + _log(f'"save "{size}" name "zname" result "zok'))
+        # The filename is NOT interpolated. `zname` is a 100-byte buffer holding a 13-character
+        # name; whether `writestring` emits the ~87 padding bytes or stops at the first of them,
+        # the result value at the end of the line is what gets lost. It is a constant here anyway.
+        emit("\t" + _log(f'"save "{size}" name {map_name} result "zok'))
         emit(f'\t"zm{size}.bmp"screencapture')
+        emit("\tzlog closefile")
+        emit('\t"zprobe.log""abw"file /zlog exch def')
 
     emit("\t" + _log('"map size ladder done"'))
     emit("\tzlog closefile")
