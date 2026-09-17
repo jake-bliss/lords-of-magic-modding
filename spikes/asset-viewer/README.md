@@ -134,7 +134,8 @@ Tested against the installed GS5R3 profile on 2026-09-11:
 | Core archive members classified | 9,804 / 9,804 |
 | IMP binaries structurally parsed | 1,800 / 1,800 |
 | IMP binaries pixel-expanded without decoder errors | 1,800 / 1,800 |
-| Same-name IMP pairs matching known statistics | 1,788 / 1,798 |
+| IMP pairs matching their generated header exactly | 1,795 / 1,800 |
+| Remaining pairs, each a value-pinned exception | 5 |
 | Loose `.scn`/`.smp`/`.lgd` grids parsed | 365 / 365 |
 | Tile-set definitions parsed | 26 / 26 |
 | Dominant 49-byte map records decoded | 16,628 in 196 files |
@@ -143,7 +144,7 @@ Tested against the installed GS5R3 profile on 2026-09-11:
 
 The viewer displayed `lbm\ACTIONS5.lbm` as a 612×120 image with 256 palette entries and ByteRun1 compression. The full scan found one image whose final compressed packet crosses a scanline boundary; matching the format's scanline semantics resolved it and is covered by a regression test.
 
-The IMP decoder handles both observed frame-record variants, the custom packet RLE, 8/4/2/1-bit indexed pixels, row padding, direct duplicates, shared-pixel records, repeated facings, typed placement candidates, and explicit sequence/facing/frame ranges. The unresolved cases are reported as failures by `--validate-imp`; they now cover ten metadata/statistical mismatches and four orphan public-catalog names. See the [Stage 1 record](../../docs/native-asset-stage.md) for the exact scope and remaining gates.
+The IMP decoder handles both observed frame-record variants, the custom packet RLE, 8/4/2/1-bit indexed pixels, row padding, direct duplicates, `0x04` shared-pixel records inside an ordinary frame-record array, typed placement candidates, and explicit sequence/facing/frame ranges. `--validate-imp` reports **zero failures** over the 1,800 paired members: 1,795 match on every statistic, and the remaining five sit in the value-pinned `IMP_VALIDATION_EXCEPTIONS` table alongside two value-pinned orphan catalog notes. Anything not covered by those exact recorded numbers is still reported as a failure. See the [Stage 1 record](../../docs/native-asset-stage.md) for the exact scope and remaining gates.
 
 ## What the tool proves
 

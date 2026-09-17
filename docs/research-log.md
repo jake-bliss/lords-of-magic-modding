@@ -52,7 +52,7 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 ### IMP format findings
 
 - **Observed:** all 1,800 IMP binaries pass bounded table, palette, frame-reference, and packed-pixel decoding, including RLE expansion where applicable.
-- **Observed:** the format contains 32-byte file headers, animation sequences/facings/frames, 256-entry BGRA palettes, six-byte padded hotspots, direct duplicate frames, and repeated facings.
+- **Observed:** the format contains 32-byte file headers, animation sequences/facings/frames, 256-entry BGRA palettes, six-byte padded hotspots, direct duplicate frames, and `0x04` shared-pixel frame records. (**Corrected 2026-09-17:** this entry said "repeated facings". There is no such thing — a facing's frame table is an ordinary array of 16-byte records, of which only the first may carry `0x04`. See the 2026-09-17 correction entry. The "BGRA palette" claim is separately corrected: entries are stored blue, red, green, pad.)
 - **Observed:** the custom RLE uses controls below `0x80` for repeated runs and controls at or above `0x80` for literal runs.
 - **Inferred:** file-flag bits `0x30` select 8-, 1-, 2-, or 4-bit indexed storage, and sub-byte indices are packed most-significant-bit first.
 - **Observed:** generated-header comparison matches 1,784 of 1,798 paired stems exactly. Fourteen bounded metadata disagreements and four orphan names remain explicit validation failures.
@@ -101,7 +101,7 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 ## 2026-09-12 — IMP placement records and native map grid
 
 - **Corrected:** frame flag `0x04` is a shared-pixel reference even when it occurs after the first record in a facing. Applying it consistently removed 27 false origin records and increased exact generated-header matches from 1,784 to 1,788 of 1,798 pairs.
-- **Observed:** the remaining IMP corpus contains 15,725 logical origin records and 64,432 six-byte hotspots across 28,771 frames. Origin ranges are X `-66..70`, Y `-207..77`; hotspot ranges are X `-115..123`, Y `-232..86`.
+- **Observed:** the remaining IMP corpus contains 15,725 logical origin records and 64,432 six-byte hotspots across 28,771 frames. Origin ranges are X `-66..70`, Y `-207..77`; hotspot ranges are X `-115..123`, Y `-232..86`. (**Stale, 2026-09-17:** these totals were measured with the decoder bug corrected that day, which swallowed 29 frame records across five files. A spot re-measurement over the 1,798 stem-paired sprites gives 15,677 origins, 28,800 hotspot-bearing frames and 64,492 hotspot records — a different population from the one these figures were taken over, so the corpus totals are **pending re-measurement** rather than replaced. The coordinate ranges are unaffected in kind but unverified since.)
 - **Inferred:** hotspot records are `u16 id, i16 x, i16 y`. All six bytes remain preserved while original-engine placement behavior is tracked in issue #1.
 - **Corrected:** generated-header action aliases can share a sequence number (`MOVE` and `STAND` in `aicr2a.h`), so the parser now retains every alias instead of overwriting the earlier name.
 - **Observed:** the installed profile contains 20 `.scn`, 337 `.smp`, and eight `.lgd` files; all 365 share a bounded 16-byte header and `width × height × 8` cell grid.
@@ -818,8 +818,10 @@ in the way the terrain-sprite probe settled the origin pair.
   appears more than once.
 - **It warns about aliasing, per path.** An origin lives in the frame record and a hotspot lives in
   the array the record points at, and the two share differently: `frames_sharing_record` covers
-  repeated facings and `0x04` shared-pixel runs, `frames_sharing_hotspots` covers distinct records
-  storing one array pointer. The second does not occur in any of 241 shipped unit sprites, but the
+  records that back more than one logical frame, `frames_sharing_hotspots` covers distinct records
+  storing one array pointer. (**Corrected 2026-09-17:** this said "repeated facings and `0x04`
+  shared-pixel runs"; neither is a real structure. Records alias only when two facings point their
+  frame tables at the same offset.) The second does not occur in any of 241 shipped unit sprites, but the
   writer advertises a guarantee, so it holds for files we did not author.
 - **It refuses a duplicate frame's origin.** A `0x04`/`0x08` frame has no origin of its own.
 - **It refuses to overwrite**, like every other output path in the tool.
@@ -1795,6 +1797,12 @@ saved, and both archives verify against the manifest.
 
 ## 2026-09-17 (final) — IMP validation closed: what the generated headers actually describe
 
+> **Partly corrected the same day.** Five of the ten exceptions below were a decoder bug of ours,
+> and the section explaining them is refuted. The current counters are **1,795 exact matches, 5
+> exceptions, 0 failures, 2 documented orphans**. Read this entry together with
+> "2026-09-17 (correction)" at the end of the log; it is left standing because it was written in
+> good faith and the way it went wrong is the useful part.
+
 `--validate-imp` reported 1,788 exact matches, 10 failures and 4 orphans. It now reports **zero
 failures**: 1,790 exact matches, 10 named value-pinned exceptions, 2 pairs recovered by a new
 pairing fallback, and 2 documented orphans. Getting there turned on three findings.
@@ -1807,12 +1815,27 @@ problem immediately: the five files filed as "duplicate frame count only" in fac
 raw-pixel, hotspot **and** stored-pixel bytes. Any explanation that addressed the duplicate tally
 alone was addressing a third of the symptom.
 
-### "Duplicate bitmaps found" counts the tool's input, not the file
+### "Duplicate bitmaps found" counts the tool's input, not the file — **REFUTED 2026-09-17**
+
+> **This subsection is wrong and is kept for the record.** Five of the ten exceptions were a bug in
+> our own frame-table decoder, not an archive artefact; with it fixed, those five files match their
+> headers on every statistic and there is no deduplication gap to explain. The reasoning below was
+> fitted to numbers the bug produced, and — the part that matters — it was filed as **Observed**
+> when it was an inference. See "2026-09-17 (correction)" at the end of this log. What follows is
+> the entry as originally written.
 
 **Observed in a local binary.** Across all 1,800 pairs, `binary_duplicates >= header_duplicates`
 holds on 1,799 — the sole violation being `units\imp\orcr4b`, whose frame count independently
-disagrees, so its header provably does not describe it. The statistic therefore counts duplicates
-among the build tool's *input* bitmaps; the written file dedupes at least as much and never less.
+disagrees. **Inferred** from that: `orcr4b`'s header describes some other build. (**Corrected
+2026-09-17:** this said the header "provably does not describe it". Nothing here proves that;
+disagreeing statistics are consistent with a stale header *and* with a decoder fault, which is
+exactly what the five files below turned out to be. Worse, excluding the one counterexample from
+the population on the strength of the invariant it violates is circular — it is the only evidence
+that could have falsified the invariant. The denominator was also wrong: 1,800 includes two pairs
+made against a *foreign* header, where agreement is not evidence about a build tool's own output.
+The measurement over the population it is meaningful for is 1,797 of 1,798 stem pairs.) The
+statistic therefore counts duplicates among the build tool's *input* bitmaps; the written file
+dedupes at least as much and never less.
 
 Two things corroborate it rather than merely fitting it. The sequence and frame counts agree exactly
 on all five affected files, so the header is not describing different art. And with
@@ -1825,7 +1848,9 @@ than that file's usual 32. Every raw and stored total is larger in the header to
 
 The scratch instrument built to count distinct records earned nothing and was deleted: the distinct
 bitmap count is exactly `frame_count - duplicate_frame_count`, which `ImpSprite` already reported.
-`ImpSprite::distinct_bitmap_count()` now names it.
+`ImpSprite::distinct_bitmap_count()` now names it. (**Deleted 2026-09-17:** it existed only to serve
+the refuted hypothesis, it had no caller outside its own test, and that test could not fail — the
+fixture has one frame and no duplicates, so both sides of its assertion read 1 under any mutation.)
 
 ### The archive's `.h` members are not reliably their own
 
@@ -1859,7 +1884,13 @@ was missing. Pairing now falls back to the sequence name the header *declares* w
 no counterpart, and two of the four resolve and then validate on every statistic:
 `imp\fleemark.h` declares `UNMRKA` and matches `imp\unmrka.imp`; `units\imp\chwmcbm.h` declares
 `DEWMHB` and matches `units\imp\dewmhb.imp`. The fallback is deliberately consulted only for
-members the stem left unmatched, because declared names are far from unique.
+members the stem left unmatched, because declared names are far from unique. (**Corrected
+2026-09-17:** "far from unique" was right and the code did not act on it — it took the first
+candidate. Measured: the 1,800 headers declare 1,370 distinct sequence names, 155 names are declared
+by more than one header, covering 585 headers, and `deaura` is declared by 32. The sprite-basename
+index was last-wins over 5 colliding `.imp` basenames. Both sides now keep every candidate, prefer
+one in the member's own directory, and report ambiguity instead of guessing. The two pairs we make
+are each uniquely supported, so the result is unchanged.)
 
 The other two cannot pair and carry catalog notes instead. `aura\lsp01ea.h` declares `SPL01EA`,
 which has no `.imp` in the archive, and is byte-identical to `aura\fsp03aa.h` whose `.imp` matches
@@ -1868,7 +1899,8 @@ its statistics exactly — a stray header copy. `imp\fleemarka.imp` measures ide
 
 ### The exception mechanism
 
-`IMP_VALIDATION_EXCEPTIONS` is a ten-row table in `spikes/asset-viewer/src/imp.rs`, each row naming
+`IMP_VALIDATION_EXCEPTIONS` is a ten-row table in `spikes/asset-viewer/src/imp.rs` (**five rows
+since the 2026-09-17 correction, and two classes rather than three**), each row naming
 the member, one of three classes, a reason, and **the exact measured numbers**. An exception applies
 only when the observed disagreements equal the recorded list — same statistics, same order, same
 values. A decoder change that moves a number, drops a disagreement or adds one re-fails the member.
@@ -1880,4 +1912,124 @@ A unit test additionally holds each row to the falsifiable claim its class makes
 
 The earlier `0x08`-only duplicate hypothesis stays refuted: validating "Duplicate bitmaps found"
 against back-references alone raises corpus failures from 10 to **112**. The statistic counts both
-`0x04` and `0x08`.
+`0x04` and `0x08`. (**Re-measured 2026-09-17** after the frame-table fix, on the same archive: 0 to
+**107**. The conclusion is unchanged on either decoder.)
+
+## 2026-09-17 (correction) — five of the ten IMP "exceptions" were our own decoder bug
+
+A cross-model review of the entry above asked why a build tool would deduplicate bitmaps *after*
+writing its header. Checking the claim against the archive instead of against the model produced a
+different answer: five of the ten exceptions were never archive artefacts. They were records our
+decoder swallowed.
+
+### The bug
+
+```rust
+let repeated_facing = source[frame_table_offset] & 0x04 != 0;
+```
+
+The decoder read the shared-pixel flag of a facing's **first** frame record and, when it was set,
+treated the entire facing as a repetition of that one record: every frame slot pointed at the same
+16 bytes. It also skipped the bounds check for the full `facing_frames * 16` table on that path, so
+the records it never looked at were never even required to exist.
+
+A facing's frame table is an ordinary array. Only the first record may carry `0x04`. Measured record
+flags (**Observed in a local binary**): `units\imp\aicr3b` sequence 2 facing 0 is `[04 00]`;
+`units\imp\chwmmb` sequence 5 facings 0-4 are each `[04 00 00 00 00 00]`. Every record after the
+first was dropped along with its pixels and its hotspot array:
+
+| Member | Swallowed records | Swallowed raw pixels | Swallowed hotspot bytes |
+| --- | ---: | ---: | ---: |
+| `units\imp\aicr3b` | 1 | 12 | 24 |
+| `units\imp\ficr3b` | 1 | 12 | 24 |
+| `units\imp\ficr5b` | 1 | 30 | 16 |
+| `units\imp\chcr3b` | 1 | 1,443 | 16 |
+| `units\imp\chwmmb` | 25 | 12,865 | 400 |
+
+**Observed in a local binary.** Those are exactly the deltas the five `HeaderPredatesDeduplication`
+exceptions waived — all three quantities, all five files. With `frame_offset` computed as
+`frame_table_offset + frame_index * 16` unconditionally and the full-table bounds check always run,
+the corpus went `validated` 1,790 -> 1,795, `validated_with_exception` 10 -> 5,
+`validation_failures` 0 -> 0, with nothing else moving. All five now agree with their headers on
+every statistic.
+
+### Why the wrong explanation survived
+
+It fit the numbers, and the arithmetic looked like corroboration. Both are weaker than they felt.
+
+- **The inequality proved nothing.** `binary_duplicates >= header_duplicates` on 1,797 of 1,798 stem
+  pairs is exactly what you also see when the headers are simply correct. It was read as evidence
+  for a deduplication pass because a deduplication pass had already been assumed.
+- **Three of the four hotspot "predictions" were arithmetically forced.** Where the gap is one
+  bitmap and a file's hotspot arrays are uniformly sized,
+  `binary_hotspot_bytes / binary_distinct * header_distinct` *must* land on the header's total. It
+  cannot fail, so it cannot confirm. Only `chwmmb`'s 25-bitmap fit carried information — and the
+  swallowed-record measurement explains that one too.
+- **The counterexample was absorbed by an epicycle.** `chcr3b` missed by 16 bytes, and the entry
+  explained it by asserting that the extra input bitmap "carried a 16-byte hotspot array rather than
+  this file's usual 32" — a property of a bitmap that is not in the archive and cannot be examined.
+  An unfalsifiable patch on a hypothesis is the signal to stop defending it. That line is deleted.
+- **The circular exclusion.** `orcr4b`, the single pair violating the inequality, was set aside as
+  "provably not described by its header" — using the invariant to dismiss the one measurement that
+  could have falsified it.
+
+### The failure that matters
+
+Not the wrong hypothesis. Wrong hypotheses are the normal cost of doing this. The failure is that an
+**inference was written down as Observed**, in a repository whose whole discipline is that those two
+words mean different things. Once "the header counts the tool's input bitmaps" was recorded as a
+measurement, nothing downstream re-examined it; it became the frame every later number was read in,
+and the five exceptions it created were carried as settled archive facts for as long as the label
+held.
+
+The mechanical safeguards were all present and all passed: the exception table was value-pinned to
+exact measurements, a unit test held every row to the falsifiable claim its class makes, and the
+corpus run was green. None of them could help, because they all checked consistency with the
+decoder's own output. Nothing compared the decoder against the format.
+
+### What changed as well
+
+- `ImpExceptionClass::HeaderPredatesDeduplication` and its five rows are deleted. Five exceptions
+  remain: `missile\lsp01ap`, `units\imp\lifitam`, `units\imp\lifitbm`, `units\imp\lifitfm`
+  (`HeaderPredatesArtRevision`) and `units\imp\orcr4b` (`HeaderDescribesAnotherBuild`).
+- `ImpSprite::distinct_bitmap_count()` is deleted. It existed for the refuted hypothesis, had no
+  caller outside its own test, and that test could not fail.
+- Three tests encoded the wrong model and asserted the bug's behaviour. They are rewritten around a
+  fixture whose facing holds records `[04 00]` with a genuinely distinct second frame, and a new
+  test pins that a truncated frame table is rejected on that path. Both fail against the old
+  decoder.
+- Catalogued orphans are now **read, parsed and re-measured** against pinned values. A member was
+  previously accepted on its *name*: a truncated replacement at a catalogued name exited 0.
+- The declared-sequence-name fallback and the sprite-basename index required a **unique** match.
+  Measured: 1,800 headers declare 1,370 distinct sequence names, 155 names are declared by more than
+  one header covering 585 headers, `deaura` by 32; 5 `.imp` basenames collide in the listfile.
+  Ambiguity is now reported, not guessed. `ambiguous_pairings` is 0 on the shipped archive.
+- One unreadable orphan header used to abort the whole run with `?` and print nothing. It is a
+  failure line now, like every other read error in the function.
+- The duplicate-tally counters print a denominator (`dedup_compared_stem_pairs`) and exclude the two
+  foreign-header fallback pairs (`dedup_foreign_header_pairs`), which had been counted as
+  confirmations.
+- `validate_imp_archive` had no test at all, which is why all of the above lived there unexercised.
+  The pairing and verdict rules are now separated from archive I/O and tested against synthetic
+  members: unique match, ambiguous match, reused partner, malformed orphan, exact exception, altered
+  exception, unreadable member and unexplained disagreement.
+
+### Final counters
+
+```
+candidate_stems	1802
+matched_pairs	1800
+paired_by_stem	1798
+paired_by_declared_sequence	2
+ambiguous_pairings	0
+validated	1795
+validated_with_exception	5
+validation_failures	0
+documented_orphans	2
+orphan_entries	0
+dedup_compared_stem_pairs	1798
+dedup_at_least_header	1797
+dedup_below_header	1
+dedup_foreign_header_pairs	2
+failures	0
+```

@@ -27,9 +27,11 @@ pub struct ImpFrame {
     pub source_frame: Option<usize>,
     /// Byte offset of the 16-byte frame record that backs this frame.
     ///
-    /// Frames in a repeated facing, and every frame of a `0x04` shared-pixel run, alias the
-    /// *same* record, so this value is not unique. Editing a record edits every frame that
-    /// shares it — see [`ImpSprite::frames_sharing_record`].
+    /// Distinct frames normally have distinct records: a facing's frame table is an ordinary
+    /// array of 16-byte records. Records may nevertheless *alias*, because a `0x04` shared-pixel
+    /// record can point at another record's pixel payload and two records can hold the same
+    /// offsets. Where they do, editing a record edits every frame that shares it — see
+    /// [`ImpSprite::frames_sharing_record`].
     pub record_offset: usize,
     /// Byte offset of this frame's hotspot array, when it has one.
     ///
@@ -81,8 +83,10 @@ pub struct ImpSprite {
     /// which `duplicate_frame_count` also counts.
     ///
     /// Kept separate for analysis only. Validating this against the generated header's
-    /// "Duplicate bitmaps found" statistic instead of `duplicate_frame_count` raises
-    /// corpus failures from 10 to 112, so that statistic provably counts both flags.
+    /// "Duplicate bitmaps found" statistic instead of `duplicate_frame_count` raises corpus
+    /// failures from 0 to 107 — measured in a local binary on 2026-09-17 *after* the frame-table
+    /// fix; the same substitution before the fix read 10 to 112. So that statistic counts both
+    /// flags, on either decoder.
     pub back_reference_frame_count: usize,
     pub hotspot_count: usize,
     pub hotspot_bytes: u64,
@@ -147,15 +151,6 @@ pub struct ImpDisagreement {
 /// Why a member cannot validate exactly, as established by the 2026-09-17 corpus survey.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImpExceptionClass {
-    /// The header describes a build with *more* distinct bitmaps than the shipped file holds.
-    ///
-    /// Sequence and frame counts agree exactly; the header's duplicate tally is lower and every
-    /// byte total is higher. Observed in a local binary across the whole archive: on 1,797 of
-    /// 1,798 pairs `binary_duplicates >= header_duplicates`, and on four of these five files
-    /// `header_hotspot_bytes` equals `binary_hotspot_bytes / binary_distinct * header_distinct`
-    /// exactly, where `header_distinct = frames - header_duplicates`. So `Duplicate bitmaps found`
-    /// counts duplicates among the tool's *input* bitmaps, and the written file dedupes further.
-    HeaderPredatesDeduplication,
     /// The header describes the same structure but different pixels.
     ///
     /// Sequence count, frame count, duplicate count and hotspot bytes all agree; only the pixel
@@ -197,71 +192,18 @@ const fn waive(statistic: ImpStatistic, binary: u64, header: u64) -> ImpDisagree
     }
 }
 
-/// The ten archive members that cannot validate exactly, each with its measured numbers.
+/// The five archive members that cannot validate exactly, each with its measured numbers.
 ///
 /// Observed in a local binary on 2026-09-17 against the shipped `imp.mpq` of Lords of Magic
-/// Special Edition (GS5R3). The other 1,788 stem-paired members validate on every statistic.
+/// Special Edition (GS5R3), and re-measured after the frame-table fix of the same day: 1,795 of
+/// the 1,800 paired members validate on every statistic and these five do not.
+///
+/// This list held ten members until the frame-table fix. The other five — `units/imp/aicr3b`,
+/// `units/imp/chcr3b`, `units/imp/chwmmb`, `units/imp/ficr3b` and `units/imp/ficr5b` — were not
+/// archive defects at all: the decoder keyed a whole facing off its first frame record's `0x04`
+/// flag and pointed every frame of that facing at that one record, swallowing real records. They
+/// validate exactly now. See `docs/research-log.md` for the correction.
 pub const IMP_VALIDATION_EXCEPTIONS: &[ImpValidationException] = &[
-    ImpValidationException {
-        member: "units/imp/aicr3b",
-        class: ImpExceptionClass::HeaderPredatesDeduplication,
-        reason: "header counts 36 input bitmaps, file stores 35; hotspot bytes scale exactly \
-                 (840 / 35 * 36 = 864) and the extra input bitmap accounts for 12 raw pixels",
-        waived: &[
-            waive(ImpStatistic::DuplicateFrameCount, 81, 80),
-            waive(ImpStatistic::RawPixelBytes, 227_449, 227_461),
-            waive(ImpStatistic::HotspotBytes, 840, 864),
-            waive(ImpStatistic::StoredPixelBytes, 62_540, 62_552),
-        ],
-    },
-    ImpValidationException {
-        member: "units/imp/chcr3b",
-        class: ImpExceptionClass::HeaderPredatesDeduplication,
-        reason: "header counts 36 input bitmaps, file stores 35; the extra bitmap's hotspot array \
-                 is 16 bytes rather than this file's usual 32, so hotspot bytes gain 16 not 32",
-        waived: &[
-            waive(ImpStatistic::DuplicateFrameCount, 91, 90),
-            waive(ImpStatistic::RawPixelBytes, 37_296, 38_739),
-            waive(ImpStatistic::HotspotBytes, 1_120, 1_136),
-            waive(ImpStatistic::StoredPixelBytes, 26_430, 27_176),
-        ],
-    },
-    ImpValidationException {
-        member: "units/imp/chwmmb",
-        class: ImpExceptionClass::HeaderPredatesDeduplication,
-        reason: "header counts 65 input bitmaps, file stores 40; hotspot bytes scale exactly \
-                 (640 / 40 * 65 = 1040), the largest dedup gap in the archive",
-        waived: &[
-            waive(ImpStatistic::DuplicateFrameCount, 105, 80),
-            waive(ImpStatistic::RawPixelBytes, 23_641, 36_506),
-            waive(ImpStatistic::HotspotBytes, 640, 1_040),
-            waive(ImpStatistic::StoredPixelBytes, 15_699, 24_140),
-        ],
-    },
-    ImpValidationException {
-        member: "units/imp/ficr3b",
-        class: ImpExceptionClass::HeaderPredatesDeduplication,
-        reason: "header counts 36 input bitmaps, file stores 35; hotspot bytes scale exactly \
-                 (840 / 35 * 36 = 864), the same shape as units/imp/aicr3b",
-        waived: &[
-            waive(ImpStatistic::DuplicateFrameCount, 81, 80),
-            waive(ImpStatistic::RawPixelBytes, 225_614, 225_626),
-            waive(ImpStatistic::HotspotBytes, 840, 864),
-            waive(ImpStatistic::StoredPixelBytes, 63_072, 63_084),
-        ],
-    },
-    ImpValidationException {
-        member: "units/imp/ficr5b",
-        class: ImpExceptionClass::HeaderPredatesDeduplication,
-        reason: "header counts 46 input bitmaps, file stores 45; hotspot bytes scale exactly \
-                 (720 / 45 * 46 = 736)",
-        waived: &[
-            waive(ImpStatistic::DuplicateFrameCount, 135, 134),
-            waive(ImpStatistic::RawPixelBytes, 170_736, 170_766),
-            waive(ImpStatistic::HotspotBytes, 720, 736),
-            waive(ImpStatistic::StoredPixelBytes, 73_560, 73_583),
-        ],
-    },
     ImpValidationException {
         member: "missile/lsp01ap",
         class: ImpExceptionClass::HeaderPredatesArtRevision,
@@ -323,11 +265,153 @@ pub const IMP_VALIDATION_EXCEPTIONS: &[ImpValidationException] = &[
 ];
 
 /// A member with no counterpart, and the catalog reason it has none.
+///
+/// The note is **value-pinned** the same way a validation exception is: `facts` records what the
+/// member measures, and [`ImpOrphanNote::verify`] re-measures it. Accepting an orphan on its name
+/// alone would let a truncated or substituted member pass the corpus run silently, which is what
+/// the validator did before 2026-09-17.
 #[derive(Debug, Clone, Copy)]
 pub struct ImpOrphanNote {
     /// Normalized member name including extension, e.g. `imp/fleemarka.imp`.
     pub member: &'static str,
     pub reason: &'static str,
+    pub facts: ImpOrphanFacts,
+}
+
+/// The measurable properties a catalog note asserts about the member it excuses.
+#[derive(Debug, Clone, Copy)]
+pub enum ImpOrphanFacts {
+    /// A `.h` with no `.imp`: the sequence name and statistics its own text declares.
+    Header {
+        sequence_name: &'static str,
+        sequence_count: usize,
+        frame_count: usize,
+        duplicate_frame_count: usize,
+        raw_pixel_bytes: u64,
+        hotspot_bytes: u64,
+        compressed_pixel_bytes: Option<u64>,
+    },
+    /// An `.imp` with no `.h`: the statistics the decoder measures from its bytes.
+    Sprite {
+        sequence_count: usize,
+        frame_count: usize,
+        duplicate_frame_count: usize,
+        raw_pixel_bytes: u64,
+        hotspot_bytes: u64,
+        stored_pixel_bytes: u64,
+    },
+}
+
+impl ImpOrphanNote {
+    /// Parse `bytes` as the kind this note claims and check every pinned value.
+    ///
+    /// A parse error, or any differing statistic, comes back as an error naming the field. A
+    /// member that merely shares the catalogued *name* therefore no longer passes.
+    pub fn verify(&self, bytes: &[u8]) -> Result<(), ImpError> {
+        let mut mismatches = Vec::new();
+        let mut check = |field: &str, measured: String, pinned: String| {
+            if measured != pinned {
+                mismatches.push(format!("{field} measured {measured}, note pins {pinned}"));
+            }
+        };
+        match self.facts {
+            ImpOrphanFacts::Header {
+                sequence_name,
+                sequence_count,
+                frame_count,
+                duplicate_frame_count,
+                raw_pixel_bytes,
+                hotspot_bytes,
+                compressed_pixel_bytes,
+            } => {
+                let stats = ImpHeaderStats::parse(bytes)?;
+                check(
+                    "declared sequence name",
+                    stats.sequence_name.to_ascii_lowercase(),
+                    sequence_name.to_ascii_lowercase(),
+                );
+                check(
+                    "sequence count",
+                    stats.sequence_count.to_string(),
+                    sequence_count.to_string(),
+                );
+                check(
+                    "frame count",
+                    stats.frame_count.to_string(),
+                    frame_count.to_string(),
+                );
+                check(
+                    "duplicate frame count",
+                    stats.duplicate_frame_count.to_string(),
+                    duplicate_frame_count.to_string(),
+                );
+                check(
+                    "raw pixel bytes",
+                    stats.raw_pixel_bytes.to_string(),
+                    raw_pixel_bytes.to_string(),
+                );
+                check(
+                    "hotspot bytes",
+                    stats.hotspot_bytes.to_string(),
+                    hotspot_bytes.to_string(),
+                );
+                check(
+                    "compressed pixel bytes",
+                    format!("{:?}", stats.compressed_pixel_bytes),
+                    format!("{compressed_pixel_bytes:?}"),
+                );
+            }
+            ImpOrphanFacts::Sprite {
+                sequence_count,
+                frame_count,
+                duplicate_frame_count,
+                raw_pixel_bytes,
+                hotspot_bytes,
+                stored_pixel_bytes,
+            } => {
+                let sprite = ImpSprite::parse(bytes)?;
+                check(
+                    "sequence count",
+                    sprite.sequence_count.to_string(),
+                    sequence_count.to_string(),
+                );
+                check(
+                    "frame count",
+                    sprite.frame_count.to_string(),
+                    frame_count.to_string(),
+                );
+                check(
+                    "duplicate frame count",
+                    sprite.duplicate_frame_count.to_string(),
+                    duplicate_frame_count.to_string(),
+                );
+                check(
+                    "raw pixel bytes",
+                    sprite.raw_pixel_bytes.to_string(),
+                    raw_pixel_bytes.to_string(),
+                );
+                check(
+                    "hotspot bytes",
+                    sprite.hotspot_bytes.to_string(),
+                    hotspot_bytes.to_string(),
+                );
+                check(
+                    "stored pixel bytes",
+                    sprite.stored_pixel_bytes.to_string(),
+                    stored_pixel_bytes.to_string(),
+                );
+            }
+        }
+        if mismatches.is_empty() {
+            Ok(())
+        } else {
+            Err(ImpError::new(format!(
+                "IMP orphan {} does not match its catalog note: {}",
+                self.member,
+                mismatches.join("; ")
+            )))
+        }
+    }
 }
 
 /// Members that remain unpaired after the declared-sequence-name fallback.
@@ -336,19 +420,36 @@ pub struct ImpOrphanNote {
 /// all four originally-orphaned members are naming artifacts. Two of the four pair up once the
 /// header's declared sequence name is consulted (`imp/fleemark.h` declares UNMRKA and matches
 /// `imp/unmrka.imp`; `units/imp/chwmcbm.h` declares DEWMHB and matches `units/imp/dewmhb.imp`).
-/// The remaining two are catalogued here.
+/// The remaining two are catalogued here, with the values each one measures.
 pub const IMP_ORPHAN_NOTES: &[ImpOrphanNote] = &[
     ImpOrphanNote {
         member: "aura/lsp01ea.h",
         reason: "stray header copy: declares sequence SPL01EA, which has no .imp in the archive, \
                  and is byte-identical to aura/fsp03aa.h, whose .imp matches its statistics \
                  exactly (1 sequence, 9 frames, 0 duplicates, 5597 raw, 2065 stored)",
+        facts: ImpOrphanFacts::Header {
+            sequence_name: "spl01ea",
+            sequence_count: 1,
+            frame_count: 9,
+            duplicate_frame_count: 0,
+            raw_pixel_bytes: 5_597,
+            hotspot_bytes: 0,
+            compressed_pixel_bytes: Some(2_065),
+        },
     },
     ImpOrphanNote {
         member: "imp/fleemarka.imp",
         reason: "unreferenced art copy: measures identically to imp/unmrka.imp (1 sequence, \
                  13 frames, 0 duplicates, 27054 raw, uncompressed) and no header in the archive \
                  declares sequence FLEEMARKA, so it shipped without a header of its own",
+        facts: ImpOrphanFacts::Sprite {
+            sequence_count: 1,
+            frame_count: 13,
+            duplicate_frame_count: 0,
+            raw_pixel_bytes: 27_054,
+            hotspot_bytes: 0,
+            stored_pixel_bytes: 27_054,
+        },
     },
 ];
 
@@ -367,6 +468,15 @@ pub fn imp_orphan_note(member: &str) -> Option<&'static ImpOrphanNote> {
 /// Archive member names use backslashes and mixed case; exception keys use neither.
 pub fn normalize_imp_member(name: &str) -> String {
     name.replace('\\', "/").to_ascii_lowercase()
+}
+
+/// The last path component of an archive member name, for either separator.
+///
+/// Member names in this archive use `\`, but a caller that has already normalized a name holds
+/// `/`. Splitting on one separator only silently yields the whole path for the other, so both
+/// basename lookups go through here.
+pub fn imp_member_basename(name: &str) -> &str {
+    name.rsplit(['\\', '/']).next().unwrap_or(name)
 }
 
 fn describe_disagreements(found: &[ImpDisagreement]) -> String {
@@ -505,23 +615,16 @@ impl ImpSprite {
                     FRAME_RECORD_SIZE,
                     "frame table",
                 )?;
-                let repeated_facing = source[frame_table_offset] & FRAME_FLAG_SHARED_PIXELS != 0;
-                if !repeated_facing {
-                    require_range(
-                        source,
-                        frame_table_offset,
-                        facing_frames,
-                        FRAME_RECORD_SIZE,
-                        "frame table",
-                    )?;
-                }
+                require_range(
+                    source,
+                    frame_table_offset,
+                    facing_frames,
+                    FRAME_RECORD_SIZE,
+                    "frame table",
+                )?;
                 let facing_first_frame = frames.len();
                 for frame_index in 0..facing_frames {
-                    let frame_offset = if repeated_facing {
-                        frame_table_offset
-                    } else {
-                        frame_table_offset + frame_index * FRAME_RECORD_SIZE
-                    };
+                    let frame_offset = frame_table_offset + frame_index * FRAME_RECORD_SIZE;
                     let frame_hotspots = usize::from(source[frame_offset + 1]);
                     let frame_flags = source[frame_offset];
                     let width = read_u16(source, frame_offset + 2)?;
@@ -559,7 +662,7 @@ impl ImpSprite {
                         let source_frame = if shared_pixels {
                             pixel_sources.get(&pixels_offset).copied().ok_or_else(|| {
                                 ImpError::new(format!(
-                                    "IMP repeated facing references unknown pixel offset {pixels_offset}"
+                                    "IMP shared-pixel frame references unknown pixel offset {pixels_offset}"
                                 ))
                             })?
                         } else {
@@ -710,20 +813,11 @@ impl ImpSprite {
         })
     }
 
-    /// Number of bitmaps the file actually stores, i.e. frames that are not duplicates.
-    ///
-    /// The generated header's `Duplicate bitmaps found` statistic implies the same quantity for
-    /// the *build tool's input* as `frame_count - duplicate_frame_count`. Comparing the two is how
-    /// [`ImpExceptionClass::HeaderPredatesDeduplication`] was established.
-    pub fn distinct_bitmap_count(&self) -> usize {
-        self.frame_count.saturating_sub(self.duplicate_frame_count)
-    }
-
     /// Every statistic on which this file and its generated header disagree.
     ///
-    /// Reports all of them. An earlier version short-circuited on the first `check_equal`, which
-    /// made five files look like they disagreed on the duplicate tally alone when they in fact
-    /// also disagree on three byte totals — the evidence that settled what the header counts.
+    /// Reports all of them. An earlier version short-circuited on the first `check_equal`, so a
+    /// file that disagreed on four statistics reported one, and the missing three were exactly
+    /// the evidence needed to tell a stale header from a decoder bug.
     pub fn disagreements(&self, stats: &ImpHeaderStats) -> Vec<ImpDisagreement> {
         let mut found = Vec::new();
         let mut compare = |statistic, binary: u64, header: u64| {
@@ -819,9 +913,8 @@ impl ImpSprite {
 
     /// Every frame index backed by the same 16-byte record as `frame_index`, itself included.
     ///
-    /// Repeated facings and `0x04` shared-pixel runs alias one record, so a write through any of
-    /// these indices is a write through all of them. Callers that edit placement should report
-    /// this rather than surprise the user.
+    /// Records may alias, so a write through any of these indices is a write through all of them.
+    /// Callers that edit placement should report this rather than surprise the user.
     pub fn frames_sharing_record(&self, frame_index: usize) -> Result<Vec<usize>, ImpError> {
         let frame = self.frames.get(frame_index).ok_or_else(|| {
             ImpError::new(format!("IMP frame index {frame_index} is out of range"))
@@ -1434,32 +1527,105 @@ mod tests {
         );
     }
 
-    #[test]
-    fn repeated_facing_record_represents_each_logical_frame() {
-        let mut source = synthetic_imp();
-        source.splice(56..56, [0_u8; FACING_RECORD_SIZE + FRAME_RECORD_SIZE]);
-        source[8..12].copy_from_slice(&96_u32.to_le_bytes());
+    /// A sprite whose second facing holds a *two-record* frame table: record 0 carries `0x04`
+    /// and record 1 is a genuinely distinct frame with its own pixels.
+    ///
+    /// This is the shape the archive actually stores — measured on 2026-09-17, `aicr3b` sequence 2
+    /// facing 0 has records `[04 00]` and `chwmmb` sequence 5 facings 0-4 each have
+    /// `[04 00 00 00 00 00]`. The decoder used to key the whole facing off record 0's flag and
+    /// point every frame slot at that one record, so records 1.. were never read.
+    ///
+    /// Layout: facing 0 holds the one real frame at record 64; facing 1 holds records 80 (shared)
+    /// and 96 (real, its own payload).
+    fn synthetic_imp_with_record_array() -> Vec<u8> {
+        let palette_offset = 112_usize;
+        let first_pixels = palette_offset + PALETTE_BYTES;
+        let second_pixels = first_pixels + 2;
+        let mut source = vec![0_u8; palette_offset];
+        source[2] = 1;
+        source[4..6].copy_from_slice(&2_u16.to_le_bytes());
+        source[6..8].copy_from_slice(&1_u16.to_le_bytes());
+        source[8..12].copy_from_slice(&(palette_offset as u32).to_le_bytes());
+        source[26..28].copy_from_slice(&1_u16.to_le_bytes());
+        source[28..32].copy_from_slice(&32_u32.to_le_bytes());
+        // One sequence with two facings.
         source[32 + 11] = 2;
-        source[48 + 4..48 + 8].copy_from_slice(&80_u32.to_le_bytes());
-        source[56 + 2..56 + 4].copy_from_slice(&5_u16.to_le_bytes());
-        source[56 + 4..56 + 8].copy_from_slice(&64_u32.to_le_bytes());
-        source[64] = FRAME_FLAG_SHARED_PIXELS;
-        source[64 + 12..64 + 16].copy_from_slice(&1120_u32.to_le_bytes());
-        source[80 + 12..80 + 16].copy_from_slice(&1120_u32.to_le_bytes());
+        source[32 + 12..32 + 16].copy_from_slice(&48_u32.to_le_bytes());
+        // Facing 0: one frame, table at 64.
+        source[48..50].copy_from_slice(&7_u16.to_le_bytes());
+        source[48 + 2..48 + 4].copy_from_slice(&1_u16.to_le_bytes());
+        source[48 + 4..48 + 8].copy_from_slice(&64_u32.to_le_bytes());
+        // Facing 1: two frames, table at 80.
+        source[56..58].copy_from_slice(&8_u16.to_le_bytes());
+        source[56 + 2..56 + 4].copy_from_slice(&2_u16.to_le_bytes());
+        source[56 + 4..56 + 8].copy_from_slice(&80_u32.to_le_bytes());
+        // Record at 64: the real frame facing 0 draws.
+        source[64 + 2..64 + 4].copy_from_slice(&2_u16.to_le_bytes());
+        source[64 + 4..64 + 6].copy_from_slice(&1_u16.to_le_bytes());
+        source[64 + 6..64 + 8].copy_from_slice(&2_u16.to_le_bytes());
+        source[64 + 12..64 + 16].copy_from_slice(&(first_pixels as u32).to_le_bytes());
+        // Record at 80: shares record 64's payload.
+        source[80] = FRAME_FLAG_SHARED_PIXELS;
+        source[80 + 12..80 + 16].copy_from_slice(&(first_pixels as u32).to_le_bytes());
+        // Record at 96: a distinct frame with a payload of its own.
+        source[96 + 2..96 + 4].copy_from_slice(&2_u16.to_le_bytes());
+        source[96 + 4..96 + 6].copy_from_slice(&1_u16.to_le_bytes());
+        source[96 + 6..96 + 8].copy_from_slice(&2_u16.to_le_bytes());
+        source[96 + 12..96 + 16].copy_from_slice(&(second_pixels as u32).to_le_bytes());
+        source.resize(first_pixels, 0);
+        source[palette_offset..palette_offset + 4].copy_from_slice(&[3, 2, 1, 0]);
+        source.extend_from_slice(&[0xaa, 0xbb]);
+        source.extend_from_slice(&[0xcc, 0xdd]);
+        source
+    }
 
-        let sprite = ImpSprite::parse(&source).unwrap();
-        assert_eq!(sprite.frame_count, 6);
-        assert_eq!(sprite.duplicate_frame_count, 5);
+    /// Regression for the decoder bug that produced five of the ten recorded corpus exceptions.
+    ///
+    /// A facing's frame table is an ordinary array: only the first record may carry `0x04`, and
+    /// the records after it are real frames. The old decoder read record 0's flag, aliased every
+    /// frame slot to it, and skipped the full-table bounds check, so it reported two duplicates
+    /// here and never read the second record's 0xcc 0xdd payload.
+    #[test]
+    fn a_facing_frame_table_is_an_array_of_records() {
+        let sprite = ImpSprite::parse(&synthetic_imp_with_record_array()).unwrap();
+
+        assert_eq!(sprite.frame_count, 3);
+        assert_eq!(sprite.duplicate_frame_count, 1);
         assert_eq!(sprite.sequences[0].facing_count, 2);
-        assert_eq!(sprite.sequences[0].frame_count, 6);
+        assert_eq!(sprite.sequences[0].frame_count, 3);
         assert_eq!(sprite.facings[1].first_frame, 1);
-        assert_eq!(sprite.facings[1].frame_count, 5);
-        assert_eq!(sprite.frame_location(5).unwrap(), (0, 1, 4));
-        assert_eq!(sprite.raw_pixel_bytes, 2);
-        assert_eq!(sprite.stored_pixel_bytes, 2);
+        assert_eq!(sprite.facings[1].frame_count, 2);
+        assert_eq!(sprite.frame_location(2).unwrap(), (0, 1, 1));
+
+        // Frame 1 is the `0x04` record; frame 2 is the SECOND record of the same facing, and it
+        // is read, not aliased to the first.
+        assert_eq!(sprite.frames[1].record_offset, 80);
+        assert_eq!(sprite.frames[1].source_frame, Some(0));
+        assert_eq!(sprite.frames[2].record_offset, 96);
+        assert_eq!(sprite.frames[2].source_frame, None);
+        assert_eq!(sprite.frames[2].palette_indices, [0xcc, 0xdd]);
         assert_eq!(
-            sprite.resolved_frame(5).unwrap().palette_indices,
+            sprite.resolved_frame(1).unwrap().palette_indices,
             [0xaa, 0xbb]
+        );
+        // Both payloads are counted: the swallowed record is what made five corpus files report
+        // fewer pixels than their headers.
+        assert_eq!(sprite.raw_pixel_bytes, 4);
+        assert_eq!(sprite.stored_pixel_bytes, 4);
+        assert_eq!(sprite.frames_sharing_record(1).unwrap(), [1]);
+        assert_eq!(sprite.frames_sharing_record(2).unwrap(), [2]);
+    }
+
+    /// The full-table bounds check used to be skipped whenever record 0 carried `0x04`, so a
+    /// facing could claim any number of records and the decoder would read none of them.
+    #[test]
+    fn a_truncated_frame_table_is_rejected_even_when_the_first_record_is_shared() {
+        let mut source = synthetic_imp_with_record_array();
+        // Facing 1 claims 200 records from offset 80; the file is far shorter.
+        source[56 + 2..56 + 4].copy_from_slice(&200_u16.to_le_bytes());
+        assert_eq!(
+            ImpSprite::parse(&source).unwrap_err().to_string(),
+            "IMP frame table is truncated"
         );
     }
 
@@ -1575,23 +1741,16 @@ mod tests {
     /// caller read back `None`.
     #[test]
     fn writing_an_origin_refuses_a_duplicate_frame() {
-        let mut source = synthetic_imp();
-        source.splice(56..56, [0_u8; FACING_RECORD_SIZE + FRAME_RECORD_SIZE]);
-        source[8..12].copy_from_slice(&96_u32.to_le_bytes());
-        source[32 + 11] = 2;
-        source[48 + 4..48 + 8].copy_from_slice(&80_u32.to_le_bytes());
-        source[56 + 2..56 + 4].copy_from_slice(&5_u16.to_le_bytes());
-        source[56 + 4..56 + 8].copy_from_slice(&64_u32.to_le_bytes());
-        source[64] = FRAME_FLAG_SHARED_PIXELS;
-        source[64 + 12..64 + 16].copy_from_slice(&1120_u32.to_le_bytes());
-        source[80 + 12..80 + 16].copy_from_slice(&1120_u32.to_le_bytes());
+        let source = synthetic_imp_with_record_array();
 
         let message = write_frame_origin(&source, 1, -1234, 567)
             .unwrap_err()
             .to_string();
         assert!(message.contains("duplicate of frame 0"), "{message}");
-        // And the untouched original frame still accepts a write.
+        // Both real frames still accept a write, including the one that follows the `0x04`
+        // record inside the same facing.
         assert!(write_frame_origin(&source, 0, -1234, 567).is_ok());
+        assert!(write_frame_origin(&source, 2, -1234, 567).is_ok());
     }
 
     /// Regression for a review finding: these overflowed silently in a release build, printing a
@@ -1684,24 +1843,23 @@ mod tests {
         assert!(message.contains("origin pair"), "{message}");
     }
 
-    /// A repeated facing aliases one record across every logical frame, so an edit through any of
-    /// them is an edit through all of them. Callers have to be told.
+    /// Two facings may point their frame tables at the *same* offset, so one 16-byte record backs
+    /// more than one logical frame and an edit through either index is an edit through both.
+    /// Callers have to be told. (Records within a single facing do not alias: that table is an
+    /// array — see `a_facing_frame_table_is_an_array_of_records`.)
     #[test]
-    fn frames_sharing_record_reports_repeated_facing_aliases() {
-        let mut source = synthetic_imp();
-        source.splice(56..56, [0_u8; FACING_RECORD_SIZE + FRAME_RECORD_SIZE]);
-        source[8..12].copy_from_slice(&96_u32.to_le_bytes());
-        source[32 + 11] = 2;
-        source[48 + 4..48 + 8].copy_from_slice(&80_u32.to_le_bytes());
-        source[56 + 2..56 + 4].copy_from_slice(&5_u16.to_le_bytes());
+    fn frames_sharing_record_reports_records_backing_more_than_one_frame() {
+        let mut source = synthetic_imp_with_record_array();
+        // Point facing 1 at facing 0's one-record table instead of its own.
+        source[56 + 2..56 + 4].copy_from_slice(&1_u16.to_le_bytes());
         source[56 + 4..56 + 8].copy_from_slice(&64_u32.to_le_bytes());
-        source[64] = FRAME_FLAG_SHARED_PIXELS;
-        source[64 + 12..64 + 16].copy_from_slice(&1120_u32.to_le_bytes());
-        source[80 + 12..80 + 16].copy_from_slice(&1120_u32.to_le_bytes());
 
         let sprite = ImpSprite::parse(&source).unwrap();
-        assert_eq!(sprite.frames_sharing_record(1).unwrap(), [1, 2, 3, 4, 5]);
-        assert_eq!(sprite.frames_sharing_record(0).unwrap(), [0]);
+        assert_eq!(sprite.frames.len(), 2);
+        assert_eq!(sprite.frames[0].record_offset, 64);
+        assert_eq!(sprite.frames[1].record_offset, 64);
+        assert_eq!(sprite.frames_sharing_record(0).unwrap(), [0, 1]);
+        assert_eq!(sprite.frames_sharing_record(1).unwrap(), [0, 1]);
     }
 
     #[test]
@@ -1738,15 +1896,20 @@ mod tests {
     }
 
     /// The old implementation used `?` on each comparison in a fixed order, so a file that
-    /// disagreed on four statistics reported one. That hid the evidence for what the header
-    /// actually counts, so every disagreement has to come back.
+    /// disagreed on four statistics reported one. That hid the evidence that separates a stale
+    /// header from a decoder bug, so every disagreement has to come back — and every statistic
+    /// has to be compared at all. Perturbing only some of the six let a deleted comparison block
+    /// survive the suite.
     #[test]
     fn disagreements_reports_every_statistic_not_only_the_first() {
         let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
         let mut stats = synthetic_stats();
+        stats.sequence_count += 1;
         stats.frame_count += 5;
+        stats.duplicate_frame_count += 2;
         stats.raw_pixel_bytes += 7;
         stats.hotspot_bytes += 9;
+        stats.compressed_pixel_bytes = Some(sprite.stored_pixel_bytes + 11);
 
         let found = sprite.disagreements(&stats);
         assert_eq!(
@@ -1755,13 +1918,59 @@ mod tests {
                 .map(|item| item.statistic)
                 .collect::<Vec<ImpStatistic>>(),
             [
+                ImpStatistic::SequenceCount,
                 ImpStatistic::FrameCount,
+                ImpStatistic::DuplicateFrameCount,
                 ImpStatistic::RawPixelBytes,
-                ImpStatistic::HotspotBytes
+                ImpStatistic::HotspotBytes,
+                ImpStatistic::StoredPixelBytes,
             ]
         );
-        assert_eq!(found[0].binary, sprite.frame_count as u64);
-        assert_eq!(found[0].header, sprite.frame_count as u64 + 5);
+        let expected = [
+            (sprite.sequence_count as u64, sprite.sequence_count as u64 + 1),
+            (sprite.frame_count as u64, sprite.frame_count as u64 + 5),
+            (
+                sprite.duplicate_frame_count as u64,
+                sprite.duplicate_frame_count as u64 + 2,
+            ),
+            (sprite.raw_pixel_bytes, sprite.raw_pixel_bytes + 7),
+            (sprite.hotspot_bytes, sprite.hotspot_bytes + 9),
+            (sprite.stored_pixel_bytes, sprite.stored_pixel_bytes + 11),
+        ];
+        for (item, (binary, header)) in found.iter().zip(expected) {
+            assert_eq!((item.binary, item.header), (binary, header), "{}", item.statistic);
+        }
+    }
+
+    /// Each statistic must be compared *independently*: perturbing one alone has to surface it.
+    /// Perturbing several at once cannot catch a comparison that was deleted outright, because
+    /// the assertion still sees a nonempty list.
+    #[test]
+    fn every_statistic_is_compared_on_its_own() {
+        let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
+        type Perturbation = (ImpStatistic, fn(&mut ImpHeaderStats));
+        let perturbations: [Perturbation; 6] = [
+            (ImpStatistic::SequenceCount, |stats| stats.sequence_count += 1),
+            (ImpStatistic::FrameCount, |stats| stats.frame_count += 1),
+            (ImpStatistic::DuplicateFrameCount, |stats| {
+                stats.duplicate_frame_count += 1
+            }),
+            (ImpStatistic::RawPixelBytes, |stats| stats.raw_pixel_bytes += 1),
+            (ImpStatistic::HotspotBytes, |stats| stats.hotspot_bytes += 1),
+            (ImpStatistic::StoredPixelBytes, |stats| {
+                stats.compressed_pixel_bytes = stats.compressed_pixel_bytes.map(|bytes| bytes + 1)
+            }),
+        ];
+        for (statistic, perturb) in perturbations {
+            let mut stats = synthetic_stats();
+            perturb(&mut stats);
+            let found = sprite.disagreements(&stats);
+            assert_eq!(
+                found.iter().map(|item| item.statistic).collect::<Vec<_>>(),
+                [statistic],
+                "{statistic} is not compared on its own"
+            );
+        }
     }
 
     #[test]
@@ -1782,15 +1991,6 @@ mod tests {
         let message = sprite.validate_against(&stats).unwrap_err().to_string();
         assert!(message.contains("sequence count mismatch"), "{message}");
         assert!(message.contains("hotspot bytes mismatch"), "{message}");
-    }
-
-    #[test]
-    fn distinct_bitmap_count_is_frames_minus_duplicates() {
-        let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
-        assert_eq!(
-            sprite.distinct_bitmap_count(),
-            sprite.frame_count - sprite.duplicate_frame_count
-        );
     }
 
     #[test]
@@ -1858,39 +2058,18 @@ mod tests {
                 "{} waives the sequence count; no member in the archive does",
                 exception.member
             );
+            // `covers` compares the waived slice element by element, so a correctly measured
+            // member whose disagreements were listed out of order would silently re-fail. The
+            // decoder emits them in `ImpStatistic` order, so the table must be written that way.
+            let mut sorted = statistics.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(
+                statistics, sorted,
+                "{} lists its waived statistics out of ImpStatistic order, which `covers` cannot match",
+                exception.member
+            );
             match exception.class {
-                ImpExceptionClass::HeaderPredatesDeduplication => {
-                    assert!(
-                        !statistics.contains(&ImpStatistic::FrameCount),
-                        "{} claims a dedup gap but the frame count itself disagrees",
-                        exception.member
-                    );
-                    let duplicates = exception
-                        .waived
-                        .iter()
-                        .find(|item| item.statistic == ImpStatistic::DuplicateFrameCount)
-                        .unwrap_or_else(|| panic!("{} waives no duplicate tally", exception.member));
-                    assert!(
-                        duplicates.binary > duplicates.header,
-                        "{} claims the file dedupes further, but it dedupes less",
-                        exception.member
-                    );
-                    for item in exception.waived {
-                        if matches!(
-                            item.statistic,
-                            ImpStatistic::RawPixelBytes
-                                | ImpStatistic::HotspotBytes
-                                | ImpStatistic::StoredPixelBytes
-                        ) {
-                            assert!(
-                                item.header > item.binary,
-                                "{} waives {} but the header total is not the larger one",
-                                exception.member,
-                                item.statistic
-                            );
-                        }
-                    }
-                }
                 ImpExceptionClass::HeaderPredatesArtRevision => {
                     assert_eq!(
                         statistics,
@@ -1938,9 +2117,94 @@ mod tests {
             );
             assert!(orphans.insert(note.member), "{} is listed twice", note.member);
             assert!(note.reason.len() > 40, "{} has a stub reason", note.member);
+            assert!(
+                match note.facts {
+                    ImpOrphanFacts::Header { .. } => note.member.ends_with(".h"),
+                    ImpOrphanFacts::Sprite { .. } => note.member.ends_with(".imp"),
+                },
+                "{} pins facts of the wrong member kind",
+                note.member
+            );
         }
         assert!(imp_orphan_note("imp/fleemarka.imp").is_some());
         assert!(imp_orphan_note("imp/fleemark.h").is_none());
+    }
+
+    fn orphan_header_text(frames: usize) -> Vec<u8> {
+        format!(
+            "// Sprite headers for sequence spl01ea\r\n\
+             // Total number of 'Sequences': 1\r\n\
+             // Total number of 'Frames': {frames}\r\n\
+             // Duplicate bitmaps found : 0\r\n\
+             // Bitmap raw memory usage : 5597\r\n\
+             // Hotspot raw memory usage : 0\r\n\
+             // Bitmap RLE memory usage : 2065\r\n"
+        )
+        .into_bytes()
+    }
+
+    fn orphan_header_note() -> ImpOrphanNote {
+        ImpOrphanNote {
+            member: "aura/lsp01ea.h",
+            reason: "fixture copy of the catalogued stray header, with the same pinned values",
+            facts: ImpOrphanFacts::Header {
+                sequence_name: "spl01ea",
+                sequence_count: 1,
+                frame_count: 9,
+                duplicate_frame_count: 0,
+                raw_pixel_bytes: 5_597,
+                hotspot_bytes: 0,
+                compressed_pixel_bytes: Some(2_065),
+            },
+        }
+    }
+
+    /// The validator used to accept an orphan on its *name* alone, never reading the member. A
+    /// truncated or substituted file at the catalogued name passed the whole corpus run.
+    #[test]
+    fn an_orphan_note_accepts_only_a_member_that_measures_what_it_pins() {
+        let note = orphan_header_note();
+        assert!(note.verify(&orphan_header_text(9)).is_ok());
+
+        let message = note.verify(&orphan_header_text(10)).unwrap_err().to_string();
+        assert!(message.contains("frame count measured 10"), "{message}");
+        assert!(message.contains("aura/lsp01ea.h"), "{message}");
+    }
+
+    #[test]
+    fn an_orphan_note_rejects_a_member_it_cannot_parse() {
+        let note = orphan_header_note();
+        let message = note.verify(b"not a generated header").unwrap_err().to_string();
+        assert!(message.contains("no sequence name"), "{message}");
+    }
+
+    #[test]
+    fn an_orphan_sprite_note_measures_the_decoded_file() {
+        let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
+        let note = ImpOrphanNote {
+            member: "imp/synthetic.imp",
+            reason: "fixture note pinning the synthetic sprite's decoded statistics exactly",
+            facts: ImpOrphanFacts::Sprite {
+                sequence_count: sprite.sequence_count,
+                frame_count: sprite.frame_count,
+                duplicate_frame_count: sprite.duplicate_frame_count,
+                raw_pixel_bytes: sprite.raw_pixel_bytes,
+                hotspot_bytes: sprite.hotspot_bytes,
+                stored_pixel_bytes: sprite.stored_pixel_bytes,
+            },
+        };
+        assert!(note.verify(&synthetic_imp()).is_ok());
+
+        let mut truncated = synthetic_imp();
+        truncated.truncate(truncated.len() - 1);
+        assert!(note.verify(&truncated).is_err());
+    }
+
+    #[test]
+    fn imp_member_basename_splits_on_either_separator() {
+        assert_eq!(imp_member_basename("units\\imp\\orcr4b"), "orcr4b");
+        assert_eq!(imp_member_basename("units/imp/orcr4b"), "orcr4b");
+        assert_eq!(imp_member_basename("orcr4b"), "orcr4b");
     }
 
     #[test]

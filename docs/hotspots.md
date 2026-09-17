@@ -32,6 +32,12 @@ hotspot-count byte at `+1`:
 | --- | --- | --- |
 | `0` | `origin_x: i16`, `origin_y: i16` — the placement itself | 15,725 |
 | `> 0` | `u32` file offset to the hotspot array; the placement is **record 0** of that array | 28,771 |
+
+**Stale, 2026-09-17.** Both counts were measured with the frame-table bug corrected that day, which
+swallowed 29 frame records across five files. A spot re-measurement over the 1,798 stem-paired
+sprites reads 15,677 and 28,800; that is a different population from the one above, so these totals
+are pending re-measurement rather than replaced. The split itself — which record kind a frame
+carries — is unaffected.
 | — | duplicate / back-reference frames carry neither | 7,170 |
 
 A frame therefore carries **one form or the other, never both**. Hotspot records are 6 bytes

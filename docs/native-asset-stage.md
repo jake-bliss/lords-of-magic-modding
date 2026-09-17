@@ -58,14 +58,14 @@ The paired generated `.h` files provide unusually valuable ground truth. The cur
 - action labels recovered from generated-header `#define` values cover 4,649 of 4,666 declared sequence slots; aliases are retained, and 1,799 of 1,800 headers provide at least one label;
 - six-byte hotspot records padded per frame to an eight-byte boundary;
 - direct duplicate-frame references and a compact repeated-facing representation;
-- shared-pixel flag `0x04`, including records that occur inside rather than only at the start of a repeated facing;
+- shared-pixel flag `0x04`, carried by individual records inside an ordinary frame-record array (a facing is never a repetition of one record — see the 2026-09-17 correction below);
 - two observed frame-record variants, one with explicit stored sizes and one whose payload length is implicit;
 - a custom packet RLE in which controls below `0x80` repeat the following byte `control + 3` times and controls at or above `0x80` copy `256 - control` literal bytes;
 - 8-, 4-, 2-, and 1-bit indexed pixels selected by file-flag bits `0x30`, with both tightly packed and row-padded layouts;
 - most-significant-bit-first packing for sub-byte pixels, which produces recognizable output across representative sprites;
 - complete pixel expansion, frame-reference resolution, and sequence/facing traversal for all 1,800 observed binaries.
 
-The shared-pixel correction removed 27 false origin records, bounded the remaining origin ranges to X `-66..70` and Y `-207..77`, and improved exact generated-header matches. Across the corpus, 15,725 logical frames carry signed origins and 28,771 carry 64,432 six-byte hotspot records. The hotspot bytes decode as `id: u16` then `x: i16`, `y: i16`. Frame record bytes `+8..+12` are **overloaded**: with a zero count byte at `+1` they are the `origin_x`/`origin_y` placement pair, otherwise a `u32` offset to `count` 6-byte records, of which **record 0 is engine-reserved and holds the draw placement**. Offsets show with observed coordinate ranges X `-115..123` and Y `-232..86`.
+The shared-pixel correction removed 27 false origin records, bounded the remaining origin ranges to X `-66..70` and Y `-207..77`, and improved exact generated-header matches. Across the corpus, 15,725 logical frames carry signed origins and 28,771 carry 64,432 six-byte hotspot records (**stale, 2026-09-17**: measured before that day's frame-table fix, which swallowed 29 records across five files; a spot re-measurement over the 1,798 stem-paired sprites reads 15,677 / 28,800 / 64,492, a different population, so these are pending re-measurement rather than replaced). The hotspot bytes decode as `id: u16` then `x: i16`, `y: i16`. Frame record bytes `+8..+12` are **overloaded**: with a zero count byte at `+1` they are the `origin_x`/`origin_y` placement pair, otherwise a `u32` offset to `count` 6-byte records, of which **record 0 is engine-reserved and holds the draw placement**. Offsets show with observed coordinate ranges X `-115..123` and Y `-232..86`.
 
 The ID is a **hotspot type**, and the numbers are now read directly out of `lomse.exe`'s constant table at `0x00560108` (8-byte `{name, value}` pairs): `NO_HOTSPOT` 0, `CURSOR_HOTSPOT` 1, `MISSILE_ORIGIN_HOTSPOT` 1, `SPELL_ORIGIN1..4_HOTSPOT` 2-5, `FLAP_OFFSET_HOTSPOT` 6, `MISSILE_TARGET_HOTSPOT` 7, `SPELL_TARGET_HOTSPOT` 7, `STREAMER_HOTSPOT` 8. **Corrected 2026-09-16:** the vocabulary is eleven names over nine distinct values 0-8, not nineteen. The `BOLT_HOTSPOT_S0..S3`/`D0..D3` names are field indices into a bolt definition record (values 15-22, in a block ending `BOLT_SPELLDEF_ID` 23 and `BOLT_RESULT_PROC` 24), not IMP hotspot types; `MISSILE_HOTSPOT` 14 likewise. Every value 0-8 appears in the corpus. Record **0** is engine-reserved and holds the **draw placement**, which is why its tag reads `NO_HOTSPOT`; `getimphotspot` and `enumimphotspots` both begin their walk at record 1. Ids 9, 10, 16, 106, 136, 138, 143 and 190 are genuinely outside the vocabulary - see [community research](community-research.md#the-hotspot-mechanism-thread-2176). Placement semantics are settled: `top_left = anchor + placement - (width >> 1, height >> 1)`, added and centre-relative. See [hotspots](hotspots.md).
 
@@ -77,44 +77,79 @@ The validator pairs generated headers with binaries and compares independently r
 | --- | ---: |
 | Header/binary pairs, by stem | 1,798 |
 | Header/binary pairs, by declared sequence name | 2 |
-| Exact matches on every statistic | 1,790 (99.4%) |
-| Named, value-pinned exceptions | 10 |
+| Exact matches on every statistic | 1,795 (99.7%) |
+| Named, value-pinned exceptions | 5 |
 | Unexplained failures | 0 |
 | Documented orphan catalog entries | 2 |
 
-**Observed in a local binary (2026-09-17).** `--validate-imp` now reports zero failures. The ten
+**Observed in a local binary (2026-09-17).** `--validate-imp` reports zero failures. The five
 members that cannot match exactly each carry an entry in `IMP_VALIDATION_EXCEPTIONS`
 (`spikes/asset-viewer/src/imp.rs`) recording its class, its reason, and the exact measured numbers.
 The waiver is value-pinned: an exception applies only when the observed disagreements are exactly
 the recorded ones, so any decoder change that moves a number, drops a disagreement or adds one
-re-fails the member. No bounds check is relaxed — every member is still fully parsed and every
-statistic still compared.
+re-fails the member. The two orphan catalog notes are value-pinned the same way and their members
+are read and re-measured, so a truncated or substituted file at a catalogued name re-fails instead
+of being accepted on its name. No bounds check is relaxed — every member is still fully parsed and
+every statistic still compared.
 
-**Corrected 2026-09-17.** `ImpSprite::validate_against` used `?` on each comparison in a fixed
-order, so a file reported only its *first* disagreement. It now collects all of them. That alone
-changed the picture: the five files previously described as disagreeing on the duplicate tally
-alone in fact also disagree on raw-pixel, hotspot and stored-pixel bytes.
+**Corrected 2026-09-17 (first correction).** `ImpSprite::validate_against` used `?` on each
+comparison in a fixed order, so a file reported only its *first* disagreement. It now collects all
+of them. That alone changed the picture: five files previously described as disagreeing on the
+duplicate tally alone in fact also disagreed on raw-pixel, hotspot and stored-pixel bytes.
 
-**Observed in a local binary — what the header's "Duplicate bitmaps found" counts.** Across all
-1,800 pairs, `binary_duplicates >= header_duplicates` holds on 1,799. So the statistic counts
-duplicates among the build tool's *input* bitmaps, and the written file dedupes at least as much
-and never less. Two independent checks corroborate it. First, on all five affected files the
-sequence and frame counts agree exactly, so the header is not describing different art. Second,
-writing `header_distinct = frames - header_duplicates`, the header's hotspot-byte total is exactly
-`binary_hotspot_bytes / binary_distinct * header_distinct` on four of the five:
+**Corrected 2026-09-17 (second correction) — five of the ten exceptions were our own decoder bug.**
+The decoder read `source[frame_table_offset] & 0x04` — the shared-pixel flag of a facing's *first*
+frame record — and, when it was set, treated the whole facing as a repetition of that one record:
+every frame slot in the facing pointed at the same 16 bytes, and the bounds check for the full
+`facing_frames * 16` table was skipped so nothing noticed. A facing's frame table is in fact an
+ordinary array of records in which only the first may carry `0x04`. Measured record flags:
+`aicr3b` sequence 2 facing 0 is `[04 00]`; `chwmmb` sequence 5 facings 0-4 are each
+`[04 00 00 00 00 00]`. Every record after the first was silently dropped, with its pixels and its
+hotspot array:
 
-| Member | Frames | Header distinct | Binary distinct | Binary hotspot bytes | Header hotspot bytes | Predicted |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `units\imp\aicr3b` | 116 | 36 | 35 | 840 | 864 | 864 |
-| `units\imp\chcr3b` | 126 | 36 | 35 | 1,120 | 1,136 | 1,152 |
-| `units\imp\chwmmb` | 145 | 65 | 40 | 640 | 1,040 | 1,040 |
-| `units\imp\ficr3b` | 116 | 36 | 35 | 840 | 864 | 864 |
-| `units\imp\ficr5b` | 180 | 46 | 45 | 720 | 736 | 736 |
+| Member | Swallowed records | Swallowed raw pixels | Swallowed hotspot bytes |
+| --- | ---: | ---: | ---: |
+| `units\imp\aicr3b` | 1 | 12 | 24 |
+| `units\imp\ficr3b` | 1 | 12 | 24 |
+| `units\imp\ficr5b` | 1 | 30 | 16 |
+| `units\imp\chcr3b` | 1 | 1,443 | 16 |
+| `units\imp\chwmmb` | 25 | 12,865 | 400 |
 
-`chcr3b` misses by 16 bytes because the one extra input bitmap carried a 16-byte hotspot array
-rather than that file's usual 32 — a smaller array, not a contradiction. Every raw-pixel and
-stored-pixel total is likewise larger in the header, by 12 bytes on `aicr3b` and `ficr3b` (one tiny
-extra bitmap) up to 12,865 on `chwmmb` (25 extra bitmaps).
+Those are exactly the deltas the five `HeaderPredatesDeduplication` exceptions waived, on all three
+quantities, for all five files. With the frame table read as an array, `validated` went 1,790 to
+1,795, `validated_with_exception` went 10 to 5, `validation_failures` stayed 0 and nothing else
+moved. All five now match their headers on every statistic.
+
+**Refuted — "the header predates a deduplication pass".** It was previously recorded here as
+**Observed** that `Duplicate bitmaps found` counts duplicates among the build tool's *input*
+bitmaps and that the written file dedupes further. There is no evidence for that. The numbers it
+explained were produced by the decoder bug above, and the explanation was fitted to them.
+
+Why it was believed, and why that was not enough:
+
+- The corpus inequality `binary_duplicates >= header_duplicates` held on 1,797 of the 1,798 stem
+  pairs, the sole exception being `units\imp\orcr4b`. It still does — but it is equally consistent
+  with the headers simply being right, which they now are. (The figure was previously quoted as
+  1,799 of 1,800, and in the source as 1,797 of 1,798, which cannot both be right: the larger
+  denominator silently included the two declared-name fallback pairs, where the header is a
+  *foreign* one and agreement is not evidence about a build tool's own output. The validator now
+  prints `dedup_compared_stem_pairs` as an explicit denominator and counts fallback pairs
+  separately as `dedup_foreign_header_pairs`.)
+- The hotspot arithmetic appeared to corroborate it: with
+  `header_distinct = frames - header_duplicates`, the header's hotspot total equalled
+  `binary_hotspot_bytes / binary_distinct * header_distinct` on four of the five files. Three of
+  those four "predictions" were arithmetically forced: where the gap is one bitmap and the file's
+  hotspot arrays are uniformly sized, that expression *has* to land, so it confirmed nothing. Only
+  `chwmmb`, with a 25-bitmap gap, carried information — and the swallowed-record measurement
+  explains it too.
+- The one file the arithmetic missed, `chcr3b`, was absorbed by asserting that its extra input
+  bitmap "carried a 16-byte hotspot array rather than this file's usual 32". That was a property
+  claimed of a bitmap that is not in the archive: an epicycle protecting the hypothesis from its
+  own counterexample. It has been deleted.
+
+The failure that matters is not the wrong hypothesis. It is that an inference was written down as
+**Observed**, which is the evidence class this repository reserves for measurement, and that is what
+let it stand as settled for as long as it did.
 
 **Observed in a local binary — the archive's `.h` members are not reliably their own.** Of the
 1,800 generated headers, **602 declare a sequence name other than their stem**, and **388 of them
@@ -143,6 +178,16 @@ to describe the `.imp` beside it. That reframes the remaining five disagreements
 "The header is stale" remains an inference from structural agreement, not a demonstrated copy —
 except for `lifitfm`, where the byte-identical header is direct evidence.
 
+**Corrected 2026-09-17 — the fallback now requires a unique match.** A declared sequence name is
+not a key: the 1,800 headers declare only **1,370 distinct sequence names**, 155 names are declared
+by more than one header, those 155 cover 585 headers, and `deaura` alone is declared by 32
+(Observed in a local binary). The fallback used to take the first candidate it found, and the same
+was true of the sprite-basename index, which was last-wins over 5 colliding `.imp` basenames. Both
+now keep every candidate, prefer one in the member's own directory, and report ambiguity as a
+failure rather than resolving it. `ambiguous_pairings` is 0 on the shipped archive — the two pairs
+we make are each uniquely supported — so the result is unchanged and the method is no longer
+arbitrary where it happens not to matter.
+
 **Observed in a local binary — the four orphans are naming artefacts, not archive gaps.** The
 archive holds 3,600 members and `1798 * 2 + 4 == 3600`, so nothing is missing. Consulting the
 header's declared sequence name resolves two of the four, and both then validate on every statistic:
@@ -170,7 +215,8 @@ no header declares sequence `FLEEMARKA` — an art copy shipped without a header
 **Refuted (retained).** Because the community specification defines only frame types `0x00` and
 `0x08`, while we additionally fold our `0x04` shared-pixel frames into the same counter, it looked
 plausible that "Duplicate bitmaps found" counts only true `0x08` back-references. Validating against
-a `0x08`-only count raises corpus failures from 10 to **112**. That statistic therefore counts both
+a `0x08`-only count raises corpus failures from 0 to **107** (re-measured 2026-09-17 after the
+frame-table fix; before the fix the same substitution read 10 to 112). That statistic therefore counts both
 flags and our existing conflation is correct. `ImpSprite::back_reference_frame_count` retains the
 separate `0x08` tally for analysis.
 
@@ -203,7 +249,7 @@ The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synth
 - **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, common five-facing action groups represent directions, which a community tool attributes to five stored facings plus engine mirroring. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
 - **Observed:** header byte 3 is a transparency colour key, nonzero in 94 of 300 sampled files; on those files palette index 0 is absent from the pixel data entirely.
 - **Observed:** across the full 1,800-member corpus the file types are 9 (8-bit RLE, 957), 8 (8-bit raw, 606), 57 (4-bit RLE, 188), 25 (1-bit RLE, 27), 10 unclassified, and 12 that crash the community parser. An independent community decoder reaches 100% of non-duplicate frames on types 8, 9, and 25 — exact agreement with ours — but 0% on type 57 and on the 12 crash cases, for 91.6% overall against our 100%. Type 57 alone is 188 files and 3,388 frames that no public tool decodes.
-- **Documented:** a community specification agrees with our header offsets, record sizes, and RLE algorithm exactly, including the `control + 3` bias; its claim that the palette is stored BGRA and swapped to RGB is **refuted** — entries are stored blue, red, green, pad, measured in the running engine on 2026-09-17, and our implementation agreed with the claim and was therefore also wrong; it names palette index 1 the shadow and our facings facings. Its guesses at a per-frame delay byte and a checksum dword are refuted by our hotspot decoding, which matches generated-header ground truth for all 1,798 pairs.
+- **Documented:** a community specification agrees with our header offsets, record sizes, and RLE algorithm exactly, including the `control + 3` bias; its claim that the palette is stored BGRA and swapped to RGB is **refuted** — entries are stored blue, red, green, pad, measured in the running engine on 2026-09-17, and our implementation agreed with the claim and was therefore also wrong; it names palette index 1 the shadow and our facings facings. Its guesses at a per-frame delay byte and a checksum dword are refuted by our hotspot decoding, which matches generated-header ground truth for all 1,800 pairs.
 - **Documented, since corrected:** the hotspot ID is a type tag; the vocabulary is nine values 0-8, not 19 names (see above), and frame byte `+1` is a **count** of hotspot records rather than a type tag — settled by ozz on the board and confirmed here by measurement. Sequence-record byte 1 is a mirror flag: values `>= 128` mirror, and no unmirrored sequence in the corpus has more than two facings. See [community research](community-research.md#the-hotspot-mechanism-thread-2176).
 - **Observed:** the engine draws a frame at `top_left = anchor + placement - (width >> 1, height >> 1)` — the stored pair is the vector from the anchor to the **centre** of the frame, in screen pixels with `+y` down, and it is **added**. Measured in the running engine on 2026-09-16; see [hotspots](hotspots.md).
 - **Unknown:** how the shadow index is blended or recolored, what the remaining sequence/facing metadata fields mean, and whether exceptional metadata cases use additional sharing rules. Animation timing appears to be carried solely by duplicate-frame repetition, since no delay field survives scrutiny on either side.
@@ -272,7 +318,7 @@ Verified on 2026-09-16 (the full corpus scan itself dates from 2026-09-12):
 - all 21 repository Python tests pass;
 - a fresh read-only scan classifies all five GS5R3 core archives with zero probe failures;
 - all 1,800 IMP payloads decode with bounded sequence/facing ranges;
-- exact IMP/header validation matches 1,788 of 1,798 pairs; the ten remaining paired disagreements and four orphan names remain intentionally reported;
+- exact IMP/header validation matches 1,795 of 1,800 pairs; the five remaining paired disagreements and two orphan names are value-pinned catalog entries, and anything else re-fails;
 - all 365 loose map/scenario/component files pass; all 196 exact 49-byte-family files decode 16,628 bounded records;
 - all 26 tile-set definitions parse, and a real `URAK.scn` terrain preview exports as a correctly oriented 1024×1024 RGBA PNG;
 - indexed-PNG export preserves synthetic palette indices and palette bytes, succeeds on a real 165×127 frame, and refuses overwrite.
@@ -281,7 +327,7 @@ Verified on 2026-09-16 (the full corpus scan itself dates from 2026-09-12):
 
 The implementation uses three layers of evidence:
 
-1. Tiny synthetic unit fixtures cover endianness, chunk bounds, ByteRun1 scanline behavior, IMP tables, sequence/facing ranges, navigation boundaries, RLE packets, all four packed pixel depths, hotspots, duplicate references, repeated facings, indexed-PNG preservation, BMP metadata, WAVE chunks, and the platform-dependent StormLib enumeration ABI.
+1. Tiny synthetic unit fixtures cover endianness, chunk bounds, ByteRun1 scanline behavior, IMP tables, sequence/facing ranges, navigation boundaries, RLE packets, all four packed pixel depths, hotspots, duplicate references, shared-pixel records inside a record array, indexed-PNG preservation, BMP metadata, WAVE chunks, and the platform-dependent StormLib enumeration ABI.
 2. User-local corpus tests scan all five archives, require every member to be readable/classifiable, and cross-check IMP binaries against their generated headers. No copyrighted fixture enters Git.
 3. Visual comparison checks representative UI, portrait, map, and animation output against the original executable before renderer behavior is considered faithful.
 
@@ -309,7 +355,7 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 
 ## Remaining before Stage 1 is complete
 
-- [ ] Resolve the ten known IMP metadata mismatches and four catalog-name orphans ([issue #3](https://github.com/jake-bliss/lords-of-magic-modding/issues/3)).
+- [ ] Resolve the five known IMP metadata mismatches and two catalog-name orphans ([issue #3](https://github.com/jake-bliss/lords-of-magic-modding/issues/3)).
 - [x] Establish palette, chroma-key, hotspot, and placement semantics ([issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1), closed — see [hotspots](hotspots.md)).
 - [ ] Measure the shadow-index blend and resolve the palette channel order, the two compositing questions issue #1 left behind.
 - [ ] Verify IMP direction and timing metadata ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)).
