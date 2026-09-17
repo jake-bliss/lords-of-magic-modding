@@ -1792,3 +1792,92 @@ no sprite survived into the next phase's plate.
 
 One keypress, well under a minute of game time. The map was the probe's own creation, nothing was
 saved, and both archives verify against the manifest.
+
+## 2026-09-17 (final) — IMP validation closed: what the generated headers actually describe
+
+`--validate-imp` reported 1,788 exact matches, 10 failures and 4 orphans. It now reports **zero
+failures**: 1,790 exact matches, 10 named value-pinned exceptions, 2 pairs recovered by a new
+pairing fallback, and 2 documented orphans. Getting there turned on three findings.
+
+### The validator was reporting one disagreement per file
+
+**Corrected.** `ImpSprite::validate_against` used `?` on each comparison in a fixed order, so every
+failing file reported only its *first* disagreement. Collecting all of them changed the shape of the
+problem immediately: the five files filed as "duplicate frame count only" in fact also disagree on
+raw-pixel, hotspot **and** stored-pixel bytes. Any explanation that addressed the duplicate tally
+alone was addressing a third of the symptom.
+
+### "Duplicate bitmaps found" counts the tool's input, not the file
+
+**Observed in a local binary.** Across all 1,800 pairs, `binary_duplicates >= header_duplicates`
+holds on 1,799 — the sole violation being `units\imp\orcr4b`, whose frame count independently
+disagrees, so its header provably does not describe it. The statistic therefore counts duplicates
+among the build tool's *input* bitmaps; the written file dedupes at least as much and never less.
+
+Two things corroborate it rather than merely fitting it. The sequence and frame counts agree exactly
+on all five affected files, so the header is not describing different art. And with
+`header_distinct = frames - header_duplicates`, the header's hotspot-byte total is exactly
+`binary_hotspot_bytes / binary_distinct * header_distinct` on four of five: `aicr3b` 840/35*36 = 864,
+`ficr3b` likewise, `ficr5b` 720/45*46 = 736, `chwmmb` 640/40*65 = 1,040. `chcr3b` predicts 1,152
+against an observed 1,136, because the one extra input bitmap carried a 16-byte hotspot array rather
+than that file's usual 32. Every raw and stored total is larger in the header too, by 12 bytes on
+`aicr3b` (one tiny extra bitmap) up to 12,865 on `chwmmb` (25 of them).
+
+The scratch instrument built to count distinct records earned nothing and was deleted: the distinct
+bitmap count is exactly `frame_count - duplicate_frame_count`, which `ImpSprite` already reported.
+`ImpSprite::distinct_bitmap_count()` now names it.
+
+### The archive's `.h` members are not reliably their own
+
+**Observed in a local binary, and the finding that reframed the rest.** Of the 1,800 generated
+headers, **602 declare a sequence name other than their stem**, and **388 of them fall into 115
+groups of byte-identical files** — 17 `missile\*.h` members are one shared file declaring `spl01ap`,
+21 share another. A `.h`
+here is a build artefact that was freely copied. It cannot be assumed to describe the `.imp` beside
+it.
+
+That explains the remaining five. `missile\lsp01ap.h` claims 540,672 raw bytes, exactly
+`33 * 128 * 128` — a uniform uncropped canvas — while the file's maximum frame size is 60x83 and its
+33 frames are cropped; the structure otherwise agrees exactly (**Inferred:** the header predates the
+crop pass). `lifitam`, `lifitbm` and `lifitfm` agree on structure exactly and differ only in pixel
+totals; `lifitfm.h` is byte-identical to `lifitam.h` and declares sequence `LIFITAM` (**Observed**),
+and the two `.imp` members measure identically, so `lifitfm` fails exactly as `lifitam` does.
+`units\imp\orcr4b` is the one file whose structure itself disagrees: its 7 sequences, 92 frames, 0
+duplicates and 1,472 hotspot bytes match its sibling `units\imp\orcr4a` *exactly*, while its
+header's 86/50/576 signature matches **no** member in the archive (**Inferred:** rebuilt from the
+`orcr4a` source, header never regenerated).
+
+**Not proven.** No `.imp` in the archive measures 170,700, 49,014, 540,672 or `orcr4b`'s 22,957 raw
+bytes. No member can be pointed at as the true owner of any of those four statistics, so "the header
+is stale" stays an inference from structural agreement rather than a demonstrated copy — except for
+`lifitfm`, where the byte-identical header is direct evidence.
+
+### The four orphans were naming artefacts
+
+**Observed in a local binary.** `1798 * 2 + 4 == 3600`, the archive's exact member count, so nothing
+was missing. Pairing now falls back to the sequence name the header *declares* when the stem finds
+no counterpart, and two of the four resolve and then validate on every statistic:
+`imp\fleemark.h` declares `UNMRKA` and matches `imp\unmrka.imp`; `units\imp\chwmcbm.h` declares
+`DEWMHB` and matches `units\imp\dewmhb.imp`. The fallback is deliberately consulted only for
+members the stem left unmatched, because declared names are far from unique.
+
+The other two cannot pair and carry catalog notes instead. `aura\lsp01ea.h` declares `SPL01EA`,
+which has no `.imp` in the archive, and is byte-identical to `aura\fsp03aa.h` whose `.imp` matches
+its statistics exactly — a stray header copy. `imp\fleemarka.imp` measures identically to
+`imp\unmrka.imp` and no header declares `FLEEMARKA` — an art copy shipped without a header.
+
+### The exception mechanism
+
+`IMP_VALIDATION_EXCEPTIONS` is a ten-row table in `spikes/asset-viewer/src/imp.rs`, each row naming
+the member, one of three classes, a reason, and **the exact measured numbers**. An exception applies
+only when the observed disagreements equal the recorded list — same statistics, same order, same
+values. A decoder change that moves a number, drops a disagreement or adds one re-fails the member.
+Nothing is loosened globally: every member is still fully parsed and every statistic still compared.
+A unit test additionally holds each row to the falsifiable claim its class makes, so a
+`HeaderPredatesArtRevision` row that starts waiving a frame count fails the suite.
+
+### Refuted, retained
+
+The earlier `0x08`-only duplicate hypothesis stays refuted: validating "Duplicate bitmaps found"
+against back-references alone raises corpus failures from 10 to **112**. The statistic counts both
+`0x04` and `0x08`.

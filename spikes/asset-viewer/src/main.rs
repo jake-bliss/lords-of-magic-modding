@@ -13,7 +13,9 @@ use lom_asset_viewer::gamescript_vm::{
     GameScriptVm, GameScriptVmError, Value as GameScriptValue,
 };
 use lom_asset_viewer::imp;
-use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
+use lom_asset_viewer::imp::{
+    imp_orphan_note, imp_validation_exception, normalize_imp_member, ImpHeaderStats, ImpSprite,
+};
 use lom_asset_viewer::map::MapAsset;
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
@@ -1560,6 +1562,22 @@ struct ImpPair {
     sprite: Option<String>,
 }
 
+/// How a `.imp` member found the `.h` it was validated against.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImpPairing {
+    /// The two members share a stem, e.g. `units\imp\aicr3b.imp` and `units\imp\aicr3b.h`.
+    Stem,
+    /// The stem had no counterpart, so the header's declared sequence name was used instead.
+    ///
+    /// Headers in this archive are routinely copied between members: 602 of the 1,800 declare a
+    /// sequence name other than their own stem, and 388 of them fall into 115 groups of
+    /// byte-identical files.
+    /// A declared name is therefore not unique, so this fallback is only ever consulted for a
+    /// member that stem pairing left unmatched, and the counterpart it finds may already be
+    /// paired with somebody else.
+    DeclaredSequenceName,
+}
+
 fn validate_imp_archive(source: &Source) -> Result<(), String> {
     let (archive, entries) = open_archive(source)?;
     let mut pairs = BTreeMap::<String, ImpPair>::new();
@@ -1573,47 +1591,185 @@ fn validate_imp_archive(source: &Source) -> Result<(), String> {
         }
     }
 
-    let mut validated = 0_usize;
-    let mut matched_pairs = 0_usize;
-    let mut orphan_entries = 0_usize;
-    let mut validation_failures = 0_usize;
-    let mut failures = Vec::new();
-    for (stem, pair) in &pairs {
-        let (Some(header_name), Some(sprite_name)) = (&pair.header, &pair.sprite) else {
-            let missing = if pair.header.is_none() { ".h" } else { ".imp" };
-            failures.push(format!("{stem}: missing {missing} counterpart"));
-            orphan_entries += 1;
+    // Sequence name a header declares -> the member names declaring it. Built for every header,
+    // because the fallback pairing needs to reach headers that are already stem-paired.
+    let mut declared_by_name = BTreeMap::<String, Vec<String>>::new();
+    for pair in pairs.values() {
+        let Some(header_name) = &pair.header else {
             continue;
         };
+        let Ok(bytes) = archive.read(header_name) else {
+            continue;
+        };
+        let Ok(stats) = ImpHeaderStats::parse(&bytes) else {
+            continue;
+        };
+        declared_by_name
+            .entry(stats.sequence_name.to_ascii_lowercase())
+            .or_default()
+            .push(header_name.clone());
+    }
+    let sprite_by_basename: BTreeMap<String, String> = pairs
+        .iter()
+        .filter_map(|(stem, pair)| {
+            let sprite = pair.sprite.as_ref()?;
+            let basename = stem.rsplit('\\').next().unwrap_or(stem);
+            Some((basename.to_owned(), sprite.clone()))
+        })
+        .collect();
+
+    let mut validated = 0_usize;
+    let mut matched_pairs = 0_usize;
+    let mut paired_by_stem = 0_usize;
+    let mut paired_by_declared_name = 0_usize;
+    let mut excepted = 0_usize;
+    let mut documented_orphans = 0_usize;
+    let mut orphan_entries = 0_usize;
+    let mut validation_failures = 0_usize;
+    // Hypothesis under test: `Duplicate bitmaps found` counts duplicates among the build tool's
+    // INPUT bitmaps, so the written file dedupes at least as much and never less.
+    let mut dedup_at_least_header = 0_usize;
+    let mut dedup_below_header = 0_usize;
+    let mut failures = Vec::new();
+    let mut notes = Vec::new();
+
+    for (stem, pair) in &pairs {
+        let resolved = match (&pair.header, &pair.sprite) {
+            (Some(header), Some(sprite)) => Some((header.clone(), sprite.clone(), ImpPairing::Stem)),
+            (Some(header), None) => {
+                // A header with no `.imp` of its own may still describe a sequence that ships.
+                let bytes = archive.read(header).map_err(|error| error.to_string())?;
+                ImpHeaderStats::parse(&bytes)
+                    .ok()
+                    .and_then(|stats| {
+                        sprite_by_basename.get(&stats.sequence_name.to_ascii_lowercase())
+                    })
+                    .map(|sprite| {
+                        (
+                            header.clone(),
+                            sprite.clone(),
+                            ImpPairing::DeclaredSequenceName,
+                        )
+                    })
+            }
+            (None, Some(sprite)) => {
+                // A sprite with no `.h` of its own may be named by somebody else's header.
+                let basename = stem.rsplit('\\').next().unwrap_or(stem);
+                declared_by_name
+                    .get(basename)
+                    .and_then(|headers| headers.first())
+                    .map(|header| {
+                        (
+                            header.clone(),
+                            sprite.clone(),
+                            ImpPairing::DeclaredSequenceName,
+                        )
+                    })
+            }
+            (None, None) => None,
+        };
+
+        let Some((header_name, sprite_name, pairing)) = resolved else {
+            let missing = if pair.header.is_none() { ".imp" } else { ".h" };
+            let member = normalize_imp_member(&format!("{stem}{missing}"));
+            match imp_orphan_note(&member) {
+                Some(note) => {
+                    documented_orphans += 1;
+                    notes.push(format!("orphan\t{member}\t{}", note.reason));
+                }
+                None => {
+                    orphan_entries += 1;
+                    failures.push(format!("{stem}: unpaired {missing} member with no catalog note"));
+                }
+            }
+            continue;
+        };
+
         matched_pairs += 1;
-        let result = (|| {
+        match pairing {
+            ImpPairing::Stem => paired_by_stem += 1,
+            ImpPairing::DeclaredSequenceName => {
+                paired_by_declared_name += 1;
+                notes.push(format!(
+                    "paired_by_declared_sequence\t{stem}\t{}\t{}",
+                    clean_field(&header_name),
+                    clean_field(&sprite_name)
+                ));
+            }
+        }
+
+        let measured = (|| {
             let header_bytes = archive
-                .read(header_name)
+                .read(&header_name)
                 .map_err(|error| error.to_string())?;
             let sprite_bytes = archive
-                .read(sprite_name)
+                .read(&sprite_name)
                 .map_err(|error| error.to_string())?;
             let stats = ImpHeaderStats::parse(&header_bytes).map_err(|error| error.to_string())?;
             let sprite = ImpSprite::parse(&sprite_bytes).map_err(|error| error.to_string())?;
-            sprite
-                .validate_against(&stats)
-                .map_err(|error| error.to_string())
+            Ok::<_, String>((sprite, stats))
         })();
-        match result {
-            Ok(()) => validated += 1,
+        let (sprite, stats) = match measured {
+            Ok(measured) => measured,
             Err(error) => {
                 validation_failures += 1;
                 failures.push(format!("{stem}: {error}"));
+                continue;
+            }
+        };
+
+        if sprite.duplicate_frame_count >= stats.duplicate_frame_count {
+            dedup_at_least_header += 1;
+        } else {
+            dedup_below_header += 1;
+            notes.push(format!(
+                "dedup_below_header\t{stem}\tbinary={}\theader={}",
+                sprite.duplicate_frame_count, stats.duplicate_frame_count
+            ));
+        }
+
+        let found = sprite.disagreements(&stats);
+        if found.is_empty() {
+            validated += 1;
+            continue;
+        }
+        let member = normalize_imp_member(stem);
+        match imp_validation_exception(&member).filter(|exception| exception.covers(&found)) {
+            Some(exception) => {
+                excepted += 1;
+                notes.push(format!(
+                    "exception\t{member}\t{:?}\t{}",
+                    exception.class,
+                    clean_field(exception.reason)
+                ));
+            }
+            None => {
+                validation_failures += 1;
+                failures.push(format!(
+                    "{stem}: {}",
+                    sprite.validate_against(&stats).unwrap_err()
+                ));
             }
         }
     }
 
     println!("candidate_stems\t{}", pairs.len());
     println!("matched_pairs\t{matched_pairs}");
+    println!("paired_by_stem\t{paired_by_stem}");
+    println!("paired_by_declared_sequence\t{paired_by_declared_name}");
     println!("validated\t{validated}");
+    println!("validated_with_exception\t{excepted}");
     println!("validation_failures\t{validation_failures}");
+    println!("documented_orphans\t{documented_orphans}");
     println!("orphan_entries\t{orphan_entries}");
+    println!("dedup_at_least_header\t{dedup_at_least_header}");
+    println!("dedup_below_header\t{dedup_below_header}");
     println!("failures\t{}", failures.len());
+    // Notes are already tab-delimited; only their trailing field can need scrubbing, and each
+    // one is scrubbed where it is built.
+    for note in &notes {
+        println!("{note}");
+    }
     for failure in &failures {
         println!("failure\t{}", clean_field(failure));
     }

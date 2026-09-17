@@ -71,32 +71,99 @@ The ID is a **hotspot type**, and the numbers are now read directly out of `loms
 
 For example, `units\imp\chcr5a.imp` contains seven named actions (`MOVE`, `STAND`, `DEFEND`, `GET_HIT`, `DIE`, `CORPSE`, and `MELEE_ATTACK`), five facings per action, and 170 logical frames. The five facings are likely directional views, but that interpretation and the remaining sequence/facing metadata have not yet been confirmed against the original executable.
 
-The validator pairs generated headers with binaries and compares independently recorded sequence, frame, duplicate, raw-pixel, hotspot, and stored-pixel statistics where applicable:
+The validator pairs generated headers with binaries and compares independently recorded sequence, frame, duplicate, raw-pixel, hotspot, and stored-pixel statistics where applicable. Pairing is by lowercased stem first; a member the stem left unmatched then falls back to the sequence name the header *declares*.
 
 | IMP validation check | Result |
 | --- | ---: |
-| Same-stem header/binary pairs | 1,798 |
-| Exact structural matches | 1,788 (99.4%) |
-| Bounded metadata mismatches | 10 |
-| Orphan catalog entries | 4 |
+| Header/binary pairs, by stem | 1,798 |
+| Header/binary pairs, by declared sequence name | 2 |
+| Exact matches on every statistic | 1,790 (99.4%) |
+| Named, value-pinned exceptions | 10 |
+| Unexplained failures | 0 |
+| Documented orphan catalog entries | 2 |
 
-All stored-pixel byte totals now agree with the generated headers. The remaining paired mismatches concern duplicate-frame counts, raw logical-pixel totals, and one logical-frame count; they remain failing validation cases until understood. Four public-catalog stems have only one member of the expected `.imp`/`.h` pair.
+**Observed in a local binary (2026-09-17).** `--validate-imp` now reports zero failures. The ten
+members that cannot match exactly each carry an entry in `IMP_VALIDATION_EXCEPTIONS`
+(`spikes/asset-viewer/src/imp.rs`) recording its class, its reason, and the exact measured numbers.
+The waiver is value-pinned: an exception applies only when the observed disagreements are exactly
+the recorded ones, so any decoder change that moves a number, drops a disagreement or adds one
+re-fails the member. No bounds check is relaxed — every member is still fully parsed and every
+statistic still compared.
 
-| Remaining disagreement | Count |
-| --- | ---: |
-| Generated duplicate-frame count | 5 |
-| Generated raw logical-pixel total | 4 |
-| Generated logical-frame count | 1 |
-| Missing expected `.imp`/`.h` counterpart | 4 |
+**Corrected 2026-09-17.** `ImpSprite::validate_against` used `?` on each comparison in a fixed
+order, so a file reported only its *first* disagreement. It now collects all of them. That alone
+changed the picture: the five files previously described as disagreeing on the duplicate tally
+alone in fact also disagree on raw-pixel, hotspot and stored-pixel bytes.
 
-One hypothesis for the five duplicate-frame disagreements has been **tested and refuted**. Because the
-community specification defines only frame types `0x00` and `0x08`, while we additionally fold our
-`0x04` shared-pixel frames into the same counter, it looked plausible that the generated header's
-"Duplicate bitmaps found" statistic counts only true `0x08` back-references. Validating against a
-`0x08`-only count raises corpus failures from 10 to **112**. That statistic therefore counts both
+**Observed in a local binary — what the header's "Duplicate bitmaps found" counts.** Across all
+1,800 pairs, `binary_duplicates >= header_duplicates` holds on 1,799. So the statistic counts
+duplicates among the build tool's *input* bitmaps, and the written file dedupes at least as much
+and never less. Two independent checks corroborate it. First, on all five affected files the
+sequence and frame counts agree exactly, so the header is not describing different art. Second,
+writing `header_distinct = frames - header_duplicates`, the header's hotspot-byte total is exactly
+`binary_hotspot_bytes / binary_distinct * header_distinct` on four of the five:
+
+| Member | Frames | Header distinct | Binary distinct | Binary hotspot bytes | Header hotspot bytes | Predicted |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `units\imp\aicr3b` | 116 | 36 | 35 | 840 | 864 | 864 |
+| `units\imp\chcr3b` | 126 | 36 | 35 | 1,120 | 1,136 | 1,152 |
+| `units\imp\chwmmb` | 145 | 65 | 40 | 640 | 1,040 | 1,040 |
+| `units\imp\ficr3b` | 116 | 36 | 35 | 840 | 864 | 864 |
+| `units\imp\ficr5b` | 180 | 46 | 45 | 720 | 736 | 736 |
+
+`chcr3b` misses by 16 bytes because the one extra input bitmap carried a 16-byte hotspot array
+rather than that file's usual 32 — a smaller array, not a contradiction. Every raw-pixel and
+stored-pixel total is likewise larger in the header, by 12 bytes on `aicr3b` and `ficr3b` (one tiny
+extra bitmap) up to 12,865 on `chwmmb` (25 extra bitmaps).
+
+**Observed in a local binary — the archive's `.h` members are not reliably their own.** Of the
+1,800 generated headers, **602 declare a sequence name other than their stem**, and **388 of them
+fall into 115 groups of byte-identical files** (17 `missile\*.h` members are one shared file
+declaring `spl01ap`; 21 share another). A `.h` in this archive is a build artefact that was freely copied, so it cannot be assumed
+to describe the `.imp` beside it. That reframes the remaining five disagreements:
+
+- **`missile\lsp01ap`** — the header's 540,672 raw bytes is exactly `33 * 128 * 128`, a uniform
+  uncropped canvas, but the file's maximum frame size is 60x83 and its 33 frames are cropped. The
+  structure otherwise agrees exactly. `missile\lsp01apa.h` declares the same sequence `lsp01ap` and
+  validates at 31,804. Inferred: the header predates the crop pass.
+- **`units\imp\lifitam`, `units\imp\lifitbm`, `units\imp\lifitfm`** — structure agrees exactly
+  (2 sequences, 35 frames, 0 duplicates, 0 hotspot bytes); only the pixel totals differ.
+  `lifitfm.h` is byte-identical to `lifitam.h` and declares sequence `LIFITAM` (**Observed**), and
+  the two `.imp` members measure identically, so `lifitfm` fails exactly as `lifitam` does. Inferred:
+  the art was revised without regenerating the `.h`.
+- **`units\imp\orcr4b`** — the single pair in the archive where the file holds *fewer* duplicates
+  than the header claims (0 against 50), and the only one whose frame count disagrees (92 against
+  86). Its structure matches its sibling `units\imp\orcr4a` exactly — 7 sequences, 92 frames, 0
+  duplicates, 1,472 hotspot bytes — while the header's 86/50/576 signature matches **no** member in
+  the archive. Inferred: the art was rebuilt from the `orcr4a` source and the `.h` was never
+  regenerated.
+
+**Not proven.** No `.imp` in the archive measures 170,700, 49,014, 540,672 or the `orcr4b` header's
+22,957 raw bytes, so no member can be pointed at as the true owner of any of those four statistics.
+"The header is stale" remains an inference from structural agreement, not a demonstrated copy —
+except for `lifitfm`, where the byte-identical header is direct evidence.
+
+**Observed in a local binary — the four orphans are naming artefacts, not archive gaps.** The
+archive holds 3,600 members and `1798 * 2 + 4 == 3600`, so nothing is missing. Consulting the
+header's declared sequence name resolves two of the four, and both then validate on every statistic:
+
+| Orphan | Resolution |
+| --- | --- |
+| `imp\fleemark.h` | declares `UNMRKA`; validates against `imp\unmrka.imp` |
+| `units\imp\dewmhb.imp` | named by `units\imp\chwmcbm.h`, which declares `DEWMHB` |
+
+The other two cannot pair and carry catalog notes in `IMP_ORPHAN_NOTES` instead. `aura\lsp01ea.h`
+declares `SPL01EA`, which has no `.imp` in the archive, and is byte-identical to `aura\fsp03aa.h`
+whose `.imp` matches its statistics exactly — a stray header copy. `imp\fleemarka.imp` measures
+identically to `imp\unmrka.imp` (1 sequence, 13 frames, 0 duplicates, 27,054 raw, uncompressed) and
+no header declares sequence `FLEEMARKA` — an art copy shipped without a header.
+
+**Refuted (retained).** Because the community specification defines only frame types `0x00` and
+`0x08`, while we additionally fold our `0x04` shared-pixel frames into the same counter, it looked
+plausible that "Duplicate bitmaps found" counts only true `0x08` back-references. Validating against
+a `0x08`-only count raises corpus failures from 10 to **112**. That statistic therefore counts both
 flags and our existing conflation is correct. `ImpSprite::back_reference_frame_count` retains the
-separate `0x08` tally for analysis. The five disagreements have another cause; the repeated-facing
-heuristic remains the leading suspect for the logical-frame and raw-pixel cases.
+separate `0x08` tally for analysis.
 
 The native viewer displays individual frames, follows duplicate/repeated references, navigates within a facing or between facings and actions, and can autoplay the current facing at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, index 0 fills the background while a distinct second index forms a 1,651-pixel silhouette beneath the creature; an inspected 1-bit aura asset similarly uses those two colours alone. Index 0 is pure **red** and index 1 pure **green** (corrected 2026-09-17; the earlier naming came through a decoder that swapped the two). This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes.
 

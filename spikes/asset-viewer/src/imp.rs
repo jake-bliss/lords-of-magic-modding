@@ -106,6 +106,282 @@ pub struct ImpHeaderStats {
     pub compressed_pixel_bytes: Option<u64>,
 }
 
+/// A statistic that a generated `.h` reports and that the decoder can measure independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ImpStatistic {
+    SequenceCount,
+    FrameCount,
+    DuplicateFrameCount,
+    RawPixelBytes,
+    HotspotBytes,
+    StoredPixelBytes,
+}
+
+impl ImpStatistic {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SequenceCount => "sequence count",
+            Self::FrameCount => "frame count",
+            Self::DuplicateFrameCount => "duplicate frame count",
+            Self::RawPixelBytes => "raw pixel bytes",
+            Self::HotspotBytes => "hotspot bytes",
+            Self::StoredPixelBytes => "stored pixel bytes",
+        }
+    }
+}
+
+impl fmt::Display for ImpStatistic {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.label())
+    }
+}
+
+/// One measured statistic that the binary and its generated header report differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImpDisagreement {
+    pub statistic: ImpStatistic,
+    pub binary: u64,
+    pub header: u64,
+}
+
+/// Why a member cannot validate exactly, as established by the 2026-09-17 corpus survey.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImpExceptionClass {
+    /// The header describes a build with *more* distinct bitmaps than the shipped file holds.
+    ///
+    /// Sequence and frame counts agree exactly; the header's duplicate tally is lower and every
+    /// byte total is higher. Observed in a local binary across the whole archive: on 1,797 of
+    /// 1,798 pairs `binary_duplicates >= header_duplicates`, and on four of these five files
+    /// `header_hotspot_bytes` equals `binary_hotspot_bytes / binary_distinct * header_distinct`
+    /// exactly, where `header_distinct = frames - header_duplicates`. So `Duplicate bitmaps found`
+    /// counts duplicates among the tool's *input* bitmaps, and the written file dedupes further.
+    HeaderPredatesDeduplication,
+    /// The header describes the same structure but different pixels.
+    ///
+    /// Sequence count, frame count, duplicate count and hotspot bytes all agree; only the pixel
+    /// byte totals differ, so the art was revised without regenerating the `.h`.
+    HeaderPredatesArtRevision,
+    /// The header describes a structure that is not this file's at all.
+    ///
+    /// Frame count itself disagrees, so no reading of the statistics can reconcile them.
+    HeaderDescribesAnotherBuild,
+}
+
+/// A member that is known not to validate exactly, with the reason and the exact numbers.
+///
+/// The waived list is **value-pinned**: [`ImpValidationException::covers`] only accepts the
+/// recorded disagreements, in order, with the recorded values. A decoder regression that changes
+/// any of these numbers, or that breaks a statistic the exception does not mention, fails the
+/// validator again. Nothing here loosens a bounds check — every member is still fully parsed.
+#[derive(Debug, Clone, Copy)]
+pub struct ImpValidationException {
+    /// Normalized member stem, e.g. `units/imp/orcr4b`. See [`normalize_imp_member`].
+    pub member: &'static str,
+    pub class: ImpExceptionClass,
+    pub reason: &'static str,
+    pub waived: &'static [ImpDisagreement],
+}
+
+impl ImpValidationException {
+    /// True only when `observed` is exactly the recorded disagreement list.
+    pub fn covers(&self, observed: &[ImpDisagreement]) -> bool {
+        observed == self.waived
+    }
+}
+
+const fn waive(statistic: ImpStatistic, binary: u64, header: u64) -> ImpDisagreement {
+    ImpDisagreement {
+        statistic,
+        binary,
+        header,
+    }
+}
+
+/// The ten archive members that cannot validate exactly, each with its measured numbers.
+///
+/// Observed in a local binary on 2026-09-17 against the shipped `imp.mpq` of Lords of Magic
+/// Special Edition (GS5R3). The other 1,788 stem-paired members validate on every statistic.
+pub const IMP_VALIDATION_EXCEPTIONS: &[ImpValidationException] = &[
+    ImpValidationException {
+        member: "units/imp/aicr3b",
+        class: ImpExceptionClass::HeaderPredatesDeduplication,
+        reason: "header counts 36 input bitmaps, file stores 35; hotspot bytes scale exactly \
+                 (840 / 35 * 36 = 864) and the extra input bitmap accounts for 12 raw pixels",
+        waived: &[
+            waive(ImpStatistic::DuplicateFrameCount, 81, 80),
+            waive(ImpStatistic::RawPixelBytes, 227_449, 227_461),
+            waive(ImpStatistic::HotspotBytes, 840, 864),
+            waive(ImpStatistic::StoredPixelBytes, 62_540, 62_552),
+        ],
+    },
+    ImpValidationException {
+        member: "units/imp/chcr3b",
+        class: ImpExceptionClass::HeaderPredatesDeduplication,
+        reason: "header counts 36 input bitmaps, file stores 35; the extra bitmap's hotspot array \
+                 is 16 bytes rather than this file's usual 32, so hotspot bytes gain 16 not 32",
+        waived: &[
+            waive(ImpStatistic::DuplicateFrameCount, 91, 90),
+            waive(ImpStatistic::RawPixelBytes, 37_296, 38_739),
+            waive(ImpStatistic::HotspotBytes, 1_120, 1_136),
+            waive(ImpStatistic::StoredPixelBytes, 26_430, 27_176),
+        ],
+    },
+    ImpValidationException {
+        member: "units/imp/chwmmb",
+        class: ImpExceptionClass::HeaderPredatesDeduplication,
+        reason: "header counts 65 input bitmaps, file stores 40; hotspot bytes scale exactly \
+                 (640 / 40 * 65 = 1040), the largest dedup gap in the archive",
+        waived: &[
+            waive(ImpStatistic::DuplicateFrameCount, 105, 80),
+            waive(ImpStatistic::RawPixelBytes, 23_641, 36_506),
+            waive(ImpStatistic::HotspotBytes, 640, 1_040),
+            waive(ImpStatistic::StoredPixelBytes, 15_699, 24_140),
+        ],
+    },
+    ImpValidationException {
+        member: "units/imp/ficr3b",
+        class: ImpExceptionClass::HeaderPredatesDeduplication,
+        reason: "header counts 36 input bitmaps, file stores 35; hotspot bytes scale exactly \
+                 (840 / 35 * 36 = 864), the same shape as units/imp/aicr3b",
+        waived: &[
+            waive(ImpStatistic::DuplicateFrameCount, 81, 80),
+            waive(ImpStatistic::RawPixelBytes, 225_614, 225_626),
+            waive(ImpStatistic::HotspotBytes, 840, 864),
+            waive(ImpStatistic::StoredPixelBytes, 63_072, 63_084),
+        ],
+    },
+    ImpValidationException {
+        member: "units/imp/ficr5b",
+        class: ImpExceptionClass::HeaderPredatesDeduplication,
+        reason: "header counts 46 input bitmaps, file stores 45; hotspot bytes scale exactly \
+                 (720 / 45 * 46 = 736)",
+        waived: &[
+            waive(ImpStatistic::DuplicateFrameCount, 135, 134),
+            waive(ImpStatistic::RawPixelBytes, 170_736, 170_766),
+            waive(ImpStatistic::HotspotBytes, 720, 736),
+            waive(ImpStatistic::StoredPixelBytes, 73_560, 73_583),
+        ],
+    },
+    ImpValidationException {
+        member: "missile/lsp01ap",
+        class: ImpExceptionClass::HeaderPredatesArtRevision,
+        reason: "header's 540672 raw bytes is exactly 33 * 128 * 128, a uniform uncropped canvas, \
+                 but the file's maximum frame size is 60x83 and its 33 frames are cropped; \
+                 missile/lsp01apa declares the same sequence and validates at 31804",
+        waived: &[
+            waive(ImpStatistic::RawPixelBytes, 47_115, 540_672),
+            waive(ImpStatistic::StoredPixelBytes, 22_616, 533_161),
+        ],
+    },
+    ImpValidationException {
+        member: "units/imp/lifitam",
+        class: ImpExceptionClass::HeaderPredatesArtRevision,
+        reason: "structure agrees exactly (2 sequences, 35 frames, 0 duplicates, 0 hotspot bytes) \
+                 and only the pixel totals differ; no member in the archive measures 170700",
+        waived: &[
+            waive(ImpStatistic::RawPixelBytes, 194_985, 170_700),
+            waive(ImpStatistic::StoredPixelBytes, 81_157, 76_301),
+        ],
+    },
+    ImpValidationException {
+        member: "units/imp/lifitbm",
+        class: ImpExceptionClass::HeaderPredatesArtRevision,
+        reason: "structure agrees exactly and only the pixel totals differ; no member in the \
+                 archive measures 49014",
+        waived: &[
+            waive(ImpStatistic::RawPixelBytes, 47_524, 49_014),
+            waive(ImpStatistic::StoredPixelBytes, 23_104, 25_521),
+        ],
+    },
+    ImpValidationException {
+        member: "units/imp/lifitfm",
+        class: ImpExceptionClass::HeaderPredatesArtRevision,
+        reason: "its .h is byte-identical to units/imp/lifitam.h and declares sequence LIFITAM; \
+                 the two .imp members also measure identically, so this fails exactly as \
+                 units/imp/lifitam does and for the same stale-header reason",
+        waived: &[
+            waive(ImpStatistic::RawPixelBytes, 194_985, 170_700),
+            waive(ImpStatistic::StoredPixelBytes, 81_157, 76_301),
+        ],
+    },
+    ImpValidationException {
+        member: "units/imp/orcr4b",
+        class: ImpExceptionClass::HeaderDescribesAnotherBuild,
+        reason: "the only pair in the archive where the file holds FEWER duplicates than the \
+                 header claims (0 against 50) and the frame count itself disagrees; the file's \
+                 structure matches its sibling units/imp/orcr4a exactly (7 sequences, 92 frames, \
+                 0 duplicates, 1472 hotspot bytes) while the header's 86/50/576 matches no \
+                 member, so the art was rebuilt and the .h was never regenerated",
+        waived: &[
+            waive(ImpStatistic::FrameCount, 92, 86),
+            waive(ImpStatistic::DuplicateFrameCount, 0, 50),
+            waive(ImpStatistic::RawPixelBytes, 58_176, 22_957),
+            waive(ImpStatistic::HotspotBytes, 1_472, 576),
+            waive(ImpStatistic::StoredPixelBytes, 38_761, 15_303),
+        ],
+    },
+];
+
+/// A member with no counterpart, and the catalog reason it has none.
+#[derive(Debug, Clone, Copy)]
+pub struct ImpOrphanNote {
+    /// Normalized member name including extension, e.g. `imp/fleemarka.imp`.
+    pub member: &'static str,
+    pub reason: &'static str,
+}
+
+/// Members that remain unpaired after the declared-sequence-name fallback.
+///
+/// The archive holds 3,600 `.imp`/`.h` members and `1798 * 2 + 4 == 3600`, so nothing is missing;
+/// all four originally-orphaned members are naming artifacts. Two of the four pair up once the
+/// header's declared sequence name is consulted (`imp/fleemark.h` declares UNMRKA and matches
+/// `imp/unmrka.imp`; `units/imp/chwmcbm.h` declares DEWMHB and matches `units/imp/dewmhb.imp`).
+/// The remaining two are catalogued here.
+pub const IMP_ORPHAN_NOTES: &[ImpOrphanNote] = &[
+    ImpOrphanNote {
+        member: "aura/lsp01ea.h",
+        reason: "stray header copy: declares sequence SPL01EA, which has no .imp in the archive, \
+                 and is byte-identical to aura/fsp03aa.h, whose .imp matches its statistics \
+                 exactly (1 sequence, 9 frames, 0 duplicates, 5597 raw, 2065 stored)",
+    },
+    ImpOrphanNote {
+        member: "imp/fleemarka.imp",
+        reason: "unreferenced art copy: measures identically to imp/unmrka.imp (1 sequence, \
+                 13 frames, 0 duplicates, 27054 raw, uncompressed) and no header in the archive \
+                 declares sequence FLEEMARKA, so it shipped without a header of its own",
+    },
+];
+
+/// Look up a validation exception by normalized member stem.
+pub fn imp_validation_exception(member: &str) -> Option<&'static ImpValidationException> {
+    IMP_VALIDATION_EXCEPTIONS
+        .iter()
+        .find(|exception| exception.member == member)
+}
+
+/// Look up an orphan catalog note by normalized member name, extension included.
+pub fn imp_orphan_note(member: &str) -> Option<&'static ImpOrphanNote> {
+    IMP_ORPHAN_NOTES.iter().find(|note| note.member == member)
+}
+
+/// Archive member names use backslashes and mixed case; exception keys use neither.
+pub fn normalize_imp_member(name: &str) -> String {
+    name.replace('\\', "/").to_ascii_lowercase()
+}
+
+fn describe_disagreements(found: &[ImpDisagreement]) -> String {
+    let parts: Vec<String> = found
+        .iter()
+        .map(|item| {
+            format!(
+                "IMP {} mismatch: binary={}, header={}",
+                item.statistic, item.binary, item.header
+            )
+        })
+        .collect();
+    parts.join("; ")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImpError(String);
 
@@ -434,24 +710,72 @@ impl ImpSprite {
         })
     }
 
-    pub fn validate_against(&self, stats: &ImpHeaderStats) -> Result<(), ImpError> {
-        check_equal("sequence count", self.sequence_count, stats.sequence_count)?;
-        check_equal("frame count", self.frame_count, stats.frame_count)?;
-        check_equal(
-            "duplicate frame count",
-            self.duplicate_frame_count,
-            stats.duplicate_frame_count,
-        )?;
-        check_equal(
-            "raw pixel bytes",
+    /// Number of bitmaps the file actually stores, i.e. frames that are not duplicates.
+    ///
+    /// The generated header's `Duplicate bitmaps found` statistic implies the same quantity for
+    /// the *build tool's input* as `frame_count - duplicate_frame_count`. Comparing the two is how
+    /// [`ImpExceptionClass::HeaderPredatesDeduplication`] was established.
+    pub fn distinct_bitmap_count(&self) -> usize {
+        self.frame_count.saturating_sub(self.duplicate_frame_count)
+    }
+
+    /// Every statistic on which this file and its generated header disagree.
+    ///
+    /// Reports all of them. An earlier version short-circuited on the first `check_equal`, which
+    /// made five files look like they disagreed on the duplicate tally alone when they in fact
+    /// also disagree on three byte totals — the evidence that settled what the header counts.
+    pub fn disagreements(&self, stats: &ImpHeaderStats) -> Vec<ImpDisagreement> {
+        let mut found = Vec::new();
+        let mut compare = |statistic, binary: u64, header: u64| {
+            if binary != header {
+                found.push(ImpDisagreement {
+                    statistic,
+                    binary,
+                    header,
+                });
+            }
+        };
+        compare(
+            ImpStatistic::SequenceCount,
+            self.sequence_count as u64,
+            stats.sequence_count as u64,
+        );
+        compare(
+            ImpStatistic::FrameCount,
+            self.frame_count as u64,
+            stats.frame_count as u64,
+        );
+        compare(
+            ImpStatistic::DuplicateFrameCount,
+            self.duplicate_frame_count as u64,
+            stats.duplicate_frame_count as u64,
+        );
+        compare(
+            ImpStatistic::RawPixelBytes,
             self.raw_pixel_bytes,
             stats.raw_pixel_bytes,
-        )?;
-        check_equal("hotspot bytes", self.hotspot_bytes, stats.hotspot_bytes)?;
-        if let Some(expected) = stats.compressed_pixel_bytes {
-            check_equal("stored pixel bytes", self.stored_pixel_bytes, expected)?;
+        );
+        compare(
+            ImpStatistic::HotspotBytes,
+            self.hotspot_bytes,
+            stats.hotspot_bytes,
+        );
+        if let Some(header) = stats.compressed_pixel_bytes {
+            compare(
+                ImpStatistic::StoredPixelBytes,
+                self.stored_pixel_bytes,
+                header,
+            );
         }
-        Ok(())
+        found
+    }
+
+    pub fn validate_against(&self, stats: &ImpHeaderStats) -> Result<(), ImpError> {
+        let found = self.disagreements(stats);
+        if found.is_empty() {
+            return Ok(());
+        }
+        Err(ImpError::new(describe_disagreements(&found)))
     }
 
     pub fn resolved_frame(&self, index: usize) -> Result<&ImpFrame, ImpError> {
@@ -688,19 +1012,6 @@ pub fn write_frame_hotspot(
     output[offset..offset + 2].copy_from_slice(&x.to_le_bytes());
     output[offset + 2..offset + 4].copy_from_slice(&y.to_le_bytes());
     Ok(output)
-}
-
-fn check_equal<T>(label: &str, actual: T, expected: T) -> Result<(), ImpError>
-where
-    T: fmt::Display + PartialEq,
-{
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(ImpError::new(format!(
-            "IMP {label} mismatch: binary={actual}, header={expected}"
-        )))
-    }
 }
 
 fn parse_hotspots(source: &[u8], offset: usize, count: usize) -> Result<Vec<ImpHotspot>, ImpError> {
@@ -1402,6 +1713,234 @@ mod tests {
         assert_eq!(hotspots[0].x, -4);
         assert_eq!(hotspots[0].y, -32);
         assert_eq!(hotspots[0].raw, source);
+    }
+
+    /// Statistics that agree with [`synthetic_imp`] on every field, so a test can perturb one.
+    fn synthetic_stats() -> ImpHeaderStats {
+        let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
+        ImpHeaderStats {
+            sequence_name: "synthetic".to_owned(),
+            sequence_labels: Vec::new(),
+            sequence_count: sprite.sequence_count,
+            frame_count: sprite.frame_count,
+            duplicate_frame_count: sprite.duplicate_frame_count,
+            raw_pixel_bytes: sprite.raw_pixel_bytes,
+            hotspot_bytes: sprite.hotspot_bytes,
+            compressed_pixel_bytes: Some(sprite.stored_pixel_bytes),
+        }
+    }
+
+    #[test]
+    fn matching_statistics_produce_no_disagreements() {
+        let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
+        assert_eq!(sprite.disagreements(&synthetic_stats()), []);
+        assert!(sprite.validate_against(&synthetic_stats()).is_ok());
+    }
+
+    /// The old implementation used `?` on each comparison in a fixed order, so a file that
+    /// disagreed on four statistics reported one. That hid the evidence for what the header
+    /// actually counts, so every disagreement has to come back.
+    #[test]
+    fn disagreements_reports_every_statistic_not_only_the_first() {
+        let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
+        let mut stats = synthetic_stats();
+        stats.frame_count += 5;
+        stats.raw_pixel_bytes += 7;
+        stats.hotspot_bytes += 9;
+
+        let found = sprite.disagreements(&stats);
+        assert_eq!(
+            found
+                .iter()
+                .map(|item| item.statistic)
+                .collect::<Vec<ImpStatistic>>(),
+            [
+                ImpStatistic::FrameCount,
+                ImpStatistic::RawPixelBytes,
+                ImpStatistic::HotspotBytes
+            ]
+        );
+        assert_eq!(found[0].binary, sprite.frame_count as u64);
+        assert_eq!(found[0].header, sprite.frame_count as u64 + 5);
+    }
+
+    #[test]
+    fn a_header_without_a_compression_statistic_does_not_compare_stored_bytes() {
+        let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
+        let mut stats = synthetic_stats();
+        stats.compressed_pixel_bytes = None;
+        assert_eq!(sprite.disagreements(&stats), []);
+    }
+
+    #[test]
+    fn the_error_message_names_every_disagreement() {
+        let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
+        let mut stats = synthetic_stats();
+        stats.sequence_count += 1;
+        stats.hotspot_bytes += 16;
+
+        let message = sprite.validate_against(&stats).unwrap_err().to_string();
+        assert!(message.contains("sequence count mismatch"), "{message}");
+        assert!(message.contains("hotspot bytes mismatch"), "{message}");
+    }
+
+    #[test]
+    fn distinct_bitmap_count_is_frames_minus_duplicates() {
+        let sprite = ImpSprite::parse(&synthetic_imp()).unwrap();
+        assert_eq!(
+            sprite.distinct_bitmap_count(),
+            sprite.frame_count - sprite.duplicate_frame_count
+        );
+    }
+
+    #[test]
+    fn normalize_imp_member_lowercases_and_forward_slashes() {
+        assert_eq!(
+            normalize_imp_member("Units\\IMP\\OrCr4b"),
+            "units/imp/orcr4b"
+        );
+    }
+
+    /// The exception table is a waiver of *specific measured numbers*, never of a check. If the
+    /// decoder starts reporting something else, the waiver has to stop applying.
+    #[test]
+    fn an_exception_covers_only_the_exact_recorded_disagreements() {
+        let exception = imp_validation_exception("units/imp/orcr4b").expect("orcr4b is excepted");
+        assert!(exception.covers(exception.waived));
+
+        let mut altered = exception.waived.to_vec();
+        altered[0].binary += 1;
+        assert!(
+            !exception.covers(&altered),
+            "a changed measurement must re-fail"
+        );
+
+        let truncated = &exception.waived[..exception.waived.len() - 1];
+        assert!(
+            !exception.covers(truncated),
+            "a disappearing disagreement must re-fail"
+        );
+
+        let mut extra = exception.waived.to_vec();
+        extra.push(ImpDisagreement {
+            statistic: ImpStatistic::SequenceCount,
+            binary: 7,
+            header: 6,
+        });
+        assert!(
+            !exception.covers(&extra),
+            "a new disagreement must re-fail"
+        );
+
+        assert!(!exception.covers(&[]), "an exact pair must not be excepted");
+    }
+
+    #[test]
+    fn an_unlisted_member_has_no_exception() {
+        assert!(imp_validation_exception("units/imp/orcr4a").is_none());
+        assert!(imp_validation_exception("UNITS/IMP/ORCR4B").is_none());
+    }
+
+    /// Each class makes a falsifiable claim about the shape of the disagreement. Keeping the
+    /// table honest to those claims is what stops it becoming a list of shrugs.
+    #[test]
+    fn every_exception_matches_the_shape_its_class_claims() {
+        for exception in IMP_VALIDATION_EXCEPTIONS {
+            let statistics: Vec<ImpStatistic> =
+                exception.waived.iter().map(|item| item.statistic).collect();
+            assert!(
+                !exception.waived.is_empty(),
+                "{} waives nothing",
+                exception.member
+            );
+            assert!(
+                !statistics.contains(&ImpStatistic::SequenceCount),
+                "{} waives the sequence count; no member in the archive does",
+                exception.member
+            );
+            match exception.class {
+                ImpExceptionClass::HeaderPredatesDeduplication => {
+                    assert!(
+                        !statistics.contains(&ImpStatistic::FrameCount),
+                        "{} claims a dedup gap but the frame count itself disagrees",
+                        exception.member
+                    );
+                    let duplicates = exception
+                        .waived
+                        .iter()
+                        .find(|item| item.statistic == ImpStatistic::DuplicateFrameCount)
+                        .unwrap_or_else(|| panic!("{} waives no duplicate tally", exception.member));
+                    assert!(
+                        duplicates.binary > duplicates.header,
+                        "{} claims the file dedupes further, but it dedupes less",
+                        exception.member
+                    );
+                    for item in exception.waived {
+                        if matches!(
+                            item.statistic,
+                            ImpStatistic::RawPixelBytes
+                                | ImpStatistic::HotspotBytes
+                                | ImpStatistic::StoredPixelBytes
+                        ) {
+                            assert!(
+                                item.header > item.binary,
+                                "{} waives {} but the header total is not the larger one",
+                                exception.member,
+                                item.statistic
+                            );
+                        }
+                    }
+                }
+                ImpExceptionClass::HeaderPredatesArtRevision => {
+                    assert_eq!(
+                        statistics,
+                        [ImpStatistic::RawPixelBytes, ImpStatistic::StoredPixelBytes],
+                        "{} claims the structure agrees, so only pixel totals may differ",
+                        exception.member
+                    );
+                }
+                ImpExceptionClass::HeaderDescribesAnotherBuild => {
+                    assert!(
+                        statistics.contains(&ImpStatistic::FrameCount),
+                        "{} claims another build, which has to show in the frame count",
+                        exception.member
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_exception_and_orphan_tables_are_normalized_and_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for exception in IMP_VALIDATION_EXCEPTIONS {
+            assert_eq!(
+                exception.member,
+                normalize_imp_member(exception.member),
+                "{} is not a normalized member stem",
+                exception.member
+            );
+            assert!(!exception.member.ends_with(".imp"));
+            assert!(
+                seen.insert(exception.member),
+                "{} is listed twice",
+                exception.member
+            );
+            assert!(exception.reason.len() > 40, "{} has a stub reason", exception.member);
+        }
+        let mut orphans = std::collections::BTreeSet::new();
+        for note in IMP_ORPHAN_NOTES {
+            assert_eq!(note.member, normalize_imp_member(note.member));
+            assert!(
+                note.member.ends_with(".imp") || note.member.ends_with(".h"),
+                "{} should name the member including its extension",
+                note.member
+            );
+            assert!(orphans.insert(note.member), "{} is listed twice", note.member);
+            assert!(note.reason.len() > 40, "{} has a stub reason", note.member);
+        }
+        assert!(imp_orphan_note("imp/fleemarka.imp").is_some());
+        assert!(imp_orphan_note("imp/fleemark.h").is_none());
     }
 
     #[test]
