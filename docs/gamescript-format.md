@@ -271,6 +271,21 @@ The general rule: when call sites disagree about a shipped operator's operand co
 names before concluding the operator is variadic. A name looked up through `begin`/`end` may be a
 procedure rather than a constant.
 
+`tools/gs_callsites.py` does this scan as a command rather than by hand, and flags the trap
+automatically. Point it at an extracted corpus:
+
+```sh
+.build/lom-mpq extract "<game>/gs.mpq" /tmp/gsx
+PYTHONPATH=tools python3 tools/gs_callsites.py /tmp/gsx addterrainsprite
+```
+
+It groups call sites by the token window before the operator, cites each with `file:line:column`
+(shipped lines run to thousands of characters, so the column is not optional), and classifies every
+name in the window against the corpus's own definitions. Any name that resolves to a **procedure**
+is listed separately, because a procedure in an operand window means the token count is not the
+operand count. Run on `addterrainsprite` it flags `keep_ttype`, `leader_ttype`, `great_temple`,
+`terrainsprites` and `polar` without being told about any of them.
+
 ### Other operand orders read from shipped call sites
 
 All **Observed in the archive**, each with its call site:
@@ -289,6 +304,8 @@ All **Observed in the archive**, each with its call site:
 | `setterrainwithradius` | `x y radius terrain` | `gs\rmg.gs` — `... 3 5 singlerand tt setterrainwithradius` |
 | `maxslope` | `slope` | `gs\rmg.gs` — `0.7 maxslope` |
 | `addcapitol` | `x y faith faith` | `gs\generate.gs` — `16 16 LIFE LIFE addcapitol` |
+| `savescenariomap` | `filename` | 6 of 6 call sites pass `mapfilename`, a `100 string` buffer |
+| `clearmap` | `texture` | `gs\maplib.gs` — re-runs `mapw maph newmap` at the current size |
 | `addunit` | `x y unittype player ?` | `gs\generate.gs` — `20 16 liinf 1 -1 addunit`, inside `unittypedict begin ... end` |
 
 `mapw` and `maph` are readable names giving the current map's dimensions, which removes the need to

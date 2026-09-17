@@ -11,7 +11,8 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 artifacts_dir="${LOM_ARTIFACTS_DIR:-${project_dir}/artifacts}"
 backup_dir="${artifacts_dir}/experiment-backups/gs5r3-20260916"
 app_dir="${1:-${HOME}/Applications/Lords of Magic GS5R3.app}"
-# Which probe to install: "ladder" (the four-rung compositing diagnostic) or "elevation".
+# Which probe to install: "ladder" (the four-rung compositing diagnostic), "elevation", or
+# "mapsize" (the oversized-map ladder for issue #22).
 probe="${LOM_PROBE:-ladder}"
 game_subpath='Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition/English'
 game_dir="${app_dir}/${game_subpath}"
@@ -118,6 +119,14 @@ PY
 # "the sprite did not render", which is the exact conclusion this probe exists to test.
 echo "== clearing stale probe output =="
 rm -f "${game_dir}"/z*.bmp "${game_dir}"/zprobe.log
+# The mapsize probe writes into the game's loose map/ directory, which holds 366 shipped files that
+# no backup here covers. Only this probe's own zz-prefixed names are ever removed, and the glob is
+# spelled so that a directory with none of them expands to nothing rather than to a literal.
+for stale in "${game_dir}"/map/zz*.sc[n]; do
+  [[ -e "${stale}" ]] || continue
+  echo "  removing stale ${stale##*/}"
+  rm -f "${stale}"
+done
 
 echo "== injecting =="
 writing=1
@@ -155,6 +164,13 @@ done
 installed=1
 
 echo
-echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map,"
-echo "and TAP z once. The probe now fires only once per launch even if the key repeats."
+if [[ "${probe}" == "mapsize" ]]; then
+  echo "Ready. Launch 'Lords of Magic GS5R3.app' and open the MAP EDITOR (not a game), then TAP z"
+  echo "once. It generates and saves a 128, a 256 and a 512 map in turn, which takes a while --"
+  echo "512x512 is sixteen times the work of a normal map. Watch zprobe.log for 'gen done' lines."
+  echo "It places no sprites and destroys nothing. Do not save the game afterwards."
+else
+  echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map,"
+  echo "and TAP z once. The probe now fires only once per launch even if the key repeats."
+fi
 echo "Afterwards run scripts/restore-game-archives.sh."

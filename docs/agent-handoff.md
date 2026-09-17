@@ -122,10 +122,25 @@ checksum** — `artifacts/experiment-backups/` holds the manifest pattern used o
 
 ### Engine probe harness — this is the reusable part
 
-**Two probes exist.** `LOM_PROBE=ladder` (the default) is the four-rung compositing diagnostic that
+**Three probes exist.** `LOM_PROBE=ladder` (the default) is the four-rung compositing diagnostic that
 settled the shadow blend and the palette order. `LOM_PROBE=elevation` surveys `getelevation` beside
 `map2screen` called with `z = 0` and with `z =` the cell's own elevation, then places six sprites to
-measure real anchors — that is the open half of the y convention.
+measure real anchors — that is the open half of the y convention. `LOM_PROBE=mapsize` generates and
+saves a 128, a 256 and a 512 map for [issue #22](https://github.com/jake-bliss/lords-of-magic-modding/issues/22);
+it places no sprites, destroys nothing, and is the only probe run from the **Map Editor** rather than
+from a game.
+
+**The mapsize probe writes outside the archives, and that needs care.** The game directory has a
+loose `map/` folder holding 366 shipped files, and **no backup here covers it** — the manifest covers
+`gs.mpq` and `imp.mpq` only. Both scripts are anchored on this probe's own `zz` prefix: the installer
+clears only `map/zz*.scn`, and the restore script collects each generated map, compares the copy, and
+only then removes the original. A unit test asserts that no probe body names a written file that does
+not start with `z`. If a probe ever needs to write elsewhere, back that directory up first.
+
+Its ladder is 128, 256, then 512, in that order and for a reason: 128 and 256 both exist in the
+shipped corpus, so a generated one can be compared against a file the game itself wrote. If the
+generated 128 does not match, the generator is not a faithful writer and nothing the 512 says can be
+trusted. The control runs first; a test enforces the order.
 
 **Run it with the two scripts, not by hand.** `scripts/install-engine-probe.sh` verifies both
 archives against the recorded originals, injects the sprites and the generated hotkey, disables the

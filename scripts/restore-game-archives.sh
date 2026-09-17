@@ -33,6 +33,31 @@ if (( ${#captures[@]} )); then
   rm -f "${captures[@]}"
 fi
 
+# The mapsize probe writes generated maps into the game's loose map/ directory. They are the
+# result, so they are collected before being removed.
+#
+# That directory holds 366 shipped map files and no backup here covers it, so the pattern is
+# anchored on this probe's own `zz` prefix and nothing else is ever matched. Collect, then delete
+# exactly what was collected -- never a second glob, which could widen between the two steps.
+generated=("${game_dir}"/map/zz*.sc[n])
+if (( ${#generated[@]} )); then
+  mkdir -p "${capture_dir}"
+  cp "${generated[@]}" "${capture_dir}/"
+  echo "collected ${#generated[@]} generated map(s) into ${capture_dir}"
+  for path in "${generated[@]}"; do
+    base="${path##*/}"
+    if [[ "${base}" != zz*.scn ]]; then
+      echo "refusing to remove ${base}: not a probe-generated name" >&2
+      continue
+    fi
+    cmp -s "${path}" "${capture_dir}/${base}" || {
+      echo "refusing to remove ${base}: the collected copy does not match" >&2
+      continue
+    }
+    rm -f "${path}"
+  done
+fi
+
 # Preflight every backup before copying any of them, so a missing or corrupt second backup cannot
 # leave one archive restored and the other still modified.
 echo "== verifying the backups against MANIFEST.sha256 =="

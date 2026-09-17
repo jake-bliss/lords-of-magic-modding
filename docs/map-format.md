@@ -67,6 +67,18 @@ It writes one new file to `map/` and modifies no archive. `mapgen.gs` line 192 w
 a dimension greater than 128 break random dungeons outside GS5R3, which is independent support for
 the *phenomenon* the community claim describes without saying anything about its mechanism.
 
+This is implemented as `LOM_PROBE=mapsize`, and it is a ladder rather than a single 512. It
+generates 128, then 256, then 512, because **128 and 256 both exist in the shipped corpus**: a
+generated file at those sizes can be compared against one the game itself wrote. If the generated
+128 does not parse identically to a shipped 128, the generator is not a faithful writer and nothing
+the 512 says about the header can be trusted. The control comes first, and a unit test enforces
+that order. The probe also logs `mapw` and `maph` after each generation, so a silent clamp cannot be
+mistaken for a successful oversized map.
+
+See [the probe harness](agent-handoff.md#engine-probe-harness--this-is-the-reusable-part) for how it
+is installed and, more importantly, for why writing into the loose `map/` directory needs more care
+than writing into the archives.
+
 The second word is strongly inferred to be elevation or height. The shipped tile-definition comments state that `1000` represents `1.0` in the map model, but exact runtime units and interpolation remain unverified.
 
 Script-side elevation is a **float**. The shipped random map generator in `gs\rmg.gs` passes `0.11`,
