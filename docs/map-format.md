@@ -348,7 +348,7 @@ residue in the file, which is what makes a save-diff a trustworthy instrument he
 
 [GitHub issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4) now tracks:
 
-- **what sets tag bit `0x00800000` in memory** — `forcetexture` sets it and **`resetvisibility`** clears it, so it is visibility state; what computes the perimeter ring the corpus carries, and whether a `.smp` load-and-save preserves it, are open;
+- **what tag bit `0x00800000` means** — `forcetexture` sets it and **`resetvisibility`** clears it, both measured; reading it as *visibility state* is an inference from the operator's name and is **not** established. What computes the perimeter ring the corpus carries, and whether a `.smp` load-and-save preserves it, are open;
 - **the 52-/53-byte record families** — now known to be a **content** difference, not a format one,
   since both save operators write identical bytes;
 - **the 18 unmatched tails** and the one ambiguous file;
@@ -613,9 +613,17 @@ once the bit is cleared it stays cleared:
 **`resetvisibility` is the one.** Not `rebuild3dmap`, which an earlier draft of this section
 proposed — that hypothesis was wrong and the isolation says so.
 
-And the name is the finding: **the bit is visibility state, not terrain state.** That reframes the
-corpus pattern, which is the bit set on exactly the perimeter ring of 146 `.smp` files — a
-visibility flag on a map's edge cells reads very differently from a texture flag.
+**What the operator's name suggests, and what it does not establish.** `resetvisibility` clearing a
+per-cell bit invites reading the bit as visibility state, and that would reframe the corpus pattern
+neatly — the bit sits on exactly the perimeter ring of 146 `.smp` files, which reads very differently
+as a visibility flag than as a texture flag.
+
+But that is an inference **from the operator's name**, and a name is not evidence about a field. The
+call could as easily clear a generic dirty or cache flag as a side effect. This project has been
+caught inferring semantics from plausible names before, so the recorded fact is the narrow one:
+`forcetexture` sets the bit, `resetvisibility` clears it, and the meaning stays **Unknown**.
+Separating "visibility" from "scratch state that the visibility pass happens to reset" needs an
+experiment on visibility itself.
 
 What is still **not** established is whether a load or a save touches the bit independently. Every
 echo save in the `mapload` run happened after the renderer block, so rung 4's sixteen cleared
@@ -657,13 +665,22 @@ background  anchor   ring (N  S  W  E  NW NE SW SE)
   8 lava     351     338 337 340 339 354 355 353 352
 ```
 
-Subtract the anchor and every row is identical, for **eight of eight** blending backgrounds,
-exactly. And the anchors are `15, 63, 111, 159, 207, 255, 303, 351` — a contiguous arithmetic run of
-stride **48**, every one congruent to **15 mod 48**. The atlas is laid out in 48-tile terrain blocks
-and blending indexes within a block.
+Subtract the anchor and every row is identical, for **eight of eight blending backgrounds** — not
+eleven; three produce no uniform ring and are excluded below.
 
-That is much stronger than eleven independent tables. Eleven tables could each be a coincidence; one
-table that regenerates all eleven cannot.
+**The anchor is defined as `SE − 1`, so read the strength of this carefully.** One free parameter per
+background is fixed by its SE tile. That leaves the other **seven** offsets across **eight**
+backgrounds — **56 constraints satisfied by the same seven numbers**. That is what makes it a finding
+rather than a restatement: eight independent tables could each be a coincidence, one table that
+regenerates all eight cannot.
+
+The independent confirmation is that the anchors then land on `15, 63, 111, 159, 207, 255, 303, 351`
+— a contiguous arithmetic run of stride **48**, every one congruent to **15 mod 48**. Nothing in
+"anchor = SE − 1" imposes an arithmetic grid.
+
+**What that does not establish** is that the whole atlas is partitioned into 48-tile terrain blocks.
+Eight transition motifs spaced 48 apart is a statement about those motifs. An atlas parser must not
+classify every 48-slot region as a terrain block on this evidence.
 
 **Water's anchor is not its representative tile.** `terrain_type_base_tile(1)` is 392, which is 8
 mod 48; its blending anchor is 63. The two are different things, and a painter that used 392 as an
@@ -688,8 +705,16 @@ blends — the ring is not one tile per direction but varies along the run. As a
 the `PerPaintedTerrain` row above. A painter must special-case road both ways.
 
 The measured behaviour is committed as `TRANSITION_RING_OFFSETS`, `TERRAIN_TRANSITIONS` and
-`transition_ring()` in `spikes/asset-viewer/src/map.rs`, generated from the run's saved maps rather
-than transcribed, with a test that regenerates all eight measured rings from the single table.
+`transition_ring()` in `spikes/asset-viewer/src/map.rs`, with a test that regenerates all eight
+measured rings from the single table.
+
+**The generator is `tools/emit_terrain_tables.py`, and `--check` re-derives the constants from the
+saved maps and fails on any difference.** That exists because a reviewer pointed out the original
+generator was a throwaway script: "generated rather than transcribed" was then an unverifiable
+claim, and the same transcription slip could have been copied into both the constants and the test
+fixture meant to catch one. The committed generator re-derives independently — and with a *stricter*
+rule, requiring every ring cell to agree rather than the eight sampled midpoints — and reproduces
+the constants exactly.
 
 ```sh
 lom-asset-viewer --map-transition-rings

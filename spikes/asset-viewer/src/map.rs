@@ -15,27 +15,31 @@ const PLACED_SPRITE_SECTION_49_FIXED_BYTES: usize = 8;
 /// bit set.** Forcing a texture does not set it, so it does not mean "forced texture". The
 /// reasoning is kept here so nobody re-derives it from the same corpus shape.
 ///
-/// **Observed in gameplay, 2026-09-17: `rebuild3dmap` clears this bit.** Two probe runs form a
-/// controlled pair differing in exactly one operation:
+/// **Observed in gameplay, 2026-09-17: `forcetexture` sets this bit and `resetvisibility` clears
+/// it.** Isolated with five fresh maps, one renderer call each -- fresh because once the bit is
+/// cleared it stays cleared:
 ///
 /// | sequence | bit, across all 4,096 cells of a 64x64 map |
 /// | --- | --- |
-/// | `clearmap` then save | **set** |
-/// | `clearmap` then `rebuild3dmap` then save | **clear** |
+/// | `clearmap`, save | **set** |
+/// | `clearmap`, `rebuild3dmap`, save | **set** |
+/// | `clearmap`, **`resetvisibility`**, save | **clear** |
+/// | `clearmap`, `rendermap`, save | **set** |
+/// | `clearmap`, `refreshdirty`, save | **set** |
 ///
-/// So `forcetexture` (which `clearmap` calls on every cell) *does* set it, and rebuilding the mesh
-/// clears it. There was never a contradiction between the two runs; they are a matched pair, and
-/// the earlier "0 of 4,096" reading was measuring the state after a rebuild.
+/// Not `rebuild3dmap`, which two earlier drafts of this comment proposed. There was never a
+/// contradiction between the runs that produced "4,096 of 4,096" and "0 of 4,096"; they are a
+/// matched pair separated by the renderer block, and `resetvisibility` inside it is the cause.
 ///
-/// **What is NOT established:** whether loading or saving independently touches the bit. Every
-/// echo save in the mapload probe happens *after* a `rebuild3dmap` inside the same rung, so the
-/// sixteen interior cells that came back cleared are equally explained by the rebuild. An earlier
-/// draft of this comment claimed "the engine clears it when it saves a map it loaded"; that was
-/// confounded, and a reviewer caught it. Separating load from rebuild needs one more rung that
-/// loads and saves with no rebuild between.
+/// **The meaning is still Unknown.** The operator's name invites reading the bit as visibility
+/// state, which would fit the corpus neatly -- it sits on exactly the perimeter ring of 146 `.smp`
+/// files. But that is an inference from a name, and the call could as easily reset a generic dirty
+/// or cache flag as a side effect. Also unestablished: whether a load or a save touches the bit
+/// independently, since every echo save in the `mapload` run followed the renderer block.
 ///
-/// Either way a writer should treat the bit as **cosmetic**: preserving it costs nothing, and
-/// setting it survives only until something rebuilds the mesh.
+/// **A writer must preserve the bit and never clear it.** The corpus shows it living on disk in one
+/// place -- those 146 `.smp` perimeters -- and no probe has exercised the `.smp` load-and-save path
+/// at all, so an editor that dropped it could be destroying its only real occurrence.
 ///
 /// A writer must therefore treat this bit as **cosmetic**: preserving it costs nothing and loses
 /// nothing, and setting it achieves nothing the engine will keep.
@@ -805,14 +809,24 @@ pub const GENERATED_HEADER_WORD: u32 = 0x6f;
 ///     ...
 /// ```
 ///
-/// Subtract the anchor and every row is identical: `N-13 S-14 W-11 E-12 NW+3 NE+4 SW+2 SE+1`,
-/// for **eight of eight** blending backgrounds, exactly. And the anchors are
-/// `15, 63, 111, 159, 207, 255, 303, 351` — an arithmetic run of stride
-/// [`TRANSITION_BLOCK_STRIDE`], every one congruent to [`TRANSITION_ANCHOR_RESIDUE`] mod 48. The
-/// atlas is laid out in 48-tile terrain blocks and blending indexes within a block.
+/// Subtract the anchor and every row is identical: `N-13 S-14 W-11 E-12 NW+3 NE+4 SW+2 SE+1`, for
+/// **eight of eight blending backgrounds** -- not eleven. Three backgrounds produce no uniform ring
+/// at all and are excluded; see [`TransitionBehaviour`].
 ///
-/// This is far stronger than eleven independent tables, and much more likely to be right: eleven
-/// tables could each be a coincidence, one table that reproduces all eleven cannot.
+/// **The anchor is defined as `SE - 1`, so read the strength of this carefully.** One free parameter
+/// per background is fixed by its SE tile; that leaves the other **seven** offsets, times eight
+/// backgrounds, as **56 constraints satisfied by the same seven numbers**. That is what makes it a
+/// finding rather than a restatement -- eight independent tables could each be a coincidence, one
+/// table that regenerates all eight cannot.
+///
+/// The independent confirmation is that the anchors then land on
+/// `15, 63, 111, 159, 207, 255, 303, 351` -- a contiguous arithmetic run of stride
+/// [`TRANSITION_BLOCK_STRIDE`], every one congruent to [`TRANSITION_ANCHOR_RESIDUE`] mod 48.
+/// Nothing in "anchor = SE - 1" imposes an arithmetic grid.
+///
+/// **What this does NOT establish** is that the whole atlas is partitioned into 48-tile terrain
+/// blocks. Eight transition motifs spaced 48 apart is a statement about those motifs. An atlas
+/// parser must not classify every 48-slot region as a terrain block on this evidence.
 pub const TRANSITION_RING_OFFSETS: [TransitionOffset; 8] = [
     TransitionOffset { direction: (0, -1), offset: -13 },
     TransitionOffset { direction: (0, 1), offset: -14 },
@@ -899,9 +913,23 @@ pub fn transition_ring(background_terrain: u32) -> Option<[u32; 8]> {
 /// The engine's terrain-sprite-type table: the name a script registers, and the id it gets.
 ///
 /// **Observed in gameplay, 2026-09-17.** `terrainsprites` is a dict keyed by name -- shipped script
-/// reads `terrainsprites /barrow get` -- and `forall` enumerated all 197 of its entries. 178 are a
-/// plain name-to-id pair and are recorded here; the rest are arrays and procedures, listed in
-/// [`TERRAIN_SPRITE_ARRAYS`].
+/// reads `terrainsprites /barrow get` -- and `forall` enumerated **197** of its entries.
+///
+/// **This table is 178 of those 197, and the accounting matters:**
+///
+/// | kind | count | recorded |
+/// | --- | ---: | --- |
+/// | plain name-to-id | 178 | here |
+/// | array-valued | 9 | [`TERRAIN_SPRITE_ARRAYS`] |
+/// | printed a name but no usable value | **10** | **nowhere** |
+///
+/// Those ten logged a name with no value the probe could render -- `define_terrain_sprite`,
+/// `keep_ttype`, `vilg_ttype`, `leader_ttype`, `special_ttype`, `great_temple` and similar. They
+/// are almost certainly procedures, and `cvs` on a procedure prints nothing useful, but that is an
+/// inference; what is measured is that they exist and are not ids. **So this is not a complete dump
+/// of the dict** and a tool must not treat it as one. An earlier version of this comment said the
+/// remainder was "arrays and procedures, listed in `TERRAIN_SPRITE_ARRAYS`", which was false --
+/// only the arrays are listed, and a reviewer found the ten-entry gap by doing the arithmetic.
 ///
 /// **This is why a map's `sprite_type` field was unusable.** The id is assigned in script execution
 /// order across 536 `addterrainspritetype` call sites, so nothing in the file format says which id
@@ -1121,12 +1149,20 @@ pub fn terrain_sprite_type(name: &str) -> Option<u32> {
         .map(|(_, id)| *id)
 }
 
-/// The name registered for a type id, when exactly one name holds it.
+/// The name registered for a type id, or `None` when no name or **more than one** name holds it.
+///
+/// The uniqueness check is not decoration. In the dumped GS5R3 table every id is held by exactly one
+/// name -- asserted by a test -- but the table is regenerated per profile, and a profile that
+/// registered an alias would make a plain `find` return whichever row came first. Reporting a
+/// confident wrong name is worse than reporting none, because the name is what a caller uses to
+/// decide whether the id is the object they meant.
 pub fn terrain_sprite_name(type_id: u32) -> Option<&'static str> {
-    TERRAIN_SPRITE_TYPES
+    let mut matches = TERRAIN_SPRITE_TYPES
         .iter()
-        .find(|(_, id)| *id == type_id)
-        .map(|(name, _)| *name)
+        .filter(|(_, id)| *id == type_id)
+        .map(|(name, _)| *name);
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first)
 }
 
 /// The largest side length [`MapAsset::create`] will produce.
