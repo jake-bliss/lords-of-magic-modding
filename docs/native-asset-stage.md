@@ -98,7 +98,7 @@ flags and our existing conflation is correct. `ImpSprite::back_reference_frame_c
 separate `0x08` tally for analysis. The five disagreements have another cause; the repeated-facing
 heuristic remains the leading suspect for the logical-frame and raw-pixel cases.
 
-The native viewer displays individual frames, follows duplicate/repeated references, navigates within a facing or between facings and actions, and can autoplay the current facing at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, green index 0 fills the background while a distinct pure-red index forms a 1,651-pixel silhouette beneath the creature; an inspected 1-bit aura asset similarly uses green and red as its only two colors. This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes.
+The native viewer displays individual frames, follows duplicate/repeated references, navigates within a facing or between facings and actions, and can autoplay the current facing at a fixed scale. Representative 8-bit unit art is recognizable, which strongly supports the byte-level decoder. In one creature frame, index 0 fills the background while a distinct second index forms a 1,651-pixel silhouette beneath the creature; an inspected 1-bit aura asset similarly uses those two colours alone. Index 0 is pure **red** and index 1 pure **green** (corrected 2026-09-17; the earlier naming came through a decoder that swapped the two). This is evidence for separate background and mask/compositing channels, not a single universal chroma key. The viewer therefore offers clean-preview, mask, and raw-palette modes.
 
 A community specification located on 2026-09-16 states the rule directly: **the transparency index is
 a header field and palette index 1 is the shadow**, keyed by index rather than by colour.
@@ -110,8 +110,9 @@ in the frame — it is the background. Keying transparency on a hardcoded 0 ther
 a third of the corpus with an opaque background and masked nothing. The parser now exposes
 `ImpSprite::color_key`, and both the viewer and the PNG export honour it. Validation figures are
 unchanged, because this affects presentation rather than structural decoding. Our own
-observation of a pure-red silhouette *beneath* a creature independently corroborates "shadow". The
-green and red RGB values in those slots are incidental art-tool choices, which is why colour-keying
+observation of a silhouette *beneath* a creature independently corroborates "shadow" — better called
+**translucency**, since it is measured as a 50% blend. The RGB in those slots is ignored by the
+engine, proved by rewriting index 1 to magenta and seeing no change, which is why colour-keying
 never generalised. `secondary_mask` is renamed `shadow` in the viewer accordingly. The same source
 names what this project originally called a "cycle" a **facing**, ordered clockwise. The clockwise
 claim is untested, but the naming is better than ours and has been adopted throughout the code, the

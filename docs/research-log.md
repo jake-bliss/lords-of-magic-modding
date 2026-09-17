@@ -80,8 +80,8 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 ## 2026-09-12 — IMP presentation channels
 
 - **Observed:** native SDL3 presentation produces recognizable 8-bit unit art and stable frame scaling.
-- **Observed:** one inspected creature frame uses green palette index 0 for 8,576 background pixels and a separate pure-red index for a 1,651-pixel silhouette beneath the creature.
-- **Observed:** an inspected 1-bit aura asset uses bright green and red as its two palette colors, confirming that blindly deleting both colors destroys meaningful mask data.
+- **Observed:** one inspected creature frame uses palette index 0 for 8,576 background pixels and a separate index for a 1,651-pixel silhouette beneath the creature. (Those colour names were recorded through the old decoder, which swapped red and green. Corrected 2026-09-17: index 0 is pure **red** and index 1 is pure **green**.)
+- **Observed:** an inspected 1-bit aura asset uses bright red and green as its two palette colors, confirming that blindly deleting both colors destroys meaningful mask data.
 - **Inferred:** green is a background channel in the inspected frames, while red is a separate shadow, translucency, recoloring, or other compositor input.
 - **Implemented:** the viewer defaults to a clean preview while `C` facings through visible-mask and untouched raw-palette modes. The decoder itself preserves every source index and palette color.
 - **Corrected:** sampling the top-left pixel as a chroma key failed when frame 156 of `chcr5a.imp` touched that corner and removed gold artwork. Viewer channels are now selected by palette index 0 (background) and index 1 (secondary mask), preserving the same colors when they occur at other indices.
