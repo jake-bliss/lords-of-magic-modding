@@ -11,8 +11,9 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 artifacts_dir="${LOM_ARTIFACTS_DIR:-${project_dir}/artifacts}"
 backup_dir="${artifacts_dir}/experiment-backups/gs5r3-20260916"
 app_dir="${1:-${HOME}/Applications/Lords of Magic GS5R3.app}"
-# Which probe to install: "ladder" (the four-rung compositing diagnostic), "elevation", or
-# "mapsize" (the oversized-map ladder for issue #22).
+# Which probe to install: "ladder" (the four-rung compositing diagnostic), "elevation",
+# "mapsize" (the oversized-map ladder, issue #22 -- now closed), or "flatground" (the built-mesh
+# probe that closes the map2screen y convention).
 probe="${LOM_PROBE:-ladder}"
 game_subpath='Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition/English'
 game_dir="${app_dir}/${game_subpath}"
@@ -169,7 +170,13 @@ done
 installed=1
 
 echo
-if [[ "${probe}" == "mapsize" ]]; then
+if [[ "${probe}" == "flatground" ]]; then
+  echo "Ready. Launch 'Lords of Magic GS5R3.app' and open the MAP EDITOR, then TAP z once."
+  echo "The probe replaces the editor's map with a 64x64 one it builds itself, photographs the"
+  echo "same six cells three times -- flat, on a raised plateau, and on single-cell spikes --"
+  echo "and removes every sprite it places. Nothing is saved and no game map is touched."
+  echo "Expect three redraws and six captures. Do not save anything afterwards."
+elif [[ "${probe}" == "mapsize" ]]; then
   echo "Ready. Launch 'Lords of Magic GS5R3.app' and open the MAP EDITOR (not a game), then TAP z"
   echo "once. It generates and saves a 128, a 256 and a 512 map in turn, which takes a while --"
   echo "512x512 is sixteen times the work of a normal map. Watch zprobe.log for 'gen done' lines."
