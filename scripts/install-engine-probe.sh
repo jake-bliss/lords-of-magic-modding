@@ -62,10 +62,15 @@ done
 
 if [[ "${probe}" == "mapload" ]]; then
   echo "== the mapload probe needs its input maps in place first =="
+  # Read from the probe generator, never inline: see build-mapload-inputs.sh for what drifting
+  # copies of this list would cost.
+  mapfile -t input_names < <(PYTHONPATH="${project_dir}/tools" python3 -c \
+    'import engine_probe; print("\n".join(engine_probe.mapload_prebuilt_names()))')
+  (( ${#input_names[@]} > 0 )) || { echo "probe input list is empty" >&2; exit 1; }
   missing=0
-  for name in zm1 zm2 zm3 zm4 zm5 zm6; do
-    if [[ ! -f "${game_dir}/map/${name}.scn" ]]; then
-      echo "   MISSING: ${game_dir}/map/${name}.scn" >&2
+  for name in "${input_names[@]}"; do
+    if [[ ! -f "${game_dir}/map/${name}" ]]; then
+      echo "   MISSING: ${game_dir}/map/${name}" >&2
       missing=1
     fi
   done
@@ -82,7 +87,7 @@ if [[ "${probe}" == "mapload" ]]; then
     echo "Rung 0's control must be written by the engine during the run, not left over." >&2
     exit 1
   fi
-  echo "   all six input maps present, and no stale zm0.scn"
+  echo "   all ${#input_names[@]} input maps present, and no stale zm0.scn"
 fi
 
 echo "== verifying the backups against MANIFEST.sha256 =="

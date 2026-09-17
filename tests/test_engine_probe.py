@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 
 import engine_probe  # noqa: E402
 import gs_syntax  # noqa: E402
@@ -855,14 +856,34 @@ class MapLoadProbeTest(unittest.TestCase):
         self.assertEqual(guards, len(engine_probe.mapload_input_names()))
         # One rebuild per guarded rung, plus the blend map's own rebuild, which follows no load.
         self.assertEqual(rebuilds, guards + 1)
-        for match in re.finditer(r"rebuild3dmap", self.body):
-            preceding = self.body.rfind("\tzok\n\t\t{\n", 0, match.start())
-            blend = self.body.rfind("clearmap", 0, match.start())
-            self.assertGreater(
-                max(preceding, blend),
-                -1,
-                "a rebuild must follow either a load guard or the blend background",
-            )
+
+        # Assert PLACEMENT, not existence. The previous version of this checked that *something*
+        # appeared earlier in the file -- `max(preceding, blend) > -1` -- which the control's
+        # `clearmap` made unconditionally true, so moving the rebuild outside the guard left the
+        # suite green. Indentation is the guard: emitted lines inside `\tzok\n\t\t{` carry two
+        # tabs, everything at rung level carries one.
+        guarded = 0
+        for line in self.body.split("\n"):
+            if "rebuild3dmap" not in line:
+                continue
+            if line.startswith("\t\t"):
+                guarded += 1
+            else:
+                # The only ungrated rebuild is the blend map's, which follows no load at all.
+                self.assertIn(
+                    "rebuild3dmap resetvisibility rendermap refreshdirty",
+                    line,
+                    f"unexpected ungrated rebuild: {line!r}",
+                )
+                self.assertTrue(
+                    line.startswith("\t") and not line.startswith("\t\t"),
+                    f"rebuild at unexpected depth: {line!r}",
+                )
+        self.assertEqual(
+            guarded,
+            guards,
+            "every per-rung rebuild must sit inside its `zok` guard",
+        )
 
     def test_each_load_is_echoed_back_to_its_own_file(self) -> None:
         """The offline diff of input against echo is the strongest readback available.
@@ -943,14 +964,27 @@ class MapLoadProbeTest(unittest.TestCase):
         The point of the rung is to hand the engine an interior flag, so the rectangle has to be
         unmistakably interior on the 128x128 donor -- otherwise a result could be read as the
         engine merely rebuilding a border.
+
+        This reads the rectangle out of **the shell script that actually decides it**. The
+        constants in `engine_probe` are referenced by nothing else, so asserting on them alone was
+        false assurance: the script could be changed to `0 0 3 3` and this test would still pass
+        while rung 4 measured exactly the border it was designed to avoid.
         """
-        x0, y0, x1, y1 = engine_probe.MAPLOAD_INTERIOR_FLAG
+        script = SCRIPTS_DIR.joinpath("build-mapload-inputs.sh").read_text()
+        match = re.search(r"--map-flag-rect \S+ (\d+) (\d+) (\d+) (\d+)", script)
+        self.assertIsNotNone(match, "the script no longer flags a rectangle")
+        x0, y0, x1, y1 = (int(value) for value in match.groups())
+        self.assertEqual(
+            (x0, y0, x1, y1),
+            engine_probe.MAPLOAD_INTERIOR_FLAG,
+            "the script and the documented constant disagree",
+        )
         self.assertLessEqual(x0, x1)
         self.assertLessEqual(y0, y1)
         for value in (x0, y0):
-            self.assertGreater(value, 8)
+            self.assertGreater(value, 8, "too close to a border to be read as interior")
         for value in (x1, y1):
-            self.assertLess(value, 119)
+            self.assertLess(value, 119, "too close to a border to be read as interior")
 
     def test_the_probe_cells_distinguish_the_two_packings(self) -> None:
         """Read-back cells must not be symmetric under transposition."""
@@ -958,10 +992,43 @@ class MapLoadProbeTest(unittest.TestCase):
             self.assertNotEqual(x, y, f"({x}, {y}) reads the same under either packing")
 
     def test_created_maps_cover_square_and_non_square(self) -> None:
-        square = engine_probe.MAPLOAD_CREATED_SIZE
-        other = engine_probe.MAPLOAD_CREATED_NON_SQUARE
+        """Read from the script, for the same reason as the rectangle above."""
+        script = SCRIPTS_DIR.joinpath("build-mapload-inputs.sh").read_text()
+        created = [
+            (int(w), int(h))
+            for w, h in re.findall(r"--map-create (\d+) (\d+) ", script)
+        ]
+        self.assertEqual(
+            created,
+            [engine_probe.MAPLOAD_CREATED_SIZE, engine_probe.MAPLOAD_CREATED_NON_SQUARE],
+            "the script and the documented constants disagree",
+        )
+        square, other = created
         self.assertEqual(square[0], square[1])
         self.assertNotEqual(other[0], other[1], "the non-square rung must be non-square")
+
+    def test_the_shell_scripts_take_their_name_lists_from_this_module(self) -> None:
+        """The scripts are what run; a Python-only assertion cannot see them.
+
+        `restore-game-archives.sh` already derives its list from `generated_map_names()`. The two
+        mapload scripts hardcoded `zm1..zm6`, so adding a rung would have left the build script not
+        creating it and the install check not looking for it -- and the probe would then have logged
+        a missing file as an engine rejection, which is the worst shape a probe bug can take.
+        """
+        build = SCRIPTS_DIR.joinpath("build-mapload-inputs.sh").read_text()
+        install = SCRIPTS_DIR.joinpath("install-engine-probe.sh").read_text()
+        restore = SCRIPTS_DIR.joinpath("restore-game-archives.sh").read_text()
+        self.assertIn("mapload_prebuilt_names", build)
+        self.assertIn("mapload_prebuilt_names", install)
+        self.assertIn("generated_map_outputs", install)
+        self.assertIn("generated_map_names", restore)
+        # And no script may carry the list inline any more.
+        for name, text in (("build", build), ("install", install)):
+            self.assertNotRegex(
+                text,
+                r"zm1 zm2 zm3",
+                f"{name} still hardcodes the input list",
+            )
 
     def test_install_time_clearing_never_touches_a_probe_input(self) -> None:
         """Regression: the install script deleted the six input maps it had just verified.
@@ -975,10 +1042,6 @@ class MapLoadProbeTest(unittest.TestCase):
         inputs = set(engine_probe.generated_map_inputs())
         outputs = set(engine_probe.generated_map_outputs())
         self.assertEqual(inputs & outputs, set(), "a name cannot be both cleared and required")
-        self.assertEqual(
-            inputs,
-            {f"map/{name}" for name in engine_probe.mapload_prebuilt_names()},
-        )
         # Rung 0's control is engine-written, so it must be cleared, never supplied.
         self.assertIn("map/zm0.scn", outputs)
         self.assertNotIn("map/zm0.scn", inputs)

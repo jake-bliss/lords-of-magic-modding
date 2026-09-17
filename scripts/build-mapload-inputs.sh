@@ -20,9 +20,16 @@ trap 'rm -rf "${work_dir}"' EXIT
 [[ -d "${map_dir}" ]] || { echo "missing map directory: ${map_dir}" >&2; exit 1; }
 [[ -f "${donor}" ]] || { echo "missing donor map: ${donor}" >&2; exit 1; }
 
+# One source of truth for the list. Hardcoding it here meant adding a rung would leave this script
+# not creating the file, the install check not looking for it, and the probe logging a missing file
+# as an engine rejection -- a plausible wrong answer rather than a crash.
+mapfile -t input_names < <(PYTHONPATH="${project_dir}/tools" python3 -c \
+  'import engine_probe; print("\n".join(engine_probe.mapload_prebuilt_names()))')
+(( ${#input_names[@]} > 0 )) || { echo "probe input list is empty" >&2; exit 1; }
+
 # zm0 is the engine's own control, written during the run. Everything else is refused if present,
 # because a leftover from a previous run would be silently measured as this run's result.
-for name in zm1 zm2 zm3 zm4 zm5 zm6; do
+for name in "${input_names[@]%.scn}"; do
   if [[ -e "${map_dir}/${name}.scn" ]]; then
     echo "refusing to run: ${map_dir}/${name}.scn already exists (leftover from a previous run?)" >&2
     echo "remove the probe's generated maps first: scripts/restore-game-archives.sh" >&2
@@ -55,13 +62,13 @@ echo "== zm5/zm6: created from nothing =="
 "${viewer}" --map-create 96 64 land "${work_dir}/zm6.scn"
 
 echo "== every input must survive our own reader before the engine sees it =="
-for name in zm1 zm2 zm3 zm4 zm5 zm6; do
+for name in "${input_names[@]%.scn}"; do
   "${viewer}" --map-roundtrip "${work_dir}/${name}.scn" > /dev/null
   printf '   %s  %s bytes  OK\n' "${name}.scn" "$(wc -c < "${work_dir}/${name}.scn" | tr -d ' ')"
 done
 
 echo "== installing into ${map_dir} =="
-for name in zm1 zm2 zm3 zm4 zm5 zm6; do
+for name in "${input_names[@]%.scn}"; do
   cp -n "${work_dir}/${name}.scn" "${map_dir}/${name}.scn"
   printf '   wrote %s\n' "${map_dir}/${name}.scn"
 done
