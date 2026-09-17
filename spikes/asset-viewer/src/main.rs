@@ -18,17 +18,17 @@ use lom_asset_viewer::imp::{
     ImpValidationException, imp_member_basename, normalize_imp_member,
 };
 use lom_asset_viewer::map::{
-    GENERATED_HEADER_WORD, MapAsset, ROAD_TERRAIN, TERRAIN_SPRITE_ARRAYS, TERRAIN_SPRITE_NAME_ONLY,
-    TERRAIN_SPRITE_TYPES, TERRAIN_TYPES, TRANSITION_RING_OFFSETS, interior_tile_family,
-    road_background_ring, terrain_sprite_name, terrain_sprite_type, terrain_type_base_tile,
-    transition_anchor, transition_ring,
+    GENERATED_HEADER_WORD, MapAsset, PaintRefusal, ROAD_TERRAIN, TERRAIN_SPRITE_ARRAYS,
+    TERRAIN_SPRITE_NAME_ONLY, TERRAIN_SPRITE_TYPES, TERRAIN_TYPES, TRANSITION_RING_OFFSETS,
+    TerrainPaintPlan, interior_tile_family, road_background_ring, terrain_sprite_name,
+    terrain_sprite_type, terrain_type_base_tile, transition_anchor, transition_ring,
 };
 use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
 use lom_asset_viewer::operator_arity;
 use lom_asset_viewer::pbm::PbmImage;
 use lom_asset_viewer::png_export::{write_imp_frame_png, write_pbm_png, write_rgba_png};
-use lom_asset_viewer::tile::TileSetDefinition;
+use lom_asset_viewer::tile::{Direction, TileChoice, TileSelector, TileSetDefinition};
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
 use sdl3::pixels::{Color, PixelFormat};
@@ -50,6 +50,20 @@ enum MapEdit {
     SetTerrain { x: u32, y: u32, terrain_type: u32 },
     SetElevation { x: u32, y: u32, value: f32 },
     FillTerrain { terrain_type: u32 },
+    /// Paint a rectangular region and blend the measured transition ring around it.
+    ///
+    /// This is `setterrain` driven by the tileset the map was authored against. `SetTerrain` stays
+    /// exactly what it was -- `forcetexture` on one cell -- because forcing a slot is a different
+    /// operation, not a worse one, and it is the only one that needs no tileset at all.
+    PaintTerrain {
+        rect: (u32, u32, u32, u32),
+        terrain_type: u32,
+        /// How to break a tie when several tiles match a cell equally.
+        ///
+        /// The engine draws at random and that draw cannot be reproduced, so the tool is
+        /// deterministic by default and seedable on request. See [`TileSelector`].
+        selector: TileSelector,
+    },
     PlaceSprite { x: u32, y: u32, sprite_type: u32 },
     RemoveSprite { instance_id: u32 },
     /// Parse and re-encode, changing nothing.
@@ -91,6 +105,11 @@ enum Command {
         input: PathBuf,
         edit: MapEdit,
         output: PathBuf,
+        /// The `.til` the map was authored against, for edits that re-select tiles.
+        ///
+        /// Positional and optional, following `--view-map`'s shape. Only `--map-paint-terrain`
+        /// reads it, and without it that verb refuses rather than guessing a tileset.
+        tile_set: Option<PathBuf>,
     },
     DescribeImp {
         source: Source,
@@ -266,7 +285,8 @@ fn run() -> Result<(), String> {
             input,
             edit,
             output,
-        } => edit_map(&input, edit, &output),
+            tile_set,
+        } => edit_map(&input, edit, &output, tile_set.as_deref()),
         Command::DescribeImp { source, member } => describe_imp(&source, &member),
         Command::ExportImpFrame {
             source,
@@ -351,6 +371,13 @@ fn parse_args() -> Result<Command, String> {
                 .map_err(|_| format!("hotspot type must be a nonnegative integer: {value}"))
         })
         .transpose()?;
+    let seed = take_option(&mut args, "--seed")?
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| format!("seed must be a nonnegative integer: {value}"))
+        })
+        .transpose()?;
     let stubs = take_repeated_option(&mut args, "--stub")
         .iter()
         .map(|specification| parse_native_stub(specification))
@@ -415,6 +442,7 @@ fn parse_args() -> Result<Command, String> {
                 input: args[1].clone().into(),
                 edit: MapEdit::Rewrite,
                 output: args[2].clone().into(),
+                tile_set: None,
             })
         }
         "--map-set-high-flag" => {
@@ -427,6 +455,7 @@ fn parse_args() -> Result<Command, String> {
                     set: parse_flag(&args[4])?,
                 },
                 output: args[5].clone().into(),
+                tile_set: None,
             })
         }
         "--map-flag-border" => {
@@ -435,6 +464,7 @@ fn parse_args() -> Result<Command, String> {
                 input: args[1].clone().into(),
                 edit: MapEdit::FlagRegion { border: true, rect: None },
                 output: args[2].clone().into(),
+                tile_set: None,
             })
         }
         "--map-flag-rect" => {
@@ -451,6 +481,7 @@ fn parse_args() -> Result<Command, String> {
                     )),
                 },
                 output: args[6].clone().into(),
+                tile_set: None,
             })
         }
         "--map-set-tile" => {
@@ -463,6 +494,7 @@ fn parse_args() -> Result<Command, String> {
                     tile_index: parse_u32(&args[4])?,
                 },
                 output: args[5].clone().into(),
+                tile_set: None,
             })
         }
         "--map-set-terrain" => {
@@ -475,6 +507,7 @@ fn parse_args() -> Result<Command, String> {
                     terrain_type: parse_terrain_type(&args[4])?,
                 },
                 output: args[5].clone().into(),
+                tile_set: None,
             })
         }
         "--map-set-elevation" => {
@@ -487,6 +520,7 @@ fn parse_args() -> Result<Command, String> {
                     value: parse_elevation(&args[4])?,
                 },
                 output: args[5].clone().into(),
+                tile_set: None,
             })
         }
         "--map-fill-terrain" => {
@@ -497,6 +531,30 @@ fn parse_args() -> Result<Command, String> {
                     terrain_type: parse_terrain_type(&args[2])?,
                 },
                 output: args[3].clone().into(),
+                tile_set: None,
+            })
+        }
+        "--map-paint-terrain" => {
+            // The tileset is a trailing positional, the shape `--view-map` already uses. Omitting
+            // it is accepted by the parser and refused by the paint, so the refusal names the
+            // missing tileset instead of the argument count.
+            if args.len() != 8 && args.len() != 9 {
+                return Err(usage());
+            }
+            Ok(Command::EditMap {
+                input: args[1].clone().into(),
+                edit: MapEdit::PaintTerrain {
+                    rect: (
+                        parse_u32(&args[2])?,
+                        parse_u32(&args[3])?,
+                        parse_u32(&args[4])?,
+                        parse_u32(&args[5])?,
+                    ),
+                    terrain_type: parse_terrain_type(&args[6])?,
+                    selector: seed.map_or(TileSelector::LowestSlot, TileSelector::Seeded),
+                },
+                output: args[7].clone().into(),
+                tile_set: args.get(8).map(|value| value.clone().into()),
             })
         }
         "--map-place-sprite" => {
@@ -509,6 +567,7 @@ fn parse_args() -> Result<Command, String> {
                     sprite_type: parse_sprite_type(&args[4])?,
                 },
                 output: args[5].clone().into(),
+                tile_set: None,
             })
         }
         "--map-remove-sprite" => {
@@ -519,6 +578,7 @@ fn parse_args() -> Result<Command, String> {
                     instance_id: parse_u32(&args[2])?,
                 },
                 output: args[3].clone().into(),
+                tile_set: None,
             })
         }
         "--describe-imp" => {
@@ -773,7 +833,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -3633,7 +3693,12 @@ fn roundtrip_maps(path: &Path) -> Result<(), String> {
 /// The shape of this deliberately matches `--set-imp-placement`: apply, re-parse the bytes that
 /// are about to be written, confirm the edit reads back, then `create_new`. The loose `map/`
 /// directory has no backup, so there is no in-place mode and no overwrite of an existing output.
-fn edit_map(input: &Path, edit: MapEdit, output: &Path) -> Result<(), String> {
+fn edit_map(
+    input: &Path,
+    edit: MapEdit,
+    output: &Path,
+    tile_set_path: Option<&Path>,
+) -> Result<(), String> {
     if paths_are_same_file(input, output) {
         return Err(format!(
             "refusing to write to the input file {}; pass a different output path",
@@ -3645,14 +3710,18 @@ fn edit_map(input: &Path, edit: MapEdit, output: &Path) -> Result<(), String> {
     let mut map = MapAsset::parse(&source).map_err(|error| error.to_string())?;
     let map_before = MapAsset::parse(&source).map_err(|error| error.to_string())?;
 
-    let note = apply_map_edit(&mut map, edit)?;
+    // Loaded once and handed to both the edit and its verification. Two loads could disagree if
+    // the file changed underneath, and then the check would be confirming a different decision.
+    let tile_set = tile_set_path.map(load_tile_set).transpose()?;
+
+    let note = apply_map_edit(&mut map, edit, tile_set.as_ref())?;
     let encoded = map.to_bytes().map_err(|error| error.to_string())?;
 
     // Re-parse before writing: a map we cannot read back is a map we must not emit.
     let reparsed = MapAsset::parse(&encoded).map_err(|error| {
         format!("refusing to write: the edited map no longer parses: {error}")
     })?;
-    verify_map_edit(&reparsed, &map_before, edit)?;
+    verify_map_edit(&reparsed, &map_before, edit, tile_set.as_ref())?;
 
     let mut file = OpenOptions::new()
         .write(true)
@@ -3695,7 +3764,19 @@ fn paths_are_same_file(left: &Path, right: &Path) -> bool {
     }
 }
 
-fn apply_map_edit(map: &mut MapAsset, edit: MapEdit) -> Result<String, String> {
+/// Read and parse a `.til`.
+fn load_tile_set(path: &Path) -> Result<TileSetDefinition, String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("could not read tile definition {}: {error}", path.display()))?;
+    TileSetDefinition::parse(&bytes)
+        .map_err(|error| format!("could not parse tile definition {}: {error}", path.display()))
+}
+
+fn apply_map_edit(
+    map: &mut MapAsset,
+    edit: MapEdit,
+    tile_set: Option<&TileSetDefinition>,
+) -> Result<String, String> {
     match edit {
         MapEdit::SetTile { x, y, tile_index } => {
             map.set_tile(x, y, tile_index)
@@ -3731,6 +3812,43 @@ fn apply_map_edit(map: &mut MapAsset, edit: MapEdit) -> Result<String, String> {
             Ok(format!(
                 "fill-terrain\tterrain:{terrain_type}\ttile:{tile}\tcells:{}",
                 map.cells.len()
+            ))
+        }
+        MapEdit::PaintTerrain {
+            rect,
+            terrain_type,
+            selector,
+        } => {
+            let tile_set = tile_set.ok_or_else(|| PaintRefusal::TileSetUnknown.to_string())?;
+            let paint = map
+                .paint_terrain(rect, terrain_type, tile_set, selector)
+                .map_err(|error| error.to_string())?;
+            let (x0, y0, x1, y1) = rect;
+            // Which cells the engine would have drawn differently is the one thing the person
+            // about to write this into a game directory cannot see in the output bytes, so say it
+            // here rather than only in a document.
+            let drawn = paint.plan.drawn_cells();
+            if drawn > 0 {
+                eprintln!(
+                    "note: {drawn} of the {} written cells were newly painted with several equally \
+                     valid tiles and none already in place. The engine draws among those at random \
+                     -- the same paint run twice gave centre tiles 385 and 390 -- so they are a \
+                     legal choice, not the engine's. Pass --seed N for a different legal draw.",
+                    paint.plan.region.len() + paint.plan.ring.len()
+                );
+            }
+            let edge = paint.plan.cells_touching_a_map_edge();
+            if edge > 0 {
+                eprintln!(
+                    "note: {edge} written cells have a neighbour off the map. This writer treats \
+                     an off-map neighbour as satisfying any constraint, which no saved artifact \
+                     tests."
+                );
+            }
+            Ok(format!(
+                "paint-terrain\t({x0}, {y0})..({x1}, {y1})\tterrain:{terrain_type}\t{}\tcells-changed:{}",
+                paint_summary(&paint.plan),
+                paint.cells_changed,
             ))
         }
         MapEdit::PlaceSprite {
@@ -3874,7 +3992,40 @@ fn flag_region_cells(
         .collect())
 }
 
-fn verify_map_edit(map: &MapAsset, before: &MapAsset, edit: MapEdit) -> Result<(), String> {
+/// How a paint's ring turned out, for the one line the CLI prints.
+///
+/// The three no-ring outcomes are named separately rather than reported as "0 cells", because
+/// "the engine blends nothing onto dirt" and "your rectangle was already that terrain" are
+/// different facts and a caller cannot tell them apart from a count.
+/// The part of a paint's result line that describes what the tileset decided.
+fn paint_summary(plan: &TerrainPaintPlan) -> String {
+    // `reproducible` is Unique plus Kept. Reporting only Unique as "determined" understated the
+    // tool badly: a whole-map paint of one terrain is every cell Kept, which is exactly what the
+    // engine does, and it used to print `determined:0`.
+    let unique = plan
+        .cells()
+        .filter(|cell| matches!(cell.choice, TileChoice::Unique(_)))
+        .count();
+    let kept = plan
+        .cells()
+        .filter(|cell| matches!(cell.choice, TileChoice::Kept { .. }))
+        .count();
+    let tiles: BTreeSet<u32> = plan.region.iter().map(|cell| cell.tile_index).collect();
+    format!(
+        "region-cells:{}\tregion-tiles:{}\tring-cells:{}\tdetermined:{unique}\tkept:{kept}\tdrawn:{}",
+        plan.region.len(),
+        tiles.iter().map(u32::to_string).collect::<Vec<_>>().join(","),
+        plan.ring.len(),
+        plan.drawn_cells(),
+    )
+}
+
+fn verify_map_edit(
+    map: &MapAsset,
+    before: &MapAsset,
+    edit: MapEdit,
+    tile_set: Option<&TileSetDefinition>,
+) -> Result<(), String> {
     let cell_tile = |x: u32, y: u32| -> Result<u32, String> {
         map.cell(x, y)
             .map(MapCellTile::tile)
@@ -3929,6 +4080,168 @@ fn verify_map_edit(map: &MapAsset, before: &MapAsset, edit: MapEdit) -> Result<(
                 return Err(format!(
                     "refusing to write: cell {index} did not take the fill tile {expected}"
                 ));
+            }
+        }
+        MapEdit::PaintTerrain {
+            rect,
+            terrain_type,
+            ..
+        } => {
+            let tile_set = tile_set.ok_or_else(|| {
+                format!("refusing to write: {}", PaintRefusal::TileSetUnknown)
+            })?;
+            // **Nothing here calls the planner.** An earlier version of this arm re-ran
+            // `plan_terrain_paint` and compared the written map to its output, which is the same
+            // decision procedure the applier used: no planner defect could ever show up, because a
+            // wrong plan was compared against itself. The two loops that followed were worse than
+            // idle -- `tiles.get(&tile_index)` and `definition.terrain_type != cell.terrain_type`
+            // are both *guaranteed* by `candidates()`, which filters on `terrain_type` and yields
+            // keys of `tiles`, so they evaluated no neighbour constraint at all while the comment
+            // claimed they proved the plan legal by the tileset's own rules.
+            //
+            // This is the third verifier in this repository that could not fail. What follows is
+            // derived from the before/after maps and the tileset independently, and each check has
+            // a named input that breaks it:
+            //
+            // - the affected set: a paint that touches a cell it had no business touching;
+            // - the region's terrain: a tile of the wrong terrain written inside the rectangle;
+            // - **constraint satisfaction**: a tile of the *right* terrain whose own declared
+            //   constraints are violated by the neighbours actually written -- for example tile 15,
+            //   the plains shore tile, dropped into the middle of a plains field. Every earlier
+            //   version of this arm accepted that.
+            let (x0, y0, x1, y1) = rect;
+            if x0 > x1 || y0 > y1 || x1 >= before.width || y1 >= before.height {
+                return Err(format!(
+                    "refusing to write: ({x0}, {y0})..({x1}, {y1}) is not a rectangle inside this \
+                     {}x{} map",
+                    before.width, before.height
+                ));
+            }
+            let terrain_at = |source: &MapAsset, x: u32, y: u32| -> Result<u32, String> {
+                let tile = source
+                    .cell(x, y)
+                    .map(|cell| cell.tile_index())
+                    .ok_or_else(|| format!("refusing to write: ({x}, {y}) is outside the map"))?;
+                tile_set.terrain_type_of_tile(tile).ok_or_else(|| {
+                    format!(
+                        "refusing to write: tile {tile} at ({x}, {y}) is not declared by the \
+                         supplied tileset"
+                    )
+                })
+            };
+
+            // Which region cells changed terrain, read from `before` alone.
+            let mut moved: BTreeSet<(u32, u32)> = BTreeSet::new();
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    if terrain_at(before, x, y)? != terrain_type {
+                        moved.insert((x, y));
+                    }
+                }
+            }
+            // The cells this paint is allowed to have written: the rectangle, plus any cell outside
+            // it with a neighbour whose terrain moved.
+            let mut allowed: BTreeSet<(u32, u32)> = BTreeSet::new();
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    allowed.insert((x, y));
+                }
+            }
+            for &(cx, cy) in &moved {
+                for dy in -1_i64..=1 {
+                    for dx in -1_i64..=1 {
+                        let (Ok(x), Ok(y)) = (
+                            u32::try_from(i64::from(cx) + dx),
+                            u32::try_from(i64::from(cy) + dy),
+                        ) else {
+                            continue;
+                        };
+                        if x < map.width && y < map.height {
+                            allowed.insert((x, y));
+                        }
+                    }
+                }
+            }
+            let allowed_indexes: BTreeSet<usize> = allowed
+                .iter()
+                .filter_map(|(x, y)| map.cell_index(*x, *y))
+                .collect();
+            let changed: BTreeSet<usize> =
+                changed_cell_indexes(before, map).into_iter().collect();
+            if let Some(stray) = changed.difference(&allowed_indexes).next() {
+                return Err(format!(
+                    "refusing to write: cell {stray} changed but is neither in the painted \
+                     rectangle nor beside a cell whose terrain moved"
+                ));
+            }
+
+            // Every cell inside the rectangle now holds a tile of the painted terrain.
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let observed = terrain_at(map, x, y)?;
+                    if observed != terrain_type {
+                        return Err(format!(
+                            "refusing to write: ({x}, {y}) is inside the painted rectangle but \
+                             holds terrain {observed}, not {terrain_type}"
+                        ));
+                    }
+                }
+            }
+
+            // And every written tile satisfies its own declared constraints against the
+            // neighbourhood *as actually encoded*. Each of the eight columns is evaluated by name
+            // through `Direction::offset`, not through `Neighbourhood`/`TileDefinition::accepts`,
+            // so this is a second reading of the tileset rather than a second call to the first.
+            for &(x, y) in &allowed {
+                let Some(index) = map.cell_index(x, y) else {
+                    continue;
+                };
+                if !changed.contains(&index) {
+                    continue;
+                }
+                let tile = map
+                    .cell(x, y)
+                    .map(|cell| cell.tile_index())
+                    .ok_or_else(|| format!("refusing to write: ({x}, {y}) is outside the map"))?;
+                let Some(definition) = tile_set.tiles.get(&tile) else {
+                    return Err(format!(
+                        "refusing to write: tile {tile} at ({x}, {y}) is not declared by the \
+                         supplied tileset"
+                    ));
+                };
+                if !definition.constraints_are_complete() {
+                    return Err(format!(
+                        "refusing to write: tile {tile} at ({x}, {y}) does not declare all eight \
+                         neighbour constraints, so it cannot be painted"
+                    ));
+                }
+                let own = definition.terrain_type;
+                for direction in Direction::ALL {
+                    let (dx, dy) = direction.offset();
+                    let (Ok(nx), Ok(ny)) = (
+                        u32::try_from(i64::from(x) + i64::from(dx)),
+                        u32::try_from(i64::from(y) + i64::from(dy)),
+                    ) else {
+                        continue;
+                    };
+                    // Off the map on the high side too, and an off-map neighbour is read as this
+                    // cell's own terrain -- the closed reading the selector chose from. Verifying
+                    // against the open reading would accept the phantom coastline that reading
+                    // produces.
+                    let neighbour = if nx >= map.width || ny >= map.height {
+                        own
+                    } else {
+                        terrain_at(map, nx, ny)?
+                    };
+                    if !definition.neighbour(direction).accepts(Some(neighbour)) {
+                        return Err(format!(
+                            "refusing to write: tile {tile} at ({x}, {y}) requires {} {:?} of \
+                             itself, but the written map has terrain {neighbour} there",
+                            direction.column_name(),
+                            definition.neighbour(direction)
+                        ));
+                    }
+                }
             }
         }
         MapEdit::PlaceSprite { x, y, .. } => {
@@ -4044,7 +4357,7 @@ mod tests {
     };
     use lom_asset_viewer::map::{MapAsset, MapCell};
     use lom_asset_viewer::pbm::PbmImage;
-    use lom_asset_viewer::tile::{TileDefinition, TileSetDefinition};
+    use lom_asset_viewer::tile::{TileDefinition, TileSelector, TileSetDefinition};
 
     use super::{
         ImpCatalog, ImpDisplayMode, ImpValidationReport, MapDisplayMode,
@@ -4170,20 +4483,8 @@ mod tests {
             tile_height: 1,
             terrain_types: BTreeMap::new(),
             tiles: BTreeMap::from([
-                (
-                    0,
-                    TileDefinition {
-                        index: 0,
-                        terrain_type: 0,
-                    },
-                ),
-                (
-                    1,
-                    TileDefinition {
-                        index: 1,
-                        terrain_type: 0,
-                    },
-                ),
+                (0, TileDefinition::unconstrained(0, 0)),
+                (1, TileDefinition::unconstrained(1, 0)),
             ]),
         };
         let atlas = PbmImage {
@@ -4968,6 +5269,7 @@ mod tests {
                 tile_index: 392,
             },
             &input,
+            None,
         )
         .unwrap_err();
         assert!(error.contains("refusing to write to the input file"), "{error}");
@@ -4986,6 +5288,7 @@ mod tests {
                 tile_index: 392,
             },
             &input,
+            None,
         )
         .unwrap_err();
         assert!(error.contains("refusing to write to the input file"), "{error}");
@@ -5013,6 +5316,7 @@ mod tests {
                 tile_index: 392,
             },
             &alias,
+            None,
         )
         .unwrap_err();
         assert!(error.contains("refusing to write to the input file"), "{error}");
@@ -5056,6 +5360,7 @@ mod tests {
                 tile_index: 392,
             },
             &output,
+            None,
         )
         .unwrap_err();
         assert!(error.contains("could not create"), "{error}");
@@ -5078,6 +5383,7 @@ mod tests {
                 terrain_type: 1,
             },
             &output,
+            None,
         )
         .unwrap();
 
@@ -5108,12 +5414,309 @@ mod tests {
                     tile_index: 392
                 },
                 &output,
-            )
+            None,
+        )
             .is_err()
         );
         assert!(
             !output.exists(),
             "an edit that could not be applied must not leave a partial file"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A tileset fixture written to a scratch file, so the CLI's own loading path is exercised.
+    ///
+    /// **No game asset is committed.** `.til` files are proprietary; this is a synthetic tileset
+    /// built to be unlike the shipped one -- a 7x3 atlas, a three-tile grass interior, a one-tile
+    /// stone interior, and asymmetric edge constraints -- for the same reason the library fixture
+    /// is.
+    const CLI_FIXTURE_TILESET: &[u8] = br#"
+LBM=fixture.lbm
+TILES= 12, 3
+TILESIZE= 8, 8
+TERRAINTYPE= 1, 40, "grass",  0, 100, 200, 11, 12, 5, 13, 14
+TERRAINTYPE= 2, 41, "stone",  2, 300, 400, 21, 22, 9, 23, 24
+TERRAINTYPE= 3, 42, "path",   0, 0, 9999, 0, 0, 1, 0, 0
+TERRAINTYPE= 4, 43, "dust",   0, 0, 9999, 0, 0, 1, 0, 0
+;         self, n,    ne,  e,    se,  s,    sw,  w,    nw,   index
+TILE=  0,    1, 1,    1,   1,    1,   1,    1,   1,    1,    99
+TILE=  1,    1, 1,    1,   1,    1,   1,    1,   1,    1,    99
+TILE=  2,    1, 1,    1,   1,    1,   1,    1,   1,    1,    99
+TILE=  3,    1, 2,    *,   1,    *,   1|3,  *,   1,    *,    3
+TILE=  4,    1, 1,    *,   1,    *,   2,    *,   1,    *,    4
+TILE=  5,    1, 1,    *,   1,    *,   1,    *,   2,    *,    5
+TILE=  6,    1, 1,    *,   2,    *,   1,    *,   1,    *,    6
+TILE=  7,    1, 1,    1,   1,    1,   1,    1,   1,    2,    7
+TILE=  8,    1, 1,    2,   1,    1,   1,    1,   1,    1,    8
+TILE=  9,    1, 1,    1,   1,    1,   1,    2,   1,    1,    9
+TILE= 10,    1, 1,    1,   1,    2,   1,    1,   1,    1,    10
+TILE= 11,    2, ~1,   ~1,  ~1,   ~1,  ~1,   ~1,  ~1,   ~1,   11
+TILE= 12,    2, 1,    1,   1,    1,   1,    1,   1,    1,    5
+TILE= 13,    2, 1,    1,   2,    1,   1,    1,   1,    1,    13
+TILE= 14,    2, 1,    1,   1,    1,   1,    1,   2,    1,    14
+TILE= 15,    1, 2,    2,   1,    1,   1,    2,   2,    2,    15
+TILE= 16,    1, 2,    2,   2,    2,   1,    1,   1,    2,    16
+TILE= 17,    1, 1,    1,   1,    2,   2,    2,   2,    2,    17
+TILE= 18,    1, 1,    2,   2,    2,   2,    2,   1,    1,    18
+TILE= 19,    2, 1,    *,   2,    *,   2,    *,   2,    *,    19
+TILE= 20,    2, 2,    *,   2,    *,   1,    *,   2,    *,    20
+TILE= 21,    2, 2,    *,   2,    *,   2,    *,   1,    *,    21
+TILE= 22,    2, 2,    *,   1,    *,   2,    *,   2,    *,    22
+TILE= 23,    2, 2,    2,   2,    1,   2,    2,   2,    2,    23
+TILE= 24,    2, 2,    2,   2,    2,   2,    1,   2,    2,    24
+TILE= 25,    2, 2,    1,   2,    2,   2,    2,   2,    2,    25
+TILE= 26,    2, 2,    2,   2,    2,   2,    2,   2,    1,    26
+TILE= 30,    4, *,    *,   *,    *,   *,    *,   *,    *,    30
+TILE= 31,    4, *,    *,   *,    *,   *,    *,   *,    *,    31
+TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
+"#;
+
+    /// A map of uniform grass, so the CLI paint has a field the fixture tileset can read.
+    fn grass_map(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0x6f_u32.to_le_bytes());
+        bytes.extend_from_slice(&width.to_le_bytes());
+        bytes.extend_from_slice(&height.to_le_bytes());
+        bytes.extend_from_slice(&8_u32.to_le_bytes());
+        for index in 0..width * height {
+            bytes.extend_from_slice(&0_u32.to_le_bytes());
+            bytes.extend_from_slice(&(index as f32).to_le_bytes());
+        }
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes
+    }
+
+    /// The CLI is the layer that writes into a game directory with no backup, so the paint verb
+    /// gets its own end-to-end test and not only a library one.
+    ///
+    /// Read back at computed byte offsets on a **non-square** 11x3 map. `N` and `S` take different
+    /// tiles and so do `W`/`E` and each diagonal pair, so a mirrored direction convention fails
+    /// here rather than passing by symmetry.
+    #[test]
+    fn painting_through_the_cli_re_selects_the_ring_from_the_tileset() {
+        let dir = scratch_dir("map-paint");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        let tileset = dir.join("fixture.til");
+        fs::write(&input, grass_map(11, 5)).unwrap();
+        fs::write(&tileset, CLI_FIXTURE_TILESET).unwrap();
+
+        edit_map(
+            &input,
+            MapEdit::PaintTerrain {
+                rect: (5, 2, 5, 2),
+                terrain_type: 2,
+                selector: TileSelector::LowestSlot,
+            },
+            &output,
+            Some(&tileset),
+        )
+        .unwrap();
+
+        let bytes = fs::read(&output).unwrap();
+        let tag_at = |x: u32, y: u32| {
+            let offset = 16 + ((y * 11 + x) as usize) * 8;
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+        };
+        assert_eq!(tag_at(5, 2), 12, "region");
+        assert_eq!(tag_at(5, 1), 4, "N");
+        assert_eq!(tag_at(5, 3), 3, "S");
+        assert_eq!(tag_at(4, 2), 6, "W");
+        assert_eq!(tag_at(6, 2), 5, "E");
+        assert_eq!(tag_at(4, 1), 10, "NW");
+        assert_eq!(tag_at(6, 1), 9, "NE");
+        assert_eq!(tag_at(4, 3), 8, "SW");
+        assert_eq!(tag_at(6, 3), 7, "SE");
+        // Everything two cells out is still background, and nothing was ambiguous: the whole
+        // footprint was determined by the tileset alone.
+        for y in 0..5 {
+            for x in [0, 1, 2, 3, 7, 8, 9, 10] {
+                assert_eq!(tag_at(x, y), 0, "({x}, {y})");
+            }
+        }
+        for x in 0..11 {
+            assert_eq!(tag_at(x, 0), 0, "row 0 x={x}");
+            assert_eq!(tag_at(x, 4), 0, "row 4 x={x}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A refused paint must leave no file at all, like every other refused edit: the output
+    /// directory is the game's own `map/`.
+    #[test]
+    fn a_refused_paint_writes_no_file() {
+        let dir = scratch_dir("map-paint-refused");
+        let input = dir.join("in.scn");
+        let tileset = dir.join("fixture.til");
+        fs::write(&input, grass_map(11, 5)).unwrap();
+        fs::write(&tileset, CLI_FIXTURE_TILESET).unwrap();
+
+        // No tileset at all: the map does not record which one it was authored against, so there
+        // is nothing to fall back to.
+        let output = dir.join("no-tileset.scn");
+        let error = edit_map(
+            &input,
+            MapEdit::PaintTerrain {
+                rect: (5, 1, 5, 1),
+                terrain_type: 2,
+                selector: TileSelector::LowestSlot,
+            },
+            &output,
+            None,
+        )
+        .unwrap_err();
+        assert!(error.contains("no tileset was supplied"), "{error}");
+        assert!(!output.exists());
+
+        // A terrain the tileset does not declare.
+        let output = dir.join("unknown-terrain.scn");
+        let error = edit_map(
+            &input,
+            MapEdit::PaintTerrain {
+                rect: (5, 1, 5, 1),
+                terrain_type: 9,
+                selector: TileSelector::LowestSlot,
+            },
+            &output,
+            Some(&tileset),
+        )
+        .unwrap_err();
+        assert!(error.contains("no tiles for terrain type 9"), "{error}");
+        assert!(!output.exists());
+
+        // A rectangle off the short axis of a non-square map.
+        let output = dir.join("outside.scn");
+        let error = edit_map(
+            &input,
+            MapEdit::PaintTerrain {
+                rect: (1, 1, 1, 6),
+                terrain_type: 2,
+                selector: TileSelector::LowestSlot,
+            },
+            &output,
+            Some(&tileset),
+        )
+        .unwrap_err();
+        assert!(error.contains("outside this 11x5 map"), "{error}");
+        assert!(!output.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The verification arm has to *verify*, and this is the third time in this repository that it
+    /// could not.
+    ///
+    /// The `FlagRegion` arm once shipped empty with a comment claiming the edit checked itself. The
+    /// paint arm then shipped re-running `plan_terrain_paint` and comparing the result to itself,
+    /// which no planner defect can fail, followed by two loops asserting things `candidates()`
+    /// already guarantees. So each case below names the input that breaks the check it stands for,
+    /// and **the last one is the case every earlier version accepted**: a tile of the right terrain,
+    /// present in the tileset, whose own declared constraints the written neighbourhood violates.
+    #[test]
+    fn the_paint_verifier_rejects_a_tile_whose_own_constraints_the_map_violates() {
+        let tile_set = TileSetDefinition::parse(CLI_FIXTURE_TILESET).unwrap();
+        let source = grass_map(11, 5);
+        let before = MapAsset::parse(&source).unwrap();
+        let edit = MapEdit::PaintTerrain {
+            rect: (5, 2, 5, 2),
+            terrain_type: 2,
+            selector: TileSelector::LowestSlot,
+        };
+        let painted = || {
+            let mut map = MapAsset::parse(&source).unwrap();
+            map.paint_terrain((5, 2, 5, 2), 2, &tile_set, TileSelector::LowestSlot)
+                .unwrap();
+            map
+        };
+
+        super::verify_map_edit(&painted(), &before, edit, Some(&tile_set)).unwrap();
+
+        // **The check that could not fail before.** Tile 3 is grass, is in the tileset, and is what
+        // the old two loops tested for -- but it declares terrain 2 to its north, and the written
+        // map has grass there. Nothing about the terrain or the atlas is wrong; only the constraint
+        // is, which is exactly what a blend writer gets wrong.
+        let mut illegal = painted();
+        illegal.set_tile(5, 1, 3).unwrap();
+        let error =
+            super::verify_map_edit(&illegal, &before, edit, Some(&tile_set)).unwrap_err();
+        assert!(error.contains("tile 3 at (5, 1) requires n"), "{error}");
+        assert!(error.contains("terrain 1 there"), "{error}");
+
+        // A region cell holding a tile of the wrong terrain.
+        let mut wrong_terrain = painted();
+        wrong_terrain.set_tile(5, 2, 0).unwrap();
+        let error =
+            super::verify_map_edit(&wrong_terrain, &before, edit, Some(&tile_set)).unwrap_err();
+        assert!(
+            error.contains("(5, 2) is inside the painted rectangle but holds terrain 1"),
+            "{error}"
+        );
+
+        // A cell nowhere near anything whose terrain moved.
+        let mut stray = painted();
+        stray.set_tile(0, 0, 1).unwrap();
+        let error = super::verify_map_edit(&stray, &before, edit, Some(&tile_set)).unwrap_err();
+        assert!(error.contains("neither in the painted rectangle nor beside"), "{error}");
+
+        // A tile the tileset does not declare at all.
+        let mut foreign = painted();
+        foreign.set_tile(5, 1, 28).unwrap();
+        let error = super::verify_map_edit(&foreign, &before, edit, Some(&tile_set)).unwrap_err();
+        assert!(error.contains("tile 28 at (5, 1) is not declared"), "{error}");
+
+        // Verifying without the tileset the edit used refuses rather than passing vacuously.
+        let error = super::verify_map_edit(&painted(), &before, edit, None).unwrap_err();
+        assert!(error.contains("no tileset was supplied"), "{error}");
+    }
+
+    /// The verifier does not consult the planner, so a broken planner cannot verify itself.
+    ///
+    /// Hand it a map that is *internally* legal by the tileset but is not what a paint of this
+    /// rectangle would produce: the rectangle simply was not painted. A verifier that re-plans and
+    /// compares to its own plan reports nothing here, because it would find the same plan and the
+    /// same map. This one reports that the rectangle does not hold the painted terrain.
+    #[test]
+    fn the_paint_verifier_does_not_ask_the_planner_what_the_answer_was() {
+        let tile_set = TileSetDefinition::parse(CLI_FIXTURE_TILESET).unwrap();
+        let source = grass_map(11, 5);
+        let before = MapAsset::parse(&source).unwrap();
+        let edit = MapEdit::PaintTerrain {
+            rect: (5, 2, 5, 2),
+            terrain_type: 2,
+            selector: TileSelector::LowestSlot,
+        };
+        // Untouched: every cell is grass interior tile 0, which satisfies its own constraints
+        // everywhere, so no constraint check can object. Only "the rectangle is not terrain 2" can.
+        let untouched = MapAsset::parse(&source).unwrap();
+        let error = super::verify_map_edit(&untouched, &before, edit, Some(&tile_set)).unwrap_err();
+        assert!(
+            error.contains("(5, 2) is inside the painted rectangle but holds terrain 1, not 2"),
+            "{error}"
+        );
+    }
+
+    /// `--map-set-terrain` is not replaced. Painting is an addition, and the single-cell
+    /// `forcetexture` behaviour is the only one that works where the background cannot be read.
+    #[test]
+    fn setting_one_cell_still_touches_exactly_one_cell() {
+        let dir = scratch_dir("map-set-terrain-unchanged");
+        let input = dir.join("in.scn");
+        let output = dir.join("out.scn");
+        fs::write(&input, editable_map(11, 3)).unwrap();
+
+        edit_map(
+            &input,
+            MapEdit::SetTerrain { x: 4, y: 1, terrain_type: 1 },
+            &output,
+            None,
+        )
+        .unwrap();
+        let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(
+            written.cells.iter().filter(|cell| cell.tile_index() != 15).count(),
+            1,
+            "forcetexture semantics: one cell, no ring"
         );
         let _ = fs::remove_dir_all(&dir);
     }
@@ -5184,6 +5787,7 @@ mod tests {
             &input,
             MapEdit::PlaceSprite { x: 3, y: 2, sprite_type: 105 },
             &output,
+            None,
         )
         .unwrap();
         let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
@@ -5222,6 +5826,7 @@ mod tests {
                 sprite_type: parse_sprite_type("castle1").unwrap(),
             },
             &output,
+            None,
         )
         .unwrap();
 
@@ -5273,7 +5878,7 @@ mod tests {
         let source = editable_map(5, 3);
         fs::write(&input, &source).unwrap();
 
-        edit_map(&input, MapEdit::Rewrite, &output).unwrap();
+        edit_map(&input, MapEdit::Rewrite, &output, None).unwrap();
         assert_eq!(fs::read(&output).unwrap(), source, "a rewrite must be byte-exact");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -5289,6 +5894,7 @@ mod tests {
             &input,
             MapEdit::SetHighFlag { x: 3, y: 2, set: true },
             &output,
+            None,
         )
         .unwrap();
         let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
@@ -5319,6 +5925,7 @@ mod tests {
                 rect: Some((1, 1, 2, 1)),
             },
             &output,
+            None,
         )
         .unwrap();
 
@@ -5345,6 +5952,7 @@ mod tests {
             &input,
             MapEdit::FlagRegion { border: true, rect: None },
             &output,
+            None,
         )
         .unwrap();
 
@@ -5375,7 +5983,8 @@ mod tests {
                     &input,
                     MapEdit::FlagRegion { border: false, rect: Some(rect) },
                     &output,
-                )
+            None,
+        )
                 .is_err(),
                 "{rect:?} should have been refused"
             );
@@ -5399,6 +6008,7 @@ mod tests {
                 sprite_type: 470,
             },
             &output,
+            None,
         )
         .unwrap();
 

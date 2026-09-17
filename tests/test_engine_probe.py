@@ -16,6 +16,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 import engine_probe  # noqa: E402
 import gs_syntax  # noqa: E402
 import map_projection  # noqa: E402
+import terrain_rings  # noqa: E402
 
 
 class SharedProbeSafetyTest(unittest.TestCase):
@@ -1283,6 +1284,160 @@ class TerrainRingProbeTest(unittest.TestCase):
         # These are outputs, not prerequisites: nothing has to exist before the run.
         for name in names:
             self.assertNotIn(name, engine_probe.generated_map_inputs())
+
+
+class DirectionConventionTest(unittest.TestCase):
+    """The analyser's direction labels and the Rust writer's must mean the same thing.
+
+    `tools/terrain_rings.py` labelled the measured ring `N, S, W, E, NW, NE, SW, SE`, and those
+    labels are what the `.til` column convention was derived *against*. If the Rust flipped its
+    reading of a column and the analyser kept its labels, every number in the run sheet would
+    silently refer to a different cell and the derivation recorded in `docs/map-format.md` would be
+    describing an experiment nobody ran.
+
+    So this parses the offsets back out of the Rust rather than trusting that two files agree.
+    """
+
+    ROOT = Path(__file__).resolve().parents[1] / "spikes" / "asset-viewer" / "src"
+
+    def test_the_analysers_ring_labels_match_the_rust_offset_table(self) -> None:
+        source = (self.ROOT / "map.rs").read_text()
+        table = source[source.index("pub const TRANSITION_RING_OFFSETS") :]
+        table = table[: table.index("];")]
+        rust = [
+            (int(dx), int(dy))
+            for dx, dy in re.findall(r"direction:\s*\((-?\d+),\s*(-?\d+)\)", table)
+        ]
+        self.assertEqual(len(rust), 8, "did not find all eight rows in map.rs")
+        analyser = [offset for offset, _name in terrain_rings.DIRECTIONS]
+        self.assertEqual(
+            analyser,
+            rust,
+            "terrain_rings.py samples the ring in a different order from TRANSITION_RING_OFFSETS",
+        )
+
+    def test_the_til_column_convention_matches_the_analysers_labels(self) -> None:
+        """`Direction::offset` is the derived `.til` reading; the labels must agree with it.
+
+        The derivation is recorded in `Direction::offset`'s own documentation and was checked
+        against `artifacts/engine-probe-captures/terrainrings-20260917`. A mirrored convention
+        would negate all eight of these, which is exactly the failure this catches.
+        """
+        source = (self.ROOT / "tile.rs").read_text()
+        body = source[source.index("pub const fn offset(self)") :]
+        body = body[: body.index("\n    }")]
+        pairs = re.findall(
+            r"Direction::(\w+) => \((-?\d+), (-?\d+)\)", body
+        )
+        rust = {name: (int(dx), int(dy)) for name, dx, dy in pairs}
+        self.assertEqual(len(rust), 8, "did not find all eight columns in tile.rs")
+        expected = {
+            "North": (0, -1),
+            "NorthEast": (1, -1),
+            "East": (1, 0),
+            "SouthEast": (1, 1),
+            "South": (0, 1),
+            "SouthWest": (-1, 1),
+            "West": (-1, 0),
+            "NorthWest": (-1, -1),
+        }
+        self.assertEqual(rust, expected)
+        # And the analyser's own labels name the same cells, spelled out rather than derived, so
+        # both sides of the derivation are pinned instead of one being defined by the other.
+        labels = {name: offset for offset, name in terrain_rings.DIRECTIONS}
+        self.assertEqual(labels["N"], rust["North"])
+        self.assertEqual(labels["S"], rust["South"])
+        self.assertEqual(labels["W"], rust["West"])
+        self.assertEqual(labels["E"], rust["East"])
+        self.assertEqual(labels["NW"], rust["NorthWest"])
+        self.assertEqual(labels["NE"], rust["NorthEast"])
+        self.assertEqual(labels["SW"], rust["SouthWest"])
+        self.assertEqual(labels["SE"], rust["SouthEast"])
+
+
+class PaintRefusalReachabilityTest(unittest.TestCase):
+    """Every declared `PaintRefusal` must be reachable, and its message must be true.
+
+    Five variants shipped that nothing ever constructed -- `NotATerrainType`, `RegionCoversMap`,
+    `PaintedRoadIsRagged`, `RingDependsOnPaintedTerrain`, `DirectionMissingFromTable`. Dead code is
+    the lesser problem. `RegionCoversMap`'s `Display` was still telling users the operation was
+    refused after it had started succeeding and writing 81 cells, so the enum had become a set of
+    promises about behaviour that no longer existed, and the compiler cannot see that because the
+    variants are `pub`.
+
+    This is checked from Python because the whole point is that Rust will not complain.
+    """
+
+    SOURCES = ("map.rs", "main.rs")
+
+    def setUp(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "spikes" / "asset-viewer" / "src"
+        self.text = {name: (root / name).read_text() for name in self.SOURCES}
+        body = self.text["map.rs"]
+        start = body.index("pub enum PaintRefusal {")
+        self.enum = body[start : body.index("\n}\n", start)]
+
+    @staticmethod
+    def _without_test_module(source: str) -> str:
+        """`source` up to its `#[cfg(test)]`.
+
+        A variant only ever constructed by a test is unreachable in production, and a test that
+        names it proves only that it is spellable. Verified by mutation: redirecting a live variant's
+        real construction site elsewhere leaves the test module still naming it, and without this
+        the check passed.
+        """
+        marker = "#[cfg(test)]"
+        return source[: source.index(marker)] if marker in source else source
+
+    def _without_display_arms(self, source: str) -> str:
+        """`source` with the `Display for PaintRefusal` block removed.
+
+        **This exclusion is the test.** Every dead variant had a `Self::X =>` arm in `Display` --
+        that arm *was* the lie -- so counting those as construction sites makes the check vacuous
+        against exactly the five variants that prompted it. Verified by mutation: redirecting a live
+        variant's only real construction site elsewhere has to fail, and without this exclusion it
+        did not.
+        """
+        marker = "impl fmt::Display for PaintRefusal {"
+        if marker not in source:
+            return source
+        start = source.index(marker)
+        end = source.index("\n}\n", start)
+        return source[:start] + source[end:]
+
+    def test_every_declared_refusal_is_constructed_somewhere(self) -> None:
+        declared = set(re.findall(r"^    ([A-Z][A-Za-z]*)", self.enum, re.M))
+        self.assertTrue(declared, "found no variants; the enum was not located")
+        # And the enum declaration itself must not count as a use of its own names.
+        constructed = set()
+        for source in self.text.values():
+            body = self._without_test_module(source)
+            body = self._without_display_arms(body).replace(self.enum, "")
+            constructed |= set(re.findall(r"PaintRefusal::([A-Z][A-Za-z]*)", body))
+            constructed |= set(re.findall(r"Self::([A-Z][A-Za-z]*)", body))
+        unreachable = sorted(declared - constructed)
+        self.assertEqual(
+            unreachable,
+            [],
+            "these refusals are declared and never constructed, so their Display text is a "
+            "promise about behaviour nothing can produce",
+        )
+
+    def test_the_deleted_refusals_have_not_come_back(self) -> None:
+        """Named individually, because each one described a rule the paint no longer follows.
+
+        A whole-map paint is now a legitimate operation -- it is "fill with correct interior tiles"
+        -- and road is refused by the tileset having no boundary tile for it, not by a special case.
+        """
+        for gone in (
+            "RegionCoversMap",
+            "PaintedRoadIsRagged",
+            "RingDependsOnPaintedTerrain",
+            "DirectionMissingFromTable",
+            "NotATerrainType",
+        ):
+            for name, source in self.text.items():
+                self.assertNotIn(gone, source, f"{gone} reappeared in {name}")
 
 
 if __name__ == "__main__":

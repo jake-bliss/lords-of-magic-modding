@@ -72,7 +72,7 @@ Success criteria:
 - [x] Verify sprite origins and hotspot placement against the running engine ([issue #1](https://github.com/jake-bliss/lords-of-magic-modding/issues/1), closed 2026-09-16 — see [hotspots](hotspots.md)).
 - Resolve uncommon IMP metadata variants and verify chroma keys, the shadow blend, and timing against the game ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2), [issue #3](https://github.com/jake-bliss/lords-of-magic-modding/issues/3)).
 - Decode the remaining map-tail variants and prove candidate placed-sprite field behavior ([issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4)).
-- Measure which transition tiles `setterrain` blends into the 8-neighbourhood, so the writer can offer terrain painting rather than single-cell forcing ([map format](map-format.md#writing-maps)).
+- [x] Measure which transition tiles `setterrain` blends into the 8-neighbourhood, and offer terrain painting rather than single-cell forcing (`--map-paint-terrain`). The ring is measured and written; the **core** tile family, road in either role, and painting across an existing boundary are refused rather than approximated, and no probe has yet loaded a painted map ([map format](map-format.md#writing-maps)).
 - [x] IMP placement write-back (`--set-imp-placement`, `--imp-placement-for`).
 - Build batch conversion, IMP **pixel** reimport, and lossless repack tests.
 - Evaluate AI upscaling on portraits and interface art.
