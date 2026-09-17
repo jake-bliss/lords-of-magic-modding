@@ -18,7 +18,8 @@ use lom_asset_viewer::imp::{
     ImpValidationException, imp_member_basename, normalize_imp_member,
 };
 use lom_asset_viewer::map::{
-    GENERATED_HEADER_WORD, MapAsset, PaintRefusal, ROAD_TERRAIN, TERRAIN_SPRITE_ARRAYS,
+    GENERATED_HEADER_WORD, MapAsset, MintProvenance, PaintRefusal, ROAD_TERRAIN,
+    TERRAIN_SPRITE_ARRAYS,
     TERRAIN_SPRITE_NAME_ONLY, TERRAIN_SPRITE_TYPES, TERRAIN_TYPES, TRANSITION_RING_OFFSETS,
     TerrainPaintPlan, interior_tile_family, road_background_ring, terrain_sprite_name,
     terrain_sprite_type, terrain_type_base_tile, transition_anchor, transition_ring,
@@ -3868,6 +3869,36 @@ fn apply_map_edit(
             let instance_id = map
                 .place_sprite(x, y, sprite_type)
                 .map_err(|error| error.to_string())?;
+            // A record minted into one of the four layouts the engine has never been watched
+            // writing is a different kind of output from one minted into the 49-byte layout, and it
+            // used to print identically. `--map-paint-terrain`, a few screens up, already emits a
+            // note for exactly this class of uncertainty; this is the same class and a stronger
+            // case, because a bad record here is a record the engine may reject outright.
+            // A record minted into a layout no engine run has been watched writing is a different
+            // kind of output from one minted into the 49-byte layout, and it used to print
+            // identically. Five of the six layouts are in that position, including the 47-byte one
+            // -- sharing the measured layout's tail shape is not the same as being it.
+            if let Some((layout, provenance)) = map
+                .resolved_tail_layout()
+                .map(|layout| (layout, layout.mint_provenance()))
+                .filter(|(_, provenance)| *provenance != MintProvenance::EngineObserved)
+            {
+                let basis = match provenance {
+                    MintProvenance::InferredProcedureTail =>
+                        "its attribute field at +24 is the 0x00000001 the engine was watched \
+                         writing into a 49-byte record -- a measured value carried across layouts",
+                    MintProvenance::InferredPlainTail | MintProvenance::EngineObserved =>
+                        "every value including the attribute field at +24 is this layout's own \
+                         corpus constant, and +24 is 0 because that is the only value all 4,003 \
+                         records of the three plain-tail layouts hold",
+                };
+                eprintln!(
+                    "note: this map uses the {layout} layout. The record just minted is Inferred: \
+                     {basis}. No engine run has been observed writing, or accepting, a record in \
+                     this layout; the one attended run wrote the 49-byte layout. Verify in the \
+                     game before shipping a map edited this way."
+                );
+            }
             // Name the type in the output. A bare id is what made these records unreadable in
             // the first place, and a caller who passed an id deserves to see what it resolved to.
             // A name, or an honest account of why there isn't one. Saying "unregistered" for an

@@ -3009,3 +3009,78 @@ months in a 2×2 fixture: a section of **mixed** record sizes, which no installe
 bytes read as a procedure id of `0`. Nothing in the parser validates the marker or the procedure id
 beyond this check — and `0` appears in **no** corpus record, whose procedure ids are `-1` or `8..717` — so the misreading would have been invisible in every other
 assertion, round trip included.
+
+### Review corrections, same day
+
+Two independent reviews of the change above found no runtime defect — every input either reviewer
+could construct behaved correctly — and both reproduced the 21,117 records, the +4,489 breakdown,
+the zero-overlap header-word partition, the per-layout tail constants, and the `cell_index` and
+`instance_id` uniqueness. What they found was in the docs, the comments and the fixtures, and three
+of the items are the same shape as this repo's standing lesson about verifiers that cannot fail —
+one layer out, in the fixtures rather than the code.
+
+**A second arithmetic collision was not enumerated.** There are exactly two lengths that two layouts
+fit for `count >= 1`, and the write-up named one. The missing one is `count == 1`: 57 bytes fit
+`49 + footer` and `53 + none`, and there the **marker word is the sole discriminator**, because one
+record sits at the same offset under both readings so every other head field is byte-identical. The
+comment in `record_head_matches` asserted the opposite — that the marker is "not what resolves the
+ambiguity" — which was true of the 196-byte pair and actively misleading about this one. Both
+collisions are now enumerated by iterating every count against all six layouts, rather than found.
+
+**The consequence of removing that check is a refusal, not a silent misread** — which is where this
+log departs from the review that raised it. Measured both ways: with the marker test deleted, both
+candidates survive, the parser's own ambiguity rule returns the tail raw, and `--map-place-sprite`
+**refuses** a map it could edit a moment earlier. It does not decode one 49-byte record with a footer
+read out of the record's own last bytes. The check is load-bearing either way, and no corpus file can
+exercise it, because no installed map has a count of 1 — but "silently round-trips wrong" and
+"loudly refuses" are different failures and the fix should be justified by the one that happens.
+
+**The fixture for that check was shaped like the wrong thing.** It zeroed two bytes, leaving
+`00 00 ff ff` at `+32..36`: a corrupted procedure record, not the plain shape, whose procedure id
+would have read as `-1`, the commonest corpus value. Zeroing all four builds what all 4,003
+plain-tail records really carry. Fixing it turned up something better: **at `count == 1` the plain
+shape in a 49-byte-sized section is a valid single 53-byte record, byte for byte**, so the parser
+decodes it and is right to. The fixture needs two records — 106 bytes, which only `49 + footer`
+fits — for the marker to be the only thing that can refuse it.
+
+**Three other fixtures were asserting less than they appeared to.** Mutation-checking the new tests
+against "validate only record zero's head" showed both 196-byte collision fixtures still pass,
+because record zero's marker already eliminates the rival layout. Nothing covered the every-record
+property until `a_section_whose_later_head_is_invalid_stays_raw` was added. The mixed-size fixture
+stays raw on the length check alone and so asserts the default outcome; its docstring now says so.
+The 196-byte collision was tested from the 48-byte side only, and the corpus cannot supply the other
+side, since the 47-byte-with-footer layout's smallest file holds 16 records.
+
+**Figures corrected in what was published.** "200 in 357 of the 364 files" was wrong and did not add
+up against its own total — 357 + 10 + 1 is 368. The per-file lowest ids are `{200: 353, 100: 10,
+203: 1}`. And the `instance_id` range is `100..1659`, not `200..1659`: the ten files that start at
+100 are all in layouts this project could not read until now, so the decode falsified a figure in the
+same document that recorded it. The `place_sprite` refusal was justified by uniqueness "across all
+16,628 corpus records"; it holds across all 21,117.
+
+**Two doc blocks contradicted the code they document.** The central safety paragraph said that if two
+layouts both fit, the tail stays raw — but the code narrows by head checks and *decodes* the
+196-byte case, and a test asserts exactly that. And `placed_sprites_mut`'s refusal still said "not
+the decoded 49-byte placed-sprite family", true of 169 maps that now edit fine; its only test
+asserted on the string's tail, so it pinned the true half and not the false head. The test now
+asserts the whole message and that it does not name a record size.
+
+**The unmeasured mint is now surfaced where it is used, not only where it is documented.**
+`--map-place-sprite` notes that the record it just minted is Inferred, on **five** of the six layouts
+— not four. The review proposed excluding 47 and 49; only the **49-byte** layout's mint was ever
+watched being written. The 47-byte layout shares the procedure tail and so takes `+24 = 0x00000001`
+measured in a *different* layout, which is the value-carried-across-layouts move this project warns
+about. `MapTailLayout::mint_provenance` makes that distinction a value with a test on it.
+
+**Support for the header-word partition is stated, not glossed.** Seven of the 19 words appear in
+exactly one file (63, 81, 87, 89, 97, 108, 109), and `chbldg01.smp`'s tie-break rests on word 76,
+which occurs in two files — one of them `chbldg01.smp` itself. No counterexample across 365 files,
+and one file deep in seven places.
+
+**`CAVWAT02.SMP` is the 196-byte collision in the shipped corpus, and it is doubly determined:** the
+stride head-check and its header word (73) agree independently, which is stronger than the original
+write-up claimed.
+
+Also closed: `MapTailLayout::footer_bytes` underflowed on `total_fixed_bytes: 0`, reachable because
+the struct's fields are `pub` — a debug panic and a release wrap to `usize::MAX - 3`. Saturating, with
+the input that would have caught it written down as a test.

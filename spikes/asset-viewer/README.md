@@ -94,7 +94,12 @@ the trailing footer, the record attribute field at `+24`, tag bit `0x00800000`, 
 in a record tail, and the entire trailing section of any tail that cannot be pinned to one layout —
 are **copied, never minted**.
 Placing a *new* sprite is the exception: a record that did not exist has to get its bytes from
-somewhere, and one of the nine it mints (`+24`) contradicts the corpus reading of that field. See
+somewhere, and **it is minted in the map's own layout** — 12 fields for a 48-byte record, 13 for a
+52-byte one, 14 for a 53-byte one. In the 47- and 49-byte layouts the minted `+24` is `0x00000001`,
+which *contradicts* the corpus reading of that field; in the other three it is `0`, which **agrees**
+with all 4,003 of their corpus records but has no engine measurement behind it at all. Only the
+49-byte layout's mint was watched being written, so `--map-place-sprite` prints a note on the other
+five. See
 [map format](../../docs/map-format.md#writing-maps). That is what lets the writer be correct
 while the format is only partly solved, and it is also why there is no create-a-map-from-nothing
 mode: three of those fields would have to be invented. Generate in the shipped GS5R3 editor, which

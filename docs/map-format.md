@@ -345,6 +345,27 @@ footerless layout writes for a map with no objects. Its header word is 76, which
 only with the 52-byte layout, and that is the single place the parser consults the header word --
 see [the header word and the layout](#the-header-word-partitions-the-layouts).
 
+### Two lengths that two layouts fit, and what separates them
+
+**Observed in a local binary, 2026-09-17, by enumeration** -- every record count against all six
+layouts, not by search. For `count >= 1` there are exactly **two** collisions:
+
+| count | section bytes | layouts that fit | what separates them |
+| ---: | ---: | --- | --- |
+| 1 | 57 | `49 + footer`, `53 + none` | the **marker word alone**. With one record both strides put it at the same offset, so every other head field is byte-identical between the two readings |
+| 4 | 196 | `47 + footer`, `48 + none` | `record_kind` at the wrong stride: the 47-byte reading puts record 1's first word inside record 0's padding, where it is zero |
+
+`CAVWAT02.SMP` is the 196-byte case in the shipped corpus -- four 48-byte records -- and it is
+**doubly determined**: the stride head-check and the header word (73) agree independently. **No**
+installed map has a count of 1, and the per-layout minimum counts are 4, 4, 6, 6, 11 and 16, so the
+57-byte case cannot come from the corpus. It is three `--map-remove-sprite` calls away from any
+six-record 53-byte map such as `fire.lgd`, which is why the marker check is load-bearing rather than
+belt-and-braces: without it neither candidate can be eliminated, the tail stays raw, and the tool
+refuses a map it could edit a moment earlier.
+
+A third, degenerate collision is `count == 0`, where every layout of the same footer width writes
+identical bytes. That is the one the header word settles.
+
 **This resolves the "18 unmatched tails" open item.** Nine of the 18 are the 48-byte layout and nine
 are the 47-byte one. They looked unmatched because only three record sizes had ever been tried; the
 parser now tries all six and validates every record's head against the stride. The one "ambiguous
@@ -381,6 +402,23 @@ is ordered: 63-73, 76-89, 96-97, 98, 101, 102-111 for the 48-, 52-, 53-, 47-no-f
 49-byte layouts. The engine's own fresh save stamps 111, the top of the range, and writes the 49-byte
 layout.
 
+**How thin parts of that partition are, stated rather than glossed.** Support is very uneven, and a
+third of the values rest on one file each:
+
+| Layout | Header words, with the number of files carrying each |
+| --- | --- |
+| 48 + none | 63 (**1**), 73 (8) |
+| 52 + none | 76 (2), 79 (140), 81 (**1**), 87 (**1**), 89 (**1**) |
+| 53 + none | 96 (5), 97 (**1**) |
+| 47 + none | 98 (6) |
+| 47 + footer | 101 (3) |
+| 49 + footer | 102 (5), 105 (27), 106 (109), 107 (31), 108 (**1**), 109 (**1**), 110 (5), 111 (17) |
+
+Seven of the 19 values -- 63, 81, 87, 89, 97, 108, 109 -- appear in exactly one file. And the
+tie-break that matters in practice, `chbldg01.smp`'s, rests on word 76, which occurs in two files,
+one of which is `chbldg01.smp` itself. So the partition has no counterexample across 365 files, which
+is worth keeping, and it is one file deep in seven places.
+
 **Inferred:** that the word is a format version and that the loader uses it to choose the record
 layout. The correlation is the observation; the causation is not. An attended run has already shown
 the engine rewrites this word from its own state on every save rather than carrying the file's, which
@@ -410,7 +448,7 @@ Unknown.
 | `+8` | 4 | `cell_index` | Always unique and in bounds per file. **Corrected 2026-09-17:** unpacks as `y × width + x`, not X-major |
 | `+12` | 4 | `unknown_12` | Always `0xffffffff`; observed |
 | `+16` | 4 | `unknown_16` | Always `0`; observed |
-| `+20` | 4 | `instance_id` | Unique per file, range `200..1659`. **Observed in gameplay, 2026-09-17:** three sprites on a fresh map got 200, 201, 202 — sequential, starting at 200 |
+| `+20` | 4 | `instance_id` | Unique and strictly increasing per file, range `100..1659`. **Observed in gameplay, 2026-09-17:** three sprites on a fresh map got 200, 201, 202 — sequential, starting at 200. **Corrected 2026-09-17:** the range was recorded as `200..1659`, which the other five layouts falsify — ten files start at 100 (all nine of the 48-byte layout and one of the 52-byte), and one starts at 203. Per-file lowest ids across the 364 files holding records are `{200: 353, 100: 10, 203: 1}` |
 | `+24` | 4 | `attribute_bits` | Meaning unknown. **Observed in a local binary:** across 16,628 corpus records only the upper nibble varies, taking codes `0..11` and `15`. **Observed in gameplay, 2026-09-17:** all three probe records carry `0x00000001`, which has low bits set and so *violates* that corpus invariant. The contradiction is the finding. The likelier reading is that a freshly minted, procedure-less sprite writes a record shape the corpus does not contain — not that 16,628 records were misread — so the corpus measurement stands and `attribute_code_candidate()` is retained, flagged, and asserted of nothing |
 | `+28` | 4 | `sprite_type` | **Observed in gameplay, 2026-09-17:** all three probe records carry 470, the id `addterrainspritetype` returned in the same keypress. Promoted from `sprite_type_candidate` |
 | `+32` | 2 | `marker_32` | Always `0x01ff` in the 47- and 49-byte layouts, and four zero bytes at `+32` in the other three; observed. This is the field that tells the two tail shapes apart, and the parser checks it as a guard -- it is not what resolves a length two layouts fit |

@@ -16,7 +16,7 @@
 | `smk/` | Smacker cinematics | Replacement cinematics | Medium–high |
 | `lomse.exe` | Closed-source engine | Rendering, input, pathfinding, hard-coded limits and mechanics | High–very high |
 
-The shared native prefix and cell grid for all three map families is documented in the [map-format probe](map-format.md). Standard terrain tags now resolve through the original tile atlas, and the dominant 49-byte placed-sprite family is structurally typed while unproven fields retain candidate names.
+The shared native prefix and cell grid for all three map families is documented in the [map-format probe](map-format.md). Standard terrain tags now resolve through the original tile atlas, and the placed-object section of **every** installed map is structurally typed — six record layouts, 21,117 records — while unproven fields retain candidate names.
 
 ## Evidence for script-level moddability
 
