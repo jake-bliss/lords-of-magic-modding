@@ -348,7 +348,7 @@ residue in the file, which is what makes a save-diff a trustworthy instrument he
 
 [GitHub issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4) now tracks:
 
-- **what sets tag bit `0x00800000` in memory, and which operation clears it** — `forcetexture` sets it and something on the render path clears it, but which call is not isolated, and whether a `.smp` load-and-save preserves the corpus's perimeter ring is unmeasured;
+- **what tag bit `0x00800000` means** — `forcetexture` sets it and **`resetvisibility`** clears it, both measured; reading it as *visibility state* is an inference from the operator's name and is **not** established. What computes the perimeter ring the corpus carries, and whether a `.smp` load-and-save preserves it, are open;
 - **the 52-/53-byte record families** — now known to be a **content** difference, not a format one,
   since both save operators write identical bytes;
 - **the 18 unmatched tails** and the one ambiguous file;
@@ -495,6 +495,47 @@ level rather than only in the parser.
 well as in fixtures — which is the same behaviour the 2026-09-17 engine probe observed from the
 game itself, reproduced by a tool the game never ran.
 
+## The terrain-sprite-type table
+
+**Observed in gameplay, 2026-09-17.** `terrainsprites` is a dict keyed by name — shipped script
+reads `terrainsprites /barrow get` — and `forall` enumerated all **197** of its entries: **178** are
+a plain name-to-id pair, and the rest are arrays and procedures.
+
+```
+0 castle1    43 tower1    184 cyccave    233 llvil
+5 cave       46 tree1     193 trllcave   234 ffvil
+16 livil     50 wavil     217 cave1      236 devil
+17 minec     54 tree4     228 mines      237 lirock
+```
+
+**This is why the `sprite_type` field at record `+28` was unusable.** The id is assigned in script
+execution order across 536 `addterrainspritetype` call sites in `gs\tree.gs` and `gs\tree2.gs`,
+many of them computed at runtime from faith and direction, so nothing in the file format says which
+id is a keep and which is a tree. The table is the missing half, and `--map-place-sprite` now takes
+a name:
+
+```sh
+lom-asset-viewer --map-place-sprite IN.scn 10 20 castle1 OUT.scn
+lom-asset-viewer --map-sprite-types
+```
+
+A raw id is still accepted and deliberately **not** range-checked against the table: ids above it
+are runtime registrations, which is how the probe's own type 470 came to exist, and refusing those
+would refuse a legitimate record shape.
+
+**The table is profile-specific.** These ids come from the working GS5R3 script set; a different mod
+registers different types in a different order and every id shifts. Re-run the probe against any
+profile whose maps you intend to edit. The CLI prints that warning with the table rather than only
+here.
+
+The nine array entries — `keep_array`, `vilg_array`, `great_temple_array`, `leader_ttype_array`,
+`special_array`, `special_unit`, `special_unit2`, `terrainspritearray`, `combatterrainspritearray` —
+are the **per-faith** tables, eight entries each, which is exactly the set the random map generator
+was observed placing. Enumerating them is the obvious next probe and would complete the table.
+
+These are identifiers from the game's own scripts, the same class of measurement as the operator and
+terrain-type names already recorded here — not shipped content.
+
 ## Engine acceptance, measured
 
 **Observed in gameplay, 2026-09-17 (the `mapload` probe).** Round-trip identity shows this
@@ -545,7 +586,7 @@ or writes whatever tileset the editor currently holds — nor whether it *reads*
 itself and merely serialises a canonical value. The separating experiment is one rung: load a `0x4f`
 sub-map, save, and see whether the echo tracks the source.
 
-### `forcetexture` sets tag bit `0x00800000`; the renderer path clears it
+### `resetvisibility` clears tag bit `0x00800000`
 
 **Observed in gameplay, 2026-09-17.** The two runs bracket the behaviour:
 
@@ -558,15 +599,35 @@ So `forcetexture` — which `clearmap` calls on every cell — *does* set the bi
 render path clears it. **There was never a contradiction** with the earlier "0 of 4,096" reading:
 that run was measuring the state after a rebuild.
 
-Two things this does **not** establish, both of which an earlier draft of this section got wrong:
+**Isolated 2026-09-17 to a single call.** Five fresh maps, one renderer call each — fresh because
+once the bit is cleared it stays cleared:
 
-- **Which** operation clears it. The two runs differ by more than one step — the earlier probe also
-  ran seven paint operators and four renderer calls — so `rebuild3dmap`, `resetvisibility`,
-  `rendermap` and `refreshdirty` are all still candidates. The next probe should save between each.
-- **Whether a load or a save touches the bit at all.** Every echo save in the `mapload` run happens
-  *after* the renderer block inside the same rung, so rung 4's sixteen interior cells coming back
-  cleared (`0x008001a8 -> 0x000001a8`, tile 424 both sides) is equally explained by the renderer.
-  Separating them needs a rung that loads and saves with **no** renderer call in between.
+| map | sequence | bit set |
+| --- | --- | ---: |
+| `zf0.scn` | `clearmap`, save | 4096 / 4096 |
+| `zf1.scn` | `clearmap`, `rebuild3dmap`, save | 4096 / 4096 |
+| **`zf2.scn`** | `clearmap`, **`resetvisibility`**, save | **0 / 4096** |
+| `zf3.scn` | `clearmap`, `rendermap`, save | 4096 / 4096 |
+| `zf4.scn` | `clearmap`, `refreshdirty`, save | 4096 / 4096 |
+
+**`resetvisibility` is the one.** Not `rebuild3dmap`, which an earlier draft of this section
+proposed — that hypothesis was wrong and the isolation says so.
+
+**What the operator's name suggests, and what it does not establish.** `resetvisibility` clearing a
+per-cell bit invites reading the bit as visibility state, and that would reframe the corpus pattern
+neatly — the bit sits on exactly the perimeter ring of 146 `.smp` files, which reads very differently
+as a visibility flag than as a texture flag.
+
+But that is an inference **from the operator's name**, and a name is not evidence about a field. The
+call could as easily clear a generic dirty or cache flag as a side effect. This project has been
+caught inferring semantics from plausible names before, so the recorded fact is the narrow one:
+`forcetexture` sets the bit, `resetvisibility` clears it, and the meaning stays **Unknown**.
+Separating "visibility" from "scratch state that the visibility pass happens to reset" needs an
+experiment on visibility itself.
+
+What is still **not** established is whether a load or a save touches the bit independently. Every
+echo save in the `mapload` run happened after the renderer block, so rung 4's sixteen cleared
+interior cells are equally explained by `resetvisibility` running in that block.
 
 The [refutation of the forced-texture flag](#tag-bit-0x00800000--refuted-as-a-forced-texture-flag)
 above still stands, but on different evidence than it was written with: the bit does not mean "this
@@ -579,76 +640,118 @@ place — 27,448 cells across 146 `.smp` files, exactly their perimeters — and
 used `loadscenariomap`/`savescenariomap`, never the `.smp` path. Whether a `.smp` load-and-save
 preserves the ring is **unmeasured**, so an editor that dropped it could be destroying real data.
 
-### `setterrain` transition tiles
+### `setterrain` transition tiles: one offset table, one anchor per background
 
-**Observed in gameplay, 2026-09-17.** Eleven isolated 3x3 blobs, one per terrain type, painted onto
-a background forced to tile 15 with `clearmap`. The ring one cell outside each blob:
+**Observed in gameplay, 2026-09-17 (the `terrainrings` probe).** Eleven terrains painted onto eleven
+backgrounds, 121 rings. The earlier one-background measurement produced an eight-tile table; all
+eleven turn out to be **the same table** plus a per-background anchor.
 
-```
-  18   2   2   2  19
-   4  57  49  58   3
-   4  51 398  52   3
-   4  55  50  56   3
-  17   1   1   1  16
-```
-
-| Direction | Tile |  | Direction | Tile |
+| direction | offset |  | direction | offset |
 | --- | ---: | --- | --- | ---: |
-| N | 2 | | NW | 18 |
-| S | 1 | | NE | 19 |
-| W | 4 | | SW | 17 |
-| E | 3 | | SE | 16 |
+| N | −13 | | NW | +3 |
+| S | −14 | | NE | +4 |
+| W | −11 | | SW | +2 |
+| E | −12 | | SE | +1 |
 
-**That ring is byte-for-byte identical for nine of the eleven terrains** — 0, 1, 2, 3, 4, 5, 7, 8 and
-10. For those nine, a transition tile is chosen by the **background terrain and the direction of the
-boundary**, and not by which terrain is on the other side.
+```
+background  anchor   ring (N  S  W  E  NW NE SW SE)
+  6 land      15       2  1  4  3  18 19 17 16
+  1 water     63      50 49 52 51  66 67 65 64
+  2 desert   111      98 97 100 99 114 115 113 112
+  3 mountain 159     146 145 148 147 162 163 161 160
+  4 happy    207     194 193 196 195 210 211 209 208
+  5 ice      255     242 241 244 243 258 259 257 256
+  7 swamp    303     290 289 292 291 306 307 305 304
+  8 lava     351     338 337 340 339 354 355 353 352
+```
 
-**That is not a general law, and terrain 9 is the counter-example**: road produces a different ring
-on the same background, so the foreground *can* matter. The finding is that it usually does not,
-which is what makes a painter tractable — nine of eleven share one table instead of needing a full
-11x11 pair matrix — but a painter must special-case road, and must not assume the pattern holds for
-a background it has not measured.
+Subtract the anchor and every row is identical, for **eight of eight blending backgrounds** — not
+eleven; three produce no uniform ring and are excluded below.
 
-The two that differ:
+**The anchor is defined as `SE − 1`, so read the strength of this carefully.** One free parameter per
+background is fixed by its SE tile. That leaves the other **seven** offsets across **eight**
+backgrounds — **56 constraints satisfied by the same seven numbers**. That is what makes it a finding
+rather than a restatement: eight independent tables could each be a coincidence, one table that
+regenerates all eight cannot.
 
-- **Terrain 9** (`tt_road`): ring `384..390`, core `474` and `546..553`. Roads blend as their own
-  family.
-- **Terrain 6** is the background's own type, and it is **not** the clean control this section first
-  called it. Its ring is pure tile 15 — no transition at all — yet its *core* was rewritten to
-  `385..391` rather than left at 15. Something was written and no ring appeared, and why is unknown.
-  Note that `384..391` turns up in **both** terrain 6's core and terrain 9's ring, which suggests it
-  belongs to the background rather than to the painted type. That is a hypothesis.
+The independent confirmation is that the anchors then land on `15, 63, 111, 159, 207, 255, 303, 351`
+— a contiguous arithmetic run of stride **48**, every one congruent to **15 mod 48**. Nothing in
+"anchor = SE − 1" imposes an arithmetic grid.
 
-  Re-measured from the preserved `zb0.scn` after a reviewer suspected a transcription mix-up between
-  blobs 6 and 9: the numbers are as stated, the blobs sit at (6,14) and (30,14), and the far field
-  is clean tile 15.
+**What that does not establish** is that the whole atlas is partitioned into 48-tile terrain blocks.
+Eight transition motifs spaced 48 apart is a statement about those motifs. An atlas parser must not
+classify every 48-slot region as a terrain block on this evidence.
 
-The table lives in `spikes/asset-viewer/src/map.rs` as `LAND_TRANSITION_TILES`, with a unit test on
-the direction coverage. **It is one background.** The structure generalises; the numbers do not. A
-complete painter needs the same measurement against each of the other ten backgrounds, which is one
-more keypress of the same shape.
+**Water's anchor is not its representative tile.** `terrain_type_base_tile(1)` is 392, which is 8
+mod 48; its blending anchor is 63. The two are different things, and a painter that used 392 as an
+anchor would take water transitions from the wrong block.
 
-### And a qualification on the terrain-to-tile table
+#### The three backgrounds that do not produce a uniform ring
 
-The same run shows `setterrain` picks its *core* tile from a family too. Painting terrain 6 onto a
-tile-15 background writes tiles in `385..391`, not 15 — while the original measurement, taken
-against a tile-392 background, gave 15.
+| background | behaviour |
+| --- | --- |
+| **0** `tt_dirt` | **No transitions at all** — every ring cell keeps tile 175 |
+| **10** `tt_impassible` | **No transitions at all** — every ring cell keeps tile 469 |
+| **9** `tt_road` | Ring depends on the **painted** terrain; only the edges change, corners keep 459 |
 
-**Measured for one terrain on one background.** Terrain 6 is also the one case where the painted
-type equals the background type, so it is the least representative row to generalise from. What is
-established is that `base_tile` is not invariant *for terrain 6*; the other ten rows were each
-measured once, against a tile-392 background, and may well be fixed. The column is therefore
-labelled a **representative** tile rather than a guaranteed one — the weaker claim the evidence
-supports — and this is not a licence to assume every row varies.
+Both no-transition backgrounds are also the two whose representative tiles are **not** on the block
+grid — 175 and 469 are 31 and 37 mod 48. That is suggestive, not established: two cases is not a
+rule.
 
-The reverse direction is unaffected **for the tiles that were measured**: the blend background, tile
-15, read back as terrain 6 exactly as predicted. The `385..391` family this paragraph is about was
-**never** read back — the probe calls `getterrain` only at `(0, 0)`, before any blob is painted — and
-`base_tile_terrain_type(385)` returns `None` in code, because only the eleven representative tiles
-are in the table. This is not a claim that the new family is type-resolvable.
+#### Road is not a direction table in either role
 
-What this project's writer does with the table — forcing one representative tile of a type into one
-cell, which is `forcetexture` semantics — remains exactly right.
+As a **painted** terrain, `tt_road` is **ragged along every edge** on all seven backgrounds where it
+blends — the ring is not one tile per direction but varies along the run. As a **background** it is
+the `PerPaintedTerrain` row above. A painter must special-case road both ways.
+
+The measured behaviour is committed as `TRANSITION_RING_OFFSETS`, `TERRAIN_TRANSITIONS` and
+`transition_ring()` in `spikes/asset-viewer/src/map.rs`, with a test that regenerates all eight
+measured rings from the single table.
+
+**The generator is `tools/emit_terrain_tables.py`, and `--check` re-derives the constants from the
+saved maps and fails on any difference.** That exists because a reviewer pointed out the original
+generator was a throwaway script: "generated rather than transcribed" was then an unverifiable
+claim, and the same transcription slip could have been copied into both the constants and the test
+fixture meant to catch one. The committed generator re-derives independently — and with a *stricter*
+rule, requiring every ring cell to agree rather than the eight sampled midpoints — and reproduces
+the constants exactly.
+
+```sh
+lom-asset-viewer --map-transition-rings
+```
+
+### A painted region's interior is a random draw, not a base tile
+
+**Observed in gameplay, 2026-09-17.** `setterrain` picks a painted region's interior from an
+eight-member family, and picks it **randomly**.
+
+The family is `384 + 8k`, where `k` is the terrain's block index `(anchor − 15) / 48` — so terrain 6
+draws from `384..391`, water from `392..399`, desert from `400..407`, and so on in anchor order.
+Verified for all eight blending terrains on all eleven backgrounds.
+
+**The randomness is the load-bearing part.** The same experiment run twice — terrain 6 on a tile-15
+background, the same 3×3 at the same coordinates, two separate attended runs — gave centre tile
+**385** once and **390** the other time, while the transition ring was **byte-identical across both
+runs**. That double result is worth more than either half: the ring is confirmed by independent
+replication, and the interior is confirmed to be unreproducible.
+
+So a writer cannot reproduce an interior, and should not try. Writing one representative tile is a
+legitimate, if less varied, choice — and it is what `--map-set-terrain` and `--map-paint-terrain` do.
+
+**This corrects two earlier claims of mine, both in the same direction.** An earlier section said
+`base_tile` was non-invariant "for terrain 6" and blamed the *background*, citing a tile-392
+background as the contrast. `zr1.scn` **is** a tile-392 background, and terrain 6's blob centre there
+is 391, not 15. `base_tile` is non-invariant for all nine blending terrains, and the variable is the
+painted region's **extent**, not the background: `TERRAIN_BASE_TILES` was measured with **single-cell**
+`setterrain`, which has no interior at all. The family was also written as `385..391`, which is wrong
+at both ends for the run it came from — 384 occurs and 385 does not in `zr6.scn`.
+
+A reviewer caught the contradiction by reading the committed artifacts. The run-to-run difference,
+which explains it, came out of checking that reviewer's numbers against my own.
+
+The reverse direction is unaffected: `getterrain` on a representative tile answers its type, and the
+blend background read back as expected on all eleven rows. What the writer does with the table —
+forcing one representative tile of a type into a cell — remains right.
 
 
 ## Commands
@@ -696,6 +799,7 @@ With a tile definition and atlas, the viewer starts in terrain-art mode. Press `
 - **Inferred:** the second word is elevation; record `+34` is a procedure identifier.
 - **Observed in a local binary (2026-09-17):** every one of the 365 installed maps re-encodes to its input bytes, and all 16,628 placed-sprite records rebuild from their typed fields alone. Place-then-remove returns a shipped 128x128 map byte for byte.
 - **Observed in gameplay (2026-09-17, mapload probe):** the engine loads maps this project wrote -- edited, sprite-placed, created from nothing, and non-square -- and the two created-from-nothing maps re-save byte-identically; the header word at `0x00` is rewritten from engine state on every save rather than carried from the file; tag bit `0x00800000` does not survive a load-and-save; `setterrain`'s transition ring is a direction table on the background, identical across nine of the eleven terrains.
-- **Partially reproduced:** `setterrain`'s transition blending. The ring is now measured for a tile-15 background (`LAND_TRANSITION_TILES`); the other ten backgrounds are not, so the writer still offers single-cell forcing rather than painting.
+- **Observed in gameplay (2026-09-17, terrainrings):** `setterrain`'s transition ring, for all eleven backgrounds. It is one offset table plus a per-background anchor for the eight that blend; `tt_dirt` and `tt_impassible` blend nothing; `tt_road` as a background has its own measured edge table. A painted region's **interior** is a random draw from its terrain's `384 + 8k` family and cannot be reproduced by a writer.
+- **Not reproduced, permanently:** a painted region's interior. The same experiment run twice gave centre tiles 385 and 390 while the ring was byte-identical, so this is a property of the engine rather than a gap in the measurement.
 - **Refuted (2026-09-17):** the header word at `0x00` as a value the engine *carries through a save*. `URAK.scn`'s `0x6c` came back as `0x6f`. Whether the **loader** reads it is untested -- that would take loading two maps differing only in that word -- and "from its own state" is equally consistent with "set by the last `newmap`".
 - **Unknown:** elevation units, what sets tag bit `0x00800000` in memory, the trailing footer's `1` vs `3`, the attribute field at `+24`, and what distinguishes the 52-/53-byte record variants. The writer copies all of them rather than minting them -- except a newly placed sprite, which mints `+24`, and that record has now been shown to survive the engine byte-exactly.

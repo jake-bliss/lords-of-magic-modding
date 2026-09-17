@@ -2496,3 +2496,162 @@ the far field is clean tile 15. **No transcription error** — but the reviewer 
 Five new CLI verbs also shipped with no CLI-level tests, while every pre-existing edit verb had
 four. The untested layer was the one that writes into the game directory, and that is precisely why
 the `FlagRegion` gap was invisible.
+
+## 2026-09-17 — `terrainrings`: one table, one call, and the sprite names
+
+One keypress, three sections, all three delivered. The most useful result is that the thing it set
+out to measure turned out to be much smaller than expected.
+
+### Section A: eleven tables collapse into one
+
+The `mapload` run measured `setterrain`'s transition ring against one background and found it shared
+by nine of eleven painted terrains. The obvious next step was eleven separate tables. What the data
+actually shows is **one** table plus a per-background anchor:
+
+```
+N −13   S −14   W −11   E −12   NW +3   NE +4   SW +2   SE +1
+```
+
+Subtract the anchor and all eight blending backgrounds are byte-identical. And the anchors —
+`15, 63, 111, 159, 207, 255, 303, 351` — are a contiguous arithmetic run of stride 48, every one
+congruent to 15 mod 48. The atlas is laid out in 48-tile terrain blocks and blending indexes within
+a block.
+
+That is a far stronger result than the eleven tables it replaces, and the reason is worth keeping:
+**eleven independent tables could each have been a coincidence; one table that regenerates all
+eleven cannot.** The Rust constant is generated from the saved maps rather than transcribed, and a
+test regenerates every measured ring from the single table.
+
+It also caught a trap. **Water's blending anchor is 63, while its representative tile is 392.** A
+painter that used `terrain_type_base_tile` as the anchor would have taken water transitions from the
+wrong 48-tile block, and the numbers would have looked plausible.
+
+Three backgrounds do not give a uniform ring: `tt_dirt` and `tt_impassible` blend nothing at all,
+and `tt_road` depends on the painted terrain with only its edges changing. Both no-transition
+backgrounds are also the two whose representative tiles are off the block grid (175 and 469 are 31
+and 37 mod 48) — suggestive, and recorded as suggestive, because two cases is not a rule.
+
+And `tt_road` as a *painted* terrain is **ragged along every edge** on all seven backgrounds where
+it blends. The offline analyser found that before this probe ran, by flagging non-uniform edges on
+the `mapload` map; the hand analysis had reported road as "a different family" and collapsed the
+raggedness by only quoting the set of tiles. A tool that refuses to average was worth writing.
+
+### Section B: the hypothesis was wrong, and the isolation says so
+
+The bit-clearing question was bracketed but not isolated, and the write-up of it was what both
+reviewers caught. Five fresh maps, one renderer call each — fresh because the bit does not come back:
+
+| sequence | bit set |
+| --- | ---: |
+| `clearmap`, save | 4096 / 4096 |
+| `clearmap`, `rebuild3dmap`, save | 4096 / 4096 |
+| `clearmap`, **`resetvisibility`**, save | **0 / 4096** |
+| `clearmap`, `rendermap`, save | 4096 / 4096 |
+| `clearmap`, `refreshdirty`, save | 4096 / 4096 |
+
+**`resetvisibility`.** Not `rebuild3dmap`, which was the hypothesis in the corrected write-up *and*
+in this probe's own run sheet. Writing the prediction down before the run is what makes being wrong
+cheap and legible instead of invisible.
+
+And the name is the finding: **the bit is visibility state, not terrain state.** The corpus carries
+it on exactly the perimeter ring of 146 `.smp` files, and a visibility flag on a map's edge cells
+reads very differently from a texture flag. Retroactively, that is also why "forced texture" never
+fit.
+
+### Section C: the sprite table, which was the real blocker
+
+`terrainsprites` is a dict keyed by name, and `forall` enumerated all 197 entries: 178 plain
+name-to-id pairs plus nine arrays and some procedures. The arrays are the per-faith tables —
+`keep_array`, `vilg_array`, `great_temple_array`, `leader_ttype_array` — eight entries each, exactly
+the set the random map generator was observed placing.
+
+This was the gap between a terrain editor and a map editor. `sprite_type` is assigned in script
+execution order across 536 `addterrainspritetype` sites, so a raw id says nothing about what it is.
+`--map-place-sprite IN.scn 10 20 castle1 OUT.scn` now works, with suggestions on a near miss.
+
+The table is **profile-specific** — a different script set shifts every id — and the CLI prints that
+warning alongside the table rather than leaving it in a document. Raw ids stay accepted and
+deliberately unchecked against the table, because ids above it are runtime registrations, which is
+how the probe's own type 470 exists.
+
+### Why all three rode in one keypress
+
+An attended run costs a person's time, and the two riders were cheap in lines and independent of the
+matrix. Ordering them last meant `forall`-over-a-dict and `cvs`-on-a-name — the least documented
+things in the run — could only cost themselves. They worked, and the section that was least likely
+to succeed is the one that moved the project furthest.
+
+### Cost
+
+One keypress, no crash. Sixteen maps and eleven captures written into the loose `map/` directory and
+removed afterwards; archives restored and verified against `MANIFEST.sha256`; `map/` back to its 366
+shipped files. Artifacts preserved at `artifacts/engine-probe-captures/terrainrings-20260917/`.
+
+### Post-review corrections, second pass
+
+Both reviewers were strong here and they diverged usefully. Codex went at the reasoning; the Claude
+pass went to the **committed run artifacts** and re-derived every claim, which is why it found things
+no amount of reading could have.
+
+**The correction that matters most came from checking a reviewer's numbers against my own.** The
+review said terrain 6's blob interior is `384..391` on every background, including the tile-392 one
+the docs cited as a contrast, and that `385..391` was wrong at the low end. Both true. But my earlier
+measurement of the *same* experiment had given a different set — because it was a different run.
+Comparing the two runs directly:
+
+| | core (3x3) | ring |
+| --- | --- | --- |
+| `mapload` `zb0.scn` | `388 390 386 391 385 388 388 390 389` | identical |
+| `terrainrings` `zr6.scn` | `388 390 387 384 390 386 387 390 391` | identical |
+
+**The ring is byte-identical across two independent attended runs; the interior is not.** The centre
+cell was 385 in one and 390 in the other. So the interior is a **random draw** from the terrain's
+eight-member `384 + 8k` family — verified for all eight blending terrains on all eleven backgrounds —
+and no writer can reproduce it. That is a property of the engine, not a gap in the measurement, and
+it is a better answer than either the docs or the review had.
+
+The double result is worth more than either half: independent replication confirms the ring, and the
+same comparison proves the interior unreproducible.
+
+**Claims that were wrong, not merely overstated:**
+
+- The generator's log slice was unbounded, so it counted two trailing lines as dict entries. Every
+  "197 entries / 10 unaccounted" figure was two too high, and `--check` validated the wrong number —
+  a checker confirming its own error. The truth is 195 rows logged, the probe's own counter said 196,
+  so 178 pairs + 9 arrays + 8 name-only, and **one entry enumerated without logging anything**. The
+  generator now bounds both ends, cross-checks the counter, and pins the silent gap at 1 so a change
+  fails rather than a known gap failing forever. This was the *second* correction to the same
+  arithmetic; the first was also a reviewer doing the subtraction.
+- "Every corpus sprite id is either in the table or above its top, never a gap inside it" — false.
+  The table has **60 gaps**, and 31 distinct ids across 113 records in the installed corpus land
+  inside them, concentrated at 95..118 and 135..141, exactly where the log shows `keep_array`,
+  `vilg_array` and `leader_ttype_array` in enumeration order. **The gaps are the per-faith types**,
+  and they are the commonest objects on a real map. `--map-place-sprite` was reporting them as
+  "unregistered (runtime type?)" — the opposite of the truth. It now distinguishes an id inside a gap
+  from one above the table's top.
+- "The two backgrounds whose representative tiles are off the 48-grid" — **four** are off it, and one
+  of them is water, which blends normally. So "off-grid implies no transition" is *refuted*, and the
+  counter-example was two paragraphs away in the same document. A hedge does not cover a false
+  premise.
+
+**Data I had and did not commit.** Road as a background is fully measured in the artifacts: corners
+keep 459, edges are `N=a, S=a−2, W=a−1, E=a+1` with `a = 456` for painted dirt and
+`a = 488 + 16(T−2)` for T in 2..8, no ring for water, road or impassible. Verified 11 of 11 and now
+`road_background_ring()`. The documentation had been telling a painter it "must special-case road"
+while withholding the table that lets it.
+
+**The framing was weaker than the evidence.** For **seven of the eight** blending backgrounds the
+anchor simply *is* `terrain_type_base_tile`; water is the sole exception. Highlighting only the
+exception made the anchor look fitted when it is mostly predictable — and predictability is what lets
+someone compute an anchor for a background nobody measured.
+
+**And an API that could be misused into writing wrong tiles.** `transition_ring` took only the
+background, so it handed out the land ring for painting *road* onto land (where the engine writes a
+ragged run) and for painting land onto land (where it writes nothing). It now takes both terrains and
+returns `None` for both cases. A measurement that can be misread into corrupting a map is worth less
+than one that refuses.
+
+Also fixed: a doc comment displaced onto the wrong function by an insertion, the handoff asserting
+the atlas-block claim this branch had already retracted, three stale test counts, README text saying
+the blend tiles were unmeasured, and the two listing verbs having no test at all — the same "the
+untested layer is the one that matters" note this log recorded one review earlier.

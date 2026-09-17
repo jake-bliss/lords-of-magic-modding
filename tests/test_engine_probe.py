@@ -653,6 +653,7 @@ class MapTagProbeTest(unittest.TestCase):
             engine_probe.map_size_map_names()
             + engine_probe.map_tag_map_names()
             + [f"map/{name}" for name in engine_probe.mapload_output_names()]
+            + engine_probe.rings_generated_names()
             + [f"map/{name}" for name in engine_probe.mapload_prebuilt_names()]
         )
         self.assertEqual(engine_probe.generated_map_names(), union)
@@ -1058,6 +1059,230 @@ class MapLoadProbeTest(unittest.TestCase):
         self.assertEqual(inputs & outputs, set())
         for name in inputs | outputs:
             self.assertTrue(name.startswith("z"), f"{name} is outside the probe's namespace")
+
+
+class TerrainRingProbeTest(unittest.TestCase):
+    """The 11x11 transition matrix, plus two riders.
+
+    The mapload run measured one background and found nine of eleven terrains sharing a ring. That
+    is a regularity, not a law -- road already breaks it -- so a painter needs the whole matrix. The
+    assertions here are mostly about ORDER and about the background being laid the one way that does
+    not itself blend.
+    """
+
+    def setUp(self) -> None:
+        self.body = engine_probe.terrain_rings_body()
+
+    def _at(self, needle: str) -> int:
+        index = self.body.find(needle)
+        self.assertNotEqual(index, -1, f"{needle!r} missing from the body")
+        return index
+
+    def test_the_terrain_table_has_not_drifted_from_the_rust_source(self) -> None:
+        """`map.rs` owns the terrain-to-tile table; this module mirrors it for `clearmap`.
+
+        Two copies of a measured table is how one of them ends up stale, so this parses the values
+        back out of the Rust rather than trusting a comment that says they match.
+        """
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "spikes"
+            / "asset-viewer"
+            / "src"
+            / "map.rs"
+        ).read_text()
+        pairs = re.findall(
+            r"terrain_type:\s*(\d+),\s*base_tile:\s*(\d+),", source
+        )
+        self.assertEqual(len(pairs), 11, "did not find all eleven rows in map.rs")
+        rust = {int(terrain): int(tile) for terrain, tile in pairs}
+        self.assertEqual(engine_probe.TERRAIN_BASE_TILES, rust)
+
+    def test_every_background_is_forced_with_clearmap_never_painted(self) -> None:
+        """`setterrain` is the operator under test and it blends.
+
+        Laying a background with it would put transitions against the default terrain and then
+        partly overwrite them, so the ring around each blob could not be attributed to the blob.
+        `clearmap` forces one tile everywhere and blends nothing.
+        """
+        for background, tile in sorted(engine_probe.TERRAIN_BASE_TILES.items()):
+            marker = f"{engine_probe.RINGS_MAP} {engine_probe.RINGS_MAP} newmap {tile} clearmap"
+            self.assertIn(marker, self.body, f"background {background} is not forced")
+        # And no setterrain may appear before the first background is down.
+        self.assertGreater(self.body.find("setterrain"), self._at("clearmap"))
+
+    def test_each_background_is_read_back_before_any_blob_is_painted(self) -> None:
+        """A forced tile that does not answer the intended type invalidates that whole row."""
+        for background in engine_probe.RINGS_TERRAINS:
+            readback = self._at(f'"background {background} tile ')
+            first_blob = self._at(f'"bg {background} blob 0 ')
+            self.assertLess(
+                readback, first_blob, f"background {background} is painted before it is checked"
+            )
+
+    def test_all_eleven_backgrounds_carry_all_eleven_terrains(self) -> None:
+        painted = re.findall(r'"bg (\d+) blob (\d+) terrain (\d+) at ', self.body)
+        self.assertEqual(len(painted), 121, "the matrix must be complete")
+        seen = {(int(bg), int(terrain)) for bg, _, terrain in painted}
+        self.assertEqual(
+            seen,
+            {
+                (bg, terrain)
+                for bg in engine_probe.RINGS_TERRAINS
+                for terrain in engine_probe.RINGS_TERRAINS
+            },
+        )
+        # Each row paints its blobs in index order, so a blob index always means the same terrain.
+        for bg, index, terrain in painted:
+            self.assertEqual(index, terrain, "blob index and terrain must line up")
+
+    def test_the_diagonal_is_the_control(self) -> None:
+        """Painting a terrain onto its own background is the row's control.
+
+        On the one background already measured it produced a ring of pure background -- no
+        transition -- which is what shows the other ten rings are measuring a boundary rather than
+        reporting noise. Every row needs one.
+        """
+        for background in engine_probe.RINGS_TERRAINS:
+            self.assertIn(
+                f'"bg {background} blob {background} terrain {background} at ',
+                self.body,
+            )
+
+    def test_blobs_cannot_blend_into_each_other(self) -> None:
+        """The measured footprint is one cell beyond the painted run on every side.
+
+        A 3x3 blob therefore influences 5x5, so origins must be more than 5 apart or a transition
+        tile could belong to either of two blobs.
+        """
+        origins = [
+            engine_probe.rings_blob_origin(index)
+            for index in range(len(engine_probe.RINGS_TERRAINS))
+        ]
+        self.assertEqual(len(set(origins)), len(origins))
+        for left in range(len(origins)):
+            for right in range(left + 1, len(origins)):
+                (ax, ay), (bx, by) = origins[left], origins[right]
+                self.assertGreater(
+                    max(abs(ax - bx), abs(ay - by)),
+                    5,
+                    f"blobs {left} and {right} can blend together",
+                )
+        for x, y in origins:
+            self.assertGreater(x, 0)
+            self.assertGreater(y, 0)
+            self.assertLess(x + engine_probe.RINGS_BLOB, engine_probe.RINGS_MAP - 1)
+            self.assertLess(y + engine_probe.RINGS_BLOB, engine_probe.RINGS_MAP - 1)
+
+    def test_one_capture_per_background(self) -> None:
+        """A row whose blobs never painted and a row that rendered flat look identical in the log."""
+        shots = re.findall(r'"(zr\d+\.bmp)"screencapture', self.body)
+        self.assertEqual(shots, engine_probe.rings_shot_names())
+        self.assertEqual(len(set(shots)), len(shots))
+        # Each capture comes after that row's blobs and before its save.
+        for background in engine_probe.RINGS_TERRAINS:
+            last_blob = self.body.rindex(f'"bg {background} blob 10 ')
+            shot = self.body.index(f'"{engine_probe.rings_shot_names()[background]}"', last_blob)
+            save = self.body.index(f'"{engine_probe.rings_map_names()[background]}"', last_blob)
+            self.assertLess(last_blob, shot)
+            self.assertLess(shot, save)
+
+    def test_one_save_per_background_in_order(self) -> None:
+        saves = re.findall(r'zname"(map/zr[^"]*)"strcpy', self.body)
+        self.assertEqual(saves, engine_probe.rings_map_names())
+        self.assertEqual(len(set(saves)), len(saves), "two rows share a filename")
+
+    def test_the_log_is_cycled_after_every_save(self) -> None:
+        """A fault in a later row must not take the earlier rows' results with it."""
+        saves = self.body.count("savescenariomap")
+        self.assertEqual(saves, 11 + len(engine_probe.FLAG_ISOLATION_CALLS))
+        self.assertEqual(self.body.count('"zprobe.log""abw"file'), saves + 1)
+
+    # --- rider B: which renderer call clears the bit ------------------------------------------
+
+    def test_each_flag_isolation_rung_gets_a_fresh_map(self) -> None:
+        """Once something clears the bit it stays cleared.
+
+        Reusing one map would make every call after the first measure the previous call's result,
+        which is the same confounding that made the original reading wrong.
+        """
+        section = self.body[self._at('"flag isolation start"') :]
+        self.assertEqual(
+            section.count("newmap"),
+            len(engine_probe.FLAG_ISOLATION_CALLS),
+            "one fresh map per call",
+        )
+        self.assertEqual(
+            section.count("savescenariomap"), len(engine_probe.FLAG_ISOLATION_CALLS)
+        )
+
+    def test_the_flag_isolation_control_runs_no_renderer_call(self) -> None:
+        """The control reproduces the save that showed the bit SET, so it must stay bare."""
+        self.assertEqual(engine_probe.FLAG_ISOLATION_CALLS[0], ("control", ""))
+        start = self._at('"flag isolation start"')
+        control_save = self.body.index('zname"map/zf0.scn"strcpy', start)
+        between = self.body[start:control_save]
+        for call in ("rebuild3dmap", "resetvisibility", "rendermap", "refreshdirty"):
+            self.assertNotIn(call, between, f"the control must not call {call}")
+
+    def test_each_renderer_call_is_isolated_to_one_rung(self) -> None:
+        calls = [call for _, call in engine_probe.FLAG_ISOLATION_CALLS if call]
+        self.assertEqual(
+            sorted(calls),
+            ["rebuild3dmap", "refreshdirty", "rendermap", "resetvisibility"],
+            "all four candidates must be tested",
+        )
+        section = self.body[self._at('"flag isolation start"') :]
+        for call in calls:
+            # Exactly once each in this section: a rung that ran two calls would isolate neither.
+            self.assertEqual(
+                len(re.findall(rf"^\t{call}$", section, re.MULTILINE)),
+                1,
+                f"{call} must appear in exactly one rung",
+            )
+
+    # --- rider C: the sprite-type table -------------------------------------------------------
+
+    def test_the_sprite_table_dump_is_last(self) -> None:
+        """It is the most speculative part of the run, so it must risk only itself.
+
+        `forall` over a dict is read out of the shipped scripts rather than documented, and `cvs`
+        on a name key is the part most likely to misbehave. Everything above it is saved and its
+        log flushed before this runs.
+        """
+        table = self._at('"sprite type table start"')
+        self.assertGreater(table, self._at('"flag isolation start"'))
+        self.assertGreater(table, self.body.rindex("savescenariomap"))
+        self.assertLess(table, self._at('"terrain ring probe done"'))
+
+    def test_the_forall_body_binds_the_value_before_the_key(self) -> None:
+        """`forall` pushes key then value, so the value is on top.
+
+        `/zv exch def` binds the value and leaves the key for `/zk exch def`. Getting this backwards
+        would log ids as names and names as ids, and the run would look like it worked.
+        """
+        self.assertIn("terrainsprites{/zv exch def /zk exch def", self.body)
+        # The name needs a string buffer to print through; `zkey` is that buffer, not `zname`,
+        # which is in use for the save filenames.
+        self.assertIn("zk zkey cvs", self.body)
+        self.assertIn("/zkey", self.body)
+
+    def test_the_probe_counts_what_it_enumerated(self) -> None:
+        """An empty dict and a failed enumeration look identical without a count."""
+        self.assertIn("/zcount 0 def", self.body)
+        self.assertIn("/zcount zcount 1 add def", self.body)
+        self.assertIn('"sprite type table done count "zcount', self.body)
+
+    def test_generated_names_include_this_probes_files_exactly_once(self) -> None:
+        names = engine_probe.rings_generated_names()
+        self.assertEqual(len(set(names)), len(names))
+        union = engine_probe.generated_map_names()
+        self.assertEqual(len(set(union)), len(union), "two probes share a map filename")
+        for name in names:
+            self.assertIn(name, union, "cleanup must cover every file this probe writes")
+        # These are outputs, not prerequisites: nothing has to exist before the run.
+        for name in names:
+            self.assertNotIn(name, engine_probe.generated_map_inputs())
 
 
 if __name__ == "__main__":

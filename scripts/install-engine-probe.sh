@@ -14,7 +14,9 @@ app_dir="${1:-${HOME}/Applications/Lords of Magic GS5R3.app}"
 # Which probe to install: "ladder" (the four-rung compositing diagnostic), "elevation",
 # "mapsize" (the oversized-map ladder, issue #22 -- now closed), "flatground" (the built-mesh
 # probe that closes the map2screen y convention), "maptag" (the cell-tag and trailing-record probe
-# for issue #4), or "mapload" (does the engine accept a map THIS PROJECT wrote?).
+# for issue #4), "mapload" (does the engine accept a map THIS PROJECT wrote?), or "terrainrings"
+# (the full 11x11 setterrain transition matrix, plus the 0x00800000 call isolation and a dump of the
+# script-assigned sprite-type table).
 #
 # "mapload" is the only probe with prerequisites: its rungs 1-6 load files that must already be in
 # the game's map/ directory, built by scripts/build-mapload-inputs.sh. Installing it without them
