@@ -61,6 +61,7 @@ target/release/lom-asset-viewer --diff-maps BEFORE.scn AFTER.scn
 target/release/lom-asset-viewer --view-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
 target/release/lom-asset-viewer --view-map MAP.scn tilesb01.til tilesb01.lbm
 target/release/lom-asset-viewer --export-map-preview MAP.scn tilesb01.til tilesb01.lbm /tmp/map-preview.png
+target/release/lom-asset-viewer --serve --pic "$PIC_MPQ"
 ```
 
 `--dump-map-cells` prints one line per cell — `x`, `y`, packed index, raw tag, masked tile index,
@@ -129,6 +130,62 @@ references a sprite by id, do not remove-then-place.
 The loose `map/` directory has no backup, so there is no in-place mode: every command takes an
 explicit output path, refuses to write over its input by canonical path, opens the output
 `create_new`, and re-parses the encoded bytes to read the edit back before anything reaches disk.
+
+## The map editor UI
+
+```sh
+target/release/lom-asset-viewer --serve --pic "$PIC_MPQ"
+target/release/lom-asset-viewer --serve tilesb01.til tilesb01.lbm --port 9000
+```
+
+A local web UI for the paint verb: open a map by path, see it drawn through its own tileset, pick a
+terrain, drag a rectangle, paint, undo one step, Save As. It prints its URL on startup and **binds
+`127.0.0.1` only** — it reads and writes arbitrary local files on request, so it must not be
+reachable off-host. There is no authentication and none is planned; the address is the boundary.
+
+The page, its script and its stylesheet are compiled into the binary, so the tool is still one file.
+No build step, no npm, no framework: the client is vanilla JS drawing 32x32 atlas tiles onto a
+`<canvas>`. The atlas is sent once as a PNG and a paint redraws only the cells the server says
+changed, so there is no image round trip per edit.
+
+`--pic` is the easy path: the tileset a map is read through is resolved from the gamescript bindings
+and both the `.til` and its `.lbm` are read straight out of `pic.mpq` by member name. Nothing is
+guessed. A combat map with **no** binding — 168 of the 337 installed `.smp` files — is refused with
+that explanation rather than defaulted, and so is one five encounters read through five different
+tilesets. For those, name the `.til` and atlas yourself in the second form; that path runs the same
+`tileset_mismatch` check `--map-paint-terrain` does, so a modded tileset is accepted and a shipped
+one the engine would not use here is refused.
+
+Combat maps work: the terrain palette is built from the resolved tileset's own tiles, so it shows
+`aibldg01.til`'s nineteen terrain ids for a battle map and `tilesb01.til`'s eleven for a world one.
+Terrain ids are tileset-local and reach 42, so there is no built-in list of terrain names anywhere in
+the UI.
+
+**Nothing is ever written in place.** Save As is a new file: the target is checked against the open
+map by device and inode, refused if the extension changes the map's class, encoded and re-parsed
+before anything reaches disk, and opened `create_new`. An existing file is never clobbered.
+
+**The log panel is the point.** The refusals and notes the CLI prints go there as readable text that
+stays on screen — "no tile of terrain 9 accepts the neighbourhood at (4, 2)", "1 of the 25 written
+cells were newly painted with several equally valid tiles … a legal choice, not the engine's", "10
+written cells have a neighbour off the map". A refusal is information, not an error to hide, so it
+comes back as a normal `200` answer with `"ok": false` and the library's own message. Expect refusals
+on a shipped world map — about a third of all 3x3 paints on `URAK.scn` are refused, and
+[map format](../../docs/map-format.md#painting-a-shipped-world-map-is-refused-about-a-third-of-the-time)
+measures the rate.
+
+Painting is deterministic by default — the lowest matching atlas slot — and the seed box reaches the
+same `--seed` the CLI has. Neither is the engine's draw, and the UI says so every time it happens.
+
+Not in this version: creating a map, sprite placement or removal, elevation, flag editing, `.smp`
+browsing, more than one level of undo, and opening more than one map at a time.
+
+The server is tested without a browser. Most tests call the request handler directly —
+`Editor::handle` is a pure function of the request and the session, with the socket confined to
+`serve` — and one drives the whole loop over a real loopback socket, which is what catches a listener
+bound to the wrong interface or a POST body never read. The fixtures are synthetic and the map is
+**11x5**, because every shipped world map is square and a square fixture cannot fail on a transposed
+cell index.
 
 ## Writing sprite placement
 
@@ -241,10 +298,13 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/imp.rs` — bounds-checked IMP tables, palette, RLE and packed-pixel decoding, hotspot and duplicate/repeated-frame structures, and generated-header validation.
 - `src/map.rs` — bounded common header/cell-grid parsing, packed `y * width + x` coordinates, terrain tags, the measured terrain-type-to-tile table, and the six placed-object record layouts for SCN/SMP/LGD files.
 - `src/tile.rs` — parser for `.til` atlas geometry, terrain types, and the full eight-column neighbour constraints, plus the constraint matcher `--map-paint-terrain` re-tiles from.
+- `examples/paint_refusal_survey.rs` — plan a 3x3 paint of every terrain the tileset draws at every non-overlapping position on one map, and report how often the declared constraints refuse and how many cells were drawn at random. Plans only: nothing is applied and nothing is written. Takes a map and a `.til`, because neither is committed.
 - `examples/parse_all_tilesets.rs` — parse every `.til` in a directory and report atlas size, terrain-id range and any row that fails to declare all eight constraints. Reading columns the parser used to discard can only *add* failure modes for `--view-map`, so this is the check that it has not: 26 parsed, 0 failed, 0 incomplete on the GS5R3 set. Takes a path, because no tileset is committed.
 - `src/gamescript.rs` — bounded GameScript lexer, procedure diagnostics, name inventory, and static `run` references.
 - `src/gamescript_vm.rs` — experimental bounded value stack, dictionaries, procedures, core operators, and structured execution failures.
 - `src/png_export.rs` — lossless indexed IMP-frame PNG and RGBA map-preview output.
+- `src/server.rs` — the `--serve` map editor: routing, one open map with one level of undo, the terrain palette built from the resolved tileset, and the Save As guards. The page, script and stylesheet it embeds are in `src/ui/`.
+- `src/paths.rs` — the device-and-inode same-file check both writers use.
 - `src/asset.rs` — content-first classification and typed format metadata.
 - `src/main.rs` — CLI inventory, extraction, validation, and SDL3 viewer.
 - `build.rs` — local native-library search and runtime paths for the Apple Silicon spike.

@@ -1477,6 +1477,53 @@ What was *retired* is the offset table's role as the **paint's decision procedur
 longer consults it; `--map-transition-rings` still prints it as the measurement it is.
 
 
+### Painting a shipped world map is refused about a third of the time
+
+**Observed in a local binary, 2026-09-17.** The constraint matcher's `NoMatchingTile` refusal was
+derived from the `terrainrings` captures and described there as "exactly the road and impassable
+cases". Driving the planner from a UI, where a person drags a rectangle anywhere they like rather
+than at coordinates chosen to work, made the **rate** visible for the first time. It is much higher
+than "road and impassable" suggests, and it is not a defect in the tool.
+
+`examples/paint_refusal_survey.rs` plans — never applies, never writes — one 3x3 paint of every
+terrain the tileset draws at every non-overlapping position on a map. Through `tilesb01.til`:
+
+| map | terrain 0–8 refused | road, terrain 9 | impassable, terrain 10 |
+| --- | ---: | ---: | ---: |
+| `URAK.scn` | 4,982 of 15,876 — **31.4%** | 14 of 1,764 accepted | **0 of 1,764** |
+| `Corlis.scn` | 4,336 of 15,876 — **27.3%** | 0 of 1,764 | **0 of 1,764** |
+| `Avaeron128.scn` | 2,094 of 15,876 — **13.2%** | 0 of 1,764 | **0 of 1,764** |
+| `fire.lgd` | 154 of 15,876 — **1.0%** | 1,727 of 1,764 accepted | **0 of 1,764** |
+
+Every refusal in all four maps is `no-matching-tile`; no other kind occurred.
+
+Three readings, and only the first two are settled:
+
+- **Impassable is unpaintable as an area, on real maps and not only in principle.** 0 of 7,056
+  attempts across four maps. `tilesb01.til` gives `tt_impassible` eight slots, each demanding that
+  all eight neighbours also be impassable, so a rectangle of it has no legal boundary anywhere. The
+  engine fills those cells from the block regardless. This is now measured on shipped data rather
+  than derived from the tileset alone.
+- **The rate tracks how mixed the map is, not the terrain being painted.** Within one map the nine
+  ordinary terrains refuse within a few percent of each other; between maps the spread is 30:1.
+  `fire.lgd` is 16,228 of its 16,384 cells a single terrain — it is a nearly blank map — and
+  `URAK.scn` has six terrains above 1,700 cells each. What a refusal reports is a *neighbourhood*
+  the tileset declares no tile for, and a mixed map has many more distinct neighbourhoods.
+- **`fire.lgd` accepting 1,727 road paints is a lead, not a conclusion.** Road is refused almost
+  everywhere on the other three. The uniform-field explanation is consistent with it and is not
+  evidence for it; nothing here establishes the mechanism.
+
+One more figure belongs with these, because it is the same instrument and it bears on how much of a
+painted map is this writer's invention rather than the engine's: on `fire.lgd` a 3x3 paint plans
+**29,099 drawn cells** per terrain against 1,746 accepted paints — roughly 17 unreproducible cells
+per paint, against 1.0 on `URAK.scn`. A blank field is where several interior tiles tie most often,
+so the emptier the map, the more of the result is a legal draw that the engine would have made
+differently. See [a painted region's interior is a random draw](#a-painted-regions-interior-is-a-random-draw-not-a-base-tile).
+
+```sh
+cargo run --release --example paint_refusal_survey -- MAP.scn tilesb01.til 3
+```
+
 ## Commands
 
 ```sh
@@ -1503,6 +1550,8 @@ target/release/lom-asset-viewer --map-remove-sprite IN.scn 200 OUT.scn
 target/release/lom-asset-viewer --view-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
 target/release/lom-asset-viewer --view-map MAP.scn tilesb01.til tilesb01.lbm
 target/release/lom-asset-viewer --export-map-preview MAP.scn tilesb01.til tilesb01.lbm /tmp/map-preview.png
+target/release/lom-asset-viewer --serve --pic '/path/to/Lords of Magic Special Edition/English/pic.mpq'
+target/release/lom-asset-viewer --serve tilesb01.til tilesb01.lbm --port 9000
 ```
 
 `--dump-map-cells` prints one line per cell — `x`, `y`, packed index, raw tag, masked tile index,
