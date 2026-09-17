@@ -1244,3 +1244,21 @@ single measurement — four sprite types placed in one capture:
 `zzctl.imp` is byte-identical to `imp\tree4e.imp`, so the third and fourth rungs differ only by the
 twenty palette bytes. Whichever rung breaks names the cause, which is precisely what the failed run
 could not do.
+
+### A third cleanup trap, caught in review rather than in the game
+
+The rebuilt probe's first version cleaned up by sprite **type**, which is what the village incident
+seemed to teach. Cross-model review pointed out that rung 0's type is
+`terrainsprites /orchard get` — the *shipped* orchard type, shared with every orchard on the map — so
+the sweep would have destroyed all of them. The generated script confirms it: the id is looked up
+from the shipped `terrainsprites` dictionary, and the sweep was unqualified.
+
+The rule that actually holds is narrower than either version: **match on type and cell together, and
+only treat a type id as safe to sweep on its own when the probe minted it via
+`addterrainspritetype` during the same keypress.** A regression test asserts it and fails when the
+bug is reintroduced.
+
+Worth recording as a pattern: the fix for a destructive bug was itself destructive, in the same
+direction, because it generalised from one incident instead of from the invariant. The invariant is
+"destroy only what this keypress created", and neither location nor type alone expresses it.
+
