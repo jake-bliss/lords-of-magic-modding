@@ -2231,6 +2231,30 @@ id **does** come back. Pinning the real behaviour beats asserting the desired on
 nowhere to persist a high-water mark and inventing a field would break the copy-never-mint rule, so
 there is no fix available, only an honest statement.
 
+### What the two reviewers each saw
+
+Both independently found the instance-id reuse and the minted-fields overclaim, which is the
+strongest signal either produced — two models, two harnesses, same two defects. Beyond that they
+diverged, and the divergence was the useful part:
+
+- **Codex alone** named the read-back guard as **tautological**. `verify_map_edit` asked
+  `map.cell(x, y)`, which is the same `cell_index` the setter had just used, so on the coordinate
+  axis the check could not fail: flip the packing in both and the guard still passes. It was being
+  advertised as a safety property. The fix adds a second witness — the before/after cell diff, which
+  catches an edit that strayed to another cell or to several — and the doc now says plainly that
+  this does not make the packing formula independent of itself. That is held by the byte-offset test
+  instead, which never calls `cell_index`. Codex also caught `paths_are_same_file` comparing
+  canonical path *strings* rather than file identity, so two hardlinks to one inode read as
+  different files; no overwrite was reachable, because `create_new` refuses either way, but the
+  function did not do what its name said. It now compares device and inode.
+- **Claude alone** caught `--map-roundtrip` exiting 0 on a directory with no maps — a green result
+  from the command every other claim here leans on — and the unvalidated tile index, where a
+  fat-fingered `3920` for `392` went straight into the tag word.
+
+Neither list was usable as delivered. Codex's first report was a partial that found nothing and had
+to be read again when the real one arrived; Claude's verdict was right but its severity ordering put
+a doc-scope fix above a guard that could not fail.
+
 ### An overclaim the review caught
 
 "Fields whose meaning is unknown are copied, never minted" was written in three files and is false

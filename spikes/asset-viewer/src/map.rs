@@ -616,16 +616,22 @@ impl PlacedSpriteSection49 {
     /// **Observed in gameplay, 2026-09-17, by construction.** The corpus could only show that this
     /// section is `count * 49 + 8` bytes; it could not say which four of the eight fixed bytes came
     /// first. Two saves of the same map settled it -- see [`PlacedSpriteSection49`].
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, MapError> {
+        // The count is a `u32` in the file. `as u32` would wrap silently and write a header that
+        // disagrees with the records behind it -- a map that parses and is wrong, which is the one
+        // outcome this whole module is built to avoid. Unreachable through the CLI (it would take
+        // hundreds of gigabytes of records) and cheap to make impossible anyway.
+        let count = u32::try_from(self.records.len())
+            .map_err(|_| MapError::new("placed-sprite record count exceeds the 32-bit field"))?;
         let mut bytes = Vec::with_capacity(
             PLACED_SPRITE_SECTION_49_FIXED_BYTES + self.records.len() * PLACED_SPRITE_RECORD_49_SIZE,
         );
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&count.to_le_bytes());
         for record in &self.records {
             bytes.extend_from_slice(&record.to_bytes());
         }
         bytes.extend_from_slice(&self.footer.to_le_bytes());
-        bytes
+        Ok(bytes)
     }
 
     /// The id a newly placed sprite should take: one past the highest in use, or 200 on an empty
@@ -674,7 +680,7 @@ impl MapAsset {
     /// The trailing section comes from the decoded records when this map is in the 49-byte family
     /// and from [`trailing_raw`](Self::trailing_raw) otherwise, so the families this project has
     /// not decoded still write back unchanged instead of being dropped.
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, MapError> {
         let mut bytes = Vec::with_capacity(
             HEADER_SIZE + self.cells.len() * CELL_SIZE + self.trailing_raw.len(),
         );
@@ -687,10 +693,10 @@ impl MapAsset {
             bytes.extend_from_slice(&cell.value_bits.to_le_bytes());
         }
         match &self.placed_sprites_49 {
-            Some(section) => bytes.extend_from_slice(&section.to_bytes()),
+            Some(section) => bytes.extend_from_slice(&section.to_bytes()?),
             None => bytes.extend_from_slice(&self.trailing_raw),
         }
-        bytes
+        Ok(bytes)
     }
 
     fn cell_index_checked(&self, x: u32, y: u32) -> Result<usize, MapError> {
@@ -1189,7 +1195,7 @@ mod tests {
     fn an_unedited_map_re_encodes_to_the_input_bytes() {
         let source = non_square_map_with_record(5, 3, 7);
         let map = MapAsset::parse(&source).unwrap();
-        assert_eq!(map.to_bytes(), source);
+        assert_eq!(map.to_bytes().unwrap(), source);
     }
 
     #[test]
@@ -1200,7 +1206,7 @@ mod tests {
             map.placed_sprites_49.is_none(),
             "the fixture must exercise the undecoded path"
         );
-        assert_eq!(map.to_bytes(), source);
+        assert_eq!(map.to_bytes().unwrap(), source);
     }
 
     #[test]
@@ -1225,7 +1231,7 @@ mod tests {
         let source = non_square_map_with_record(width, height, 0);
         let mut map = MapAsset::parse(&source).unwrap();
         map.set_tile(x, y, 392).unwrap();
-        let bytes = map.to_bytes();
+        let bytes = map.to_bytes().unwrap();
 
         let expected_offset = 16 + ((y * width + x) as usize) * 8;
         assert_eq!(
@@ -1336,10 +1342,10 @@ mod tests {
         let source = non_square_map_with_record(5, 3, 7);
         let mut map = MapAsset::parse(&source).unwrap();
         let instance = map.place_sprite(2, 2, 470).unwrap();
-        assert_ne!(map.to_bytes(), source);
+        assert_ne!(map.to_bytes().unwrap(), source);
         map.remove_sprite(instance).unwrap();
         assert_eq!(
-            map.to_bytes(),
+            map.to_bytes().unwrap(),
             source,
             "the engine leaves no residue when a sprite is destroyed; neither may this"
         );
@@ -1358,15 +1364,15 @@ mod tests {
 
         let mut map = reparse(&source);
         assert_eq!(map.place_sprite(0, 0, 470).unwrap(), 200);
-        source = map.to_bytes();
+        source = map.to_bytes().unwrap();
 
         let mut map = reparse(&source);
         assert_eq!(map.place_sprite(1, 0, 470).unwrap(), 201);
-        source = map.to_bytes();
+        source = map.to_bytes().unwrap();
 
         let mut map = reparse(&source);
         map.remove_sprite(201).unwrap();
-        source = map.to_bytes();
+        source = map.to_bytes().unwrap();
 
         let mut map = reparse(&source);
         assert_eq!(
@@ -1374,7 +1380,7 @@ mod tests {
             201,
             "the freed id returns across a write, which is the documented limitation"
         );
-        let written = reparse(&map.to_bytes());
+        let written = reparse(&map.to_bytes().unwrap());
         let section = written.placed_sprites_49.as_ref().unwrap();
         let reissued = section
             .records
@@ -1435,7 +1441,7 @@ mod tests {
         assert!(map.remove_sprite(200).is_err());
         // A cell edit is still fine, and must still write the tail back untouched.
         map.set_tile(0, 0, 15).unwrap();
-        assert_eq!(&map.to_bytes()[map.trailing_offset..], &map.trailing_raw[..]);
+        assert_eq!(&map.to_bytes().unwrap()[map.trailing_offset..], &map.trailing_raw[..]);
     }
 
     #[test]

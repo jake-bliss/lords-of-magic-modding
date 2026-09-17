@@ -3293,7 +3293,7 @@ fn roundtrip_maps(path: &Path) -> Result<(), String> {
             }
         }
 
-        let encoded = map.to_bytes();
+        let encoded = map.to_bytes().map_err(|error| error.to_string())?;
         match first_tail_difference(&bytes, &encoded) {
             None => identical += 1,
             Some(at) => {
@@ -3352,15 +3352,16 @@ fn edit_map(input: &Path, edit: MapEdit, output: &Path) -> Result<(), String> {
     let source =
         fs::read(input).map_err(|error| format!("could not read {}: {error}", input.display()))?;
     let mut map = MapAsset::parse(&source).map_err(|error| error.to_string())?;
+    let map_before = MapAsset::parse(&source).map_err(|error| error.to_string())?;
 
     let note = apply_map_edit(&mut map, edit)?;
-    let encoded = map.to_bytes();
+    let encoded = map.to_bytes().map_err(|error| error.to_string())?;
 
     // Re-parse before writing: a map we cannot read back is a map we must not emit.
     let reparsed = MapAsset::parse(&encoded).map_err(|error| {
         format!("refusing to write: the edited map no longer parses: {error}")
     })?;
-    verify_map_edit(&reparsed, edit)?;
+    verify_map_edit(&reparsed, &map_before, edit)?;
 
     let mut file = OpenOptions::new()
         .write(true)
@@ -3376,12 +3377,7 @@ fn edit_map(input: &Path, edit: MapEdit, output: &Path) -> Result<(), String> {
         return Err(format!("could not write {}: {error}", output.display()));
     }
 
-    let changed_cells = map
-        .cells
-        .iter()
-        .zip(&MapAsset::parse(&source).map_err(|error| error.to_string())?.cells)
-        .filter(|(after, before)| !after.has_same_bytes(before))
-        .count();
+    let changed_cells = changed_cell_indexes(&map_before, &map).len();
     println!("wrote\t{}\t{} bytes", output.display(), encoded.len());
     println!("cells-changed\t{changed_cells}");
     println!("{note}");
@@ -3390,12 +3386,20 @@ fn edit_map(input: &Path, edit: MapEdit, output: &Path) -> Result<(), String> {
 
 /// Whether two paths name the same file on disk.
 ///
-/// Compares canonical paths, so `map/URAK.scn` and `./map/../map/URAK.scn` are caught. An output
-/// that does not exist yet cannot canonicalize, and that is the normal case -- it is also, by
-/// definition, not the input.
+/// Compares the **device and inode**, not canonical path strings. String comparison already caught
+/// `map/URAK.scn` versus `./map/../map/URAK.scn` and the macOS case-only variant, but it answers
+/// `false` for two hardlinks to one inode -- which is the same file by every meaning that matters
+/// to a writer. No overwrite is reachable through that gap, because `create_new` refuses an
+/// existing output whatever it is linked to; the function simply did not do what its name said,
+/// and a guard whose contract is wider than its implementation is how the next caller gets
+/// surprised.
+///
+/// An output that does not exist yet has no metadata to read, and that is the normal case -- it is
+/// also, by definition, not the input.
 fn paths_are_same_file(left: &Path, right: &Path) -> bool {
-    match (left.canonicalize(), right.canonicalize()) {
-        (Ok(left), Ok(right)) => left == right,
+    use std::os::unix::fs::MetadataExt;
+    match (fs::metadata(left), fs::metadata(right)) {
+        (Ok(left), Ok(right)) => left.dev() == right.dev() && left.ino() == right.ino(),
         _ => false,
     }
 }
@@ -3462,7 +3466,51 @@ fn apply_map_edit(map: &mut MapAsset, edit: MapEdit) -> Result<String, String> {
 ///
 /// Applying an edit to an in-memory struct proves nothing about what lands on disk; only re-parsing
 /// the encoded bytes does. This is the same guard `--set-imp-placement` uses.
-fn verify_map_edit(map: &MapAsset, edit: MapEdit) -> Result<(), String> {
+/// The packed indexes whose eight bytes differ between two maps of the same shape.
+fn changed_cell_indexes(before: &MapAsset, after: &MapAsset) -> Vec<usize> {
+    before
+        .cells
+        .iter()
+        .zip(&after.cells)
+        .enumerate()
+        .filter(|(_, (before, after))| !after.has_same_bytes(before))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Check that a single-cell edit touched **exactly one** cell, and the one that was asked for.
+///
+/// This is the answer to a real weakness the review found: reading the edit back through
+/// `map.cell(x, y)` asks the same `cell_index` the setter used, so on the coordinate axis it is a
+/// tautology -- flip the packing in both and the check still passes. The cell *diff* is a second
+/// witness. It cannot make the packing formula independent of itself, and it is not claimed to:
+/// what it adds is that an edit which strayed to another cell, or to several, is caught, and that
+/// the byte that moved is the byte that was meant to. The packing itself is held by the byte-offset
+/// test in `map.rs`, which computes the offset without going through `cell_index` at all.
+fn verify_single_cell_edit(
+    before: &MapAsset,
+    after: &MapAsset,
+    x: u32,
+    y: u32,
+) -> Result<(), String> {
+    let expected = after
+        .cell_index(x, y)
+        .ok_or_else(|| format!("refusing to write: ({x}, {y}) is outside the map"))?;
+    match changed_cell_indexes(before, after).as_slice() {
+        [] => Ok(()),
+        [only] if *only == expected => Ok(()),
+        [only] => Err(format!(
+            "refusing to write: the edit landed on cell {only}, not the cell {expected} at ({x}, {y})"
+        )),
+        several => Err(format!(
+            "refusing to write: a single-cell edit changed {} cells: {:?}",
+            several.len(),
+            &several[..several.len().min(8)]
+        )),
+    }
+}
+
+fn verify_map_edit(map: &MapAsset, before: &MapAsset, edit: MapEdit) -> Result<(), String> {
     let cell_tile = |x: u32, y: u32| -> Result<u32, String> {
         map.cell(x, y)
             .map(MapCellTile::tile)
@@ -3470,6 +3518,7 @@ fn verify_map_edit(map: &MapAsset, edit: MapEdit) -> Result<(), String> {
     };
     match edit {
         MapEdit::SetTile { x, y, tile_index } => {
+            verify_single_cell_edit(before, map, x, y)?;
             let observed = cell_tile(x, y)?;
             if observed != tile_index {
                 return Err(format!(
@@ -3484,6 +3533,7 @@ fn verify_map_edit(map: &MapAsset, edit: MapEdit) -> Result<(), String> {
         } => {
             let expected = terrain_type_base_tile(terrain_type)
                 .ok_or_else(|| format!("{terrain_type} is not a terrain type"))?;
+            verify_single_cell_edit(before, map, x, y)?;
             let observed = cell_tile(x, y)?;
             if observed != expected {
                 return Err(format!(
@@ -3492,6 +3542,7 @@ fn verify_map_edit(map: &MapAsset, edit: MapEdit) -> Result<(), String> {
             }
         }
         MapEdit::SetElevation { x, y, value } => {
+            verify_single_cell_edit(before, map, x, y)?;
             let observed = map
                 .cell(x, y)
                 .ok_or_else(|| format!("refusing to write: ({x}, {y}) is missing after the edit"))?
@@ -4532,6 +4583,54 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// Two hardlinks to one inode are the same file, and the old canonical-path comparison said
+    /// they were not. No overwrite was reachable -- `create_new` refuses either way -- but the
+    /// guard did not do what its name claimed, which is the mismatch class this branch already got
+    /// caught on twice.
+    #[test]
+    fn two_hardlinks_to_one_inode_are_recognised_as_the_same_file() {
+        let dir = scratch_dir("map-hardlink");
+        let input = dir.join("in.scn");
+        let alias = dir.join("alias.scn");
+        fs::write(&input, editable_map(5, 3)).unwrap();
+        fs::hard_link(&input, &alias).unwrap();
+
+        assert!(super::paths_are_same_file(&input, &alias));
+        let error = edit_map(
+            &input,
+            MapEdit::SetTile {
+                x: 0,
+                y: 0,
+                tile_index: 392,
+            },
+            &alias,
+        )
+        .unwrap_err();
+        assert!(error.contains("refusing to write to the input file"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The cell diff is the verifier's second witness. A single-cell edit that strayed must be
+    /// refused before anything is written.
+    #[test]
+    fn a_single_cell_edit_that_touched_more_than_one_cell_is_refused() {
+        let source = editable_map(5, 3);
+        let before = MapAsset::parse(&source).unwrap();
+        let mut after = MapAsset::parse(&source).unwrap();
+        after.set_tile(3, 2, 392).unwrap();
+        // The edit that was asked for is fine.
+        super::verify_single_cell_edit(&before, &after, 3, 2).unwrap();
+        // A stray second write is not.
+        after.set_tile(0, 0, 392).unwrap();
+        let error = super::verify_single_cell_edit(&before, &after, 3, 2).unwrap_err();
+        assert!(error.contains("changed 2 cells"), "{error}");
+        // Nor is landing on the wrong cell.
+        let mut wrong = MapAsset::parse(&source).unwrap();
+        wrong.set_tile(0, 0, 392).unwrap();
+        let error = super::verify_single_cell_edit(&before, &wrong, 3, 2).unwrap_err();
+        assert!(error.contains("not the cell 13"), "{error}");
+    }
+
     #[test]
     fn editing_refuses_to_overwrite_an_existing_output() {
         let dir = scratch_dir("map-overwrite");
@@ -4640,7 +4739,7 @@ mod tests {
         assert!(roundtrip_maps(&input).is_ok());
         let map = MapAsset::parse(&source).unwrap();
         assert!(map.placed_sprites_49.is_none());
-        assert_eq!(map.to_bytes(), source);
+        assert_eq!(map.to_bytes().unwrap(), source);
         let _ = fs::remove_dir_all(&dir);
     }
 
