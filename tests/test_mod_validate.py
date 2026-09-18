@@ -80,6 +80,38 @@ def facts(
     }
 
 
+def pbm(*, width: int = 4, height: int = 2, palette_entries: int = 256) -> bytes:
+    """A minimal IFF PBM image, built here so this file needs no game content either.
+
+    `palette_entries` below 8 makes the fixed pixel values 1..8 address a colour the CMAP does not
+    hold, which is what the palette check exists to catch.
+    """
+    import struct
+
+    def chunk(chunk_id: bytes, payload: bytes) -> bytes:
+        pad = b"\x00" if len(payload) % 2 else b""
+        return chunk_id + struct.pack(">I", len(payload)) + payload + pad
+
+    header = chunk(
+        b"BMHD",
+        struct.pack(">HH", width, height)
+        + struct.pack(">HH", 0, 0)
+        + bytes([8, 0, 1, 0])
+        + struct.pack(">H", 0)
+        + bytes([1, 1])
+        + struct.pack(">HH", width, height),
+    )
+    rows = [bytes(range(1, width + 1)), bytes(range(width + 1, 2 * width + 1))]
+    body = b"".join(bytes([len(row) - 1]) + row for row in rows[:height])
+    payload = (
+        b"PBM "
+        + header
+        + chunk(b"CMAP", bytes(palette_entries * 3))
+        + chunk(b"BODY", body)
+    )
+    return b"FORM" + struct.pack(">I", len(payload)) + payload
+
+
 class ValidateTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
@@ -528,13 +560,69 @@ class CoverageTest(ValidateTestCase):
         self.assertEqual(finding.severity, WARNING)
         self.assertIn("NEVER", finding.message)
 
-    def test_a_binary_member_is_counted_as_unvalidated(self) -> None:
-        relative = self.write("pic.mpq/LBM/ART.lbm", b"\x00")
+    def test_a_member_no_reader_here_understands_is_counted_as_unvalidated(self) -> None:
+        """A .til tileset is packed as given; 26 of them sit in pic.mpq beside the images."""
+        self.write("pic.mpq/til/jeff01.til", b"LBM=whatever")
+        report = self.run_validate(
+            manifests={"gs.mpq": [], "pic.mpq": [base_member("til\\jeff01.til")]},
+            mod_facts={},
+        )
+        self.assertEqual(report.coverage.counts["members-with-no-content-validation"], 1)
+        self.assertEqual(report.coverage.counts["image-members-content-validated"], 0)
+
+    def test_an_image_member_is_no_longer_counted_as_unvalidated(self) -> None:
+        """The Phase 5 box: a .lbm is read, so claiming it was not inspected would be a lie."""
+        self.write("pic.mpq/LBM/ART.lbm", pbm())
         report = self.run_validate(
             manifests={"gs.mpq": [], "pic.mpq": [base_member("LBM\\ART.lbm")]},
             mod_facts={},
         )
-        self.assertEqual(report.coverage.counts["members-with-no-content-validation"], 1)
+        self.assertEqual(report.coverage.counts["members-with-no-content-validation"], 0)
+        self.assertEqual(report.coverage.counts["image-members-content-validated"], 1)
+        self.assertEqual(
+            report.coverage.counts["image-pixels-checked-against-their-palette"], 8
+        )
+
+    def test_a_well_formed_image_member_produces_no_image_finding(self) -> None:
+        relative = self.write("pic.mpq/LBM/ART.lbm", pbm())
+        report = self.run_validate(
+            manifests={"gs.mpq": [], "pic.mpq": [base_member("LBM\\ART.lbm")]},
+            mod_facts={},
+        )
+        self.assertEqual(
+            [f for f in report.findings if f.location == relative], []
+        )
+
+    def test_an_image_member_that_is_not_an_image_is_an_error_naming_the_file(self) -> None:
+        relative = self.write("pic.mpq/LBM/ART.lbm", b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        report = self.run_validate(
+            manifests={"gs.mpq": [], "pic.mpq": [base_member("LBM\\ART.lbm")]},
+            mod_facts={},
+        )
+        finding = self.findings(report, "iff-structure")[0]
+        self.assertEqual(finding.severity, ERROR)
+        self.assertEqual(finding.location, relative)
+        self.assertFalse(report.ok)
+
+    def test_an_image_whose_pixels_leave_its_palette_is_an_error(self) -> None:
+        """Palette validation, reached through the pipeline rather than the reader alone."""
+        relative = self.write("pic.mpq/LBM/ART.lbm", pbm(palette_entries=4))
+        report = self.run_validate(
+            manifests={"gs.mpq": [], "pic.mpq": [base_member("LBM\\ART.lbm")]},
+            mod_facts={},
+        )
+        finding = self.findings(report, "palette-index")[0]
+        self.assertEqual(finding.severity, ERROR)
+        self.assertEqual(finding.location, relative)
+
+    def test_an_upper_case_image_member_is_validated_too(self) -> None:
+        """11 of vanilla pic.mpq's 1,044 images spell the suffix .LBM."""
+        self.write("pic.mpq/LBM/ART.LBM", pbm())
+        report = self.run_validate(
+            manifests={"gs.mpq": [], "pic.mpq": [base_member("LBM\\ART.LBM")]},
+            mod_facts={},
+        )
+        self.assertEqual(report.coverage.counts["image-members-content-validated"], 1)
 
     def test_an_empty_tree_is_refused_rather_than_passing(self) -> None:
         """A build from a tree that maps nothing would change nothing and report success."""
