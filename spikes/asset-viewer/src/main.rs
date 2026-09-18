@@ -17,7 +17,9 @@ use lom_asset_viewer::gamescript_vm::{
 use lom_asset_viewer::imp;
 use lom_asset_viewer::imp::{
     IMP_ORPHAN_NOTES, IMP_VALIDATION_EXCEPTIONS, ImpHeaderStats, ImpOrphanNote, ImpSprite,
-    ImpValidationException, imp_member_basename, normalize_imp_member,
+    ImpValidationException, MAX_RLE_REPEAT, PackedSizes, encode_rle, frame_pixel_target,
+    imp_member_basename, layout_is_unobservable, layouts_are_identical, normalize_imp_member,
+    pack_pixels, read_frame_pixels, unpack_pixels, write_frame_pixels,
 };
 use lom_asset_viewer::map::{
     GENERATED_HEADER_WORD, MapAsset, MintProvenance, PaintRefusal, ROAD_TERRAIN,
@@ -207,10 +209,23 @@ enum Command {
     ScanMapDirectory(PathBuf),
     /// Re-encode every PBM in an archive and compare the result with the original.
     RoundtripPbm(Source),
+    /// Re-encode every IMP frame in an archive and compare the result with the original.
+    ///
+    /// `rewrite` escalates the check from "the payload re-encodes" to "the whole *file* rewrites":
+    /// each frame is replaced with its own unmodified pixels through `write_frame_pixels`, which
+    /// exercises the pointer rewriting and the byte-for-byte preservation of everything else.
+    RoundtripImp { source: Source, rewrite: bool },
     /// Write an indexed PNG back into a PBM, inheriting palette and chunks from a source file.
     ImportPngPbm {
         png: PathBuf,
         template: PathBuf,
+        output: PathBuf,
+    },
+    /// Write an indexed PNG back over one frame of an IMP, inheriting everything else.
+    ImportPngImp {
+        png: PathBuf,
+        template: PathBuf,
+        frame: usize,
         output: PathBuf,
     },
     ValidateImp(Source),
@@ -395,11 +410,18 @@ fn run() -> Result<(), String> {
         ),
         Command::ScanMapDirectory(path) => scan_map_directory(&path),
         Command::RoundtripPbm(source) => roundtrip_pbm(&source),
+        Command::RoundtripImp { source, rewrite } => roundtrip_imp(&source, rewrite),
         Command::ImportPngPbm {
             png,
             template,
             output,
         } => import_png_pbm(&png, &template, &output),
+        Command::ImportPngImp {
+            png,
+            template,
+            frame,
+            output,
+        } => import_png_imp(&png, &template, frame, &output),
         Command::ValidateImp(source) => validate_imp_archive(&source),
         Command::ViewImp {
             source,
@@ -414,6 +436,11 @@ fn run() -> Result<(), String> {
 fn parse_args() -> Result<Command, String> {
     let mut args: Vec<String> = env::args().skip(1).collect();
     let listfile = take_option(&mut args, "--listfile")?.map(PathBuf::from);
+    // Taken here with the other global options, but only ONE command honours it, so the command
+    // arm below must reject it everywhere else. A flag that is silently swallowed and discarded
+    // hands back a successful exit for a mode that never ran -- `--pbm-roundtrip X --rewrite` used
+    // to print a clean sweep and rewrite nothing.
+    let rewrite = take_flag(&mut args, "--rewrite")?;
     let executable = take_option(&mut args, "--exe")?.map(PathBuf::from);
     let expression = take_option(&mut args, "--eval")?;
     let reports = take_option(&mut args, "--reports")?.map(PathBuf::from);
@@ -444,6 +471,15 @@ fn parse_args() -> Result<Command, String> {
         .map(|specification| parse_native_stub(specification))
         .collect::<Result<Vec<_>, String>>()?;
     let first = args.first().ok_or_else(usage)?.as_str();
+    // `--rewrite` is taken with the global options above but honoured by exactly one command, so
+    // every other command must refuse it rather than swallow it. Silently discarding it returns a
+    // successful exit for a mode that never ran: `--pbm-roundtrip X --rewrite` printed a clean
+    // sweep and rewrote nothing.
+    if rewrite && first != "--imp-roundtrip" {
+        return Err(format!(
+            "--rewrite is only meaningful with --imp-roundtrip, not {first}"
+        ));
+    }
     match first {
         "--catalog" => {
             require_len(&args, 2)?;
@@ -703,12 +739,28 @@ fn parse_args() -> Result<Command, String> {
             require_len(&args, 2)?;
             Ok(Command::RoundtripPbm(source(&args[1], listfile)))
         }
+        "--imp-roundtrip" => {
+            require_len(&args, 2)?;
+            Ok(Command::RoundtripImp {
+                source: source(&args[1], listfile),
+                rewrite,
+            })
+        }
         "--import-png-pbm" => {
             require_len(&args, 4)?;
             Ok(Command::ImportPngPbm {
                 png: args[1].clone().into(),
                 template: args[2].clone().into(),
                 output: args[3].clone().into(),
+            })
+        }
+        "--import-png-imp" => {
+            require_len(&args, 5)?;
+            Ok(Command::ImportPngImp {
+                png: args[1].clone().into(),
+                template: args[2].clone().into(),
+                frame: parse_frame_index(&args[3])?,
+                output: args[4].clone().into(),
             })
         }
         "--export-pbm" => {
@@ -958,6 +1010,24 @@ fn parse_native_stub(specification: &str) -> Result<(String, GameScriptValue), S
     Ok((name.to_owned(), value))
 }
 
+/// Remove a valueless flag, refusing a repeat the way [`take_option`] refuses a repeated option.
+///
+/// A flag silently accepted twice is a flag whose second spelling was a typo nobody was told about.
+fn take_flag(args: &mut Vec<String>, flag: &str) -> Result<bool, String> {
+    let Some(position) = args.iter().position(|argument| argument == flag) else {
+        return Ok(false);
+    };
+    if args
+        .iter()
+        .skip(position + 1)
+        .any(|argument| argument == flag)
+    {
+        return Err(format!("{flag} may only be supplied once"));
+    }
+    args.remove(position);
+    Ok(true)
+}
+
 fn take_option(args: &mut Vec<String>, option: &str) -> Result<Option<String>, String> {
     let Some(position) = args.iter().position(|argument| argument == option) else {
         return Ok(None);
@@ -986,7 +1056,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --import-png-imp INPUT.png SOURCE.imp FRAME OUTPUT.imp\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --imp-roundtrip ARCHIVE.mpq [--listfile FILE] [--rewrite]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -1262,6 +1332,623 @@ fn roundtrip_pbm(source: &Source) -> Result<(), String> {
     Ok(())
 }
 
+/// Which of the several legal packed sizes a frame stored its pixels in.
+///
+/// This is the whole reason IMP re-encoding is not a matter of picking a layout. The variants are
+/// counted separately because [`Unobservable`](PackedSizeChoice::Unobservable) proves nothing: at
+/// 8bpp, and at any depth whose rows fill whole bytes, both layouts are the same length and the
+/// original's choice left no trace. Only the frames where the sizes differ are evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PackedSizeChoice {
+    /// The two layouts are the same *bytes*, not merely the same length, so there was never a
+    /// choice to record. Two independent ways to land here: a row's bits fill whole bytes, which is
+    /// always so at 8bpp; or the frame is a single row, where "restart each row on a byte boundary"
+    /// has nothing to restart.
+    Identical,
+    /// The two layouts are the same length and **different bytes**. The frame's stored size names
+    /// neither, and `unpack_pixels` resolves it as tight unconditionally -- so a frame the original
+    /// tool wrote row-padded at one of these shapes is being decoded wrong today, and no
+    /// round-trip can notice, because the re-encode reproduces whatever the decode produced.
+    AmbiguousLength,
+    /// One continuous bitstream, shorter than the row-padded form.
+    Tight,
+    /// Every scanline restarts on a byte boundary.
+    RowPadded,
+    /// The tight form with its final partial byte omitted; 1bpp only.
+    TightFloor,
+}
+
+impl PackedSizeChoice {
+    /// Names the layout a stored length implies, or `None` when it implies none.
+    ///
+    /// Order matters and is not arbitrary. `tight_ceil == row_padded` is the common case and is
+    /// reported *first*, because calling such a frame "tight" would claim evidence the frame does
+    /// not carry. That case then splits on whether the layouts are also the same bytes, which the
+    /// caller decides and passes in. Equal lengths alone do not settle it -- 7x5 at 1bpp is five
+    /// bytes under both layouts and five *different* bytes.
+    fn classify(packed_size: usize, sizes: PackedSizes, layouts_identical: bool) -> Option<Self> {
+        if packed_size == sizes.tight_ceil && packed_size == sizes.row_padded {
+            if layouts_identical {
+                Some(Self::Identical)
+            } else {
+                Some(Self::AmbiguousLength)
+            }
+        } else if packed_size == sizes.tight_ceil {
+            Some(Self::Tight)
+        } else if packed_size == sizes.row_padded {
+            Some(Self::RowPadded)
+        } else if packed_size == sizes.tight_floor {
+            Some(Self::TightFloor)
+        } else {
+            None
+        }
+    }
+
+    /// Every variant, so a report prints a zero rather than omitting the line. A missing row reads
+    /// as "not measured"; `frames=0` reads as "measured, none".
+    const ALL: [Self; 5] = [
+        Self::Identical,
+        Self::AmbiguousLength,
+        Self::Tight,
+        Self::RowPadded,
+        Self::TightFloor,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Identical => "identical-layouts",
+            Self::AmbiguousLength => "ambiguous-same-length",
+            Self::Tight => "tight",
+            Self::RowPadded => "row-padded",
+            Self::TightFloor => "tight-floor",
+        }
+    }
+}
+
+/// The two "this instrument could not have seen it" verdicts for one frame, as arithmetic with no
+/// archive in it.
+///
+/// Extracted from the sweep because the published bound -- 752 frames unobservable, and the gap
+/// evidence clearing **none** of them -- rests entirely on three numbers that a corpus run can only
+/// confirm in aggregate: the gating condition, the `2 * ceil(delta / MAX_RLE_REPEAT)` cost of an
+/// unread continuation, and the `< 8` comparison against the archive's payload alignment. A sweep
+/// over 41,373 real frames prints one total; it cannot say the `130` was right, because every frame
+/// in the corpus happens to land on the same side of that boundary. These are unit-testable only
+/// once they are a function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct LayoutObservability {
+    /// The decoder stopped short of a row-padded layout it could not have seen. See
+    /// [`imp::layout_is_unobservable`], which the writer reports on the same rule.
+    unobservable: bool,
+    /// Of those, the ones the payload-gap evidence cannot clear either.
+    ///
+    /// A row-padded frame read as tight leaves `row_padded - tight_ceil` packed bytes unconsumed.
+    /// Those bytes cost at least two stored bytes per RLE repeat packet, so at least
+    /// `2 * ceil(delta / MAX_RLE_REPEAT)` stored bytes. Where that minimum is 8 or more, a gap of 8
+    /// or more would have to exist between two payloads and none does -- the histogram tops out at
+    /// 7. Where it is under 8, the shortfall hides inside the archive's 8-byte payload alignment and
+    /// the gaps say nothing.
+    ///
+    /// **Implies `unobservable`.** A frame the decoder *could* have seen row-padded needs no
+    /// clearing, so this is a subset counter and never a second population; the sweep prints both
+    /// and they are equal over `imp.mpq`.
+    not_cleared_by_gaps: bool,
+}
+
+impl LayoutObservability {
+    /// The archive's payload alignment, and so the size of shortfall a gap could not distinguish
+    /// from ordinary padding. Named rather than inlined because it is the same 8 as
+    /// `imp::PAYLOAD_ALIGNMENT` and for the same reason, not a coincidence.
+    const GAP_RESOLUTION: usize = 8;
+
+    fn for_frame(
+        packed_size: usize,
+        sizes: PackedSizes,
+        record_variant: u8,
+        compressed: bool,
+    ) -> Self {
+        if !layout_is_unobservable(packed_size, sizes, record_variant, compressed) {
+            return Self::default();
+        }
+        let delta = sizes.row_padded - sizes.tight_ceil;
+        let minimum_extra = 2 * delta.div_ceil(MAX_RLE_REPEAT);
+        Self {
+            unobservable: true,
+            not_cleared_by_gaps: minimum_extra < Self::GAP_RESOLUTION,
+        }
+    }
+}
+
+/// Bucket a writer refusal by its cause, so the sweep reports a distribution rather than 40,000
+/// distinct strings.
+///
+/// Matching on message text is fragile, so an unrecognised message is reported as `other` rather
+/// than folded into a neighbour; a nonzero `other` is a signal that this list has fallen behind
+/// `write_frame_pixels`, not a rounding error.
+fn refusal_class(message: &str) -> &'static str {
+    if message.contains("is a duplicate of frame") {
+        "duplicate-record"
+    } else if message.contains("shares its pixels with") {
+        "shared-pixels"
+    } else if message.contains("zero-length payload") {
+        "zero-length-payload"
+    } else if message.contains("carries no pixel payload") {
+        "no-payload"
+    } else if message.contains("is empty") {
+        "empty-frame"
+    } else if message.contains("16-bit encoded size") {
+        "encoded-size-overflow"
+    } else if message.contains("reads back as") {
+        "does-not-read-back"
+    } else {
+        "other"
+    }
+}
+
+/// Frames checked, frames whose pixels survived, and frames whose bytes came back identical.
+#[derive(Debug, Clone, Copy, Default)]
+struct ImpRoundtripTally {
+    checked: usize,
+    pixel_lossless: usize,
+    byte_identical: usize,
+}
+
+impl ImpRoundtripTally {
+    fn record(&mut self, pixel_lossless: bool, byte_identical: bool) {
+        self.checked += 1;
+        self.pixel_lossless += usize::from(pixel_lossless);
+        self.byte_identical += usize::from(byte_identical);
+    }
+}
+
+/// Re-encode every frame of every IMP in an archive and report three numbers that must not be
+/// conflated.
+///
+/// **Pixel-lossless** is the correctness claim: `unpack(repack(unpack(x))) == unpack(x)`, checked
+/// by pushing the re-encoded payload back through [`read_frame_pixels`] — the parser's own code —
+/// rather than through a second decoder that could share this encoder's mistakes. Anything short of
+/// every frame is a bug here.
+///
+/// **Byte-identical** is a fidelity observation about the *original* packer, which nothing in this
+/// project has reverse-engineered. A miss means our packet boundaries or our padding bits differ
+/// from theirs, not that pixels were lost, so it is reported rather than failed.
+///
+/// **The packed-size distribution** is neither. It is the measurement that decides whether a frame
+/// replacement can preserve a frame's length at all: a frame stores its pixels tight or row-padded,
+/// the parser accepts both, and an encoder that chooses for itself silently resizes the frame.
+fn roundtrip_imp(source: &Source, rewrite: bool) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let mut members = 0_usize;
+    let mut duplicate_frames = 0_usize;
+    let mut empty_frames = 0_usize;
+    let mut their_pixel_bytes = 0_usize;
+    let mut our_pixel_bytes = 0_usize;
+    let mut total = ImpRoundtripTally::default();
+    let mut by_variant = BTreeMap::<u8, ImpRoundtripTally>::new();
+    let mut by_depth = BTreeMap::<u8, ImpRoundtripTally>::new();
+    let mut by_choice = BTreeMap::<PackedSizeChoice, ImpRoundtripTally>::new();
+    // How many frames the sweep could not have seen a row-padded layout on even if they had one,
+    // and how many of those the payload-gap evidence cannot clear either. The rule for both, and
+    // the reason neither covers the equal-length ambiguous frames, is on `LayoutObservability`.
+    let mut layout_unreachable = 0_usize;
+    let mut layout_unreachable_and_unclearable = 0_usize;
+    // Frames whose *shape* is ambiguous, which is not the same population as the
+    // `ambiguous-same-length` choice above and is printed so the difference can be read rather than
+    // guessed at. `layout_is_ambiguous` asks only about width, height and depth; the choice also
+    // requires the stored size to BE that common length, so an ambiguous-shaped 1bpp frame that
+    // dropped its final partial byte classifies as `tight-floor` while still being undecidable.
+    let mut layout_ambiguous_shape = 0_usize;
+    // The cross-check for that counter, and it deliberately does not share its mechanism.
+    //
+    // Payload spans are taken from the *file's own* pixel pointers, not from the decoder's stop
+    // rule. If a compressed variant-0 stream really stopped early -- read as tight when the frame
+    // was row-padded -- the span this sweep measured would fall short of where the next payload
+    // begins, and a gap would appear here. Payloads that abut exactly are evidence the decoder
+    // consumed the whole stream, arrived at independently.
+    let mut payload_pairs = 0_usize;
+    let mut payload_abutting = 0_usize;
+    let mut payload_gaps = 0_usize;
+    let mut payload_overlaps = 0_usize;
+    let mut payload_gap_sizes = BTreeMap::<usize, usize>::new();
+    // Every distinct payload start, and how many of them sit on an 8-byte boundary. This is the
+    // measurement `imp::PAYLOAD_ALIGNMENT` rests on; the gap histogram is consistent with it but
+    // does not state it, so it is counted directly rather than inferred from the gaps.
+    let mut payload_starts = 0_usize;
+    let mut payload_starts_aligned = 0_usize;
+    // Records carrying their own pixel pointer, counted BEFORE the distinct-offset dedup.
+    //
+    // `payload_starts` is a count of offsets and `frames` is a count of frames, and a report that
+    // pairs them is asserting they coincide. They need not: two ordinary records may point at one
+    // payload -- `ImpSprite::frames_sharing_pixels` exists precisely because they can -- and each
+    // such pair costs one start without costing a frame. So the coincidence is measured here rather
+    // than assumed, and the difference from `payload_starts` is the number of shared payloads.
+    // (Duplicate and shared-pixel records cannot contribute: the parser leaves their
+    // `pixels_offset` as `None`, so they are absent from both populations. A zero-by-zero frame
+    // does carry a pointer and so is counted here while `frames` skips it, which is why
+    // `empty-frames` is printed too; it is 0 in this archive.)
+    let mut payload_offset_records = 0_usize;
+    // The `--rewrite` tally: frames put back through the whole-file writer with their own
+    // unmodified pixels, and how many produced a byte-identical file.
+    let mut rewrite_attempted = 0_usize;
+    let mut rewrite_identical = 0_usize;
+    let mut rewrite_differs_by_payload = 0_usize;
+    let mut rewrite_refused = BTreeMap::<&'static str, usize>::new();
+    let mut rewrite_ambiguous = 0_usize;
+    // The writer's own report of the 752-frame class, counted here so the two flags it now returns
+    // are both measured over the corpus rather than only the smaller one.
+    let mut rewrite_unobservable = 0_usize;
+    let mut failures = Vec::new();
+    let mut differences = Vec::new();
+
+    for entry in &entries {
+        let bytes = match archive.read(&entry.name) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                failures.push(format!("{}: could not read: {error}", entry.name));
+                continue;
+            }
+        };
+        if !matches!(
+            probe(&entry.name, &bytes).map(|info| info.kind),
+            Ok(AssetKind::ImpSprite)
+        ) {
+            continue;
+        }
+        let sprite = match ImpSprite::parse(&bytes) {
+            Ok(sprite) => sprite,
+            Err(error) => {
+                failures.push(format!("{}: {error}", entry.name));
+                continue;
+            }
+        };
+        members += 1;
+
+        // Distinct payload starts only: shared-pixel records alias an earlier frame's bytes, and
+        // counting an alias as a second payload would manufacture an overlap.
+        let mut spans = BTreeMap::<usize, usize>::new();
+        for frame in &sprite.frames {
+            if let (Some(offset), Some(size)) = (frame.pixels_offset, frame.stored_size) {
+                let span = spans.entry(offset).or_insert(size);
+                *span = (*span).max(size);
+            }
+        }
+        let starts: Vec<(usize, usize)> = spans.into_iter().collect();
+        payload_starts += starts.len();
+        payload_offset_records += sprite
+            .frames
+            .iter()
+            .filter(|frame| frame.pixels_offset.is_some())
+            .count();
+        payload_starts_aligned += starts.iter().filter(|(offset, _)| offset % 8 == 0).count();
+        for pair in starts.windows(2) {
+            let [(offset, size), (next_offset, _)] = pair else {
+                continue;
+            };
+            payload_pairs += 1;
+            match (offset + size).cmp(next_offset) {
+                std::cmp::Ordering::Equal => payload_abutting += 1,
+                std::cmp::Ordering::Less => {
+                    payload_gaps += 1;
+                    *payload_gap_sizes
+                        .entry(next_offset - (offset + size))
+                        .or_default() += 1;
+                }
+                std::cmp::Ordering::Greater => payload_overlaps += 1,
+            }
+        }
+
+        for (index, frame) in sprite.frames.iter().enumerate() {
+            // Duplicate and shared-pixel records carry no payload of their own; re-encoding one
+            // would be re-encoding whichever frame it points at, counted twice.
+            let (Some(packed_size), Some(pixels_offset), Some(stored_size)) =
+                (frame.packed_size, frame.pixels_offset, frame.stored_size)
+            else {
+                duplicate_frames += 1;
+                continue;
+            };
+            if frame.width == 0 || frame.height == 0 {
+                empty_frames += 1;
+                continue;
+            }
+
+            let sizes =
+                match PackedSizes::for_frame(frame.width, frame.height, sprite.bits_per_pixel) {
+                    Ok(sizes) => sizes,
+                    Err(error) => {
+                        failures.push(format!("{} frame {index}: {error}", entry.name));
+                        continue;
+                    }
+                };
+            let layouts_identical =
+                layouts_are_identical(frame.width, frame.height, sprite.bits_per_pixel);
+            let observability = LayoutObservability::for_frame(
+                packed_size,
+                sizes,
+                sprite.record_variant,
+                sprite.compressed,
+            );
+            if observability.unobservable {
+                layout_unreachable += 1;
+            }
+            if observability.not_cleared_by_gaps {
+                layout_unreachable_and_unclearable += 1;
+            }
+            match imp::layout_is_ambiguous(frame.width, frame.height, sprite.bits_per_pixel) {
+                Ok(true) => layout_ambiguous_shape += 1,
+                Ok(false) => {}
+                Err(error) => failures.push(format!("{} frame {index}: {error}", entry.name)),
+            }
+            let Some(choice) = PackedSizeChoice::classify(packed_size, sizes, layouts_identical)
+            else {
+                failures.push(format!(
+                    "{} frame {index}: stored packed size {packed_size} matches none of {sizes:?}",
+                    entry.name
+                ));
+                continue;
+            };
+
+            let packed = match pack_pixels(
+                &frame.palette_indices,
+                frame.width,
+                frame.height,
+                sprite.bits_per_pixel,
+                packed_size,
+            ) {
+                Ok(packed) => packed,
+                Err(error) => {
+                    failures.push(format!(
+                        "{} frame {index}: could not pack: {error}",
+                        entry.name
+                    ));
+                    continue;
+                }
+            };
+            let payload = if sprite.compressed {
+                encode_rle(&packed)
+            } else {
+                packed
+            };
+
+            // Read our own payload back with the parser's code, standing where the file's pixel
+            // pointer would stand. This is what catches a `record_variant == 0` stream that halts
+            // on the tight size when the frame is row-padded: the pixels come back rearranged
+            // rather than merely differently packed.
+            let reread = read_frame_pixels(
+                &payload,
+                0,
+                frame.width,
+                frame.height,
+                sprite.bits_per_pixel,
+                sprite.compressed,
+                sprite.record_variant,
+                payload.len(),
+            );
+            let (repacked, consumed) = match reread {
+                Ok(result) => result,
+                Err(error) => {
+                    failures.push(format!(
+                        "{} frame {index}: re-encoded payload does not decode: {error}",
+                        entry.name
+                    ));
+                    continue;
+                }
+            };
+            if consumed != payload.len() {
+                failures.push(format!(
+                    "{} frame {index}: re-encoded payload is {} bytes but the parser stops after {consumed}",
+                    entry.name,
+                    payload.len()
+                ));
+                continue;
+            }
+            if repacked.len() != packed_size {
+                failures.push(format!(
+                    "{} frame {index}: re-encoded payload decodes to {} packed bytes, not {packed_size}",
+                    entry.name,
+                    repacked.len()
+                ));
+                continue;
+            }
+            let indices =
+                match unpack_pixels(&repacked, frame.width, frame.height, sprite.bits_per_pixel) {
+                    Ok(indices) => indices,
+                    Err(error) => {
+                        failures.push(format!(
+                            "{} frame {index}: could not unpack: {error}",
+                            entry.name
+                        ));
+                        continue;
+                    }
+                };
+
+            let pixel_lossless = indices == frame.palette_indices;
+            let theirs = bytes
+                .get(pixels_offset..pixels_offset + stored_size)
+                .unwrap_or_default();
+            let byte_identical = theirs == payload.as_slice();
+            their_pixel_bytes += stored_size;
+            our_pixel_bytes += payload.len();
+            total.record(pixel_lossless, byte_identical);
+            by_variant
+                .entry(sprite.record_variant)
+                .or_default()
+                .record(pixel_lossless, byte_identical);
+            by_depth
+                .entry(sprite.bits_per_pixel)
+                .or_default()
+                .record(pixel_lossless, byte_identical);
+            by_choice
+                .entry(choice)
+                .or_default()
+                .record(pixel_lossless, byte_identical);
+
+            if !pixel_lossless {
+                let at = indices
+                    .iter()
+                    .zip(&frame.palette_indices)
+                    .position(|(wrote, read)| wrote != read);
+                failures.push(format!(
+                    "{} frame {index}: pixels changed (first differing pixel {at:?})",
+                    entry.name
+                ));
+            } else if !byte_identical && differences.len() < 10 {
+                let at = theirs
+                    .iter()
+                    .zip(&payload)
+                    .position(|(read, wrote)| read != wrote)
+                    .unwrap_or_else(|| theirs.len().min(payload.len()));
+                differences.push(format!(
+                    "{} frame {index}\t{}x{}\t{}bpp\tvariant={}\t{}\tfirst-differing-byte={at}\ttheirs={}\tours={}\ttheir-bytes={stored_size}\tour-bytes={}",
+                    entry.name,
+                    frame.width,
+                    frame.height,
+                    sprite.bits_per_pixel,
+                    sprite.record_variant,
+                    choice.label(),
+                    describe_byte(theirs, at),
+                    describe_byte(&payload, at),
+                    payload.len(),
+                ));
+            }
+
+            if !rewrite {
+                continue;
+            }
+            // The acceptance test that matters: put the frame back with its OWN pixels through the
+            // whole-file writer and require the file to come back unchanged. Nothing synthetic
+            // reaches this bar -- it exercises every record, every pointer and every uninitialised
+            // leftover byte in 1,800 real files at once.
+            match write_frame_pixels(&bytes, index, &frame.palette_indices) {
+                Ok(write) => {
+                    rewrite_attempted += 1;
+                    if write.layout_ambiguous {
+                        rewrite_ambiguous += 1;
+                    }
+                    if write.layout_unobservable {
+                        rewrite_unobservable += 1;
+                    }
+                    if write.bytes == bytes {
+                        rewrite_identical += 1;
+                    } else if !byte_identical {
+                        // Expected, and it is the *payload* that differs, not the rewrite: this
+                        // frame is already one of the `byte-differences` above, where our RLE packet
+                        // boundaries differ from the original packer's. A whole-file rewrite cannot
+                        // be more faithful than the payload it splices in.
+                        rewrite_differs_by_payload += 1;
+                    } else {
+                        // A frame whose payload re-encodes to the original bytes and whose file
+                        // still changed is a defect in the *writer*: the pointer rewriting, the
+                        // alignment padding, or the byte-for-byte preservation. Nothing else is
+                        // left to blame, which is what makes this a sharp gate.
+                        failures.push(format!(
+                            "{} frame {index}: identity rewrite changed the file although its payload is byte-identical (shift={}, stored {}->{}, padding={})",
+                            entry.name,
+                            write.shift,
+                            write.stored_size.0,
+                            write.stored_size.1,
+                            write.alignment_padding,
+                        ));
+                    }
+                }
+                Err(error) => {
+                    *rewrite_refused
+                        .entry(refusal_class(&error.to_string()))
+                        .or_default() += 1;
+                }
+            }
+        }
+    }
+
+    println!("members\t{members}");
+    println!("frames\t{}", total.checked);
+    println!("duplicate-frames\t{duplicate_frames}");
+    println!("empty-frames\t{empty_frames}");
+    println!("pixel-lossless\t{}", total.pixel_lossless);
+    println!("byte-identical\t{}", total.byte_identical);
+    println!("their-pixel-bytes\t{their_pixel_bytes}");
+    println!("our-pixel-bytes\t{our_pixel_bytes}");
+    for choice in PackedSizeChoice::ALL {
+        let tally = by_choice.get(&choice).copied().unwrap_or_default();
+        println!(
+            "packed-size\t{}\tframes={}\tpixel-lossless={}\tbyte-identical={}",
+            choice.label(),
+            tally.checked,
+            tally.pixel_lossless,
+            tally.byte_identical,
+        );
+    }
+    println!("layout-ambiguous-shape\t{layout_ambiguous_shape}");
+    println!("layout-unobservable-by-this-decoder\t{layout_unreachable}");
+    println!("layout-unobservable-and-not-cleared-by-gaps\t{layout_unreachable_and_unclearable}");
+    println!("payload-offset-records\t{payload_offset_records}");
+    println!("payload-starts\t{payload_starts}");
+    println!(
+        "payload-shared-by-two-records\t{}",
+        payload_offset_records - payload_starts
+    );
+    println!("payload-starts-8-byte-aligned\t{payload_starts_aligned}");
+    println!("payload-adjacent-pairs\t{payload_pairs}");
+    println!("payload-abutting\t{payload_abutting}");
+    println!("payload-gaps\t{payload_gaps}");
+    println!("payload-overlaps\t{payload_overlaps}");
+    let mut ranked: Vec<(usize, usize)> = payload_gap_sizes
+        .iter()
+        .map(|(size, count)| (*count, *size))
+        .collect();
+    ranked.sort_unstable_by(|left, right| right.cmp(left));
+    println!("payload-gap-distinct-sizes\t{}", ranked.len());
+    for (count, size) in ranked.iter().take(8) {
+        println!("payload-gap\t{size}\tpairs={count}");
+    }
+    for (variant, tally) in &by_variant {
+        println!(
+            "variant\t{variant}\tframes={}\tpixel-lossless={}\tbyte-identical={}",
+            tally.checked, tally.pixel_lossless, tally.byte_identical,
+        );
+    }
+    for (depth, tally) in &by_depth {
+        println!(
+            "bpp\t{depth}\tframes={}\tpixel-lossless={}\tbyte-identical={}",
+            tally.checked, tally.pixel_lossless, tally.byte_identical,
+        );
+    }
+    if rewrite {
+        println!("rewrite-attempted\t{rewrite_attempted}");
+        println!("rewrite-byte-identical\t{rewrite_identical}");
+        println!("rewrite-differs-only-by-payload\t{rewrite_differs_by_payload}");
+        println!("rewrite-ambiguous-layout\t{rewrite_ambiguous}");
+        println!("rewrite-unobservable-layout\t{rewrite_unobservable}");
+        println!(
+            "rewrite-refused\t{}",
+            rewrite_refused.values().sum::<usize>()
+        );
+        for (reason, count) in &rewrite_refused {
+            println!("rewrite-refusal\t{reason}\tframes={count}");
+        }
+    }
+    println!("byte-differences\t{}", total.checked - total.byte_identical);
+    for difference in &differences {
+        println!("difference\t{}", clean_field(difference));
+    }
+    println!("failures\t{}", failures.len());
+    for failure in failures.iter().take(50) {
+        println!("failure\t{}", clean_field(failure));
+    }
+
+    if !failures.is_empty() {
+        return Err(format!("{} IMP frames did not round-trip", failures.len()));
+    }
+    // Zero frames checked is not a pass: a mistyped archive would otherwise print a green report
+    // about nothing.
+    if total.checked == 0 {
+        return Err(format!(
+            "no IMP frames were checked in {}",
+            source.archive.display()
+        ));
+    }
+    Ok(())
+}
+
 /// Every chunk a re-encode must hand back untouched: `BODY` is the only one it
 /// is allowed to rewrite.
 fn chunks_other_than_body(file: &PbmFile) -> Vec<&PbmChunk> {
@@ -1328,6 +2015,7 @@ fn import_png_pbm(png_path: &Path, template_path: &Path, output: &Path) -> Resul
     let png = read_indexed_png(
         BufReader::new(png_file),
         (template.image.width, template.image.height),
+        "the PBM header",
     )
     .map_err(|error| {
         format!(
@@ -1390,6 +2078,141 @@ fn import_png_pbm(png_path: &Path, template_path: &Path, output: &Path) -> Resul
         written.image.palette_entries,
         written.chunks.len(),
     );
+    Ok(())
+}
+
+/// Write an edited indexed PNG back over one frame of an `.imp`.
+///
+/// The palette, every table, every record and every byte the decoder does not model come from
+/// `template`, which is normally the file the PNG was exported from with `--export-imp-frame`. Only
+/// one frame's pixels come from the PNG, and the PNG's own palette is checked against the
+/// template's rather than adopted, because the indices are meaningless under a different palette.
+///
+/// The refusals -- duplicate records, shared payloads, and anything that will not read back -- are
+/// [`write_frame_pixels`]'s, and the reason each one exists is documented there.
+fn import_png_imp(
+    png_path: &Path,
+    template_path: &Path,
+    frame_index: usize,
+    output: &Path,
+) -> Result<(), String> {
+    for existing in [png_path, template_path] {
+        if paths_are_same_file(existing, output) {
+            return Err(format!(
+                "refusing to write to the input file {}; pass a different output path",
+                existing.display()
+            ));
+        }
+    }
+
+    let template_bytes = fs::read(template_path)
+        .map_err(|error| format!("could not read {}: {error}", template_path.display()))?;
+    let sprite = ImpSprite::parse(&template_bytes).map_err(|error| error.to_string())?;
+    // Ask the writer whether this frame is writable **before** the PNG is opened. The frame's
+    // dimensions are taken from the record, and a `0x08` duplicate or `0x04` shared-pixel record
+    // carries `0x0` there -- 10,293 of them in `imp.mpq`, and `--export-imp-frame` exports them
+    // happily by resolving to the frame that owns the payload. Sizing the PNG check off the
+    // unresolved record made the re-import of an exported frame fail with "PNG is 24x1 but the
+    // template is 0x0", which names the wrong dimensions and says nothing about which frame to edit
+    // instead. `frame_pixel_target` returns the refusal that does.
+    frame_pixel_target(&sprite, frame_index).map_err(|error| error.to_string())?;
+    let frame = sprite
+        .frames
+        .get(frame_index)
+        .ok_or_else(|| format!("IMP frame index {frame_index} is out of range"))?;
+
+    let png_file = fs::File::open(png_path)
+        .map_err(|error| format!("could not read {}: {error}", png_path.display()))?;
+    // The frame's size is handed to the reader rather than checked after it, so a mismatched header
+    // is refused before it can size a decode buffer.
+    let png = read_indexed_png(
+        BufReader::new(png_file),
+        (frame.width, frame.height),
+        "the IMP frame record",
+    )
+    .map_err(
+        |error| {
+            format!(
+                "{}: {error} (template {} frame {frame_index})",
+                png_path.display(),
+                template_path.display()
+            )
+        },
+    )?;
+
+    // No "too many palette entries" check, unlike the PBM import: an IMP's palette is always
+    // exactly 256 entries -- `ImpSprite::parse` reads a fixed 1,024-byte block -- and 256 is also
+    // the most a PNG PLTE can hold, so the comparison could never fail. A guard that cannot fire is
+    // a guard the next reader will trust for something it does not do.
+    //
+    // A PNG whose palette was merely trimmed to the entries it uses is fine; a PNG whose colours
+    // were *remapped* is not, because the written file keeps the template's palette and every index
+    // would then mean a different colour.
+    if let Some((index, _)) = png
+        .palette
+        .iter()
+        .zip(&sprite.palette)
+        .enumerate()
+        .find(|(_, (edited, original))| *edited != &[original[0], original[1], original[2]])
+    {
+        return Err(format!(
+            "{} changed palette entry {index}; the IMP keeps {}'s palette, so re-export and edit \
+             only the pixels",
+            png_path.display(),
+            template_path.display(),
+        ));
+    }
+
+    let write = write_frame_pixels(&template_bytes, frame_index, &png.indices)
+        .map_err(|error| error.to_string())?;
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    file.write_all(&write.bytes)
+        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+    println!(
+        "wrote\t{}\t{}\tframe={frame_index}\t{}x{}\t{}bpp\tlayout={:?}\tstored={}->{}\tpadding={}\tshift={}\toffsets-rewritten={}",
+        output.display(),
+        write.bytes.len(),
+        frame.width,
+        frame.height,
+        sprite.bits_per_pixel,
+        write.layout,
+        write.stored_size.0,
+        write.stored_size.1,
+        write.alignment_padding,
+        write.shift,
+        write.rewritten_offsets,
+    );
+    if write.layout_ambiguous {
+        // Not a refusal: the file round-trips through this decoder either way. It is a warning
+        // because the *engine* may read these bytes row-padded, in which case the pixels exported
+        // to the PNG were already scrambled and the edit was made on scrambled art.
+        println!(
+            "warning\tframe {frame_index} is {}x{} at {}bpp, a shape where the tight and row-padded layouts are the same length and different bytes; the stored size names neither and this decoder reads it as tight",
+            frame.width, frame.height, sprite.bits_per_pixel,
+        );
+    }
+    if write.layout_unobservable {
+        // The larger sibling of the warning above, and printed in the same shape rather than folded
+        // into it. Here the file *does* record the layout; this decoder's variant-0 reader stops at
+        // the first acceptable length on a packet boundary and so could not have seen a row-padded
+        // one. 752 frames in `imp.mpq` are in this class against 45 in the ambiguous one, and
+        // `layout=Tight` above is printed as fact for every one of them.
+        //
+        // Not a refusal, for the same reason: the file round-trips through this decoder either way,
+        // and refusing would block the 752 from being edited at all on a suspicion no measurement
+        // here can settle. What it must not do is stay silent -- if the frame was stored
+        // row-padded, the exported pixels were already scrambled, and this import splices a tight
+        // payload over only the prefix the reader consumed, stranding the original tail.
+        println!(
+            "warning\tframe {frame_index} is a compressed record-variant-0 frame whose stored size is not the row-padded one, so this decoder's reader stopped before it could observe row padding; layout={:?} is what was read, not what the file necessarily stores",
+            write.layout,
+        );
+    }
     Ok(())
 }
 
@@ -5268,10 +6091,12 @@ fn gameplay_symbols_like(pattern: &str, reports: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        GENERATED_HEADER_WORD, GameScriptValue, MapEdit, TRANSITION_RING_OFFSETS, create_map,
-        edit_map, import_png_pbm, parse_coordinate, parse_dimension, parse_elevation,
-        parse_native_stub, parse_offset, parse_sprite_type, parse_terrain_type, roundtrip_maps,
-        set_imp_placement, sprite_types, terrain_sprite_name, transition_rings,
+        GENERATED_HEADER_WORD, GameScriptValue, LayoutObservability, MapEdit, PackedSizeChoice,
+        TRANSITION_RING_OFFSETS,
+        create_map, edit_map, import_png_imp, import_png_pbm, parse_coordinate, parse_dimension,
+        parse_elevation, parse_native_stub, parse_offset, parse_sprite_type, parse_terrain_type,
+        refusal_class, roundtrip_maps, set_imp_placement, sprite_types, terrain_sprite_name,
+        transition_rings,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
@@ -5280,12 +6105,13 @@ mod tests {
 
     use lom_asset_viewer::imp::{
         ImpDisagreement, ImpExceptionClass, ImpFacing, ImpFrame, ImpOrphanFacts, ImpOrphanNote,
-        ImpSequence, ImpSprite, ImpStatistic, ImpValidationException,
+        ImpSequence, ImpSprite, ImpStatistic, ImpValidationException, PackedSizes,
+        write_frame_pixels,
     };
     use lom_asset_viewer::map::{MapAsset, MapCell};
     use lom_asset_viewer::pbm::PbmFile;
     use lom_asset_viewer::pbm::PbmImage;
-    use lom_asset_viewer::png_export::write_pbm_png;
+    use lom_asset_viewer::png_export::{write_imp_frame_png, write_pbm_png};
     use lom_asset_viewer::tile::{TileDefinition, TileSelector, TileSetDefinition};
 
     use super::{
@@ -5996,6 +6822,237 @@ mod tests {
 
     /// A minimal single-frame IMP with an origin pair, built here because the library's own
     /// fixture is `#[cfg(test)]` inside the library crate and so is not visible to this binary.
+    /// `refusal_class` buckets a writer refusal by matching its message text, which is exactly the
+    /// kind of coupling that rots silently: the writer rewords an error, the sweep quietly files it
+    /// under `other`, and a report that used to say "3,439 frames share their pixels" starts saying
+    /// nothing in particular.
+    ///
+    /// So the cases are driven by **errors `write_frame_pixels` actually produced**, not by literal
+    /// strings copied out of it. A reworded message fails here rather than degrading a report.
+    #[test]
+    fn every_writer_refusal_lands_in_a_named_bucket() {
+        // A two-frame file whose second record is a `0x08` back-reference to the first.
+        let mut duplicated = minimal_imp();
+        duplicated.splice(72..72, [0_u8; 16]);
+        duplicated[8..12].copy_from_slice(&88_u32.to_le_bytes());
+        duplicated[48 + 2..48 + 4].copy_from_slice(&2_u16.to_le_bytes());
+        duplicated[56 + 12..56 + 16].copy_from_slice(&1112_u32.to_le_bytes());
+        duplicated[72] = 0x08;
+
+        // A 1x1 frame at 1bpp declaring a zero-byte payload, which is legal.
+        let mut zero_length = minimal_imp();
+        zero_length[0] = 0x10;
+        zero_length[4..6].copy_from_slice(&1_u16.to_le_bytes());
+        zero_length[56 + 2..56 + 4].copy_from_slice(&1_u16.to_le_bytes());
+        zero_length[56 + 6..56 + 8].copy_from_slice(&0_u16.to_le_bytes());
+
+        // A record declaring 0x0.
+        let mut empty = minimal_imp();
+        empty[56 + 2..56 + 4].copy_from_slice(&0_u16.to_le_bytes());
+        empty[56 + 4..56 + 6].copy_from_slice(&0_u16.to_le_bytes());
+        empty[56 + 6..56 + 8].copy_from_slice(&0_u16.to_le_bytes());
+
+        // A 17x4 1bpp `record_variant == 0` frame stored as one 12-byte literal packet, so the
+        // parser reads it row-padded. A replacement whose first packet lands on nine packed bytes
+        // stops the parser early, and the writer refuses it.
+        let mut stops_early = vec![0_u8; 72 + 1024];
+        stops_early[0] = 0x01 | 0x10; // compressed, 1bpp
+        stops_early[4..6].copy_from_slice(&17_u16.to_le_bytes());
+        stops_early[6..8].copy_from_slice(&4_u16.to_le_bytes());
+        stops_early[8..12].copy_from_slice(&72_u32.to_le_bytes());
+        stops_early[26..28].copy_from_slice(&1_u16.to_le_bytes());
+        stops_early[28..32].copy_from_slice(&32_u32.to_le_bytes());
+        stops_early[32 + 11] = 1;
+        stops_early[32 + 12..32 + 16].copy_from_slice(&48_u32.to_le_bytes());
+        stops_early[48 + 2..48 + 4].copy_from_slice(&1_u16.to_le_bytes());
+        stops_early[48 + 4..48 + 8].copy_from_slice(&56_u32.to_le_bytes());
+        stops_early[56 + 2..56 + 4].copy_from_slice(&17_u16.to_le_bytes());
+        stops_early[56 + 4..56 + 6].copy_from_slice(&4_u16.to_le_bytes());
+        stops_early[56 + 12..56 + 16].copy_from_slice(&(72_u32 + 1024).to_le_bytes());
+        stops_early.push(0xf4);
+        stops_early.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        let blank_then_full: Vec<u8> = std::iter::repeat_n(0_u8, 51)
+            .chain(std::iter::repeat_n(1_u8, 17))
+            .collect();
+
+        let cases: [(&str, Vec<u8>, usize, Vec<u8>); 6] = [
+            ("shared-pixels", duplicated.clone(), 0, vec![1, 2]),
+            ("duplicate-record", duplicated, 1, vec![1, 2]),
+            ("zero-length-payload", zero_length, 0, vec![1]),
+            ("empty-frame", empty, 0, Vec::new()),
+            ("does-not-read-back", stops_early, 0, blank_then_full),
+            ("other", minimal_imp(), 9, vec![1, 2]),
+        ];
+        for (bucket, source, frame, pixels) in cases {
+            let message = write_frame_pixels(&source, frame, &pixels)
+                .expect_err(bucket)
+                .to_string();
+            assert_eq!(refusal_class(&message), bucket, "{message}");
+        }
+    }
+
+    /// Export a frame and import it straight back: the file must come back byte for byte, which is
+    /// the same acceptance property `--imp-roundtrip --rewrite` measures over the whole archive.
+    #[test]
+    fn import_png_imp_round_trips_an_exported_frame() {
+        let dir = scratch_dir("imp-import");
+        let template = dir.join("source.imp");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.imp");
+        fs::write(&template, minimal_imp()).unwrap();
+        let sprite = ImpSprite::parse(&minimal_imp()).unwrap();
+        let mut encoded = Vec::new();
+        write_imp_frame_png(&mut encoded, &sprite, 0).unwrap();
+        fs::write(&png, &encoded).unwrap();
+
+        import_png_imp(&png, &template, 0, &output).unwrap();
+
+        assert_eq!(fs::read(&output).unwrap(), minimal_imp());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Only the named frame's pixels come from the PNG. Everything else -- palette, records, the
+    /// bytes the decoder does not model -- comes from the template.
+    #[test]
+    fn import_png_imp_replaces_only_the_named_frames_pixels() {
+        let dir = scratch_dir("imp-import-pixels");
+        let template = dir.join("source.imp");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.imp");
+        fs::write(&template, minimal_imp()).unwrap();
+        let sprite = ImpSprite::parse(&minimal_imp()).unwrap();
+        let palette: Vec<[u8; 3]> = sprite
+            .palette
+            .iter()
+            .map(|entry| [entry[0], entry[1], entry[2]])
+            .collect();
+        let mut encoded = Vec::new();
+        write_indexed_png_for_test(&mut encoded, 2, 1, &palette, &[0x11, 0x22]);
+        fs::write(&png, &encoded).unwrap();
+
+        import_png_imp(&png, &template, 0, &output).unwrap();
+
+        let written = fs::read(&output).unwrap();
+        assert_eq!(written.len(), minimal_imp().len());
+        assert_eq!(
+            ImpSprite::parse(&written).unwrap().frames[0].palette_indices,
+            [0x11, 0x22]
+        );
+        // Only the two payload bytes at the end of the file changed.
+        assert_eq!(
+            &written[..written.len() - 2],
+            &minimal_imp()[..written.len() - 2]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The PNG's size is checked against the *frame*, not the file, and it is checked from the
+    /// header before a decode buffer is sized. A frame-sized mismatch is the common editing
+    /// mistake, so the message has to name both sizes.
+    #[test]
+    fn import_png_imp_refuses_a_png_of_the_wrong_size() {
+        let dir = scratch_dir("imp-import-size");
+        let template = dir.join("source.imp");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.imp");
+        fs::write(&template, minimal_imp()).unwrap();
+        let palette = vec![[0_u8, 0, 0]; 256];
+        let mut encoded = Vec::new();
+        write_indexed_png_for_test(&mut encoded, 3, 1, &palette, &[0, 1, 2]);
+        fs::write(&png, &encoded).unwrap();
+
+        let error = import_png_imp(&png, &template, 0, &output).unwrap_err();
+
+        assert!(error.contains("PNG is 3x1"), "{error}");
+        assert!(!output.exists(), "nothing may be written on a refusal");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The written file keeps the template's palette, so a PNG whose colours were remapped would
+    /// silently mean different colours under the same indices.
+    #[test]
+    fn import_png_imp_refuses_a_remapped_palette() {
+        let dir = scratch_dir("imp-import-palette");
+        let template = dir.join("source.imp");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.imp");
+        fs::write(&template, minimal_imp()).unwrap();
+        let mut palette = vec![[0_u8, 0, 0]; 256];
+        // The template's entry 0 decodes to [2, 1, 3]; claim something else.
+        palette[0] = [9, 9, 9];
+        let mut encoded = Vec::new();
+        write_indexed_png_for_test(&mut encoded, 2, 1, &palette, &[0, 1]);
+        fs::write(&png, &encoded).unwrap();
+
+        let error = import_png_imp(&png, &template, 0, &output).unwrap_err();
+
+        assert!(error.contains("changed palette entry 0"), "{error}");
+        assert!(!output.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Writing the edit back over its own template would destroy the only copy of the art. The
+    /// `create_new` open would refuse it too, but with "file exists", which reads like a stale
+    /// leftover rather than the mistake it is.
+    #[test]
+    fn import_png_imp_refuses_to_write_over_its_own_input() {
+        let dir = scratch_dir("imp-import-selfwrite");
+        let template = dir.join("source.imp");
+        let png = dir.join("edited.png");
+        fs::write(&template, minimal_imp()).unwrap();
+        let sprite = ImpSprite::parse(&minimal_imp()).unwrap();
+        let mut encoded = Vec::new();
+        write_imp_frame_png(&mut encoded, &sprite, 0).unwrap();
+        fs::write(&png, &encoded).unwrap();
+
+        for output in [&template, &png] {
+            let error = import_png_imp(&png, &template, 0, output).unwrap_err();
+            assert!(
+                error.contains("refusing to write to the input file"),
+                "{error}"
+            );
+        }
+        assert_eq!(fs::read(&template).unwrap(), minimal_imp());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_png_imp_refuses_to_overwrite_an_existing_output() {
+        let dir = scratch_dir("imp-import-overwrite");
+        let template = dir.join("source.imp");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.imp");
+        fs::write(&template, minimal_imp()).unwrap();
+        let sprite = ImpSprite::parse(&minimal_imp()).unwrap();
+        let mut encoded = Vec::new();
+        write_imp_frame_png(&mut encoded, &sprite, 0).unwrap();
+        fs::write(&png, &encoded).unwrap();
+        fs::write(&output, b"do not clobber me").unwrap();
+
+        let error = import_png_imp(&png, &template, 0, &output).unwrap_err();
+
+        assert!(error.contains("could not create"), "{error}");
+        assert_eq!(fs::read(&output).unwrap(), b"do not clobber me");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Encodes an indexed PNG directly, so a test can build files the exporter would refuse.
+    fn write_indexed_png_for_test(
+        into: &mut Vec<u8>,
+        width: u32,
+        height: u32,
+        palette: &[[u8; 3]],
+        indices: &[u8],
+    ) {
+        let bytes: Vec<u8> = palette.iter().flatten().copied().collect();
+        let mut encoder = png::Encoder::new(into, width, height);
+        encoder.set_color(png::ColorType::Indexed);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_palette(bytes);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(indices).unwrap();
+    }
+
     fn minimal_imp() -> Vec<u8> {
         const PALETTE_BYTES: usize = 256 * 4;
         let mut source = vec![0_u8; 32 + 16 + 8 + 16];
@@ -6019,6 +7076,98 @@ mod tests {
         source[palette_offset..palette_offset + 4].copy_from_slice(&[3, 2, 1, 0]);
         source.extend_from_slice(&[0xaa, 0xbb]);
         source
+    }
+
+    /// `minimal_imp` with a second frame that is a `0x08` back-reference to the first.
+    ///
+    /// The class that matters here: 10,293 of `imp.mpq`'s 51,666 frame records carry no payload of
+    /// their own, and the parser leaves their width and height at zero because the record does.
+    fn minimal_imp_with_a_duplicate_frame() -> Vec<u8> {
+        const PALETTE_BYTES: usize = 256 * 4;
+        const FRAME_FLAG_DUPLICATE: u8 = 0x08;
+        let mut source = vec![0_u8; 32 + 16 + 8 + 16 * 2];
+        source[2] = 1;
+        source[4..6].copy_from_slice(&2_u16.to_le_bytes());
+        source[6..8].copy_from_slice(&1_u16.to_le_bytes());
+        let palette_offset = source.len();
+        source[8..12].copy_from_slice(&(palette_offset as u32).to_le_bytes());
+        source[26..28].copy_from_slice(&1_u16.to_le_bytes());
+        source[28..32].copy_from_slice(&32_u32.to_le_bytes());
+        source[32 + 11] = 1;
+        source[32 + 12..32 + 16].copy_from_slice(&48_u32.to_le_bytes());
+        source[48 + 2..48 + 4].copy_from_slice(&2_u16.to_le_bytes());
+        source[48 + 4..48 + 8].copy_from_slice(&56_u32.to_le_bytes());
+        source[56 + 2..56 + 4].copy_from_slice(&2_u16.to_le_bytes());
+        source[56 + 4..56 + 6].copy_from_slice(&1_u16.to_le_bytes());
+        source[56 + 6..56 + 8].copy_from_slice(&2_u16.to_le_bytes());
+        let pixel_offset = palette_offset + PALETTE_BYTES;
+        source[56 + 12..56 + 16].copy_from_slice(&(pixel_offset as u32).to_le_bytes());
+        // Frame 1: a back-reference, whose pixel dword is the frame *index* 0, not an offset.
+        source[72] = FRAME_FLAG_DUPLICATE;
+        source.resize(pixel_offset, 0);
+        source[palette_offset..palette_offset + 4].copy_from_slice(&[3, 2, 1, 0]);
+        source.extend_from_slice(&[0xaa, 0xbb]);
+        source
+    }
+
+    /// Export resolves a duplicate record to the frame that owns the pixels; import must refuse it
+    /// by name rather than by its unresolved `0x0` dimensions.
+    ///
+    /// The bug this pins: the import took the PNG's expected size from `sprite.frames[i]` straight,
+    /// which is `0x0` for the 10,293 records that store no pixels, so the round trip of an exported
+    /// frame died inside the PNG reader with "PNG is 2x1 but the template is 0x0" -- the wrong
+    /// dimensions, a message about the PBM header on an IMP path, and no hint that the fix is to
+    /// edit frame 0 instead.
+    #[test]
+    fn import_png_imp_names_the_frame_that_owns_the_pixels_rather_than_its_zero_size() {
+        let dir = scratch_dir("imp-import-duplicate");
+        let template = dir.join("source.imp");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.imp");
+        let bytes = minimal_imp_with_a_duplicate_frame();
+        fs::write(&template, &bytes).unwrap();
+        let sprite = ImpSprite::parse(&bytes).unwrap();
+        assert_eq!(sprite.frames[1].source_frame, Some(0));
+        assert_eq!((sprite.frames[1].width, sprite.frames[1].height), (0, 0));
+        // Export succeeds, because it resolves the reference. That asymmetry is the whole problem.
+        let mut encoded = Vec::new();
+        write_imp_frame_png(&mut encoded, &sprite, 1).unwrap();
+        fs::write(&png, &encoded).unwrap();
+
+        let error = import_png_imp(&png, &template, 1, &output).unwrap_err();
+
+        assert!(
+            error.contains("is a duplicate of frame 0") && error.contains("replace frame 0"),
+            "{error}"
+        );
+        assert!(
+            !error.contains("the template is 0x0"),
+            "the unresolved dimensions must never reach the user: {error}"
+        );
+        assert!(!output.exists(), "nothing may be written on a refusal");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The size-mismatch message is shared with the PBM import, and it used to name the PBM header
+    /// unconditionally -- on a path that has no PBM in it.
+    #[test]
+    fn the_size_mismatch_refusal_names_the_format_it_was_reached_from() {
+        let dir = scratch_dir("imp-import-size-wording");
+        let template = dir.join("source.imp");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.imp");
+        fs::write(&template, minimal_imp()).unwrap();
+        let palette = vec![[0_u8, 0, 0]; 256];
+        let mut encoded = Vec::new();
+        write_indexed_png_for_test(&mut encoded, 3, 1, &palette, &[0, 1, 2]);
+        fs::write(&png, &encoded).unwrap();
+
+        let error = import_png_imp(&png, &template, 0, &output).unwrap_err();
+
+        assert!(error.contains("PNG is 3x1 but the template is 2x1"), "{error}");
+        assert!(error.contains("the IMP frame record"), "{error}");
+        assert!(!error.contains("PBM"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn scratch_dir(name: &str) -> PathBuf {
@@ -6108,6 +7257,219 @@ mod tests {
         assert!(parse_coordinate("x").is_err());
     }
 
+    #[test]
+    fn a_packed_length_only_names_a_layout_when_the_layouts_differ() {
+        // 8bpp: every width makes the two the same length, so no frame at that depth is evidence
+        // about which layout its packer chose. Reporting those as "tight" would be a claim the
+        // corpus does not support, and the corpus is almost all 8bpp.
+        let square = PackedSizes::for_frame(20, 10, 8).unwrap();
+        assert_eq!(square.tight_ceil, square.row_padded);
+        assert_eq!(
+            PackedSizeChoice::classify(200, square, true),
+            Some(PackedSizeChoice::Identical)
+        );
+
+        // A single row is free of the choice too, whatever its width: there is no second row for
+        // the row padding to push along. The corpus's entire ambiguous-looking population turned
+        // out to be 1x1 and 2x1 frames, so getting this wrong invented 88 phantom ambiguities.
+        let one_row = PackedSizes::for_frame(7, 1, 1).unwrap();
+        assert_eq!(one_row.tight_ceil, one_row.row_padded);
+        assert_eq!(
+            PackedSizeChoice::classify(1, one_row, true),
+            Some(PackedSizeChoice::Identical)
+        );
+
+        // Equal lengths are not equal layouts. 7 pixels a row at 1bpp over five rows costs five
+        // bytes packed either way, and the five bytes differ.
+        let ragged_but_equal = PackedSizes::for_frame(7, 5, 1).unwrap();
+        assert_eq!(ragged_but_equal.tight_ceil, ragged_but_equal.row_padded);
+        assert_eq!(
+            PackedSizeChoice::classify(5, ragged_but_equal, false),
+            Some(PackedSizeChoice::AmbiguousLength)
+        );
+
+        // 17 pixels at 1bpp need 17 bits, so a row costs 3 bytes padded and the whole frame costs
+        // 9 tight. Those differ, and only then does a length name a layout.
+        let ragged = PackedSizes::for_frame(17, 4, 1).unwrap();
+        assert_eq!(
+            (ragged.tight_floor, ragged.tight_ceil, ragged.row_padded),
+            (8, 9, 12)
+        );
+        assert_eq!(
+            PackedSizeChoice::classify(9, ragged, false),
+            Some(PackedSizeChoice::Tight)
+        );
+        assert_eq!(
+            PackedSizeChoice::classify(12, ragged, false),
+            Some(PackedSizeChoice::RowPadded)
+        );
+        assert_eq!(
+            PackedSizeChoice::classify(8, ragged, false),
+            Some(PackedSizeChoice::TightFloor)
+        );
+        assert_eq!(PackedSizeChoice::classify(10, ragged, false), None);
+        assert_eq!(PackedSizeChoice::classify(0, ragged, false), None);
+
+        // A frame whose tight size already fills its last byte has no floor form to fall back to,
+        // so the floor and the ceiling coincide and the length still names the padded layout.
+        let flush = PackedSizes::for_frame(4, 4, 1).unwrap();
+        assert_eq!(
+            (flush.tight_floor, flush.tight_ceil, flush.row_padded),
+            (2, 2, 4)
+        );
+        assert_eq!(
+            PackedSizeChoice::classify(2, flush, false),
+            Some(PackedSizeChoice::Tight)
+        );
+        assert_eq!(
+            PackedSizeChoice::classify(4, flush, false),
+            Some(PackedSizeChoice::RowPadded)
+        );
+    }
+
+    /// A synthetic frame shape, so the arithmetic can be driven past where the corpus happens to
+    /// sit.
+    ///
+    /// `PackedSizes` is built by hand rather than from real dimensions on purpose. The whole point
+    /// of these tests is the `delta = row_padded - tight_ceil` boundary at 390/391, and no frame in
+    /// `imp.mpq` is anywhere near it -- a corpus run can only ever report that all 752 landed on
+    /// one side. A fixture shaped like the corpus could not fail on what the corpus hides.
+    fn sizes_with_delta(tight_ceil: usize, delta: usize) -> PackedSizes {
+        PackedSizes {
+            tight_floor: tight_ceil.saturating_sub(1),
+            tight_ceil,
+            row_padded: tight_ceil + delta,
+        }
+    }
+
+    /// The gate: only a compressed, variant-0 frame whose stored size is *not* the row-padded one
+    /// is out of this decoder's reach. Each of the four clauses is tested by removing it alone.
+    #[test]
+    fn only_a_compressed_variant_0_frame_stopping_short_is_unobservable() {
+        let ragged = PackedSizes::for_frame(17, 4, 1).unwrap();
+        assert_eq!(
+            (ragged.tight_floor, ragged.tight_ceil, ragged.row_padded),
+            (8, 9, 12)
+        );
+
+        // The tight size on a shape where the layouts differ: the reader stopped at 9 and could
+        // never have reached 12. This is the class the 752 are drawn from.
+        assert!(LayoutObservability::for_frame(9, ragged, 0, true).unobservable);
+        // So is the tight-floor size, for the same reason: 8 is short of 12 too.
+        assert!(LayoutObservability::for_frame(8, ragged, 0, true).unobservable);
+
+        // The row-padded size itself. The reader DID land on 12 -- a single 12-byte literal packet
+        // reaches it without passing through 8 or 9 -- so the layout was observed, and counting it
+        // would let the sweep report `row-padded` and `unobservable` for one frame at once.
+        assert!(!LayoutObservability::for_frame(12, ragged, 0, true).unobservable);
+
+        // A variant-1 record declares its length, so the reader consumes exactly that many bytes
+        // and never has to guess where to stop.
+        assert!(!LayoutObservability::for_frame(9, ragged, 1, true).unobservable);
+
+        // An uncompressed payload is read by length, not by decoding packets until a size matches.
+        assert!(!LayoutObservability::for_frame(9, ragged, 0, false).unobservable);
+
+        // A shape whose two layouts are the same length records no choice for the reader to miss.
+        // Those frames are the separate `ambiguous-same-length` population and must not be added
+        // here as well.
+        let equal = PackedSizes::for_frame(7, 5, 1).unwrap();
+        assert_eq!(equal.tight_ceil, equal.row_padded);
+        assert!(!LayoutObservability::for_frame(5, equal, 0, true).unobservable);
+
+        // The case that makes `tight_ceil != row_padded` load-bearing on its own, and the reason
+        // this predicate takes a stored size rather than a classified layout name. A 7x1 frame at
+        // 1bpp stores `tight_floor` 0 while `tight_ceil == row_padded == 1`: its stored size is not
+        // the row-padded one, it is compressed and variant 0, and it is still not unobservable,
+        // because there is no row-padded layout for the reader to have missed. Every other clause
+        // here is satisfied, so dropping this one would count it.
+        let floored = PackedSizes::for_frame(7, 1, 1).unwrap();
+        assert_eq!(
+            (floored.tight_floor, floored.tight_ceil, floored.row_padded),
+            (0, 1, 1)
+        );
+        assert!(!LayoutObservability::for_frame(0, floored, 0, true).unobservable);
+    }
+
+    /// `not_cleared_by_gaps` is a strict subset of `unobservable`, which is what lets the report
+    /// print both counters and call them equal rather than adding them.
+    #[test]
+    fn a_frame_the_decoder_could_see_is_never_counted_as_uncleared() {
+        let ragged = PackedSizes::for_frame(17, 4, 1).unwrap();
+        for (packed_size, variant, compressed) in
+            [(12, 0, true), (9, 1, true), (9, 0, false), (12, 1, false)]
+        {
+            let verdict = LayoutObservability::for_frame(packed_size, ragged, variant, compressed);
+            assert_eq!(
+                verdict,
+                LayoutObservability::default(),
+                "packed_size={packed_size} variant={variant} compressed={compressed}"
+            );
+        }
+    }
+
+    /// The 390/391 boundary, from both sides, and it is the whole of the "the gaps clear none of
+    /// them" claim.
+    ///
+    /// An unread row-padded continuation of `delta` packed bytes costs at least
+    /// `2 * ceil(delta / 130)` stored bytes. That reaches 8 -- the archive's payload alignment, and
+    /// so the smallest shortfall a gap could distinguish from ordinary padding -- exactly when
+    /// `ceil(delta / 130)` reaches 4, at `delta == 391`.
+    ///
+    /// Both constants are pinned here in both directions. Raising the threshold to `<= 8` flips
+    /// delta 391; lowering it to `< 6` flips delta 390. Widening the repeat length to 131 flips
+    /// delta 391 the other way, and narrowing it to 129 flips delta 390. What is NOT killable is
+    /// `< 7`: the minimum is `2 * k` and therefore always even, so no input separates it from
+    /// `< 8`, and a surviving mutant there is equivalent rather than untested.
+    #[test]
+    fn the_gap_evidence_clears_a_frame_exactly_when_the_shortfall_reaches_eight_stored_bytes() {
+        // delta 390 = 3 full repeat packets, 6 stored bytes, under the 8-byte alignment: it hides,
+        // and the gap histogram says nothing.
+        let hides = sizes_with_delta(16, 390);
+        assert!(LayoutObservability::for_frame(16, hides, 0, true).unobservable);
+        assert!(LayoutObservability::for_frame(16, hides, 0, true).not_cleared_by_gaps);
+
+        // delta 391 spills into a fourth packet: 8 stored bytes, which could not hide inside a
+        // 7-byte gap. Still unobservable by the decoder; cleared by the alignment evidence.
+        let shows = sizes_with_delta(16, 391);
+        assert!(LayoutObservability::for_frame(16, shows, 0, true).unobservable);
+        assert!(!LayoutObservability::for_frame(16, shows, 0, true).not_cleared_by_gaps);
+
+        // Far past the boundary, where no arithmetic slip could still land under 8.
+        let obvious = sizes_with_delta(16, 4000);
+        assert!(!LayoutObservability::for_frame(16, obvious, 0, true).not_cleared_by_gaps);
+
+        // And the smallest possible shortfall, one packed byte: two stored bytes, well inside the
+        // padding.
+        let tiny = sizes_with_delta(16, 1);
+        assert!(LayoutObservability::for_frame(16, tiny, 0, true).not_cleared_by_gaps);
+    }
+
+    /// The corpus's own 752 are all far below the boundary, which is the fact the doc reports and
+    /// the reason the two printed counters are equal. Stated as a test so a change to the threshold
+    /// cannot quietly move the published number.
+    #[test]
+    fn the_real_frame_shapes_in_the_archive_all_hide_inside_the_alignment() {
+        // The largest frame the format can hold at 1bpp is bounded by the header's maximum
+        // dimensions, but the shapes that actually occur are small: a 17x4 leaves 3 packed bytes.
+        let ragged = PackedSizes::for_frame(17, 4, 1).unwrap();
+        assert_eq!(ragged.row_padded - ragged.tight_ceil, 3);
+        assert!(LayoutObservability::for_frame(9, ragged, 0, true).not_cleared_by_gaps);
+
+        // A real shape CAN escape -- the arithmetic is not vacuously one-sided -- but it takes a
+        // 391-byte shortfall, and at 1bpp the shortfall grows by under a byte per row. A 9-pixel
+        // row wastes 7 bits, so it takes a frame around 450 rows tall, and `imp.mpq`'s tallest
+        // frame is nothing like that. This is the reason the boundary above had to be driven with
+        // a synthetic `PackedSizes`: no frame in the corpus sits near it.
+        let tall = PackedSizes::for_frame(9, 500, 1).unwrap();
+        assert!(
+            tall.row_padded - tall.tight_ceil >= 391,
+            "{tall:?} should overshoot the boundary"
+        );
+        assert!(LayoutObservability::for_frame(tall.tight_ceil, tall, 0, true).unobservable);
+        assert!(!LayoutObservability::for_frame(tall.tight_ceil, tall, 0, true).not_cleared_by_gaps);
+    }
+
     fn navigation_sprite() -> ImpSprite {
         let frames = (0..6)
             .map(|index| ImpFrame {
@@ -6122,6 +7484,9 @@ mod tests {
                 source_frame: None,
                 record_offset: index * 16,
                 hotspot_offset: None,
+                packed_size: Some(1),
+                pixels_offset: Some(index * 16),
+                stored_size: Some(1),
             })
             .collect();
         ImpSprite {

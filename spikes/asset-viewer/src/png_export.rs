@@ -68,9 +68,16 @@ pub struct IndexedPng {
 /// before its short IDAT was ever reported. The import already requires the
 /// sizes to match, so refusing the mismatch first costs nothing and bounds the
 /// allocation by a file the caller already holds.
+///
+/// `size_source` names **where the expected size came from**, and is the
+/// caller's wording because this function has two callers that inherit it from
+/// different places: the PBM import from an ILBM `BMHD` header, the IMP import
+/// from a frame record. It used to say "the PBM header is inherited"
+/// unconditionally, which was simply false on the IMP path.
 pub fn read_indexed_png<R: BufRead + Seek>(
     reader: R,
     expected: (u16, u16),
+    size_source: &str,
 ) -> Result<IndexedPng, String> {
     let decoder = png::Decoder::new(reader);
     let mut reader = decoder
@@ -81,8 +88,8 @@ pub fn read_indexed_png<R: BufRead + Seek>(
     // describe the template.
     if (info.width, info.height) != (u32::from(expected.0), u32::from(expected.1)) {
         return Err(format!(
-            "PNG is {}x{} but the template is {}x{}; the PBM header is inherited, so the sizes \
-             must match",
+            "PNG is {}x{} but the template is {}x{}; the size is kept from {size_source}, so the \
+             sizes must match",
             info.width, info.height, expected.0, expected.1,
         ));
     }
@@ -274,7 +281,7 @@ mod tests {
     fn refuses_an_index_beyond_the_pngs_own_palette() {
         let encoded = raw_indexed_png(2, 1, &[7, 8, 9], &[0, 200]);
 
-        let error = read_indexed_png(Cursor::new(encoded), (2, 1)).unwrap_err();
+        let error = read_indexed_png(Cursor::new(encoded), (2, 1), "the PBM header").unwrap_err();
 
         assert!(
             error.contains("palette index 200") && error.contains("only 1"),
@@ -288,7 +295,7 @@ mod tests {
     fn refuses_the_index_one_past_the_last_palette_entry() {
         let encoded = raw_indexed_png(2, 1, &[7, 8, 9, 1, 2, 3], &[1, 2]);
 
-        let error = read_indexed_png(Cursor::new(encoded), (2, 1)).unwrap_err();
+        let error = read_indexed_png(Cursor::new(encoded), (2, 1), "the PBM header").unwrap_err();
 
         assert!(
             error.contains("palette index 2") && error.contains("only 2"),
@@ -300,7 +307,7 @@ mod tests {
     fn accepts_an_index_at_the_last_palette_entry() {
         let encoded = raw_indexed_png(2, 1, &[7, 8, 9, 1, 2, 3], &[1, 0]);
 
-        let png = read_indexed_png(Cursor::new(encoded), (2, 1)).unwrap();
+        let png = read_indexed_png(Cursor::new(encoded), (2, 1), "the PBM header").unwrap();
 
         assert_eq!(png.indices, [1, 0], "index 1 of a 2-entry PLTE is legal");
     }
@@ -354,7 +361,7 @@ mod tests {
         encoded.extend_from_slice(&png_chunk(b"IDAT", &[0x78, 0x01]));
         encoded.extend_from_slice(&png_chunk(b"IEND", &[]));
 
-        let error = read_indexed_png(Cursor::new(encoded), (4, 2)).unwrap_err();
+        let error = read_indexed_png(Cursor::new(encoded), (4, 2), "the PBM header").unwrap_err();
 
         assert!(
             error.contains("PNG is 65535x65535 but the template is 4x2"),
