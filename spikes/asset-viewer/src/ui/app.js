@@ -27,6 +27,9 @@ const state = {
   // path twice -- the first attempt at this tool failed on whitespace pasted into one.
   directory: "",
   undoDepth: 0,
+  // A full path chosen through the native save dialog. When set it is sent instead of the
+  // directory-and-filename pair, and it goes through exactly the same server-side guards.
+  savePath: "",
 };
 
 const mapCanvas = document.getElementById("map");
@@ -303,6 +306,54 @@ async function undo() {
   log("undid the last paint", "ok");
 }
 
+// The browser cannot hand the server a real filesystem path: `webkitdirectory` gives file contents
+// with fake relative names, and the File System Access API gives an opaque handle and is Chrome
+// only. Neither yields `/Users/...`, which is what the server has to read and write. **The server
+// runs on this machine, so the server opens the dialog** and hands back the genuine path.
+//
+// The typed fields are not going away. This is an accelerator for them.
+async function browse(endpoint, fields) {
+  const result = await api(endpoint, form(fields));
+  logNotes(result.notes);
+  if (!result.ok) {
+    log(result.refusal, "refusal");
+    return null;
+  }
+  // Dismissing a dialog is an ordinary thing to do and says nothing worth logging.
+  return result.cancelled ? null : result.path;
+}
+
+document.getElementById("browse-dir").addEventListener("click", async () => {
+  const chosen = await browse("/api/pick-directory", { dir: state.directory });
+  if (chosen === null) {
+    return;
+  }
+  document.getElementById("maps-dir").value = chosen;
+  await listDirectory(chosen);
+});
+
+document.getElementById("browse-save").addEventListener("click", async () => {
+  if (!state.open) {
+    log("no map is open in this tab, so there is nothing to save", "refusal");
+    return;
+  }
+  const chosen = await browse("/api/pick-save", {
+    dir: state.directory,
+    name: document.getElementById("save-name").value.trim(),
+  });
+  if (chosen === null) {
+    return;
+  }
+  state.savePath = chosen;
+  document.getElementById("save-name").value = chosen;
+  log(`saving to ${chosen} when you press Save As`, "note");
+});
+
+// A typed filename replaces a browsed path: whichever the user touched last is the one that counts.
+document.getElementById("save-name").addEventListener("input", () => {
+  state.savePath = "";
+});
+
 document.getElementById("dir-form").addEventListener("submit", (event) => {
   event.preventDefault();
   listDirectory(document.getElementById("maps-dir").value.trim());
@@ -333,7 +384,12 @@ document.getElementById("save-form").addEventListener("submit", async (event) =>
     log("type a filename to save as", "refusal");
     return;
   }
-  const result = await api("/api/save", form({ dir: state.directory, name }));
+  // A browsed path is sent whole; a typed name is sent with the directory it belongs to, and the
+  // server refuses anything that is not one plain component. Both go through the same create-new
+  // and same-file guards.
+  const result = state.savePath
+    ? await api("/api/save", form({ path: state.savePath }))
+    : await api("/api/save", form({ dir: state.directory, name }));
   logNotes(result.notes);
   log(result.ok ? `wrote ${result.path} (${result.bytes} bytes)` : result.refusal,
     result.ok ? "ok" : "refusal");

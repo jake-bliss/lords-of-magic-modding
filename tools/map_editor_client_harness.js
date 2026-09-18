@@ -89,8 +89,9 @@ function makeElement(id) {
 }
 
 const IDS = [
-  "dir-form", "maps-dir", "map-file", "open-form", "map-summary", "palette", "seed", "undo",
-  "zoom", "save-form", "save-name", "map", "overlay", "centre", "cursor-cell", "log",
+  "dir-form", "maps-dir", "browse-dir", "map-file", "open-form", "map-summary", "palette", "seed",
+  "undo", "zoom", "save-form", "save-name", "browse-save", "map", "overlay", "centre",
+  "cursor-cell", "log",
 ];
 const elements = new Map(IDS.map((id) => [id, makeElement(id)]));
 
@@ -154,6 +155,10 @@ const OPEN = {
 };
 
 const requests = [];
+
+// What the stubbed picker endpoints answer. Swapped between scenarios so the page's three cases --
+// a path, a dismissal, and no dialog at all -- can each be driven.
+let pickAnswer = { ok: true, cancelled: false, path: "/chosen/maps", notes: [] };
 const sandbox = {
   console,
   URLSearchParams,
@@ -195,7 +200,9 @@ const sandbox = {
     const body = options?.body ?? "";
     requests.push({ url, method: options?.method ?? "GET", body });
     let payload = { ok: true, notes: [], undoDepth: 1 };
-    if (url.startsWith("/api/config")) {
+    if (url.startsWith("/api/pick-")) {
+      payload = pickAnswer;
+    } else if (url.startsWith("/api/config")) {
       payload = CONFIG;
     } else if (url.startsWith("/api/list")) {
       payload = url.includes("empty") ? { ...LIST, entries: [] } : LIST;
@@ -384,6 +391,72 @@ async function cellAt(clientX, clientY) {
   await elements.get("save-form").fire("submit", {});
   await settle();
   measurements.saveAfterEmptyRefusal = requests.map((request) => request.url);
+
+  // --- the native file dialog, through the page ---------------------------------------------
+  // Re-open the map first: the refusal scenarios above left this tab closed.
+  elements.get("map-file").value = "big.scn";
+  await elements.get("open-form").fire("submit", {});
+  await settle();
+  await settle();
+
+  // Browse for a directory: the field is filled and the directory listed, as if it had been typed.
+  pickAnswer = { ok: true, cancelled: false, path: "/chosen/maps", notes: [] };
+  requests.length = 0;
+  await elements.get("browse-dir").fire("click", {});
+  await settle();
+  await settle();
+  measurements.browseDirRequests = requests.map((request) => ({
+    url: request.url, method: request.method,
+  }));
+  measurements.browsedDirectoryField = elements.get("maps-dir").value;
+
+  // Dismissing the dialog must change nothing and say nothing.
+  //
+  // The path here is deliberately **not** null, although the server always nulls it on a cancel
+  // (a Rust test pins that). If this fixture also nulled it, a client that ignored `cancelled`
+  // entirely and merely checked for a null path would pass -- and the two are different contracts.
+  // The flag is what decides.
+  pickAnswer = { ok: true, cancelled: true, path: "/should/not/be/used", notes: [] };
+  const logBeforeCancel = elements.get("log").children.length;
+  const fieldBeforeCancel = elements.get("maps-dir").value;
+  requests.length = 0;
+  await elements.get("browse-dir").fire("click", {});
+  await settle();
+  await settle();
+  measurements.cancelChangedTheField =
+    elements.get("maps-dir").value !== fieldBeforeCancel;
+  measurements.cancelLoggedAnything =
+    elements.get("log").children.length !== logBeforeCancel;
+  measurements.cancelRelisted = requests.some((request) => request.url.startsWith("/api/list"));
+
+  // No dialog at all: a refusal the user can act on, and the typed field still works.
+  pickAnswer = { ok: false, refusal: "there is no desktop session. Type the path instead", notes: [] };
+  await elements.get("browse-dir").fire("click", {});
+  await settle();
+  measurements.unavailableLog = elements.get("log").children.map((row) => row.textContent)
+    .filter((text) => text.includes("no desktop session"));
+  elements.get("maps-dir").value = "/fixture/maps";
+  requests.length = 0;
+  await elements.get("dir-form").fire("submit", {});
+  await settle();
+  measurements.typedStillWorks = requests.map((request) => request.url.split("?")[0]);
+
+  // Browse for a save path: the whole path is sent, not a directory and a filename.
+  pickAnswer = { ok: true, cancelled: false, path: "/elsewhere/picked.scn", notes: [] };
+  await elements.get("browse-save").fire("click", {});
+  await settle();
+  requests.length = 0;
+  await elements.get("save-form").fire("submit", {});
+  await settle();
+  measurements.saveAfterBrowse = requests[0].body;
+
+  // Typing over it goes back to the directory-and-filename form, which the server confines.
+  elements.get("save-name").value = "typed.scn";
+  await elements.get("save-name").fire("input", {});
+  requests.length = 0;
+  await elements.get("save-form").fire("submit", {});
+  await settle();
+  measurements.saveAfterTyping = requests[0].body;
 
   console.log(JSON.stringify(measurements, null, 2));
 })().catch((error) => {

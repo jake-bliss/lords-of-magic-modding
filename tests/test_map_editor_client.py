@@ -173,6 +173,62 @@ class ClientState(unittest.TestCase):
         self.assertEqual(self.measured["saveAfterEmptyRefusal"], [])
 
 
+class NativeFileDialog(unittest.TestCase):
+    """Browse, for the people who should not have to type an absolute path.
+
+    A web page cannot hand the server a real filesystem path -- `webkitdirectory` gives file
+    contents with fake relative names and the File System Access API gives an opaque, Chrome-only
+    handle. The server runs on the same machine, so the server opens the dialog. What the page does
+    with the three answers is what these pin; the dialog itself needs a human and a desktop.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.measured = run_harness()
+
+    def test_browsing_fills_the_field_and_lists_the_directory(self):
+        self.assertEqual(
+            self.measured["browseDirRequests"],
+            [
+                {"url": "/api/pick-directory", "method": "POST"},
+                {"url": "/api/list?dir=%2Fchosen%2Fmaps", "method": "GET"},
+            ],
+        )
+        # The chosen path lands in the typed field, so the two are the same thing afterwards and
+        # the user can edit what the dialog gave them.
+        self.assertEqual(self.measured["browsedDirectoryField"], "/chosen/maps")
+
+    def test_dismissing_the_dialog_changes_nothing_and_says_nothing(self):
+        # A cancel is an ordinary act. Turning it into a line in the log -- the one place this
+        # editor says things that matter -- trains people to stop reading it.
+        self.assertFalse(self.measured["cancelChangedTheField"])
+        self.assertFalse(self.measured["cancelLoggedAnything"])
+        self.assertFalse(self.measured["cancelRelisted"])
+
+    def test_no_dialog_is_a_refusal_that_leaves_the_typed_field_working(self):
+        self.assertEqual(
+            self.measured["unavailableLog"],
+            ["there is no desktop session. Type the path instead"],
+        )
+        # And the field it points at still does the job, which is what keeps this an accelerator
+        # rather than a replacement -- it has to survive SSH and a headless box.
+        self.assertEqual(self.measured["typedStillWorks"], ["/api/list"])
+
+    def test_a_browsed_save_path_is_sent_whole_and_a_typed_one_is_not(self):
+        # A browsed path may be in any directory the user navigated to, so it goes as `path`, which
+        # the server guards with create-new and the device-and-inode check. A typed name goes as a
+        # directory plus one plain component, which the server also confines to that directory.
+        self.assertEqual(
+            self.measured["saveAfterBrowse"], "path=%2Felsewhere%2Fpicked.scn&token=handle-0"
+        )
+        # Typing over a browsed path goes back to the confined form: whichever the user touched
+        # last is the one that counts, and a stale browsed path must not outlive it.
+        self.assertEqual(
+            self.measured["saveAfterTyping"],
+            "dir=%2Ffixture%2Fmaps&name=typed.scn&token=handle-0",
+        )
+
+
 class CanvasSizingContract(unittest.TestCase):
     """The stylesheet invariant the pixel mapping rests on.
 

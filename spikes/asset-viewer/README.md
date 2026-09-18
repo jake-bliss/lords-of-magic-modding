@@ -183,6 +183,43 @@ changes the map's class, refused if the name is anything but one plain path comp
 re-parsed before anything reaches disk, and opened `create_new`. An existing file is never
 clobbered, and the picker is not a way round that.
 
+### Browse, and why the server opens the dialog
+
+Next to both path fields is a **Browse…** button. A web page cannot hand a server a real filesystem
+path: `<input type="file" webkitdirectory>` gives file *contents* under fake relative names, and the
+File System Access API gives an opaque handle and is Chrome-only. Neither yields `/Users/…`, which
+is what the server has to read and write. The server is on the user's own machine, so **the server
+opens the dialog** — `POST /api/pick-directory` and `POST /api/pick-save` shell out to the OS
+chooser and get the genuine path back.
+
+**macOS only, through `osascript`, with no new dependency.** Windows and Linux have no equivalent
+one-liner; they need a crate such as `rfd`, and **that is the packaging gap before this goes to the
+community**. On any other platform the endpoint reports itself unavailable and says to type the path
+instead.
+
+Four things this gets right on purpose:
+
+- **The typed fields are unchanged and are not second-class.** They survive SSH and a headless box,
+  they are what most of the tests drive, and Browse is an accelerator for them — the chosen path is
+  written into the field, where it can still be edited.
+- **Cancelling is not an error.** Dismissing the dialog answers `"ok": true, "cancelled": true`,
+  changes nothing and logs nothing. `osascript` exits non-zero for a cancel as well as a failure, so
+  the two are told apart by AppleScript's error **number** `-128` rather than by the text "User
+  canceled", which is localised.
+- **A dialog that never appears is killed, not waited on.** The request loop is single-threaded, so
+  a child blocked on a window that will never be drawn freezes the whole editor; there is a 120
+  second bound and the child is killed at it. A missing `osascript` is reported the same way.
+- **A picked path is trusted exactly as far as a typed one.** It goes through the same guards. In
+  particular the native save dialog asks its own "replace?" question and hands back an existing path
+  when the user says yes — **and we refuse it anyway**, with a refusal that says why: the map
+  directory has no backup, this tool never writes in place, and the OS dialog does not get to
+  override that.
+
+The arguments go to `osascript` as `argv`, never interpolated into the script text, and there is no
+`sh -c`. The first version put a `-` between the script and its arguments; `osascript` does not
+consume it after `-e`, so it arrived as `item 1 of argv` and shifted every string by one. A test
+pins the argument list.
+
 The directory listing is **not a filesystem browser**. It lists the map files of the directory it is
 given — no subdirectories, no parent, no recursion — and it does not canonicalise the path, because
 the obvious workaround for a 180-character install path is a symlink and resolving it would make the
@@ -209,7 +246,8 @@ not offered. Ctrl-scroll or a trackpad pinch over the map zooms **to the cursor*
 pans the pane.
 
 Not in this version: creating a map, sprite placement or removal, elevation, flag editing, redo,
-navigating between directories, and opening more than one map at a time. **One process holds one
+navigating between directories, a native file dialog anywhere but macOS, and opening more than one
+map at a time. **One process holds one
 map**, so a second browser tab does not get a second session — it gets a handle the server then
 refuses, which is the loud version of a tab silently painting into a map it is not showing.
 
@@ -224,8 +262,14 @@ The **client** is tested too, which needs `node`: `tools/map_editor_client_harne
 `src/ui/app.js` verbatim against a stub DOM, fires the real handlers, and reports what it computed
 for `tests/test_map_editor_client.py` to assert — where a click lands at two zooms and on a scrolled
 page, that ctrl-scroll zooms about the cursor, that a drag released outside the window does not stay
-live, and that a refused open cannot leave the page saying "No map open." over a live session. A
-missing `node` fails that file rather than skipping it.
+live, that a refused open cannot leave the page saying "No map open." over a live session, and what
+the page does with each of the file dialog's three answers. A missing `node` fails that file rather
+than skipping it.
+
+**What no test covers, because it needs a human and a desktop:** that the macOS dialog actually
+appears, that it is usable, and that a real cancel from a real click produces the `-128` this code
+reads. The scripts were confirmed to compile and reach the dialog by running each one under a
+short kill timer; everything past that point is the seam's stub.
 
 ## Writing sprite placement
 

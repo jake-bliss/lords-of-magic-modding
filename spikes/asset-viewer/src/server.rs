@@ -23,6 +23,8 @@ use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::map::MapAsset;
 use crate::mpq::Archive;
@@ -170,6 +172,51 @@ pub struct HttpRequest<'a> {
     pub origin: Option<&'a str>,
 }
 
+/// What kind of path a native dialog is being asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickKind {
+    /// A folder, for the maps directory.
+    Directory,
+    /// A file to create, for Save As.
+    SaveFile,
+}
+
+/// What the page is asking the operating system for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickRequest {
+    pub kind: PickKind,
+    /// Where the dialog should start, when it exists.
+    pub start_in: Option<PathBuf>,
+    pub default_name: Option<String>,
+}
+
+/// What a native dialog answered.
+///
+/// **Cancelling is not an error.** A user who dismisses a dialog has told the tool something
+/// perfectly ordinary, and turning that into a refusal in the log trains people to ignore the log
+/// -- which is the one place this editor says things that matter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickOutcome {
+    Chosen(PathBuf),
+    Cancelled,
+    /// No dialog could be shown, with the reason to put in front of the user.
+    Unavailable(String),
+}
+
+/// How the editor asks the operating system for a path.
+///
+/// A seam, because a file dialog cannot run in CI: a test substitutes one that answers
+/// immediately. Everything downstream of it -- the endpoint, the validation the chosen path then
+/// goes through, the cancel path and the unavailable path -- is covered without a desktop.
+pub type Picker = Box<dyn Fn(&PickRequest) -> PickOutcome + Send>;
+
+/// How long a dialog may stay up before the editor gives up on it.
+///
+/// **The request loop is single-threaded, so a blocked picker freezes the whole editor.** A user
+/// standing in front of the dialog is not using the editor anyway, so the bound is generous; what
+/// it rules out is the case where no dialog ever appeared and the child waits forever.
+pub const PICK_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// The whole editor: a tileset source, and at most one open map.
 pub struct Editor {
     source: TileSetSource,
@@ -180,6 +227,8 @@ pub struct Editor {
     /// against "any loopback port" would let one local server's page drive another's.
     port: u16,
     counter: u64,
+    /// How to ask the operating system for a path. See [`Picker`].
+    picker: Picker,
 }
 
 impl Editor {
@@ -189,7 +238,13 @@ impl Editor {
             session: None,
             port,
             counter: 0,
+            picker: Box::new(native_pick),
         }
+    }
+
+    /// Replace the native dialog with something else. For tests.
+    pub fn set_picker(&mut self, picker: Picker) {
+        self.picker = picker;
     }
 
     /// The open session, for tests and for [`serve`]'s startup banner.
@@ -234,6 +289,12 @@ impl Editor {
             // state-mutating GET is reachable from a bare `<img>` tag on any page in the world.
             ("GET", "/api/config") => self.config(),
             ("GET", "/api/list") => list_directory(&form_fields(query)),
+            // **POST, and guarded like everything else.** A cross-origin page must not be able to
+            // make the user's machine pop a file dialog. No session handle is required, because
+            // choosing the maps directory happens before any map is open and the endpoint touches
+            // no session state.
+            ("POST", "/api/pick-directory") => self.pick(PickKind::Directory, &form_fields(request.body)),
+            ("POST", "/api/pick-save") => self.pick(PickKind::SaveFile, &form_fields(request.body)),
             ("POST", "/api/open") => self.open(&form_fields(request.body)),
             ("GET", "/api/atlas.png") => self.atlas_png(&form_fields(query)),
             ("POST", "/api/paint") => self.paint(&form_fields(request.body)),
@@ -302,6 +363,42 @@ impl Editor {
                 |directory| json_string(&directory.display().to_string())
             ),
         ))
+    }
+
+    /// Ask the operating system for a path.
+    ///
+    /// **The path that comes back is trusted exactly as far as a typed one, which is to say not at
+    /// all.** It goes through the same listing confinement and the same save guards; the dialog is
+    /// an accelerator for the field above it and never a second route into the filesystem.
+    fn pick(&mut self, kind: PickKind, fields: &BTreeMap<String, String>) -> HttpResponse {
+        let start_in = fields
+            .get("dir")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .filter(|directory| directory.is_dir());
+        let request = PickRequest {
+            kind,
+            start_in,
+            default_name: fields
+                .get("name")
+                .filter(|value| !value.is_empty())
+                .cloned(),
+        };
+        match (self.picker)(&request) {
+            PickOutcome::Chosen(path) => HttpResponse::json(format!(
+                "{{\"ok\":true,\"cancelled\":false,\"path\":{},\"notes\":[]}}",
+                json_string(&path.display().to_string())
+            )),
+            // Not a refusal: dismissing a dialog is an ordinary thing to do, and a log full of
+            // non-events is a log nobody reads.
+            PickOutcome::Cancelled => HttpResponse::json(
+                "{\"ok\":true,\"cancelled\":true,\"path\":null,\"notes\":[]}".to_owned(),
+            ),
+            PickOutcome::Unavailable(reason) => HttpResponse::refusal(
+                &format!("{reason}. Type the path into the field instead -- it does the same thing"),
+                &[],
+            ),
+        }
     }
 
     fn open(&mut self, fields: &BTreeMap<String, String>) -> HttpResponse {
@@ -617,7 +714,23 @@ fn save_session(session: &EditorSession, target: &Path) -> Result<usize, String>
         .write(true)
         .create_new(true)
         .open(target)
-        .map_err(|error| format!("could not create {}: {error}", target.display()))?;
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                // The native save dialog asks its own "replace?" question and will hand back an
+                // existing path if the user says yes. **We refuse it anyway.** The loose `map/`
+                // directory has no backup, never writing in place is this tool's rule, and an OS
+                // dialog does not get to override it -- but the user has just confirmed a replace,
+                // so the refusal has to say why it did not happen.
+                format!(
+                    "{} already exists. This editor never writes over an existing file, even one \
+                     you confirmed replacing in the save dialog: the map directory has no backup. \
+                     Choose a name that is not taken",
+                    target.display()
+                )
+            } else {
+                format!("could not create {}: {error}", target.display())
+            }
+        })?;
     if let Err(error) = file.write_all(&encoded) {
         drop(file);
         let _ = fs::remove_file(target);
@@ -732,6 +845,170 @@ fn target_path(fields: &BTreeMap<String, String>) -> Result<PathBuf, String> {
 fn is_single_component(name: &str) -> bool {
     let mut components = Path::new(name).components();
     matches!(components.next(), Some(std::path::Component::Normal(_))) && components.next().is_none()
+}
+
+/// AppleScript's error number for a dialog the user dismissed.
+///
+/// Matched on the number rather than on "User canceled", because the text is localised and the
+/// number is not. A cancel misread as a failure puts a refusal in front of someone who did nothing
+/// wrong.
+const APPLESCRIPT_USER_CANCELLED: &str = "-128";
+
+/// The folder chooser, as a script that takes its prompt from `argv`.
+///
+/// **The prompt is an argument, never interpolated into the script text**, and there is no `sh -c`
+/// anywhere in this file. The strings here are the user's own, so this is hygiene rather than a
+/// live threat -- but a quoting bug in a path like `Program Files (x86)` is exactly the class of
+/// problem this whole feature exists to remove.
+///
+/// Arguments follow the script with **no `-` separator**. The `-` form is for reading a script
+/// from standard input; after `-e` it is not consumed and arrives as `item 1 of argv`, which put
+/// the prompt in item 2 and the directory in item 3. Measured against `osascript` on 2026-09-17,
+/// and every string would have been off by one.
+const CHOOSE_FOLDER: &str = r#"on run argv
+    set chosen to choose folder with prompt (item 1 of argv)
+    return POSIX path of chosen
+end run"#;
+
+const CHOOSE_FOLDER_IN: &str = r#"on run argv
+    set chosen to choose folder with prompt (item 1 of argv) default location (POSIX file (item 2 of argv))
+    return POSIX path of chosen
+end run"#;
+
+const CHOOSE_SAVE_NAME: &str = r#"on run argv
+    set chosen to choose file name with prompt (item 1 of argv) default name (item 2 of argv)
+    return POSIX path of chosen
+end run"#;
+
+const CHOOSE_SAVE_NAME_IN: &str = r#"on run argv
+    set chosen to choose file name with prompt (item 1 of argv) default name (item 2 of argv) default location (POSIX file (item 3 of argv))
+    return POSIX path of chosen
+end run"#;
+
+/// Ask macOS for a path through `osascript`.
+///
+/// `osascript` is in the base system, so this needs no dependency. **Windows and Linux have no
+/// equivalent one-liner and are not covered**; they need a crate such as `rfd`, and that is the
+/// packaging gap. On those platforms this reports itself unavailable and the typed field -- which
+/// is not going away and which every test drives -- keeps working.
+#[cfg(target_os = "macos")]
+fn native_pick(request: &PickRequest) -> PickOutcome {
+    run_picker(pick_command(request), PICK_TIMEOUT)
+}
+
+/// The `osascript` invocation for one request.
+///
+/// Split out so the argument list can be asserted without a desktop. That is not ceremony: the
+/// first version put a `-` between the script and its arguments, which shifted every string by one
+/// and would have shown a dialog prompted `-`.
+#[cfg(target_os = "macos")]
+fn pick_command(request: &PickRequest) -> Command {
+    let start_in = request
+        .start_in
+        .as_ref()
+        .map(|directory| directory.display().to_string());
+    let mut command = Command::new("osascript");
+    match request.kind {
+        PickKind::Directory => {
+            let prompt = "Choose the directory your maps are in";
+            match &start_in {
+                Some(directory) => command.args(["-e", CHOOSE_FOLDER_IN, prompt, directory]),
+                None => command.args(["-e", CHOOSE_FOLDER, prompt]),
+            };
+        }
+        PickKind::SaveFile => {
+            let prompt = "Save the edited map as a new file";
+            let name = request.default_name.as_deref().unwrap_or("edited.scn");
+            match &start_in {
+                Some(directory) => command.args(["-e", CHOOSE_SAVE_NAME_IN, prompt, name, directory]),
+                None => command.args(["-e", CHOOSE_SAVE_NAME, prompt, name]),
+            };
+        }
+    }
+    command
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native_pick(_request: &PickRequest) -> PickOutcome {
+    PickOutcome::Unavailable(
+        "this build has no native file dialog: only macOS is covered, through osascript".to_owned(),
+    )
+}
+
+/// Run a dialog process, and **kill it rather than wait forever**.
+///
+/// A dialog that never appears -- no window server, no automation permission, a headless session --
+/// leaves a child blocked on a window that will never be drawn. The request loop is single-threaded,
+/// so that child freezes the editor. Polling with a deadline bounds it; a hang is the one outcome
+/// there is no recovering from.
+fn run_picker(mut command: Command, timeout: Duration) -> PickOutcome {
+    let mut child = match command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            return PickOutcome::Unavailable(format!(
+                "could not start the file dialog: {error}"
+            ));
+        }
+    };
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return PickOutcome::Unavailable(format!(
+                        "the file dialog did not answer within {} seconds and was stopped; there \
+                         may be no desktop session to show it on",
+                        timeout.as_secs().max(1)
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => {
+                return PickOutcome::Unavailable(format!("the file dialog failed: {error}"));
+            }
+        }
+    }
+    // The child has exited, so the pipes hold everything it wrote and this cannot block. The
+    // output is one path, far short of a pipe buffer.
+    match child.wait_with_output() {
+        Ok(output) => classify_pick(
+            output.status.success(),
+            &output.stdout,
+            &String::from_utf8_lossy(&output.stderr),
+        ),
+        Err(error) => PickOutcome::Unavailable(format!("the file dialog failed: {error}")),
+    }
+}
+
+/// Turn a finished dialog process into an outcome.
+///
+/// Pure, so the three cases that matter -- a path, a cancel, a failure -- are testable without a
+/// desktop. Separating cancel from failure is the whole point: `osascript` exits non-zero for both.
+fn classify_pick(success: bool, stdout: &[u8], stderr: &str) -> PickOutcome {
+    if success {
+        let path = String::from_utf8_lossy(stdout).trim().to_owned();
+        if path.is_empty() {
+            return PickOutcome::Unavailable(
+                "the file dialog returned no path at all".to_owned(),
+            );
+        }
+        return PickOutcome::Chosen(PathBuf::from(path));
+    }
+    if stderr.contains(APPLESCRIPT_USER_CANCELLED) {
+        return PickOutcome::Cancelled;
+    }
+    let reason = stderr.trim();
+    PickOutcome::Unavailable(format!(
+        "the file dialog could not be shown{}",
+        if reason.is_empty() {
+            String::new()
+        } else {
+            format!(": {reason}")
+        }
+    ))
 }
 
 /// Why a request must not be served, or `None` when it may proceed.
@@ -1883,7 +2160,7 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         let occupied = fixture.dir.join("taken.scn");
         fs::write(&occupied, b"not a map").unwrap();
         let exists = refusal(&fixture.save(&occupied));
-        assert!(exists.contains("could not create"), "{exists}");
+        assert!(exists.contains("never writes over an existing file"), "{exists}");
         assert_eq!(fs::read(&occupied).unwrap(), b"not a map");
 
         // A class change: a world map saved under a combat extension would be drawn through a
@@ -2482,7 +2759,7 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
             &mut fixture,
             format!("dir={}&name=out.scn", encode(&dir.display().to_string())),
         ));
-        assert!(again.contains("could not create"), "{again}");
+        assert!(again.contains("never writes over an existing file"), "{again}");
     }
 
     #[test]
@@ -2515,6 +2792,313 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         let none = String::from_utf8(loose.handle(&own_page("GET", "/api/config", "")).body).unwrap();
         assert!(none.contains("\"mapsDirectory\":null"), "{none}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_chosen_path_comes_back_and_a_cancel_is_not_an_error() {
+        let mut fixture = Fixture::new("picker");
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<PickRequest>>> = Default::default();
+
+        // A path, the ordinary case.
+        let recorder = std::sync::Arc::clone(&seen);
+        fixture.editor.set_picker(Box::new(move |request| {
+            recorder.lock().unwrap().push(request.clone());
+            PickOutcome::Chosen(PathBuf::from("/chosen/maps"))
+        }));
+        let chosen = String::from_utf8(
+            fixture
+                .editor
+                .handle(&own_page("POST", "/api/pick-directory", "dir=/nowhere"))
+                .body,
+        )
+        .unwrap();
+        assert!(chosen.contains("\"ok\":true"), "{chosen}");
+        assert!(chosen.contains("\"cancelled\":false"), "{chosen}");
+        assert!(chosen.contains("\"path\":\"/chosen/maps\""), "{chosen}");
+        // A directory that does not exist is not offered to the dialog as a starting point: the
+        // macOS chooser errors on one rather than ignoring it.
+        assert_eq!(seen.lock().unwrap()[0].start_in, None);
+        assert_eq!(seen.lock().unwrap()[0].kind, PickKind::Directory);
+
+        // A real directory is passed through, and the save form carries the filename too.
+        let dir = fixture.dir.display().to_string();
+        let saved = String::from_utf8(
+            fixture
+                .editor
+                .handle(&own_page(
+                    "POST",
+                    "/api/pick-save",
+                    &format!("dir={}&name=out.scn", encode(&dir)),
+                ))
+                .body,
+        )
+        .unwrap();
+        assert!(saved.contains("\"ok\":true"), "{saved}");
+        let request = seen.lock().unwrap()[1].clone();
+        assert_eq!(request.kind, PickKind::SaveFile);
+        assert_eq!(request.start_in, Some(fixture.dir.clone()));
+        assert_eq!(request.default_name.as_deref(), Some("out.scn"));
+
+        // **Cancelling is an answer, not a refusal.** `"ok":true` with nothing chosen, so the page
+        // can leave the field exactly as it was and say nothing.
+        fixture
+            .editor
+            .set_picker(Box::new(|_| PickOutcome::Cancelled));
+        let cancelled = String::from_utf8(
+            fixture
+                .editor
+                .handle(&own_page("POST", "/api/pick-directory", ""))
+                .body,
+        )
+        .unwrap();
+        assert!(cancelled.contains("\"ok\":true"), "{cancelled}");
+        assert!(cancelled.contains("\"cancelled\":true"), "{cancelled}");
+        assert!(cancelled.contains("\"path\":null"), "{cancelled}");
+        assert!(!cancelled.contains("refusal"), "a cancel must not read as a failure: {cancelled}");
+
+        // No dialog to show: a refusal that points at the field that still works.
+        fixture.editor.set_picker(Box::new(|_| {
+            PickOutcome::Unavailable("there is no desktop session".to_owned())
+        }));
+        let unavailable = refusal(
+            &String::from_utf8(
+                fixture
+                    .editor
+                    .handle(&own_page("POST", "/api/pick-directory", ""))
+                    .body,
+            )
+            .unwrap(),
+        );
+        assert!(unavailable.contains("no desktop session"), "{unavailable}");
+        assert!(unavailable.contains("Type the path into the field"), "{unavailable}");
+    }
+
+    #[test]
+    fn the_file_dialog_is_a_post_and_gets_the_same_guards_as_everything_else() {
+        let mut fixture = Fixture::new("picker-guards");
+        fixture.editor.set_picker(Box::new(|_| {
+            panic!("a guarded request must never reach the dialog")
+        }));
+        // A cross-origin page must not be able to make the user's machine pop a file dialog.
+        for target in ["/api/pick-directory", "/api/pick-save"] {
+            let foreign = fixture.editor.handle(&HttpRequest {
+                method: "POST",
+                target,
+                body: "",
+                host: Some("127.0.0.1:8731"),
+                origin: Some("https://evil.example"),
+            });
+            assert_eq!(foreign.status, 403, "{target}");
+            let rebound = fixture.editor.handle(&HttpRequest {
+                method: "POST",
+                target,
+                body: "",
+                host: Some("evil.example:8731"),
+                origin: None,
+            });
+            assert_eq!(rebound.status, 403, "{target}");
+            // And not reachable by GET, which is what an `<img>` or a redirect could produce.
+            assert_eq!(fixture.editor.handle(&own_page("GET", target, "")).status, 404);
+        }
+    }
+
+    #[test]
+    fn a_picked_path_is_validated_exactly_like_a_typed_one() {
+        let mut fixture = Fixture::new("picker-validation");
+        fixture.open();
+        fixture.paint((5, 2, 5, 2), 2, None);
+        let token = fixture.token.clone();
+        let taken = fixture.dir.join("taken.scn");
+        fs::write(&taken, b"already here").unwrap();
+
+        // The native save dialog asks its own "replace?" question and hands back an existing path
+        // when the user says yes. We refuse it anyway, and say why -- the map directory has no
+        // backup and this tool never writes in place, whatever the OS offered.
+        fixture.editor.set_picker(Box::new({
+            let taken = taken.clone();
+            move |_| PickOutcome::Chosen(taken.clone())
+        }));
+        let picked = String::from_utf8(
+            fixture
+                .editor
+                .handle(&own_page("POST", "/api/pick-save", ""))
+                .body,
+        )
+        .unwrap();
+        assert!(picked.contains("\"ok\":true"), "{picked}");
+
+        let refused = refusal(&String::from_utf8(
+            fixture
+                .editor
+                .handle(&own_page(
+                    "POST",
+                    "/api/save",
+                    &format!("path={}&token={token}", encode(&taken.display().to_string())),
+                ))
+                .body,
+        )
+        .unwrap());
+        assert!(refused.contains("never writes over an existing file"), "{refused}");
+        assert!(refused.contains("save dialog"), "{refused}");
+        assert_eq!(fs::read(&taken).unwrap(), b"already here");
+
+        // And a picked path that would rename the map's class is refused like a typed one.
+        let combat = fixture.dir.join("picked.smp");
+        let class = refusal(&String::from_utf8(
+            fixture
+                .editor
+                .handle(&own_page(
+                    "POST",
+                    "/api/save",
+                    &format!("path={}&token={token}", encode(&combat.display().to_string())),
+                ))
+                .body,
+        )
+        .unwrap());
+        assert!(class.contains("read through different tilesets"), "{class}");
+        assert!(!combat.exists());
+    }
+
+    #[test]
+    fn a_finished_dialog_is_read_as_a_path_a_cancel_or_a_failure() {
+        // The three outcomes, from the bytes `osascript` actually produces. This is the part that
+        // decides whether a user who dismissed a dialog sees a refusal they did not earn.
+        assert_eq!(
+            classify_pick(true, b"/Users/someone/English/map/\n", ""),
+            PickOutcome::Chosen(PathBuf::from("/Users/someone/English/map/"))
+        );
+        // The cancel is matched on AppleScript's error **number**, because the text is localised
+        // and the number is not. A French or Japanese system says something else entirely.
+        assert_eq!(
+            classify_pick(false, b"", "1:1: execution error: User canceled. (-128)\n"),
+            PickOutcome::Cancelled
+        );
+        assert_eq!(
+            classify_pick(false, b"", "execution error: erreur inconnue. (-128)\n"),
+            PickOutcome::Cancelled
+        );
+        // A genuine failure keeps its reason.
+        let broken = classify_pick(
+            false,
+            b"",
+            "execution error: Application isn't running. (-600)\n",
+        );
+        match broken {
+            PickOutcome::Unavailable(reason) => assert!(reason.contains("-600"), "{reason}"),
+            other => panic!("a failure was read as {other:?}"),
+        }
+        // Success with nothing in it is not a path.
+        assert!(matches!(
+            classify_pick(true, b"  \n", ""),
+            PickOutcome::Unavailable(_)
+        ));
+    }
+
+    #[test]
+    fn a_dialog_that_never_answers_is_killed_rather_than_hanging_the_editor() {
+        // The request loop is single-threaded, so a child blocked on a window that will never be
+        // drawn freezes the whole editor. No GUI is involved here: `sleep` stands in for the
+        // dialog, which is the only part of this that a headless test can exercise honestly.
+        let mut command = Command::new("/bin/sleep");
+        command.arg("30");
+        let started = Instant::now();
+        let outcome = run_picker(command, Duration::from_millis(200));
+        let elapsed = started.elapsed();
+        match outcome {
+            PickOutcome::Unavailable(reason) => {
+                assert!(reason.contains("did not answer"), "{reason}");
+                assert!(reason.contains("stopped"), "{reason}");
+            }
+            other => panic!("a hung dialog was read as {other:?}"),
+        }
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the timeout did not fire: {elapsed:?}"
+        );
+        assert_eq!(PICK_TIMEOUT, Duration::from_secs(120));
+
+        // A program that is not there at all is unavailable, not a panic: this is the shape of a
+        // machine with no `osascript`.
+        match run_picker(
+            Command::new("/definitely/not/a/program"),
+            Duration::from_millis(200),
+        ) {
+            PickOutcome::Unavailable(reason) => {
+                assert!(reason.contains("could not start"), "{reason}")
+            }
+            other => panic!("a missing dialog program was read as {other:?}"),
+        }
+    }
+
+    /// The script's arguments, after the `-e` and the script text itself.
+    #[cfg(target_os = "macos")]
+    fn script_arguments(request: &PickRequest) -> Vec<String> {
+        pick_command(request)
+            .get_args()
+            .skip(2)
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// Measured against `osascript` on 2026-09-17, because this is where the first version was
+    /// wrong: `osascript -e SCRIPT - a b` does **not** consume the `-`. It arrives as
+    /// `item 1 of argv`, so the prompt became item 2 and the directory item 3, and the dialog
+    /// would have been titled `-`. A `sh -c` would have hidden this behind a quoting problem
+    /// instead; there is none here, and the arguments are the whole interface.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_dialog_script_gets_its_strings_as_argv_in_the_order_it_reads_them() {
+        let directory = PickRequest {
+            kind: PickKind::Directory,
+            start_in: Some(PathBuf::from("/Program Files (x86)/map")),
+            default_name: None,
+        };
+        assert_eq!(
+            script_arguments(&directory),
+            vec![
+                "Choose the directory your maps are in".to_owned(),
+                "/Program Files (x86)/map".to_owned(),
+            ],
+            "the script reads its prompt from `item 1 of argv`"
+        );
+        assert_eq!(
+            script_arguments(&PickRequest { start_in: None, ..directory.clone() }),
+            vec!["Choose the directory your maps are in".to_owned()]
+        );
+
+        // Save takes prompt, then name, then location -- the order the script indexes them in.
+        let save = PickRequest {
+            kind: PickKind::SaveFile,
+            start_in: Some(PathBuf::from("/maps")),
+            default_name: Some("URAK-edited.scn".to_owned()),
+        };
+        assert_eq!(
+            script_arguments(&save),
+            vec![
+                "Save the edited map as a new file".to_owned(),
+                "URAK-edited.scn".to_owned(),
+                "/maps".to_owned(),
+            ]
+        );
+        // With no name typed there is still a name, because `choose file name` needs one.
+        assert_eq!(
+            script_arguments(&PickRequest { default_name: None, ..save })[1],
+            "edited.scn"
+        );
+
+        // And the two script bodies really do index the arguments this way, so the assertions
+        // above are about the pair and not about one side of it.
+        assert!(CHOOSE_FOLDER_IN.contains("prompt (item 1 of argv)"));
+        assert!(CHOOSE_FOLDER_IN.contains("POSIX file (item 2 of argv)"));
+        assert!(CHOOSE_SAVE_NAME_IN.contains("default name (item 2 of argv)"));
+        assert!(CHOOSE_SAVE_NAME_IN.contains("POSIX file (item 3 of argv)"));
+        // No separator between the script and its arguments: that is the bug this test exists for.
+        assert!(
+            !pick_command(&directory)
+                .get_args()
+                .any(|argument| argument == "-"),
+            "a `-` after -e is passed through as argv, not consumed"
+        );
     }
 
     /// Send raw bytes and return the status line and body.
