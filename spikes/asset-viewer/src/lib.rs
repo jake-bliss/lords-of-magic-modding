@@ -14,5 +14,6 @@ pub mod operator_bodies;
 pub mod paths;
 pub mod pbm;
 pub mod png_export;
+pub mod save;
 pub mod server;
 pub mod tile;
