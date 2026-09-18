@@ -192,10 +192,35 @@ is what the server has to read and write. The server is on the user's own machin
 opens the dialog** — `POST /api/pick-directory` and `POST /api/pick-save` shell out to the OS
 chooser and get the genuine path back.
 
-**macOS only, through `osascript`, with no new dependency.** Windows and Linux have no equivalent
-one-liner; they need a crate such as `rfd`, and **that is the packaging gap before this goes to the
-community**. On any other platform the endpoint reports itself unavailable and says to type the path
-instead.
+**All three platforms, through programs rather than a linked crate, so there is still no new
+dependency.** macOS uses `osascript`, Windows uses PowerShell driving `System.Windows.Forms`, and
+Linux uses `zenity` or `kdialog`, whichever is on `PATH`. Where none is available — a Linux box with
+neither installed — the endpoint reports itself unavailable and names what to install, and the typed
+field keeps working.
+
+**What is verified, and what is not.** Only the macOS dialog has been watched by a human. The
+Windows and Linux builders are asserted at the level of the argument list, the environment, and the
+cancel/failure reading; nobody has clicked through either. That is a real limit, so it is worth
+saying what those assertions are actually worth: the one bug this feature has already shipped was an
+argument-order mistake that no test then covered, and argument lists are exactly what is covered
+now. The flavour is carried as a value rather than decided by `cfg!`, specifically so that **a Mac
+builds and asserts the Windows and Linux commands too** — `cfg`-gating them would leave two dialogs
+that no test anywhere could look at.
+
+Per-platform details that are easy to get wrong, each pinned by a test:
+
+- **`-STA` is load-bearing on Windows.** WinForms dialogs throw outside a single-threaded apartment,
+  and PowerShell 5 runs `-Command` in an MTA by default, so without it the dialog never draws.
+  `-NoProfile` is there too: a profile that writes to stdout would corrupt the path read back.
+- **The Windows strings travel as environment variables, never interpolated into the script.** A
+  path like `C:\Program Files (x86)\…` is full of PowerShell metacharacters, and needing to type
+  such a path is the problem this feature exists to remove — re-introducing it as a quoting bug
+  would be a poor trade. With no starting directory the variable is *removed* rather than inherited,
+  so a stale value cannot send the dialog somewhere nobody asked for.
+- **zenity's `--filename` needs its trailing separator** to mean "start inside this directory"
+  rather than "select this directory"; without it the chooser opens one level up.
+- **kdialog needs a positional start directory**; given the flag alone it prints usage and exits
+  non-zero, which would surface to the user as a broken dialog.
 
 **On a Wine-wrapper install the folder dialog may not be able to reach your maps at all, and that
 is macOS's rule rather than ours.** This community mostly runs the game inside a wrapper, so the
@@ -232,13 +257,20 @@ Four things this gets right on purpose:
   Browse, the one that matters most, opened wherever macOS happened to be. It now falls back to the
   same `--pic`-derived suggestion the field is seeded from, so the two cannot disagree about where
   this install keeps its maps.
-- **Cancelling is not an error.** Dismissing the dialog answers `"ok": true, "cancelled": true`,
-  changes nothing and logs nothing. `osascript` exits non-zero for a cancel as well as a failure, so
-  the two are told apart by AppleScript's error **number** `-128` rather than by the text "User
-  canceled", which is localised.
+- **Cancelling is not an error**, and each platform says so differently. Dismissing the dialog
+  answers `"ok": true, "cancelled": true`, changes nothing and logs nothing. `osascript` exits
+  non-zero for a cancel as well as a failure, so the two are told apart by AppleScript's error
+  **number** `-128` rather than by the text "User canceled", which is localised. zenity, kdialog and
+  our PowerShell scripts instead exit non-zero with **nothing on stdout**, and their stderr is not a
+  signal at all — GTK and Qt both emit warnings on a perfectly ordinary run, so reading a non-empty
+  stderr as failure would report a cancel as an error to anyone on a noisy desktop. That rule errs
+  toward reading an ambiguous failure as a cancel, deliberately: a cancel misreported as an error
+  puts an alarming refusal in front of someone who did nothing but change their mind, and teaches
+  them to ignore the log, which is the one place this editor says things that matter. The reverse
+  mistake costs a silent no-op they can simply retry.
 - **A dialog that never appears is killed, not waited on.** The request loop is single-threaded, so
   a child blocked on a window that will never be drawn freezes the whole editor; there is a 120
-  second bound and the child is killed at it. A missing `osascript` is reported the same way.
+  second bound and the child is killed at it. A missing dialog program is reported the same way.
 - **A picked path is trusted exactly as far as a typed one.** It goes through the same guards. In
   particular the native save dialog asks its own "replace?" question and hands back an existing path
   when the user says yes — **and we refuse it anyway**, with a refusal that says why: the map

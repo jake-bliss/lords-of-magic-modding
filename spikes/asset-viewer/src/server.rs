@@ -908,54 +908,229 @@ const CHOOSE_SAVE_NAME_IN: &str = r#"on run argv
     return POSIX path of chosen
 end run"#;
 
-/// Ask macOS for a path through `osascript`.
+/// Which dialog program a platform drives, and therefore how to read its answer.
 ///
-/// `osascript` is in the base system, so this needs no dependency. **Windows and Linux have no
-/// equivalent one-liner and are not covered**; they need a crate such as `rfd`, and that is the
-/// packaging gap. On those platforms this reports itself unavailable and the typed field -- which
-/// is not going away and which every test drives -- keeps working.
-#[cfg(target_os = "macos")]
-fn native_pick(request: &PickRequest) -> PickOutcome {
-    run_picker(pick_command(request), PICK_TIMEOUT)
+/// The flavour is carried as a value rather than decided by `cfg!` at every use, so that **every
+/// platform's argument list is constructed and asserted on whatever machine runs the tests**. The
+/// alternative -- `cfg`-gating the command builders -- ships a Windows dialog and a Linux dialog
+/// that no test on a developer's Mac can ever look at. The first version of the macOS builder had
+/// an argument-order bug that a desktop would have caught and CI would not; two more uncovered
+/// builders is that same trap, twice.
+///
+/// Only the *selection* below is platform-gated. Construction is portable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerFlavour {
+    /// macOS, through `osascript`. In the base system, so it needs no dependency.
+    AppleScript,
+    /// Linux/BSD, through GNOME's `zenity`.
+    Zenity,
+    /// Linux/BSD, through KDE's `kdialog`.
+    KDialog,
+    /// Windows, through PowerShell driving `System.Windows.Forms`.
+    PowerShell,
 }
 
-/// The `osascript` invocation for one request.
+/// Environment variables that carry the dialog's strings into PowerShell.
+///
+/// **The strings are passed as environment, never interpolated into the script text.** A path like
+/// `Program Files (x86)` is full of PowerShell metacharacters, and the whole reason this feature
+/// exists is that people should not have to type such paths by hand. Interpolating them into a
+/// `-Command` string would reintroduce, in a worse form, the quoting problem the dialog removes.
+const PS_PROMPT_VAR: &str = "LOM_PICK_PROMPT";
+const PS_DIR_VAR: &str = "LOM_PICK_DIR";
+const PS_NAME_VAR: &str = "LOM_PICK_NAME";
+
+/// Pick a folder with the WinForms folder browser.
+const PS_CHOOSE_FOLDER: &str = r#"Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = $env:LOM_PICK_PROMPT
+if ($env:LOM_PICK_DIR) { $dialog.SelectedPath = $env:LOM_PICK_DIR }
+if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 1 }
+[Console]::Out.Write($dialog.SelectedPath)"#;
+
+/// Pick a save name with the WinForms save dialog.
+const PS_CHOOSE_SAVE_NAME: &str = r#"Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.SaveFileDialog
+$dialog.Title = $env:LOM_PICK_PROMPT
+$dialog.FileName = $env:LOM_PICK_NAME
+if ($env:LOM_PICK_DIR) { $dialog.InitialDirectory = $env:LOM_PICK_DIR }
+if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 1 }
+[Console]::Out.Write($dialog.FileName)"#;
+
+/// The prompt shown when choosing where maps live.
+const DIRECTORY_PROMPT: &str = "Choose the directory your maps are in";
+
+/// The prompt shown when choosing what to call the edited map.
+const SAVE_PROMPT: &str = "Save the edited map as a new file";
+
+/// The name offered when the caller has no better suggestion.
+const DEFAULT_SAVE_NAME: &str = "edited.scn";
+
+/// Which dialog program this build should use, or `None` when none is available.
+///
+/// On Linux the answer depends on what is *installed*, not on what was compiled, so it is a
+/// runtime probe. Neither `zenity` nor `kdialog` is guaranteed on a desktop and plenty of machines
+/// have exactly one; checking both and preferring whichever is present beats hard-coding a desktop
+/// environment. When neither is there the typed path field still works, and the refusal says what
+/// to install rather than just reporting failure.
+fn available_flavour() -> Option<PickerFlavour> {
+    if cfg!(target_os = "macos") {
+        return Some(PickerFlavour::AppleScript);
+    }
+    if cfg!(target_os = "windows") {
+        return Some(PickerFlavour::PowerShell);
+    }
+    for (tool, flavour) in [
+        ("zenity", PickerFlavour::Zenity),
+        ("kdialog", PickerFlavour::KDialog),
+    ] {
+        if tool_on_path(tool) {
+            return Some(flavour);
+        }
+    }
+    None
+}
+
+/// Whether an executable of this name is on `PATH`.
+///
+/// Done by reading `PATH` rather than by running `which`, because the point is to avoid spawning a
+/// process that might not exist, and because `which` is itself not universally present.
+fn tool_on_path(tool: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|directory| {
+        let candidate = directory.join(tool);
+        std::fs::metadata(&candidate).is_ok_and(|meta| meta.is_file())
+    })
+}
+
+/// Ask the operating system for a path.
+///
+/// macOS uses `osascript`, Windows uses PowerShell, and Linux uses `zenity` or `kdialog` --
+/// all of them programs rather than a linked crate, so **this still adds no dependency**. Where
+/// none is available the typed field, which every test drives and which is not going away,
+/// keeps working.
+fn native_pick(request: &PickRequest) -> PickOutcome {
+    let Some(flavour) = available_flavour() else {
+        return PickOutcome::Unavailable(
+            "no file dialog is available on this machine: install `zenity` or `kdialog` to get \
+             one. Typing the directory into the field works without either."
+                .to_owned(),
+        );
+    };
+    run_picker(pick_command(flavour, request), PICK_TIMEOUT, flavour)
+}
+
+/// The dialog invocation for one request, on one flavour.
 ///
 /// Split out so the argument list can be asserted without a desktop. That is not ceremony: the
 /// first version put a `-` between the script and its arguments, which shifted every string by one
 /// and would have shown a dialog prompted `-`.
-#[cfg(target_os = "macos")]
-fn pick_command(request: &PickRequest) -> Command {
+fn pick_command(flavour: PickerFlavour, request: &PickRequest) -> Command {
     let start_in = request
         .start_in
         .as_ref()
         .map(|directory| directory.display().to_string());
-    let mut command = Command::new("osascript");
-    match request.kind {
-        PickKind::Directory => {
-            let prompt = "Choose the directory your maps are in";
-            match &start_in {
-                Some(directory) => command.args(["-e", CHOOSE_FOLDER_IN, prompt, directory]),
-                None => command.args(["-e", CHOOSE_FOLDER, prompt]),
+    let name = request.default_name.as_deref().unwrap_or(DEFAULT_SAVE_NAME);
+    match flavour {
+        PickerFlavour::AppleScript => {
+            let mut command = Command::new("osascript");
+            match request.kind {
+                PickKind::Directory => match &start_in {
+                    Some(directory) => {
+                        command.args(["-e", CHOOSE_FOLDER_IN, DIRECTORY_PROMPT, directory])
+                    }
+                    None => command.args(["-e", CHOOSE_FOLDER, DIRECTORY_PROMPT]),
+                },
+                PickKind::SaveFile => match &start_in {
+                    Some(directory) => {
+                        command.args(["-e", CHOOSE_SAVE_NAME_IN, SAVE_PROMPT, name, directory])
+                    }
+                    None => command.args(["-e", CHOOSE_SAVE_NAME, SAVE_PROMPT, name]),
+                },
             };
+            command
         }
-        PickKind::SaveFile => {
-            let prompt = "Save the edited map as a new file";
-            let name = request.default_name.as_deref().unwrap_or("edited.scn");
+        PickerFlavour::Zenity => {
+            let mut command = Command::new("zenity");
+            command.arg("--file-selection");
+            match request.kind {
+                PickKind::Directory => {
+                    command.arg("--directory");
+                    command.arg(format!("--title={DIRECTORY_PROMPT}"));
+                    // zenity reads `--filename` as the starting selection, and a **trailing
+                    // separator is what makes it mean "inside this directory"** rather than "this
+                    // directory, selected". Without it the chooser opens one level up.
+                    if let Some(directory) = &start_in {
+                        command.arg(format!("--filename={}/", directory.trim_end_matches('/')));
+                    }
+                }
+                PickKind::SaveFile => {
+                    command.args(["--save", "--confirm-overwrite"]);
+                    command.arg(format!("--title={SAVE_PROMPT}"));
+                    match &start_in {
+                        Some(directory) => command.arg(format!(
+                            "--filename={}/{name}",
+                            directory.trim_end_matches('/')
+                        )),
+                        None => command.arg(format!("--filename={name}")),
+                    };
+                }
+            }
+            command
+        }
+        PickerFlavour::KDialog => {
+            let mut command = Command::new("kdialog");
+            match request.kind {
+                PickKind::Directory => {
+                    command.args(["--title", DIRECTORY_PROMPT]);
+                    command.arg("--getexistingdirectory");
+                    // kdialog takes the start directory positionally and **needs one**: with no
+                    // argument it prints usage to stderr and exits non-zero, which would surface
+                    // as "the dialog could not be shown". `.` is the harmless stand-in.
+                    command.arg(start_in.as_deref().unwrap_or("."));
+                }
+                PickKind::SaveFile => {
+                    command.args(["--title", SAVE_PROMPT]);
+                    command.arg("--getsavefilename");
+                    match &start_in {
+                        Some(directory) => command
+                            .arg(format!("{}/{name}", directory.trim_end_matches('/'))),
+                        None => command.arg(name),
+                    };
+                }
+            }
+            command
+        }
+        PickerFlavour::PowerShell => {
+            let mut command = Command::new("powershell");
+            // `-STA` is **required**: `System.Windows.Forms` dialogs need a single-threaded
+            // apartment, and PowerShell 5's default for `-Command` is MTA, where `ShowDialog`
+            // throws instead of drawing anything. `-NoProfile` keeps a user's profile from
+            // writing to stdout and corrupting the path this reads back.
+            command.args(["-NoProfile", "-STA", "-NonInteractive", "-Command"]);
+            command.arg(match request.kind {
+                PickKind::Directory => PS_CHOOSE_FOLDER,
+                PickKind::SaveFile => PS_CHOOSE_SAVE_NAME,
+            });
+            command.env(
+                PS_PROMPT_VAR,
+                match request.kind {
+                    PickKind::Directory => DIRECTORY_PROMPT,
+                    PickKind::SaveFile => SAVE_PROMPT,
+                },
+            );
+            command.env(PS_NAME_VAR, name);
             match &start_in {
-                Some(directory) => command.args(["-e", CHOOSE_SAVE_NAME_IN, prompt, name, directory]),
-                None => command.args(["-e", CHOOSE_SAVE_NAME, prompt, name]),
+                Some(directory) => command.env(PS_DIR_VAR, directory),
+                // Removed rather than left to inherit: a stale value from the parent environment
+                // would silently send the dialog somewhere the caller did not ask for.
+                None => command.env_remove(PS_DIR_VAR),
             };
+            command
         }
     }
-    command
-}
-
-#[cfg(not(target_os = "macos"))]
-fn native_pick(_request: &PickRequest) -> PickOutcome {
-    PickOutcome::Unavailable(
-        "this build has no native file dialog: only macOS is covered, through osascript".to_owned(),
-    )
 }
 
 /// Run a dialog process, and **kill it rather than wait forever**.
@@ -964,7 +1139,7 @@ fn native_pick(_request: &PickRequest) -> PickOutcome {
 /// leaves a child blocked on a window that will never be drawn. The request loop is single-threaded,
 /// so that child freezes the editor. Polling with a deadline bounds it; a hang is the one outcome
 /// there is no recovering from.
-fn run_picker(mut command: Command, timeout: Duration) -> PickOutcome {
+fn run_picker(mut command: Command, timeout: Duration, flavour: PickerFlavour) -> PickOutcome {
     let mut child = match command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -998,6 +1173,7 @@ fn run_picker(mut command: Command, timeout: Duration) -> PickOutcome {
     // output is one path, far short of a pipe buffer.
     match child.wait_with_output() {
         Ok(output) => classify_pick(
+            flavour,
             output.status.success(),
             &output.stdout,
             &String::from_utf8_lossy(&output.stderr),
@@ -1009,18 +1185,47 @@ fn run_picker(mut command: Command, timeout: Duration) -> PickOutcome {
 /// Turn a finished dialog process into an outcome.
 ///
 /// Pure, so the three cases that matter -- a path, a cancel, a failure -- are testable without a
-/// desktop. Separating cancel from failure is the whole point: `osascript` exits non-zero for both.
-fn classify_pick(success: bool, stdout: &[u8], stderr: &str) -> PickOutcome {
+/// desktop, on every flavour rather than only the one this machine runs.
+///
+/// **Telling cancel apart from failure is the whole job, and each flavour signals it differently:**
+///
+/// - `osascript` exits non-zero for both and distinguishes them only by AppleScript error number
+///   `-128` in its stderr. Matched on the number because the accompanying text is localised.
+/// - `zenity` and `kdialog` exit non-zero and print **nothing on stdout** when dismissed. Their
+///   stderr is *not* a reliable signal: GTK and Qt both emit warnings on a perfectly ordinary
+///   run, so a non-empty stderr means nothing by itself.
+/// - The PowerShell scripts are ours, and they `exit 1` with no output on a non-OK dialog result,
+///   which puts Windows on the same rule as Linux.
+///
+/// So for every flavour but AppleScript the rule is: **non-zero exit with empty stdout is a
+/// cancel.** That deliberately errs toward reading an ambiguous failure as a cancel. A cancel
+/// misreported as an error puts an alarming refusal in front of someone who did nothing but change
+/// their mind, and trains people to ignore the log -- which is the one place this editor says
+/// things that matter. The reverse mistake costs a silent no-op the user can simply retry.
+fn classify_pick(
+    flavour: PickerFlavour,
+    success: bool,
+    stdout: &[u8],
+    stderr: &str,
+) -> PickOutcome {
     if success {
         let path = String::from_utf8_lossy(stdout).trim().to_owned();
         if path.is_empty() {
+            // Not read as a cancel even under the empty-stdout rule: the flavours that cancel this
+            // way exit non-zero doing it, so a *successful* run with no path is a real anomaly.
             return PickOutcome::Unavailable(
                 "the file dialog returned no path at all".to_owned(),
             );
         }
         return PickOutcome::Chosen(PathBuf::from(path));
     }
-    if stderr.contains(APPLESCRIPT_USER_CANCELLED) {
+    let cancelled = match flavour {
+        PickerFlavour::AppleScript => stderr.contains(APPLESCRIPT_USER_CANCELLED),
+        PickerFlavour::Zenity | PickerFlavour::KDialog | PickerFlavour::PowerShell => {
+            String::from_utf8_lossy(stdout).trim().is_empty()
+        }
+    };
+    if cancelled {
         return PickOutcome::Cancelled;
     }
     let reason = stderr.trim();
@@ -3059,21 +3264,22 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         // The three outcomes, from the bytes `osascript` actually produces. This is the part that
         // decides whether a user who dismissed a dialog sees a refusal they did not earn.
         assert_eq!(
-            classify_pick(true, b"/Users/someone/English/map/\n", ""),
+            classify_pick(PickerFlavour::AppleScript, true, b"/Users/someone/English/map/\n", ""),
             PickOutcome::Chosen(PathBuf::from("/Users/someone/English/map/"))
         );
         // The cancel is matched on AppleScript's error **number**, because the text is localised
         // and the number is not. A French or Japanese system says something else entirely.
         assert_eq!(
-            classify_pick(false, b"", "1:1: execution error: User canceled. (-128)\n"),
+            classify_pick(PickerFlavour::AppleScript, false, b"", "1:1: execution error: User canceled. (-128)\n"),
             PickOutcome::Cancelled
         );
         assert_eq!(
-            classify_pick(false, b"", "execution error: erreur inconnue. (-128)\n"),
+            classify_pick(PickerFlavour::AppleScript, false, b"", "execution error: erreur inconnue. (-128)\n"),
             PickOutcome::Cancelled
         );
         // A genuine failure keeps its reason.
         let broken = classify_pick(
+            PickerFlavour::AppleScript,
             false,
             b"",
             "execution error: Application isn't running. (-600)\n",
@@ -3084,7 +3290,7 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         }
         // Success with nothing in it is not a path.
         assert!(matches!(
-            classify_pick(true, b"  \n", ""),
+            classify_pick(PickerFlavour::AppleScript, true, b"  \n", ""),
             PickOutcome::Unavailable(_)
         ));
     }
@@ -3097,7 +3303,7 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         let mut command = Command::new("/bin/sleep");
         command.arg("30");
         let started = Instant::now();
-        let outcome = run_picker(command, Duration::from_millis(200));
+        let outcome = run_picker(command, Duration::from_millis(200), PickerFlavour::AppleScript);
         let elapsed = started.elapsed();
         match outcome {
             PickOutcome::Unavailable(reason) => {
@@ -3117,6 +3323,7 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         match run_picker(
             Command::new("/definitely/not/a/program"),
             Duration::from_millis(200),
+            PickerFlavour::AppleScript,
         ) {
             PickOutcome::Unavailable(reason) => {
                 assert!(reason.contains("could not start"), "{reason}")
@@ -3148,13 +3355,22 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         }
     }
 
-    /// The script's arguments, after the `-e` and the script text itself.
-    #[cfg(target_os = "macos")]
-    fn script_arguments(request: &PickRequest) -> Vec<String> {
-        pick_command(request)
+    /// Every argument of a built command, as strings.
+    ///
+    /// Not gated to one platform: the whole point of carrying the flavour as a value is that a
+    /// Mac can assert the Windows and Linux argument lists too.
+    fn arguments_of(flavour: PickerFlavour, request: &PickRequest) -> Vec<String> {
+        pick_command(flavour, request)
             .get_args()
-            .skip(2)
             .map(|argument| argument.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// The AppleScript's arguments, after the `-e` and the script text itself.
+    fn script_arguments(request: &PickRequest) -> Vec<String> {
+        arguments_of(PickerFlavour::AppleScript, request)
+            .into_iter()
+            .skip(2)
             .collect()
     }
 
@@ -3163,7 +3379,6 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
     /// `item 1 of argv`, so the prompt became item 2 and the directory item 3, and the dialog
     /// would have been titled `-`. A `sh -c` would have hidden this behind a quoting problem
     /// instead; there is none here, and the arguments are the whole interface.
-    #[cfg(target_os = "macos")]
     #[test]
     fn the_dialog_script_gets_its_strings_as_argv_in_the_order_it_reads_them() {
         let directory = PickRequest {
@@ -3212,11 +3427,231 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         assert!(CHOOSE_SAVE_NAME_IN.contains("POSIX file (item 3 of argv)"));
         // No separator between the script and its arguments: that is the bug this test exists for.
         assert!(
-            !pick_command(&directory)
-                .get_args()
+            !arguments_of(PickerFlavour::AppleScript, &directory)
+                .iter()
                 .any(|argument| argument == "-"),
             "a `-` after -e is passed through as argv, not consumed"
         );
+    }
+
+    /// The Linux and Windows dialogs, asserted on whatever machine runs the tests.
+    ///
+    /// These two builders are the ones nobody developing this can click through, so the argument
+    /// list is the only thing standing between them and shipping broken. The macOS builder already
+    /// shipped an argument-order bug once.
+    #[test]
+    fn the_linux_and_windows_dialogs_are_built_with_the_arguments_their_programs_read() {
+        let directory = PickRequest {
+            kind: PickKind::Directory,
+            start_in: Some(PathBuf::from("/home/someone/English/map")),
+            default_name: None,
+        };
+        let save = PickRequest {
+            kind: PickKind::SaveFile,
+            start_in: Some(PathBuf::from("/home/someone/English/map")),
+            default_name: Some("URAK-edited.scn".to_owned()),
+        };
+
+        // zenity: the trailing `/` is what makes `--filename` mean "start inside this directory"
+        // rather than "select this directory", which opens the chooser one level up.
+        let zenity = arguments_of(PickerFlavour::Zenity, &directory);
+        assert!(zenity.contains(&"--file-selection".to_owned()), "{zenity:?}");
+        assert!(zenity.contains(&"--directory".to_owned()), "{zenity:?}");
+        assert!(
+            zenity.contains(&"--filename=/home/someone/English/map/".to_owned()),
+            "a starting directory without its trailing separator opens one level up: {zenity:?}"
+        );
+        let zenity_save = arguments_of(PickerFlavour::Zenity, &save);
+        assert!(zenity_save.contains(&"--save".to_owned()), "{zenity_save:?}");
+        assert!(
+            zenity_save.contains(&"--filename=/home/someone/English/map/URAK-edited.scn".to_owned()),
+            "{zenity_save:?}"
+        );
+        // Saving is the one path that can destroy work, so the overwrite prompt is not optional.
+        assert!(
+            zenity_save.contains(&"--confirm-overwrite".to_owned()),
+            "{zenity_save:?}"
+        );
+        assert!(!zenity_save.contains(&"--directory".to_owned()), "{zenity_save:?}");
+
+        // kdialog takes its start directory positionally, and **needs one**: with the flag and no
+        // argument it prints usage and exits non-zero, which would read as a broken dialog.
+        let kdialog = arguments_of(PickerFlavour::KDialog, &directory);
+        assert_eq!(
+            kdialog,
+            vec![
+                "--title".to_owned(),
+                "Choose the directory your maps are in".to_owned(),
+                "--getexistingdirectory".to_owned(),
+                "/home/someone/English/map".to_owned(),
+            ]
+        );
+        assert_eq!(
+            arguments_of(
+                PickerFlavour::KDialog,
+                &PickRequest { start_in: None, ..directory.clone() }
+            )
+            .last()
+            .map(String::as_str),
+            Some("."),
+            "kdialog must be given some directory or it prints usage"
+        );
+        assert_eq!(
+            arguments_of(PickerFlavour::KDialog, &save).last().map(String::as_str),
+            Some("/home/someone/English/map/URAK-edited.scn")
+        );
+
+        // PowerShell: `-STA` is load-bearing. WinForms dialogs throw in the MTA that `-Command`
+        // defaults to under PowerShell 5, so without it the dialog never draws at all.
+        let windows = arguments_of(PickerFlavour::PowerShell, &directory);
+        assert!(
+            windows.contains(&"-STA".to_owned()),
+            "WinForms dialogs throw outside a single-threaded apartment: {windows:?}"
+        );
+        assert!(
+            windows.contains(&"-NoProfile".to_owned()),
+            "a user profile writing to stdout would corrupt the path read back: {windows:?}"
+        );
+        assert!(windows.iter().any(|argument| argument == PS_CHOOSE_FOLDER));
+        assert!(
+            arguments_of(PickerFlavour::PowerShell, &save)
+                .iter()
+                .any(|argument| argument == PS_CHOOSE_SAVE_NAME)
+        );
+
+        // Nothing user-supplied is interpolated into the PowerShell source. A path full of
+        // metacharacters is exactly what this feature exists to stop people typing.
+        for script in [PS_CHOOSE_FOLDER, PS_CHOOSE_SAVE_NAME] {
+            assert!(!script.contains("/home/someone"), "{script}");
+            assert!(script.contains("$env:"), "{script}");
+        }
+    }
+
+    /// The PowerShell strings travel as environment, and an absent directory is *removed*.
+    #[test]
+    fn the_windows_dialog_takes_its_strings_from_the_environment() {
+        let save = PickRequest {
+            kind: PickKind::SaveFile,
+            start_in: Some(PathBuf::from(r"C:\Program Files (x86)\map")),
+            default_name: Some("URAK-edited.scn".to_owned()),
+        };
+        let command = pick_command(PickerFlavour::PowerShell, &save);
+        let environment: Vec<(String, Option<String>)> = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        assert!(
+            environment.contains(&(
+                PS_DIR_VAR.to_owned(),
+                Some(r"C:\Program Files (x86)\map".to_owned())
+            )),
+            "{environment:?}"
+        );
+        assert!(
+            environment
+                .contains(&(PS_NAME_VAR.to_owned(), Some("URAK-edited.scn".to_owned()))),
+            "{environment:?}"
+        );
+
+        // With no starting directory the variable is cleared rather than left to inherit: a stale
+        // value from the parent environment would send the dialog somewhere nobody asked for.
+        let command = pick_command(
+            PickerFlavour::PowerShell,
+            &PickRequest { start_in: None, ..save },
+        );
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == PS_DIR_VAR && value.is_none()),
+            "an absent starting directory must clear the variable, not inherit one"
+        );
+    }
+
+    /// A dismissed dialog is a cancel on every flavour, and each one signals it differently.
+    #[test]
+    fn a_dismissed_dialog_is_a_cancel_on_every_flavour() {
+        // zenity and kdialog exit non-zero with nothing on stdout. Their stderr is not a signal:
+        // GTK and Qt both emit warnings on a perfectly ordinary run, so reading a non-empty
+        // stderr as failure would report a cancel as an error to anyone on a noisy desktop.
+        for flavour in [
+            PickerFlavour::Zenity,
+            PickerFlavour::KDialog,
+            PickerFlavour::PowerShell,
+        ] {
+            assert_eq!(classify_pick(flavour, false, b"", ""), PickOutcome::Cancelled);
+            assert_eq!(
+                classify_pick(
+                    flavour,
+                    false,
+                    b"",
+                    "Gtk-Message: Failed to load module \"canberra-gtk-module\"\n"
+                ),
+                PickOutcome::Cancelled,
+                "a desktop's routine stderr noise must not turn a cancel into a refusal"
+            );
+            // A path still comes back as a path.
+            assert_eq!(
+                classify_pick(flavour, true, b"/home/someone/map\n", ""),
+                PickOutcome::Chosen(PathBuf::from("/home/someone/map"))
+            );
+            // Non-zero *with* output is the genuine failure: the program ran and complained.
+            assert!(matches!(
+                classify_pick(flavour, false, b"usage: kdialog [options]\n", "bad option"),
+                PickOutcome::Unavailable(_)
+            ));
+        }
+
+        // AppleScript is the exception, and must stay one: it exits non-zero with empty stdout for
+        // **both** outcomes, so the empty-stdout rule would read every macOS failure as a cancel.
+        assert!(matches!(
+            classify_pick(
+                PickerFlavour::AppleScript,
+                false,
+                b"",
+                "execution error: Application isn't running. (-600)\n"
+            ),
+            PickOutcome::Unavailable(_)
+        ));
+    }
+
+    /// Whichever flavour this machine has, the editor must not claim a dialog it cannot show.
+    #[test]
+    fn this_machine_reports_a_flavour_consistent_with_what_it_can_actually_run() {
+        let flavour = available_flavour();
+        if cfg!(target_os = "macos") {
+            assert_eq!(flavour, Some(PickerFlavour::AppleScript));
+            // The claim is only worth anything if the program is really there.
+            assert!(
+                std::path::Path::new("/usr/bin/osascript").exists(),
+                "macOS claims osascript and does not have it"
+            );
+        } else if cfg!(target_os = "windows") {
+            assert_eq!(flavour, Some(PickerFlavour::PowerShell));
+        } else {
+            // On Linux the answer depends on what is installed, so the only invariant is that a
+            // claimed flavour corresponds to a program on PATH.
+            match flavour {
+                Some(PickerFlavour::Zenity) => assert!(tool_on_path("zenity")),
+                Some(PickerFlavour::KDialog) => assert!(tool_on_path("kdialog")),
+                None => assert!(!tool_on_path("zenity") && !tool_on_path("kdialog")),
+                other => panic!("a non-Linux flavour on Linux: {other:?}"),
+            }
+        }
+    }
+
+    /// The PATH probe finds a real program and does not invent one.
+    #[test]
+    fn the_path_probe_answers_from_the_real_path() {
+        // `sh` is required to exist by POSIX, and /bin is on every PATH this runs under.
+        assert!(tool_on_path("sh"), "PATH probe cannot find sh");
+        assert!(!tool_on_path("definitely-not-a-program-6f3a1c"));
+        // A directory with the right name is not a program.
+        assert!(!tool_on_path("."));
     }
 
     /// Send raw bytes and return the status line and body.
