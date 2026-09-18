@@ -47,12 +47,29 @@ own section below rather than being retro-fitted into phases it was never part o
 - [x] Prove archive write-back: `SFileAddFileEx` round-trips a `gs.mpq` member and the game executes the rewritten archive (2026-09-16).
 - [x] Wrap that in a deterministic, reproducible repack command with a byte-shape check before any development-profile install. **`scripts/repack-archive.sh` + `lom-mpq repack` + `tools/mpq_shape.py`** ([repack](repack.md)). Byte-identical output measured across repeated runs, and across changed mtimes, changed source paths, `umask` and `TZ`. Refuses and exits nonzero on a shape mismatch, and `--install` refuses outright, because installing is Phase 3.
 
+- [x] Recover the names of members no archive catalogues, by pooling every catalogue and confirming each candidate against the target archive itself. **23,005 of the 23,026 unnamed members across the three profiles are now named**, leaving 21 ([member names](member-names.md)).
+
 **Phase 1 is complete.** Two measured limits are recorded rather than papered over: StormLib
 regenerates `(listfile)` on every write so its bytes cannot be preserved — the single exemption,
 safe only because every member name is verified individually — and compaction is off by default
 because `SFileCompactArchive` fails with `ERROR_UNKNOWN_FILE_NAMES` on any archive holding unnamed
-members. Archives are copied-then-patched rather than rebuilt from an extracted tree, because 409
-PIC5R3 members have no name and **the name is part of the encryption key**.
+members.
+
+**Updated 2026-09-18:** the second of those limits used to be stated as permanent, on the grounds
+that 409 PIC5R3 members have no name and **the name is part of the encryption key**. The premise has
+largely gone: name recovery leaves 21 unnamed members in the whole corpus, not 12,000
+([member names](member-names.md)). The conclusion has not changed, and neither has the practice.
+Archives are still copied-then-patched rather than rebuilt from an extracted tree, for three
+reasons that recovery does not touch:
+
+- 21 members still have no name at all — 9 combat-AI plays in vanilla and 3.02 `gs.mpq`, and one
+  image in each `pic.mpq`;
+- recovered names are supplied to a *reader*. `SFileCompactArchive` reads names from the archive's
+  own `(listfile)`, which `pic.mpq`, `imp.mpq`, `sndfx.mpq` and `special.mpq` do not have at all, so
+  compaction still fails them. Writing a recovered listfile into an archive might change that and
+  has not been tried; it is a Phase 3 decision;
+- a rebuild must reproduce each member's flags, locale and storage decisions, which nothing here
+  addresses.
 
 Shape preserved is not the same as playable. The only engine evidence remains the attended
 2026-09-16 round trip, and that was an `MPQ_FILE_IMPLODE` member of `gs.mpq`; the compression choice
@@ -172,7 +189,10 @@ files from 1,406 entries on *any* filesystem. An earlier reading of this as a ca
 problem is **Refuted** — the two names are the same bytes, and an MPQ cannot hold two names
 differing only in case at all. Any shape check built from extracted files, or from names alone,
 therefore cannot tell 1,406 members from 1,405; it has to address members by block index
-([MPQ inventory](mpq-inventory.md)).
+([MPQ inventory](mpq-inventory.md)). Name recovery does not dissolve this case and must not be read
+as doing so: both members are already named, and **name → block is not injective**. It does reduce
+PIC5R3's unnamed remainder from 409 to 1, which matters for the separate reason that block indexes
+are unstable across a rewrite ([member names](member-names.md)).
 
 ## Phase 4 — First vertical slice
 
