@@ -437,6 +437,7 @@ fn survey_module_loads(
     let mut unparsable = 0_usize;
     let mut blockers: BTreeMap<String, usize> = BTreeMap::new();
     let mut other_messages: BTreeMap<String, usize> = BTreeMap::new();
+    let mut line_endings = LineEndingCensus::default();
     let mut corpus_definitions: BTreeSet<String> = BTreeSet::new();
     let mut blocked_by: BTreeMap<&'static str, usize> = BTreeMap::new();
 
@@ -450,8 +451,13 @@ fn survey_module_loads(
         let Ok(document) = GameScriptDocument::parse(&bytes) else {
             continue;
         };
+        line_endings.record(&bytes);
         for name in document.analyze().definition_names.keys() {
-            corpus_definitions.insert(name.to_ascii_lowercase());
+            // Case-sensitively. The VM resolves names case-sensitively -- `lookup` builds a
+            // `DictKey::Name` from the name as written -- so folding here claimed that a loader
+            // would resolve `GOLD` because `gs\barter.gs` defines `/gold`. It would not, and that
+            // one fold put 54 constant names and 75 members in the wrong class.
+            corpus_definitions.insert(name.clone());
         }
     }
 
@@ -486,6 +492,7 @@ fn survey_module_loads(
         }
     }
 
+    line_endings.report();
     println!("survey-members-loaded\t{loaded}");
     println!("survey-members-stopped-on-a-name\t{stopped_on_name}");
     println!("survey-members-failed-otherwise\t{other_failure}");
@@ -531,12 +538,17 @@ fn evaluate(vm: &mut GameScriptVm, source: &str) -> Result<String, GameScriptVmE
 ///
 /// `defined-in-another-member` comes first deliberately: a name some other `.gs` defines is one a
 /// loader resolves for free, whatever the engine also happens to call it.
+///
+/// The match is **case-sensitive**, because the VM's own name resolution is. It did not used to be,
+/// and the difference is not cosmetic: nothing in 3.02 defines `GOLD`, `gs\barter.gs` defines
+/// `/gold`, and the fold moved 54 engine-constant names -- 75 members by `GOLD` alone -- into
+/// `defined-in-another-member`. That was the single number the continue recommendation rested on.
 fn blocker_class(
     name: &str,
     corpus_definitions: &BTreeSet<String>,
     operators: Option<&OperatorIndex>,
 ) -> &'static str {
-    if corpus_definitions.contains(&name.to_ascii_lowercase()) {
+    if corpus_definitions.contains(name) {
         return "defined-in-another-member";
     }
     match operators.map(|index| index.classify(name)) {
@@ -544,5 +556,53 @@ fn blocker_class(
         Some(NameClass::EngineConstant) => "engine-constant",
         Some(NameClass::Unresolved) => "unresolved",
         None => "unclassified",
+    }
+}
+
+/// How the archive's members terminate their lines.
+///
+/// These are **overlapping** counts, not a partition: a member may hold CRLF and bare CR and bare
+/// LF at once, and 193 of 3.02's bare-CR members also hold CRLF. Reporting them as if they
+/// partitioned the archive is what made an earlier version of the documentation sum to more
+/// members than exist. `bare-cr-only` is the subset for which the lexer's line counter is the
+/// *only* thing standing between a reader and a wrong line number.
+#[derive(Default)]
+struct LineEndingCensus {
+    members: usize,
+    with_crlf: usize,
+    with_bare_cr: usize,
+    with_bare_lf: usize,
+    bare_cr_only: usize,
+    without_any: usize,
+}
+
+impl LineEndingCensus {
+    fn record(&mut self, bytes: &[u8]) {
+        self.members += 1;
+        let mut crlf = false;
+        let mut bare_cr = false;
+        let mut bare_lf = false;
+        for (index, byte) in bytes.iter().enumerate() {
+            match byte {
+                b'\r' if bytes.get(index + 1) == Some(&b'\n') => crlf = true,
+                b'\r' => bare_cr = true,
+                b'\n' if index == 0 || bytes[index - 1] != b'\r' => bare_lf = true,
+                _ => {}
+            }
+        }
+        self.with_crlf += usize::from(crlf);
+        self.with_bare_cr += usize::from(bare_cr);
+        self.with_bare_lf += usize::from(bare_lf);
+        self.bare_cr_only += usize::from(bare_cr && !crlf && !bare_lf);
+        self.without_any += usize::from(!crlf && !bare_cr && !bare_lf);
+    }
+
+    fn report(&self) {
+        println!("line-endings-members\t{}", self.members);
+        println!("line-endings-containing-crlf\t{}", self.with_crlf);
+        println!("line-endings-containing-bare-cr\t{}", self.with_bare_cr);
+        println!("line-endings-containing-bare-lf\t{}", self.with_bare_lf);
+        println!("line-endings-bare-cr-only\t{}", self.bare_cr_only);
+        println!("line-endings-without-any\t{}", self.without_any);
     }
 }

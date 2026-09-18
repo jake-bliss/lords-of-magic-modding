@@ -7,6 +7,13 @@
 //! stops execution with an inspectable trace instead of returning an invented value, because a VM
 //! that guesses a host call produces plausible wrong results, which is worse than no result.
 //!
+//! The same rule binds the *language* half, and it did not at first. `1 0 div` returned `inf`,
+//! `1 0 mod` returned `NaN`, and `1 32 bitshift` returned `1` by masking the shift count -- three
+//! invented values reached by arithmetic rather than by a host call, one of which then made every
+//! later `gt` and `lt` answer `false`. They now stop, as does a shift whose engine-side width
+//! behaviour is not established. Execution is bounded in three dimensions, not one: steps,
+//! call depth, and allocation size.
+//!
 //! Two GameScript features are not PostScript and were recovered from the corpus:
 //!
 //! - **Procedure locals.** `PROC /name VALUE replace` attaches `VALUE` to the procedure under
@@ -183,6 +190,23 @@ impl ProcedureValue {
 /// form of the same procedures names it `dummy` explicitly. Evidence class: Inferred.
 const SLOT_ZERO_LOCAL_NAME: &str = "dummy";
 
+/// How deep script-to-script calls may nest before the VM refuses.
+///
+/// Recursion consumes the *host* stack, not the step budget, so `/f {f} def f` aborted the whole
+/// process with a Rust stack overflow at roughly twenty thousand frames -- long before any step
+/// ceiling. That matters most for the `--survey` driver, which runs every member in one process:
+/// one recursive member took down the entire run.
+///
+/// The figure is measured, not chosen for roundness. A debug build overflows a 2 MB thread stack
+/// -- which is what `cargo test` gives each test -- somewhere under a thousand of these frames, so
+/// a limit set by "far below where the host stack gives out" on the main thread would still abort
+/// the test suite. 256 clears the whole corpus (the `--survey` member counts are unchanged by it)
+/// and holds on the smallest stack any caller here runs on.
+const DEFAULT_MAXIMUM_CALL_DEPTH: usize = 256;
+
+/// The largest `array` or `string` a script may ask this VM to allocate.
+const MAXIMUM_ALLOCATION_LENGTH: usize = 1_000_000;
+
 /// Whether execution of a value sequence ran to the end or was cut short by `exit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Flow {
@@ -236,6 +260,7 @@ pub struct GameScriptVm {
     frames: Vec<BTreeMap<String, Value>>,
     steps: usize,
     maximum_steps: usize,
+    maximum_call_depth: usize,
     native_stubs: BTreeMap<String, Value>,
     native_calls: BTreeMap<String, usize>,
 }
@@ -260,6 +285,7 @@ impl GameScriptVm {
             frames: Vec::new(),
             steps: 0,
             maximum_steps,
+            maximum_call_depth: DEFAULT_MAXIMUM_CALL_DEPTH,
             native_stubs: BTreeMap::new(),
             native_calls: BTreeMap::new(),
         }
@@ -381,6 +407,12 @@ impl GameScriptVm {
                     let procedure = procedure.borrow();
                     (procedure.body.clone(), procedure.locals.clone())
                 };
+                if self.call_stack.len() >= self.maximum_call_depth {
+                    return Err(self.error(format!(
+                        "procedure call depth exceeded the {}-frame limit at {name}",
+                        self.maximum_call_depth
+                    )));
+                }
                 self.call_stack.push(name.to_owned());
                 self.frames.push(locals);
                 let result = self.execute_values(&body);
@@ -439,7 +471,7 @@ impl GameScriptVm {
                 self.operand_stack.push(Value::Dictionary(new_dictionary()));
             }
             "array" => {
-                let length = self.pop_nonnegative_integer("array length")?;
+                let length = self.pop_allocation_length("array length")?;
                 self.operand_stack
                     .push(Value::Array(Rc::new(RefCell::new(vec![
                         Value::Number(0.0);
@@ -447,7 +479,7 @@ impl GameScriptVm {
                     ]))));
             }
             "string" => {
-                let length = self.pop_nonnegative_integer("string length")?;
+                let length = self.pop_allocation_length("string length")?;
                 self.operand_stack.push(Value::String("\0".repeat(length)));
             }
             "[" => self.operand_stack.push(Value::Mark(CollectionKind::Array)),
@@ -569,16 +601,7 @@ impl GameScriptVm {
             "truncate" => self.unary_number("truncate", f64::trunc)?,
             "floor" => self.unary_number("floor", f64::floor)?,
             "ceiling" => self.unary_number("ceiling", f64::ceil)?,
-            "bitshift" => {
-                let shift = self.pop_number("bitshift")? as i64;
-                let value = self.pop_number("bitshift")? as i64;
-                let shifted = if shift >= 0 {
-                    value.wrapping_shl(shift as u32)
-                } else {
-                    value.wrapping_shr((-shift) as u32)
-                };
-                self.operand_stack.push(Value::Number(shifted as f64));
-            }
+            "bitshift" => self.bitshift()?,
             "eq" => {
                 let right = self.pop()?;
                 let left = self.pop()?;
@@ -634,6 +657,10 @@ impl GameScriptVm {
                 let procedure = self.pop_procedure("repeat")?;
                 let count = self.pop_nonnegative_integer("repeat count")?;
                 for _ in 0..count {
+                    // An empty body executes no values, so without charging the iteration itself
+                    // `100000000000 {} repeat` would never reach the step ceiling. `for` and
+                    // `loop` both charge; `repeat` did not.
+                    self.charge_step()?;
                     if self.execute_values(&procedure)? == Flow::Exit {
                         break;
                     }
@@ -926,9 +953,8 @@ impl GameScriptVm {
     ) -> Result<(), GameScriptVmError> {
         let right = self.pop_number(operator)?;
         let left = self.pop_number(operator)?;
-        self.operand_stack
-            .push(Value::Number(function(left, right)));
-        Ok(())
+        let result = function(left, right);
+        self.push_defined_result(operator, result)
     }
 
     fn unary_number(
@@ -937,7 +963,66 @@ impl GameScriptVm {
         function: impl FnOnce(f64) -> f64,
     ) -> Result<(), GameScriptVmError> {
         let value = self.pop_number(operator)?;
-        self.operand_stack.push(Value::Number(function(value)));
+        let result = function(value);
+        self.push_defined_result(operator, result)
+    }
+
+    /// Push an arithmetic result, or stop if it is not a number.
+    ///
+    /// `1 0 div` is `inf` in IEEE arithmetic and `undefinedresult` in PostScript. Returning `inf`
+    /// or `NaN` is the same failure as inventing a host call: `1 0 div 1000000 gt` answers `true`,
+    /// and a `NaN` then makes every later `gt` *and* `lt` answer `false`, so a wrong result
+    /// propagates silently and looks plausible. Every operand here was finite, so a non-finite
+    /// result is this operator's doing and it stops.
+    fn push_defined_result(
+        &mut self,
+        operator: &str,
+        result: f64,
+    ) -> Result<(), GameScriptVmError> {
+        if !result.is_finite() {
+            return Err(self.error(format!(
+                "{operator} has no defined result for its operands (it computed {result})"
+            )));
+        }
+        self.operand_stack.push(Value::Number(result));
+        Ok(())
+    }
+
+    /// `bitshift` on the engine's 32-bit integers.
+    ///
+    /// Two behaviours were wrong here. `f64 as i64` saturates, so `1 -1e300 bitshift` reached
+    /// `i64::MIN` and the negation panicked outright in a debug build. And `wrapping_shl` masks
+    /// the shift count, so `1 32 bitshift` answered `1` and `1 64 bitshift` answered `1` -- a
+    /// fabricated flag rather than a stop, which matters because `getflagvalue` is
+    /// `1 exch bitshift and`.
+    ///
+    /// A shift of 32 or more is **refused** rather than modelled. A 32-bit x86 `shl` masks the
+    /// count to five bits and would answer `1`, while C's `1 << 32` is undefined and a compiler
+    /// may fold it to `0`; which one `lomse.exe` does is not established here, and guessing it is
+    /// exactly what this VM must not do. Within range the shift is computed on the 32-bit pattern
+    /// with vacated bits zero-filled, which is what PostScript documents. Evidence class:
+    /// Documented for the in-range rule, Refused for the out-of-range case.
+    fn bitshift(&mut self) -> Result<(), GameScriptVmError> {
+        let shift = self.pop_number("bitshift")?;
+        let value = self.pop_number("bitshift")?;
+        if shift.fract() != 0.0 || !(-31.0..=31.0).contains(&shift) {
+            return Err(self.error(format!(
+                "bitshift needs a whole shift count in -31..=31, found {shift}; the engine's behaviour beyond the 32-bit width is not established"
+            )));
+        }
+        if value.fract() != 0.0 || !(f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&value) {
+            return Err(self.error(format!(
+                "bitshift needs a 32-bit integer operand, found {value}"
+            )));
+        }
+        let pattern = value as i32 as u32;
+        let shifted = if shift >= 0.0 {
+            pattern << (shift as u32)
+        } else {
+            pattern >> ((-shift) as u32)
+        };
+        self.operand_stack
+            .push(Value::Number(f64::from(shifted as i32)));
         Ok(())
     }
 
@@ -948,6 +1033,11 @@ impl GameScriptVm {
     ) -> Result<(), GameScriptVmError> {
         let right = self.pop_number(operator)?;
         let left = self.pop_number(operator)?;
+        // A `NaN` answers `false` to `gt` *and* to `lt`, so an ordering comparison on one is not a
+        // comparison at all. Arithmetic here can no longer produce one, but a native stub can.
+        if left.is_nan() || right.is_nan() {
+            return Err(self.error(format!("{operator} cannot order a not-a-number operand")));
+        }
         self.operand_stack
             .push(Value::Boolean(function(left, right)));
         Ok(())
@@ -1038,6 +1128,34 @@ impl GameScriptVm {
             Value::Dictionary(dictionary) => Ok(dictionary),
             value => Err(self.type_error(operator, "dictionary", &value)),
         }
+    }
+
+    /// Charge one step against the ceiling. Loop constructs call this per iteration so that a
+    /// body executing no values still cannot run forever.
+    fn charge_step(&mut self) -> Result<(), GameScriptVmError> {
+        self.steps = self.steps.saturating_add(1);
+        if self.steps > self.maximum_steps {
+            return Err(self.error(format!(
+                "execution exceeded the {}-step limit",
+                self.maximum_steps
+            )));
+        }
+        Ok(())
+    }
+
+    /// Pop a script-controlled allocation length, refusing one this process should not attempt.
+    ///
+    /// A step ceiling bounds time, not memory: `100000000000 array` asks for 1.6 TB of `Value`
+    /// before a single step is charged. The limit is a refusal, not a silent clamp -- a shorter
+    /// array than the script asked for would quietly change what the script computes.
+    fn pop_allocation_length(&mut self, purpose: &str) -> Result<usize, GameScriptVmError> {
+        let length = self.pop_nonnegative_integer(purpose)?;
+        if length > MAXIMUM_ALLOCATION_LENGTH {
+            return Err(self.error(format!(
+                "{purpose} {length} exceeds the {MAXIMUM_ALLOCATION_LENGTH}-element allocation limit"
+            )));
+        }
+        Ok(length)
     }
 
     fn require_stack(&self, count: usize) -> Result<(), GameScriptVmError> {
@@ -1488,6 +1606,118 @@ mod tests {
         let mut vm = GameScriptVm::new(50);
         let error = vm.execute_document(&document).unwrap_err();
         assert!(error.message.contains("50-step limit"), "{}", error.message);
+    }
+
+    /// Issue #5 forbids inventing a value for something the VM cannot compute. IEEE arithmetic
+    /// invents them cheerfully, and a released `inf` or `NaN` is indistinguishable from a real
+    /// answer two operators later.
+    #[test]
+    fn arithmetic_with_no_defined_result_stops_instead_of_answering() {
+        for source in [
+            &b"1 0 div"[..],
+            b"1 0 idiv",
+            b"1 0 mod",
+            b"-4 sqrt",
+            b"1e308 1e308 mul",
+        ] {
+            let error = run(source).unwrap_err();
+            assert!(
+                error.contains("has no defined result"),
+                "{} should have stopped, got {error}",
+                String::from_utf8_lossy(source)
+            );
+        }
+
+        // The specific poisoning this prevents: a released infinity compares as a real number.
+        assert!(run(b"1 0 div 1000000 gt").is_err());
+        // A stub is the remaining way to get a NaN onto the stack; ordering it is refused.
+        let document = GameScriptDocument::parse(b"1 nan_source gt").unwrap();
+        let mut vm = GameScriptVm::new(1_000);
+        vm.define_native_stub("nan_source", Value::Number(f64::NAN));
+        let error = vm.execute_document(&document).unwrap_err();
+        assert_eq!(error.message, "gt cannot order a not-a-number operand");
+    }
+
+    #[test]
+    fn bitshift_refuses_what_it_cannot_model_and_never_panics() {
+        // In range, on the engine's 32-bit width, vacated bits zero-filled.
+        assert_eq!(rendered_stack(b"1 4 bitshift"), "16");
+        assert_eq!(rendered_stack(b"-1 31 bitshift"), "-2147483648");
+        assert_eq!(rendered_stack(b"256 -4 bitshift"), "16");
+
+        // Out of range: refused, not masked. `1 32 bitshift` used to answer `1`, which
+        // `getflagvalue` would have reported as a set flag.
+        for source in [
+            &b"1 32 bitshift"[..],
+            b"1 64 bitshift",
+            b"1 -1e300 bitshift",
+        ] {
+            let error = run(source).unwrap_err();
+            assert!(
+                error.contains("shift count in -31..=31"),
+                "{} should have stopped, got {error}",
+                String::from_utf8_lossy(source)
+            );
+        }
+        // And the flag helper's own idiom still works across the whole modelled width.
+        assert_eq!(rendered_stack(b"5 1 0 bitshift and"), "1");
+        assert_eq!(rendered_stack(b"5 1 1 bitshift and"), "0");
+    }
+
+    /// A step ceiling alone bounds none of these. Each of the three used to run the process out of
+    /// time, host stack, or memory with no error to show for it.
+    #[test]
+    fn execution_is_bounded_in_steps_call_depth_and_allocation() {
+        // `repeat` with an empty body executes no values, so it charged no steps.
+        let document = GameScriptDocument::parse(b"100000000000 {} repeat").unwrap();
+        let mut vm = GameScriptVm::new(500);
+        let error = vm.execute_document(&document).unwrap_err();
+        assert!(
+            error.message.contains("500-step limit"),
+            "{}",
+            error.message
+        );
+
+        // Recursion consumes the host stack, which no step budget protects.
+        let document = GameScriptDocument::parse(b"/f {f} def f").unwrap();
+        let mut vm = GameScriptVm::new(100_000_000);
+        let error = vm.execute_document(&document).unwrap_err();
+        assert!(
+            error.message.contains("call depth exceeded"),
+            "{}",
+            error.message
+        );
+
+        // A script-controlled allocation is refused rather than attempted or silently shortened.
+        for source in [&b"100000000000 array"[..], b"100000000000 string"] {
+            let error = run(source).unwrap_err();
+            assert!(
+                error.contains("allocation limit"),
+                "{} should have stopped, got {error}",
+                String::from_utf8_lossy(source)
+            );
+        }
+        // Pin the boundary too. Removing the guard entirely is "caught" only by the process
+        // exhausting memory, which is detection but not an assertion; this is the assertion.
+        assert!(run(b"1000001 array").is_err());
+        assert!(run(b"1000000 array").is_ok());
+        assert!(run(b"1000001 string").is_err());
+    }
+
+    /// A procedure local, and a dictionary definition, shadow a language primitive. That is
+    /// deliberate: in PostScript the primitives live at the bottom of the dictionary stack, so any
+    /// nearer binding wins, and 15 of 3.02's script definitions rely on it by overriding an
+    /// operator the engine also implements.
+    #[test]
+    fn a_nearer_binding_shadows_a_primitive() {
+        let vm = run(b"/probe { add 0 get } /add [7] replace bind def probe").unwrap();
+        assert_eq!(vm.operand_stack(), &[Value::Number(7.0)]);
+
+        let vm = run(b"/add {99} def 1 2 add").unwrap();
+        assert_eq!(
+            vm.operand_stack(),
+            &[Value::Number(1.0), Value::Number(2.0), Value::Number(99.0)]
+        );
     }
 
     #[test]

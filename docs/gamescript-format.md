@@ -105,15 +105,28 @@ old heuristic excluded any name appearing as a literal anywhere, hiding genuine 
 
 `GameScriptAnalysis::definition_names` counts only literals in a definition position:
 
-- `/name <value-or-procedure> ... def` within three tokens at the same nesting depth, covering
-  `/NAME{...}def`, `/INSANE_LEVEL 3 def`, and `/a exch def`;
+- `/name <value-or-procedure> ... def` where the `def` is reached at the same nesting depth, within
+  three tokens of anything, or further out across only the operators that *finish* a definition
+  (`bind`, `dup`, `put`, `dict`, `array`, `string`, `replace`, `currentdict`, `begin`, `end`).
+  That covers `/NAME{...}def`, `/INSANE_LEVEL 3 def`, `/a exch def`, and the two procedure-local
+  attachment forms `/NAME{...}dup 0 N dict put bind def` and `/NAME{...}/dummy N dict replace bind
+  def`. Any other operator at that depth ends the statement, so `/invoke_spell cvx` is still not a
+  definition;
 - `/name <value>` directly inside a `<< >>` dictionary literal, which is how scenario tables such as
   `gs\scenario\default.gs` declare entries.
 
-Measured on GS5R3: 17,641 distinct literal names but only **13,609 definitions**, so 4,032 literals
-were never definitions. The native-candidate count rises from 2,091 to **2,151**. The scan reports
-`distinct-definition-names` alongside the literal count, and `LOM_CANDIDATE_LIMIT` raises the
-50-line display cap for cataloguing the full vocabulary.
+Measured on GS5R3: 17,641 distinct literal names and **14,978 definitions**, so 2,663 literals were
+never definitions. The native-candidate count is **2,148**, down from 2,151, because the widened
+rule recognises definitions the three-token window missed. (Those three figures were 13,609 and
+2,151 while the rule was three tokens flat; the widening is described under *Procedure locals*
+below and is labelled Corrected.) The scan reports `distinct-definition-names` alongside the
+literal count, and `LOM_CANDIDATE_LIMIT` raises the 50-line display cap for cataloguing the full
+vocabulary.
+
+Name matching against this set is **case-sensitive** wherever it is compared with names the VM
+resolves, because `GameScriptVm` resolves case-sensitively. Folding is a real defect and not a
+cosmetic one: nothing in 3.02 defines `GOLD`, `gs\barter.gs` defines `/gold`, and one fold moved 54
+engine-constant names into the script-defined class.
 
 Recommended first VM stubs, all pure reads of game state with small return types:
 `getdifficultylevel`, `getmultiplayerflag`, `getplayeraistatus`, `getarmydata`, `getunitdata`,
@@ -494,9 +507,11 @@ It resolves the normalized, case-insensitive path against every member in the sa
 
 ## Line endings: bare CR is a line ending here
 
-`gs.mpq` mixes all three conventions. In a local GS5R3 install: **1,123 members CRLF, 242 bare CR, 63 bare LF**, and 501 with no line terminator at all (the `fonts\*.gs` members are single-line). Evidence class: Observed in a local binary.
+`gs.mpq` mixes all three conventions, and members mix them internally, so these are **overlapping counts and not a partition**. Of GS5R3's 1,696 members: **1,123 contain at least one CRLF, 242 contain at least one bare CR, 63 contain at least one bare LF**, and 501 contain no line terminator at all (the `fonts\*.gs` members are single-line). Only **49** are bare-CR-*only*; the other 193 bare-CR members also contain CRLF. 3.02 has 302 CRLF members and no bare CR at all. `--survey` prints this census (`line-endings-*`). Evidence class: Observed in a local binary.
 
 This is not a cosmetic detail. A `;` comment runs to the end of its line, so a reader that splits on LF sees a single comment swallow dozens of live statements — which is how this project once harvested commented-out code as if it were bindings. The lexer terminates comments at `\r` or `\n`, counts a bare CR as a line ending, and counts a CRLF pair once; `a_comment_ends_at_a_bare_carriage_return` and `line_numbers_count_bare_carriage_returns_and_pair_crlf` fail if either rule is removed.
+
+For the 49 bare-CR-only members, the line counter is the only thing between a reader and a line number of 1 for every position in the file. For the other 193 it is not absent but *understated*: the counter advances on the CRLF pairs and stalls across the bare CRs, so reported lines drift rather than collapse — which is the harder error to notice.
 
 The corpus relies on it. GS5R3's `gs\standard.gs` comments out its inherited `min`/`max` at lines 68 and 70 and redefines them at 73 and 74; reading the commented pair as live would give the wrong bodies.
 
@@ -544,15 +559,63 @@ The interpreter implements 68 language primitives, listed in `gamescript_vm::PRI
 
 `PRIMITIVE_NAMES` is checked against the dispatch itself by a test that reads the match arms back out of the source, because the vocabulary classification below calls a name a native host call precisely when the engine lists it and this VM does not implement it.
 
+### What the VM refuses rather than answers
+
+Issue #5's rule — never invent a value — binds the language half as much as the host half, and at
+first it did not. Four invented results were reachable without touching a native call:
+
+| Expression | Was | Now |
+| --- | --- | --- |
+| `1 0 div`, `1 0 idiv` | `inf` | stops: "has no defined result" |
+| `1 0 mod`, `-4 sqrt` | `NaN` | stops |
+| `1e308 1e308 mul` | `inf` | stops |
+| `1 32 bitshift` | `1` (shift count masked) | stops: the engine's behaviour past 32 bits is not established |
+| `1 -1e300 bitshift` | **panic**, "attempt to negate with overflow" | stops |
+
+The consequences were worse than the values. `1 0 div 1000000 gt` answered `true`, and a released
+`NaN` makes every later `gt` **and** `lt` answer `false`, so one undefined result quietly turns
+every subsequent comparison into a wrong answer that looks like a real one. `bitshift` mattered
+most concretely: `getflagvalue` is `1 exch bitshift and`, so a masked shift count reported a set
+flag for a bit index of 32 or more. PostScript raises `undefinedresult` for the arithmetic cases;
+for the shift width, a 32-bit x86 `shl` masks the count to five bits and C's `1 << 32` is undefined,
+so which one `lomse.exe` does is **refused rather than modelled**. Within `-31..=31` the shift runs
+on the 32-bit pattern with vacated bits zero-filled, which is what PostScript documents.
+
+No shipped member reaches any of these — the 406 that load are unchanged by the change — so this is
+a claim about the VM, not about the corpus.
+
+Execution is bounded in three dimensions, because a step ceiling bounds only one of them:
+
+- **steps.** `repeat` did not charge them, so `100000000000 {} repeat` never returned; `for` and
+  `loop` always did.
+- **call depth.** Script recursion consumes the *host* stack, not the step budget: `/f {f} def f`
+  aborted the process outright with a Rust stack overflow at roughly twenty thousand frames. That
+  mattered most for `--survey`, which runs all 1,681 members in one process, so a single recursive
+  member destroyed every other result. Capped at 256 frames, measured against the 2 MB stack
+  `cargo test` gives a test thread, and confirmed not to change any survey count.
+- **allocation.** `100000000000 array` asks for 1.6 TB before a single step is charged. Refused at
+  a million elements — refused, not clamped, because a shorter array than the script asked for
+  would silently change what the script computes.
+
+### Nearer bindings shadow primitives, deliberately
+
+`frame_local` is consulted before the dictionary stack, and the dictionary stack before the
+primitives. That is the PostScript model: the operators live at the bottom of the dictionary stack,
+so any nearer binding wins. 15 of 3.02's script definitions depend on it by overriding a name the
+engine also implements, `standard.gs`'s own `/index` among them. A procedure local named after a
+primitive would shadow it too; nothing in the corpus does that today.
+
 ### The `standard.gs` battery
 
-`cargo run --example gamescript_standard` loads 3.02's `gs\standard.gs` (339 VM steps, 37 names, empty operand stack) and then runs 31 exercises whose expected stacks were worked out from the shipped bodies rather than recorded from output. **All 31 behave as expected**: 22 produce a stated stack, and 9 stop on a named engine call. Six were wrong on the first run and the run said so, which is the point of stating the expectation first.
+`cargo run --example gamescript_standard` loads 3.02's `gs\standard.gs` (339 VM steps, 36 names, empty operand stack) and then runs 31 exercises whose expected stacks were worked out from the shipped bodies rather than recorded from output. **All 31 behave as expected**: 22 produce a stated stack, and 9 stop on a named engine call. Six were wrong on the first run and the run said so, which is the point of stating the expectation first.
 
 Three findings fell out of executing rather than reading:
 
 1. **`get_if_known`'s header comment states its operands backwards.** The comment says `;val dict key get_if_known`; the code's `3 1 roll` requires `dictionary key default`. Evidence class: Corrected.
 2. **`dump_flags` does nothing to its operand.** After the first iteration its `2 copy` reads the loop counter rather than the flags, and the trailing `pop` discards the one index it kept. `5 dump_flags` leaves `5`. Evidence class: Observed in a local binary, by execution.
-3. **GS5R3 ships `min` and `max` swapped.** Vanilla and 3.02 both define `/min{2 copy gt{exch pop}{pop}ifelse}`. GS5R3 comments that line out and redefines the gt-body as `max` and the lt-body as `min`, so under GS5R3 `3 7 min` is `7` and `3 7 max` is `3`. The same battery run against GS5R3 flags exactly those two exercises. Evidence class: Observed in a local binary. (GS5R3 also has no `string_cvi` or `char_cvs`; those are 3.02 additions.)
+3. **GS5R3 ships `min` and `max` swapped.** Vanilla and 3.02 both define `/min{2 copy gt{exch pop}{pop}ifelse}`. GS5R3 comments that line out at `gs\standard.gs:68`/`:70` and redefines the gt-body as `max` and the lt-body as `min` at `:73`/`:74`, so under GS5R3 `3 7 min` is `7` and `3 7 max` is `3`. Evidence class: Observed in a local binary.
+
+  The GS5R3 run reports **four** failures, not two: `min` and `max` for the swap, plus `string_cvi` and `char_cvs`, which stop on an unknown name because GS5R3 does not ship them — they are 3.02 additions. The vanilla run reports those same two and nothing else. The committed transcripts in `reports/gs/standard-run-*.tsv` are the three runs verbatim.
 
 The nine engine names the battery reached, with their `lomse.exe` entry points where the operator table lists them:
 
@@ -568,21 +631,22 @@ The nine engine names the battery reached, with their `lomse.exe` entry points w
 | `sysdlg` | unresolved | — | `exitapplication` |
 | `unitdictxref` | unresolved | — | `geteasyunitdata` |
 
-The three unresolved ones are **not** engine calls: `build_statement` is defined in `gs\text.gs`, `sysdlg` in `gs\dlg\sysdlg.gs`, `unitdictxref` in `units\easyunit.gs`. They are the module-loading gap, not the host-API gap.
+None of the three unresolved ones is an engine *call*: `build_statement` is defined in `gs\text.gs`, `sysdlg` in `gs\dlg\sysdlg.gs`, `unitdictxref` in `units\easyunit.gs`. For `build_statement` and `unitdictxref` that closes the dependency; for `sysdlg` it only **relocates** it, because its definition is `/sysdlg 50 dialog def` and `dialog` is an operator. Loading resolves the name and then needs the host anyway.
 
-`standard.gs`'s whole static debt to the engine is 21 names — 17 in the operator table, 4 unresolved.
+The tool reports `standard.gs`'s static debt as 21 names. One of them, `outfilename`, is the module's own local, defined inside `eval` with a value spanning more than the attachment window, so the real debt is **20** — 17 operator-table entries and 3 unresolved names.
 
 ## Vocabulary classification
 
-`cargo run --example gamescript_vocabulary` partitions every distinct executable name in a profile, in the order the interpreter resolves: script definition, then language primitive, then native host call, then constant, then nothing. It writes `reports/gs/vocabulary-<profile>.tsv` (name, uses, class, whether the old broad heuristic admitted it, operator entry point).
+`cargo run --example gamescript_vocabulary` partitions every distinct executable name in a profile, in the order the interpreter resolves. It writes `reports/gs/vocabulary-<profile>.tsv` (name, uses, class, whether the old broad heuristic admitted it, operator entry point).
 
 | Class | vanilla | patch302 | gs5r3 |
 | --- | ---: | ---: | ---: |
-| script-definition | 10,365 | 10,967 | 12,417 |
+| script-definition | 10,317 | 10,913 | 12,368 |
 | language-primitive | 55 | 55 | 54 |
 | native-host-call | 1,383 | 1,414 | 1,390 |
-| constant-or-data | 647 | 734 | 675 |
-| heuristic-false-positive | 1,630 | 2,004 | 2,319 |
+| constant-or-data | 693 | 786 | 722 |
+| engine-dictionary-key | 112 | 113 | 126 |
+| unclassified-residue | 1,520 | 1,893 | 2,195 |
 | **distinct executable names** | **14,080** | **15,174** | **16,855** |
 
 Restricted to the broad "likely hardcoded engine name" candidate list, which is what issue #5 asked to partition:
@@ -592,12 +656,17 @@ Restricted to the broad "likely hardcoded engine name" candidate list, which is 
 | language-primitive | 55 | 55 | 54 |
 | native-host-call | 1,383 | 1,414 | 1,390 |
 | constant-or-data | 643 | 709 | 670 |
-| heuristic-false-positive | 32 | 33 | 34 |
+| engine-dictionary-key | 0 | 0 | 1 |
+| unclassified-residue | 32 | 33 | 33 |
 | **broad candidates** | **2,113** | **2,211** | **2,148** |
 
-So **roughly 98.5% of the broad candidate list is real** — a primitive, an operator the engine registers, or a constant — and about 33 names per profile are coincidences. `script-definition` is zero there by construction: the heuristic already excludes anything the corpus defines.
+So **roughly 98.5% of the broad candidate list is real** — a primitive, an operator the engine registers, or a constant — and about 33 names per profile are coincidences of the string filter. `script-definition` is zero there by construction: the heuristic already excludes anything the corpus defines.
 
-The full-vocabulary `heuristic-false-positive` class is the interesting residue: names the corpus calls, nothing defines, the engine does not register, and which are not constant-shaped. It is dominated by cross-member references the definition scanner still cannot see (`build_statement`, 340 uses, is defined in `gs\text.gs` with its value spanning more than the attachment window) and by mixed-case engine type names such as `Type_GraphicPage` that `is_screaming_case` does not match.
+The `broad-candidate` column reproduces that older heuristic **including its case fold**, on purpose: comparing a repaired classifier against a faithfully reproduced baseline is the only comparison worth making. It is also why `GOLD` is not a candidate — `gs\barter.gs` defines `/gold`, and the fold takes that as a definition of `GOLD`.
+
+`engine-dictionary-key` recognises keys of a dictionary the engine owns, against this crate's own recovered terrain-sprite registry (`map::TERRAIN_SPRITE_TYPES`). That accounts for 113 of 3.02's residue rows — `cave` at 157 uses, plus `eemush2`, `minec`, `crystb`, `fish`, `brew` and the rest. The table's *ids* are profile-specific and unused here; only its names are.
+
+`unclassified-residue` is named for what is not known about it. It is **not** a false-positive list: its highest-use members are genuine script definitions whose definition sites the scanner still cannot see — `set_level_modifications` (279 uses, `gs\levlmods.gs`), `getdungeonstrength` (204 uses, `gs\placedng.gs`), `build_statement` (340 uses, `gs\text.gs`, its value spanning more than the attachment window). The rest is mixed-case engine type names such as `Type_GraphicPage` that `is_screaming_case` does not match. Shrinking this class is a job for the definition scanner, not for the operator table.
 
 Names the corpus defines that the engine *also* registers are reported separately — 15 in 3.02, including `exec`, `ne`, `type`, `run` and `sleep`. The dictionary wins at run time, so these are script overrides of engine behaviour.
 
@@ -611,16 +680,24 @@ Names the corpus defines that the engine *also* registers are reported separatel
 | stopped on a name | 1,267 |
 | failed some other way | 8 |
 
-Of the 1,267 stops, classified by what the **first** blocking name is:
+Of the 1,267 stops, classified by what the **first** blocking name is. Matching against the corpus's definitions is case-sensitive here, as the VM's own resolution is:
 
 | First blocker | Members |
 | --- | ---: |
-| defined in another member | 640 |
-| engine constant | 480 |
+| defined in another member | 564 |
+| engine constant | 556 |
 | engine operator | 124 |
 | unresolved | 23 |
 
 Read that as a lower bound on what loading would unblock, not a projection: resolving a member's first blocker only reveals its second.
+
+Three caveats, because the top two are effectively tied and an earlier version of this table was not:
+
+1. **A case fold produced 640/480 and inverted the comparison.** Nothing in 3.02 defines `GOLD`; `gs\barter.gs` defines `/gold`. Folding put `GOLD` and 53 other constant names — 75 members by `GOLD` alone — in the wrong column. **Corrected.**
+2. **41 of the 564 are `userdict`.** That is the root dictionary the entry-point module builds for itself (`START.GS`: `/userdict 1000 dict dup begin def`), so on a standalone-member reading it is not another member's definition in any useful sense. Discount it and the two groups cross: 523 against 556.
+3. **`engine-constant` is itself a shape heuristic** — SCREAMING_CASE and absent from the operator table. So 523-against-556 pits one heuristic against another. The *direction* is solid; the crossover point is not establishable from this measurement.
+
+The eight "failed some other way" members are two groups, not one. Four are the procedure-as-array modelling gap: `type` reports a procedure as `/arraytype` and `length` accepts one, but `forall` refuses it (2 members) and `PROC 0 get` reads the attachment table rather than the body (`procedure has no metadata slot 0`, 1 member; `put does not support procedure with procedure index`, 1 member). The other four are genuinely unbalanced `{` in the shipped source.
 
 ## Command
 
@@ -690,20 +767,25 @@ cargo run --example gamescript_vocabulary -- \
 - 406 of 3.02's 1,681 `.gs` members execute to completion with **no** engine support at all;
 - `gs\standard.gs` loads and 31 stated expectations over its utility procedures all hold, including three that contradicted a reading of the source;
 - the broad engine-name heuristic is now resolved: ~98.5% of it is real, ~33 names per profile are coincidence;
-- unknown engine names stop with a trace naming the operator's entry point, and no host call has been guessed.
+- unknown engine names stop with a trace naming the operator's entry point, no host call has been guessed, and no arithmetic result is invented either;
+- execution is bounded in steps, call depth and allocation, so one pathological member cannot take down a survey of the whole archive.
 
 The residual risk is unchanged in kind and smaller in size: the native host surface is 1,414 operators in 3.02, and nothing here executes any of them.
 
 ## Next slice and gate: continue for module loading
 
-**Continue.** The measurement that decides it: of the 1,267 members that stop on a name, the single largest group — **640** — stops on a name **another member of the same archive defines**. Those are resolved by loading, not by implementing engine behaviour. The three "unresolved" names the `standard.gs` battery hit are all of this kind (`build_statement` in `gs\text.gs`, `sysdlg` in `gs\dlg\sysdlg.gs`, `unitdictxref` in `units\easyunit.gs`), and the static `run` reference graph already resolves against the archive.
+**Continue.** The evidence is *not* "the largest blocking group is a script definition" — that sentence rested on a case fold and does not survive fixing it. Corrected, the two candidate groups are a near tie: **564** members stop first on a name another member defines, **556** on an engine constant, and discounting `userdict` crosses them at 523 against 556.
+
+What actually decides it is the third row, which no correction touched: only **124** of 1,267 members stop first on a real engine operator, and **23** on a name nothing in the corpus or the binary explains. Both of the large groups are cheap — a `run` that reads the archive, and a declared constant table — and neither requires simulating anything. The expensive class is small and stayed small.
+
+The three "unresolved" names the `standard.gs` battery hit are of the cheap kind (`build_statement` in `gs\text.gs`, `sysdlg` in `gs\dlg\sysdlg.gs`, `unitdictxref` in `units\easyunit.gs`), though `sysdlg`'s own definition needs the `dialog` operator, so loading relocates that one rather than removing it. The static `run` reference graph already resolves against the archive.
 
 The next slice is therefore:
 
 1. `run` backed by the archive, with a load set and cycle detection, so `"gs/standard.gs" run` resolves inside the VM;
-2. a declared engine-constant table — the second-largest blocking group, 480 members, is faith and resource names such as `GOLD`, `ORDER`, `AIR`;
+2. a declared engine-constant table — 556 members stop first on one, and they are faith and resource names such as `GOLD`, `ORDER`, `AIR`, matched **case-sensitively**;
 3. a per-module load report, **not** a boot. `START.GS` reaches `protectdictstack` and `dialog` almost immediately, so attempting to load the tree as the engine does will stop early and tell us little.
 
 Constants must be *declared*, with their values stated as inputs, exactly as `--stub` already works. An engine constant whose value is invented is the same failure mode as an invented host call, one step further from being noticed.
 
-**Park if** the next subsystem's first blocker stops being a script definition. The moment the dominant blocker class flips from `defined-in-another-member` to `engine-operator`, further VM work is buying simulation, not loading, and the honest move is to stop.
+**Park if** the cheap classes stop dominating. Concretely: re-run `--survey` after each of the two steps above and park when `engine-operator` becomes the largest first-blocker class. It is 124 of 1,267 today. The trigger is stated against `engine-operator` rather than against which of the two cheap classes is larger, because that comparison is a near tie between two heuristics and it already moved once under correction.

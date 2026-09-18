@@ -11,8 +11,15 @@
 //! 2. `language-primitive` -- the VM in `gamescript_vm` implements it as language, not game state.
 //! 3. `native-host-call` -- `lomse.exe` registers it. Running dependent script needs the engine.
 //! 4. `constant-or-data` -- SCREAMING_CASE and absent from the operator table.
-//! 5. `heuristic-false-positive` -- none of the above: the name is called, nothing defines it, the
-//!    engine does not implement it, and it is not constant-shaped.
+//! 5. `engine-dictionary-key` -- a key in a dictionary the engine owns, recognised against this
+//!    crate's recovered terrain-sprite registry.
+//! 6. `unclassified-residue` -- none of the above. This class is **not** a false-positive list:
+//!    its highest-use members are genuine script definitions whose definition sites the scanner
+//!    still cannot see, such as `set_level_modifications` in `gs\levlmods.gs`.
+//!
+//! Name matching against the corpus is case-sensitive, because the VM's name resolution is. The
+//! `broad-candidate` column deliberately reproduces the older heuristic's case *fold*, so the two
+//! can be compared row by row.
 //!
 //! Usage:
 //!
@@ -37,16 +44,23 @@ enum Class {
     LanguagePrimitive,
     NativeHostCall,
     ConstantOrData,
-    HeuristicFalsePositive,
+    /// A key in a dictionary the engine owns. The terrain-sprite registry is the one such table
+    /// this crate has recovered, so it is the one that can be recognised: 113 of 3.02's residue
+    /// rows are sprite-type names such as `cave`, `minec` and `crystb`.
+    EngineDictionaryKey,
+    /// Everything left over. Deliberately named for what is *not* known about it: it is dominated
+    /// by cross-member definitions this scanner still cannot see, not by coincidences.
+    UnclassifiedResidue,
 }
 
 impl Class {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::ScriptDefinition,
         Self::LanguagePrimitive,
         Self::NativeHostCall,
         Self::ConstantOrData,
-        Self::HeuristicFalsePositive,
+        Self::EngineDictionaryKey,
+        Self::UnclassifiedResidue,
     ];
 
     fn label(self) -> &'static str {
@@ -55,7 +69,8 @@ impl Class {
             Self::LanguagePrimitive => "language-primitive",
             Self::NativeHostCall => "native-host-call",
             Self::ConstantOrData => "constant-or-data",
-            Self::HeuristicFalsePositive => "heuristic-false-positive",
+            Self::EngineDictionaryKey => "engine-dictionary-key",
+            Self::UnclassifiedResidue => "unclassified-residue",
         }
     }
 }
@@ -125,6 +140,13 @@ fn classify(profile: &Profile, output: Option<&Path>) -> Result<(), String> {
     let operators = OperatorIndex::from_image(&image)
         .map_err(|error| format!("could not read the operator table: {error}"))?;
     let binary_strings = ascii_strings(&image);
+    // Names registered in the engine's terrain-sprite dictionary, recovered by this crate's own
+    // engine probe. The table was dumped from a GS5R3 script set, so it is applied to all three
+    // profiles as a *name* list only; the ids it also carries are profile-specific and unused here.
+    let terrain_sprite_names: BTreeSet<String> = lom_asset_viewer::map::TERRAIN_SPRITE_TYPES
+        .iter()
+        .map(|(name, _)| name.to_ascii_lowercase())
+        .collect();
 
     let archive = Archive::open(&profile.archive)
         .map_err(|error| format!("could not open the archive: {error}"))?;
@@ -134,6 +156,10 @@ fn classify(profile: &Profile, output: Option<&Path>) -> Result<(), String> {
 
     let mut executable_names: BTreeMap<String, usize> = BTreeMap::new();
     let mut definition_names: BTreeSet<String> = BTreeSet::new();
+    // The older heuristic's case-folded view of the same set, kept separately so the
+    // `broad-candidate` column reproduces that heuristic exactly rather than a repaired version
+    // of it. Comparing a fixed classifier against a faithful baseline is the whole point.
+    let mut folded_definition_names: BTreeSet<String> = BTreeSet::new();
     let mut members = 0_usize;
     let mut failures = 0_usize;
 
@@ -155,7 +181,11 @@ fn classify(profile: &Profile, output: Option<&Path>) -> Result<(), String> {
             *executable_names.entry(name.clone()).or_default() += count;
         }
         for name in analysis.definition_names.keys() {
-            definition_names.insert(name.to_ascii_lowercase());
+            // Case-sensitively, because the VM resolves names case-sensitively. Folding made
+            // `GOLD` a `script-definition` on the strength of `gs\barter.gs`'s `/gold`, in the
+            // same run that reported `GOLD` unresolved in 75 members.
+            definition_names.insert(name.clone());
+            folded_definition_names.insert(name.to_ascii_lowercase());
         }
     }
 
@@ -167,7 +197,7 @@ fn classify(profile: &Profile, output: Option<&Path>) -> Result<(), String> {
             NameClass::Operator { entry_point } => Some(entry_point),
             _ => None,
         };
-        let class = if definition_names.contains(&lower) {
+        let class = if definition_names.contains(name) {
             Class::ScriptDefinition
         } else if is_primitive(name) {
             Class::LanguagePrimitive
@@ -175,11 +205,16 @@ fn classify(profile: &Profile, output: Option<&Path>) -> Result<(), String> {
             Class::NativeHostCall
         } else if is_screaming_case(name) {
             Class::ConstantOrData
+        } else if terrain_sprite_names.contains(&lower) {
+            Class::EngineDictionaryKey
         } else {
-            Class::HeuristicFalsePositive
+            Class::UnclassifiedResidue
         };
-        // The scanner's existing broad heuristic, reproduced so the two can be compared directly.
-        let candidate = !definition_names.contains(&lower) && binary_strings.contains(&lower);
+        // The scanner's existing broad heuristic, reproduced *including* its case fold, so the two
+        // can be compared row by row. The fold is a defect of that heuristic -- it is why `GOLD`
+        // is not a candidate -- and reproducing it faithfully is the point of the column.
+        let candidate =
+            !folded_definition_names.contains(&lower) && binary_strings.contains(&lower);
         rows.push((name.clone(), *uses, class, candidate, entry_point));
     }
 
