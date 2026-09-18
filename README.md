@@ -43,6 +43,7 @@ Concretely, today you can **inspect, decode, render, export, and measure**, and 
 - [Map and scenario format](docs/map-format.md) — cell/terrain lookup, placed-sprite records, corpus measurements, and open variants
 - [GameScript language and runtime probe](docs/gamescript-format.md) — corpus-derived lexical model, vocabulary measurements, and the next VM gate
 - [MPQ inventory](docs/mpq-inventory.md) — reproducible extraction and baseline/3.02/GS5R3 findings
+- [Deterministic MPQ repack](docs/repack.md) — the repack command, what its shape check proves, and what it does not guarantee
 - [Mod ecosystem](docs/mod-ecosystem.md) — 3.02, GS5R3, optional packages, and compatibility
 - [Research log](docs/research-log.md) — evidence and conclusions from the working installation
 - [Roadmap](docs/roadmap.md) — proposed mod SDK and first experiments

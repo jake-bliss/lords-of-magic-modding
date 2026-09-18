@@ -1,0 +1,841 @@
+profile	kind	field	present	absent	numeric	minimum	maximum	modal-value	modal-count	distinct	shapes
+vanilla	unit	air_resistance	35	122	35	-50	100	25	9	9	number:35
+vanilla	unit	alpha_impfile_proc	4	153	0	-	-	-	0	0	procedure:4
+vanilla	unit	armor	156	1	156	0	20	2	24	15	number:156
+vanilla	unit	attack	157	0	157	0	25	8	18	20	number:157
+vanilla	unit	attack_recovery_ticks	150	7	150	4	40	12	23	23	number:150
+vanilla	unit	barracks_required	44	113	44	1	4	1	32	2	number:44
+vanilla	unit	carrying_capacity	9	148	9	4	4	4	9	1	number:9
+vanilla	unit	casting_aura_type	18	139	0	-	-	-	0	0	name:18
+vanilla	unit	chaos_resistance	35	122	35	-50	100	25	11	8	number:35
+vanilla	unit	code	151	6	0	-	-	-	0	0	number:8 name:143
+vanilla	unit	death_alpha_impfile_proc	1	156	0	-	-	-	0	0	procedure:1
+vanilla	unit	death_impfile_proc	2	155	0	-	-	-	0	0	procedure:2
+vanilla	unit	death_resistance	34	123	34	-50	100	0	12	8	number:34
+vanilla	unit	dexterity	154	3	154	0	32	8	36	20	number:154
+vanilla	unit	earth_resistance	35	122	35	-50	100	25	12	7	number:35
+vanilla	unit	faith	154	3	0	-	-	-	0	0	name:154
+vanilla	unit	fire_resistance	37	120	37	-50	100	25	9	11	number:37
+vanilla	unit	flags	157	0	0	-	-	-	0	0	name:10 expression:147
+vanilla	unit	food_to_build	98	59	98	0	264	0	20	41	number:98
+vanilla	unit	food_used_per_turn	116	41	116	0	5	0	71	5	number:116
+vanilla	unit	frames_per_grid	148	9	148	3	10	6	45	8	number:148
+vanilla	unit	get_hit_recovery_ticks	150	7	150	0	16	2	26	12	number:150
+vanilla	unit	gold_to_build	98	59	98	0	300	0	35	36	number:98
+vanilla	unit	gold_used_per_turn	116	41	116	0	6	0	77	3	number:116
+vanilla	unit	health_bar_x	147	10	147	-19	-13	-16	135	6	number:147
+vanilla	unit	health_bar_y	147	10	147	-200	-25	-75	14	41	number:147
+vanilla	unit	hit_points	157	0	157	2	250	12	17	40	number:157
+vanilla	unit	impfile_proc	157	0	0	-	-	-	0	0	procedure:157
+vanilla	unit	initiates_to_build	99	58	99	0	3	1	61	3	number:99
+vanilla	unit	keep_required	3	154	3	1	1	1	3	1	number:3
+vanilla	unit	level_procedure	148	9	0	-	-	-	0	0	procedure:148
+vanilla	unit	library_required	1	156	1	1	1	1	1	1	number:1
+vanilla	unit	life_resistance	35	122	35	-50	100	0	12	11	number:35
+vanilla	unit	magic_crystals_to_build	98	59	98	0	300	0	25	43	number:98
+vanilla	unit	magic_crystals_used_per_turn	116	41	116	0	8	0	68	8	number:116
+vanilla	unit	man_turns	18	139	18	20	50	20	10	4	number:18
+vanilla	unit	marketplace_required	2	155	2	1	1	1	2	1	number:2
+vanilla	unit	maximum_mana	19	138	19	3	7	5	10	3	number:19
+vanilla	unit	melee_attack_resistance	28	129	28	0	80	33	12	8	number:28
+vanilla	unit	military_units	53	104	53	1	3	3	35	3	number:53
+vanilla	unit	missile_attack_resistance	32	125	32	0	80	25	10	8	number:32
+vanilla	unit	missile_range	51	106	51	4	18	10	12	12	number:51
+vanilla	unit	missile_speed	51	106	51	0.75	1.5	1	32	3	number:51
+vanilla	unit	missile_type	50	107	0	-	-	-	0	0	name:50
+vanilla	unit	morale_bar_x	146	11	146	-15	-10	-12	139	5	number:146
+vanilla	unit	morale_bar_y	146	11	146	-200	-25	-75	14	41	number:146
+vanilla	unit	mount_type	26	131	0	-	-	-	0	0	name:26
+vanilla	unit	mps	157	0	157	1	40	8	29	16	number:157
+vanilla	unit	name	157	0	0	-	-	-	0	0	text:150 expression:7
+vanilla	unit	order_resistance	35	122	35	-50	100	0	14	11	number:35
+vanilla	unit	portrait_doodad	5	152	0	-	-	-	0	0	expression:5
+vanilla	unit	production_doodad	5	152	0	-	-	-	0	0	expression:5
+vanilla	unit	race	153	4	0	-	-	-	0	0	name:153
+vanilla	unit	ranged_attack	51	106	51	3	21	6	9	14	number:51
+vanilla	unit	recover_hitpoints	126	31	126	0	81	3	32	11	number:126
+vanilla	unit	recover_hitpoints_inside	126	31	126	0	10	3	34	9	number:126
+vanilla	unit	recover_hitpoints_moved	126	31	126	0	81	1	57	8	number:126
+vanilla	unit	shadow_impfile_proc	3	154	0	-	-	-	0	0	procedure:3
+vanilla	unit	shipyard_required	1	156	1	1	1	1	1	1	number:1
+vanilla	unit	sight_radius	156	1	156	1	7	3	40	7	number:156
+vanilla	unit	small_doodad	6	151	0	-	-	-	0	0	expression:6
+vanilla	unit	special_unit_type	59	98	0	-	-	-	0	0	name:59
+vanilla	unit	stables_required	2	155	2	1	1	1	2	1	number:2
+vanilla	unit	stealth_noise_factor	148	9	148	1	15	12	26	14	number:148
+vanilla	unit	strength	148	9	148	0	24	9	19	23	number:148
+vanilla	unit	temple_required	1	156	1	1	1	1	1	1	number:1
+vanilla	unit	thieves_guild_required	33	124	33	1	4	1	25	2	number:33
+vanilla	unit	water_resistance	35	122	35	-200	100	25	8	13	number:35
+vanilla	unit	wisdom	148	9	148	0	16	6	37	12	number:148
+vanilla	unit	wizards_tower_required	49	108	49	1	4	1	16	4	number:49
+vanilla	spell	barter_value_proc	192	0	0	-	-	-	0	0	procedure:192
+vanilla	spell	bolt_aura	1	191	1	-1	-1	-1	1	1	number:1
+vanilla	spell	bolt_origin_hotspot	1	191	1	-1	-1	-1	1	1	number:1
+vanilla	spell	bolt_palette	1	191	1	2	2	2	1	1	number:1
+vanilla	spell	bolt_step	1	191	1	10	10	10	1	1	number:1
+vanilla	spell	bolt_target_hotspot	1	191	1	-1	-1	-1	1	1	number:1
+vanilla	spell	bolt_thickness	1	191	1	1	1	1	1	1	number:1
+vanilla	spell	bolt_ticks	1	191	1	10	10	10	1	1	number:1
+vanilla	spell	book	191	1	30	-1	-1	-1	30	1	number:30 name:161
+vanilla	spell	cast_ticks	191	1	191	1	12	12	87	6	number:191
+vanilla	spell	caster_aura_type	4	188	0	-	-	-	0	0	name:4
+vanilla	spell	display_updates	12	180	0	-	-	-	0	0	procedure:12
+vanilla	spell	dummy	84	108	0	-	-	-	0	0	expression:84
+vanilla	spell	duration	192	0	183	0	150000	0	67	25	number:183 procedure:9
+vanilla	spell	effect	1	191	0	-	-	-	0	0	procedure:1
+vanilla	spell	faith	192	0	0	-	-	-	0	0	name:192
+vanilla	spell	ghost_sound	2	190	2	-1	-1	-1	2	1	number:2
+vanilla	spell	ghost_speed	2	190	2	300	300	300	2	1	number:2
+vanilla	spell	image	192	0	192	1	26	9	11	25	number:192
+vanilla	spell	level	146	46	146	1	1	1	146	1	number:146
+vanilla	spell	maintenance	192	0	192	0	32	2	175	4	number:192
+vanilla	spell	mana	192	0	192	0	12	4	58	12	number:192
+vanilla	spell	missile_action	15	177	15	-1	-1	-1	15	1	number:15
+vanilla	spell	missile_flags	18	174	0	-	-	-	0	0	name:2 expression:16
+vanilla	spell	missile_gravity	23	169	23	0.1	0.1	0.1	23	1	number:23
+vanilla	spell	missile_hit_aura	23	169	0	-	-	-	0	0	name:1 procedure:22
+vanilla	spell	missile_launch_action	4	188	1	-1	-1	-1	1	1	number:1 name:3
+vanilla	spell	missile_launch_hotspot	2	190	0	-	-	-	0	0	name:2
+vanilla	spell	missile_lifespan	3	189	3	1000	1000	1000	3	1	number:3
+vanilla	spell	missile_speed	23	169	23	0.4	2	2	18	4	number:23
+vanilla	spell	missile_type	23	169	0	-	-	-	0	0	name:23
+vanilla	spell	mode	192	0	0	-	-	-	0	0	name:175 expression:17
+vanilla	spell	modifier_aura	30	162	1	-1	-1	-1	1	1	number:1 procedure:29
+vanilla	spell	modifier_flag	1	191	0	-	-	-	0	0	name:1
+vanilla	spell	name	192	0	0	-	-	-	0	0	text:192
+vanilla	spell	num_bolts	4	188	4	1	1	1	4	1	number:4
+vanilla	spell	permanent_modifications	192	0	0	-	-	-	0	0	dictionary:192
+vanilla	spell	range	136	56	136	-1	10	-1	120	3	number:136
+vanilla	spell	recover_ticks	191	1	191	0	90	0	72	31	number:191
+vanilla	spell	repeat_count	12	180	11	5	3000	20	4	6	number:11 procedure:1
+vanilla	spell	repeat_modifications	12	180	0	-	-	-	0	0	dictionary:12
+vanilla	spell	repeat_time	12	180	12	1	100	39	3	8	number:12
+vanilla	spell	research_cost	192	0	192	0	220	5	15	74	number:192
+vanilla	spell	spread_infection?	1	191	0	-	-	-	0	0	procedure:1
+vanilla	spell	target	192	0	0	-	-	-	0	0	name:192
+vanilla	spell	target_action	2	190	0	-	-	-	0	0	name:2
+vanilla	spell	target_aura	53	139	25	-1	-1	-1	25	1	number:25 procedure:28
+vanilla	spell	target_aura_channel	15	177	15	0	0	0	15	1	number:15
+vanilla	spell	target_palette_effect	4	188	4	0	1	1	2	2	number:4
+vanilla	spell	target_radius	27	165	16	4	30	20	8	4	number:16 procedure:11
+vanilla	spell	temporary_modifications	192	0	0	-	-	-	0	0	dictionary:192
+vanilla	spell	viability	34	158	0	-	-	-	0	0	procedure:34
+vanilla	spell	vortex_da	3	189	0	-	-	-	0	0	expression:3
+vanilla	spell	vortex_dda	3	189	3	0.2	0.2	0.2	3	1	number:3
+vanilla	spell	vortex_turn_time	3	189	0	-	-	-	0	0	procedure:3
+vanilla	artifact	attack_proc	32	147	0	-	-	-	0	0	procedure:32
+vanilla	artifact	autocalc_end_combat_proc	1	178	0	-	-	-	0	0	procedure:1
+vanilla	artifact	barter_proc	175	4	0	-	-	-	0	0	procedure:175
+vanilla	artifact	begin_turn_proc	10	169	0	-	-	-	0	0	procedure:10
+vanilla	artifact	can_be_used	112	67	0	-	-	-	0	0	name:112
+vanilla	artifact	category	179	0	179	1	3	2	117	3	number:179
+vanilla	artifact	defend_proc	38	141	0	-	-	-	0	0	procedure:38
+vanilla	artifact	desc_buffer	4	175	0	-	-	-	0	0	expression:4
+vanilla	artifact	description	179	0	0	-	-	-	0	0	text:126 procedure:5 expression:48
+vanilla	artifact	description_table	179	0	0	-	-	-	0	0	dictionary:179
+vanilla	artifact	dummy	21	158	0	-	-	-	0	0	expression:21
+vanilla	artifact	dummy2	2	177	0	-	-	-	0	0	expression:2
+vanilla	artifact	end_combat_proc	24	155	0	-	-	-	0	0	procedure:24
+vanilla	artifact	end_turn_proc	5	174	0	-	-	-	0	0	procedure:5
+vanilla	artifact	faith	177	2	0	-	-	-	0	0	name:177
+vanilla	artifact	image	179	0	179	1	20	1	34	20	number:179
+vanilla	artifact	max_charges	16	163	16	0	12	1	5	6	number:16
+vanilla	artifact	max_mana	94	85	92	0	5000	0	31	17	number:92 name:2
+vanilla	artifact	mod_proc	162	17	0	-	-	-	0	0	procedure:162
+vanilla	artifact	name	179	0	0	-	-	-	0	0	text:128 name:2 expression:49
+vanilla	artifact	override_flag	1	178	0	-	-	-	0	0	expression:1
+vanilla	artifact	portrait_code	179	0	0	-	-	-	0	0	text:179
+vanilla	artifact	spell_id	87	92	0	-	-	-	0	0	expression:87
+vanilla	artifact	start_combat_proc	13	166	0	-	-	-	0	0	procedure:13
+vanilla	artifact	unmod_proc	157	22	0	-	-	-	0	0	procedure:157
+vanilla	artifact	uses_artifact_mana	103	76	0	-	-	-	0	0	name:103
+vanilla	artifact	uses_wizard_mana	103	76	0	-	-	-	0	0	name:103
+vanilla	artifact	val_buffer	4	175	0	-	-	-	0	0	expression:4
+vanilla	artifact	wield	179	0	0	-	-	-	0	0	name:179
+vanilla	artifact	wield_champion_types	174	5	0	-	-	-	0	0	procedure:174
+vanilla	artifact	wield_faiths	174	5	0	-	-	-	0	0	procedure:174
+vanilla	encounter	ai_leave_alone	188	118	0	-	-	-	0	0	name:188
+vanilla	encounter	alldie	129	177	0	-	-	-	0	0	procedure:129
+vanilla	encounter	army_specification	201	105	0	-	-	-	0	0	procedure:201
+vanilla	encounter	army_spoils_list	70	236	0	-	-	-	0	0	procedure:70
+vanilla	encounter	artifact_spoils_list	65	241	0	-	-	-	0	0	procedure:65
+vanilla	encounter	auto_artifacts	95	211	0	-	-	-	0	0	name:95
+vanilla	encounter	barrow_number	1	305	1	-1	-1	-1	1	1	number:1
+vanilla	encounter	cave_number	1	305	1	-1	-1	-1	1	1	number:1
+vanilla	encounter	choice	1	305	1	1	1	1	1	1	number:1
+vanilla	encounter	disable_normal_spawning	57	249	0	-	-	-	0	0	name:57
+vanilla	encounter	discover_message	296	10	0	-	-	-	0	0	procedure:296
+vanilla	encounter	do_not_create_army	2	304	0	-	-	-	0	0	name:2
+vanilla	encounter	do_revenge_for_order	1	305	0	-	-	-	0	0	procedure:1
+vanilla	encounter	doorway_status	35	271	0	-	-	-	0	0	name:35
+vanilla	encounter	dummy	229	77	0	-	-	-	0	0	array:163 expression:66
+vanilla	encounter	dummy2	3	303	0	-	-	-	0	0	expression:3
+vanilla	encounter	encounter	230	76	0	-	-	-	0	0	procedure:230
+vanilla	encounter	encounter_attack_text	1	305	0	-	-	-	0	0	name:1
+vanilla	encounter	encounter_crystals	41	265	40	0	200	0	35	4	number:40 expression:1
+vanilla	encounter	encounter_enter2_text	1	305	0	-	-	-	0	0	name:1
+vanilla	encounter	encounter_enter_text	113	193	0	-	-	-	0	0	text:1 name:112
+vanilla	encounter	encounter_enter_text2	22	284	0	-	-	-	0	0	name:22
+vanilla	encounter	encounter_enter_text3	4	302	0	-	-	-	0	0	name:4
+vanilla	encounter	encounter_enter_text4	1	305	0	-	-	-	0	0	name:1
+vanilla	encounter	encounter_exit_text	116	190	0	-	-	-	0	0	text:1 name:115
+vanilla	encounter	encounter_exit_text2	3	303	0	-	-	-	0	0	name:3
+vanilla	encounter	encounter_food	41	265	40	0	200	0	29	7	number:40 expression:1
+vanilla	encounter	encounter_gold	41	265	40	0	200	0	27	8	number:40 expression:1
+vanilla	encounter	enter_barrow_level	1	305	1	-1	-1	-1	1	1	number:1
+vanilla	encounter	enter_progress_filename	87	219	0	-	-	-	0	0	text:87
+vanilla	encounter	entry_text_array	1	305	0	-	-	-	0	0	array:1
+vanilla	encounter	exit_key	3	303	0	-	-	-	0	0	text:3
+vanilla	encounter	exit_progress_filename	87	219	0	-	-	-	0	0	text:87
+vanilla	encounter	faith	305	1	1	0	0	0	1	1	number:1 name:304
+vanilla	encounter	fix_buildings	1	305	0	-	-	-	0	0	procedure:1
+vanilla	encounter	flee	128	178	0	-	-	-	0	0	procedure:128
+vanilla	encounter	get_dungeon_choice	1	305	0	-	-	-	0	0	procedure:1
+vanilla	encounter	key	224	82	0	-	-	-	0	0	text:224
+vanilla	encounter	lose	300	6	0	-	-	-	0	0	procedure:300
+vanilla	encounter	macrostringdict_sprite_type	3	303	0	-	-	-	0	0	expression:3
+vanilla	encounter	makeglue	1	305	0	-	-	-	0	0	procedure:1
+vanilla	encounter	mapfile	303	3	0	-	-	-	0	0	text:292 procedure:11
+vanilla	encounter	multi_level_dung	8	298	0	-	-	-	0	0	name:8
+vanilla	encounter	name	306	0	0	-	-	-	0	0	text:24 name:282
+vanilla	encounter	on_new_game	120	186	0	-	-	-	0	0	procedure:120
+vanilla	encounter	owner	305	1	4	1	2	2	3	2	number:4 name:301
+vanilla	encounter	parley_encounter	125	181	125	0	2	0	99	3	number:125
+vanilla	encounter	pick1	1	305	0	-	-	-	0	0	array:1
+vanilla	encounter	pick2	1	305	0	-	-	-	0	0	array:1
+vanilla	encounter	pick5	1	305	0	-	-	-	0	0	array:1
+vanilla	encounter	quest_list	57	249	0	-	-	-	0	0	dictionary:57
+vanilla	encounter	random_barrows	1	305	0	-	-	-	0	0	array:1
+vanilla	encounter	random_orc_caves	1	305	0	-	-	-	0	0	array:1
+vanilla	encounter	resource_delta	66	240	0	-	-	-	0	0	procedure:66
+vanilla	encounter	scenario	205	101	0	-	-	-	0	0	text:205
+vanilla	encounter	setup	305	1	0	-	-	-	0	0	procedure:305
+vanilla	encounter	setup_second_level	1	305	0	-	-	-	0	0	procedure:1
+vanilla	encounter	spells_spoils_list	8	298	0	-	-	-	0	0	procedure:8
+vanilla	encounter	spoils	164	142	0	-	-	-	0	0	procedure:164
+vanilla	encounter	sprite_type	305	1	1	0	0	0	1	1	number:1 procedure:3 expression:301
+vanilla	encounter	tileset	306	0	0	-	-	-	0	0	text:295 procedure:11
+vanilla	encounter	time	1	305	1	1	1	1	1	1	number:1
+vanilla	encounter	type_override	28	278	0	-	-	-	0	0	text:2 name:26
+vanilla	encounter	unknown_name	162	144	0	-	-	-	0	0	name:162
+vanilla	encounter	win	128	178	0	-	-	-	0	0	procedure:128
+vanilla	faction	symbols_declaring_this_faith	8	0	8	69	228	89	1	8	number:8
+vanilla	building	code	12	0	0	-	-	-	0	0	text:12
+vanilla	building	first_level	12	0	12	0	0	0	12	1	number:12
+vanilla	building	last_level	12	0	12	1	3	3	10	2	number:12
+patch302	unit	air_resistance	35	122	35	-50	100	25	9	9	number:35
+patch302	unit	alpha_impfile_proc	4	153	0	-	-	-	0	0	procedure:4
+patch302	unit	armor	156	1	156	0	20	2	24	15	number:156
+patch302	unit	attack	157	0	157	0	25	8	18	20	number:157
+patch302	unit	attack_recovery_ticks	150	7	150	4	40	12	23	23	number:150
+patch302	unit	barracks_required	44	113	44	1	4	1	32	2	number:44
+patch302	unit	carrying_capacity	9	148	9	4	4	4	9	1	number:9
+patch302	unit	casting_aura_type	18	139	0	-	-	-	0	0	name:18
+patch302	unit	chaos_resistance	35	122	35	-50	100	25	11	8	number:35
+patch302	unit	code	151	6	0	-	-	-	0	0	number:8 name:143
+patch302	unit	death_alpha_impfile_proc	1	156	0	-	-	-	0	0	procedure:1
+patch302	unit	death_impfile_proc	2	155	0	-	-	-	0	0	procedure:2
+patch302	unit	death_resistance	34	123	34	-50	100	0	12	8	number:34
+patch302	unit	dexterity	154	3	154	0	32	8	36	20	number:154
+patch302	unit	earth_resistance	35	122	35	-50	100	25	12	7	number:35
+patch302	unit	faith	154	3	0	-	-	-	0	0	name:154
+patch302	unit	fire_resistance	37	120	37	-50	100	25	9	11	number:37
+patch302	unit	flags	157	0	0	-	-	-	0	0	name:10 expression:147
+patch302	unit	food_to_build	98	59	98	0	264	0	20	41	number:98
+patch302	unit	food_used_per_turn	116	41	116	0	5	0	71	5	number:116
+patch302	unit	frames_per_grid	148	9	148	3	10	6	45	8	number:148
+patch302	unit	get_hit_recovery_ticks	150	7	150	0	16	2	26	12	number:150
+patch302	unit	gold_to_build	98	59	98	0	300	0	35	36	number:98
+patch302	unit	gold_used_per_turn	116	41	116	0	6	0	77	3	number:116
+patch302	unit	health_bar_x	147	10	147	-19	-13	-16	135	6	number:147
+patch302	unit	health_bar_y	147	10	147	-200	-25	-75	14	41	number:147
+patch302	unit	hit_points	157	0	157	2	250	12	17	40	number:157
+patch302	unit	impfile_proc	157	0	0	-	-	-	0	0	procedure:157
+patch302	unit	initiates_to_build	99	58	99	0	3	1	61	3	number:99
+patch302	unit	keep_required	3	154	3	1	1	1	3	1	number:3
+patch302	unit	level_procedure	148	9	0	-	-	-	0	0	procedure:148
+patch302	unit	library_required	1	156	1	1	1	1	1	1	number:1
+patch302	unit	life_resistance	35	122	35	-50	100	0	12	11	number:35
+patch302	unit	magic_crystals_to_build	98	59	98	0	300	0	25	43	number:98
+patch302	unit	magic_crystals_used_per_turn	116	41	116	0	8	0	68	8	number:116
+patch302	unit	man_turns	18	139	18	20	50	20	10	4	number:18
+patch302	unit	marketplace_required	2	155	2	1	1	1	2	1	number:2
+patch302	unit	maximum_mana	19	138	19	3	7	5	10	3	number:19
+patch302	unit	melee_attack_resistance	28	129	28	0	80	33	12	8	number:28
+patch302	unit	military_units	53	104	53	1	3	3	35	3	number:53
+patch302	unit	missile_attack_resistance	32	125	32	0	80	25	10	8	number:32
+patch302	unit	missile_range	51	106	51	4	18	10	12	12	number:51
+patch302	unit	missile_speed	51	106	51	0.75	1.5	1	32	3	number:51
+patch302	unit	missile_type	50	107	0	-	-	-	0	0	name:50
+patch302	unit	morale_bar_x	146	11	146	-15	-10	-12	139	5	number:146
+patch302	unit	morale_bar_y	146	11	146	-200	-25	-75	14	41	number:146
+patch302	unit	mount_type	26	131	0	-	-	-	0	0	name:26
+patch302	unit	mps	157	0	157	1	40	8	29	16	number:157
+patch302	unit	name	157	0	0	-	-	-	0	0	text:150 expression:7
+patch302	unit	order_resistance	35	122	35	-50	100	0	14	11	number:35
+patch302	unit	portrait_doodad	5	152	0	-	-	-	0	0	expression:5
+patch302	unit	production_doodad	5	152	0	-	-	-	0	0	expression:5
+patch302	unit	race	153	4	0	-	-	-	0	0	name:153
+patch302	unit	ranged_attack	51	106	51	3	21	6	9	14	number:51
+patch302	unit	recover_hitpoints	126	31	126	0	81	3	32	11	number:126
+patch302	unit	recover_hitpoints_inside	126	31	126	0	10	3	34	9	number:126
+patch302	unit	recover_hitpoints_moved	126	31	126	0	81	1	57	8	number:126
+patch302	unit	shadow_impfile_proc	3	154	0	-	-	-	0	0	procedure:3
+patch302	unit	shipyard_required	1	156	1	1	1	1	1	1	number:1
+patch302	unit	sight_radius	156	1	156	1	7	3	40	7	number:156
+patch302	unit	small_doodad	6	151	0	-	-	-	0	0	expression:6
+patch302	unit	special_unit_type	59	98	0	-	-	-	0	0	name:59
+patch302	unit	stables_required	2	155	2	1	1	1	2	1	number:2
+patch302	unit	stealth_noise_factor	148	9	148	1	15	12	26	14	number:148
+patch302	unit	strength	148	9	148	0	24	9	19	23	number:148
+patch302	unit	temple_required	1	156	1	1	1	1	1	1	number:1
+patch302	unit	thieves_guild_required	33	124	33	1	4	1	25	2	number:33
+patch302	unit	water_resistance	35	122	35	-200	100	25	8	13	number:35
+patch302	unit	wisdom	148	9	148	0	16	6	37	12	number:148
+patch302	unit	wizards_tower_required	49	108	49	1	4	1	16	4	number:49
+patch302	spell	barter_value_proc	192	0	0	-	-	-	0	0	procedure:192
+patch302	spell	bolt_aura	1	191	1	-1	-1	-1	1	1	number:1
+patch302	spell	bolt_origin_hotspot	1	191	1	-1	-1	-1	1	1	number:1
+patch302	spell	bolt_palette	1	191	1	2	2	2	1	1	number:1
+patch302	spell	bolt_step	1	191	1	10	10	10	1	1	number:1
+patch302	spell	bolt_target_hotspot	1	191	1	-1	-1	-1	1	1	number:1
+patch302	spell	bolt_thickness	1	191	1	1	1	1	1	1	number:1
+patch302	spell	bolt_ticks	1	191	1	10	10	10	1	1	number:1
+patch302	spell	book	191	1	30	-1	-1	-1	30	1	number:30 name:161
+patch302	spell	cast_ticks	191	1	191	1	12	12	87	6	number:191
+patch302	spell	caster_aura_type	4	188	0	-	-	-	0	0	name:4
+patch302	spell	display_updates	12	180	0	-	-	-	0	0	procedure:12
+patch302	spell	dummy	84	108	0	-	-	-	0	0	expression:84
+patch302	spell	duration	192	0	183	0	150000	0	67	25	number:183 procedure:9
+patch302	spell	effect	1	191	0	-	-	-	0	0	procedure:1
+patch302	spell	faith	192	0	0	-	-	-	0	0	name:192
+patch302	spell	ghost_sound	2	190	2	-1	-1	-1	2	1	number:2
+patch302	spell	ghost_speed	2	190	2	300	300	300	2	1	number:2
+patch302	spell	image	192	0	192	1	26	9	11	25	number:192
+patch302	spell	level	146	46	146	1	1	1	146	1	number:146
+patch302	spell	maintenance	192	0	192	0	32	2	175	4	number:192
+patch302	spell	mana	192	0	192	0	12	4	58	12	number:192
+patch302	spell	missile_action	15	177	15	-1	-1	-1	15	1	number:15
+patch302	spell	missile_flags	18	174	0	-	-	-	0	0	name:2 expression:16
+patch302	spell	missile_gravity	23	169	23	0.1	0.1	0.1	23	1	number:23
+patch302	spell	missile_hit_aura	23	169	0	-	-	-	0	0	name:1 procedure:22
+patch302	spell	missile_launch_action	4	188	1	-1	-1	-1	1	1	number:1 name:3
+patch302	spell	missile_launch_hotspot	2	190	0	-	-	-	0	0	name:2
+patch302	spell	missile_lifespan	3	189	3	1000	1000	1000	3	1	number:3
+patch302	spell	missile_speed	23	169	23	0.4	2	2	18	4	number:23
+patch302	spell	missile_type	23	169	0	-	-	-	0	0	name:23
+patch302	spell	mode	192	0	0	-	-	-	0	0	name:175 expression:17
+patch302	spell	modifier_aura	30	162	1	-1	-1	-1	1	1	number:1 procedure:29
+patch302	spell	modifier_flag	1	191	0	-	-	-	0	0	name:1
+patch302	spell	name	192	0	0	-	-	-	0	0	text:192
+patch302	spell	num_bolts	4	188	4	1	1	1	4	1	number:4
+patch302	spell	permanent_modifications	192	0	0	-	-	-	0	0	dictionary:192
+patch302	spell	range	136	56	136	-1	10	-1	120	3	number:136
+patch302	spell	recover_ticks	191	1	191	0	90	0	72	31	number:191
+patch302	spell	repeat_count	12	180	11	5	3000	20	4	6	number:11 procedure:1
+patch302	spell	repeat_modifications	12	180	0	-	-	-	0	0	dictionary:12
+patch302	spell	repeat_time	12	180	12	1	100	39	3	8	number:12
+patch302	spell	research_cost	192	0	192	0	220	5	15	74	number:192
+patch302	spell	spread_infection?	1	191	0	-	-	-	0	0	procedure:1
+patch302	spell	target	192	0	0	-	-	-	0	0	name:192
+patch302	spell	target_action	2	190	0	-	-	-	0	0	name:2
+patch302	spell	target_aura	53	139	25	-1	-1	-1	25	1	number:25 procedure:28
+patch302	spell	target_aura_channel	15	177	15	0	0	0	15	1	number:15
+patch302	spell	target_palette_effect	4	188	4	0	1	1	2	2	number:4
+patch302	spell	target_radius	27	165	16	4	30	20	8	4	number:16 procedure:11
+patch302	spell	temporary_modifications	192	0	0	-	-	-	0	0	dictionary:192
+patch302	spell	viability	34	158	0	-	-	-	0	0	procedure:34
+patch302	spell	vortex_da	3	189	0	-	-	-	0	0	expression:3
+patch302	spell	vortex_dda	3	189	3	0.2	0.2	0.2	3	1	number:3
+patch302	spell	vortex_turn_time	3	189	0	-	-	-	0	0	procedure:3
+patch302	artifact	attack_proc	32	147	0	-	-	-	0	0	procedure:32
+patch302	artifact	autocalc_end_combat_proc	1	178	0	-	-	-	0	0	procedure:1
+patch302	artifact	barter_proc	175	4	0	-	-	-	0	0	procedure:175
+patch302	artifact	begin_turn_proc	10	169	0	-	-	-	0	0	procedure:10
+patch302	artifact	can_be_used	112	67	0	-	-	-	0	0	name:112
+patch302	artifact	category	179	0	179	1	3	2	117	3	number:179
+patch302	artifact	defend_proc	38	141	0	-	-	-	0	0	procedure:38
+patch302	artifact	desc_buffer	4	175	0	-	-	-	0	0	expression:4
+patch302	artifact	description	179	0	0	-	-	-	0	0	text:126 procedure:5 expression:48
+patch302	artifact	description_table	179	0	0	-	-	-	0	0	dictionary:179
+patch302	artifact	dummy	21	158	0	-	-	-	0	0	expression:21
+patch302	artifact	dummy2	2	177	0	-	-	-	0	0	expression:2
+patch302	artifact	end_combat_proc	24	155	0	-	-	-	0	0	procedure:24
+patch302	artifact	end_turn_proc	5	174	0	-	-	-	0	0	procedure:5
+patch302	artifact	faith	177	2	0	-	-	-	0	0	name:177
+patch302	artifact	image	179	0	179	1	20	1	34	20	number:179
+patch302	artifact	max_charges	16	163	16	0	12	1	5	6	number:16
+patch302	artifact	max_mana	94	85	92	0	5000	0	31	17	number:92 name:2
+patch302	artifact	mod_proc	162	17	0	-	-	-	0	0	procedure:162
+patch302	artifact	name	179	0	0	-	-	-	0	0	text:128 name:2 expression:49
+patch302	artifact	override_flag	1	178	0	-	-	-	0	0	expression:1
+patch302	artifact	portrait_code	179	0	0	-	-	-	0	0	text:179
+patch302	artifact	spell_id	87	92	0	-	-	-	0	0	expression:87
+patch302	artifact	start_combat_proc	13	166	0	-	-	-	0	0	procedure:13
+patch302	artifact	unmod_proc	157	22	0	-	-	-	0	0	procedure:157
+patch302	artifact	uses_artifact_mana	103	76	0	-	-	-	0	0	name:103
+patch302	artifact	uses_wizard_mana	103	76	0	-	-	-	0	0	name:103
+patch302	artifact	val_buffer	4	175	0	-	-	-	0	0	expression:4
+patch302	artifact	wield	179	0	0	-	-	-	0	0	name:179
+patch302	artifact	wield_champion_types	174	5	0	-	-	-	0	0	procedure:174
+patch302	artifact	wield_faiths	174	5	0	-	-	-	0	0	procedure:174
+patch302	encounter	ai_leave_alone	188	118	0	-	-	-	0	0	name:188
+patch302	encounter	alldie	129	177	0	-	-	-	0	0	procedure:129
+patch302	encounter	army_specification	201	105	0	-	-	-	0	0	procedure:201
+patch302	encounter	army_spoils_list	70	236	0	-	-	-	0	0	procedure:70
+patch302	encounter	artifact_spoils_list	65	241	0	-	-	-	0	0	procedure:65
+patch302	encounter	auto_artifacts	95	211	0	-	-	-	0	0	name:95
+patch302	encounter	barrow_number	1	305	1	-1	-1	-1	1	1	number:1
+patch302	encounter	cave_number	1	305	1	-1	-1	-1	1	1	number:1
+patch302	encounter	choice	1	305	1	1	1	1	1	1	number:1
+patch302	encounter	disable_normal_spawning	57	249	0	-	-	-	0	0	name:57
+patch302	encounter	discover_message	296	10	0	-	-	-	0	0	procedure:296
+patch302	encounter	do_not_create_army	2	304	0	-	-	-	0	0	name:2
+patch302	encounter	do_revenge_for_order	1	305	0	-	-	-	0	0	procedure:1
+patch302	encounter	doorway_status	35	271	0	-	-	-	0	0	name:35
+patch302	encounter	dummy	229	77	0	-	-	-	0	0	array:163 expression:66
+patch302	encounter	dummy2	3	303	0	-	-	-	0	0	expression:3
+patch302	encounter	encounter	230	76	0	-	-	-	0	0	procedure:230
+patch302	encounter	encounter_attack_text	1	305	0	-	-	-	0	0	name:1
+patch302	encounter	encounter_crystals	41	265	40	0	200	0	35	4	number:40 expression:1
+patch302	encounter	encounter_enter2_text	1	305	0	-	-	-	0	0	name:1
+patch302	encounter	encounter_enter_text	113	193	0	-	-	-	0	0	text:1 name:112
+patch302	encounter	encounter_enter_text2	22	284	0	-	-	-	0	0	name:22
+patch302	encounter	encounter_enter_text3	4	302	0	-	-	-	0	0	name:4
+patch302	encounter	encounter_enter_text4	1	305	0	-	-	-	0	0	name:1
+patch302	encounter	encounter_exit_text	116	190	0	-	-	-	0	0	text:1 name:115
+patch302	encounter	encounter_exit_text2	3	303	0	-	-	-	0	0	name:3
+patch302	encounter	encounter_food	41	265	40	0	200	0	29	7	number:40 expression:1
+patch302	encounter	encounter_gold	41	265	40	0	200	0	27	8	number:40 expression:1
+patch302	encounter	enter_barrow_level	1	305	1	-1	-1	-1	1	1	number:1
+patch302	encounter	enter_progress_filename	87	219	0	-	-	-	0	0	text:87
+patch302	encounter	entry_text_array	1	305	0	-	-	-	0	0	array:1
+patch302	encounter	exit_key	3	303	0	-	-	-	0	0	text:3
+patch302	encounter	exit_progress_filename	87	219	0	-	-	-	0	0	text:87
+patch302	encounter	faith	305	1	1	0	0	0	1	1	number:1 name:304
+patch302	encounter	fix_buildings	1	305	0	-	-	-	0	0	procedure:1
+patch302	encounter	flee	128	178	0	-	-	-	0	0	procedure:128
+patch302	encounter	get_dungeon_choice	1	305	0	-	-	-	0	0	procedure:1
+patch302	encounter	key	224	82	0	-	-	-	0	0	text:224
+patch302	encounter	lose	300	6	0	-	-	-	0	0	procedure:300
+patch302	encounter	macrostringdict_sprite_type	3	303	0	-	-	-	0	0	expression:3
+patch302	encounter	makeglue	1	305	0	-	-	-	0	0	procedure:1
+patch302	encounter	mapfile	303	3	0	-	-	-	0	0	text:292 procedure:11
+patch302	encounter	multi_level_dung	8	298	0	-	-	-	0	0	name:8
+patch302	encounter	name	306	0	0	-	-	-	0	0	text:24 name:282
+patch302	encounter	on_new_game	120	186	0	-	-	-	0	0	procedure:120
+patch302	encounter	owner	305	1	4	1	2	2	3	2	number:4 name:301
+patch302	encounter	parley_encounter	125	181	125	0	2	0	99	3	number:125
+patch302	encounter	pick1	1	305	0	-	-	-	0	0	array:1
+patch302	encounter	pick2	1	305	0	-	-	-	0	0	array:1
+patch302	encounter	pick5	1	305	0	-	-	-	0	0	array:1
+patch302	encounter	quest_list	57	249	0	-	-	-	0	0	dictionary:57
+patch302	encounter	random_barrows	1	305	0	-	-	-	0	0	array:1
+patch302	encounter	random_orc_caves	1	305	0	-	-	-	0	0	array:1
+patch302	encounter	resource_delta	66	240	0	-	-	-	0	0	procedure:66
+patch302	encounter	scenario	205	101	0	-	-	-	0	0	text:205
+patch302	encounter	setup	305	1	0	-	-	-	0	0	procedure:305
+patch302	encounter	setup_second_level	1	305	0	-	-	-	0	0	procedure:1
+patch302	encounter	spells_spoils_list	8	298	0	-	-	-	0	0	procedure:8
+patch302	encounter	spoils	164	142	0	-	-	-	0	0	procedure:164
+patch302	encounter	sprite_type	305	1	1	0	0	0	1	1	number:1 procedure:3 expression:301
+patch302	encounter	tileset	306	0	0	-	-	-	0	0	text:295 procedure:11
+patch302	encounter	time	1	305	1	1	1	1	1	1	number:1
+patch302	encounter	type_override	28	278	0	-	-	-	0	0	text:2 name:26
+patch302	encounter	unknown_name	162	144	0	-	-	-	0	0	name:162
+patch302	encounter	win	128	178	0	-	-	-	0	0	procedure:128
+patch302	faction	symbols_declaring_this_faith	8	0	8	69	228	89	1	8	number:8
+patch302	building	code	12	0	0	-	-	-	0	0	text:12
+patch302	building	first_level	12	0	12	0	0	0	12	1	number:12
+patch302	building	last_level	12	0	12	1	3	3	10	2	number:12
+gs5r3	unit	air_resistance	88	78	88	-100	125	25	38	10	number:88
+gs5r3	unit	alpha_impfile_proc	4	162	0	-	-	-	0	0	procedure:4
+gs5r3	unit	armor	166	0	166	-5	99	5	21	25	number:166
+gs5r3	unit	attack	166	0	166	0	45	4	18	26	number:166
+gs5r3	unit	attack_recovery_ticks	162	4	162	10	60	20	41	18	number:162
+gs5r3	unit	barracks_required	85	81	85	0	4	1	33	4	number:85
+gs5r3	unit	carrying_capacity	8	158	8	4	4	4	8	1	number:8
+gs5r3	unit	casting_aura_type	24	142	0	-	-	-	0	0	name:24
+gs5r3	unit	chaos_resistance	86	80	86	-100	100	25	29	9	number:86
+gs5r3	unit	code	166	0	0	-	-	-	0	0	number:8 name:158
+gs5r3	unit	death_alpha_impfile_proc	1	165	0	-	-	-	0	0	procedure:1
+gs5r3	unit	death_impfile_proc	3	163	0	-	-	-	0	0	procedure:3
+gs5r3	unit	death_resistance	84	82	84	-100	100	25	33	8	number:84
+gs5r3	unit	dexterity	162	4	162	0	30	10	43	18	number:162
+gs5r3	unit	earth_resistance	88	78	88	-100	150	25	33	10	number:88
+gs5r3	unit	faith	162	4	0	-	-	-	0	0	name:162
+gs5r3	unit	fame_to_build	1	165	1	65535	65535	65535	1	1	number:1
+gs5r3	unit	fire_resistance	88	78	88	-100	100	25	29	9	number:88
+gs5r3	unit	flags	166	0	0	-	-	-	0	0	name:6 expression:160
+gs5r3	unit	food_to_build	157	9	157	0	500	0	39	25	number:157
+gs5r3	unit	food_used_per_turn	158	8	158	-4	5	0	97	9	number:158
+gs5r3	unit	frames_per_grid	166	0	166	3	100	6	46	10	number:166
+gs5r3	unit	get_hit_recovery_ticks	162	4	162	2	30	10	61	16	number:162
+gs5r3	unit	gold_to_build	157	9	157	0	200	0	46	18	number:157
+gs5r3	unit	gold_used_per_turn	158	8	158	0	5	0	107	5	number:158
+gs5r3	unit	health_bar_x	162	4	162	-19	-13	-16	149	6	number:162
+gs5r3	unit	health_bar_y	162	4	162	-200	-25	-75	17	42	number:162
+gs5r3	unit	hit_points	166	0	166	2	200	15	17	38	number:166
+gs5r3	unit	impfile_proc	164	2	0	-	-	-	0	0	procedure:164
+gs5r3	unit	initiates_to_build	157	9	157	0	5	0	84	4	number:157
+gs5r3	unit	keep_required	1	165	1	1	1	1	1	1	number:1
+gs5r3	unit	level_procedure	163	3	0	-	-	-	0	0	procedure:163
+gs5r3	unit	life_resistance	88	78	88	-100	125	25	25	10	number:88
+gs5r3	unit	magic_crystals_to_build	157	9	157	0	500	0	69	22	number:157
+gs5r3	unit	magic_crystals_used_per_turn	157	9	157	0	5	0	100	5	number:157
+gs5r3	unit	maximum_mana	24	142	24	0	10	5	12	4	number:24
+gs5r3	unit	melee_attack_resistance	104	62	104	-50	75	25	23	11	number:104
+gs5r3	unit	military_units	59	107	59	1	3	3	37	3	number:59
+gs5r3	unit	missile_attack_resistance	120	46	120	-50	75	25	39	13	number:120
+gs5r3	unit	missile_range	53	113	53	3	16	10	12	12	number:53
+gs5r3	unit	missile_speed	53	113	53	0.75	6	1	32	5	number:53
+gs5r3	unit	missile_type	51	115	0	-	-	-	0	0	name:51
+gs5r3	unit	morale_bar_x	162	4	162	-15	-10	-12	155	5	number:162
+gs5r3	unit	morale_bar_y	162	4	162	-200	-25	-75	17	42	number:162
+gs5r3	unit	mount_type	30	136	1	-1	-1	-1	1	1	number:1 name:29
+gs5r3	unit	mps	166	0	166	1	20	10	43	15	number:166
+gs5r3	unit	name	166	0	0	-	-	-	0	0	text:166
+gs5r3	unit	order_resistance	90	76	90	-100	100	-25	29	11	number:90
+gs5r3	unit	portrait_doodad	1	165	0	-	-	-	0	0	name:1
+gs5r3	unit	race	161	5	0	-	-	-	0	0	name:161
+gs5r3	unit	ranged_attack	53	113	53	0	25	5	8	18	number:53
+gs5r3	unit	recover_hitpoints	155	11	155	0	30	4	36	14	number:155
+gs5r3	unit	recover_hitpoints_inside	155	11	155	0	30	4	33	13	number:155
+gs5r3	unit	recover_hitpoints_moved	155	11	155	0	30	2	32	14	number:155
+gs5r3	unit	shadow_impfile_proc	4	162	0	-	-	-	0	0	procedure:4
+gs5r3	unit	sight_radius	166	0	166	1	12	4	33	11	number:166
+gs5r3	unit	small_doodad	9	157	1	25	25	25	1	1	number:1 name:8
+gs5r3	unit	special_unit_type	67	99	0	-	-	-	0	0	name:67
+gs5r3	unit	stealth_noise_factor	162	4	162	1	15	3	23	14	number:162
+gs5r3	unit	strength	162	4	162	0	35	10	23	24	number:162
+gs5r3	unit	thieves_guild_required	76	90	76	0	4	4	28	4	number:76
+gs5r3	unit	water_resistance	88	78	88	-100	125	25	32	9	number:88
+gs5r3	unit	wisdom	162	4	162	0	16	5	63	13	number:162
+gs5r3	unit	wizards_tower_required	94	72	94	0	4	4	33	5	number:94
+gs5r3	spell	alt_terraform_type	2	260	0	-	-	-	0	0	procedure:2
+gs5r3	spell	attack_armor	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	attack_hit_recovery	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	barter_value_proc	262	0	0	-	-	-	0	0	procedure:262
+gs5r3	spell	bolt_aura	1	261	1	-1	-1	-1	1	1	number:1
+gs5r3	spell	bolt_origin_hotspot	1	261	1	-1	-1	-1	1	1	number:1
+gs5r3	spell	bolt_palette	3	259	3	0	2	2	1	3	number:3
+gs5r3	spell	bolt_step	1	261	1	10	10	10	1	1	number:1
+gs5r3	spell	bolt_target_hotspot	1	261	1	-1	-1	-1	1	1	number:1
+gs5r3	spell	bolt_thickness	2	260	2	1	2	2	1	2	number:2
+gs5r3	spell	bolt_ticks	1	261	1	10	10	10	1	1	number:1
+gs5r3	spell	book	262	0	74	-1	-1	-1	74	1	number:74 name:188
+gs5r3	spell	can_accumulate?	62	200	0	-	-	-	0	0	name:46 procedure:16
+gs5r3	spell	cast_ticks	261	1	261	1	60	12	86	18	number:261
+gs5r3	spell	caster_aura_type	5	257	0	-	-	-	0	0	name:5
+gs5r3	spell	casterlink?	1	261	0	-	-	-	0	0	name:1
+gs5r3	spell	casting_aura_type	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	cost_amount	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	count_sparkle	1	261	1	10	10	10	1	1	number:1
+gs5r3	spell	cure_amount	7	255	0	-	-	-	0	0	procedure:7
+gs5r3	spell	delay_amount	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	delay_time	2	260	2	1	12	12	1	2	number:2
+gs5r3	spell	delayed_modifications	3	259	0	-	-	-	0	0	dictionary:3
+gs5r3	spell	delayed_mods	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	disabled_repeat_invoke_effects	2	260	0	-	-	-	0	0	procedure:2
+gs5r3	spell	display_updates	25	237	0	-	-	-	0	0	procedure:25
+gs5r3	spell	do_embrace_health	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	do_embrace_mana	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	do_hp_mod	8	254	0	-	-	-	0	0	procedure:8
+gs5r3	spell	do_visage_hp_mod	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	drain4mana?	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	dummy	104	158	0	-	-	-	0	0	expression:104
+gs5r3	spell	dummy2	1	261	0	-	-	-	0	0	expression:1
+gs5r3	spell	duration	258	4	161	-1	655350	0	62	20	number:161 procedure:97
+gs5r3	spell	enemy_effect	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	engulfed	5	257	0	-	-	-	0	0	procedure:5
+gs5r3	spell	expire_mods	7	255	0	-	-	-	0	0	procedure:7
+gs5r3	spell	faith	262	0	0	-	-	-	0	0	name:262
+gs5r3	spell	friendly_effect	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	gamble_mod	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	ghost_sound	2	260	2	-1	-1	-1	2	1	number:2
+gs5r3	spell	ghost_speed	2	260	2	300	300	300	2	1	number:2
+gs5r3	spell	health_cost	2	260	2	4	4	4	2	1	number:2
+gs5r3	spell	horrified	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	hp_ratio	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	image	262	0	262	1	183	9	10	68	number:262
+gs5r3	spell	invoke_effects	93	169	0	-	-	-	0	0	procedure:93
+gs5r3	spell	invoke_effects_alternate	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	lands_noeffect	17	245	0	-	-	-	0	0	procedure:17
+gs5r3	spell	lands_notarget	9	253	0	-	-	-	0	0	procedure:9
+gs5r3	spell	leadership_mod	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	level	262	0	262	0	9	1	228	4	number:262
+gs5r3	spell	maintenance	262	0	262	0	5	3	89	5	number:262
+gs5r3	spell	mana	262	0	262	0	16	2	66	12	number:262
+gs5r3	spell	melee_missile_resistance	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	mighty_mod	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	minor_fate_mod	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	missile_action	16	246	16	-1	-1	-1	16	1	number:16
+gs5r3	spell	missile_effects	16	246	0	-	-	-	0	0	procedure:16
+gs5r3	spell	missile_flags	27	235	0	-	-	-	0	0	name:4 expression:23
+gs5r3	spell	missile_gravity	26	236	26	0.01	100	0.1	22	4	number:26
+gs5r3	spell	missile_hit_aura	20	242	1	-1	-1	-1	1	1	number:1 procedure:19
+gs5r3	spell	missile_launch_action	6	256	1	-1	-1	-1	1	1	number:1 name:5
+gs5r3	spell	missile_launch_hotspot	1	261	0	-	-	-	0	0	name:1
+gs5r3	spell	missile_lifespan	8	254	8	20	300	300	3	4	number:8
+gs5r3	spell	missile_speed	26	236	26	0.4	3	2	17	5	number:26
+gs5r3	spell	missile_type	25	237	0	-	-	-	0	0	name:24 expression:1
+gs5r3	spell	missilecondition?	2	260	0	-	-	-	0	0	procedure:2
+gs5r3	spell	mode	262	0	0	-	-	-	0	0	name:186 expression:76
+gs5r3	spell	modifier_aura	75	187	52	-1	-1	-1	52	1	number:52 name:2 procedure:21
+gs5r3	spell	modifier_flag	4	258	0	-	-	-	0	0	procedure:4
+gs5r3	spell	morale_mod	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	more_damage	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	mp_ratio	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	mps_cost	10	252	10	0	2	2	9	2	number:10
+gs5r3	spell	my_army_percent_health	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	name	262	0	0	-	-	-	0	0	text:262
+gs5r3	spell	num_bolts	4	258	4	1	1	1	4	1	number:4
+gs5r3	spell	opposite_tt	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	other_army_percent_health	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	permanent_modifications	262	0	0	-	-	-	0	0	dictionary:262
+gs5r3	spell	post_mods	27	235	0	-	-	-	0	0	procedure:27
+gs5r3	spell	pre_mods	28	234	0	-	-	-	0	0	procedure:28
+gs5r3	spell	protection_mod	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	rain_resistance_mod	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	rain_speed_mod	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	random_aura	1	261	0	-	-	-	0	0	expression:1
+gs5r3	spell	random_faith	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	random_health_recovery	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	random_missile	1	261	0	-	-	-	0	0	expression:1
+gs5r3	spell	random_movement	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	range	197	65	197	-1	256	-1	169	5	number:197
+gs5r3	spell	ranged_attack_missile_range	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	recover_ticks	261	1	261	0	90	0	85	28	number:261
+gs5r3	spell	reduce_hps	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	reduce_mps	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	repeat_count	47	215	7	1	1	1	7	1	number:7 procedure:40
+gs5r3	spell	repeat_invoke_effects	22	240	0	-	-	-	0	0	procedure:22
+gs5r3	spell	repeat_modifications	48	214	0	-	-	-	0	0	dictionary:48
+gs5r3	spell	repeat_sparkle	1	261	1	60	60	60	1	1	number:1
+gs5r3	spell	repeat_time	47	215	15	1	15	1	12	4	number:15 procedure:32
+gs5r3	spell	repeatcondition?	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	repeatondead?	1	261	0	-	-	-	0	0	name:1
+gs5r3	spell	repeatwithoutbuff?	16	246	0	-	-	-	0	0	name:8 procedure:8
+gs5r3	spell	research_cost	262	0	262	1	256	64	55	13	number:262
+gs5r3	spell	reset_entangle_effect	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	resist_mod	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	roulette_mod	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	shock_them_again	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	slow_down	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	slow_undead	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	spell_damage	42	220	0	-	-	-	0	0	procedure:42
+gs5r3	spell	spell_var0	21	241	0	-	-	-	0	0	procedure:21
+gs5r3	spell	spell_var1	11	251	0	-	-	-	0	0	procedure:11
+gs5r3	spell	spell_var2	3	259	0	-	-	-	0	0	procedure:3
+gs5r3	spell	spellcondition?	140	122	0	-	-	-	0	0	procedure:140
+gs5r3	spell	spread_infection?	4	258	0	-	-	-	0	0	procedure:4
+gs5r3	spell	sub_mps	2	260	0	-	-	-	0	0	procedure:2
+gs5r3	spell	target	262	0	0	-	-	-	0	0	name:262
+gs5r3	spell	target_action	2	260	0	-	-	-	0	0	name:2
+gs5r3	spell	target_aura	93	169	79	-1	-1	-1	79	1	number:79 name:2 procedure:12
+gs5r3	spell	target_aura_channel	32	230	32	-1	85	-1	26	3	number:32
+gs5r3	spell	target_palette_effect	7	255	0	-	-	-	0	0	procedure:4 expression:3
+gs5r3	spell	target_palette_effect_percent	7	255	3	80	300	80	1	3	number:3 procedure:4
+gs5r3	spell	target_radius	81	181	6	0	30	5	1	6	number:6 procedure:75
+gs5r3	spell	target_terrain_type	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	temp_var0	23	239	0	-	-	-	0	0	procedure:23
+gs5r3	spell	temp_var1	11	251	1	10	10	10	1	1	number:1 procedure:10
+gs5r3	spell	temp_var2	3	259	0	-	-	-	0	0	procedure:3
+gs5r3	spell	temp_var3	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	temporary_modifications	262	0	0	-	-	-	0	0	dictionary:262
+gs5r3	spell	terraform_type	9	253	0	-	-	-	0	0	procedure:9
+gs5r3	spell	tip_buffer	262	0	0	-	-	-	0	0	procedure:262
+gs5r3	spell	unfreeze	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	viability	124	138	0	-	-	-	0	0	procedure:124
+gs5r3	spell	viability_damage	2	260	0	-	-	-	0	0	procedure:2
+gs5r3	spell	viability_old	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	spell	vortex_da	4	258	0	-	-	-	0	0	procedure:1 expression:3
+gs5r3	spell	vortex_dda	4	258	3	0.2	0.2	0.2	3	1	number:3 procedure:1
+gs5r3	spell	vortex_turn_time	4	258	0	-	-	-	0	0	procedure:4
+gs5r3	spell	wind_speed	1	261	0	-	-	-	0	0	procedure:1
+gs5r3	artifact	alt_spell_id	4	246	0	-	-	-	0	0	expression:4
+gs5r3	artifact	alt_spells_id	3	247	0	-	-	-	0	0	expression:3
+gs5r3	artifact	attack_proc	81	169	0	-	-	-	0	0	procedure:81
+gs5r3	artifact	autocalc_end_combat_proc	108	142	0	-	-	-	0	0	procedure:108
+gs5r3	artifact	barter_proc	222	28	0	-	-	-	0	0	procedure:222
+gs5r3	artifact	begin_turn_proc	124	126	0	-	-	-	0	0	procedure:124
+gs5r3	artifact	breakoncast?	10	240	0	-	-	-	0	0	name:10
+gs5r3	artifact	can_be_used	182	68	0	-	-	-	0	0	name:182
+gs5r3	artifact	category	250	0	250	0	9	9	46	9	number:250
+gs5r3	artifact	colorizeborder?	50	200	0	-	-	-	0	0	name:50
+gs5r3	artifact	colorizetext?	56	194	0	-	-	-	0	0	name:56
+gs5r3	artifact	defend_proc	88	162	0	-	-	-	0	0	procedure:88
+gs5r3	artifact	description	239	11	0	-	-	-	0	0	text:178 procedure:16 expression:45
+gs5r3	artifact	description_table	250	0	0	-	-	-	0	0	dictionary:250
+gs5r3	artifact	dummy	171	79	0	-	-	-	0	0	expression:171
+gs5r3	artifact	dummy2	9	241	0	-	-	-	0	0	expression:9
+gs5r3	artifact	end_combat_proc	139	111	0	-	-	-	0	0	procedure:139
+gs5r3	artifact	end_turn_proc	24	226	0	-	-	-	0	0	procedure:24
+gs5r3	artifact	faith	250	0	0	-	-	-	0	0	name:250
+gs5r3	artifact	image	250	0	250	1	267	20	27	68	number:250
+gs5r3	artifact	max_charges	143	107	143	0	30	3	44	11	number:143
+gs5r3	artifact	max_mana	153	97	153	0	100	0	77	16	number:153
+gs5r3	artifact	mod_proc	83	167	0	-	-	-	0	0	procedure:83
+gs5r3	artifact	name	250	0	0	-	-	-	0	0	text:202 name:2 expression:46
+gs5r3	artifact	override_flag	2	248	0	-	-	-	0	0	expression:2
+gs5r3	artifact	p1	2	248	0	-	-	-	0	0	procedure:2
+gs5r3	artifact	portrait_code	250	0	0	-	-	-	0	0	text:250
+gs5r3	artifact	questonly?	66	184	0	-	-	-	0	0	name:66
+gs5r3	artifact	random_text	1	249	0	-	-	-	0	0	array:1
+gs5r3	artifact	rechargeable?	155	95	0	-	-	-	0	0	name:155
+gs5r3	artifact	rechargeonturn?	142	108	142	0	3	3	90	3	number:142
+gs5r3	artifact	rechargequantity?	142	108	142	0	4	1	68	4	number:142
+gs5r3	artifact	spell_id	178	72	0	-	-	-	0	0	expression:178
+gs5r3	artifact	start_combat_proc	47	203	0	-	-	-	0	0	procedure:47
+gs5r3	artifact	unmod_proc	229	21	0	-	-	-	0	0	procedure:229
+gs5r3	artifact	uses_artifact_mana	136	114	0	-	-	-	0	0	name:136
+gs5r3	artifact	uses_wizard_mana	175	75	0	-	-	-	0	0	name:175
+gs5r3	artifact	val_A	143	107	0	-	-	-	0	0	procedure:143
+gs5r3	artifact	val_B	128	122	0	-	-	-	0	0	procedure:128
+gs5r3	artifact	val_C	112	138	0	-	-	-	0	0	procedure:112
+gs5r3	artifact	val_D	83	167	0	-	-	-	0	0	procedure:83
+gs5r3	artifact	val_E	54	196	0	-	-	-	0	0	procedure:54
+gs5r3	artifact	val_F	30	220	0	-	-	-	0	0	procedure:30
+gs5r3	artifact	val_G	17	233	0	-	-	-	0	0	procedure:17
+gs5r3	artifact	val_H	15	235	0	-	-	-	0	0	procedure:15
+gs5r3	artifact	val_I	9	241	0	-	-	-	0	0	procedure:9
+gs5r3	artifact	val_J	1	249	0	-	-	-	0	0	procedure:1
+gs5r3	artifact	wield	250	0	0	-	-	-	0	0	name:250
+gs5r3	artifact	wield_champion_types	241	9	0	-	-	-	0	0	procedure:241
+gs5r3	artifact	wield_faiths	241	9	0	-	-	-	0	0	procedure:241
+gs5r3	artifact	wield_mods	147	103	0	-	-	-	0	0	dictionary:147
+gs5r3	encounter	CAV1	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	CAV2	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	CAVS	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	CAV_GEN	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	CBIG1	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	CBIG2	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	CBIGS	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	CHAMP1	2	312	0	-	-	-	0	0	array:2
+gs5r3	encounter	CHAMP2	2	312	0	-	-	-	0	0	array:2
+gs5r3	encounter	CHAMP3	2	312	0	-	-	-	0	0	array:2
+gs5r3	encounter	CHAMPS	3	311	0	-	-	-	0	0	array:3
+gs5r3	encounter	CMID1	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	CMID2	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	CMIDS	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	CR1_GEN	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	CR2_GEN	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	CR3_GEN	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	CR4_ANI	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	CR4_FLY	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	CR4_GEN	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	CR4_WEP	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	CR5_GEN	9	305	0	-	-	-	0	0	array:9
+gs5r3	encounter	CRE_GEN	6	308	0	-	-	-	0	0	array:6
+gs5r3	encounter	CSMALL1	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	CSMALL2	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	CSMALLS	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	FIT1	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	FIT2	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	FITS	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	FIT_GEN	9	305	0	-	-	-	0	0	array:9
+gs5r3	encounter	INF1	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	INF2	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	INFS	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	INF_GEN	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	M1_GEN	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	M2_GEN	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	M3_GEN	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	MELEE_GEN	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	MIL1	2	312	0	-	-	-	0	0	array:2
+gs5r3	encounter	MIL2	2	312	0	-	-	-	0	0	array:2
+gs5r3	encounter	MIL3	2	312	0	-	-	-	0	0	array:2
+gs5r3	encounter	MILS	3	311	0	-	-	-	0	0	array:3
+gs5r3	encounter	MIS1	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	MIS2	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	MISS	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	MIS_GEN	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	RAND_CHAMP	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	RAND_MELEE	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	RAND_MELEE1	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	RAND_MELEE2	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	RAND_MELEE3	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	SCOUT_GEN	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	SQUAD_HIGH	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	SQUAD_LOW	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	SQUAD_MED	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	THF1	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	THF2	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	THFS	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	THF_GEN	9	305	0	-	-	-	0	0	array:9
+gs5r3	encounter	WIZ1	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	WIZ2	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	WIZS	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	WIZ_GEN	9	305	0	-	-	-	0	0	array:9
+gs5r3	encounter	ai_leave_alone	188	126	0	-	-	-	0	0	name:188
+gs5r3	encounter	alldie	129	185	0	-	-	-	0	0	procedure:129
+gs5r3	encounter	army_specification	225	89	0	-	-	-	0	0	procedure:225
+gs5r3	encounter	army_spoils_list	70	244	0	-	-	-	0	0	procedure:70
+gs5r3	encounter	artifact_spoils_list	65	249	0	-	-	-	0	0	procedure:65
+gs5r3	encounter	auto_artifacts	103	211	0	-	-	-	0	0	name:103
+gs5r3	encounter	barrow_number	1	313	1	-1	-1	-1	1	1	number:1
+gs5r3	encounter	cave_number	1	313	1	-1	-1	-1	1	1	number:1
+gs5r3	encounter	choice	1	313	1	1	1	1	1	1	number:1
+gs5r3	encounter	disable_normal_spawning	57	257	0	-	-	-	0	0	name:57
+gs5r3	encounter	discover_message	304	10	0	-	-	-	0	0	procedure:304
+gs5r3	encounter	do_not_create_army	2	312	0	-	-	-	0	0	name:2
+gs5r3	encounter	do_revenge_for_order	1	313	0	-	-	-	0	0	procedure:1
+gs5r3	encounter	doorway_status	59	255	0	-	-	-	0	0	name:59
+gs5r3	encounter	dummy	261	53	0	-	-	-	0	0	array:163 expression:98
+gs5r3	encounter	dummy2	3	311	0	-	-	-	0	0	expression:3
+gs5r3	encounter	encounter	206	108	0	-	-	-	0	0	procedure:206
+gs5r3	encounter	encounter_attack_text	1	313	0	-	-	-	0	0	name:1
+gs5r3	encounter	encounter_crystals	41	273	40	0	200	0	35	4	number:40 expression:1
+gs5r3	encounter	encounter_enter2_text	1	313	0	-	-	-	0	0	name:1
+gs5r3	encounter	encounter_enter_text	113	201	0	-	-	-	0	0	text:1 name:112
+gs5r3	encounter	encounter_enter_text2	22	292	0	-	-	-	0	0	name:22
+gs5r3	encounter	encounter_enter_text3	4	310	0	-	-	-	0	0	name:4
+gs5r3	encounter	encounter_enter_text4	1	313	0	-	-	-	0	0	name:1
+gs5r3	encounter	encounter_exit_text	116	198	0	-	-	-	0	0	text:1 name:115
+gs5r3	encounter	encounter_exit_text2	3	311	0	-	-	-	0	0	name:3
+gs5r3	encounter	encounter_food	41	273	40	0	200	0	29	7	number:40 expression:1
+gs5r3	encounter	encounter_gold	41	273	40	0	200	0	27	8	number:40 expression:1
+gs5r3	encounter	enter_barrow_level	1	313	1	-1	-1	-1	1	1	number:1
+gs5r3	encounter	enter_progress_filename	75	239	0	-	-	-	0	0	text:75
+gs5r3	encounter	entry_text_array	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	exit_key	3	311	0	-	-	-	0	0	text:3
+gs5r3	encounter	exit_progress_filename	75	239	0	-	-	-	0	0	text:75
+gs5r3	encounter	faith	313	1	1	0	0	0	1	1	number:1 name:312
+gs5r3	encounter	fix_buildings	1	313	0	-	-	-	0	0	procedure:1
+gs5r3	encounter	flee	128	186	0	-	-	-	0	0	procedure:128
+gs5r3	encounter	get_dungeon_choice	1	313	0	-	-	-	0	0	procedure:1
+gs5r3	encounter	key	296	18	0	-	-	-	0	0	text:296
+gs5r3	encounter	lose	308	6	0	-	-	-	0	0	procedure:308
+gs5r3	encounter	makeglue	1	313	0	-	-	-	0	0	procedure:1
+gs5r3	encounter	mapfile	308	6	0	-	-	-	0	0	text:297 procedure:11
+gs5r3	encounter	maps	40	274	0	-	-	-	0	0	array:40
+gs5r3	encounter	multi_level_dung	8	306	0	-	-	-	0	0	name:8
+gs5r3	encounter	name	306	8	0	-	-	-	0	0	text:50 name:256
+gs5r3	encounter	names	8	306	0	-	-	-	0	0	array:8
+gs5r3	encounter	on_new_game	120	194	0	-	-	-	0	0	procedure:120
+gs5r3	encounter	owner	313	1	4	1	2	2	3	2	number:4 name:309
+gs5r3	encounter	parley_encounter	125	189	125	0	2	0	99	3	number:125
+gs5r3	encounter	pick1	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	pick2	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	pick5	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	quest_list	57	257	0	-	-	-	0	0	dictionary:57
+gs5r3	encounter	random_barrows	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	random_orc_caves	1	313	0	-	-	-	0	0	array:1
+gs5r3	encounter	resource_delta	66	248	0	-	-	-	0	0	procedure:66
+gs5r3	encounter	scenario	205	109	0	-	-	-	0	0	text:205
+gs5r3	encounter	setup	313	1	0	-	-	-	0	0	procedure:313
+gs5r3	encounter	setup_second_level	1	313	0	-	-	-	0	0	procedure:1
+gs5r3	encounter	spells_spoils_list	8	306	0	-	-	-	0	0	procedure:8
+gs5r3	encounter	spoils	164	150	0	-	-	-	0	0	procedure:164
+gs5r3	encounter	sprite_type	313	1	1	0	0	0	1	1	number:1 procedure:1 expression:311
+gs5r3	encounter	tiles	40	274	0	-	-	-	0	0	array:40
+gs5r3	encounter	tileset	311	3	0	-	-	-	0	0	text:300 procedure:11
+gs5r3	encounter	time	1	313	1	1	1	1	1	1	number:1
+gs5r3	encounter	type_override	60	254	0	-	-	-	0	0	text:16 name:44
+gs5r3	encounter	unknown_name	167	147	0	-	-	-	0	0	text:8 name:159
+gs5r3	encounter	win	136	178	0	-	-	-	0	0	procedure:136
+gs5r3	faction	symbols_declaring_this_faith	8	0	8	77	246	85	2	7	number:8
+gs5r3	building	code	12	0	0	-	-	-	0	0	text:12
+gs5r3	building	first_level	12	0	12	0	0	0	12	1	number:12
+gs5r3	building	last_level	12	0	12	1	3	3	10	2	number:12

@@ -54,7 +54,9 @@ Extracted copyrighted game data is intentionally excluded from Git. Only tools, 
 
 GS5R3 `gs.mpq` identifies 1,696 `.gs` files, two text files, one URL, and its listfile. PIC5R3 identifies 994 LBM images, two BMP images, and its listfile. The remaining 409 picture entries lack names.
 
-PIC5R3 contains two archive entries named `portrait\AIpotM.lbm`. Consequently, extraction onto the default case-insensitive macOS filesystem produces 1,405 disk files from 1,406 logical entries. The manifest retains both entries; one extracted pathname necessarily overwrites the other.
+PIC5R3 contains two archive entries named `portrait\AIpotM.lbm`. Consequently, extraction produces 1,405 disk files from 1,406 logical entries. The manifest retains both entries; one extracted pathname necessarily overwrites the other.
+
+**Corrected 2026-09-18:** this paragraph previously blamed "the default case-insensitive macOS filesystem". The two entry names are byte-identical, so the loss happens on a case-sensitive filesystem too; case-insensitivity is not the mechanism. The two entries are genuinely distinct members — SHA-256 `9dc00e94…` at block 1108 and `884f4bb9…` at block 1144, with different compressed sizes — measured with `lom-mpq manifest`, which reads members by block index. **Observed** separately: an MPQ cannot hold two members whose names differ only in case at all, because the name hash is case-insensitive; adding `A.txt` then `a.txt` leaves one member under the first name holding the second content.
 
 ## Pairwise results
 
@@ -115,7 +117,9 @@ This evidence reinforces the profile policy: do not stack 3.02 and GS5R3. Treat 
 - Extraction requires a new or empty destination and warns when an archive contains duplicate case-insensitive paths.
 - Uncatalogued entries can be extracted and hashed, but their placeholder names are archive-slot labels only.
 - The earlier `.gs` lexical normalizer remains suitable for change triage. The newer bounded lexer tokenizes every named script across all three profiles and inventories definitions, calls, and static loads; it is still not a complete parser or proof of behavioral equivalence. See the [GameScript probe](gamescript-format.md).
-- Archive repacking is deliberately not implemented yet, though `lom-asset-viewer --set-imp-placement` does write **loose** IMP files (identical length, re-parsed and read back before writing, non-overwriting). We should validate archive creation and round-trip behavior in a disposable development profile before writing any game archive.
+- Archive repacking now exists as a verified, non-installing command: `lom-mpq repack` plus the manifest shape check in `tools/mpq_shape.py`, driven by `scripts/repack-archive.sh`. It produces byte-identical output across repeated runs on both GS5R3 archives and refuses any output that lost a member. It does **not** install, and no repacked archive has been put in front of the engine. See [deterministic MPQ repack](repack.md).
+- `lom-asset-viewer --set-imp-placement` writes **loose** IMP files (identical length, re-parsed and read back before writing, non-overwriting).
+- `lom-mpq manifest` addresses members by block index rather than by name, which is what makes the two same-named PIC5R3 entries visible. `lom-mpq create` exists to build small archives for tests and is not a mod packaging command.
 
 ## Next investigation
 
