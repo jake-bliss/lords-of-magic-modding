@@ -941,7 +941,7 @@ fn absolute_reference_sites(image: &PeImage<'_>, target: u32) -> BTreeSet<u32> {
         let Some(offset) = image.file_offset(start) else {
             continue;
         };
-        let end = (offset + length as usize).min(image.bytes().len());
+        let end = (offset + length).min(image.bytes().len());
         let Some(section) = image.bytes().get(offset..end) else {
             continue;
         };
@@ -991,7 +991,7 @@ fn accessor_call_sites(image: &PeImage<'_>) -> BTreeSet<u32> {
         let Some(offset) = image.file_offset(start) else {
             continue;
         };
-        let end = (offset + length as usize).min(image.bytes().len());
+        let end = (offset + length).min(image.bytes().len());
         let Some(section) = image.bytes().get(offset..end) else {
             continue;
         };
@@ -1069,7 +1069,7 @@ fn map_object_methods(image: &PeImage<'_>) -> BTreeSet<u32> {
         let Some(offset) = image.file_offset(start) else {
             continue;
         };
-        let end = (offset + length as usize).min(image.bytes().len());
+        let end = (offset + length).min(image.bytes().len());
         let Some(section) = image.bytes().get(offset..end) else {
             continue;
         };
