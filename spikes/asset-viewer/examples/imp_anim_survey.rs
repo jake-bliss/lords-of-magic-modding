@@ -4,33 +4,29 @@
 //! Usage:
 //!   cargo run --release --example imp_anim_survey -- lomse.exe imp.mpq LISTFILE
 //!
-//! The binary half recovers the cycle-mode dispatch and the mirror rule from the instruction
-//! stream, and then bounds the negative that matters: it lists *every* register-relative read at a
-//! small displacement inside the IMP module, so "nothing reads sequence byte 2" can be checked
-//! rather than taken on trust. The corpus half reports what the fields actually hold.
-use std::collections::BTreeMap;
+//! The binary half recovers every rule from the instruction stream -- the cycle-mode dispatch, the
+//! mode the two ping-pong sites special-case, the mirror bit, and the width parity the mirrored
+//! placement corrects for -- and refuses if the binary disagrees with the module it is checking.
+//! It then bounds the negative that the timing result rests on, by following sequence-record
+//! pointers from the two places they are created and reporting every field read through them. The
+//! corpus half reports what the fields actually hold.
+use std::collections::{BTreeMap, BTreeSet};
 
 use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::imp_anim::{
-    cycle_mode, direction_count, field_reads, mirrors_facings, recover_cycle_modes, CycleEnd,
-    PING_PONG_MODE,
+    CycleEnd, EngineAddresses, HEADER_SEQUENCE_TABLE, PLAYER_CACHED_SEQUENCE, PointerSource,
+    UNEXPLAINED_SEQUENCE_BYTES, call_sites, cycle_mode, direction_count, field_reads,
+    mirrored_anchor_x, mirrors_facings, record_pointer_reads, recover, sequence_record_sites,
 };
 use lom_asset_viewer::mpq::Archive;
 use lom_asset_viewer::native_table::PeImage;
 
-/// `Imp::Advance`, the function that steps the frame index and ends the cycle.
-///
-/// Reached from the native operator table: `setimpplayeraction` (0x0049E860) tail-calls
-/// `Imp::SetAction` at 0x0049DA80, which calls this at 0x0049DACB.
-const ADVANCE: u32 = 0x0049_D9A0;
+/// The executable's code section, for the scans that must not be bounded by a guessed module span.
+const TEXT_START: u32 = 0x0040_1000;
+const TEXT_LENGTH: usize = 1_357_312;
 
-/// The address range holding the engine's IMP code, used to bound the field-read scan.
-///
-/// Chosen to cover every function reached from the `imp*` operators in the native table: the
-/// lowest is `imp` at 0x0049B690 and the highest is `blankimpplayer` at 0x0049EF60, and the
-/// helpers they call (`Imp::GetFrame` 0x0049ABE0 upwards) sit inside the same block.
-const IMP_MODULE_START: u32 = 0x0049_9000;
-const IMP_MODULE_LENGTH: usize = 0x7000;
+/// `Imp::GetSequence(action)`: the only function that returns a sequence-record pointer.
+const GET_SEQUENCE: u32 = 0x0049_ADB0;
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -40,9 +36,16 @@ fn main() {
 
     let exe = std::fs::read(&exe_path).expect("read executable");
     let image = PeImage::parse(&exe).expect("parse executable");
+    let addresses = EngineAddresses::default();
+    let rules = recover(&image, &addresses).expect("recover the animation rules");
+    // The module span bounds the *reporting*, not the negative. It is an operator entry-point
+    // range, not a call-graph closure; part 1 below is what closes the graph.
+    let module = addresses.module.clone();
+    let module_length = (module.end - module.start) as usize;
+    let in_module = |address: u32| module.contains(&address);
 
-    println!("== cycle-mode dispatch recovered from the executable");
-    let table = recover_cycle_modes(&image, ADVANCE).expect("recover the cycle-mode switch");
+    println!("== rules recovered from the executable");
+    let table = &rules.cycle_modes;
     println!(
         "advance={:#010x} dispatch={:#010x} table={:#010x} modes={}",
         table.advance,
@@ -51,14 +54,39 @@ fn main() {
         table.modes.len()
     );
     for entry in &table.modes {
-        let note = if entry.mode == PING_PONG_MODE {
-            "  (the mode both length sites special-case)"
+        let note = if entry.mode == rules.ping_pong_mode {
+            "  <- ping-pong: doubled length + reflection"
         } else {
             ""
         };
         println!(
             "  mode {} -> {:#010x}  {}{note}",
             entry.mode, entry.target, entry.end
+        );
+    }
+    println!(
+        "ping-pong mode {} from the length site {:#010x} and the reflection {:#010x}",
+        rules.ping_pong_mode, rules.ping_pong_length_site, rules.ping_pong_reflection_site
+    );
+    println!(
+        "mirror bit {:#04x}, tested at {}",
+        rules.mirror_bit,
+        rules
+            .mirror_test_sites
+            .iter()
+            .map(|site| format!("{site:#010x}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    println!(
+        "mirrored placement subtracts one more pixel on {} widths ({:#010x})",
+        rules.mirror_decrements_when, rules.mirror_parity_site
+    );
+    println!("  flipped anchor-relative x, worked through for a few widths:");
+    for width in [7_u16, 8, 9, 32, 33] {
+        println!(
+            "    width {width:>3} placement -4  ->  {}",
+            mirrored_anchor_x(&rules, width, -4)
         );
     }
     let ends: BTreeMap<u8, CycleEnd> = table
@@ -68,23 +96,102 @@ fn main() {
         .collect();
 
     println!();
-    println!("== register-relative reads at displacements 0..15 inside the IMP module");
-    println!("   (the search whose emptiness is the evidence for an unread field)");
-    let reads = field_reads(&image, IMP_MODULE_START, IMP_MODULE_LENGTH, 0..=15)
-        .expect("scan the IMP module");
-    let mut by_key: BTreeMap<(u64, usize), Vec<&str>> = BTreeMap::new();
-    for read in &reads {
-        by_key
-            .entry((read.displacement, read.operand_size))
-            .or_default()
-            .push(read.text.as_str());
+    println!("== the negative, part 1: who can obtain a sequence-record pointer");
+    println!("   `Imp::GetSequence` ({GET_SEQUENCE:#010x}) is the only function that returns one.");
+    let producers =
+        call_sites(&image, TEXT_START, TEXT_LENGTH, GET_SEQUENCE).expect("enumerate call sites");
+    let outside: Vec<u32> = producers
+        .iter()
+        .copied()
+        .filter(|site| !in_module(*site))
+        .collect();
+    for site in &producers {
+        println!("   called from {site:#010x}");
     }
-    for ((displacement, size), hits) in &by_key {
+    println!(
+        "   {} call sites, {} outside the IMP module",
+        producers.len(),
+        outside.len()
+    );
+
+    println!();
+    println!("== the negative, part 2: every field read through a sequence-record pointer");
+    println!("   sources: header[{HEADER_SEQUENCE_TABLE:#x}] as a table (an index must be added");
+    println!(
+        "            before a read counts) and player[{PLAYER_CACHED_SEQUENCE:#x}] as a record."
+    );
+    println!("   Displacements cannot type a struct, so out-of-module hits are offset collisions");
+    println!("   on unrelated objects; part 1 is what rules them out. The in-module rows decide.");
+    let tainted = record_pointer_reads(
+        &image,
+        TEXT_START,
+        TEXT_LENGTH,
+        &[
+            PointerSource::Table {
+                displacement: HEADER_SEQUENCE_TABLE,
+            },
+            PointerSource::Record {
+                displacement: PLAYER_CACHED_SEQUENCE,
+            },
+        ],
+        48,
+    )
+    .expect("follow record pointers");
+    let mut by_displacement: BTreeMap<u64, Vec<&lom_asset_viewer::imp_anim::TaintedRead>> =
+        BTreeMap::new();
+    for read in &tainted {
+        by_displacement
+            .entry(read.displacement)
+            .or_default()
+            .push(read);
+    }
+    for (displacement, reads) in &by_displacement {
+        let inside: Vec<_> = reads
+            .iter()
+            .filter(|read| in_module(read.address))
+            .collect();
+        let unexplained = if UNEXPLAINED_SEQUENCE_BYTES.contains(displacement) {
+            "  <- an unexplained byte"
+        } else {
+            ""
+        };
         println!(
-            "  disp {displacement:>2}  size {size}  n={:<4} e.g. {}",
-            hits.len(),
-            hits[0]
+            "  disp {displacement:>3}  total={:<4} in-module={:<3}{unexplained}",
+            reads.len(),
+            inside.len()
         );
+        for read in inside {
+            println!(
+                "      {:#010x}  {:<34} via {:#010x} [{:#x}]",
+                read.address, read.text, read.source, read.source_displacement
+            );
+        }
+    }
+    let unexplained_in_module = tainted
+        .iter()
+        .filter(|read| {
+            UNEXPLAINED_SEQUENCE_BYTES.contains(&read.displacement) && in_module(read.address)
+        })
+        .count();
+    println!(
+        "  in-module reads at the unexplained displacements {:?}: {unexplained_in_module}",
+        UNEXPLAINED_SEQUENCE_BYTES
+    );
+
+    println!();
+    println!("== reporting scan: base-relative reads at displacements 0..15 in the IMP module");
+    println!("   (indexed operands and `ebp` bases are INCLUDED; only absolute and esp-based");
+    println!("    operands and stores are excluded)");
+    let reads = field_reads(&image, module.start, module_length, 0..=15).expect("scan the module");
+    let mut by_key: BTreeMap<(u64, usize, bool), usize> = BTreeMap::new();
+    for read in &reads {
+        *by_key
+            .entry((read.displacement, read.operand_size, read.indexed))
+            .or_default() += 1;
+    }
+    for ((displacement, size, indexed), count) in &by_key {
+        let shape = if *indexed { "base+index" } else { "base only " };
+        println!("  disp {displacement:>2}  size {size}  {shape}  n={count}");
     }
     println!("  byte-sized reads at each displacement, in full:");
     for displacement in 0..=15_u64 {
@@ -99,17 +206,13 @@ fn main() {
     }
 
     println!();
-    println!("== sites that form a sequence-record address (index * 16 + header[0x1C])");
-    let sites = lom_asset_viewer::imp_anim::sequence_record_sites(
-        &image,
-        IMP_MODULE_START,
-        IMP_MODULE_LENGTH,
-    )
-    .expect("scan for record addressing");
+    println!("== sites that scale an index by 16 near a header sequence-table load");
+    let sites = sequence_record_sites(&image, module.start, module_length)
+        .expect("scan for record addressing");
     for (address, near_header_load, text) in &sites {
         // The window cannot tell a sequence-table index from a frame-table index inside the same
-        // function -- both stride by 16 and both sit near the header load. It narrows the set of
-        // sites that have to be read by hand, and that set is small enough to read.
+        // function -- both stride by 16 and both sit near the header load. This narrows the set
+        // that has to be read by hand; it is not by itself the negative.
         let kind = if *near_header_load {
             "candidate: near a header sequence-table load"
         } else {
@@ -147,11 +250,15 @@ fn main() {
     let mut members = 0_usize;
     let mut sequences = 0_usize;
     let mut mode_counts: BTreeMap<u8, usize> = BTreeMap::new();
+    let mut mirror_set = 0_usize;
     let mut mirror_by_facings: BTreeMap<(bool, usize), usize> = BTreeMap::new();
     let mut directions: BTreeMap<usize, usize> = BTreeMap::new();
-    let mut unread_bytes: Vec<BTreeMap<u8, usize>> = vec![BTreeMap::new(); 11];
+    let mut metadata_bytes: Vec<BTreeMap<u8, usize>> = vec![BTreeMap::new(); 11];
+    let mut control_high_bits: BTreeMap<u8, usize> = BTreeMap::new();
     let mut facing_metadata: BTreeMap<u16, usize> = BTreeMap::new();
     let mut ragged_facings = Vec::new();
+    let mut empty_facings = Vec::new();
+    let mut frame_total_disagreements = Vec::new();
     let mut byte2_by_label: BTreeMap<String, BTreeMap<u8, usize>> = BTreeMap::new();
     let mut members_with_one_byte2 = 0_usize;
     let mut members_with_many_byte2 = 0_usize;
@@ -181,6 +288,19 @@ fn main() {
             let mode = cycle_mode(&sequence.metadata);
             let mirrored = mirrors_facings(&sequence.metadata);
             *mode_counts.entry(mode).or_default() += 1;
+            if mirrored {
+                mirror_set += 1;
+            }
+            // A standing structural cross-check: the decoder's per-sequence frame total has to be
+            // the sum of its facings'. If the two levels ever disagree the record walk has slipped.
+            let facing_frame_total: usize = sprite.facings
+                [sequence.first_facing..sequence.first_facing + sequence.facing_count]
+                .iter()
+                .map(|facing| facing.frame_count)
+                .sum();
+            if facing_frame_total != sequence.frame_count {
+                frame_total_disagreements.push(format!("{name} seq{index}"));
+            }
             *mirror_by_facings
                 .entry((mirrored, sequence.facing_count))
                 .or_default() += 1;
@@ -188,24 +308,34 @@ fn main() {
                 .entry(direction_count(&sequence.metadata, sequence.facing_count))
                 .or_default() += 1;
             for (offset, value) in sequence.metadata.iter().enumerate() {
-                *unread_bytes[offset].entry(*value).or_default() += 1;
+                *metadata_bytes[offset].entry(*value).or_default() += 1;
             }
+            *control_high_bits
+                .entry(sequence.metadata[0] & !0x07)
+                .or_default() += 1;
             let facings = &sprite.facings
                 [sequence.first_facing..sequence.first_facing + sequence.facing_count];
             for facing in facings {
                 *facing_metadata.entry(facing.metadata).or_default() += 1;
             }
-            // A mirrored sequence has to be able to fill its advertised direction count out of
-            // facings that all exist, so the cycle lengths matter per facing, not per sequence.
-            let first = facings[0].frame_count;
-            if facings.iter().any(|facing| facing.frame_count != first) {
-                ragged_facings.push(format!(
-                    "{name} seq{index}: {:?}",
-                    facings
+            // A sequence with no facings is refused by the decoder today, but surveying mods is
+            // the stated purpose of this tool, so it reports the anomaly instead of panicking.
+            match facings.first() {
+                None => empty_facings.push(format!("{name} seq{index}")),
+                Some(first) => {
+                    if facings
                         .iter()
-                        .map(|facing| facing.frame_count)
-                        .collect::<Vec<_>>()
-                ));
+                        .any(|facing| facing.frame_count != first.frame_count)
+                    {
+                        ragged_facings.push(format!(
+                            "{name} seq{index}: {:?}",
+                            facings
+                                .iter()
+                                .map(|facing| facing.frame_count)
+                                .collect::<Vec<_>>()
+                        ));
+                    }
+                }
             }
             let label = member_labels
                 .and_then(|table| table.get(index))
@@ -223,9 +353,7 @@ fn main() {
                 .entry(mode)
                 .or_default() += 1;
         }
-        // If byte 2 were a per-action cadence it would differ between a creature's MOVE and its
-        // DIE. If it is an export-time property of the file it will be one value per member.
-        let distinct: std::collections::BTreeSet<u8> = sprite
+        let distinct: BTreeSet<u8> = sprite
             .sequences
             .iter()
             .map(|sequence| sequence.metadata[2])
@@ -238,13 +366,23 @@ fn main() {
     }
 
     println!("members={members} sequences={sequences}");
+    println!(
+        "-- sequence frame total vs the sum over its facings: {} disagreements",
+        frame_total_disagreements.len()
+    );
     println!("-- cycle modes observed, against the dispatch recovered above");
     for (mode, count) in &mode_counts {
         let end = ends
             .get(mode)
             .map_or("NO JUMP-TABLE SLOT".to_owned(), |end| end.to_string());
-        println!("  mode {mode}: n={count:<5} {end}");
+        let note = if *mode == rules.ping_pong_mode {
+            "  (ping-pong)"
+        } else {
+            ""
+        };
+        println!("  mode {mode}: n={count:<5} {end}{note}");
     }
+    println!("  sequences with the mirror bit set: {mirror_set}");
     println!("-- mirror bit against facing count");
     for ((mirrored, facings), count) in &mirror_by_facings {
         println!(
@@ -265,14 +403,15 @@ fn main() {
         println!("  {value:#06x}: n={count}");
     }
     println!(
-        "-- sequences whose facings have unequal frame counts: {}",
+        "-- sequences with no facings: {}  with unequal facing frame counts: {}",
+        empty_facings.len(),
         ragged_facings.len()
     );
     for line in ragged_facings.iter().take(10) {
         println!("  {line}");
     }
-    println!("-- sequence metadata bytes the engine never reads");
-    for (offset, hist) in unread_bytes.iter().enumerate() {
+    println!("-- sequence metadata byte distributions");
+    for (offset, hist) in metadata_bytes.iter().enumerate() {
         let mut top: Vec<_> = hist.iter().collect();
         top.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
         let shown: Vec<String> = top
@@ -285,6 +424,10 @@ fn main() {
             hist.len(),
             shown.join(" ")
         );
+    }
+    println!("-- byte 0 bits 3-7, the part the engine masks away");
+    for (bits, count) in &control_high_bits {
+        println!("  {bits:#04x}: n={count}");
     }
     println!(
         "-- byte 2: members holding one value={members_with_one_byte2} \

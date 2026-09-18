@@ -20,6 +20,7 @@
 //! instruction stream and fails if the shape it expects is not there, so a different build reports
 //! a refusal rather than a fabricated answer.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, Mnemonic, NasmFormatter, OpKind};
@@ -38,9 +39,6 @@ pub const SEQUENCE_MIRROR_BYTE: usize = 1;
 
 /// The only bit of [`SEQUENCE_MIRROR_BYTE`] the engine tests.
 pub const SEQUENCE_MIRROR_BIT: u8 = 0x80;
-
-/// Byte 11 of a sequence record: the facing count, read as `mov cl,[edi+0Bh]` at 0x0049D967.
-pub const SEQUENCE_FACING_COUNT_BYTE: usize = 11;
 
 /// What the engine does when the frame index runs off the end of a cycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,34 +130,44 @@ pub fn facing_for_direction(
     (folded < facing_count).then_some((folded, true))
 }
 
+/// The mode value this module is built for, checked against the binary by [`recover`].
+///
+/// It is deliberately **not** consulted by the rules below: they take the mode the binary actually
+/// encodes. A constant that both the implementation and its test read is self-consistent for any
+/// value -- with this set to 3, every ping-pong sequence in the archive would truncate to
+/// forward-only and a suite comparing the implementation to itself would stay green. So the only
+/// thing this constant does is give [`recover`] something to disagree with.
+pub const PING_PONG_MODE: u8 = 4;
+
 /// How many steps the frame index takes before the cycle ends.
 ///
-/// `Imp::CycleLength` at 0x0049D8F0: mode 4 returns `2 * frames - 1`
+/// `Imp::CycleLength` at 0x0049D8F0: the ping-pong mode returns `2 * frames - 1`
 /// (`lea eax,[edx+edx-1]`, 0x0049D90E); every other mode returns the stored frame count
 /// (0x0049D915).
-pub fn cycle_length(mode: u8, frame_count: usize) -> usize {
-    if mode == PING_PONG_MODE {
+///
+/// Pass [`AnimRules::ping_pong_mode`] as `ping_pong`, not a literal.
+pub fn cycle_length(ping_pong: u8, mode: u8, frame_count: usize) -> usize {
+    if mode == ping_pong {
         (2 * frame_count).saturating_sub(1)
     } else {
         frame_count
     }
 }
 
-/// The mode whose cycle runs forward and then back again.
-///
-/// Named by two independent sites that both special-case exactly 4: the length rule at 0x0049D906
-/// and the reflection at 0x0049AC94.
-pub const PING_PONG_MODE: u8 = 4;
-
 /// Which stored frame a position in the cycle shows.
 ///
-/// The reflection is `Imp::GetFrame` at 0x0049AC94..0x0049ACA9: for mode 4, a position at or past
-/// the frame count is replaced by `2 * frames - position - 2`.
-pub fn frame_for_cycle_index(mode: u8, frame_count: usize, index: usize) -> Option<usize> {
+/// The reflection is `Imp::GetFrame` at 0x0049AC94..0x0049ACA9: for the ping-pong mode, a position
+/// at or past the frame count is replaced by `2 * frames - position - 2`.
+pub fn frame_for_cycle_index(
+    ping_pong: u8,
+    mode: u8,
+    frame_count: usize,
+    index: usize,
+) -> Option<usize> {
     if frame_count == 0 {
         return None;
     }
-    if mode == PING_PONG_MODE && index >= frame_count {
+    if mode == ping_pong && index >= frame_count {
         let folded = (2 * frame_count).checked_sub(index + 2)?;
         return (folded < frame_count).then_some(folded);
     }
@@ -196,18 +204,26 @@ pub fn recover_cycle_modes(
     advance: u32,
 ) -> Result<CycleModeTable, ImpAnimError> {
     let instructions = decode_from(image, advance, 64)?;
-    let mut mask = None;
-    let mut bound = None;
+    // Keyed by register, so the mask and the bound that are adopted are the ones applied to the
+    // register the jump actually indexes with. Taking the textually nearest `and`/`cmp` would let
+    // an unrelated masked value next door supply the answer, which is the opposite of what this
+    // function's contract claims.
+    let mut masks: BTreeMap<iced_x86::Register, u8> = BTreeMap::new();
+    let mut bounds: BTreeMap<iced_x86::Register, i32> = BTreeMap::new();
     for instruction in instructions.iter() {
-        if instruction.mnemonic() == Mnemonic::And
+        if instruction.op0_kind() == OpKind::Register
             && instruction.op1_kind() == OpKind::Immediate8to32
         {
-            mask = Some(instruction.immediate8to32() as u8);
-        }
-        if instruction.mnemonic() == Mnemonic::Cmp
-            && instruction.op1_kind() == OpKind::Immediate8to32
-        {
-            bound = Some(instruction.immediate8to32());
+            let register = instruction.op0_register().full_register32();
+            match instruction.mnemonic() {
+                Mnemonic::And => {
+                    masks.insert(register, instruction.immediate8to32() as u8);
+                }
+                Mnemonic::Cmp => {
+                    bounds.insert(register, instruction.immediate8to32());
+                }
+                _ => {}
+            }
         }
         if instruction.mnemonic() != Mnemonic::Jmp || instruction.op0_kind() != OpKind::Memory {
             continue;
@@ -215,9 +231,10 @@ pub fn recover_cycle_modes(
         if instruction.memory_index_scale() != 4 {
             continue;
         }
-        let mask = mask.ok_or_else(|| {
+        let index = instruction.memory_index().full_register32();
+        let mask = masks.get(&index).copied().ok_or_else(|| {
             ImpAnimError::new(format!(
-                "the indexed jump at {:#010x} is not preceded by a mask",
+                "the indexed jump at {:#010x} indexes with {index:?}, which nothing masked",
                 instruction.ip()
             ))
         })?;
@@ -226,9 +243,9 @@ pub fn recover_cycle_modes(
                 "the mode mask at {advance:#010x} is {mask:#04x}, not {CYCLE_MODE_MASK:#04x}"
             )));
         }
-        let bound = bound.ok_or_else(|| {
+        let bound = bounds.get(&index).copied().ok_or_else(|| {
             ImpAnimError::new(format!(
-                "the indexed jump at {:#010x} is not preceded by a range check",
+                "the indexed jump at {:#010x} indexes with {index:?}, which nothing bounded",
                 instruction.ip()
             ))
         })?;
@@ -294,6 +311,356 @@ fn classify_cycle_end(image: &PeImage<'_>, target: u32) -> Result<CycleEnd, ImpA
     Ok(CycleEnd::Unclassified)
 }
 
+/// Which width parity the mirrored-placement path subtracts an extra pixel for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Parity {
+    Even,
+    Odd,
+}
+
+impl fmt::Display for Parity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Even => "even",
+            Self::Odd => "odd",
+        })
+    }
+}
+
+/// The addresses the recovery starts from. Defaults are for `lomse.exe` 3.02.
+///
+/// These are the only hardcoded numbers in the module that are not checked against something: they
+/// say *where to look*. Everything read at them is verified, so a different build produces a
+/// refusal rather than a wrong answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineAddresses {
+    /// `Imp::Advance`, reached from operator `setimpplayeraction` (0x0049E860) via
+    /// `Imp::SetAction` (0x0049DA80, calls it at 0x0049DACB).
+    pub advance: u32,
+    /// `Imp::CycleLength`: returns the number of steps in the current cycle.
+    pub cycle_length: u32,
+    /// `Imp::GetFrame`: resolves (action, facing, position) to a frame record.
+    pub get_frame: u32,
+    /// `Imp::DirectionCount`: how many directions the current action exposes.
+    pub direction_count: u32,
+    /// `ImpPlayer::GetPlacement`: writes the anchor-relative top-left of the current frame.
+    pub placement: u32,
+    /// The address range holding the engine's IMP code.
+    ///
+    /// Used only to enumerate the sites the documentation cites, and to separate in-module hits
+    /// from offset collisions elsewhere. It is an operator entry-point span, not a call-graph
+    /// closure -- the closure claim is [`call_sites`].
+    pub module: std::ops::Range<u32>,
+}
+
+impl Default for EngineAddresses {
+    fn default() -> Self {
+        Self {
+            advance: 0x0049_D9A0,
+            cycle_length: 0x0049_D8F0,
+            get_frame: 0x0049_ABE0,
+            direction_count: 0x0049_D920,
+            placement: 0x0049_CC80,
+            module: 0x0049_9000..0x004a_0000,
+        }
+    }
+}
+
+/// Every animation rule this module implements, with the value the binary actually encodes.
+///
+/// The point of carrying the values rather than reading module constants is that a wrong constant
+/// cannot hide. `recover` refuses when the binary disagrees with the constant, and the pure
+/// functions below take these values, so there is no path where a mutated constant silently
+/// changes what the survey reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnimRules {
+    pub cycle_modes: CycleModeTable,
+    /// The mode value the two ping-pong sites special-case.
+    pub ping_pong_mode: u8,
+    /// Where the `2N-1` cycle length is computed.
+    pub ping_pong_length_site: u32,
+    /// Where a position past the end is reflected to `2N-i-2`.
+    pub ping_pong_reflection_site: u32,
+    /// The bit of sequence byte 1 that turns facing mirroring on.
+    pub mirror_bit: u8,
+    /// Where that bit is tested, in address order.
+    pub mirror_test_sites: Vec<u32>,
+    /// The width parity for which the mirrored placement subtracts one more pixel.
+    pub mirror_decrements_when: Parity,
+    /// The `dec` that subtracts it.
+    pub mirror_parity_site: u32,
+}
+
+/// Read every animation rule out of the image, refusing on any disagreement with this module.
+pub fn recover(
+    image: &PeImage<'_>,
+    addresses: &EngineAddresses,
+) -> Result<AnimRules, ImpAnimError> {
+    let cycle_modes = recover_cycle_modes(image, addresses.advance)?;
+    let (ping_pong_mode, ping_pong_length_site) =
+        recover_ping_pong_length(image, addresses.cycle_length)?;
+    let (reflected_mode, ping_pong_reflection_site) =
+        recover_ping_pong_reflection(image, addresses.get_frame)?;
+    if reflected_mode != ping_pong_mode {
+        return Err(ImpAnimError::new(format!(
+            "the length site at {ping_pong_length_site:#010x} special-cases mode {ping_pong_mode} \
+             but the reflection at {ping_pong_reflection_site:#010x} special-cases \
+             {reflected_mode}; a ping-pong needs both"
+        )));
+    }
+    if ping_pong_mode != PING_PONG_MODE {
+        return Err(ImpAnimError::new(format!(
+            "the binary special-cases cycle mode {ping_pong_mode}, but this module is built for \
+             {PING_PONG_MODE}"
+        )));
+    }
+    if !cycle_modes
+        .modes
+        .iter()
+        .any(|entry| entry.mode == ping_pong_mode && entry.end == CycleEnd::WrapToStart)
+    {
+        return Err(ImpAnimError::new(format!(
+            "mode {ping_pong_mode} is special-cased as a ping-pong but does not wrap; a cycle that \
+             held its last frame could not run back"
+        )));
+    }
+    let (mirror_bit, mirror_test_sites) =
+        recover_mirror_bit(image, addresses.direction_count, &addresses.module)?;
+    if mirror_bit != SEQUENCE_MIRROR_BIT {
+        return Err(ImpAnimError::new(format!(
+            "the binary tests sequence byte 1 with {mirror_bit:#04x}, but this module is built for \
+             {SEQUENCE_MIRROR_BIT:#04x}"
+        )));
+    }
+    let (mirror_decrements_when, mirror_parity_site) =
+        recover_mirror_parity(image, addresses.placement)?;
+    Ok(AnimRules {
+        cycle_modes,
+        ping_pong_mode,
+        ping_pong_length_site,
+        ping_pong_reflection_site,
+        mirror_bit,
+        mirror_test_sites,
+        mirror_decrements_when,
+        mirror_parity_site,
+    })
+}
+
+/// Recover the ping-pong mode from `Imp::CycleLength`'s `2N-1`.
+///
+/// The shape is a `cmp r8,imm` whose taken branch reaches `lea r,[r+r-1]`. The immediate is the
+/// mode; the `lea` is what makes it a doubling rather than some other special case.
+fn recover_ping_pong_length(
+    image: &PeImage<'_>,
+    cycle_length: u32,
+) -> Result<(u8, u32), ImpAnimError> {
+    let instructions = decode_from(image, cycle_length, 24)?;
+    let mut candidate = None;
+    for instruction in &instructions {
+        if instruction.mnemonic() == Mnemonic::Cmp
+            && instruction.op0_kind() == OpKind::Register
+            && instruction.op1_kind() == OpKind::Immediate8
+        {
+            candidate = Some(instruction.immediate8());
+        }
+        if let Some(mode) = candidate
+            && is_double_minus(instruction, 1)
+        {
+            return Ok((mode, instruction.ip() as u32));
+        }
+    }
+    Err(ImpAnimError::new(format!(
+        "no `lea r,[r+r-1]` doubling found within 24 instructions of {cycle_length:#010x}"
+    )))
+}
+
+/// Recover the ping-pong mode from `Imp::GetFrame`'s `2N-i-2` reflection.
+///
+/// The shape is a `cmp r8,imm` reaching `lea r,[r+r]` followed by two subtractions. Requiring the
+/// doubling *and* the `sub ...,2` is what distinguishes the reflection from any other comparison
+/// against a small constant in the same function.
+fn recover_ping_pong_reflection(
+    image: &PeImage<'_>,
+    get_frame: u32,
+) -> Result<(u8, u32), ImpAnimError> {
+    let instructions = decode_from(image, get_frame, 128)?;
+    let mut candidate = None;
+    for (position, instruction) in instructions.iter().enumerate() {
+        if instruction.mnemonic() == Mnemonic::Cmp
+            && instruction.op0_kind() == OpKind::Register
+            && instruction.op1_kind() == OpKind::Immediate8
+        {
+            candidate = Some(instruction.immediate8());
+        }
+        let Some(mode) = candidate else { continue };
+        if !is_double_minus(instruction, 0) {
+            continue;
+        }
+        let tail = &instructions[position..(position + 4).min(instructions.len())];
+        let subtracts_two = tail.iter().any(|candidate| {
+            candidate.mnemonic() == Mnemonic::Sub
+                && candidate.op1_kind() == OpKind::Immediate8to32
+                && candidate.immediate8to32() == 2
+        });
+        if subtracts_two {
+            return Ok((mode, instruction.ip() as u32));
+        }
+    }
+    Err(ImpAnimError::new(format!(
+        "no `lea r,[r+r]` / `sub r,2` reflection found within 128 instructions of {get_frame:#010x}"
+    )))
+}
+
+/// Whether an instruction is `lea r,[b+b-offset]`, i.e. a doubling with a constant subtracted.
+fn is_double_minus(instruction: &Instruction, offset: i64) -> bool {
+    instruction.mnemonic() == Mnemonic::Lea
+        && instruction.memory_base() != iced_x86::Register::None
+        && instruction.memory_base() == instruction.memory_index()
+        && instruction.memory_index_scale() == 1
+        && instruction.memory_displacement64() as i32 as i64 == -offset
+}
+
+/// Recover the mirror bit from `Imp::DirectionCount`, and every site that tests it.
+///
+/// The function is only a dozen instructions long and its whole content is: test a bit of byte 1,
+/// and on the set branch return `2N-2`. Requiring the `lea r,[r+r-2]` is what ties the bit to
+/// mirroring rather than to some other flag in the same byte.
+fn recover_mirror_bit(
+    image: &PeImage<'_>,
+    direction_count: u32,
+    module: &std::ops::Range<u32>,
+) -> Result<(u8, Vec<u32>), ImpAnimError> {
+    let instructions = decode_from(image, direction_count, 48)?;
+    let mut bit = None;
+    for instruction in &instructions {
+        if instruction.mnemonic() == Mnemonic::Test
+            && instruction.op0_kind() == OpKind::Memory
+            && instruction.memory_size().size() == 1
+            && instruction.memory_displacement64() == SEQUENCE_MIRROR_BYTE as u64
+            && instruction.op1_kind() == OpKind::Immediate8
+        {
+            bit = Some((instruction.immediate8(), instruction.ip() as u32));
+        }
+        if let Some((value, _)) = bit
+            && is_double_minus(instruction, 2)
+        {
+            let sites = mirror_test_sites(image, value, module)?;
+            return Ok((value, sites));
+        }
+    }
+    Err(ImpAnimError::new(format!(
+        "no `lea r,[r+r-2]` direction doubling found within 48 instructions of \
+         {direction_count:#010x}"
+    )))
+}
+
+/// Every `test byte [r+1],bit` in the IMP module, so the doc's site list is measured not recalled.
+fn mirror_test_sites(
+    image: &PeImage<'_>,
+    bit: u8,
+    module: &std::ops::Range<u32>,
+) -> Result<Vec<u32>, ImpAnimError> {
+    let instructions = decode_range(image, module.start, (module.end - module.start) as usize)?;
+    Ok(instructions
+        .iter()
+        .filter(|instruction| {
+            instruction.mnemonic() == Mnemonic::Test
+                && instruction.op0_kind() == OpKind::Memory
+                && instruction.memory_size().size() == 1
+                && instruction.memory_displacement64() == SEQUENCE_MIRROR_BYTE as u64
+                && instruction.op1_kind() == OpKind::Immediate8
+                && instruction.immediate8() == bit
+        })
+        .map(|instruction| instruction.ip() as u32)
+        .collect())
+}
+
+/// Recover which width parity the mirrored placement path subtracts an extra pixel for.
+///
+/// This exists because the answer was got backwards once by reading the mnemonics in order and
+/// assuming the `dec` after a `jne` runs on the tested condition. It does not: the shape is
+/// `neg` / `test r8,1` / `jcc past` / `dec`, and a `jne` that jumps *over* the `dec` means the
+/// `dec` runs when the low bit is **clear**, i.e. on even widths.
+fn recover_mirror_parity(
+    image: &PeImage<'_>,
+    placement: u32,
+) -> Result<(Parity, u32), ImpAnimError> {
+    let instructions = decode_from(image, placement, 48)?;
+    for (position, instruction) in instructions.iter().enumerate() {
+        let tests_low_bit = instruction.mnemonic() == Mnemonic::Test
+            && instruction.op0_kind() == OpKind::Register
+            && instruction.op1_kind() == OpKind::Immediate8
+            && instruction.immediate8() == 1;
+        if !tests_low_bit {
+            continue;
+        }
+        let Some(branch) = instructions.get(position + 1) else {
+            continue;
+        };
+        let Some(decrement) = instructions.get(position + 2) else {
+            continue;
+        };
+        if decrement.mnemonic() != Mnemonic::Dec {
+            continue;
+        }
+        let skips_the_decrement = branch.near_branch32() > decrement.ip() as u32;
+        let parity = match (branch.mnemonic(), skips_the_decrement) {
+            // `jne` past the `dec`: the jump is taken when the bit is set, so the `dec` is the
+            // fall-through and runs when the bit is clear.
+            (Mnemonic::Jne, true) => Parity::Even,
+            (Mnemonic::Je, true) => Parity::Odd,
+            _ => {
+                return Err(ImpAnimError::new(format!(
+                    "the parity branch at {:#010x} is {:?} and does not skip the `dec` at \
+                     {:#010x}; the shape this reads is not there",
+                    branch.ip(),
+                    branch.mnemonic(),
+                    decrement.ip()
+                )));
+            }
+        };
+        return Ok((parity, decrement.ip() as u32));
+    }
+    Err(ImpAnimError::new(format!(
+        "no `test r8,1` / branch / `dec` parity correction found within 48 instructions of \
+         {placement:#010x}"
+    )))
+}
+
+/// The anchor-relative top-left x of a frame drawn **flipped**.
+///
+/// `ImpPlayer::GetPlacement` (0x0049CC80) computes the unflipped value as
+/// `placement_x - (width >> 1)` at 0x0049CD01 -- the x half of the rule in `docs/hotspots.md` --
+/// and the flipped value at 0x0049CCC8..0x0049CCD3 as
+/// `-((width >> 1) + placement_x)`, minus one more pixel when the width is **even**.
+///
+/// The even-width `dec` is Observed, not derived: reflecting the unflipped span about the anchor
+/// column reproduces the odd-width result exactly and lands two pixels away on even widths, so the
+/// extra pixel is the engine's own convention rather than a consequence of the mirror. Anyone
+/// implementing flipped placement wants this function, not the algebra.
+pub fn mirrored_anchor_x(rules: &AnimRules, width: u16, placement_x: i16) -> i32 {
+    let half = i32::from(width >> 1);
+    let base = -(half + i32::from(placement_x));
+    let parity = if width.is_multiple_of(2) {
+        Parity::Even
+    } else {
+        Parity::Odd
+    };
+    if parity == rules.mirror_decrements_when {
+        base - 1
+    } else {
+        base
+    }
+}
+
+/// The anchor-relative top-left x of a frame drawn unflipped, for comparison.
+///
+/// `0x0049CCFC`..`0x0049CD01`. Present so the flipped rule can be tested against the rule this
+/// repository already established rather than against a restatement of itself.
+pub fn anchor_x(width: u16, placement_x: i16) -> i32 {
+    i32::from(placement_x) - i32::from(width >> 1)
+}
+
 /// Offset of the playback frame index inside the engine's animation-player object.
 ///
 /// Written by `Imp::SetAction` at 0x0049DAC8 and by both jump-table targets (0x0049D9FC,
@@ -306,16 +673,27 @@ pub struct FieldRead {
     pub address: u32,
     pub displacement: u64,
     pub operand_size: usize,
+    /// Whether the operand also carried a scaled index register.
+    pub indexed: bool,
     pub text: String,
 }
 
-/// Every register-relative memory read in a code range whose displacement falls in `range`.
+/// Every base-register-relative memory read in a code range whose displacement falls in `range`.
 ///
-/// This exists to bound a negative. Claiming "the engine never reads sequence byte 2" is only
-/// worth something if the search that failed to find such a read was exhaustive, so the scan walks
-/// the whole range and reports what it found rather than answering yes or no. Stack-relative
-/// operands are excluded: `esp` and `ebp` displacements are locals, not record fields, and they
-/// swamp everything else.
+/// This exists to bound a negative, and a bound is only worth what its exclusions cost. **What is
+/// excluded, in full:** operands with no base register (absolute globals, which cannot be a record
+/// field), `esp`-based operands (locals, and they swamp everything else), and stores. Nothing
+/// else. In particular:
+///
+/// - **Indexed operands are kept**, and reported through [`FieldRead::indexed`]. An earlier version
+///   dropped them, which would have hidden `0x0049AC8F mov di,[ebx+esi*8+2]` -- a real record read
+///   at displacement 2 -- and would have let a timing field read as `mov cx,[edi+ebx*16+2]` produce
+///   no hits at all.
+/// - **`ebp` is kept.** In this module `ebp` is an object pointer, not a frame pointer:
+///   `0x0049ABFC`, `0x0049AC0F` and `0x0049AC43` are genuine record reads through it. Excluding it
+///   as "a local" was wrong.
+/// - **`lea` is dropped**, because it computes an address and reads no memory. It is the one
+///   exclusion added rather than removed on review; leaving it in inflated the counts.
 pub fn field_reads(
     image: &PeImage<'_>,
     start: u32,
@@ -324,36 +702,18 @@ pub fn field_reads(
 ) -> Result<Vec<FieldRead>, ImpAnimError> {
     use iced_x86::Register;
 
-    let offset = image
-        .file_offset(start)
-        .ok_or_else(|| ImpAnimError::new(format!("{start:#010x} is not mapped")))?;
-    let end = offset
-        .checked_add(length)
-        .filter(|end| *end <= image.bytes().len())
-        .ok_or_else(|| ImpAnimError::new("the scan range runs past the image"))?;
-    let mut decoder = Decoder::with_ip(
-        32,
-        &image.bytes()[offset..end],
-        u64::from(start),
-        DecoderOptions::NONE,
-    );
     let mut formatter = NasmFormatter::new();
     let mut text = String::new();
     let mut reads = Vec::new();
-    let mut instruction = Instruction::default();
-    while decoder.can_decode() {
-        decoder.decode_out(&mut instruction);
+    for instruction in decode_range(image, start, length)? {
         let reads_memory =
             (0..instruction.op_count()).any(|index| instruction.op_kind(index) == OpKind::Memory);
         if !reads_memory {
             continue;
         }
-        if instruction.memory_index() != Register::None {
-            continue;
-        }
         if matches!(
             instruction.memory_base(),
-            Register::None | Register::ESP | Register::EBP
+            Register::None | Register::ESP | Register::EIP
         ) {
             continue;
         }
@@ -364,16 +724,178 @@ pub fn field_reads(
         if instruction.op0_kind() == OpKind::Memory && instruction.mnemonic() == Mnemonic::Mov {
             continue;
         }
+        // `lea` computes an address and touches no memory at all. Counting it as a read inflated
+        // the totals this scan is quoted for.
+        if instruction.mnemonic() == Mnemonic::Lea {
+            continue;
+        }
         text.clear();
         formatter.format(&instruction, &mut text);
         reads.push(FieldRead {
             address: instruction.ip() as u32,
             displacement: instruction.memory_displacement64(),
             operand_size: instruction.memory_size().size(),
+            indexed: instruction.memory_index() != Register::None,
             text: text.clone(),
         });
     }
     Ok(reads)
+}
+
+/// A read reached through a pointer that was loaded out of a known struct field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaintedRead {
+    /// The load that produced the pointer.
+    pub source: u32,
+    /// The displacement that load read from.
+    pub source_displacement: u64,
+    /// The read reached through it.
+    pub address: u32,
+    pub displacement: u64,
+    pub operand_size: usize,
+    pub text: String,
+}
+
+/// How a pointer becomes a *record* pointer, and therefore what counts as a source.
+///
+/// Displacement alone cannot identify a struct, and in this engine that is not a hypothetical:
+/// **offset 0x1C means two different things**. On the loaded IMP header it is the sequence table
+/// (`0x0049ADE3`); on the animation-player object it is the current *frame* record
+/// (`0x0049CC80`). A scan keyed on the displacement alone reports the second as the first and its
+/// output is worthless -- which is what the first version of this scan did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerSource {
+    /// A dword load at this displacement yields a **table base**. Reads are only reported once an
+    /// index has been added to it, because that addition is what turns a table into a record.
+    Table { displacement: u64 },
+    /// A dword load at this displacement already yields a record pointer.
+    Record { displacement: u64 },
+}
+
+impl PointerSource {
+    fn displacement(&self) -> u64 {
+        match self {
+            Self::Table { displacement } | Self::Record { displacement } => *displacement,
+        }
+    }
+
+    fn needs_index(&self) -> bool {
+        matches!(self, Self::Table { .. })
+    }
+}
+
+/// Follow pointers loaded from `sources` and report every field they are then read through.
+///
+/// This is the scan that bounds the "nothing reads sequence byte 2" claim, and it exists because
+/// the argument it replaces was refuted by code already read. The old argument was "a
+/// sequence-record address can only be formed by scaling an index by 16 and adding the header
+/// pointer". It cannot: `Imp::SetAction` caches the record pointer into the player object at
+/// `0x0049DAA2 mov [esi+24h],eax`, and `Imp::CycleLength` reads it straight back at `0x0049D8F7`
+/// with no scaling anywhere, from a function 25 out-of-module callers can reach.
+///
+/// So the search starts from the *loads*. For each dword load at one of `sources`, the pointer is
+/// followed for `window` instructions through register moves and through the `shl`/`add` that turns
+/// a table base into a record address, and every memory read based on it is reported.
+///
+/// **Limits, stated because the negative rests on them:** the walk is linear, so it does not follow
+/// branches, and it stops at the first `call` or `ret` because those clobber registers. It tracks
+/// only 32-bit general registers, never memory-to-memory forwarding. A [`PointerSource::Table`]
+/// source suppresses reads taken before an index is added, which is what makes the output about
+/// records rather than about every struct in the image that happens to use the same offset. It is a
+/// bound on straight-line reachability, not a proof.
+pub fn record_pointer_reads(
+    image: &PeImage<'_>,
+    start: u32,
+    length: usize,
+    sources: &[PointerSource],
+    window: usize,
+) -> Result<Vec<TaintedRead>, ImpAnimError> {
+    use iced_x86::Register;
+    use std::collections::BTreeSet;
+
+    let instructions = decode_range(image, start, length)?;
+    let mut formatter = NasmFormatter::new();
+    let mut text = String::new();
+    let mut found = Vec::new();
+    for (position, load) in instructions.iter().enumerate() {
+        let is_load = load.mnemonic() == Mnemonic::Mov
+            && load.op0_kind() == OpKind::Register
+            && load.op1_kind() == OpKind::Memory
+            && load.memory_size().size() == 4;
+        if !is_load {
+            continue;
+        }
+        let Some(source) = sources
+            .iter()
+            .find(|source| source.displacement() == load.memory_displacement64())
+        else {
+            continue;
+        };
+        let mut tainted: BTreeSet<Register> = BTreeSet::new();
+        tainted.insert(load.op0_register().full_register32());
+        // For a table base, nothing is a record until an index has been added to it.
+        let mut indexed = !source.needs_index();
+        let high = (position + 1 + window).min(instructions.len());
+        for instruction in &instructions[position + 1..high] {
+            if matches!(instruction.mnemonic(), Mnemonic::Call | Mnemonic::Ret) {
+                break;
+            }
+            let base = instruction.memory_base().full_register32();
+            let reads_memory = (0..instruction.op_count())
+                .any(|index| instruction.op_kind(index) == OpKind::Memory);
+            // An operand that carries its own scaled index is a record access in one step.
+            let self_indexed = instruction.memory_index() != Register::None;
+            // `lea` off a record pointer propagates the pointer (handled below) but reads nothing.
+            let is_read = reads_memory && instruction.mnemonic() != Mnemonic::Lea;
+            if is_read && tainted.contains(&base) && (indexed || self_indexed) {
+                text.clear();
+                formatter.format(instruction, &mut text);
+                found.push(TaintedRead {
+                    source: load.ip() as u32,
+                    source_displacement: load.memory_displacement64(),
+                    address: instruction.ip() as u32,
+                    displacement: instruction.memory_displacement64(),
+                    operand_size: instruction.memory_size().size(),
+                    text: text.clone(),
+                });
+            }
+            // Propagate through a move, and through the scaling that turns a table base into a
+            // record address. Any other write to a register clears it.
+            if instruction.op0_kind() != OpKind::Register {
+                continue;
+            }
+            let destination = instruction.op0_register().full_register32();
+            let propagates = match instruction.mnemonic() {
+                // A register-to-register move carries the pointer; a load *through* it does not.
+                // `mov eax,[eax+edx+0Ch]` yields the pointee -- the facing table a sequence record
+                // points at -- which is a different object. Treating that as the same pointer is
+                // what made the first run of this scan report facing-record reads as sequence-record
+                // reads, and it is the single most important rule here.
+                Mnemonic::Mov => {
+                    instruction.op1_kind() == OpKind::Register
+                        && tainted.contains(&instruction.op1_register().full_register32())
+                }
+                // `lea` computes an address rather than dereferencing, so it does carry.
+                Mnemonic::Lea => {
+                    tainted.contains(&base)
+                        || tainted.contains(&instruction.memory_index().full_register32())
+                }
+                // The index has landed: from here the pointer designates a record.
+                Mnemonic::Add if tainted.contains(&destination) => {
+                    indexed = true;
+                    true
+                }
+                Mnemonic::Shl | Mnemonic::Sub | Mnemonic::And => tainted.contains(&destination),
+                _ => false,
+            };
+            if propagates {
+                tainted.insert(destination);
+            } else {
+                tainted.remove(&destination);
+            }
+        }
+    }
+    Ok(found)
 }
 
 /// Offset of the sequence-table pointer inside the loaded IMP header.
@@ -382,6 +904,16 @@ pub fn field_reads(
 /// 0x0049ADE3, and they are the same two header fields `ImpSprite::parse` reads from file offsets
 /// 26 and 28 -- which is what makes this scan's addressing a control rather than a guess.
 pub const HEADER_SEQUENCE_TABLE: u64 = 0x1c;
+
+/// Offset at which the player object caches the current action's sequence record.
+///
+/// Written at `0x0049DAA2`, read back at `0x0049D8F7`. This is the second way a sequence-record
+/// pointer comes into existence, and missing it is what made the first version of the negative
+/// overstated.
+pub const PLAYER_CACHED_SEQUENCE: u64 = 0x24;
+
+/// The sequence-record bytes with no established meaning.
+pub const UNEXPLAINED_SEQUENCE_BYTES: std::ops::RangeInclusive<u64> = 2..=10;
 
 /// Every site that forms the address of a sequence record.
 ///
@@ -434,6 +966,52 @@ pub fn sequence_record_sites(
         sites.push((instruction.ip() as u32, near_header_load, text.clone()));
     }
     Ok(sites)
+}
+
+/// Every direct `call`/`jmp` to `target` in a code range.
+///
+/// The second half of the negative's bound, and the half that is actually sound. Typing a struct by
+/// the displacement a pointer was loaded from does not work -- offsets 0x1C and 0x24 are used by
+/// plenty of unrelated objects -- so the question "could out-of-module code hold a sequence-record
+/// pointer?" is answered instead by asking who can obtain one. `Imp::GetSequence` (0x0049ADB0) is
+/// the only function that returns one, so enumerating its call sites bounds the answer exhaustively.
+pub fn call_sites(
+    image: &PeImage<'_>,
+    start: u32,
+    length: usize,
+    target: u32,
+) -> Result<Vec<u32>, ImpAnimError> {
+    Ok(decode_range(image, start, length)?
+        .iter()
+        .filter(|instruction| {
+            matches!(instruction.mnemonic(), Mnemonic::Call | Mnemonic::Jmp)
+                && instruction.op0_kind() == OpKind::NearBranch32
+                && instruction.near_branch32() == target
+        })
+        .map(|instruction| instruction.ip() as u32)
+        .collect())
+}
+
+/// Decode a whole byte range linearly.
+fn decode_range(
+    image: &PeImage<'_>,
+    start: u32,
+    length: usize,
+) -> Result<Vec<Instruction>, ImpAnimError> {
+    let offset = image
+        .file_offset(start)
+        .ok_or_else(|| ImpAnimError::new(format!("{start:#010x} is not mapped")))?;
+    let end = offset
+        .checked_add(length)
+        .filter(|end| *end <= image.bytes().len())
+        .ok_or_else(|| ImpAnimError::new("the scan range runs past the image"))?;
+    let mut decoder = Decoder::with_ip(
+        32,
+        &image.bytes()[offset..end],
+        u64::from(start),
+        DecoderOptions::NONE,
+    );
+    Ok(decoder.iter().collect())
 }
 
 fn decode_from(
@@ -576,93 +1154,131 @@ mod tests {
         assert!(error.to_string().contains("mode mask"), "{error}");
     }
 
-    /// The installed game, when this machine has one. Set `LOM_GAME_DIR` to the directory holding
-    /// `lomse.exe` and `imp.mpq` to turn the corpus tests on; they announce themselves when they
-    /// cannot run, because a test that skips in silence is a test nobody notices has stopped.
-    fn game_directory() -> Option<std::path::PathBuf> {
-        let directory = std::env::var_os("LOM_GAME_DIR")?;
-        let directory = std::path::PathBuf::from(directory);
-        directory.join("lomse.exe").is_file().then_some(directory)
+    #[test]
+    fn ignores_a_mask_applied_to_a_register_the_jump_does_not_index_with() {
+        // `and edx,7` before the jump, and nothing masking `ecx`. The earlier version of this
+        // recovery took the textually nearest mask and would have accepted the unrelated one,
+        // contradicting its own claim to assume nothing.
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0x83, 0xe2, 0x07]); // and edx,7
+        code.extend_from_slice(&[0x83, 0xfa, 0x04]); // cmp edx,4
+        code.extend_from_slice(&[0xff, 0x24, 0x8d]); // jmp dword [ecx*4+TABLE]
+        code.extend_from_slice(&TABLE.to_le_bytes());
+        let bytes = image_with_code(&code, &[ENTRY]);
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let error = recover_cycle_modes(&image, ENTRY).expect_err("ecx was never masked");
+        assert!(
+            error.to_string().contains("which nothing masked"),
+            "{error}"
+        );
+    }
+
+    /// `cmp cl,4` then `lea eax,[edx+edx-1]`: the `2N-1` at 0x0049D903..0x0049D90E.
+    ///
+    /// The `0x04` here is a literal standing for the byte the engine encodes, not for
+    /// [`PING_PONG_MODE`] -- which is the point. If the module constant is changed to anything
+    /// else, this test fails, because the two are now independent.
+    #[test]
+    fn recovers_the_ping_pong_mode_from_the_doubled_cycle_length() {
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0x80, 0xf9, 0x04]); // cmp cl,4
+        code.extend_from_slice(&[0x75, 0x04]); // jne +4
+        code.extend_from_slice(&[0x8d, 0x44, 0x12, 0xff]); // lea eax,[edx+edx-1]
+        code.extend_from_slice(&[0xc3]); // ret
+        let bytes = image_with_code(&code, &[]);
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let (mode, site) =
+            recover_ping_pong_length(&image, ENTRY).expect("the doubling is recovered");
+        assert_eq!(mode, PING_PONG_MODE);
+        assert_eq!(site, ENTRY + 5);
     }
 
     #[test]
-    fn every_cycle_mode_the_corpus_uses_has_a_slot_in_the_recovered_dispatch() {
-        let Some(directory) = game_directory() else {
-            eprintln!("skipped: set LOM_GAME_DIR to the installed English directory");
-            return;
-        };
-        let exe = std::fs::read(directory.join("lomse.exe")).expect("read lomse.exe");
-        let image = PeImage::parse(&exe).expect("parse lomse.exe");
-        let table = recover_cycle_modes(&image, 0x0049_D9A0).expect("recover the dispatch");
-        let implemented: Vec<u8> = table.modes.iter().map(|entry| entry.mode).collect();
+    fn a_comparison_without_a_doubling_is_not_taken_for_the_ping_pong_mode() {
+        // A bare `cmp cl,4` guarding something else must not be mistaken for the length rule.
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0x80, 0xf9, 0x04]); // cmp cl,4
+        code.extend_from_slice(&[0x75, 0x01]); // jne +1
+        code.extend_from_slice(&[0x40]); // inc eax
+        code.extend_from_slice(&[0xc3]); // ret
+        let bytes = image_with_code(&code, &[]);
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        assert!(recover_ping_pong_length(&image, ENTRY).is_err());
+    }
 
-        let archive = crate::mpq::Archive::open(&directory.join("imp.mpq")).expect("open imp.mpq");
-        let listfile =
-            std::env::var("LOM_LISTFILE").expect("set LOM_LISTFILE alongside LOM_GAME_DIR");
-        let names = std::fs::read_to_string(listfile).expect("read listfile");
-        let mut seen = 0_usize;
-        for name in names.lines() {
-            if !name.to_ascii_lowercase().ends_with(".imp") {
-                continue;
-            }
-            let Ok(bytes) = archive.read(name) else {
-                continue;
-            };
-            let Ok(sprite) = crate::imp::ImpSprite::parse(&bytes) else {
-                continue;
-            };
-            for sequence in &sprite.sequences {
-                seen += 1;
-                let mode = cycle_mode(&sequence.metadata);
-                assert!(
-                    implemented.contains(&mode),
-                    "{name} uses cycle mode {mode}, which the dispatch at {:#010x} does not cover",
-                    table.table_address
-                );
-                // Every direction the engine advertises has to land on a facing that exists.
-                let directions = direction_count(&sequence.metadata, sequence.facing_count);
-                for direction in 0..directions {
-                    let resolved =
-                        facing_for_direction(&sequence.metadata, sequence.facing_count, direction);
-                    let (facing, _) = resolved.unwrap_or_else(|| {
-                        panic!("{name} advertises {directions} directions but direction {direction} resolves to nothing")
-                    });
-                    assert!(
-                        facing < sequence.facing_count,
-                        "{name} direction {direction}"
-                    );
-                }
-            }
-            for facing in &sprite.facings {
-                // The issue's "raw 16-bit field". If a build or a mod ever puts something there,
-                // this is the assertion that says so.
-                assert_eq!(
-                    facing.metadata, 0,
-                    "{name} has a nonzero facing metadata word"
-                );
-            }
-        }
-        assert!(
-            seen > 1000,
-            "only {seen} sequences read; the listfile looks wrong"
-        );
+    /// `test byte [eax+1],0x80` then `lea eax,[ecx+ecx-2]`: 0x0049D95F..0x0049D96A.
+    ///
+    /// As above, `0x80` is an independent literal for the engine's encoded byte.
+    #[test]
+    fn recovers_the_mirror_bit_from_the_doubled_direction_count() {
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0xf6, 0x40, 0x01, 0x80]); // test byte [eax+1],80h
+        code.extend_from_slice(&[0x74, 0x04]); // je +4
+        code.extend_from_slice(&[0x8d, 0x44, 0x09, 0xfe]); // lea eax,[ecx+ecx-2]
+        code.extend_from_slice(&[0xc3]); // ret
+        let bytes = image_with_code(&code, &[]);
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let module = ENTRY..ENTRY + code.len() as u32;
+        let (bit, sites) =
+            recover_mirror_bit(&image, ENTRY, &module).expect("the mirror bit is recovered");
+        assert_eq!(bit, SEQUENCE_MIRROR_BIT);
+        // The site scan runs over the range it was given, so the one `test` in this image is it.
+        assert_eq!(sites, vec![ENTRY]);
+    }
+
+    /// The error this module was reviewed for: reading `neg` / `test dl,1` / `jne` / `dec` as
+    /// "decrement when odd". The branch is taken when the bit is **set**, so the `dec` it jumps
+    /// over runs when the bit is **clear** -- on even widths.
+    #[test]
+    fn a_jne_over_the_decrement_means_the_decrement_runs_on_even_widths() {
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0xf7, 0xd9]); // neg ecx
+        code.extend_from_slice(&[0xf6, 0xc2, 0x01]); // test dl,1
+        code.extend_from_slice(&[0x75, 0x01]); // jne +1  (skips the dec)
+        code.extend_from_slice(&[0x49]); // dec ecx
+        code.extend_from_slice(&[0xc3]); // ret
+        let bytes = image_with_code(&code, &[]);
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let (parity, site) = recover_mirror_parity(&image, ENTRY).expect("parity is recovered");
+        assert_eq!(parity, Parity::Even);
+        assert_eq!(site, ENTRY + 7);
+    }
+
+    #[test]
+    fn a_je_over_the_decrement_means_the_opposite_parity() {
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0xf7, 0xd9]); // neg ecx
+        code.extend_from_slice(&[0xf6, 0xc2, 0x01]); // test dl,1
+        code.extend_from_slice(&[0x74, 0x01]); // je +1
+        code.extend_from_slice(&[0x49]); // dec ecx
+        code.extend_from_slice(&[0xc3]); // ret
+        let bytes = image_with_code(&code, &[]);
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let (parity, _) = recover_mirror_parity(&image, ENTRY).expect("parity is recovered");
+        assert_eq!(parity, Parity::Odd);
     }
 
     #[test]
     fn ping_pong_length_and_reflection_describe_one_traversal() {
         // The two rules live at different addresses in the engine and are only useful together:
         // walking the whole cycle length must visit every frame out and back without repeating
-        // the endpoints. A length or a fold that disagreed would show up as a wrong sequence here.
+        // the endpoints. The mode number is deliberately arbitrary here -- this test is about the
+        // arithmetic composing, and `recovers_the_ping_pong_mode_from_the_doubled_cycle_length`
+        // is what ties the number to the binary.
+        let ping_pong = 4_u8;
         for frames in 1..12_usize {
-            let length = cycle_length(PING_PONG_MODE, frames);
+            let length = cycle_length(ping_pong, ping_pong, frames);
             let walked: Vec<usize> = (0..length)
                 .map(|index| {
-                    frame_for_cycle_index(PING_PONG_MODE, frames, index).expect("inside the cycle")
+                    frame_for_cycle_index(ping_pong, ping_pong, frames, index)
+                        .expect("inside the cycle")
                 })
                 .collect();
             let mut expected: Vec<usize> = (0..frames).collect();
             expected.extend((0..frames.saturating_sub(1)).rev());
             assert_eq!(walked, expected, "frames={frames}");
+            // Any other mode plays forward once and stops.
+            assert_eq!(cycle_length(ping_pong, ping_pong + 1, frames), frames);
         }
     }
 
@@ -697,5 +1313,205 @@ mod tests {
             assert_eq!(direction_count(&plain, facings), facings);
             assert!(facing_for_direction(&plain, facings, facings).is_none());
         }
+    }
+
+    #[test]
+    fn the_flipped_placement_reflects_the_established_rule_exactly_on_odd_widths() {
+        // `anchor_x` is the x half of the rule in `docs/hotspots.md`, established by a different
+        // method months earlier. Reflecting the span it produces about the anchor column must
+        // reproduce the engine's flipped value -- and on odd widths it does, exactly. On even
+        // widths the engine lands two pixels away, which is why the extra pixel is recorded as
+        // observed rather than derived. Asserting both is what stops the even case being quietly
+        // "fixed" to match the algebra.
+        let rules = AnimRules {
+            cycle_modes: CycleModeTable {
+                advance: 0,
+                dispatch_site: 0,
+                table_address: 0,
+                modes: Vec::new(),
+            },
+            ping_pong_mode: PING_PONG_MODE,
+            ping_pong_length_site: 0,
+            ping_pong_reflection_site: 0,
+            mirror_bit: SEQUENCE_MIRROR_BIT,
+            mirror_test_sites: Vec::new(),
+            mirror_decrements_when: Parity::Even,
+            mirror_parity_site: 0,
+        };
+        for width in 1..40_u16 {
+            for placement in [-20_i16, -7, 0, 3, 19] {
+                let left = anchor_x(width, placement);
+                let right_inclusive = left + i32::from(width) - 1;
+                let reflected = -right_inclusive;
+                let flipped = mirrored_anchor_x(&rules, width, placement);
+                if width % 2 == 1 {
+                    assert_eq!(flipped, reflected, "width={width} placement={placement}");
+                } else {
+                    assert_eq!(
+                        flipped,
+                        reflected - 2,
+                        "width={width} placement={placement}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The installed game. `#[ignore]`d rather than silently skipped: an `eprintln!` from a passing
+    /// test is captured by libtest, so `cargo test` printed `ok` and nothing distinguished "ran
+    /// and passed" from "could not run". `ignored` is visible in the default summary.
+    ///
+    /// Run with:
+    ///   LOM_GAME_DIR=.../English LOM_LISTFILE=... cargo test --release -- --ignored
+    fn game_directory() -> std::path::PathBuf {
+        let directory = std::env::var_os("LOM_GAME_DIR")
+            .map(std::path::PathBuf::from)
+            .expect("set LOM_GAME_DIR to the installed English directory");
+        assert!(
+            directory.join("lomse.exe").is_file(),
+            "no lomse.exe under {}",
+            directory.display()
+        );
+        directory
+    }
+
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR and LOM_LISTFILE"]
+    fn the_recovered_rules_match_the_installed_executable() {
+        let directory = game_directory();
+        let exe = std::fs::read(directory.join("lomse.exe")).expect("read lomse.exe");
+        let image = PeImage::parse(&exe).expect("parse lomse.exe");
+        // `recover` refuses when the binary disagrees with this module's constants, so reaching
+        // here at all is the check. The site lists are asserted because they are what the
+        // documentation cites.
+        let rules = recover(&image, &EngineAddresses::default()).expect("rules are recovered");
+        assert_eq!(rules.ping_pong_mode, PING_PONG_MODE);
+        assert_eq!(rules.mirror_bit, SEQUENCE_MIRROR_BIT);
+        assert_eq!(rules.mirror_decrements_when, Parity::Even);
+        assert_eq!(rules.cycle_modes.modes.len(), 5);
+
+        // Part one of the timing negative: the only producer of a sequence-record pointer is
+        // called from inside the IMP module and nowhere else.
+        const IMP_MODULE: std::ops::Range<u32> = 0x0049_9000..0x004a_0000;
+        let producers =
+            call_sites(&image, 0x0040_1000, 1_357_312, 0x0049_ADB0).expect("enumerate call sites");
+        assert!(!producers.is_empty(), "the producer is never called");
+        assert!(
+            producers.iter().all(|site| IMP_MODULE.contains(site)),
+            "a sequence-record pointer is produced outside the IMP module: {producers:#x?}"
+        );
+
+        // Part two: inside the module, nothing reads the unexplained bytes through such a pointer.
+        let tainted = record_pointer_reads(
+            &image,
+            0x0040_1000,
+            1_357_312,
+            &[
+                PointerSource::Table {
+                    displacement: HEADER_SEQUENCE_TABLE,
+                },
+                PointerSource::Record {
+                    displacement: PLAYER_CACHED_SEQUENCE,
+                },
+            ],
+            48,
+        )
+        .expect("follow record pointers");
+        let offending: Vec<&TaintedRead> = tainted
+            .iter()
+            .filter(|read| {
+                IMP_MODULE.contains(&read.address)
+                    && UNEXPLAINED_SEQUENCE_BYTES.contains(&read.displacement)
+            })
+            .collect();
+        assert!(
+            offending.is_empty(),
+            "the engine reads an unexplained sequence byte after all: {offending:#x?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR and LOM_LISTFILE"]
+    fn the_corpus_matches_the_recovered_rules() {
+        let directory = game_directory();
+        let exe = std::fs::read(directory.join("lomse.exe")).expect("read lomse.exe");
+        let image = PeImage::parse(&exe).expect("parse lomse.exe");
+        let rules = recover(&image, &EngineAddresses::default()).expect("rules are recovered");
+        let implemented: Vec<u8> = rules.cycle_modes.modes.iter().map(|e| e.mode).collect();
+
+        let archive = crate::mpq::Archive::open(&directory.join("imp.mpq")).expect("open imp.mpq");
+        let listfile =
+            std::env::var("LOM_LISTFILE").expect("set LOM_LISTFILE alongside LOM_GAME_DIR");
+        let names = std::fs::read_to_string(listfile).expect("read listfile");
+        let mut sequences = 0_usize;
+        let mut ping_pong = 0_usize;
+        let mut mirrored = 0_usize;
+        let mut exactly_mirror_byte = 0_usize;
+        for name in names.lines() {
+            if !name.to_ascii_lowercase().ends_with(".imp") {
+                continue;
+            }
+            let Ok(bytes) = archive.read(name) else {
+                continue;
+            };
+            let Ok(sprite) = crate::imp::ImpSprite::parse(&bytes) else {
+                continue;
+            };
+            for sequence in &sprite.sequences {
+                sequences += 1;
+                let mode = cycle_mode(&sequence.metadata);
+                assert!(
+                    implemented.contains(&mode),
+                    "{name} uses cycle mode {mode}, which the dispatch at {:#010x} does not cover",
+                    rules.cycle_modes.table_address
+                );
+                if mode == rules.ping_pong_mode {
+                    ping_pong += 1;
+                }
+                if mirrors_facings(&sequence.metadata) {
+                    mirrored += 1;
+                }
+                if sequence.metadata[SEQUENCE_MIRROR_BYTE] == SEQUENCE_MIRROR_BIT {
+                    exactly_mirror_byte += 1;
+                }
+                let directions = direction_count(&sequence.metadata, sequence.facing_count);
+                for direction in 0..directions {
+                    let (facing, _) =
+                        facing_for_direction(&sequence.metadata, sequence.facing_count, direction)
+                            .unwrap_or_else(|| {
+                                panic!("{name} advertises {directions} directions but {direction} resolves to nothing")
+                            });
+                    assert!(
+                        facing < sequence.facing_count,
+                        "{name} direction {direction}"
+                    );
+                }
+            }
+            for facing in &sprite.facings {
+                // The issue's "raw 16-bit field". If a build or a mod ever puts something there,
+                // this is the assertion that says so.
+                assert_eq!(
+                    facing.metadata, 0,
+                    "{name} has a nonzero facing metadata word"
+                );
+            }
+        }
+        assert_eq!(
+            sequences, 4_667,
+            "the archive is not the one this was measured on"
+        );
+        // Measured counts, not restatements of the code. With `PING_PONG_MODE` set to any other
+        // value these both collapse -- 3 has no users at all and the ping-pong count would be 0 --
+        // which is what makes the constant falsifiable against the shipped archive.
+        assert_eq!(ping_pong, 955, "ping-pong sequences");
+        // 3,379, not the 2,931 that the byte-1 histogram shows for the value 0x80 exactly. The
+        // difference is 448 sequences whose byte 1 is 0x81, 0xCC or 0xFF: the mirror bit is set and
+        // other bits are set alongside it. Since the engine tests the bit and never the byte, those
+        // 448 mirror. Asserting both numbers keeps that distinction from being lost again.
+        assert_eq!(mirrored, 3_379, "sequences with the mirror bit set");
+        assert_eq!(
+            exactly_mirror_byte, 2_931,
+            "sequences whose byte 1 is exactly the mirror bit"
+        );
     }
 }

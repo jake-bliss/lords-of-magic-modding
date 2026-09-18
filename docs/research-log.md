@@ -3449,7 +3449,12 @@ have failed there instead of one step later on the part nobody can check.
 `0x0049DA68`. Two distinct endings: wrap to zero, or hold the last frame. Mode 4 shares the wrapping
 target but is special-cased at **two other addresses** — `Imp::CycleLength` returns `2N − 1` at
 `0x0049D90E`, and `Imp::GetFrame` reflects a position past the end to `2N − i − 2` at `0x0049ACA1`.
-That is a ping-pong, and it is the reading the corpus independently supports: of the sequences whose
+That is a ping-pong, and — a point the review sharpened — it is **established rather than merely
+consistent**. The two sites are not independent guesses that happen to agree: they run on the same
+record in the same call, `Advance` takes the length from the first and hands the index to the second,
+and composing them is arithmetic. Length `2N − 1` with `0..N−1` taken as themselves and `N..2N−2`
+folded to `2N − i − 2` enumerates `0,…,N−1,N−2,…,0`. There is no reading under which mode 4 is
+something else. The corpus then supports it from a second direction: of the sequences whose
 generated `.h` names them, `DEFEND`, `GET_HIT`, `MELEE_ATTACK` and `MINOR_SPELL` are overwhelmingly
 mode 4, while `STAND`, `MOVE`, `DIE` and `CORPSE` are mode 0. A sword swings out and back; walking
 loops. Neither side was fitted to the other.
@@ -3465,11 +3470,35 @@ all.
 return `2N − 2`; otherwise return `N`. Five stored facings therefore cover eight directions, with
 5, 6 and 7 drawn as 3, 2 and 1 flipped. 2,234 sequences are exactly that shape.
 
-The flip was worth one more step of checking rather than assuming. It is passed to the blitter as an
-argument at `0x0049D416`, and when it is set the sprite's anchor x is *negated* at `0x0049CCCC` with
-an odd-width correction at `0x0049CCD3` — which is the mirror image of the centre-relative placement
-rule in [hotspots.md](hotspots.md). Two independent sites, one of them a rule established months ago
-by a different method.
+The flip was worth one more step of checking rather than assuming. When it is set the sprite's
+anchor x is *negated* at `0x0049CCCC`, which is the mirror image of the centre-relative placement
+rule in [hotspots.md](hotspots.md) — a rule established months ago by a different method. That one
+observation carries the claim. The flag is also pushed to the blitter at `0x0049D416`, but nothing
+inside `0x004F46F0` was read, so that shows the flag *reaches* the drawing code and not what the
+drawing code does with it. Corroboration, not a second independent count.
+
+**Corrected on review, same day.** The first draft of this entry and of
+[imp-format.md](imp-format.md) called `0x0049CCD3` an "odd-width correction". It is the opposite:
+
+```asm
+0049ccce  test dl,1              ; dl = low byte of the width
+0049ccd1  jne  short 0049CCD4h   ; width ODD -> jump, skipping the dec
+0049ccd3  dec  ecx               ; runs when the width is EVEN
+```
+
+`jne` is taken when the bit is **set**, so the `dec` it jumps over runs when the bit is **clear**.
+The rule is `flipped_x = -((w >> 1) + placement_x) - (w even ? 1 : 0)`. Implementing the wrong
+wording puts every even-width sprite one pixel off, and even widths are the majority — the same
+one-pixel class of error that cost this repository weeks on the palette channel order. Both
+reviewers found it independently; I had read the mnemonics in order and assumed the `dec` ran on the
+tested condition. `recover_mirror_parity` now reads the branch polarity out of the binary and two
+tests pin both polarities.
+
+One more honest scope note while correcting it: the extra pixel is **Observed, not derived.**
+Reflecting the unflipped span about the anchor column reproduces the engine exactly on odd widths
+and lands two pixels away on even ones, so the `dec` is a convention of the engine rather than a
+consequence of mirroring. The test asserts the discrepancy as well as the identity, so nobody
+"fixes" the even case to match the algebra.
 
 The corpus then produced an anomaly worth recording rather than smoothing over: **991 sequences set
 the mirror bit on a single facing**, advertising `2 × 1 − 2 = 0` directions. It is inert — direction
@@ -3482,16 +3511,53 @@ The issue asks to "measure frame cadence for MOVE, STAND, DIE and MELEE_ATTACK",
 the cadence is in the file. It is not, and the interesting part is how that was established rather
 than merely believed.
 
-A negative claim is worth exactly as much as the bound on the search behind it. Three bounds:
+A negative claim is worth exactly as much as the bound on the search behind it. **The first version
+of this bound was overstated in three ways, and all three were caught on review.** Recording the
+corrected argument and what was wrong with the old one, because the bound *was* the result:
 
-1. A sequence-record address can only be formed by scaling an index by 16 and adding the header
-   pointer at `0x1C`. The survey enumerates every `shl reg,4` in the IMP module and flags the nine
-   near such a load; all nine were read.
-2. Across the whole module, **exactly one** byte-sized register-relative read exists at displacement
-   2 — `0x0049B25D`, inside the 1,024-byte palette copy loop — and **none at all** at displacements
-   3 through 10.
-3. The playback object's constructor at `0x0049C830` has no timer field; its only numeric default is
-   the direction denominator, 8.
+**Refuted: "a sequence-record address can only be formed by scaling an index by 16."** It cannot,
+and the refutation is code I had already read and quoted. `Imp::SetAction` caches the record pointer
+into the player object at `0x0049DAA2 mov [esi+24h],eax`, and `Imp::CycleLength` reads it straight
+back at `0x0049D8F7` with no scaling anywhere — from a function 12 out-of-module callers reach.
+Scanning for the arithmetic was searching the wrong thing. The reviewer then ran the correct check
+and it came out my way, which does not make my argument the one that got there.
+
+**Corrected: "no reads at displacements 3–10."** My own survey output printed over a hundred
+register-relative reads at displacements 4–10 — only the *byte-sized* rows were empty. I had read a
+table I generated and reported a stronger sentence than it contained. Re-measured with the
+exclusions fixed it is **124**: word and dword reads of frame heights, frame-table pointers, pixel
+pointers and fields of unrelated objects. Nothing in that scan establishes what they are; the
+pointer-following scan is what does. (The review quoted 120 from the old output; the difference is
+the exclusions changing underneath, and six `lea`s that were being counted as reads and are not.)
+
+**Corrected: the scan's exclusions were wider than its documentation.** It dropped every indexed
+operand and every `ebp`-based one while disclosing only a stack exclusion. Both drops were wrong:
+`0x0049AC8F mov di,[ebx+esi*8+2]` is a genuine record read at displacement 2, and in this module
+`ebp` is an object pointer rather than a frame pointer (`0x0049ABFC`, `0x0049AC0F`, `0x0049AC43`).
+A timing field read as `mov cx,[edi+ebx*16+2]` would have produced zero hits and the survey would
+have printed exactly what it printed.
+
+The argument that actually reaches the conclusion is in two parts:
+
+1. **Who can obtain a sequence-record pointer.** `Imp::GetSequence` (`0x0049ADB0`) is the only
+   function that returns one. Its direct call sites over the whole `.text` number **five**, and all
+   five are in-module. So bounding the field scan to the module is a closure, not a guess.
+2. **What the module reads through one.** Following the pointer from both places it is created —
+   the header table at `0x1C` with an index added, and the player's cached record at `0x24` — the
+   in-module reads land at displacements **0, 1, 11 and 12 only. Zero at 2 through 10.**
+
+The one rule that made part 2 work is worth stating: a `mov` that *dereferences* a tainted pointer
+must kill the taint, because `mov eax,[eax+edx+0Ch]` yields the facing table a sequence record
+points at — a different object. The first run propagated through it and duly reported facing-record
+reads as sequence-record reads, which is how a scan built to bound a negative can manufacture a
+positive.
+
+Displacements also cannot type a struct, and in this engine that is not hypothetical: offset `0x1C`
+is the sequence table on the IMP header and the *current frame record* on the player object
+(`0x0049CC80`). A scan keyed on displacement alone conflates them.
+
+And the structural part, unchanged: the playback object's constructor at `0x0049C830` has no timer
+field; its only numeric default is the direction denominator, 8.
 
 Cadence is the caller's. The terrain-sprite driver at `0x0050C31F` shows the shape it takes:
 `(per-object phase + [0x005AF134]) mod CycleLength`, one global counter for every sprite on screen.
@@ -3501,8 +3567,10 @@ answer with an unverified number, and the number lives in the engine's tick loop
 
 ### Sequence byte 2: shaped like a frame rate, and that is not good enough
 
-Byte 2 is the one unexplained byte with a non-garbage distribution — 12 values in 1–16, 15 in two
-thirds of sequences. It is tempting and it would be useful. Three findings, in increasing
+Byte 2 has a non-garbage distribution — 12 values in 1–16, 15 in two thirds of sequences. (The
+first draft called it "the only" such byte, which was wrong and my own survey output said so: byte 3
+is `0x01` in 4,661 records and `0x04` in 6, byte 4 is `0xFF` in all 4,667, and 501 records carry a
+patterned value in the high bits of byte 0 that every reader masks away. Constant is not garbage.) It is tempting and it would be useful. Three findings, in increasing
 inconvenience: the engine never reads it; it is not the frame count (97 of 4,667 match); and it is a
 property of the *file* rather than the action — 1,624 of 1,800 members give every sequence the same
 value, and `MOVE` takes 10, 15, 6, 11 and 8 across different creatures. That is consistent with an
@@ -3514,10 +3582,62 @@ containing readable fragments such as `frames` and `\imps\`.
 
 ### What this leaves
 
-Issue #2's acceptance criterion is that the viewer derive direction labels and playback timing from
-verified metadata rather than a fixed guess. **Direction is now derivable** — count, fold and flip,
-all from the file. **Timing is not, and cannot be**, because the file does not carry it. The
-remaining question is the engine's tick period, which is one global constant, not a per-sequence
-field; the cheapest route to it is `0x005AF134`'s writer. Direction *labels* — which bearing is
-index 0 — are still unanchored, with two rotations (`0x005AEC3C`, and a `+1` at `0x0049DCDD`)
-between a script-level facing and a stored index.
+Issue #2's acceptance criterion is that **the viewer** derive direction labels and playback timing
+from verified metadata rather than a fixed guess.
+
+The first draft of this entry claimed "direction is now derivable" and treated that as satisfying
+the direction half. It does not, and the review was right to press on it: `imp_anim` has no
+consumers outside its own survey example, and `src/main.rs` still steps forward-only on a fixed
+100 ms. What this work did was convert #2 from "we do not know" into "we know and have not applied
+it" — real progress, and not the criterion. It also turns an unknown defect into a documented one:
+**955 sequences are ping-pong and the viewer plays them forward-then-jump.**
+
+So the premise of the timing half is **Refuted** — there is no cadence field in an `.imp`, and no
+amount of further decoding will produce one — and the issue splits into three:
+
+1. Wire the cycle mode and the direction fold and flip into the viewer. Fully specified now; no
+   further reverse engineering needed.
+2. Find `0x005AF134`'s writer for the tick period. One global constant, a static exe question. A
+   literal-dword search finds only readers, so it needs a data-xref pass.
+3. Anchor direction 0 to a compass bearing. Still needs an attended run or a GameScript call site
+   with an independently known bearing; two rotations sit in the way (`0x005AEC3C`, and a `+1` at
+   `0x0049DCDD`).
+
+### A contradiction to record rather than resolve: the palette channel order
+
+Found while scanning for byte-sized reads and initially filed as out of scope, which is the one
+outcome to avoid — an out-of-scope observation that goes nowhere is an unrecorded finding.
+
+`0x0049B220`–`0x0049B269` is a 1,024-byte loop over **the IMP's own palette**. It reaches it by
+loading the palette pointer from the loaded header at offset 8 — `0x0049B247 mov eax,[edi+8]`, where
+`edi` is the file image — which is the same field `imp.rs:535` reads as `read_u32(source, 8)`. It
+writes a three-byte destination triple in the order `(p2, p1, p0)`:
+
+```asm
+0049b258  mov  dl,[eax+1]
+0049b25b  mov  bl,[eax]
+0049b25d  mov  al,[eax+2]
+0049b260  mov  [ecx-4],al      ; p2
+0049b263  mov  [ecx-3],dl      ; p1
+0049b266  mov  [ecx-2],bl      ; p0
+```
+
+That is a pure reversal. `imp.rs:566` maps `(p0,p1,p2) → (p1,p2,p0)`, i.e. it reads file order as
+**B, R, G**. Those two cannot both be a plain channel identity: a pure reversal is benign only if
+the file is R,G,B and the destination B,G,R, and file-order R,G,B is the community reading that
+`imp.rs:563` explicitly refutes.
+
+**Both observations stand; the resolution does not.** Codex notes that `0x0049B2A0` repacks the
+result into a 16-bit format using shift globals, so the destination of this loop may not be a plain
+byte triple at all, in which case there is no contradiction to resolve — only a second consumer with
+its own convention. The two candidate resolutions are:
+
+- the destination is not a linear RGB triple, and the reversal is an artefact of whatever
+  `0x0049B2A0` expects; or
+- one of the two readings of file order is wrong.
+
+**`imp.rs` is deliberately untouched.** The attended measurement behind the current code is strong —
+14 of 14 sampled indices fit `(p1,p2,p0)`, the next best permutation fits 4, and writing raw
+`ff 00 00` renders blue — and this repository's rule is that a recorded contradicting symptom wins
+over a clean-looking disassembly. This entry exists so that if the palette is ever questioned again,
+the four addresses are already written down.
