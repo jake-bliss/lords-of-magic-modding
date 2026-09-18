@@ -24,7 +24,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use lom_asset_viewer::install_checksum::{ContentVerdict, exe_checksum, script_checksum_continued};
+use lom_asset_viewer::install_checksum::{
+    ContentVerdict, exe_checksum, script_checksum_continued, session_tag,
+};
 use lom_asset_viewer::mpq::Archive;
 
 /// Files whose contents are compared for every install. `lomse.exe` is first because it is the
@@ -201,6 +203,15 @@ fn report_installs(installs: &[Install]) {
                     scripts.total_bytes,
                     scripts.accumulated
                 );
+                if let Some(exe) = install.exe_version {
+                    println!(
+                        "- session tag, same shape the engine builds: `{}`. A game in the \
+                         multiplayer list whose tag differs from yours is shown with a leading \
+                         `*`. The second number is exact; the first will likely differ from the \
+                         game's, because the engine sums only the members it loads.",
+                        session_tag(scripts.accumulated, exe)
+                    );
+                }
                 if !scripts.unreadable.is_empty() {
                     println!(
                         "- **{} member(s) listed but unreadable**, so the accumulator above is \

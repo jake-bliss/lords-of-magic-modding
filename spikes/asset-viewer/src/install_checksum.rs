@@ -97,6 +97,31 @@ pub fn script_checksum_continued(total: i32, bytes: &[u8]) -> i32 {
     total.wrapping_add(script_checksum(bytes))
 }
 
+/// The tag the engine builds from the two reproducible checksums and attaches to a session.
+///
+/// **This is the one place a player can see these values without patching anything.** The engine
+/// formats `cksum=%d,%d` (`0x005736ec`) at `0x00505f30` from `[0x00584604]` and `[0x00584424]`,
+/// and the argument order is worth getting right: the caller at `0x00505f10` pushes the executable
+/// sum then the script checksum, and the callee re-pushes them so that the **script checksum comes
+/// first** and the executable sum second.
+///
+/// Both concrete transports call it while setting the session name — the Storm class at
+/// `0x0046fbf8` and `CDPlay` at `0x0044a84e`. `CDPlay`'s vtable slot 11 (`0x0044a840`) compares the
+/// local tag against a session's byte by byte and, when they differ, formats the session's display
+/// name through `"*%s"` (`0x00556b24`) instead of copying it plainly. So a game in the multiplayer
+/// list whose host build does not match yours is shown with a **leading asterisk**, and one that
+/// matches is not.
+///
+/// **Only half of this tag is comparable to what the game shows.** The executable sum is exact, so
+/// that half must match the game's display. The script half is the accumulator over a member set
+/// the engine may not load (see the module notes), so the tool's number will very likely differ
+/// from the game's and that is expected rather than a fault in either. What transfers across the
+/// two is the *comparison*: two installs showing the same tag in the game list agree on both
+/// halves, and two showing different tags disagree on at least one.
+pub fn session_tag(script_checksum: i32, exe_checksum: u32) -> String {
+    format!("cksum={script_checksum},{exe_checksum}")
+}
+
 /// Whether two byte strings are the same, and if not, how they were told apart.
 ///
 /// A checksum comparison can only ever say "these sums differ". An exact comparison can say
@@ -326,6 +351,15 @@ steamapps/common/Lords of Magic Special Edition/English";
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_session_tag_puts_the_script_checksum_first() {
+        // The argument order is the whole content of this test. Getting it backwards would make
+        // every comparison against the game's own display silently wrong, and both values are
+        // plain decimal integers so nothing else would give it away.
+        assert_eq!(session_tag(-5, 7), "cksum=-5,7");
+        assert_ne!(session_tag(-5, 7), session_tag(7, 5));
     }
 
     #[test]

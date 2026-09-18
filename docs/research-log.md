@@ -3643,3 +3643,96 @@ reproducible two-machine test.
 is suggestive and the name is all I have. Also Unknown: what writes `GS.LOG` and `GSDEBUG.DAT` —
 Observed only that they are filename fields of the GameScript VM object (`+0x660` and `+0x55c`, set
 at `0x004d2225`/`0x004d221d`), which is a different thing from the network stat log.
+
+## 2026-09-18 — Resync is dead, the transfer path cannot ship scripts, and the engine already marks bad builds
+
+Third pass. Detail in [`docs/multiplayer.md`](multiplayer.md) from "Third pass". The question was
+whether resync could move the homelab verdict. It cannot, and the reason is structural rather than
+evidential.
+
+### Resync is unreachable
+
+Shift-corrected first, because the slot-versus-type trap has now bitten twice on this branch: slots
+62/63 hold `RESYNC_REQUEST`/`RESYNC_START`, so the real types are **63** and **64**.
+
+**Observed.** There are exactly two message-header builders: `0x0048cc70`, which takes the type as
+an argument, and `0x0048cc40`, the same function with the type hardcoded to zero. `0x0048cc70` has
+**54 call sites and every one passes a literal `push imm8`** — no site passes a computed type. Those
+54 sites construct **45 distinct types**, and neither 63 nor 64 is among them.
+
+The routing exists, which is what made them look live: the send fan-out at `0x00489c6c` gives both
+policy `0x00489d0d` (send to every computer including the sender, shared with `READY`, `GO`,
+`TICK_TIME`), and the 31..65 gate at `0x00489ad5` routes both to the same branch as 28 other types.
+**Wired and never built** — the same shape as the disabled post-mortem from the previous entry.
+**Inferred:** designed, plumbing survived, trigger never written or removed. **Unknown:** what it
+would have carried, since there is no builder whose payload could be read.
+
+Method note: I first tried to settle this from the dispatchers and got two false leads. The
+dispatcher at `0x0048bdc0` turned out to be the "emit a CHECKSUM after this message" filter, and
+`0x00489c6c` the *send* fan-out, not a receive handler. Enumerating what the binary can *construct*
+was the question that actually had an answer, and it is a better question than "where is the
+handler" whenever the handler might not exist.
+
+### The transfer path cannot ship an archive
+
+**Observed.** `XFER` (type 31) is built once, at `0x004b7439`. The sender `0x004b7410` resolves a
+file-kind tag through `0x004b9570`, then `CreateFileA` / `CreateFileMappingA` / `GetFileSize` /
+`MapViewOfFile`, and ships the mapping in **120-byte chunks** (`mov edi,78h` at `0x004b74da`) with a
+`chunk * 100 / total` percentage for `XFER_PROGRESS` (`0x004b75a8`–`0x004b75b7`). 120 fits inside
+the 257-byte payload cap, so the design is coherent.
+
+**Observed.** Four callers, each passing a literal tag (83, 71, 77, 68). The resolver maps tags
+68..83 onto the path builder `0x00505110`, whose eight kinds are exactly
+`savegame|multisav/lastsave.lom`, `LOMGSOUT.TMP`, `LOMXFERG.TMP`, `LOMXFERS.TMP`, `LOMXFERU.TMP`,
+`APPLOG.TXT`, `LOM_TSPR.TMP`, `LOMD%.4d.TMP` — plus tag 77, which runs the script's
+`setscenarionameproc` procedure for `map/<name>` or `multisav/<name>`.
+
+**No MPQ path template exists and no caller can supply an arbitrary filename.** So a resync could
+only ever have repaired a *state* divergence, never a `'GS' files` mismatch, and **the homelab
+verdict stands unchanged**.
+
+### The engine already marks incompatible games — and this is the useful part
+
+**Observed.** `0x00505f10` formats `[0x00584604]` (script content checksum) and `[0x00584424]`
+(executable byte sum) through `cksum=%d,%d` (`0x005736ec`) at `0x00505f30`, script checksum first.
+Both transports build that tag while setting the session name — Storm at `0x0046fbf8` inside vtable
+slot 2 (`0x0046fbd0`), `CDPlay` at `0x0044a84e`.
+
+**Observed.** `CDPlay` vtable slot 11 (`0x0044a840`, virtual-only, reached by no operator) builds the
+local tag and compares it byte by byte against another; on mismatch it formats the session's display
+name through `"*%s"` (`0x00556b24`), on match it copies it plainly.
+
+**Inferred: a game in the multiplayer list whose host build does not match yours is shown with a
+leading asterisk.** It marks, it does not refuse. That is a shipped, user-facing pre-flight check
+over exactly the two values the `preflight` tool reproduces, and it partly answers the previous
+entry's Unknown — the *tag* is checked before joining, while the six-value comparison still waits
+for play to start. **Unknown:** whether any UI renders the asterisk; I have not seen the list.
+
+`install_checksum::session_tag` now produces the same string and `preflight` prints it. **Only half
+is comparable to the game's display:** the executable sum is exact, the script half sums a member set
+the engine may not load, so the first number will likely differ. The comparison carries across; the
+absolute value does not. I wrote the stronger claim first and corrected it before committing.
+
+### Two unexplored leads
+
+**Observed.** `APPLOG.TXT` is path kind 5, requested from exactly one site, `0x0048447f`. There *is*
+an application log path in the shipped build. **Unknown** what is written to it or whether that site
+is reachable — a better lead than `GS.LOG` for anyone wanting engine output. `LOMGSOUT.TMP` (kind 1)
+is requested from `0x004c9929` and `0x004d7119`, both GameScript modules, likewise **Unknown**.
+
+### The two-machine experiment is now specified
+
+Written out in the doc as steps: byte-identical archives first (checked with `preflight` or by
+comparing session tags), an eight-faith `.scn`, a layer-2 domain, `/testseed=12345` on both, two runs
+differing only in `COMBAT_MODE`, and a result table mapping each observation to what it would mean.
+The engine's own dump is unavailable, so capture is script-side: `getgameseed` and the
+`setchecksumproc` procedure's result each turn, plus a screen recording because
+`'PlayAnimation Count'` is a divergence class.
+
+### On the test gap flagged last entry
+
+It is covered rather than open, and the doc now says so. The property a guessed hash would have
+violated — the two byte sums differ because one sign-extends and the other zero-extends — is
+asserted by `the_two_checksums_disagree_on_a_high_byte`, which always runs and was confirmed to fail
+when the sign extension is swapped. The install test demonstrates separation only, and that same
+swap passes it.

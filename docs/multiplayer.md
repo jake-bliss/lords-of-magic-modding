@@ -1064,3 +1064,231 @@ Items 1–7 of the first list stand. These replace item 8 and add to it.
     the path that sends it. If the reporter is reached with that type it formats a wild pointer.
     Whether that is a crash, garbage, or unreachable in practice is **Unknown** and one join with a
     large scenario would tell.
+
+---
+
+# Third pass: resync is dead, but the engine already tells you
+
+## 10. Resync is unreachable. Nothing ever sends it.
+
+Shift-corrected first, because the slot-versus-type trap has now bitten twice on this branch: table
+slots 62 and 63 hold `RESYNC_REQUEST` and `RESYNC_START`, so the real `gm_type`s are **63** and
+**64**.
+
+**Observed in a local binary.** There are exactly two message-header builders in the image, and
+they are siblings 48 bytes apart:
+
+- `0x0048cc70` takes the type as an argument (`mov al,[esp+0Ch]` / `mov [esi+4],al` at
+  `0x0048cc83`/`0x0048cc8a`);
+- `0x0048cc40` is the same function with the type hardcoded to zero (`xor al,al` /
+  `mov [esi+4],al` at `0x0048cc54`/`0x0048cc5d`), i.e. it can only make a `NO_MESSAGE`.
+
+**Observed.** `0x0048cc70` has **54 call sites**, and every one of them passes a literal
+`push imm8` within 26 bytes of the call — there is no site that passes a computed type. Those 54
+sites construct **45 distinct message types**. Resolving them against the name table
+(shift-corrected) gives the complete set of messages this executable can ever build:
+
+```
+4 SWITCH_UNITS        5 SWITCH_COMMANDERS   6 SET_UNIT_COMMANDER  13 MOVE_ARMY (x2)
+16 STOP_ARMY          27 ADD_SPELL          28 TRANSFER_ARTIFACT  29 TELEPORT_ARTIFACTS
+30 WIELD_ARTIFACT     31 XFER               33 SET_PLAYER         49 START_COMBAT
+54 SET_CITY_DATA      55 SET_CITY_NAME      56 SET_BUILDING_DATA  59 ARMY_ANIM
+60 ARMY_KILLUNIT      61 TIME_ESTIMATE      62 READY              65 GO (x2)
+66 TICK_TIME          68 ORDERS (x8)        69 BATCH_ORDERS       71 SET_LEADER
+72 REQUEST_LEADER     73 ASSIGN_LEADER      75 GAME_SETUP         76 START_GAME
+77 SET_PLAYER_NAME    78 JUST_ENTERED       79 SAVED_GUIDS        80 PULSE
+81 COMPUTERS_ASSIGNED 82 GAME_STARTED       86 REENTER            87 NETMERGE
+88 ENTER_BUILDING     90 EVENT_ALARM_NOTIFICATION                 91 CHAMPION_BRAIN_NOTIFICATION
+92 SCRIPTCALLBACK     93 REQUEST_SCENARIO   94 REQUEST_START_GAME 95 CHECKSUM
+96 AUTOPLAY           97 XFER_PROGRESS
+```
+
+**`RESYNC_REQUEST` (63) and `RESYNC_START` (64) are not in that list.** Neither is
+`RESYNC_*` reachable through the zero-type builder.
+
+The enum slot and the routing tables exist for them, which is what made them look live:
+
+- **Observed.** The send fan-out dispatcher at `0x00489c6c` (`mov al,[ebp+4]` / `dec eax` /
+  `cmp eax,60h` / `mov dl,[eax+489E74h]` / `jmp [edx*4+489E20h]`) has a policy entry for both: they
+  share policy `0x00489d0d` with `READY`, `GO` and `TICK_TIME`, which loops `1..numcomputers` and
+  sends to **every computer including the sender**.
+- **Observed.** The 31..65 gate at `0x00489ad5` (`add ecx,0FFFFFFE1h` / `cmp ecx,22h`) routes both
+  to `0x00489aec`, the same branch as 28 other types.
+
+**So the routing is wired and the messages are never built.** That is the same shape of finding as
+the disabled post-mortem: a facility present in the tables and unreachable in the code.
+
+**Inferred:** resync was designed, the plumbing survived, and the trigger was never written or was
+removed. **Unknown:** what it would have transferred, because there is no builder whose payload
+could be read.
+
+## 11. What the file-transfer path can ship — and it is not scripts
+
+This matters because it is what a resync would have had to use, and it decides whether an
+always-on host could ever have brought a mismatched peer into line.
+
+**Observed in a local binary.** `XFER` (type 31) is built once, at `0x004b7439`, inside the sender
+at `0x004b7410`. The sender:
+
+1. resolves a **file-kind tag** through `0x004b9570` (`0x004b742c`);
+2. `CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0x08000000, NULL)`
+   (`0x004b7468`), `CreateFileMappingA(… PAGE_READONLY …)` (`0x004b748f`), `GetFileSize`
+   (`0x004b74b0`), `MapViewOfFile` (`0x004b74c2`);
+3. ships the mapping in chunks of **`mov edi,78h` = 120 bytes** (`0x004b74da`, rewritten at
+   `0x004b7523`), which sits comfortably inside the 257-byte payload cap from
+   [3b](#3b-network-messages-are-capped-at-257-bytes-on-a-fixed-buffer);
+4. computes a percentage as `chunk * 100 / total` (`lea eax,[ebx+ebx*4]` / `lea eax,[eax+eax*4]` /
+   `shl eax,2` / `idiv` at `0x004b75a8`–`0x004b75b7`) for the `XFER_PROGRESS` message.
+
+**Observed.** The sender has four callers, each passing a literal tag: `0x0045cd7d` (tag 83),
+`0x0048286e` (71), `0x00483f95` (77), `0x004a868c` (68). `0x004b9570` maps tags `68..83` through an
+index table at `0x004b95f4` and a jump table at `0x004b95e0` onto the path builder `0x00505110`:
+
+| Tag | Resolves to |
+| ---: | --- |
+| 68 | path kind 7 — `LOMD%.4d.TMP` |
+| 71 | path kind 2 — `LOMXFERG.TMP` |
+| 77 | the script's `setscenarionameproc` procedure, via `0x004b54c0` — i.e. `map/<name>` or `multisav/<name>` |
+| 83 | path kind 3 — `LOMXFERS.TMP` |
+| all others in 69..82 | path kind 4 — `LOMXFERU.TMP` |
+
+**Observed.** The path builder `0x00505110` bounds its kind to `0..7` and yields exactly:
+
+| Kind | Path |
+| ---: | --- |
+| 0 | `savegame/lastsave.lom`, or `multisav/lastsave.lom` when `[0x005851a0]` is set |
+| 1 | `LOMGSOUT.TMP` |
+| 2 | `LOMXFERG.TMP` |
+| 3 | `LOMXFERS.TMP` |
+| 4 | `LOMXFERU.TMP` |
+| 5 | `APPLOG.TXT` |
+| 6 | `LOM_TSPR.TMP` |
+| 7 | `LOMD%.4d.TMP` |
+
+**There is no path template for an MPQ archive, and no way for a caller to supply an arbitrary
+filename** — the tag is a literal at every call site and the resolver's range is eight fixed kinds
+plus the scenario-name procedure.
+
+**So the decisive question has a clean answer: a resync could not have repaired a `'GS' files`
+mismatch even if it existed.** The transfer path can move a savegame, a scenario and a handful of
+temporaries — game state — and cannot move `gs.mpq`. **The homelab verdict in
+[question 4](#4-what-a-homelab-could-and-could-not-do) stands unchanged**, and now for a
+structural reason rather than for want of evidence.
+
+## 12. The engine already marks incompatible games in the list
+
+This is the one positive result of the third pass, and it is what a person can act on today.
+
+**Observed in a local binary.** `0x00505f10` reads `[0x00584604]` (the GameScript content
+checksum) and `[0x00584424]` (the executable byte sum) and formats them through
+`cksum=%d,%d` (`0x005736ec`) at `0x00505f30`. The argument order, traced through both frames, puts
+the **script checksum first** and the executable sum second.
+
+**Observed.** Both concrete transports build that tag while setting the session name: the Storm
+class at `0x0046fbf8`, inside its vtable slot 2 (`0x0046fbd0`, which copies 29 bytes of the caller's
+name into `[this+0xe0]` and NUL-terminates at `+0xfd`); and `CDPlay` at `0x0044a84e`.
+
+**Observed.** `CDPlay` vtable slot 11 (`0x0044a840`, reached by no operator and with zero direct
+callers, so virtual-only) calls `0x00505f10`, then compares the local tag against another string
+byte by byte (`0x0044a857`–`0x0044a87f`). On **mismatch** it formats the session's display name
+through `"*%s"` (`0x00556b24`, pushed at `0x0044a891`); on **match** it copies the name plainly
+(`0x0044a8a1`).
+
+**Inferred:** a game in the multiplayer list whose host's build does not match yours is displayed
+with a **leading asterisk**, and one that matches is not. It marks; it does not refuse.
+
+That is a shipped, user-facing pre-flight check over exactly the two values `preflight` reproduces.
+It also **partly answers the round-two Unknown** about whether a mismatch is caught at join: the
+*tag* is compared before you join and marked in the list, while the six-value divergence comparison
+still only happens once play is under way. **Unknown:** whether any UI actually renders the
+asterisk, since I have not seen the list.
+
+`preflight` now prints the same tag for each install. **Only half of it is comparable to the game's
+display:** the executable sum is exact, the script half is the accumulator over a member set the
+engine may not load, so the tool's first number will likely differ from the game's. What carries
+across is the comparison — same tag means agreement on both halves, different tags mean
+disagreement on at least one.
+
+### Two incidental finds
+
+- **Observed.** `APPLOG.TXT` is path kind 5, requested from exactly one site, `0x0048447f`. So
+  there *is* an application log path in the shipped build. **Unknown:** what is written to it and
+  whether that site is reachable. This is a better lead than `GS.LOG` for anyone who wants engine
+  output, and it is unexplored.
+- **Observed.** `LOMGSOUT.TMP` (kind 1) is requested from `0x004c9929` and `0x004d7119`, both in the
+  GameScript modules. **Unknown** likewise.
+
+## 13. The two-machine experiment, specified
+
+This is the handoff. `/testseed=` makes the whole thing worth doing properly, because it removes the
+two known sources of nondeterminism a tester cannot otherwise control
+([section 8](#8-testseed-and-the-rest-of-the-command-line)).
+
+**Before anything else — the free check.** Run `preflight` over both machines' `English`
+directories, or compare the session tags each machine shows. If the tags differ, stop: fix the
+install before testing anything else. This is now the recommended first step for the community and
+it needs no session at all.
+
+### Setup, both machines
+
+1. Copy `lomse.exe`, `gs.mpq`, `imp.mpq` and `pic.mpq` from **one** machine to the other, so they
+   are byte-identical. Confirm with `preflight` — it must report *will not diverge* on
+   `'EXE' version` and *identical* on every file.
+2. Pick a `.scn` with all eight faiths, or the multiplayer list will not offer it
+   ([3i](#3i-player-and-computer-caps-and-the-map-restriction)).
+3. Set `COMBAT_MODE` to `Always Autocalc Combat` for run A and `Observe All Combat` for run B
+   ([3g](#3g-there-is-a-real-time-turn-clock-and-a-real-time-combat-mode)).
+4. Put both machines on one **layer-2** broadcast domain. Routed-only will not enumerate
+   ([question 2](#how-a-session-is-found-and-whether-you-can-type-an-address)).
+
+### Launch
+
+Both machines, same integer, non-zero:
+
+```
+lomse.exe /testseed=12345
+```
+
+**Observed** why this is the right switch: `0x0048417b` makes the host's game seed `[0x005d2ca4]`
+when non-zero and `rand()` otherwise, and `0x0045c722` / `0x0045cdf4` substitute it for
+`GetTickCount()` in two message-construction paths. **Inferred:** with it set, two runs of the same
+inputs should produce the same simulation, so a desync becomes reproducible.
+
+Add `/debug` on both if you want whatever the debug flag at `[cfg+0x6b0]` enables — **Unknown** what
+that is, so treat it as an experiment rather than a step.
+
+### What to capture
+
+The engine's own state dump is unavailable
+([section 7](#7-the-desync-post-mortem-is-wired-up-and-disabled)), so capture from the script side:
+
+- **Every turn, on both machines:** `getgameseed` through the console (`~`). Two different values is
+  a `'Random-Seed'` divergence and the simulations never agreed.
+- **Every turn, on both machines:** run the procedure vanilla `gs/network.gs` hands
+  `setchecksumproc` and print the result. That is the `'Player-Stats'` value and the only way to see
+  it in this build.
+- **The session tag in the game list**, before joining, from both sides.
+- A screen recording, because `'PlayAnimation Count'` is a divergence class and animation
+  divergence is otherwise invisible.
+
+### What each result would mean
+
+| Observation | Reading |
+| --- | --- |
+| Session tags differ | Builds differ. Nothing else is worth testing until fixed. |
+| Tags match, `getgameseed` differs between machines | The seed exchange failed. `/testseed=` should make this impossible; if it still happens, `START_GAME` (type 76) is not arriving. |
+| Seeds match, script checksums diverge at a specific turn | A genuine state divergence. Note the turn — with a fixed seed it should reproduce. |
+| Script checksums match while the games visibly disagree | The divergence is in something the script checksum does not cover — the animation counter is the prime suspect. |
+| Run A (autocalc) survives and run B (observe all) desyncs | Real-time combat replication is the source. That is the single most useful result on this list, because it is advice a player can follow. |
+| Both runs desync identically at the same turn with a fixed seed | Reproducible. That is a bug report someone could act on. |
+| Both runs desync at *different* turns with the same `/testseed=` | Something outside the seed is nondeterministic. `/testseed=` covers two paths only, and the rest of the engine's `GetTickCount` use is untouched. |
+
+### On the test-coverage gap
+
+The three-install validation in `install_checksum` skips when the installs are absent, so on a bare
+machine it cannot fail. That gap is covered, not open: the property a guessed hash would have
+violated — that the two byte sums genuinely differ, because one sign-extends and the other
+zero-extends — is asserted by `the_two_checksums_disagree_on_a_high_byte`, which always runs and
+which was confirmed to fail when the sign extension is swapped out. The always-running tests pin
+the algorithms; the install test only demonstrates separation, and swapping the sign extension
+passes it. Both facts are stated in the module documentation.
