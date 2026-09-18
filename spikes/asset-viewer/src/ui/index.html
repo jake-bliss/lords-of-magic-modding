@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lords of Magic map editor</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>Lords of Magic map editor</h1>
+  <form id="dir-form">
+    <label>Maps directory<input id="maps-dir" type="text" spellcheck="false" placeholder="/path/to/English/map" size="60"></label>
+    <button id="browse-dir" type="button">Browse…</button>
+    <button type="submit">List</button>
+  </form>
+  <p class="hint" id="bundle-hint">
+    With <code>--pic</code> this field is already filled in — press <b>List</b> and pick a map.
+    <b>Browse cannot enter a <code>.app</code> bundle by clicking</b>, which is where a Wine-wrapper
+    install keeps its maps; that is the macOS folder chooser's rule, not ours. Inside the dialog
+    press <b>Cmd+Shift+G</b> and paste the path, or just use the field above.
+  </p>
+  <form id="open-form">
+    <label>Map file
+      <select id="map-file"><option value="">list a directory first</option></select>
+    </label>
+    <button type="submit">Open</button>
+  </form>
+  <div id="map-summary">No map open.</div>
+</header>
+
+<main>
+  <section id="left">
+    <h2>Terrain</h2>
+    <div id="palette" class="palette">Open a map to load its tileset's terrain list.</div>
+    <h2>Paint</h2>
+    <label>Seed
+      <input id="seed" type="text" spellcheck="false" placeholder="deterministic (lowest slot)" size="18">
+    </label>
+    <p class="hint">Ctrl-scroll or pinch over the map to zoom to the cursor; plain scroll pans.</p>
+    <p class="hint">
+      Where several tiles match a cell equally and the cell held none of them, the engine draws at
+      random and that draw cannot be reproduced. Blank means the lowest matching slot; a seed gives
+      a different legal draw. Neither is the engine's.
+    </p>
+    <div class="row">
+      <button id="undo" type="button" disabled>Undo</button>
+      <label>Zoom <input id="zoom" type="range" min="2" max="32" value="8"></label>
+      <span id="cursor-cell" class="hint">cell: —</span>
+    </div>
+    <h2>Save As</h2>
+    <form id="save-form">
+      <label>New filename<input id="save-name" type="text" spellcheck="false" placeholder="URAK-edited.scn" size="30"></label>
+      <button id="browse-save" type="button">Browse…</button>
+      <button type="submit">Save As</button>
+    </form>
+    <p class="hint">Browse here picks a new file anywhere; <b>Cmd+Shift+G</b> types a path.</p>
+    <p class="hint">
+      Written into the maps directory above, always as a new file. An existing name is refused,
+      never overwritten, and the name may not contain a path separator.
+    </p>
+  </section>
+
+  <section id="centre">
+    <div id="canvas-wrap">
+      <canvas id="map"></canvas>
+      <canvas id="overlay"></canvas>
+    </div>
+  </section>
+</main>
+
+<section id="log-panel">
+  <h2>Log</h2>
+  <div id="log"></div>
+</section>
+
+<script src="/app.js"></script>
+</body>
+</html>

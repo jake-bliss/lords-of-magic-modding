@@ -8,6 +8,7 @@ publish = false
 iced-x86 = { version = "1.21.0", default-features = false, features = ["decoder", "instr_info", "std"] }
 png = "0.18.1"
 sdl3 = "0.20.0"
+tiny_http = { version = "0.12.0", default-features = false }
 
 [dev-dependencies]
 iced-x86 = { version = "1.21.0", default-features = false, features = ["decoder", "instr_info", "std", "nasm"] }

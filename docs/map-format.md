@@ -1477,6 +1477,85 @@ What was *retired* is the offset table's role as the **paint's decision procedur
 longer consults it; `--map-transition-rings` still prints it as the measurement it is.
 
 
+### Painting a shipped world map is refused about 30% of the time
+
+**Observed in a local binary, 2026-09-17.** The constraint matcher's `NoMatchingTile` refusal was
+derived from the `terrainrings` captures and described there as "exactly the road and impassable
+cases". Driving the planner from a UI, where a person drags a rectangle anywhere they like rather
+than at coordinates chosen to work, made the **rate** visible for the first time. It is much higher
+than "road and impassable" suggests, and it is not a defect in the tool.
+
+`examples/paint_refusal_survey.rs` plans — never applies, never writes — one 3x3 paint of every
+terrain the tileset draws at **every position the rectangle legally fits**: 126 x 126 = 15,876
+origins on a 128-wide map, per terrain. Through `tilesb01.til`:
+
+| map | terrains 0–8 refused | road, terrain 9 | impassable, terrain 10 |
+| --- | ---: | ---: | ---: |
+| `URAK.scn` | 43,714 of 142,884 — **30.6%** | 98 of 15,876 accepted | **0 of 15,876** |
+| `Corlis.scn` | 38,466 of 142,884 — **26.9%** | 1 of 15,876 | **0 of 15,876** |
+| `Avaeron128.scn` | 18,554 of 142,884 — **13.0%** | 1 of 15,876 | **0 of 15,876** |
+| `fire.lgd` | 1,490 of 142,884 — **1.0%** | 15,540 of 15,876 accepted | **0 of 15,876** |
+
+Every refusal in all four maps is `no-matching-tile`; no other kind occurred.
+
+**Corrected, 2026-09-17: this was first published from a disjoint sample and called a population.**
+The survey stepped by the rectangle's own side, testing 42 x 42 = 1,764 origins out of the 15,876 a
+3x3 actually fits on, and the figure was quoted as the rate over *all* 3x3 paints. Re-run at stride
+1 the rate is **30.59%** against the sample's 31.07% on `URAK.scn`, 26.92% against 27.73% on
+`Corlis.scn`, 12.99% against 13.41% on `Avaeron128.scn`, and 1.04% against 0.93% on `fire.lgd`. So
+the published number was not wrong — but it was not measured, and the stride is now 1 by default.
+The old stride also skipped the last `width % side` columns and rows entirely, which is the map
+edge, and the map edge is exactly where the untested off-map-neighbour assumption applies.
+
+Two readings, and one that is not settled:
+
+- **Impassable is unpaintable as an area, on real maps and not only in principle.** 0 of 63,504
+  attempts across four maps. `tilesb01.til` gives `tt_impassible` eight slots, each demanding that
+  all eight neighbours also be impassable, so a rectangle of it has no legal boundary anywhere. The
+  engine fills those cells from the block regardless. This is now measured on shipped data rather
+  than derived from the tileset alone.
+- **The rate tracks how mixed the map is.** Within one map the nine ordinary terrains refuse within
+  a few percent of each other; between maps the spread is 30:1. `fire.lgd` is 16,228 of its 16,384
+  cells a single terrain — it is a nearly blank map — and `URAK.scn` has six terrains above 1,700
+  cells each. What a refusal reports is a *neighbourhood* the tileset declares no tile for, and a
+  mixed map has many more distinct neighbourhoods.
+- **`fire.lgd` accepting 15,540 road paints is a lead, not a conclusion.** Road is refused almost
+  everywhere on the other three. The uniform-field explanation is consistent with it and is not
+  evidence for it; nothing here establishes the mechanism.
+
+#### What decides how much of a painted map is a draw: the terrain already there
+
+**Corrected, 2026-09-17.** An earlier version of this section claimed "a blank field is where
+several interior tiles tie most often, so the emptier the map, the more of the result is a legal
+draw", and quoted "roughly 17 unreproducible cells per paint on `fire.lgd` against 1.0 on
+`URAK.scn`". The second figure matched no reading of the instrument, and **the mechanism is refuted
+by the instrument's own output.** Drawn cells per accepted paint, at stride 1:
+
+| | `fire.lgd` (blank) | `URAK.scn` (mixed) |
+| --- | ---: | ---: |
+| terrain **0**, which `fire.lgd` already is | **0.05** | **7.63** |
+| terrain **2**, which it is not | **16.73** | **1.40** |
+| all terrains together | 15.07 | 2.05 |
+
+Emptiness cannot be the variable: on the blank map terrain 0 draws 0.05 cells per paint against
+7.63 on the mixed one, a 150x inversion, while terrain 2 runs the other way. The driver is the one
+[`TerrainPaintPlan::drawn_cells`](../spikes/asset-viewer/src/map.rs) already documents —
+`TileChoice::Kept`. A cell that **already holds a tile the constraints accept keeps it**, and that
+is reproducible, because it is what the engine was observed doing. So:
+
+> **What matters is whether the terrain being painted is already there, not how empty the map is.**
+> `fire.lgd` is 99% terrain 0, so painting terrain 0 onto it is almost entirely Kept and almost
+> entirely reproducible, and painting anything else onto it is almost entirely new and almost
+> entirely drawn.
+
+The practical consequence for anyone editing: **widening an existing region of a terrain is close to
+reproducible; stamping a new terrain into a large uniform field is mostly this writer's invention.**
+
+```sh
+cargo run --release --example paint_refusal_survey -- MAP.scn tilesb01.til 3
+cargo run --release --example paint_refusal_survey -- MAP.scn tilesb01.til 3 8   # coarser stride
+```
+
 ## Commands
 
 ```sh
@@ -1503,6 +1582,8 @@ target/release/lom-asset-viewer --map-remove-sprite IN.scn 200 OUT.scn
 target/release/lom-asset-viewer --view-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
 target/release/lom-asset-viewer --view-map MAP.scn tilesb01.til tilesb01.lbm
 target/release/lom-asset-viewer --export-map-preview MAP.scn tilesb01.til tilesb01.lbm /tmp/map-preview.png
+target/release/lom-asset-viewer --serve --pic '/path/to/Lords of Magic Special Edition/English/pic.mpq'
+target/release/lom-asset-viewer --serve tilesb01.til tilesb01.lbm --port 9000
 ```
 
 `--dump-map-cells` prints one line per cell — `x`, `y`, packed index, raw tag, masked tile index,

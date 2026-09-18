@@ -1,0 +1,38 @@
+:root { color-scheme: dark; }
+body {
+  margin: 0;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #14161a;
+  color: #dfe3ea;
+}
+h1 { font-size: 15px; margin: 0 0 6px; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #8d97a8; margin: 14px 0 6px; }
+header { padding: 10px 14px; border-bottom: 1px solid #262b33; }
+main { display: flex; align-items: flex-start; }
+#left { width: 340px; flex: none; padding: 0 14px 14px; border-right: 1px solid #262b33; }
+#centre { padding: 14px; overflow: auto; }
+#canvas-wrap { position: relative; display: inline-block; }
+#canvas-wrap canvas { position: absolute; left: 0; top: 0; image-rendering: pixelated; }
+#canvas-wrap canvas#map { position: static; }
+#overlay { cursor: crosshair; }
+input, button { font: inherit; background: #1d2128; color: #dfe3ea; border: 1px solid #39414e; border-radius: 3px; padding: 3px 6px; }
+button { cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+label { display: block; margin: 4px 0; }
+label input[type=text] { display: block; margin-top: 2px; }
+.row { display: flex; gap: 10px; align-items: center; }
+.hint { color: #8d97a8; margin: 6px 0; max-width: 62em; }
+.hint code { color: #b6bdc9; }
+.hint b { color: #c8cfdb; font-weight: 600; }
+.palette { display: flex; flex-wrap: wrap; gap: 4px; }
+.swatch { display: flex; align-items: center; gap: 5px; padding: 2px 5px 2px 2px; border: 1px solid #39414e; border-radius: 3px; background: #1d2128; cursor: pointer; }
+.swatch.selected { border-color: #d8b25a; background: #2c2a20; }
+.swatch canvas { image-rendering: pixelated; }
+.swatch.unpaintable { opacity: .45; cursor: not-allowed; }
+#map-summary { color: #b6bdc9; white-space: pre-wrap; }
+#log-panel { border-top: 1px solid #262b33; padding: 0 14px 14px; }
+#log { max-height: 230px; overflow: auto; white-space: pre-wrap; }
+#log div { padding: 1px 0; border-bottom: 1px solid #1d2128; }
+#log .refusal { color: #f0a08a; }
+#log .note { color: #e8cf8e; }
+#log .ok { color: #9fc48f; }

@@ -11,10 +11,12 @@ The repository contains no game assets. Commands below require a local, legally 
 The current build targets Apple Silicon Homebrew:
 
 ```sh
-brew install rust stormlib sdl3
+brew install rust stormlib sdl3 node
 ```
 
-Rust can instead be installed with `rustup`. The current `build.rs` expects StormLib and SDL3 under `/opt/homebrew/opt`; portable dependency discovery is tracked as remaining Stage 1 work.
+`node` is needed only by `tests/test_map_editor_client.py`, which drives the map editor's browser
+client; that file fails rather than skipping when it is absent, because a check that quietly does
+not run is not a check. Rust can instead be installed with `rustup`. The current `build.rs` expects StormLib and SDL3 under `/opt/homebrew/opt`; portable dependency discovery is tracked as remaining Stage 1 work.
 
 ## Build and test
 
@@ -61,6 +63,7 @@ target/release/lom-asset-viewer --diff-maps BEFORE.scn AFTER.scn
 target/release/lom-asset-viewer --view-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
 target/release/lom-asset-viewer --view-map MAP.scn tilesb01.til tilesb01.lbm
 target/release/lom-asset-viewer --export-map-preview MAP.scn tilesb01.til tilesb01.lbm /tmp/map-preview.png
+target/release/lom-asset-viewer --serve --pic "$PIC_MPQ"
 ```
 
 `--dump-map-cells` prints one line per cell — `x`, `y`, packed index, raw tag, masked tile index,
@@ -129,6 +132,184 @@ references a sprite by id, do not remove-then-place.
 The loose `map/` directory has no backup, so there is no in-place mode: every command takes an
 explicit output path, refuses to write over its input by canonical path, opens the output
 `create_new`, and re-parses the encoded bytes to read the edit back before anything reaches disk.
+
+## The map editor UI
+
+```sh
+target/release/lom-asset-viewer --serve --pic "$PIC_MPQ"
+target/release/lom-asset-viewer --serve tilesb01.til tilesb01.lbm --port 9000
+```
+
+A local web UI for the paint verb: point it at a maps directory, choose a file from the listing,
+see it drawn through its own tileset, pick a terrain, drag a rectangle, paint, undo, Save As. With
+`--pic` the maps directory is filled in for you — in a standard install the maps sit beside
+`pic.mpq` — so the common case is zero typing.
+
+**Loopback is not a security boundary, and this does not pretend it is.** The server binds
+`127.0.0.1` and never `0.0.0.0`, but any web page in the world can issue requests to `127.0.0.1`,
+and a request that only *writes* never needs to read the response, so neither the same-origin policy
+nor CORS stops it. Two checks do, and every request passes both:
+
+- **`Origin`** must be this editor's own page when it is present at all, and
+- **`Host`** must be a loopback literal carrying this editor's port. That is the one that closes DNS
+  rebinding: an attacker who points a name at `127.0.0.1` gets a browser that treats the responses
+  as same-origin, but it sends that name in `Host`.
+
+Opening a map is a `POST` for the same reason — it replaces the server's whole session, and a
+state-mutating `GET` is reachable from a bare `<img src>`. There is still no user authentication and
+none is planned; what there is, is an origin check, and the difference matters.
+
+The page, its script and its stylesheet are compiled into the binary, so the tool is still one file.
+No build step, no npm, no framework: the client is vanilla JS drawing 32x32 atlas tiles onto a
+`<canvas>`. The atlas is sent once as a PNG and a paint redraws only the cells the server says
+changed, so there is no image round trip per edit.
+
+`--pic` is the easy path: the tileset a map is read through is resolved from the gamescript bindings
+and both the `.til` and its `.lbm` are read straight out of `pic.mpq` by member name. Nothing is
+guessed. A combat map with **no** binding — 168 of the 337 installed `.smp` files — is refused with
+that explanation rather than defaulted, and so is one five encounters read through five different
+tilesets. For those, name the `.til` and atlas yourself in the second form; that path runs the same
+`tileset_mismatch` check `--map-paint-terrain` does, so a modded tileset is accepted and a shipped
+one the engine would not use here is refused.
+
+Combat maps work: the terrain palette is built from the resolved tileset's own tiles, so it shows
+`aibldg01.til`'s nineteen terrain ids for a battle map and `tilesb01.til`'s eleven for a world one.
+Terrain ids are tileset-local and reach 42, so there is no built-in list of terrain names anywhere in
+the UI.
+
+**Nothing is ever written in place.** Save As is a filename inside the chosen directory, always a
+new file: the target is checked against the open map by device and inode, refused if the extension
+changes the map's class, refused if the name is anything but one plain path component, encoded and
+re-parsed before anything reaches disk, and opened `create_new`. An existing file is never
+clobbered, and the picker is not a way round that.
+
+### Browse, and why the server opens the dialog
+
+Next to both path fields is a **Browse…** button. A web page cannot hand a server a real filesystem
+path: `<input type="file" webkitdirectory>` gives file *contents* under fake relative names, and the
+File System Access API gives an opaque handle and is Chrome-only. Neither yields `/Users/…`, which
+is what the server has to read and write. The server is on the user's own machine, so **the server
+opens the dialog** — `POST /api/pick-directory` and `POST /api/pick-save` shell out to the OS
+chooser and get the genuine path back.
+
+**macOS only, through `osascript`, with no new dependency.** Windows and Linux have no equivalent
+one-liner; they need a crate such as `rfd`, and **that is the packaging gap before this goes to the
+community**. On any other platform the endpoint reports itself unavailable and says to type the path
+instead.
+
+**On a Wine-wrapper install the folder dialog may not be able to reach your maps at all, and that
+is macOS's rule rather than ours.** This community mostly runs the game inside a wrapper, so the
+maps end up somewhere like
+`…/Lords of Magic GS5R3.app/Contents/SharedSupport/prefix/drive_c/Program Files (x86)/…/English/map`
+— *inside a `.app` bundle*. The folder chooser greys bundles out and will not descend into one by
+clicking. Three things follow, and the first is the one to remember:
+
+1. **The route that works needs no dialog.** With `--pic`, the maps directory is already in the
+   field when the page loads; press **List** and pick a map. That is zero typing and it does not
+   touch the chooser.
+2. `choose folder` is now asked `with showing package contents`, which is the documented way to let
+   a chooser enter a bundle. **Observed 2026-09-17:** the script compiles and the dialog launches
+   with it, and with a default location inside a bundle. Whether a person can then click all the
+   way through has not been watched — that needs a human at a desktop — so it is an improvement
+   offered, not a fix claimed.
+3. Inside any macOS dialog, **`Cmd+Shift+G`** accepts a typed path and ignores the bundle rule.
+   That is said on the page next to the Browse button, because a note in this file is worth nothing
+   to somebody standing in front of the dialog right now.
+
+Browse is not going anywhere: it is right for maps kept somewhere ordinary, and for a save target,
+which is the case where the user genuinely has to name a new place. `choose file name` has no
+package-contents parameter and is not given one — saving *into* the game's own bundle is the one
+thing this tool should make awkward, because the loose `map/` directory has no backup.
+
+Four things this gets right on purpose:
+
+- **The typed fields are unchanged and are not second-class.** They survive SSH and a headless box,
+  they are what most of the tests drive, they are the only route that works on a wrapper install,
+  and Browse is an accelerator for them — the chosen path is written into the field, where it can
+  still be edited.
+- **The dialog starts at the maps directory, including the first time.** `start_in` used to come
+  only from the page, and on a freshly loaded page there is no directory yet — so the *first*
+  Browse, the one that matters most, opened wherever macOS happened to be. It now falls back to the
+  same `--pic`-derived suggestion the field is seeded from, so the two cannot disagree about where
+  this install keeps its maps.
+- **Cancelling is not an error.** Dismissing the dialog answers `"ok": true, "cancelled": true`,
+  changes nothing and logs nothing. `osascript` exits non-zero for a cancel as well as a failure, so
+  the two are told apart by AppleScript's error **number** `-128` rather than by the text "User
+  canceled", which is localised.
+- **A dialog that never appears is killed, not waited on.** The request loop is single-threaded, so
+  a child blocked on a window that will never be drawn freezes the whole editor; there is a 120
+  second bound and the child is killed at it. A missing `osascript` is reported the same way.
+- **A picked path is trusted exactly as far as a typed one.** It goes through the same guards. In
+  particular the native save dialog asks its own "replace?" question and hands back an existing path
+  when the user says yes — **and we refuse it anyway**, with a refusal that says why: the map
+  directory has no backup, this tool never writes in place, and the OS dialog does not get to
+  override that.
+
+The arguments go to `osascript` as `argv`, never interpolated into the script text, and there is no
+`sh -c`. The first version put a `-` between the script and its arguments; `osascript` does not
+consume it after `-e`, so it arrived as `item 1 of argv` and shifted every string by one. A test
+pins the argument list.
+
+The directory listing is **not a filesystem browser**. It lists the map files of the directory it is
+given — no subdirectories, no parent, no recursion — and it does not canonicalise the path, because
+the obvious workaround for a 180-character install path is a symlink and resolving it would make the
+listed names belong to somewhere the user did not type.
+
+**The log panel is the point.** The refusals and notes the CLI prints go there as readable text that
+stays on screen — "no tile of terrain 9 accepts the neighbourhood at (4, 2)", "1 of the 25 written
+cells were newly painted with several equally valid tiles … a legal choice, not the engine's", "10
+written cells have a neighbour off the map". A refusal is information, not an error to hide, so it
+comes back as a normal `200` answer with `"ok": false` and the library's own message. Expect refusals
+on a shipped world map — **30.6% of every position a 3x3 rectangle fits on `URAK.scn`** is refused,
+measured at every one of the 142,884 of them and not sampled, and
+[map format](../../docs/map-format.md#painting-a-shipped-world-map-is-refused-about-30-of-the-time)
+records the spread across four maps.
+
+Painting is deterministic by default — the lowest matching atlas slot — and the seed box reaches the
+same `--seed` the CLI has. Neither is the engine's draw, and the UI says so every time it happens.
+The count a save reports is **how many cells of the file still hold a drawn tile**, not how many
+draws the session ever made: painting over one puts it back under the tileset's control, and an
+honesty mechanism that over-reports is one people learn to ignore.
+
+Undo walks back the last 32 paints, with the draw account moving with the map at every step. Redo is
+not offered. Ctrl-scroll or a trackpad pinch over the map zooms **to the cursor**; a plain scroll
+pans the pane.
+
+Not in this version: creating a map, sprite placement or removal, elevation, flag editing, redo,
+navigating between directories, a native file dialog anywhere but macOS, and opening more than one
+map at a time. **One process holds one
+map**, so a second browser tab does not get a second session — it gets a handle the server then
+refuses, which is the loud version of a tab silently painting into a map it is not showing.
+
+The server is tested without a browser. Most tests call the request handler directly —
+`Editor::handle` is a pure function of the request *including its `Host` and `Origin`*, with the
+socket confined to `run` — and several drive the whole loop over a real loopback socket, which is
+what catches a listener bound to the wrong interface, a POST body never read, or a handler panic
+taking the session with it. The fixtures are synthetic and the map is **11x5**, because every
+shipped world map is square and a square fixture cannot fail on a transposed cell index.
+
+The **client** is tested too, which needs `node`: `tools/map_editor_client_harness.js` loads
+`src/ui/app.js` verbatim against a stub DOM, fires the real handlers, and reports what it computed
+for `tests/test_map_editor_client.py` to assert — where a click lands at two zooms and on a scrolled
+page, that ctrl-scroll zooms about the cursor, that a drag released outside the window does not stay
+live, that a refused open cannot leave the page saying "No map open." over a live session, and what
+the page does with each of the file dialog's three answers. A missing `node` fails that file rather
+than skipping it.
+
+**What no test covers, because it needs a human and a desktop:** that the macOS dialog actually
+appears, that it is usable, that `with showing package contents` really lets a person click into a
+`.app` bundle, and that a real cancel from a real click produces the `-128` this code reads. The
+scripts were confirmed to compile and reach the dialog by running each one under a short kill timer,
+including with a default location inside the user's own bundle; everything past that point is the
+seam's stub.
+
+**Filed, not built: remembering the last-used maps directory between runs.** It would sidestep the
+dialog entirely after one successful List, and it is the obvious next thing. It is not in v1 because
+the `--pic` suggestion already covers the standard install with zero typing, and because persistent
+state that silently overrides a derived default is a new way for the tool to be confidently wrong
+about where the maps are — after a reinstall or a second copy of the game, a stale entry and a fresh
+derivation look identical to the user. If it is added it must be a default only, fall back silently
+when missing or gone, and never widen where a save may write.
 
 ## Writing sprite placement
 
@@ -241,10 +422,14 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/imp.rs` — bounds-checked IMP tables, palette, RLE and packed-pixel decoding, hotspot and duplicate/repeated-frame structures, and generated-header validation.
 - `src/map.rs` — bounded common header/cell-grid parsing, packed `y * width + x` coordinates, terrain tags, the measured terrain-type-to-tile table, and the six placed-object record layouts for SCN/SMP/LGD files.
 - `src/tile.rs` — parser for `.til` atlas geometry, terrain types, and the full eight-column neighbour constraints, plus the constraint matcher `--map-paint-terrain` re-tiles from.
+- `examples/paint_refusal_survey.rs` — plan a 3x3 paint of every terrain the tileset draws at **every position it legally fits** on one map, and report how often the declared constraints refuse and how many cells per accepted paint were drawn at random. A coarser stride is an optional argument; it used to be the only behaviour, and the disjoint sample it produced was published as a rate over all paints. Plans only: nothing is applied and nothing is written. Takes a map and a `.til`, because neither is committed.
 - `examples/parse_all_tilesets.rs` — parse every `.til` in a directory and report atlas size, terrain-id range and any row that fails to declare all eight constraints. Reading columns the parser used to discard can only *add* failure modes for `--view-map`, so this is the check that it has not: 26 parsed, 0 failed, 0 incomplete on the GS5R3 set. Takes a path, because no tileset is committed.
 - `src/gamescript.rs` — bounded GameScript lexer, procedure diagnostics, name inventory, and static `run` references.
 - `src/gamescript_vm.rs` — experimental bounded value stack, dictionaries, procedures, core operators, and structured execution failures.
 - `src/png_export.rs` — lossless indexed IMP-frame PNG and RGBA map-preview output.
+- `src/server.rs` — the `--serve` map editor: routing, one open map with one level of undo, the terrain palette built from the resolved tileset, and the Save As guards. The page, script and stylesheet it embeds are in `src/ui/`.
+- `src/paths.rs` — the device-and-inode same-file check both writers use.
+- `tools/map_editor_client_harness.js` — load `src/ui/app.js` verbatim against a stub DOM, fire its real handlers, and print what it computed. Asserts nothing itself; `tests/test_map_editor_client.py` holds the expected values.
 - `src/asset.rs` — content-first classification and typed format metadata.
 - `src/main.rs` — CLI inventory, extraction, validation, and SDL3 viewer.
 - `build.rs` — local native-library search and runtime paths for the Apple Silicon spike.
