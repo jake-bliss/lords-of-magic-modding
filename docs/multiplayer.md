@@ -664,9 +664,403 @@ they would change the picture. Each names what result would mean what.
    The script builds eight player slots; the divergence reporter indexes sixteen computer records.
    What happens between 9 and 16 is **Unknown** and only observable by trying it.
 
-8. **Capture the network log.**
-   `gs/network.gs` registers a full state dump through `netlog` and `setstatlogproc`. If that log
-   can be made to land in a file, two peers' logs after a divergence identify the exact army and
-   unit that diverged. I did not find where `netlog` writes; establishing that would turn every
-   future desync report into a diffable artefact, and is probably the highest-leverage thing anyone
-   could do for this game's multiplayer.
+8. **Capture the network log.** *Superseded — see
+   [the desync post-mortem is disabled](#5-the-desync-post-mortem-is-wired-up-and-disabled). The
+   answer is that it cannot be captured, and no second machine is needed to know that.*
+
+---
+
+# Second pass: the six checksums, the pre-flight checker, and the disabled post-mortem
+
+Everything in this half was recovered after the first, again with no game run and no packet sent.
+Two results here **sharpen** the first half and one **replaces** a hope stated in it. Nothing in
+the first half is refuted.
+
+Reproduce with:
+
+```
+cd spikes/asset-viewer
+cargo run --release --example preflight -- "<install A>/English" "<install B>/English" ...
+cargo run --release --example multiplayer_survey -- <lomse.exe>
+```
+
+## 5. The six divergence values, individually
+
+**Observed in a local binary.** The comparator dispatches on a value index through a six-entry
+jump table at `0x004b54a8`, guarded by `cmp eax,5 / ja` at `0x004b4f9b`. Matching each jump target
+to the string its branch pushes gives the index-to-class map:
+
+| Index | Jump target | Divergence class |
+| ---: | ---: | --- |
+| 0 | `0x004b51ef` | `'EXE' version` |
+| 1 | `0x004b5027` | `'GS' files` |
+| 2 | `0x004b5110` | `'Random-Seed'` |
+| 3 | `0x004b4fb6` | `'Player-Stats'` |
+| 4 | `0x004b509f` | `'IMP' files` |
+| 5 | `0x004b5181` | `'PlayAnimation Count'` |
+
+**Observed.** Three of the six message texts say `has a different …` and three say
+`now has a different …`. The three without `now` are `'EXE' version`, `'IMP' files` and
+`'GS' files` — the install-derived ones. That reading is corroborated by what the code computes.
+
+### The one message builder, and everything it puts in the message
+
+**Observed in a local binary.** There is exactly one function that builds a `CHECKSUM` message
+(`0x004b4c20`) and it has exactly one caller (`0x0048bdf5`). Its complete set of payload stores:
+
+| Payload offset | Written with | At |
+| ---: | --- | ---: |
+| `+0x31` | `thiscomputer` | `0x004b4d79` |
+| `+0x35` | first argument | `0x004b4d75` |
+| `+0x39` | *never written* | — |
+| `+0x3d` | `[0x00583560]`, the tick — then **overwritten** by the second argument | `0x004b4d88`, `0x004b4da6` |
+| `+0x41` | `[0x00584424]`, the executable byte sum | `0x004b4d6b` |
+| `+0x45` | *never written* | — |
+| `+0x49` | `[0x00584604]`, the GameScript content checksum | `0x004b4d96` |
+| `+0x4d` | `[0x00573428]`, the game seed | `0x004b4d9e` |
+| `+0x51` | the result of the script's `setchecksumproc` procedure | `0x004b4d92` |
+| `+0x55` | zero | `0x004b4d9a` |
+| `+0x59` | zero | `0x004b4da2` |
+
+Ten dwords, which matches the receiver copying 40 bytes (`mov ecx,0Ah / rep movsd` at
+`0x004b4e88`) into a 40-byte-strided per-computer record.
+
+**Observed.** Both stores at `0x004b4d88` and `0x004b4da6` encode `[esp+0x3d]` — raw bytes
+`89 4c 24 3d` and `89 44 24 3d`. The tick is computed, stored, and thrown away; the CHECKSUM
+message does not carry the tick it was taken at. (The divergence *report* gets the tick from the
+global directly at `0x004b526e`, so the printed `at Tick #%d` is the tick of the *comparison*, not
+of the checksum.)
+
+**Inferred**, and this is the load-bearing inference of this section: only **four** meaningful
+quantities are compared — the executable byte sum, the GameScript content checksum, the game seed,
+and the script-supplied state checksum. Two slots are hardcoded zero and two are never written at
+all, so **two of the six named divergence classes can never fire, and a third may compare
+uninitialised stack.** Which class lands on which slot I could not establish; the payload offsets
+and the value indices do not line up in any ordering I could justify, and I am not going to pick
+one to make the table tidy. **Unknown.**
+
+### `'EXE' version` — reproducible exactly
+
+**Observed in a local binary**, `0x004b4a95`–`0x004b4b2a`. The engine calls
+`GetModuleFileNameA(NULL, …)`, opens that path `"rb"`, reads the whole file, and accumulates into
+the global `0x00584424`:
+
+```text
+004b4b0c  mov [584424h],ebx        ; the accumulator starts at zero
+004b4b14  mov ecx,[584424h]
+004b4b1a  xor edx,edx              ; zero-extend
+004b4b1c  mov dl,[eax+edi]
+004b4b1f  add ecx,edx
+004b4b21  inc eax
+004b4b22  cmp eax,esi
+004b4b24  mov [584424h],ecx
+004b4b2a  jb  004B4B14h
+```
+
+A 32-bit wrapping sum of the **zero-extended** bytes of the running executable. Reproduced by
+`install_checksum::exe_checksum`.
+
+### `'GS' files` — the algorithm is reproducible, the value is not
+
+**Observed in a local binary**, `0x004d496c`–`0x004d4990`, inside the GameScript loader path:
+
+```text
+004d496c  mov eax,[584600h]        ; the gschecksumon / gschecksumoff flag
+004d4971  test eax,eax
+004d4973  je  004D4992h            ; flag clear: accumulate nothing
+004d497b  movsx edx,byte [eax+edi] ; SIGN-extend
+004d497f  mov ebp,[584604h]
+004d4985  add ebp,edx
+004d4987  inc eax
+004d4988  cmp eax,ecx
+004d498a  mov [584604h],ebp
+004d4990  jl  004D497Bh
+```
+
+So `'GS' files` is **not** a digest of `gs.mpq`. It is a running sum of the bytes of every script
+source the loader is handed, and `0x00584604` is the same global the state dump prints as
+`GS Checksum=%d`. **This sharpens the first half rather than contradicting it:** peers with
+different scripts still diverge, and the engine still notices — it notices by executing them, not
+by hashing the archive.
+
+Note `movsx`, against the executable sum's `xor edx,edx`. **The two byte sums are not the same byte
+sum.** A byte of `0x80..=0xFF` contributes `+128..=+255` to one and `-128..=-1` to the other. Any
+test vector made of ASCII cannot tell them apart, which is exactly how a guessed hash would have
+survived a weak test.
+
+**Observed.** The engine brackets the accumulation: `0x004ff59c` zeroes `0x00584604`, sets
+`0x00584600`, calls the loader at `0x004d48a0`, and clears the flag again at `0x004ff5b8`. So the
+value covers exactly the members one top-level script run reaches. **Which members that is, is
+Unknown** — it is a property of the script graph, not the archive. And because `gschecksumon` is a
+script-callable operator, a mod can widen the bracket and change the value without changing any
+script byte.
+
+### `'IMP' files` — no algorithm found
+
+**Observed.** `lomse.exe` contains no `.mpq` filename string at all, and the only two whole-file
+byte-sum routines in the image are the executable sum above and a generic one at `0x004b1e60`
+(identical idiom, unsigned, filename obtained by running the script's `setscenarionameproc`
+procedure) which serves the scenario-file transfer and writes its results to `0x00583ad4`/
+`0x00583ad8`. Neither touches `imp.mpq`.
+
+**Inferred:** `'IMP' files` is one of the four dead payload slots and is not computed in this build.
+I could not prove which slot, so this is inference, not observation. It also means **the
+coordinating expectation that `'GS' files` and `'IMP' files` are archive digests is only half
+right**, and the pre-flight checker is built accordingly rather than around a guessed hash.
+
+### The comparison is bounded, and the bounds are small
+
+**Observed in a local binary.**
+
+- The checksum queue is **100 entries of 192 bytes**: the reset at `0x004b4a50` runs
+  `mov esi,64h` (100) over a body that advances `edx` by `0xc0` each iteration. That is the queue
+  behind `Error: Checksum queue is full for ID #%d...` (`0x004b4dff`).
+- The comparison covers **at most four computers**: `cmp ebx,4 / jge` at `0x004b4f43`, walking a
+  `0x28` stride. Computer records themselves are indexed `1..16` (`cmp ecx,10h / jge` at
+  `0x004b4fbd`, base `0x005af194`, stride 7556 bytes). **Inferred: in a session with more than four
+  computers, the fifth and beyond are not checked against anyone.**
+
+### Which messages trigger a checksum
+
+**Observed in a local binary.** A byte table at `0x0048c000` indexed by `gm_type - 0x0d`, feeding a
+jump table at `0x0048bfd8`, routes 16 of the 80 dispatched types to the CHECKSUM-emitting branch at
+`0x0048bdeb`. Shift-corrected (see below), they are: `MOVE_ARMY`, `END_TURN`, `BUY_UNIT`,
+`TRANSFORM_UNIT`, `SET_PLAYER_DATA`, `START_COMBAT`, `END_COMBAT`, `GO`, `ORDERS`, `BATCH_ORDERS`,
+`UNPAUSE_ARMY`, `UNPAUSEALL_ARMY`, `REENTER`, `NETMERGE`, `ENTER_BUILDING`, `SCRIPTCALLBACK`.
+
+Every one of those is a simulation mutation, which is a third independent confirmation of the name
+shift: corrected, the list is coherent; uncorrected, it is a nonsense mix.
+
+## 6. The message-name table is off by one, and its last slot is a wild pointer
+
+**Observed in a local binary.** The lookup at `0x0048a4e0`:
+
+```text
+0048a4e0  mov eax,[esp+4]
+0048a4e4  test eax,eax
+0048a4e6  jl  0048A4F5h            ; negative -> "Unknown: gm_type %d"
+0048a4e8  cmp eax,62h              ; 98
+0048a4eb  jge 0048A4F5h
+0048a4ed  mov eax,[eax*4+55B898h]
+0048a4f4  ret
+```
+
+The bound and the table base are both read out of that body by `multiplayer_survey`, which then
+dumps the table. **Observed: the bound permits `gm_type` 0..97, and only 97 slots resolve to a
+string.** Slot 97 holds `0x52454658`, the ASCII bytes `XFER`: the pointer table has run into the
+string data it points at. The caller formats the result with `%s`.
+
+**Observed.** Slot 20 is `THIEF_STOLEN_RESOURCEPRISONER_ESCAPE`, 36 characters — the longest entry
+in the table by eight characters over the next longest, `UPDATE_SPELLS_USED_IN_COMBAT`.
+
+**Inferred**, strongly: that is two names in one C string literal, i.e. a missing comma, so the
+table has 97 pointers where the enum has 98 values, and `table[t]` yields the name of message
+`t + 1` for every `t ≥ 21`.
+
+**Observed — an independent cross-check that shares no mechanism with the string evidence.** The
+CHECKSUM builder sends `push 5Fh` at `0x004b4c4f`, i.e. `gm_type` **95**. Table slot 94 is
+`CHECKSUM`; slot 95 is `AUTOPLAY`. A live send site puts the name exactly one slot low, which
+confirms the shift from code rather than from the data layout. The same arithmetic makes the
+intended type of `XFER_PROGRESS` 97 — the one index the bound permits and the table cannot serve.
+
+**Inferred:** the divergence report, whose whole job is to say which message the peers disagreed
+after, prints the wrong message name for anything above type 20, and prints from a wild pointer for
+`XFER_PROGRESS`. The wrong names are all plausible, which is the worst kind of wrong.
+
+A first version of the survey tool tried to detect the merge automatically by "entry X ends with
+entry Y's whole name". That rule fired on `BATCH_ORDERS`/`ORDERS`, `SCRIPTCALLBACK`/`ACK` and
+`REQUEST_START_GAME`/`START_GAME` — all legitimate — and missed slot 20, because the swallowed name
+is only a *suffix* of the merged literal and no slot points at it. The tool now reports the length
+distribution and leaves the argument to this document.
+
+## 7. The desync post-mortem is wired up and disabled
+
+This replaces the first half's hope that the network log could be captured. **It cannot be, and the
+reason is in the binary.**
+
+**Observed in a local binary.**
+
+```text
+004b4940  mov eax,[5843E4h]        ; the gate
+004b4945  test eax,eax
+004b4947  je  004B496Ah            ; zero: return, having done nothing
+004b4949  mov eax,[5843E8h]        ; the setstatlogproc procedure
+004b494e  cmp al,6                 ; tag 6 = procedure
+004b4950  jne 004B496Ah
+004b4957  mov ecx,[5843ECh]
+004b495d  push ecx
+004b495e  mov ecx,[5A7B78h]        ; the interpreter
+004b4965  call 004D05E0h           ; execute it
+```
+
+- **Observed.** `0x004b4940` has exactly one caller: `0x004b52d7`, immediately after the
+  `Divergence` report is formatted. The engine is built to dump full state at the moment a desync
+  is detected.
+- **Observed.** `0x005843e8`/`0x005843ec` hold the procedure `setstatlogproc` registers
+  (`0x004b5781`, `0x004b57b4`), and `gs/network.gs` registers one that walks every player, army and
+  unit through `netlog`.
+- **Observed.** `0x005843e4`, the gate, is written at exactly one instruction in the whole image —
+  `0x004b585e`, `mov [5843E4h],edi`, inside the `netlog` operator, with `edi` zeroed at
+  `0x004b57d9`. It lies past the end of `.data`'s raw data, so it is zero at load.
+
+**So the gate is zero at load and the only write to it writes zero. The post-mortem never runs.**
+
+This time that reading is safe, and it is worth saying why, because the first half of this document
+records me getting an identical-looking measurement wrong. `0x005d1e84` had many reads and no
+absolute writes because it is a *field of a static object* whose writer holds the base in a
+register. `0x005843e4` is different: it *is* written absolutely, and its neighbours
+`0x005843e0`/`0x005843e8`/`0x005843ec`/`0x005843f0` are each written absolutely by a different
+operator, which is the signature of separate globals rather than one object. The
+absolute-write-exists check is what makes the conclusion sound here and unsound there.
+
+**Observed.** `netlog` itself (`0x004b57d0`) pops one string and, if its first byte is `*`
+(`cmp byte [eax],2Ah` at `0x004b5859`), stores zero to the gate. It contains no output call of any
+kind — its only `call` is the interpreter's error raiser. **`netlog` writes nothing.**
+
+**Inferred:** this is why no one in this community has ever diffed a desync. The instrument exists,
+fires in the right place, and is switched off in the shipped binary with no switch to turn it on.
+
+### What is *not* the same thing
+
+- **Observed.** `GS.LOG` (`0x0055e44c`) and `GSDEBUG.DAT` (`0x0055e440`) are filename fields of the
+  GameScript **VM** object, copied in at `0x004d2225` and `0x004d221d` into fields `+0x660` and
+  `+0x55c`. They are the script engine's own logs, not the network stat log. **Unknown:** what
+  writes them and under what condition.
+- **Observed.** The `GS Checksum=%d,…` block (`0x0055c048`, a single 19-field format string) is
+  `sprintf`-ed at `0x0048d3d9` with `[0x00584604]` as its first argument. **Unknown:** where that
+  buffer goes.
+- **Observed.** A second registered procedure (`0x005843f8`/`0x005843fc`) *is* invoked, from
+  `0x004b48e0`, but only while `[0x00584418] == 2` (one of the network setup screens) and no more
+  than once per 100 ms. That is a lobby tick, not a logger.
+
+### The honest recipe
+
+There is no recipe for the stat log. What *can* be done, with its evidence:
+
+1. **Observed.** `gschecksumon` / `gschecksumoff` (`0x004d6ce0` / `0x004d6cf0`) set and clear
+   `0x00584600`, and that is the gate on the `'GS' files` accumulation and nothing else. A mod or
+   the console can widen the accumulated range. Useful for *changing* the checksum, not for seeing
+   it.
+2. **Observed.** `getgameseed` (`0x004e56f0`) returns `[0x00573428]`, the value compared as
+   `'Random-Seed'`. A script can print it. Two peers reading out different seeds is a desync you can
+   see without any engine logging.
+3. **Observed.** `setchecksumproc`'s procedure result is compared as `'Player-Stats'`, and a script
+   can compute and display the same value it hands the engine. The vanilla procedure in
+   `gs/network.gs` is a worked example.
+
+Those three are script-side and need no patching. Getting the engine's own dump out needs one byte
+of the executable changed, which is outside this document's scope and outside its rules.
+
+## 8. `/testseed=` and the rest of the command line
+
+**Observed in a local binary**, `0x004fee60`–`0x004fefb0`. The parser is `strstr` against a literal,
+then `atoi` for the `=` forms. The complete set:
+
+| Switch | Effect | At |
+| --- | --- | ---: |
+| `/s=` | `atoi` into a config field | `0x004fee2x` |
+| `/x=` | `atoi` into config `+0x6ac` | `0x004feeaf` |
+| `/testseed=` | `atoi` into the global `0x005d2ca4` | `0x004feef8` |
+| `/debug` | config `+0x6b0` = 1 | `0x004fef1a` |
+| `/nodebug` | config `+0x6b0` = 0 | `0x004fef4e` |
+| `/nompq` | config `+0x12c` = 0 | `0x004fef66` |
+| `/notrimlogs=` | config `+0x130` = 0 (the value is parsed by nothing; presence is enough) | `0x004fef7e` |
+| `/cd=` | string copy | `0x004fef84`+ |
+| `/%` | config `+0x6b4` = 0 | `0x004fef36` |
+
+**Unknown:** what reads config `+0x130`, so what `/notrimlogs=` actually changes is not
+established. The name is suggestive and the name is all I have.
+
+**Observed.** `0x005d2ca4` is read at exactly three sites and they make `/testseed=` a determinism
+switch, not just a seed:
+
+- `0x0048417b`: the host builds message type `0x4c` and sets the game seed to `[0x005d2ca4]` if it
+  is non-zero, **otherwise to `rand()`** (`call 0x0053a110` at `0x00484184`), storing it to
+  `0x005843e0`.
+- `0x0045c722` and `0x0045cdf4`: in two message-construction paths, `[0x005d2ca4] + [0x00573428]` is
+  used **in place of `GetTickCount() + [0x00573428]`** when the switch is set.
+
+**Inferred:** `/testseed=<n>` fixes the shared seed *and* replaces the wall clock in two paths that
+put a timestamp on the wire. That is the developers' desync-reproduction switch, and it is the right
+tool for the two-machine experiment below.
+
+## 9. The pre-flight checker
+
+`spikes/asset-viewer/examples/preflight.rs`, over `install_checksum`. It reports, per pair of
+installs: the reproduced `'EXE' version`; exact content comparison of `lomse.exe`, `gs.mpq`,
+`imp.mpq` and `pic.mpq`; and a per-member comparison of the script archive with the engine's
+accumulator run over every member.
+
+It is deliberately conservative and deliberately limited, and says so in its own output:
+`'EXE' version` is a **prediction** about the engine because the algorithm is fully reproduced;
+`'GS' files` is a **comparison** because the member set the engine loads is unknown; `'IMP' files`
+is a **content statement** because no algorithm exists to reproduce.
+
+### Validated against three installs on this machine
+
+Three installs of the same game, independently confirmed by `shasum` to have byte-identical
+`lomse.exe` and `imp.mpq` and three different `gs.mpq`. That makes the checker's output falsifiable:
+`'EXE' version` must match for all three pairs, `imp.mpq` must be identical for all three, and the
+script content must differ for all three.
+
+| | `'EXE' version` | `imp.mpq` | script content | accumulator |
+| --- | --- | --- | --- | --- |
+| Steambuild baseline | `149429203` | — | 1687 members, 4 934 695 B | `457423125` |
+| 3.02 | `149429203` | — | 1690 members, 5 109 799 B | `470619348` |
+| GS5R3 | `149429203` | — | 1699 members, 10 060 912 B | `867588804` |
+
+| Pair | `'EXE' version` | `imp.mpq` | `'GS' files` |
+| --- | --- | --- | --- |
+| baseline vs 3.02 | will not diverge | identical | **differs** — 379 named members, `457423125` vs `470619348` |
+| baseline vs GS5R3 | will not diverge | identical | **differs** — 2406 named members, `457423125` vs `867588804` |
+| 3.02 vs GS5R3 | will not diverge | identical | **differs** — 2770 named members, `470619348` vs `867588804` |
+
+All nine predictions hold. `pic.mpq`, which has no divergence class, is identical for the first pair
+and differs for the other two.
+
+**The corollary matters more than the tool.** Since the executable is byte-identical across all
+three, **`'EXE' version` cannot be what makes a modded install incompatible.** Script content is the
+whole story — which is what the first half concluded from the divergence classes, now with the
+mechanism and a measurement behind it.
+
+**Caveat, stated because it is the checker's real limit.** The archive comparison covers every
+member, not only those the engine loads, so it can report a difference the engine would never see.
+That is a false alarm, which is the safe direction; it cannot miss a difference the engine would
+see. `(listfile)` is excluded because its contents are the member *names*, which StormLib
+synthesises for unnamed members, and two archives naming their unnamed members differently is not a
+script difference.
+
+**Caveat on the test.** `install_checksum`'s three-install test skips when the installs are absent,
+so on a machine without the game it cannot fail — a real weakness by this repo's standards. The
+algorithms are therefore also covered by synthetic tests that always run, and the two were
+mutation-checked separately: swapping the sign-extension for a zero-extension fails two synthetic
+tests **and passes the three-install test**, which is precisely the limit of what a separation test
+can prove.
+
+## What still needs two machines, after the second pass
+
+Items 1–7 of the first list stand. These replace item 8 and add to it.
+
+9. **Run a deliberately reproducible session.** Launch both peers with the *same* `/testseed=<n>`.
+   Predicted: identical `gameseed`, and the two paths at `0x0045c722`/`0x0045cdf4` stop contributing
+   wall-clock variation. If a desync still occurs, it is reproducible, and that is the difference
+   between a bug report and a shrug. This is the experiment design the rest of the list needs.
+
+10. **Read the seed out of both peers with a script.** `getgameseed` is callable from the console.
+    Two different values is a `'Random-Seed'` divergence you can see without engine logging. Ten
+    seconds of work, and it distinguishes "the seeds never matched" from "the simulations drifted".
+
+11. **Compute `setchecksumproc`'s own procedure on both peers and display it.** Vanilla
+    `gs/network.gs` already contains the procedure; running it and printing the result is the only
+    way to observe `'Player-Stats'` in this build. If the two agree while the game visibly disagrees,
+    the divergence is in something the script checksum does not cover.
+
+12. **Try a session with five or more computers.** The comparator checks at most four
+    (`0x004b4f43`). Predicted: peers five and up are never validated against anyone, so a desync on
+    those peers is silent. This is Observed code with an Unknown consequence and only a real session
+    can say which.
+
+13. **Provoke a `gm_type` 97 (`XFER_PROGRESS`) report.** A joining peer receiving a scenario file is
+    the path that sends it. If the reporter is reached with that type it formats a wild pointer.
+    Whether that is a crash, garbage, or unreachable in practice is **Unknown** and one join with a
+    large scenario would tell.

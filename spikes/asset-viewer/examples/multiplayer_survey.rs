@@ -18,6 +18,11 @@
 //!
 //! Optionally pass `--imports` to list the imported module for every call site in the networking
 //! DLLs, which is what distinguishes "the transport is DirectPlay" from "the transport is Storm".
+//!
+//! It also regenerates the wire protocol's message-name table, because that table is what decodes
+//! a divergence report and because it is wrong in the shipped engine in a way that only shows up
+//! when you read it in order. Pass `--messages <hex address of the lookup function>` to override
+//! the default.
 
 use std::collections::BTreeMap;
 
@@ -34,6 +39,11 @@ const VTABLE_SLOT_LIMIT: usize = 64;
 /// null check and a tail call and nothing else -- which is exactly why it is the reliable seed.
 const SEED_OPERATOR: &str = "netlockgame";
 
+/// The `gm_type` to name lookup, `mov eax,[imm32 + eax*4]` behind a bounds check. Its bound and
+/// its table base are read out of its own body rather than hardcoded, so a build with a different
+/// table is reported rather than silently mis-decoded.
+const DEFAULT_MESSAGE_LOOKUP: u32 = 0x0048_a4e0;
+
 /// Modules whose imports decide what the transport actually is.
 const TRANSPORT_MODULES: [&str; 5] = ["DPLAYX", "STORM", "WSOCK32", "WS2_32", "DPNET"];
 
@@ -43,7 +53,26 @@ fn main() {
         eprintln!("usage: multiplayer_survey <lomse.exe> [--imports]");
         std::process::exit(2);
     });
-    let show_imports = arguments.any(|argument| argument == "--imports");
+    let mut show_imports = false;
+    let mut message_lookup = DEFAULT_MESSAGE_LOOKUP;
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--imports" => show_imports = true,
+            "--messages" => {
+                message_lookup = arguments
+                    .next()
+                    .and_then(|value| u32::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+                    .unwrap_or_else(|| {
+                        eprintln!("--messages needs a hex address");
+                        std::process::exit(2);
+                    });
+            }
+            other => {
+                eprintln!("unrecognised argument {other}");
+                std::process::exit(2);
+            }
+        }
+    }
 
     let bytes = std::fs::read(&path).expect("read executable");
     let image = PeImage::parse(&bytes).expect("parse 32-bit PE");
@@ -81,6 +110,7 @@ fn main() {
     println!();
     println!("`{SEED_OPERATOR}` dispatches virtually through the pointer at {pointer:#010x}.");
 
+    report_message_table(&image, message_lookup);
     report_singletons(&dispatches, pointer);
     report_base_members(&dispatches, pointer);
     let slots = report_operator_slots(&dispatches, pointer);
@@ -336,6 +366,136 @@ fn report_vtables(image: &PeImage<'_>, operator_slots: &BTreeMap<u32, Vec<String
     );
     println!();
     println!("Disassemble those with `cargo run --release --example disasm -- <exe> <address>`.");
+}
+
+/// Regenerate the `gm_type` to name table, with the bound the code actually enforces.
+///
+/// Three things are worth seeing here and none of them survives a paste:
+///
+/// * the bound the code checks against, versus how many entries the table really has;
+/// * any entry that has swallowed the next name, which is what a missing comma in a C array of
+///   string literals looks like from the outside;
+/// * any slot inside the bound that does not resolve to a string, because the caller formats the
+///   result with `%s`.
+fn report_message_table(image: &PeImage<'_>, lookup: u32) {
+    println!();
+    println!("## Message-name table");
+    println!();
+
+    let Some((base, bound)) = message_table_shape(image, lookup) else {
+        println!(
+            "The lookup at {lookup:#010x} does not have the expected shape (a `cmp eax,imm32` \
+             bound followed by `mov eax,[imm32 + eax*4]`), so nothing is claimed about it."
+        );
+        return;
+    };
+    println!(
+        "Lookup at {lookup:#010x}: bound `{bound}` (so it accepts `gm_type` 0..{}), table base \
+         {base:#010x}.",
+        bound - 1
+    );
+
+    // Read until a slot stops resolving to a string, then report both lengths.
+    let mut names: Vec<Option<String>> = Vec::new();
+    for index in 0..bound {
+        let Some(offset) = image.file_offset(base + index * 4) else {
+            break;
+        };
+        let Some(word) = image.bytes().get(offset..offset + 4) else {
+            break;
+        };
+        let pointer = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+        names.push(read_c_string(image, pointer));
+    }
+    let resolving = names.iter().take_while(|name| name.is_some()).count();
+    println!();
+    println!(
+        "{resolving} slot(s) resolve to a string; the bound permits {bound}. {}",
+        if resolving < bound as usize {
+            format!(
+                "**Slots {resolving}..{} are inside the bound and do not resolve**, so a `gm_type` \
+                 in that range is formatted with `%s` from a value that is not a string pointer.",
+                bound - 1
+            )
+        } else {
+            String::from("Every permitted index resolves.")
+        }
+    );
+
+    // Report the length distribution rather than guessing which entry is malformed.
+    //
+    // A first version of this flagged "entry X ends with entry Y's whole name" as a swallowed
+    // literal. That rule is wrong in both directions here: it fired on `BATCH_ORDERS`/`ORDERS`,
+    // `SCRIPTCALLBACK`/`ACK` and `REQUEST_START_GAME`/`START_GAME`, which are all legitimate
+    // separate names, and it missed the entry that really is two names -- because the swallowed
+    // name is only a *suffix* of the merged literal and no slot points at it, so there is nothing
+    // to match against. A detector that cannot be stated crisply is worse than none, so the tool
+    // reports the measurement and `docs/multiplayer.md` argues the cause.
+    let resolved: Vec<(usize, &str)> = names
+        .iter()
+        .enumerate()
+        .filter_map(|(index, name)| name.as_deref().map(|name| (index, name)))
+        .collect();
+    let mut by_length = resolved.clone();
+    by_length.sort_by_key(|(_, name)| std::cmp::Reverse(name.len()));
+    println!();
+    println!("Longest entries, because a literal that swallowed its neighbour shows up here:");
+    for (index, name) in by_length.iter().take(5) {
+        println!("- slot {index}: `{name}` ({} chars)", name.len());
+    }
+
+    println!();
+    println!("| gm_type | Name in the table |");
+    println!("| ---: | --- |");
+    for (index, name) in names.iter().enumerate() {
+        match name {
+            Some(name) => println!("| {index} | `{name}` |"),
+            None => println!("| {index} | **does not resolve to a string** |"),
+        }
+    }
+}
+
+/// The table base and the bound, read out of the lookup function's own body.
+fn message_table_shape(image: &PeImage<'_>, lookup: u32) -> Option<(u32, u32)> {
+    use iced_x86::{Decoder, DecoderOptions, Mnemonic, OpKind, Register};
+
+    let offset = image.file_offset(lookup)?;
+    let mut decoder = Decoder::with_ip(
+        32,
+        &image.bytes()[offset..],
+        u64::from(lookup),
+        DecoderOptions::NONE,
+    );
+    let mut bound = None;
+    for _ in 0..16 {
+        let instruction = decoder.decode();
+        if instruction.is_invalid() {
+            return None;
+        }
+        if instruction.mnemonic() == Mnemonic::Cmp
+            && instruction.op0_kind() == OpKind::Register
+            && instruction.op1_kind() == OpKind::Immediate8to32
+        {
+            bound = Some(instruction.immediate32());
+        }
+        if instruction.mnemonic() == Mnemonic::Mov
+            && instruction.op1_kind() == OpKind::Memory
+            && instruction.memory_index() != Register::None
+            && instruction.memory_index_scale() == 4
+            && instruction.memory_base() == Register::None
+        {
+            return bound.map(|bound| (instruction.memory_displacement32(), bound));
+        }
+    }
+    None
+}
+
+/// A NUL-terminated string at a virtual address, or `None` if the address is not raw data.
+fn read_c_string(image: &PeImage<'_>, address: u32) -> Option<String> {
+    let start = image.file_offset(address)?;
+    let tail = image.bytes().get(start..)?;
+    let length = tail.iter().position(|byte| *byte == 0)?;
+    std::str::from_utf8(&tail[..length]).ok().map(str::to_owned)
 }
 
 /// Imported module, function name, import thunk address, and the direct callers of that thunk.

@@ -3518,3 +3518,128 @@ to rate-limit itself, with a 100 ms default post-send wait set in the base const
 per-destination sequence number kept as a dword but sent as **one byte**; a silent drop path for a
 flagged peer; and no IP-address field anywhere in the shipped UI, so discovery is broadcast-only and
 `Join` refuses any name not already in the enumerated list.
+
+## 2026-09-18 — The six checksums, an offline pre-flight checker, and a post-mortem that is switched off
+
+Second pass on multiplayer. Full detail in [`docs/multiplayer.md`](multiplayer.md) from the heading
+"Second pass". Three results, in order of how much they change what a person would do.
+
+### 1. The desync post-mortem exists, fires in exactly the right place, and is disabled
+
+**Observed.** `0x004b4940` runs the procedure registered by `setstatlogproc` — in vanilla
+`gs/network.gs`, a full per-player, per-army, per-unit state dump — and has exactly **one** caller,
+`0x004b52d7`, immediately after the `Divergence` report is formatted. The engine was built to dump
+its state the moment a desync is detected.
+
+**Observed.** It is gated on `[0x005843e4]`. That global is written at exactly one instruction in
+the whole image, `0x004b585e` inside the `netlog` operator, with `edi` zeroed at `0x004b57d9`. It
+lies past `.data`'s raw data, so it is zero at load. **The gate is zero at load and the only write
+to it writes zero.** `netlog` itself contains no output call of any kind.
+
+So the instrument is switched off with no switch to turn it on, which is a complete explanation for
+why nobody in this community has ever diffed a desync. This **replaces** the first pass's closing
+suggestion that the network log be captured; it cannot be, and no second machine was needed to find
+that out.
+
+**Why this global reading is sound when last week's identical-looking one was not.** On the previous
+entry I read `0x005d1e84` as never written and was wrong: it is a field of a static object whose
+writer holds the base in a register, so no absolute store existed to find. `0x005843e4` *is* written
+absolutely, and each of its neighbours `0x005843e0`/`e8`/`ec`/`f0` is written absolutely by a
+different operator — the signature of separate globals, not one object. The presence of an absolute
+write is the check that distinguishes the two cases, and it is the check I skipped last time.
+
+### 2. Two of the three install-derived checksums are reproducible; the third is not computed
+
+**Observed.** The comparator dispatches on a value index through a six-entry jump table at
+`0x004b54a8` (`cmp eax,5 / ja` at `0x004b4f9b`), giving index 0 `'EXE' version`, 1 `'GS' files`,
+2 `'Random-Seed'`, 3 `'Player-Stats'`, 4 `'IMP' files`, 5 `'PlayAnimation Count'`.
+
+**Observed.** `'EXE' version` (`0x004b4a95`–`0x004b4b2a`) is a 32-bit wrapping sum of the
+**zero-extended** bytes of the running executable, cached in `0x00584424`.
+
+**Observed.** `'GS' files` (`0x004d496c`–`0x004d4990`) is a 32-bit wrapping sum of the
+**sign-extended** bytes of every script source the loader is handed, gated by
+`gschecksumon`/`gschecksumoff` on `0x00584600` and accumulated in `0x00584604` — the same global
+the state dump prints as `GS Checksum=%d`. It is **not** a digest of `gs.mpq`. That sharpens the
+first pass rather than contradicting it: peers with different scripts still diverge, and the engine
+notices by executing them.
+
+The two byte sums are **not the same byte sum**: `movsx` against `xor edx,edx`. Any test vector made
+of ASCII cannot tell them apart, which is how a guessed hash would have survived a weak test.
+
+**Observed.** There is exactly one `CHECKSUM` builder (`0x004b4c20`, one caller) and its complete
+set of payload stores puts four meaningful quantities in a ten-dword payload: the executable sum,
+the script content sum, the game seed, and the script `setchecksumproc` result. Two slots are
+hardcoded zero; two are never written. **Inferred: two of the six named classes can never fire and a
+third may compare uninitialised stack.** Which class lands on which slot is **Unknown** — the
+payload offsets and the value indices do not line up in any ordering I could justify, and I did not
+pick one to make the table tidy.
+
+**Observed.** `lomse.exe` contains no `.mpq` filename string, and the only two whole-file byte-sum
+routines are the executable sum and a generic one at `0x004b1e60` serving the scenario transfer.
+**Inferred: `'IMP' files` is not computed in this build.** So the pre-flight checker is built around
+what was read, not around a plausible hash.
+
+Also Observed, on the bounds: the checksum queue is **100 entries of 192 bytes** (`mov esi,64h` at
+`0x004b4a71`, stride `0xc0`), and the comparison covers **at most four computers**
+(`cmp ebx,4 / jge` at `0x004b4f43`) while computer records are indexed 1..16.
+
+### 3. The pre-flight checker works, validated three ways
+
+`examples/preflight.rs` over the new `install_checksum` module. Three installs on this machine have
+byte-identical `lomse.exe` and `imp.mpq` and three different `gs.mpq` (confirmed independently with
+`shasum` before trusting it), so the output is falsifiable.
+
+| Pair | `'EXE' version` | `imp.mpq` | script content |
+| --- | --- | --- | --- |
+| baseline vs 3.02 | both `149429203` | identical | differs, 379 named members |
+| baseline vs GS5R3 | both `149429203` | identical | differs, 2406 named members |
+| 3.02 vs GS5R3 | both `149429203` | identical | differs, 2770 named members |
+
+All nine predictions hold. **The corollary is the useful part: since the executable is byte-identical
+across all three, `'EXE' version` cannot be what makes a modded install incompatible. Script content
+is the whole story.**
+
+Honest limits, both in the tool's own output: the archive comparison covers every member rather than
+only those the engine loads, so it can raise a false alarm but cannot miss a real difference; and
+the three-install test skips when the installs are absent, so on a bare machine it cannot fail. The
+algorithms are separately covered by synthetic tests that always run. Mutation-checked: swapping the
+sign-extension for a zero-extension fails two synthetic tests **and passes the three-install test**,
+which is exactly the limit of what a separation test can prove.
+
+### 4. The message-name table is off by one, and its last slot is a wild pointer
+
+**Observed.** The lookup at `0x0048a4e0` bounds `gm_type` to 0..97 (`cmp eax,62h`), and only 97
+slots of the table at `0x0055b898` resolve to a string; slot 97 holds `0x52454658`, the ASCII bytes
+`XFER` — the pointer table has run into the string data it points at, and the caller formats it
+with `%s`. Slot 20 is `THIEF_STOLEN_RESOURCEPRISONER_ESCAPE`, 36 characters, eight longer than the
+next-longest entry. **Inferred, strongly:** a missing comma in a C literal array, so `table[t]`
+names message `t + 1` for every `t ≥ 21`.
+
+**Observed — a cross-check sharing no mechanism with the string evidence.** The CHECKSUM builder
+sends `push 5Fh` (type 95) at `0x004b4c4f`; slot 94 is `CHECKSUM` and slot 95 is `AUTOPLAY`. A live
+send site puts the name one slot low. A third confirmation: the 16 message types that route to the
+checksum-emitting branch are, shift-corrected, all simulation mutations (`MOVE_ARMY`, `END_TURN`,
+`BUY_UNIT`, `ORDERS`, `SCRIPTCALLBACK`, …) and uncorrected a nonsense mix.
+
+**A detector I withdrew.** The survey tool first flagged the merge automatically with "entry X ends
+with entry Y's whole name". It fired on `BATCH_ORDERS`/`ORDERS`, `SCRIPTCALLBACK`/`ACK` and
+`REQUEST_START_GAME`/`START_GAME` — all legitimate — and **missed slot 20**, because the swallowed
+name is only a suffix of the merged literal and no slot points at it. Three false positives and a
+false negative. The tool now reports the length distribution and the argument lives in prose. A
+detector that cannot be stated crisply is worse than none.
+
+### 5. `/testseed=` is a determinism switch, not just a seed
+
+**Observed.** The command line is parsed at `0x004fee60`–`0x004fefb0` by `strstr` plus `atoi`:
+`/s=`, `/x=`, `/testseed=`, `/debug`, `/nodebug`, `/nompq`, `/notrimlogs=`, `/cd=`, `/%`.
+`/testseed=` stores to `0x005d2ca4`, read at three sites: `0x0048417b` makes the host's game seed
+`[0x005d2ca4]` when non-zero and `rand()` otherwise, and `0x0045c722`/`0x0045cdf4` substitute
+`[0x005d2ca4]` for `GetTickCount()` in two message-construction paths. **Inferred:** it fixes the
+shared seed *and* removes wall-clock variation from two wire paths, which is the right tool for a
+reproducible two-machine test.
+
+**Unknown:** what reads config `+0x130`, so what `/notrimlogs=` changes is not established. The name
+is suggestive and the name is all I have. Also Unknown: what writes `GS.LOG` and `GSDEBUG.DAT` —
+Observed only that they are filename fields of the GameScript VM object (`+0x660` and `+0x55c`, set
+at `0x004d2225`/`0x004d221d`), which is a different thing from the network stat log.
