@@ -5697,3 +5697,80 @@ is `300000000`, and the longest numeric token is `3.14159265` at ten characters 
 would take to overflow. So the guard is unexercised rather than dead, and the unit test now drives
 it with `1e400` and `-1e400` instead of `INF`, which would no longer reach it. Evidence class:
 Observed in a local binary.
+
+## 2026-09-18 — Three savegame sections decoded from the writer, and two readings refuted
+
+`LS_PLR_`, `LS_REGN` and `LS_ALRM` now decode completely. `LS_SPR_` does not, and that is stated as
+a scope decision rather than a finding. Full detail in [save-format.md](save-format.md).
+
+**The method was the point, and it was not corpus inference.** The previous pass had taken corpus
+arithmetic as far as it goes and said so — "three observed lengths (8,998 / 9,389 / 9,780) and no
+known structure" is what five shipped scenarios have left to give. This pass walked the writer at
+`0x00482AF0` into the per-record writers it calls, and then used the files only as a **byte
+account**: parse with the recovered model and require the cursor to land exactly on the section's
+end. That check has nothing to tune, because every length in these sections is either a constant in
+the instruction stream or a count the file stores. All three land exactly, in every file, with zero
+slack.
+
+Routines walked: `0x004BCE20` / `0x004BCBD0` (player record, writer and reader), `0x0050A360`,
+`0x0050B800`, `0x00509FC0`, `0x0049F2A0`, `0x0051C6C0`, `0x004BF0A0`, `0x004C7390`, `0x004C5840`,
+the six alarm list writers `0x0040B7D0` .. `0x0040F600` with their element writers, and the shared
+string writer `0x004D5F20`.
+
+**Refuted: `LS_ALRM`'s eight-word header.** There is no header. The section is six independent
+linked lists, each `u32 count` then that many records. What two passes read as a header is
+`count(queue 0) = 0`, `count(queue 1)`, then the first five fields of queue 1's first record — and
+the eighth "header word", the constant 16, is the **string length of `monstergenerator`**. The turn
+does sit at payload word 2 in every file, *because queue 0 is empty in every file*. This is the same
+failure the previous `Corrected` note diagnosed, one level up: that note moved the turn from index 1
+to index 2 and kept the frame. Indexing into a payload is not a structure, and a check that asks
+"does some word equal the turn" cannot tell a field from a coincidence. Evidence class: Refuted.
+
+**Refuted: `LS_PLR_`'s "record size is not established for version 111" — the premise.** There is no
+record size at any version. A record is a tree of counted lists and varies *within* one file;
+`combat.sav` holds eight records of eight different lengths, 6,759 to 7,339 bytes. The version-108
+file's clean `9 × 6223` is a turn-1 scenario in which every player has an empty queue and sixteen
+empty armies, not a stride. Evidence class: Refuted.
+
+**Corrected: version and game-age were not confounded for that reading.** The previous pass said
+resolving the 108-versus-111 difference needed a new sample. It needed the reader: eight
+`cmp dword [0x5AA12C], n / jl` gates in `0x004BCBD0` at minimum versions 57, 68, 76, 86, 104, 110
+and 111. Version 108 clears 104 and not 110 or 111, so it stores 12 bytes less per record — exactly
+what the corpus shows. The writer has **no** gates, so a save is readable by its own build and every
+later one; the ladder exists only for older files. Evidence class: Corrected.
+
+**Corrected: `[0x0054D0D8]` / `[0x0054D0DC]` is a lock pair, not a transform**, so the asterisk on
+"no compression and no encryption" comes off `LS_REGN`. Both take a pointer to `[this+0x1bc]` as
+their only argument and neither return is used; and the cross-check that does not share that
+mechanism is that the bytes between them decode with no transform applied at all. Evidence class:
+Corrected.
+
+**Corrected: the corpus is ten distinct game states across 24 files, not seven across twenty.**
+There are four installs on this machine, not three, and `Lords of Magic GS5R3.app` carries four
+files no other install has — `combat.lom`, `endturn.lom`, and its own `lastsave.lom` and `Merlin I`,
+which do not match the identically-named 3.02 files. Three further states, all genuine play. Worth
+recording because it cuts the other way from the usual error: the previous pass was rightly
+suspicious of an inflated file count and, guarding against that, stopped looking for more states.
+Evidence class: Corrected.
+
+**What resisted.** `LS_SPR_`. Its writer at `0x004F6BC0` is now read — `u32 live_count`, then one
+self-identifying record per live object through `call [vtable+0x20]` — which narrows the problem to
+ten class writers, each of which will be a tree like `0x004BCE20`'s with its own version ladder.
+That was not attempted here. The next instrument is the vtable, not the files. Also still open: the
+six-byte `LS_REGN` grid cell, whose fields the writer says nothing about because it emits the whole
+grid in one `fwrite`.
+
+**A bounded negative, with what it could not reach.** Alarm queues 3 and 4 are **empty in all 24
+files**. Their field schedules are Observed in a local binary and have no corpus corroboration at
+all — a wrong reading of either would parse every available save perfectly. Likewise `LS_PLR_`'s
+gates at 57, 68, 76, 86 and 104: the corpus holds two versions, so five of the seven gates are
+exercised only by synthetic fixtures.
+
+**Mutation sweep: 53 mutations over the new code, every constant in both directions, 53 caught, 0
+survivors.** The first run had three survivors and they were all one defect: `NAME` 76→75,
+`BLOCK_68` 104→103 and `UNKNOWN_15B4_15B8` 110→109 each survived because no fixture version stood
+between the gate and the value below it. All three were caught in the *up* direction. This is the
+asymmetry already recorded for the visibility level `63`, walked into again in a new place: **a
+version sweep that samples only the gates cannot fail on a gate moved down.** The fix sweeps each
+gate *and the version immediately below it*, and asserts the per-step size deltas including the
+zeros, since a zero is exactly what a downward gate move destroys.

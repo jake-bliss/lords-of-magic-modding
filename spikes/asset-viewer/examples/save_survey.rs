@@ -9,24 +9,25 @@
 //! Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition/English/savegame"
 //! ```
 //!
-//! More than one directory may be given, which is how the six shipped demo saves and the 3.02
-//! install's two files are surveyed in one run.
+//! More than one directory may be given, which is how the six shipped demo saves, the 3.02
+//! install's two extra files and the GS5R3 install's four are surveyed in one run.
 //!
 //! Every file in the directory is attempted regardless of extension: two of the corpus files
 //! (`quickstart`, `Merlin I`) have none, and a survey that filtered on `.sav` would have silently
 //! skipped the only mid-game player states in existence here.
 //!
 //! **Every invariant prints the value it measured, not just pass or fail.** That is deliberate and
-//! it is not decoration. The `LS_ALRM` turn index was wrong for a whole analysis pass while a
-//! pass/fail check reported green -- *some* header word equalled the turn, so the invariant
-//! "held"; it was the wrong word. Only the number shows that.
+//! it is not decoration. The `LS_ALRM` turn index was wrong for two analysis passes while a
+//! pass/fail check reported green -- *some* payload word equalled the turn, so the invariant
+//! "held"; it was the wrong word, and there was no header for it to be a word of. Only the number
+//! shows that.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use lom_asset_viewer::save::{
-    AlarmSection, SECTION_TAGS, SaveContainer, SaveError, SaveFile, TagCensus, UserRecord,
+    SECTION_TAGS, SaveContainer, SaveError, SaveFile, TagCensus, UserRecord,
 };
 
 /// How far the `LS_SPR_` fixed-stride search looks for a plausible per-section header.
@@ -224,27 +225,60 @@ fn main() -> ExitCode {
             save.game.trailer,
         );
         println!(
-            "    LS_PLR_  {} record bytes undecoded, terminator at +{}, lord codes {:?}",
-            save.players.records_raw.len(),
+            "    LS_PLR_  {} records, lengths {:?}, slots {:?}, terminator at +{}, lord codes {:?}",
+            save.players.records.len(),
+            save.players.record_lengths(),
+            save.players
+                .records
+                .iter()
+                .map(|record| record.slot_index)
+                .collect::<Vec<u32>>(),
             save.players.sentinel_offset(),
             save.players.lord_codes,
         );
+        for record in &save.players.records {
+            println!(
+                "      slot {:>2}  {} bytes  queue {}  units {}  name {:?}",
+                record.slot_index,
+                record.encoded_len(),
+                record.queue.len(),
+                record
+                    .armies
+                    .iter()
+                    .map(|army| army.units.len())
+                    .sum::<usize>(),
+                record.name_lossy().unwrap_or_default(),
+            );
+        }
         println!(
-            "    LS_REGN  {}x{}  grid {} bytes  tail {} bytes (structure unknown)",
+            "    LS_REGN  {}x{}  grid {} bytes  tail {} bytes  {} regions (array {} + 1)",
             save.regions.width,
             save.regions.height,
             save.regions.grid_len(),
             save.regions.tail_len(),
+            save.regions.regions.len(),
+            save.regions.array_count,
         );
         println!(
-            "    LS_ALRM  header {:?}  turn@{} {}  countdown {} -> turn {:?}  {} record bytes undecoded",
-            save.alarms.header,
-            AlarmSection::TURN_INDEX,
+            "    LS_ALRM  queues {:?}  turn {:?}  countdown {:?} -> turn {:?}",
+            save.alarms
+                .queues
+                .iter()
+                .map(|queue| queue.records.len())
+                .collect::<Vec<usize>>(),
             save.alarms.turn(),
             save.alarms.countdown(),
             save.alarms.turn_from_countdown(),
-            save.alarms.records_raw.len(),
         );
+        let mut callbacks: BTreeMap<String, usize> = BTreeMap::new();
+        for (_, record) in save.alarms.records() {
+            for name in &record.names {
+                *callbacks
+                    .entry(String::from_utf8_lossy(name).into_owned())
+                    .or_default() += 1;
+            }
+        }
+        println!("      callbacks {callbacks:?}");
 
         println!("  corpus regularities (a failure here is a DISCOVERY, not a bad file)");
         for check in save.regularities() {
@@ -431,10 +465,21 @@ fn normalized_state(save: &SaveFile) -> Vec<u8> {
     }
     out.extend_from_slice(&save.regions.tail_raw);
 
-    for value in &save.alarms.header {
-        out.extend_from_slice(&value.to_le_bytes());
+    for queue in &save.alarms.queues {
+        out.extend_from_slice(&(queue.records.len() as u32).to_le_bytes());
+        for record in &queue.records {
+            for word in &record.words {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+            for name in &record.names {
+                out.extend_from_slice(name);
+            }
+            for argument in &record.arguments {
+                out.extend_from_slice(&argument.to_le_bytes());
+            }
+            out.extend_from_slice(&record.trailer.to_le_bytes());
+        }
     }
-    out.extend_from_slice(&save.alarms.records_raw);
 
     out
 }
