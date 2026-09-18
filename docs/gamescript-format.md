@@ -541,6 +541,39 @@ This is not a cosmetic detail. A `;` comment runs to the end of its line, so a r
 
 For the 49 bare-CR-only members, the line counter is the only thing between a reader and a line number of 1 for every position in the file. For the other 193 it is not absent but *understated*: the counter advances on the CRLF pairs and stalls across the bare CRs, so reported lines drift rather than collapse — which is the harder error to notice.
 
+### The same census across all three profiles
+
+The counts above are GS5R3's. Re-measured 2026-09-18 over **all 4,692 `.gs` members of the three
+installed profiles' `gs.mpq`** (vanilla 1,315, 3.02 1,681, GS5R3 1,696; 0 unreadable), as an
+*exclusive partition* rather than overlapping counts:
+
+| Exclusive style | vanilla | 3.02 | GS5R3 | all |
+|---|---:|---:|---:|---:|
+| no terminator at all | 1,170 | 1,379 | 501 | **3,050** |
+| CRLF only | 145 | 302 | 890 | 1,337 |
+| CRLF + bare CR | 0 | 0 | 193 | 193 |
+| bare CR only | 0 | 0 | 49 | 49 |
+| CRLF + bare LF | 0 | 0 | 40 | 40 |
+| bare LF only | 0 | 0 | 23 | 23 |
+
+This was produced independently of the numbers above and agrees with every one of them: ≥1 CRLF
+890 + 193 + 40 = 1,123; ≥1 bare CR 193 + 49 = 242; ≥1 bare LF 40 + 23 = 63; no terminator 501;
+bare-CR-only 49; and 3.02 with no bare CR at all. Evidence class: Observed in a local binary.
+
+Two things the wider view adds. **Bare CR is a GS5R3 phenomenon**: neither vanilla nor 3.02 contains
+a single bare CR, so a tool that mishandles them is correct on two of the three profiles and on the
+whole of the vanilla corpus a first mod is most likely to be built against. And **the single
+commonest shape in the corpus is a member with no line ending at all** — 65% of it — which is why a
+"preserve the line endings" rule is not a useful check on its own. `units\orinf.gs`, the Phase 4
+target, is one of those: 1,798 bytes, one line, no trailing newline. The build pipeline therefore
+compares a replacement's census against its base member's rather than against any fixed style; see
+[the build pipeline](build-pipeline.md).
+
+The damage `tools/gs_syntax.py`'s LF-only comment rule actually does is narrower than the bare-CR
+population suggests, because a bare CR costs it nothing unless a `;` comment is there to run on.
+Comparing its token count against the same rule with CR treated as a terminator: **34 members lose
+tokens, all 34 in GS5R3, none in vanilla or 3.02.**
+
 The corpus relies on it. GS5R3's `gs\standard.gs` comments out its inherited `min`/`max` at lines 68 and 70 and redefines them at 73 and 74; reading the commented pair as live would give the wrong bodies.
 
 ## Procedure locals: `replace` and the slot-zero dictionary

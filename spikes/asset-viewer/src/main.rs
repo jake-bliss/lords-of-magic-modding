@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use lom_asset_viewer::asset::{AssetKind, probe};
 use lom_asset_viewer::gameplay_symbols;
 use lom_asset_viewer::gamescript::{GameScriptDocument, is_number_token};
+use lom_asset_viewer::gs_facts::GsFacts;
 use lom_asset_viewer::gamescript_vm::{
     GameScriptVm, GameScriptVmError, Value as GameScriptValue,
 };
@@ -175,6 +176,10 @@ enum Command {
     ScanGameScript {
         source: Source,
         executable: Option<PathBuf>,
+    },
+    /// Emit one JSON object per `.gs` member, for the build pipeline's validator.
+    GsFacts {
+        target: GsFactsTarget,
     },
     ScanNatives {
         executable: PathBuf,
@@ -357,6 +362,7 @@ fn run() -> Result<(), String> {
         Command::ScanGameScript { source, executable } => {
             scan_gamescript_archive(&source, executable.as_deref())
         }
+        Command::GsFacts { target } => emit_gs_facts(&target),
         Command::ScanNatives { executable, source } => {
             scan_native_table(&executable, source.as_ref())
         }
@@ -727,6 +733,33 @@ fn parse_args() -> Result<Command, String> {
                 reports: reports.clone().unwrap_or_else(default_gameplay_reports),
             })
         }
+        "--gs-facts" => {
+            if !(2..=3).contains(&args.len()) {
+                return Err(usage());
+            }
+            let path = PathBuf::from(&args[1]);
+            // An archive is addressed as ARCHIVE plus an optional member; anything else is a
+            // local file or directory.
+            //
+            // The directory test comes FIRST and deliberately outranks the `.mpq` suffix: a mod
+            // tree's source directory for `gs.mpq` is itself named `archives/gs.mpq`, so deciding
+            // on the suffix alone would try to open a directory as an archive.
+            let target = if args.len() == 3 {
+                GsFactsTarget::ArchiveMember {
+                    source: source(&args[1], listfile),
+                    member: args[2].clone(),
+                }
+            } else if !path.is_dir()
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("mpq"))
+            {
+                GsFactsTarget::Archive(source(&args[1], listfile))
+            } else {
+                GsFactsTarget::Path(path)
+            };
+            Ok(Command::GsFacts { target })
+        }
         "--scan-natives" => {
             if args.len() != 2 && args.len() != 3 {
                 return Err(usage());
@@ -925,7 +958,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -1967,6 +2000,122 @@ fn probe_gamescript_member(
     println!("defined-names\t{}", defined_names.len());
     for name in defined_names.iter().take(50) {
         println!("defined-name\t{}", clean_field(name));
+    }
+    Ok(())
+}
+
+/// What `--gs-facts` was pointed at.
+///
+/// Three forms and no discovery: an archive, one member of an archive, or a local file or
+/// directory. Nothing here searches `~/Applications` for anything, matching the rule
+/// `scripts/repack-archive.sh` already sets.
+enum GsFactsTarget {
+    Archive(Source),
+    ArchiveMember { source: Source, member: String },
+    Path(PathBuf),
+}
+
+/// Emit one JSON object per `.gs` file, on its own line.
+///
+/// JSON Lines rather than one document, so a caller can stream a 1,700-member archive and so a
+/// failure part-way through leaves the lines already written readable. The bytes are read and
+/// measured; they are never rewritten. A member that fails to lex still gets a record -- with its
+/// `parse_error` populated -- because "this file does not lex" is the single most useful thing the
+/// validator can report, and dropping the record would turn an error into a silence.
+fn emit_gs_facts(target: &GsFactsTarget) -> Result<(), String> {
+    let stdout = std::io::stdout();
+    let mut out = std::io::BufWriter::new(stdout.lock());
+    let mut emitted = 0_usize;
+    let mut unreadable = Vec::new();
+
+    match target {
+        GsFactsTarget::Path(path) => {
+            let mut files = Vec::new();
+            collect_gamescript_files(path, &mut files)?;
+            files.sort();
+            for file in files {
+                let name = file
+                    .strip_prefix(path)
+                    .unwrap_or(&file)
+                    .to_string_lossy()
+                    .into_owned();
+                match fs::read(&file) {
+                    Ok(bytes) => {
+                        writeln!(out, "{}", GsFacts::measure(&name, &bytes).to_json())
+                            .map_err(|error| error.to_string())?;
+                        emitted += 1;
+                    }
+                    Err(error) => unreadable.push(format!("{}: {error}", file.display())),
+                }
+            }
+        }
+        GsFactsTarget::Archive(source) => {
+            let (archive, entries) = open_archive(source)?;
+            let mut names: Vec<String> = entries
+                .iter()
+                .filter(|entry| entry.name.to_ascii_lowercase().ends_with(".gs"))
+                .map(|entry| entry.name.clone())
+                .collect();
+            names.sort();
+            for name in names {
+                match archive.read(&name) {
+                    Ok(bytes) => {
+                        writeln!(out, "{}", GsFacts::measure(&name, &bytes).to_json())
+                            .map_err(|error| error.to_string())?;
+                        emitted += 1;
+                    }
+                    Err(error) => unreadable.push(format!("{name}: {error}")),
+                }
+            }
+        }
+        GsFactsTarget::ArchiveMember { source, member } => {
+            let (archive, entries) = open_archive(source)?;
+            // Resolved case-insensitively to find the member, but reported under the name the
+            // archive spells, so a caller can see a case difference rather than inherit the one
+            // it asked with.
+            let entry = entries
+                .iter()
+                .find(|entry| entry.name.eq_ignore_ascii_case(member))
+                .ok_or_else(|| format!("archive has no member named {member}"))?;
+            let bytes = archive.read(&entry.name).map_err(|error| error.to_string())?;
+            writeln!(out, "{}", GsFacts::measure(&entry.name, &bytes).to_json())
+                .map_err(|error| error.to_string())?;
+            emitted += 1;
+        }
+    }
+
+    out.flush().map_err(|error| error.to_string())?;
+    // The count of what could not be read goes to stderr with the count of what could, so a
+    // bounded negative downstream can say how large its blind spot was.
+    eprintln!("{emitted} member(s) measured, {} unreadable", unreadable.len());
+    for failure in &unreadable {
+        eprintln!("  unreadable {failure}");
+    }
+    if unreadable.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{} member(s) could not be read", unreadable.len()))
+    }
+}
+
+fn collect_gamescript_files(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    if path.is_file() {
+        files.push(path.to_path_buf());
+        return Ok(());
+    }
+    let entries = fs::read_dir(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let child = entry.path();
+        if child.is_dir() {
+            collect_gamescript_files(&child, files)?;
+        } else if child
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("gs"))
+        {
+            files.push(child);
+        }
     }
     Ok(())
 }

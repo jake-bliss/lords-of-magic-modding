@@ -4,7 +4,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from tools.mpq_shape import Member, compare, main, read_manifest
+from tools.mpq_shape import Member, compare, is_unnamed, main, read_manifest
 
 # Literal digests, so an assertion can never be satisfied by the same expression
 # that built the fixture.
@@ -376,6 +376,101 @@ class CommandLineTest(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn("REFUSED", captured.getvalue())
         self.assertIn("member_missing", captured.getvalue())
+
+
+class UnnamedMemberTest(unittest.TestCase):
+    """A member with no name cannot be addressed across a rewrite.
+
+    StormLib synthesises `File%08u.xxx` from the block index, and **Observed 2026-09-18** it
+    renumbers unnamed blocks when it rewrites vanilla `gs.mpq`. Addressing them by that synthetic
+    name refused a repack in which all 1,688 entries, all 372 unnamed slots and all 1,316 named
+    members were intact and exactly one declared member had changed.
+    """
+
+    def test_the_pattern_matches_only_stormlibs_synthetic_names(self) -> None:
+        self.assertTrue(is_unnamed(member("File00001425.xxx", ALPHA_SHA)))
+        # Asserted in both directions: a real member whose name merely resembles the form must
+        # keep its per-block treatment, or a mod could hide a change behind a chosen filename.
+        self.assertFalse(is_unnamed(member("File0001425.xxx", ALPHA_SHA)))
+        self.assertFalse(is_unnamed(member("File00001425.gs", ALPHA_SHA)))
+        self.assertFalse(is_unnamed(member("gs\\File00001425.xxx", ALPHA_SHA)))
+        self.assertFalse(is_unnamed(member("xFile00001425.xxx", ALPHA_SHA)))
+
+    def test_renumbered_unnamed_blocks_are_not_a_shape_change(self) -> None:
+        source = [
+            member("File00000010.xxx", ALPHA_SHA, block_index=10),
+            member("File00000011.xxx", BRAVO_SHA, block_index=11),
+            member("START.GS", EMPTY_SHA, size=0, block_index=12),
+        ]
+        output = [
+            member("File00000008.xxx", ALPHA_SHA, block_index=8),
+            member("File00000009.xxx", BRAVO_SHA, block_index=9),
+            member("START.GS", EMPTY_SHA, size=0, block_index=12),
+        ]
+        report = compare(source, output)
+
+        self.assertTrue(report.ok)
+        self.assertEqual(report.findings, [])
+        self.assertEqual(report.unchanged_members, 3)
+
+    def test_an_unnamed_member_losing_its_content_is_still_refused(self) -> None:
+        source = [
+            member("File00000010.xxx", ALPHA_SHA, block_index=10),
+            member("File00000011.xxx", BRAVO_SHA, block_index=11),
+        ]
+        output = [
+            member("File00000010.xxx", ALPHA_SHA, block_index=10),
+            member("File00000011.xxx", EMPTY_SHA, size=0, block_index=11),
+        ]
+        report = compare(source, output)
+
+        self.assertFalse(report.ok)
+        self.assertEqual(
+            sorted(failure_kinds(report)),
+            ["unnamed_member_added", "unnamed_member_missing"],
+        )
+
+    def test_an_unnamed_member_dropped_is_refused(self) -> None:
+        source = [
+            member("File00000010.xxx", ALPHA_SHA, block_index=10),
+            member("File00000011.xxx", BRAVO_SHA, block_index=11),
+        ]
+        output = [member("File00000010.xxx", ALPHA_SHA, block_index=10)]
+        report = compare(source, output)
+
+        self.assertFalse(report.ok)
+        self.assertEqual(failure_kinds(report), ["unnamed_member_count_changed"])
+
+    def test_an_unnamed_member_changing_only_its_flags_is_refused(self) -> None:
+        """Content equal, storage different. The multiset comparison must still see it."""
+        source = [member("File00000010.xxx", ALPHA_SHA, block_index=10)]
+        output = [
+            member("File00000010.xxx", ALPHA_SHA, block_index=10, flags="0x80000200")
+        ]
+        report = compare(source, output)
+
+        self.assertFalse(report.ok)
+        self.assertEqual(
+            sorted(failure_kinds(report)),
+            ["unnamed_member_added", "unnamed_member_missing"],
+        )
+
+    def test_a_named_member_still_gets_per_name_treatment(self) -> None:
+        """The weakening applies to unnamed members and to nothing else."""
+        source = [
+            member("File00000010.xxx", ALPHA_SHA, block_index=10),
+            member("gs\\a.gs", BRAVO_SHA, block_index=11),
+        ]
+        output = [
+            member("File00000010.xxx", ALPHA_SHA, block_index=10),
+            member("gs\\b.gs", BRAVO_SHA, block_index=11),
+        ]
+        report = compare(source, output)
+
+        self.assertFalse(report.ok)
+        self.assertEqual(
+            sorted(failure_kinds(report)), ["member_added", "member_missing"]
+        )
 
 
 if __name__ == "__main__":
