@@ -449,11 +449,19 @@ The instrument is the decoder, and the decoder cannot see a row-padded layout on
 
 A payload's length is declared in the frame record's `encoded_size` field on `record_variant != 0`
 records. **A `record_variant == 0` record declares nothing.** Its reader — `decode_rle_until_size` —
-consumes RLE packets and stops at the *first* length `packed_sizes` accepts, which is the smallest.
-For a frame where the tight and row-padded lengths differ, tight is always the smaller, so a
-variant-0 compressed frame that really was written row-padded is read as tight, its trailing bytes
-are never consumed, and it is counted in the "names tight" row above. The sweep reports the
-population directly:
+consumes RLE packets and tests the output length after each **complete packet**, stopping at the
+first acceptable length that falls on a packet boundary.
+
+That is *not* the same as "stops at the smallest acceptable length", and an earlier version of this
+section said it was. The difference is reachable, not theoretical: a 17×4 frame at 1bpp has
+acceptable sizes `[8, 9, 12]`, and a single 12-byte literal packet — control `0xf4` — lands on 12,
+the row-padded size, without the reader ever seeing 8 or 9. Such a frame **is** observed as
+row-padded. Counting it as unobservable let the sweep report `row-padded` and `unobservable` for one
+frame at the same time, which cannot both be true.
+
+So the unobservable class is narrower than "every compressed variant-0 frame": it is those where the
+decoder actually stopped **short**, at a tight or tight-floor boundary, leaving a continuation it
+could not have seen. The sweep reports that population directly:
 
 ```
 layout-unobservable-by-this-decoder            752
@@ -462,6 +470,21 @@ layout-unobservable-and-not-cleared-by-gaps    752
 
 752 of 41,373 is **1.8%**. Rounding it to "no frame is row-padded, full stop" would be claiming the
 instrument reached where it does not.
+
+**These are not the only frames this instrument cannot resolve, and the two populations must be
+added rather than conflated.** A further **50** frames have two layouts of the same *length* and
+different *bytes* — 7×5 at 1bpp is five bytes either way — and no rule over the file's bytes can
+separate them; `pixel_layout_for` resolves them as tight by an arbitrary documented choice. The
+sweep prints that as `layout-ambiguous-shape`. The table above says 45 for `ambiguous-same-length`
+and the two differ for a reason worth keeping straight: ambiguity is a property of the shape, while
+the table's row also requires the stored size to *be* that common length, so 5 frames of an
+ambiguous shape that dropped a final partial byte are filed under `tight-floor` while remaining just
+as undecidable. The undecidable population is the 50.
+
+The two classes are disjoint by construction — unobservability needs `tight_ceil != row_padded` and
+ambiguity needs them equal — so the frames where this instrument could have seen row padding and did
+not is at most **41,373 − 752 − 50 = 40,571**, not 40,621. The difference is small and the
+distinction is not: 752 frames are merely unseen, and the 50 are undecidable.
 
 ### Why the payload alignment cannot clear the last 752
 
@@ -481,6 +504,49 @@ shortfall fits inside the padding the archive already leaves and the histogram s
 For all 752 frames the minimum is under 8. The gap evidence clears none of them, which is why the
 sweep prints the two counters and why they are equal.
 
+That 41,373 is a count of **payload starts**, and the 41,373 above it is a count of **frames**. They
+are not the same population by definition and the sweep no longer leaves the reader to assume they
+coincide: two ordinary frame records may point at one payload, which would cost a start without
+costing a frame. So both are printed, and the difference with them:
+
+```
+payload-offset-records          41373
+payload-starts                  41373
+payload-shared-by-two-records       0
+```
+
+No payload in `imp.mpq` is addressed by two ordinary records, so the two populations do coincide
+here — measured, not assumed. (Duplicate and shared-pixel records cannot enter either count: the
+parser leaves their `pixels_offset` unset, because a `0x08` record's pixel dword is a frame index
+and a `0x04` record's payload belongs to the frame it aliases.)
+
+Nothing in `imp.mpq` comes near the 391-byte shortfall that would escape the alignment, so the
+corpus can only ever confirm one side of that boundary. The arithmetic — the gating condition, the
+`2 * ceil(delta / 130)` cost, and the `< 8` comparison — is therefore unit-tested against synthetic
+`PackedSizes` in `main.rs`, driven past 390 and 391 from both sides, with the `130` and the `8`
+mutated in both directions. A fixture shaped like the corpus could not fail on what the corpus
+hides.
+
+### What the editor is told
+
+`--import-png-imp` prints `layout=...` for the frame it wrote, and that line is a statement about
+what this decoder **read**, not necessarily about what the file stores. Both unobservable classes
+get a warning beside it, in the same shape and with no refusal: the 50 whose stored size names no
+layout, and the 752 whose stored size names one this reader stopped too early to see. Warning about
+only the smaller class would leave the common case printing `layout: Tight` as fact — and if such a
+frame really is stored row-padded, the exported pixels were already scrambled and the import splices
+a tight payload over only the prefix the reader consumed, stranding the original tail after the
+padding. The sweep counts both over the archive as `rewrite-ambiguous-layout` (46) and
+`rewrite-unobservable-layout` (746), over the 37,930 frames the writer accepts rather than all
+41,373 — it refuses 3,439 shared payloads and 4 zero-length ones before it classifies anything.
+
+`rewrite-ambiguous-layout` being 46 where the table above says 45 is not a discrepancy, and the
+sweep now prints the number that explains it: `layout-ambiguous-shape` is **50**. Ambiguity is a
+property of the *shape* — width, height, depth — while the `ambiguous-same-length` row of the table
+also requires the stored size to be that common length. The other 5 are 1bpp frames of an ambiguous
+shape that dropped their final partial byte, so they classify as `tight-floor` while remaining
+exactly as undecidable. The 45 and the 50 are different questions, and both are printed.
+
 ### What probe would close it
 
 Not built, and deliberately so — it needs the engine, not more reading of the archive.
@@ -489,12 +555,12 @@ Pick one of the 752 frames at a shape where the two layouts differ, replace its 
 entries that make every index visually distinct, run the game to a screen that draws that frame, and
 capture it. A tight read and a row-padded read of the same bytes produce **different pictures**, not
 different byte counts, so the capture decides it outright: one of the two predicted images matches
-and the other does not. The same run answers the 45 equal-length ambiguous frames, which no amount
+and the other does not. The same run answers the 50 equal-length ambiguous frames, which no amount
 of arithmetic over the file can touch, because there the two layouts are indistinguishable in every
 measurable property except the pixels they draw.
 
-Until then: 0 of 41,373 frames are observed row-padded, 40,621 of them by an instrument that could
-have seen it, and 752 by one that could not.
+Until then: 0 of 41,373 frames are observed row-padded, 40,571 of them by an instrument that could
+have seen it, 752 by one that could not, and 50 by one where the file settles nothing.
 
 ## What is still open
 
@@ -516,7 +582,7 @@ have seen it, and 752 by one that could not.
    correlate with byte 1 taking `0x81`, `0xCC` and `0xFF`. Something wrote them deliberately.
 7. **Byte 1 bits 0–6.** Same story: set in 448 records, never tested.
 8. **Whether any frame is stored row-padded.** 0 of 41,373 are observed to be, but 752 of them are
-   `record_variant == 0` frames whose reader could not have seen it, and 45 more have a shape where
+   `record_variant == 0` frames whose reader could not have seen it, and 50 more have a shape where
    the two layouts are indistinguishable in the file. See
    [pixel layout](#pixel-layout-what-no-frame-is-row-padded-rests-on-and-where-it-stops) for the
    probe that would close it.

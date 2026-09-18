@@ -1179,45 +1179,41 @@ pub struct ImpPixelWrite {
     /// pixels handed in may already have been decoded under the wrong one. See
     /// [`layout_is_ambiguous`].
     pub layout_ambiguous: bool,
+    /// True when the frame's stored size *does* name a layout but this decoder's reader stops
+    /// before it could have seen the row-padded one, so `layout` is what was read rather than what
+    /// was necessarily stored. See [`layout_is_unobservable`].
+    ///
+    /// Reported beside `layout_ambiguous` and never folded into it. The consequence for a caller is
+    /// the same -- the exported pixels may have been decoded under the wrong layout, and splicing a
+    /// tight payload back over a row-padded one strands the original tail after the alignment
+    /// padding -- but this class is sixteen times larger, and a warning that names only the smaller
+    /// one would leave the common case silent while reporting `layout: Tight` as fact.
+    pub layout_unobservable: bool,
 }
 
-/// Replace one frame's pixels, rewriting every file offset the new payload's length disturbs.
+/// The span a pixel replacement would overwrite, or the refusal that stops it before anything else
+/// is read.
 ///
-/// Everything that is not the replaced payload, the offsets that point past it, and the one
-/// `encoded_size` field that declares its length is copied **byte for byte**. That is deliberate
-/// beyond tidiness: bytes 5–10 of a sequence record hold uninitialised leftover text from the
-/// authoring tool (`frames`, `\imps\`), byte 2 has a distribution nobody has explained, and bytes 3
-/// and 4 are constant but unread. Re-emitting a "clean" record would destroy evidence and could
-/// break a reader nobody has audited. Nothing here re-synthesises a record.
+/// Split out of [`write_frame_pixels`] so a caller holding a parsed sprite can ask **whether this
+/// frame is writable at all** before it commits to work the refusal would throw away. The import
+/// path needs exactly that: it used to take the frame's dimensions straight from the record and
+/// hand them to the PNG reader, and for the 10,293 records that carry no payload of their own those
+/// dimensions are `0x0`, so the user met "PNG is 24x1 but the template is 0x0" instead of being told
+/// which frame actually stores the pixels. The refusal text lives here, once, rather than being
+/// paraphrased at each caller.
 ///
-/// # What is rewritten
-///
-/// The payload at the frame's pixel pointer is replaced. If the new payload is a different length,
-/// everything after it moves, so every absolute file offset the format stores is adjusted: the
-/// palette pointer, the sequence-table pointer, each sequence's facing-table pointer, each facing's
-/// frame-table pointer, and each frame record's hotspot-array and pixel pointers. A `0x08`
-/// duplicate record's pixel dword is a frame *index*, not an offset, and is left alone.
-///
-/// The move is rounded up to [`PAYLOAD_ALIGNMENT`] so later payloads keep the 8-byte starts the
-/// whole shipped archive gives them.
-///
-/// # What it refuses
-///
-/// - a frame with no payload of its own — a duplicate or shared-pixel record, or an empty frame;
-/// - a frame whose payload some **other** frame also reads, by any of the three routes
-///   [`ImpSprite::frames_sharing_pixels`] knows. A replacement there would silently repaint a
-///   picture the caller never named, and there are 10,293 such records in `imp.mpq`;
-/// - a frame whose stored payload is zero bytes long, where the pixel pointer addresses nothing and
-///   there is no span to replace;
-/// - a payload that will not read back through [`read_frame_pixels`] as exactly what was written,
-///   which is what catches a `record_variant == 0` stream that halts early;
-/// - a new payload too long for the `encoded_size` field, on the variants that have one.
-pub fn write_frame_pixels(
-    source: &[u8],
+/// The refusals themselves, and why each exists, are documented on [`write_frame_pixels`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FramePixelTarget {
+    pub packed_size: usize,
+    pub pixels_offset: usize,
+    pub stored_size: usize,
+}
+
+pub fn frame_pixel_target(
+    sprite: &ImpSprite,
     frame_index: usize,
-    indices: &[u8],
-) -> Result<ImpPixelWrite, ImpError> {
-    let sprite = ImpSprite::parse(source)?;
+) -> Result<FramePixelTarget, ImpError> {
     let frame = sprite
         .frames
         .get(frame_index)
@@ -1250,6 +1246,69 @@ pub fn write_frame_pixels(
             "IMP frame {frame_index} shares its pixels with frame(s) {sharing:?}; replacing it would repaint them too, so this refuses rather than changing art that was not named"
         )));
     }
+    Ok(FramePixelTarget {
+        packed_size,
+        pixels_offset,
+        stored_size,
+    })
+}
+
+/// Replace one frame's pixels, rewriting every file offset the new payload's length disturbs.
+///
+/// Everything that is not the replaced payload, the offsets that point past it, and the one
+/// `encoded_size` field that declares its length is copied **byte for byte**. That is deliberate
+/// beyond tidiness: bytes 5–10 of a sequence record hold uninitialised leftover text from the
+/// authoring tool (`frames`, `\imps\`), byte 2 has a distribution nobody has explained, and bytes 3
+/// and 4 are constant but unread. Re-emitting a "clean" record would destroy evidence and could
+/// break a reader nobody has audited. Nothing here re-synthesises a record.
+///
+/// # What is rewritten
+///
+/// The payload at the frame's pixel pointer is replaced. If the new payload is a different length,
+/// everything after it moves, so every absolute file offset **this repo has identified** is
+/// adjusted -- the set [`absolute_offset_fields`] enumerates: the palette pointer at file offset 8,
+/// the sequence-table pointer at 28, each sequence's facing-table pointer, each facing's
+/// frame-table pointer, and each frame record's hotspot-array and pixel pointers. A `0x08`
+/// duplicate record's pixel dword is a frame *index*, not an offset, and is left alone.
+///
+/// That the enumeration is **complete** is not measured. Header bytes 12-25 are read by nothing in
+/// this repo and `docs/imp-format.md` documents the records field by field but never the 32-byte
+/// file header, so a pointer hiding there would be adjusted by nobody. A header of that size
+/// usually holds counts and maxima rather than pointers, and the `--imp-roundtrip --rewrite` sweep
+/// re-parses every written file, which would catch a stale pointer that any reader in this repo
+/// follows -- but not one only the engine follows.
+///
+/// Two things would settle it, neither run here: `imp_anim::field_reads` recovers every
+/// displacement the engine reads off a struct pointer, which would say outright whether 12-25 are
+/// read at all; and a corpus pass could report whether those bytes ever hold a value that lands
+/// inside the file, which is what a pointer would have to do.
+///
+/// The move is rounded up to [`PAYLOAD_ALIGNMENT`] so later payloads keep the 8-byte starts the
+/// whole shipped archive gives them.
+///
+/// # What it refuses
+///
+/// - a frame with no payload of its own — a duplicate or shared-pixel record, or an empty frame;
+/// - a frame whose payload some **other** frame also reads, by any of the three routes
+///   [`ImpSprite::frames_sharing_pixels`] knows. A replacement there would silently repaint a
+///   picture the caller never named, and there are 10,293 such records in `imp.mpq`;
+/// - a frame whose stored payload is zero bytes long, where the pixel pointer addresses nothing and
+///   there is no span to replace;
+/// - a payload that will not read back through [`read_frame_pixels`] as exactly what was written,
+///   which is what catches a `record_variant == 0` stream that halts early;
+/// - a new payload too long for the `encoded_size` field, on the variants that have one.
+pub fn write_frame_pixels(
+    source: &[u8],
+    frame_index: usize,
+    indices: &[u8],
+) -> Result<ImpPixelWrite, ImpError> {
+    let sprite = ImpSprite::parse(source)?;
+    let FramePixelTarget {
+        packed_size,
+        pixels_offset,
+        stored_size,
+    } = frame_pixel_target(&sprite, frame_index)?;
+    let frame = &sprite.frames[frame_index];
 
     let packed = pack_pixels(
         indices,
@@ -1350,6 +1409,12 @@ pub fn write_frame_pixels(
             sprite.bits_per_pixel,
         )?,
         layout_ambiguous: layout_is_ambiguous(frame.width, frame.height, sprite.bits_per_pixel)?,
+        layout_unobservable: layout_is_unobservable(
+            packed_size,
+            PackedSizes::for_frame(frame.width, frame.height, sprite.bits_per_pixel)?,
+            sprite.record_variant,
+            sprite.compressed,
+        ),
     })
 }
 
@@ -1809,7 +1874,10 @@ pub fn layouts_are_identical(width: u16, height: u16, bits_per_pixel: u8) -> boo
 /// This is the one shape where the decoder is guessing. [`pixel_layout_for`] resolves it as
 /// [`PixelLayout::Tight`] — deliberately, and see that function for why — so a frame the original
 /// tool wrote row-padded at one of these shapes is decoded wrong, with nothing in the file to say
-/// so. 45 of the 41,373 payload-carrying frames in `imp.mpq` have such a shape.
+/// so. 50 of the 41,373 payload-carrying frames in `imp.mpq` have such a shape -- the sweep's
+/// `layout-ambiguous-shape`. The 45 in the `ambiguous-same-length` row of `docs/imp-format.md` is a
+/// different question: that row also requires the stored size to BE the common length, and 5 of the
+/// 50 are 1bpp frames that dropped their final partial byte.
 ///
 /// Closing it needs information from outside the file: the engine's own reader, or a frame whose
 /// pixels are known independently. Nothing in the bytes can do it.
@@ -1817,6 +1885,39 @@ pub fn layout_is_ambiguous(width: u16, height: u16, bits_per_pixel: u8) -> Resul
     let sizes = PackedSizes::for_frame(width, height, bits_per_pixel)?;
     Ok(!layouts_are_identical(width, height, bits_per_pixel)
         && sizes.tight_ceil == sizes.row_padded)
+}
+
+/// Whether this frame's layout is one **this decoder could not have observed**, even though the
+/// file does record it.
+///
+/// Distinct from [`layout_is_ambiguous`], and the two must be added rather than conflated. There
+/// the file settles nothing; here the file settles it and the *reader* stops too early to see.
+///
+/// A compressed `record_variant == 0` payload declares no length, so `decode_rle_until_size`
+/// consumes packets and tests the output length after each **complete** packet, stopping at the
+/// first acceptable length that falls on a packet boundary. That is not the same as "the smallest
+/// acceptable length": a 17x4 frame at 1bpp accepts `[8, 9, 12]`, and a single 12-byte literal
+/// packet lands on 12 -- the row-padded size -- without ever passing through 8 or 9. Such a frame
+/// **is** observed as row-padded, which is why `packed_size != sizes.row_padded` is part of the
+/// test rather than "variant 0 and compressed" alone.
+///
+/// 752 of the 41,373 payload-carrying frames in `imp.mpq` are in this class -- fifteen times the 50
+/// [`layout_is_ambiguous`] finds, and with the same consequence for an editor: if such a frame was
+/// written row-padded, the pixels this decoder handed out were already wrong.
+///
+/// Takes the stored `packed_size` rather than a classified layout name because the two are not
+/// interchangeable. A 7x1 frame at 1bpp stores `tight_floor` 0 while `tight_ceil == row_padded == 1`,
+/// so it classifies as "tight-floor" -- not row-padded -- while this predicate is correctly false.
+pub fn layout_is_unobservable(
+    packed_size: usize,
+    sizes: PackedSizes,
+    record_variant: u8,
+    compressed: bool,
+) -> bool {
+    sizes.tight_ceil != sizes.row_padded
+        && record_variant == 0
+        && compressed
+        && packed_size != sizes.row_padded
 }
 
 /// The layout a stored payload of `packed_size` bytes is read with, stated as a rule about the
@@ -1998,7 +2099,11 @@ fn unpack_byte(
 /// ByteRun1**, which the sibling `pbm` module implements: there the repeat count is `257 - control`
 /// and the packet classes are split by sign. Reusing that encoder here produces garbage, and the
 /// `+ 3` bias is the reason a two-byte run has no repeat form at all.
-const MAX_RLE_REPEAT: usize = 130;
+///
+/// Public because it is not only an encoder detail: `--imp-roundtrip`'s bound on how many stored
+/// bytes an unread row-padded continuation would have cost is `2 * ceil(delta / MAX_RLE_REPEAT)`,
+/// and the published 752-frame figure moves if this number does.
+pub const MAX_RLE_REPEAT: usize = 130;
 
 /// The shortest run an IMP repeat packet can express: control `0x00` means three copies.
 ///
@@ -2185,6 +2290,41 @@ fn read_u32(source: &[u8], offset: usize) -> Result<u32, ImpError> {
 
 #[cfg(test)]
 mod tests {
+    /// A variant-0 compressed payload does NOT necessarily resolve to the smallest acceptable size.
+    ///
+    /// `decode_rle_until_size` tests the output length after each COMPLETE packet, so it stops at
+    /// the first acceptable length that falls on a packet boundary. A 17x4 frame at 1bpp accepts
+    /// [8, 9, 12]; one 12-byte literal packet lands on 12 -- the row-padded size -- without the
+    /// reader ever seeing 8 or 9. The sweep's "unobservable" counter assumed the smallest was
+    /// always taken, which let it report `row-padded` and `unobservable` for one frame at once.
+    #[test]
+    fn a_single_packet_can_land_on_the_row_padded_size_skipping_the_tight_ones() {
+        let sizes = packed_sizes(17, 4, 1).expect("sizes");
+        assert_eq!(sizes, vec![8, 9, 12], "the three acceptable sizes for 17x4 at 1bpp");
+
+        // One literal packet of 12 bytes: control 0x100 - 12 = 0xf4.
+        let mut payload = vec![0xf4_u8];
+        payload.extend(std::iter::repeat_n(0xab_u8, 12));
+
+        let (decoded, consumed) = decode_rle_until_size(&payload, &sizes).expect("decode");
+        assert_eq!(decoded.len(), 12, "landed on the row-padded size, not on 8 or 9");
+        assert_eq!(consumed, payload.len(), "the whole packet was consumed");
+    }
+
+    /// The counter-case, so the test above cannot pass by the reader simply never stopping early.
+    #[test]
+    fn a_packet_boundary_at_the_smallest_acceptable_size_does_stop_there() {
+        let sizes = packed_sizes(17, 4, 1).expect("sizes");
+        // One literal packet of exactly 8 bytes: control 0x100 - 8 = 0xf8.
+        let mut payload = vec![0xf8_u8];
+        payload.extend(std::iter::repeat_n(0xab_u8, 8));
+        payload.extend([0xf4_u8, 0x00]); // trailing bytes that must never be consumed
+
+        let (decoded, consumed) = decode_rle_until_size(&payload, &sizes).expect("decode");
+        assert_eq!(decoded.len(), 8, "stopped at tight_floor, the first boundary that qualifies");
+        assert_eq!(consumed, 9, "the trailing packet is left unread");
+    }
+
     use super::*;
 
     fn synthetic_imp() -> Vec<u8> {
@@ -3259,6 +3399,101 @@ mod tests {
         assert_eq!(sprite.frames_sharing_pixels(2).unwrap(), [1]);
         // And the real frame still sees both of them, through the duplicate chain.
         assert_eq!(sprite.frames_sharing_pixels(0).unwrap(), [1, 2]);
+    }
+
+    /// One 17x4 frame at 1bpp, compressed, with a payload the caller chooses.
+    ///
+    /// The one shape in this file where a stored size actually names a layout: acceptable sizes are
+    /// `[8, 9, 12]`, so 9 is tight and 12 is row-padded. The 8bpp `writable_imp` fixture cannot test
+    /// any of this -- at 8bpp the two layouts are the same bytes and every frame is `Identical`.
+    fn ragged_1bpp_imp(record_variant: u8, packed: &[u8]) -> Vec<u8> {
+        const PAYLOAD: usize = 72;
+        const PALETTE: usize = 104;
+        let payload = encode_rle(packed);
+        assert!(payload.len() <= PALETTE - PAYLOAD, "payload must fit");
+        let mut source = vec![0_u8; PALETTE + PALETTE_BYTES];
+        source[0] = FILE_FLAG_RLE | 0x10;
+        source[2] = record_variant;
+        source[4..6].copy_from_slice(&17_u16.to_le_bytes());
+        source[6..8].copy_from_slice(&4_u16.to_le_bytes());
+        source[8..12].copy_from_slice(&(PALETTE as u32).to_le_bytes());
+        source[26..28].copy_from_slice(&1_u16.to_le_bytes());
+        source[28..32].copy_from_slice(&32_u32.to_le_bytes());
+        source[32 + 11] = 1;
+        source[32 + 12..32 + 16].copy_from_slice(&48_u32.to_le_bytes());
+        source[48 + 2..48 + 4].copy_from_slice(&1_u16.to_le_bytes());
+        source[48 + 4..48 + 8].copy_from_slice(&56_u32.to_le_bytes());
+        source[56 + 2..56 + 4].copy_from_slice(&17_u16.to_le_bytes());
+        source[56 + 4..56 + 6].copy_from_slice(&4_u16.to_le_bytes());
+        source[56 + 6..56 + 8].copy_from_slice(&(payload.len() as u16).to_le_bytes());
+        source[56 + 12..56 + 16].copy_from_slice(&(PAYLOAD as u32).to_le_bytes());
+        source[PAYLOAD..PAYLOAD + payload.len()].copy_from_slice(&payload);
+        source[PALETTE..PALETTE + 4].copy_from_slice(&[3, 2, 1, 0]);
+        source
+    }
+
+    /// The writer must report the 752-frame class, not only the 50-frame ambiguous one.
+    ///
+    /// Both have the same consequence for an editor -- the pixels it exported may have been decoded
+    /// under the wrong layout, and splicing a tight payload back over a row-padded one strands the
+    /// original tail after the alignment padding -- and this one is sixteen times larger. Before
+    /// this field the writer reported `layout: Tight` for all 752 as fact, with nothing beside it.
+    #[test]
+    fn the_writer_reports_a_layout_its_own_reader_could_not_have_observed() {
+        // Nine distinct bytes: one literal packet, so the reader's only length test happens at 9.
+        // It never passes through 8, and it can never reach the row-padded 12.
+        let tight = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x80];
+        let source = ragged_1bpp_imp(0, &tight);
+        let sprite = ImpSprite::parse(&source).unwrap();
+        assert_eq!(sprite.frames[0].packed_size, Some(9));
+
+        let write =
+            write_frame_pixels(&source, 0, &sprite.frames[0].palette_indices.clone()).unwrap();
+        assert_eq!(write.bytes, source, "an identity rewrite must not move a byte");
+        assert_eq!(write.layout, PixelLayout::Tight);
+        assert!(
+            !write.layout_ambiguous,
+            "9 and 12 are different lengths, so the size does name a layout"
+        );
+        assert!(
+            write.layout_unobservable,
+            "a compressed variant-0 frame stopping at 9 could not have seen the row-padded 12"
+        );
+
+        // The same shape, the same reader, twelve bytes: a single 12-byte literal packet lands on
+        // the row-padded size without ever passing through 8 or 9, so the layout WAS observed.
+        // Each row's third byte carries one meaningful bit, which is why they are 0x80 and 0x00.
+        let padded = [
+            0x12, 0x34, 0x80, 0x56, 0x78, 0x00, 0x9a, 0xbc, 0x80, 0xde, 0xf0, 0x00,
+        ];
+        let source = ragged_1bpp_imp(0, &padded);
+        let sprite = ImpSprite::parse(&source).unwrap();
+        assert_eq!(sprite.frames[0].packed_size, Some(12));
+        let write =
+            write_frame_pixels(&source, 0, &sprite.frames[0].palette_indices.clone()).unwrap();
+        assert_eq!(write.layout, PixelLayout::RowPadded);
+        assert!(
+            !write.layout_unobservable,
+            "the decoder landed on the row-padded size, so nothing was hidden from it"
+        );
+
+        // A variant-1 record declares its length, so the reader never guesses where to stop.
+        let declared = ragged_1bpp_imp(1, &tight);
+        let write = write_frame_pixels(
+            &declared,
+            0,
+            &ImpSprite::parse(&declared).unwrap().frames[0]
+                .palette_indices
+                .clone(),
+        )
+        .unwrap();
+        assert!(!write.layout_unobservable);
+
+        // And the 8bpp fixture, where the two layouts are the same bytes: neither flag fires.
+        let flat = writable_imp(true, [RUN, LITERAL, OTHER_RUN]);
+        let write = write_frame_pixels(&flat, 0, RUN).unwrap();
+        assert!(!write.layout_ambiguous);
+        assert!(!write.layout_unobservable);
     }
 
     /// A `record_variant != 0` record declares its payload length in 16 bits, so the declaration

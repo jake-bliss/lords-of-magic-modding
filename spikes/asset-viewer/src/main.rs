@@ -17,8 +17,9 @@ use lom_asset_viewer::gamescript_vm::{
 use lom_asset_viewer::imp;
 use lom_asset_viewer::imp::{
     IMP_ORPHAN_NOTES, IMP_VALIDATION_EXCEPTIONS, ImpHeaderStats, ImpOrphanNote, ImpSprite,
-    ImpValidationException, PackedSizes, encode_rle, imp_member_basename, layouts_are_identical,
-    normalize_imp_member, pack_pixels, read_frame_pixels, unpack_pixels, write_frame_pixels,
+    ImpValidationException, MAX_RLE_REPEAT, PackedSizes, encode_rle, frame_pixel_target,
+    imp_member_basename, layout_is_unobservable, layouts_are_identical, normalize_imp_member,
+    pack_pixels, read_frame_pixels, unpack_pixels, write_frame_pixels,
 };
 use lom_asset_viewer::map::{
     GENERATED_HEADER_WORD, MapAsset, MintProvenance, PaintRefusal, ROAD_TERRAIN,
@@ -435,6 +436,10 @@ fn run() -> Result<(), String> {
 fn parse_args() -> Result<Command, String> {
     let mut args: Vec<String> = env::args().skip(1).collect();
     let listfile = take_option(&mut args, "--listfile")?.map(PathBuf::from);
+    // Taken here with the other global options, but only ONE command honours it, so the command
+    // arm below must reject it everywhere else. A flag that is silently swallowed and discarded
+    // hands back a successful exit for a mode that never ran -- `--pbm-roundtrip X --rewrite` used
+    // to print a clean sweep and rewrite nothing.
     let rewrite = take_flag(&mut args, "--rewrite")?;
     let executable = take_option(&mut args, "--exe")?.map(PathBuf::from);
     let expression = take_option(&mut args, "--eval")?;
@@ -466,6 +471,15 @@ fn parse_args() -> Result<Command, String> {
         .map(|specification| parse_native_stub(specification))
         .collect::<Result<Vec<_>, String>>()?;
     let first = args.first().ok_or_else(usage)?.as_str();
+    // `--rewrite` is taken with the global options above but honoured by exactly one command, so
+    // every other command must refuse it rather than swallow it. Silently discarding it returns a
+    // successful exit for a mode that never ran: `--pbm-roundtrip X --rewrite` printed a clean
+    // sweep and rewrote nothing.
+    if rewrite && first != "--imp-roundtrip" {
+        return Err(format!(
+            "--rewrite is only meaningful with --imp-roundtrip, not {first}"
+        ));
+    }
     match first {
         "--catalog" => {
             require_len(&args, 2)?;
@@ -1391,6 +1405,60 @@ impl PackedSizeChoice {
     }
 }
 
+/// The two "this instrument could not have seen it" verdicts for one frame, as arithmetic with no
+/// archive in it.
+///
+/// Extracted from the sweep because the published bound -- 752 frames unobservable, and the gap
+/// evidence clearing **none** of them -- rests entirely on three numbers that a corpus run can only
+/// confirm in aggregate: the gating condition, the `2 * ceil(delta / MAX_RLE_REPEAT)` cost of an
+/// unread continuation, and the `< 8` comparison against the archive's payload alignment. A sweep
+/// over 41,373 real frames prints one total; it cannot say the `130` was right, because every frame
+/// in the corpus happens to land on the same side of that boundary. These are unit-testable only
+/// once they are a function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct LayoutObservability {
+    /// The decoder stopped short of a row-padded layout it could not have seen. See
+    /// [`imp::layout_is_unobservable`], which the writer reports on the same rule.
+    unobservable: bool,
+    /// Of those, the ones the payload-gap evidence cannot clear either.
+    ///
+    /// A row-padded frame read as tight leaves `row_padded - tight_ceil` packed bytes unconsumed.
+    /// Those bytes cost at least two stored bytes per RLE repeat packet, so at least
+    /// `2 * ceil(delta / MAX_RLE_REPEAT)` stored bytes. Where that minimum is 8 or more, a gap of 8
+    /// or more would have to exist between two payloads and none does -- the histogram tops out at
+    /// 7. Where it is under 8, the shortfall hides inside the archive's 8-byte payload alignment and
+    /// the gaps say nothing.
+    ///
+    /// **Implies `unobservable`.** A frame the decoder *could* have seen row-padded needs no
+    /// clearing, so this is a subset counter and never a second population; the sweep prints both
+    /// and they are equal over `imp.mpq`.
+    not_cleared_by_gaps: bool,
+}
+
+impl LayoutObservability {
+    /// The archive's payload alignment, and so the size of shortfall a gap could not distinguish
+    /// from ordinary padding. Named rather than inlined because it is the same 8 as
+    /// `imp::PAYLOAD_ALIGNMENT` and for the same reason, not a coincidence.
+    const GAP_RESOLUTION: usize = 8;
+
+    fn for_frame(
+        packed_size: usize,
+        sizes: PackedSizes,
+        record_variant: u8,
+        compressed: bool,
+    ) -> Self {
+        if !layout_is_unobservable(packed_size, sizes, record_variant, compressed) {
+            return Self::default();
+        }
+        let delta = sizes.row_padded - sizes.tight_ceil;
+        let minimum_extra = 2 * delta.div_ceil(MAX_RLE_REPEAT);
+        Self {
+            unobservable: true,
+            not_cleared_by_gaps: minimum_extra < Self::GAP_RESOLUTION,
+        }
+    }
+}
+
 /// Bucket a writer refusal by its cause, so the sweep reports a distribution rather than 40,000
 /// distinct strings.
 ///
@@ -1459,21 +1527,17 @@ fn roundtrip_imp(source: &Source, rewrite: bool) -> Result<(), String> {
     let mut by_variant = BTreeMap::<u8, ImpRoundtripTally>::new();
     let mut by_depth = BTreeMap::<u8, ImpRoundtripTally>::new();
     let mut by_choice = BTreeMap::<PackedSizeChoice, ImpRoundtripTally>::new();
-    // How many frames the sweep could not have seen a row-padded layout on even if they had one.
-    //
-    // A compressed `record_variant == 0` payload declares no length, so `read_frame_pixels` stops
-    // at the *first* acceptable size the stream reaches -- which is the smallest. A frame of that
-    // class that really was row-padded would be read as tight, and the sweep would classify it
-    // that way. The negative "no frame uses the row-padded layout" is therefore only as strong as
-    // the frames outside this count; this is the counter for the ones it cannot reach.
+    // How many frames the sweep could not have seen a row-padded layout on even if they had one,
+    // and how many of those the payload-gap evidence cannot clear either. The rule for both, and
+    // the reason neither covers the equal-length ambiguous frames, is on `LayoutObservability`.
     let mut layout_unreachable = 0_usize;
-    // Of those, the ones the gap evidence alone cannot clear. A row-padded frame read as tight
-    // leaves `row_padded - tight_ceil` packed bytes unconsumed, which costs at least two RLE bytes
-    // per repeat packet, so at least `2 * ceil(delta / MAX_RLE_REPEAT)` stored bytes. Where that
-    // minimum is under 8 it can hide inside the archive's 8-byte payload alignment and the gap
-    // histogram says nothing; where it is 8 or more, a gap of 8 or more would have to exist, and
-    // none does.
     let mut layout_unreachable_and_unclearable = 0_usize;
+    // Frames whose *shape* is ambiguous, which is not the same population as the
+    // `ambiguous-same-length` choice above and is printed so the difference can be read rather than
+    // guessed at. `layout_is_ambiguous` asks only about width, height and depth; the choice also
+    // requires the stored size to BE that common length, so an ambiguous-shaped 1bpp frame that
+    // dropped its final partial byte classifies as `tight-floor` while still being undecidable.
+    let mut layout_ambiguous_shape = 0_usize;
     // The cross-check for that counter, and it deliberately does not share its mechanism.
     //
     // Payload spans are taken from the *file's own* pixel pointers, not from the decoder's stop
@@ -1491,6 +1555,18 @@ fn roundtrip_imp(source: &Source, rewrite: bool) -> Result<(), String> {
     // does not state it, so it is counted directly rather than inferred from the gaps.
     let mut payload_starts = 0_usize;
     let mut payload_starts_aligned = 0_usize;
+    // Records carrying their own pixel pointer, counted BEFORE the distinct-offset dedup.
+    //
+    // `payload_starts` is a count of offsets and `frames` is a count of frames, and a report that
+    // pairs them is asserting they coincide. They need not: two ordinary records may point at one
+    // payload -- `ImpSprite::frames_sharing_pixels` exists precisely because they can -- and each
+    // such pair costs one start without costing a frame. So the coincidence is measured here rather
+    // than assumed, and the difference from `payload_starts` is the number of shared payloads.
+    // (Duplicate and shared-pixel records cannot contribute: the parser leaves their
+    // `pixels_offset` as `None`, so they are absent from both populations. A zero-by-zero frame
+    // does carry a pointer and so is counted here while `frames` skips it, which is why
+    // `empty-frames` is printed too; it is 0 in this archive.)
+    let mut payload_offset_records = 0_usize;
     // The `--rewrite` tally: frames put back through the whole-file writer with their own
     // unmodified pixels, and how many produced a byte-identical file.
     let mut rewrite_attempted = 0_usize;
@@ -1498,6 +1574,9 @@ fn roundtrip_imp(source: &Source, rewrite: bool) -> Result<(), String> {
     let mut rewrite_differs_by_payload = 0_usize;
     let mut rewrite_refused = BTreeMap::<&'static str, usize>::new();
     let mut rewrite_ambiguous = 0_usize;
+    // The writer's own report of the 752-frame class, counted here so the two flags it now returns
+    // are both measured over the corpus rather than only the smaller one.
+    let mut rewrite_unobservable = 0_usize;
     let mut failures = Vec::new();
     let mut differences = Vec::new();
 
@@ -1535,6 +1614,11 @@ fn roundtrip_imp(source: &Source, rewrite: bool) -> Result<(), String> {
         }
         let starts: Vec<(usize, usize)> = spans.into_iter().collect();
         payload_starts += starts.len();
+        payload_offset_records += sprite
+            .frames
+            .iter()
+            .filter(|frame| frame.pixels_offset.is_some())
+            .count();
         payload_starts_aligned += starts.iter().filter(|(offset, _)| offset % 8 == 0).count();
         for pair in starts.windows(2) {
             let [(offset, size), (next_offset, _)] = pair else {
@@ -1575,19 +1659,25 @@ fn roundtrip_imp(source: &Source, rewrite: bool) -> Result<(), String> {
                         continue;
                     }
                 };
-            if sizes.tight_ceil != sizes.row_padded
-                && sprite.record_variant == 0
-                && sprite.compressed
-            {
-                layout_unreachable += 1;
-                // 130 is the longest run one IMP repeat packet expresses; see `imp::encode_rle`.
-                let minimum_extra = 2 * (sizes.row_padded - sizes.tight_ceil).div_ceil(130);
-                if minimum_extra < 8 {
-                    layout_unreachable_and_unclearable += 1;
-                }
-            }
             let layouts_identical =
                 layouts_are_identical(frame.width, frame.height, sprite.bits_per_pixel);
+            let observability = LayoutObservability::for_frame(
+                packed_size,
+                sizes,
+                sprite.record_variant,
+                sprite.compressed,
+            );
+            if observability.unobservable {
+                layout_unreachable += 1;
+            }
+            if observability.not_cleared_by_gaps {
+                layout_unreachable_and_unclearable += 1;
+            }
+            match imp::layout_is_ambiguous(frame.width, frame.height, sprite.bits_per_pixel) {
+                Ok(true) => layout_ambiguous_shape += 1,
+                Ok(false) => {}
+                Err(error) => failures.push(format!("{} frame {index}: {error}", entry.name)),
+            }
             let Some(choice) = PackedSizeChoice::classify(packed_size, sizes, layouts_identical)
             else {
                 failures.push(format!(
@@ -1734,6 +1824,9 @@ fn roundtrip_imp(source: &Source, rewrite: bool) -> Result<(), String> {
                     if write.layout_ambiguous {
                         rewrite_ambiguous += 1;
                     }
+                    if write.layout_unobservable {
+                        rewrite_unobservable += 1;
+                    }
                     if write.bytes == bytes {
                         rewrite_identical += 1;
                     } else if !byte_identical {
@@ -1784,9 +1877,15 @@ fn roundtrip_imp(source: &Source, rewrite: bool) -> Result<(), String> {
             tally.byte_identical,
         );
     }
+    println!("layout-ambiguous-shape\t{layout_ambiguous_shape}");
     println!("layout-unobservable-by-this-decoder\t{layout_unreachable}");
     println!("layout-unobservable-and-not-cleared-by-gaps\t{layout_unreachable_and_unclearable}");
+    println!("payload-offset-records\t{payload_offset_records}");
     println!("payload-starts\t{payload_starts}");
+    println!(
+        "payload-shared-by-two-records\t{}",
+        payload_offset_records - payload_starts
+    );
     println!("payload-starts-8-byte-aligned\t{payload_starts_aligned}");
     println!("payload-adjacent-pairs\t{payload_pairs}");
     println!("payload-abutting\t{payload_abutting}");
@@ -1818,6 +1917,7 @@ fn roundtrip_imp(source: &Source, rewrite: bool) -> Result<(), String> {
         println!("rewrite-byte-identical\t{rewrite_identical}");
         println!("rewrite-differs-only-by-payload\t{rewrite_differs_by_payload}");
         println!("rewrite-ambiguous-layout\t{rewrite_ambiguous}");
+        println!("rewrite-unobservable-layout\t{rewrite_unobservable}");
         println!(
             "rewrite-refused\t{}",
             rewrite_refused.values().sum::<usize>()
@@ -1915,6 +2015,7 @@ fn import_png_pbm(png_path: &Path, template_path: &Path, output: &Path) -> Resul
     let png = read_indexed_png(
         BufReader::new(png_file),
         (template.image.width, template.image.height),
+        "the PBM header",
     )
     .map_err(|error| {
         format!(
@@ -2007,6 +2108,14 @@ fn import_png_imp(
     let template_bytes = fs::read(template_path)
         .map_err(|error| format!("could not read {}: {error}", template_path.display()))?;
     let sprite = ImpSprite::parse(&template_bytes).map_err(|error| error.to_string())?;
+    // Ask the writer whether this frame is writable **before** the PNG is opened. The frame's
+    // dimensions are taken from the record, and a `0x08` duplicate or `0x04` shared-pixel record
+    // carries `0x0` there -- 10,293 of them in `imp.mpq`, and `--export-imp-frame` exports them
+    // happily by resolving to the frame that owns the payload. Sizing the PNG check off the
+    // unresolved record made the re-import of an exported frame fail with "PNG is 24x1 but the
+    // template is 0x0", which names the wrong dimensions and says nothing about which frame to edit
+    // instead. `frame_pixel_target` returns the refusal that does.
+    frame_pixel_target(&sprite, frame_index).map_err(|error| error.to_string())?;
     let frame = sprite
         .frames
         .get(frame_index)
@@ -2016,7 +2125,12 @@ fn import_png_imp(
         .map_err(|error| format!("could not read {}: {error}", png_path.display()))?;
     // The frame's size is handed to the reader rather than checked after it, so a mismatched header
     // is refused before it can size a decode buffer.
-    let png = read_indexed_png(BufReader::new(png_file), (frame.width, frame.height)).map_err(
+    let png = read_indexed_png(
+        BufReader::new(png_file),
+        (frame.width, frame.height),
+        "the IMP frame record",
+    )
+    .map_err(
         |error| {
             format!(
                 "{}: {error} (template {} frame {frame_index})",
@@ -2080,6 +2194,23 @@ fn import_png_imp(
         println!(
             "warning\tframe {frame_index} is {}x{} at {}bpp, a shape where the tight and row-padded layouts are the same length and different bytes; the stored size names neither and this decoder reads it as tight",
             frame.width, frame.height, sprite.bits_per_pixel,
+        );
+    }
+    if write.layout_unobservable {
+        // The larger sibling of the warning above, and printed in the same shape rather than folded
+        // into it. Here the file *does* record the layout; this decoder's variant-0 reader stops at
+        // the first acceptable length on a packet boundary and so could not have seen a row-padded
+        // one. 752 frames in `imp.mpq` are in this class against 45 in the ambiguous one, and
+        // `layout=Tight` above is printed as fact for every one of them.
+        //
+        // Not a refusal, for the same reason: the file round-trips through this decoder either way,
+        // and refusing would block the 752 from being edited at all on a suspicion no measurement
+        // here can settle. What it must not do is stay silent -- if the frame was stored
+        // row-padded, the exported pixels were already scrambled, and this import splices a tight
+        // payload over only the prefix the reader consumed, stranding the original tail.
+        println!(
+            "warning\tframe {frame_index} is a compressed record-variant-0 frame whose stored size is not the row-padded one, so this decoder's reader stopped before it could observe row padding; layout={:?} is what was read, not what the file necessarily stores",
+            write.layout,
         );
     }
     Ok(())
@@ -5960,7 +6091,8 @@ fn gameplay_symbols_like(pattern: &str, reports: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        GENERATED_HEADER_WORD, GameScriptValue, MapEdit, PackedSizeChoice, TRANSITION_RING_OFFSETS,
+        GENERATED_HEADER_WORD, GameScriptValue, LayoutObservability, MapEdit, PackedSizeChoice,
+        TRANSITION_RING_OFFSETS,
         create_map, edit_map, import_png_imp, import_png_pbm, parse_coordinate, parse_dimension,
         parse_elevation, parse_native_stub, parse_offset, parse_sprite_type, parse_terrain_type,
         refusal_class, roundtrip_maps, set_imp_placement, sprite_types, terrain_sprite_name,
@@ -6946,6 +7078,98 @@ mod tests {
         source
     }
 
+    /// `minimal_imp` with a second frame that is a `0x08` back-reference to the first.
+    ///
+    /// The class that matters here: 10,293 of `imp.mpq`'s 51,666 frame records carry no payload of
+    /// their own, and the parser leaves their width and height at zero because the record does.
+    fn minimal_imp_with_a_duplicate_frame() -> Vec<u8> {
+        const PALETTE_BYTES: usize = 256 * 4;
+        const FRAME_FLAG_DUPLICATE: u8 = 0x08;
+        let mut source = vec![0_u8; 32 + 16 + 8 + 16 * 2];
+        source[2] = 1;
+        source[4..6].copy_from_slice(&2_u16.to_le_bytes());
+        source[6..8].copy_from_slice(&1_u16.to_le_bytes());
+        let palette_offset = source.len();
+        source[8..12].copy_from_slice(&(palette_offset as u32).to_le_bytes());
+        source[26..28].copy_from_slice(&1_u16.to_le_bytes());
+        source[28..32].copy_from_slice(&32_u32.to_le_bytes());
+        source[32 + 11] = 1;
+        source[32 + 12..32 + 16].copy_from_slice(&48_u32.to_le_bytes());
+        source[48 + 2..48 + 4].copy_from_slice(&2_u16.to_le_bytes());
+        source[48 + 4..48 + 8].copy_from_slice(&56_u32.to_le_bytes());
+        source[56 + 2..56 + 4].copy_from_slice(&2_u16.to_le_bytes());
+        source[56 + 4..56 + 6].copy_from_slice(&1_u16.to_le_bytes());
+        source[56 + 6..56 + 8].copy_from_slice(&2_u16.to_le_bytes());
+        let pixel_offset = palette_offset + PALETTE_BYTES;
+        source[56 + 12..56 + 16].copy_from_slice(&(pixel_offset as u32).to_le_bytes());
+        // Frame 1: a back-reference, whose pixel dword is the frame *index* 0, not an offset.
+        source[72] = FRAME_FLAG_DUPLICATE;
+        source.resize(pixel_offset, 0);
+        source[palette_offset..palette_offset + 4].copy_from_slice(&[3, 2, 1, 0]);
+        source.extend_from_slice(&[0xaa, 0xbb]);
+        source
+    }
+
+    /// Export resolves a duplicate record to the frame that owns the pixels; import must refuse it
+    /// by name rather than by its unresolved `0x0` dimensions.
+    ///
+    /// The bug this pins: the import took the PNG's expected size from `sprite.frames[i]` straight,
+    /// which is `0x0` for the 10,293 records that store no pixels, so the round trip of an exported
+    /// frame died inside the PNG reader with "PNG is 2x1 but the template is 0x0" -- the wrong
+    /// dimensions, a message about the PBM header on an IMP path, and no hint that the fix is to
+    /// edit frame 0 instead.
+    #[test]
+    fn import_png_imp_names_the_frame_that_owns_the_pixels_rather_than_its_zero_size() {
+        let dir = scratch_dir("imp-import-duplicate");
+        let template = dir.join("source.imp");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.imp");
+        let bytes = minimal_imp_with_a_duplicate_frame();
+        fs::write(&template, &bytes).unwrap();
+        let sprite = ImpSprite::parse(&bytes).unwrap();
+        assert_eq!(sprite.frames[1].source_frame, Some(0));
+        assert_eq!((sprite.frames[1].width, sprite.frames[1].height), (0, 0));
+        // Export succeeds, because it resolves the reference. That asymmetry is the whole problem.
+        let mut encoded = Vec::new();
+        write_imp_frame_png(&mut encoded, &sprite, 1).unwrap();
+        fs::write(&png, &encoded).unwrap();
+
+        let error = import_png_imp(&png, &template, 1, &output).unwrap_err();
+
+        assert!(
+            error.contains("is a duplicate of frame 0") && error.contains("replace frame 0"),
+            "{error}"
+        );
+        assert!(
+            !error.contains("the template is 0x0"),
+            "the unresolved dimensions must never reach the user: {error}"
+        );
+        assert!(!output.exists(), "nothing may be written on a refusal");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The size-mismatch message is shared with the PBM import, and it used to name the PBM header
+    /// unconditionally -- on a path that has no PBM in it.
+    #[test]
+    fn the_size_mismatch_refusal_names_the_format_it_was_reached_from() {
+        let dir = scratch_dir("imp-import-size-wording");
+        let template = dir.join("source.imp");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.imp");
+        fs::write(&template, minimal_imp()).unwrap();
+        let palette = vec![[0_u8, 0, 0]; 256];
+        let mut encoded = Vec::new();
+        write_indexed_png_for_test(&mut encoded, 3, 1, &palette, &[0, 1, 2]);
+        fs::write(&png, &encoded).unwrap();
+
+        let error = import_png_imp(&png, &template, 0, &output).unwrap_err();
+
+        assert!(error.contains("PNG is 3x1 but the template is 2x1"), "{error}");
+        assert!(error.contains("the IMP frame record"), "{error}");
+        assert!(!error.contains("PBM"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     fn scratch_dir(name: &str) -> PathBuf {
         let path = env::temp_dir().join(format!("lom-placement-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
@@ -7101,6 +7325,149 @@ mod tests {
             PackedSizeChoice::classify(4, flush, false),
             Some(PackedSizeChoice::RowPadded)
         );
+    }
+
+    /// A synthetic frame shape, so the arithmetic can be driven past where the corpus happens to
+    /// sit.
+    ///
+    /// `PackedSizes` is built by hand rather than from real dimensions on purpose. The whole point
+    /// of these tests is the `delta = row_padded - tight_ceil` boundary at 390/391, and no frame in
+    /// `imp.mpq` is anywhere near it -- a corpus run can only ever report that all 752 landed on
+    /// one side. A fixture shaped like the corpus could not fail on what the corpus hides.
+    fn sizes_with_delta(tight_ceil: usize, delta: usize) -> PackedSizes {
+        PackedSizes {
+            tight_floor: tight_ceil.saturating_sub(1),
+            tight_ceil,
+            row_padded: tight_ceil + delta,
+        }
+    }
+
+    /// The gate: only a compressed, variant-0 frame whose stored size is *not* the row-padded one
+    /// is out of this decoder's reach. Each of the four clauses is tested by removing it alone.
+    #[test]
+    fn only_a_compressed_variant_0_frame_stopping_short_is_unobservable() {
+        let ragged = PackedSizes::for_frame(17, 4, 1).unwrap();
+        assert_eq!(
+            (ragged.tight_floor, ragged.tight_ceil, ragged.row_padded),
+            (8, 9, 12)
+        );
+
+        // The tight size on a shape where the layouts differ: the reader stopped at 9 and could
+        // never have reached 12. This is the class the 752 are drawn from.
+        assert!(LayoutObservability::for_frame(9, ragged, 0, true).unobservable);
+        // So is the tight-floor size, for the same reason: 8 is short of 12 too.
+        assert!(LayoutObservability::for_frame(8, ragged, 0, true).unobservable);
+
+        // The row-padded size itself. The reader DID land on 12 -- a single 12-byte literal packet
+        // reaches it without passing through 8 or 9 -- so the layout was observed, and counting it
+        // would let the sweep report `row-padded` and `unobservable` for one frame at once.
+        assert!(!LayoutObservability::for_frame(12, ragged, 0, true).unobservable);
+
+        // A variant-1 record declares its length, so the reader consumes exactly that many bytes
+        // and never has to guess where to stop.
+        assert!(!LayoutObservability::for_frame(9, ragged, 1, true).unobservable);
+
+        // An uncompressed payload is read by length, not by decoding packets until a size matches.
+        assert!(!LayoutObservability::for_frame(9, ragged, 0, false).unobservable);
+
+        // A shape whose two layouts are the same length records no choice for the reader to miss.
+        // Those frames are the separate `ambiguous-same-length` population and must not be added
+        // here as well.
+        let equal = PackedSizes::for_frame(7, 5, 1).unwrap();
+        assert_eq!(equal.tight_ceil, equal.row_padded);
+        assert!(!LayoutObservability::for_frame(5, equal, 0, true).unobservable);
+
+        // The case that makes `tight_ceil != row_padded` load-bearing on its own, and the reason
+        // this predicate takes a stored size rather than a classified layout name. A 7x1 frame at
+        // 1bpp stores `tight_floor` 0 while `tight_ceil == row_padded == 1`: its stored size is not
+        // the row-padded one, it is compressed and variant 0, and it is still not unobservable,
+        // because there is no row-padded layout for the reader to have missed. Every other clause
+        // here is satisfied, so dropping this one would count it.
+        let floored = PackedSizes::for_frame(7, 1, 1).unwrap();
+        assert_eq!(
+            (floored.tight_floor, floored.tight_ceil, floored.row_padded),
+            (0, 1, 1)
+        );
+        assert!(!LayoutObservability::for_frame(0, floored, 0, true).unobservable);
+    }
+
+    /// `not_cleared_by_gaps` is a strict subset of `unobservable`, which is what lets the report
+    /// print both counters and call them equal rather than adding them.
+    #[test]
+    fn a_frame_the_decoder_could_see_is_never_counted_as_uncleared() {
+        let ragged = PackedSizes::for_frame(17, 4, 1).unwrap();
+        for (packed_size, variant, compressed) in
+            [(12, 0, true), (9, 1, true), (9, 0, false), (12, 1, false)]
+        {
+            let verdict = LayoutObservability::for_frame(packed_size, ragged, variant, compressed);
+            assert_eq!(
+                verdict,
+                LayoutObservability::default(),
+                "packed_size={packed_size} variant={variant} compressed={compressed}"
+            );
+        }
+    }
+
+    /// The 390/391 boundary, from both sides, and it is the whole of the "the gaps clear none of
+    /// them" claim.
+    ///
+    /// An unread row-padded continuation of `delta` packed bytes costs at least
+    /// `2 * ceil(delta / 130)` stored bytes. That reaches 8 -- the archive's payload alignment, and
+    /// so the smallest shortfall a gap could distinguish from ordinary padding -- exactly when
+    /// `ceil(delta / 130)` reaches 4, at `delta == 391`.
+    ///
+    /// Both constants are pinned here in both directions. Raising the threshold to `<= 8` flips
+    /// delta 391; lowering it to `< 6` flips delta 390. Widening the repeat length to 131 flips
+    /// delta 391 the other way, and narrowing it to 129 flips delta 390. What is NOT killable is
+    /// `< 7`: the minimum is `2 * k` and therefore always even, so no input separates it from
+    /// `< 8`, and a surviving mutant there is equivalent rather than untested.
+    #[test]
+    fn the_gap_evidence_clears_a_frame_exactly_when_the_shortfall_reaches_eight_stored_bytes() {
+        // delta 390 = 3 full repeat packets, 6 stored bytes, under the 8-byte alignment: it hides,
+        // and the gap histogram says nothing.
+        let hides = sizes_with_delta(16, 390);
+        assert!(LayoutObservability::for_frame(16, hides, 0, true).unobservable);
+        assert!(LayoutObservability::for_frame(16, hides, 0, true).not_cleared_by_gaps);
+
+        // delta 391 spills into a fourth packet: 8 stored bytes, which could not hide inside a
+        // 7-byte gap. Still unobservable by the decoder; cleared by the alignment evidence.
+        let shows = sizes_with_delta(16, 391);
+        assert!(LayoutObservability::for_frame(16, shows, 0, true).unobservable);
+        assert!(!LayoutObservability::for_frame(16, shows, 0, true).not_cleared_by_gaps);
+
+        // Far past the boundary, where no arithmetic slip could still land under 8.
+        let obvious = sizes_with_delta(16, 4000);
+        assert!(!LayoutObservability::for_frame(16, obvious, 0, true).not_cleared_by_gaps);
+
+        // And the smallest possible shortfall, one packed byte: two stored bytes, well inside the
+        // padding.
+        let tiny = sizes_with_delta(16, 1);
+        assert!(LayoutObservability::for_frame(16, tiny, 0, true).not_cleared_by_gaps);
+    }
+
+    /// The corpus's own 752 are all far below the boundary, which is the fact the doc reports and
+    /// the reason the two printed counters are equal. Stated as a test so a change to the threshold
+    /// cannot quietly move the published number.
+    #[test]
+    fn the_real_frame_shapes_in_the_archive_all_hide_inside_the_alignment() {
+        // The largest frame the format can hold at 1bpp is bounded by the header's maximum
+        // dimensions, but the shapes that actually occur are small: a 17x4 leaves 3 packed bytes.
+        let ragged = PackedSizes::for_frame(17, 4, 1).unwrap();
+        assert_eq!(ragged.row_padded - ragged.tight_ceil, 3);
+        assert!(LayoutObservability::for_frame(9, ragged, 0, true).not_cleared_by_gaps);
+
+        // A real shape CAN escape -- the arithmetic is not vacuously one-sided -- but it takes a
+        // 391-byte shortfall, and at 1bpp the shortfall grows by under a byte per row. A 9-pixel
+        // row wastes 7 bits, so it takes a frame around 450 rows tall, and `imp.mpq`'s tallest
+        // frame is nothing like that. This is the reason the boundary above had to be driven with
+        // a synthetic `PackedSizes`: no frame in the corpus sits near it.
+        let tall = PackedSizes::for_frame(9, 500, 1).unwrap();
+        assert!(
+            tall.row_padded - tall.tight_ceil >= 391,
+            "{tall:?} should overshoot the boundary"
+        );
+        assert!(LayoutObservability::for_frame(tall.tight_ceil, tall, 0, true).unobservable);
+        assert!(!LayoutObservability::for_frame(tall.tight_ceil, tall, 0, true).not_cleared_by_gaps);
     }
 
     fn navigation_sprite() -> ImpSprite {
