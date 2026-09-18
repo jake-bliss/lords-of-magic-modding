@@ -864,17 +864,33 @@ fn is_single_component(name: &str) -> bool {
 /// Matched on the number rather than on "User canceled", because the text is localised and the
 /// number is not. A cancel misread as a failure puts a refusal in front of someone who did nothing
 /// wrong.
-const APPLESCRIPT_USER_CANCELLED: &str = "(-128)";
+const APPLESCRIPT_USER_CANCELLED: i32 = -128;
 
-/// Why the parentheses are part of the pattern.
+/// The AppleScript error number a dialog reports, if its stderr ends in one.
 ///
-/// `osascript` echoes the offending path into its error text, so a bare `-128` matches any user
-/// whose directory happens to contain those characters. **Demonstrated on a real Mac** against this
-/// file's own `CHOOSE_FOLDER_IN`: with `/Users/<name>/LOM-1280/map` as the default location the
-/// error is `execution error: Can't make file "...LOM-1280:map" into type alias. (-1700)` and the
-/// process exits 1 -- so a genuine failure was read as a cancel and silently did nothing.
-/// AppleScript always parenthesises the number, so requiring them costs nothing.
-const _: () = ();
+/// **Parsed, not searched for.** `osascript` echoes the offending path into its error text, so any
+/// substring test can be defeated by a directory name. A bare `-128` matched
+/// `/Users/<name>/LOM-1280/map`, demonstrated on a real Mac: the error is
+/// `execution error: Can't make file "...LOM-1280:map" into type alias. (-1700)` with exit 1, so a
+/// genuine failure was read as a cancel and silently did nothing. Adding the parentheses narrowed
+/// that but did not close it -- a path containing `(-128)` is unusual but legal, and "unusual but
+/// legal" is what this class of bug is made of.
+///
+/// AppleScript puts the number last, in parentheses, so the **last** parenthesised integer is the
+/// error rather than any earlier text. A path cannot move it.
+fn applescript_error_number(stderr: &str) -> Option<i32> {
+    let mut found = None;
+    let mut rest = stderr;
+    while let Some(open) = rest.find('(') {
+        rest = &rest[open + 1..];
+        if let Some(close) = rest.find(')')
+            && let Ok(number) = rest[..close].trim().parse::<i32>()
+        {
+            found = Some(number);
+        }
+    }
+    found
+}
 
 /// The folder chooser, as a script that takes its prompt from `argv`.
 ///
@@ -959,8 +975,11 @@ const PS_NAME_VAR: &str = "LOM_PICK_NAME";
 /// would be relying on unmeasured semantics. With `Stop`, any error terminates with its own
 /// non-zero code and cannot be mistaken for a cancel.
 ///
-/// The encoding is `UTF8Encoding::new($false)` rather than `[Text.Encoding]::UTF8`, which is the
-/// **BOM-emitting** singleton -- a `U+FEFF` on stdout would become the first character of the path.
+/// The encoding is `UTF8Encoding::new($false)` rather than `[Text.Encoding]::UTF8`, whose
+/// singleton carries a BOM preamble. **That rationale was overstated** and is corrected here:
+/// .NET's console writer suppresses the preamble, so the singleton would most likely have been
+/// fine. The explicit BOM-free constructor is kept because it is unambiguous and costs nothing,
+/// not because the alternative was measured to break.
 ///
 /// **Not 1.** These scripts are ours, so they can signal a cancel unambiguously -- and they must,
 /// because the interesting Windows failures exit 1 with nothing on stdout, which is exactly the
@@ -991,6 +1010,19 @@ $dialog.FileName = $env:LOM_PICK_NAME
 if ($env:LOM_PICK_DIR) { $dialog.InitialDirectory = $env:LOM_PICK_DIR }
 if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 7 }
 [Console]::Out.Write($dialog.FileName)"#;
+
+/// Remove the environment variables that let a dialog redefine its own cancel status.
+///
+/// **zenity honours `ZENITY_CANCEL` and `DIALOG_CANCEL`**, which change the exit code it uses for a
+/// dismissed dialog. They are inherited, so a user with either set in their shell profile -- or a
+/// parent process that exported one -- would make every cancel arrive as an unrecognised code and
+/// every cancel be reported as a broken dialog. Clearing them is how "exit 1 means cancel" becomes
+/// true rather than assumed.
+fn clear_cancel_status_overrides(command: &mut Command) {
+    for name in ["ZENITY_CANCEL", "ZENITY_OK", "DIALOG_CANCEL", "DIALOG_OK"] {
+        command.env_remove(name);
+    }
+}
 
 /// Make a path safe to pass as a bare positional argument.
 ///
@@ -1235,6 +1267,7 @@ fn pick_command(flavour: PickerFlavour, request: &PickRequest) -> Command {
         }
         PickerFlavour::Zenity => {
             let mut command = Command::new("zenity");
+            clear_cancel_status_overrides(&mut command);
             command.arg("--file-selection");
             match request.kind {
                 PickKind::Directory => {
@@ -1263,6 +1296,7 @@ fn pick_command(flavour: PickerFlavour, request: &PickRequest) -> Command {
         }
         PickerFlavour::KDialog => {
             let mut command = Command::new("kdialog");
+            clear_cancel_status_overrides(&mut command);
             match request.kind {
                 PickKind::Directory => {
                     command.args(["--title", DIRECTORY_PROMPT]);
@@ -1409,6 +1443,27 @@ fn run_picker(mut command: Command, timeout: Duration, flavour: PickerFlavour) -
 /// Reading an ambiguous outcome as a cancel is still the deliberate direction: a cancel misreported
 /// as an error puts an alarming refusal in front of someone who did nothing but change their mind,
 /// and teaches them to ignore the log, which is the one place this editor says things that matter.
+/// Whether this stderr names a failure that cannot be a cancel.
+///
+/// **The display gate cannot catch everything.** `DISPLAY` may be set and still be unusable -- a
+/// stale value, an unauthorised one, a dead X server -- and GTK then exits **1 with empty stdout**,
+/// which is byte-for-byte the signature of a dismissed dialog. So the exit code alone is not
+/// enough, and this is the narrow escape hatch: a small set of unambiguous markers, not a general
+/// "stderr is non-empty" rule, because GTK and Qt both print warnings on a perfectly ordinary run
+/// and treating those as failure would report every cancel as an error.
+fn names_a_fatal_display_failure(stderr: &str) -> bool {
+    const FATAL: [&str; 4] = [
+        // GTK, when it cannot reach the X server or Wayland compositor.
+        "cannot open display",
+        "Failed to open display",
+        // Qt, when kdialog has no platform plugin it can load.
+        "could not connect to display",
+        "this application failed to start because no Qt platform plugin",
+    ];
+    let lowered = stderr.to_ascii_lowercase();
+    FATAL.iter().any(|marker| lowered.contains(&marker.to_ascii_lowercase()))
+}
+
 fn classify_pick(
     flavour: PickerFlavour,
     code: Option<i32>,
@@ -1431,9 +1486,13 @@ fn classify_pick(
         return PickOutcome::Chosen(PathBuf::from(path));
     }
     let cancelled = match flavour {
-        PickerFlavour::AppleScript => stderr.contains(APPLESCRIPT_USER_CANCELLED),
+        PickerFlavour::AppleScript => {
+            applescript_error_number(stderr) == Some(APPLESCRIPT_USER_CANCELLED)
+        }
         PickerFlavour::Zenity | PickerFlavour::KDialog => {
-            code == Some(1) && String::from_utf8_lossy(stdout).trim().is_empty()
+            code == Some(1)
+                && String::from_utf8_lossy(stdout).trim().is_empty()
+                && !names_a_fatal_display_failure(stderr)
         }
         PickerFlavour::PowerShell => code == Some(PS_CANCELLED_EXIT_CODE),
     };
@@ -3883,7 +3942,25 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
     /// nothing and removes the whole class.
     #[test]
     fn a_path_containing_the_cancel_number_is_not_read_as_a_cancel() {
-        assert!(APPLESCRIPT_USER_CANCELLED.starts_with('('), "the parentheses are the fix");
+        // The number is parsed out of the stderr, so no path text can be mistaken for it.
+        assert_eq!(applescript_error_number("... alias. (-1700)\n"), Some(-1700));
+        assert_eq!(applescript_error_number("User canceled. (-128)\n"), Some(-128));
+        // **The last** parenthesised integer wins, so a path containing one cannot displace it.
+        // Adding the parentheses to a substring match did not close this; parsing does.
+        assert_eq!(
+            applescript_error_number("Can't make file \"HD:Users:x:LOM(-128):map\" ... (-1700)\n"),
+            Some(-1700)
+        );
+        assert_eq!(applescript_error_number("no number here"), None);
+        match classify_pick(
+            PickerFlavour::AppleScript,
+            Some(1),
+            b"",
+            "execution error: Can't make file \"HD:Users:x:LOM(-128):map\" into alias. (-1700)\n",
+        ) {
+            PickOutcome::Unavailable(reason) => assert!(reason.contains("-1700"), "{reason}"),
+            other => panic!("a path containing (-128) turned a failure into {other:?}"),
+        }
         // The exact stderr a real Mac produced, with the path echoed into it.
         let stderr = concat!(
             "30:149: execution error: Can't make file ",
@@ -3907,6 +3984,81 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
 "
             ),
             PickOutcome::Cancelled
+        );
+    }
+
+    /// A display that is set but unusable is a failure, not a cancel.
+    ///
+    /// The display gate cannot catch this: `DISPLAY` may be present and stale, unauthorised, or
+    /// pointing at a dead server, and GTK then exits **1 with empty stdout** -- byte-for-byte the
+    /// signature of a dismissed dialog. Only the stderr distinguishes them.
+    #[test]
+    fn a_display_that_cannot_be_opened_is_a_failure_and_not_a_cancel() {
+        for stderr in [
+            "cannot open display: :0\n",
+            "Gtk-WARNING **: cannot open display: localhost:10.0\n",
+            "qt.qpa.plugin: This application failed to start because no Qt platform plugin \
+             could be initialized\n",
+        ] {
+            match classify_pick(PickerFlavour::Zenity, Some(1), b"", stderr) {
+                PickOutcome::Unavailable(reason) => assert!(!reason.is_empty(), "{stderr}"),
+                other => panic!("an unusable display was read as {other:?}: {stderr}"),
+            }
+        }
+        // And ordinary desktop noise on exit 1 is still a cancel, which is the whole reason this
+        // is a narrow marker list rather than a "stderr is non-empty" rule.
+        assert_eq!(
+            classify_pick(
+                PickerFlavour::KDialog,
+                Some(1),
+                b"",
+                "Gtk-Message: Failed to load module \"canberra-gtk-module\"\n"
+            ),
+            PickOutcome::Cancelled
+        );
+    }
+
+    /// zenity lets the environment redefine its cancel status, so the environment is cleared.
+    ///
+    /// `ZENITY_CANCEL` and `DIALOG_CANCEL` are inherited. A user with either set in their shell
+    /// profile would make every dismissal arrive as an unrecognised exit code, and every cancel be
+    /// reported to them as a broken dialog.
+    #[test]
+    fn the_environment_cannot_redefine_a_dialogs_cancel_status() {
+        let request = PickRequest {
+            kind: PickKind::Directory,
+            start_in: None,
+            default_name: None,
+        };
+        for flavour in [PickerFlavour::Zenity, PickerFlavour::KDialog] {
+            let command = pick_command(flavour, &request);
+            let cleared: Vec<String> = command
+                .get_envs()
+                .filter(|(_, value)| value.is_none())
+                .map(|(key, _)| key.to_string_lossy().into_owned())
+                .collect();
+            for name in ["ZENITY_CANCEL", "ZENITY_OK", "DIALOG_CANCEL", "DIALOG_OK"] {
+                assert!(
+                    cleared.contains(&name.to_owned()),
+                    "{name} can redefine the cancel status and is not cleared for {flavour:?}"
+                );
+            }
+        }
+    }
+
+    /// The `$env:` extractor must not be satisfied by a name inside a comment.
+    #[test]
+    fn a_commented_out_variable_does_not_count_as_read() {
+        assert_eq!(
+            env_names_read_by("# $env:LOM_PICK_DIR\n$dialog.X = $env:LOM_PICK_PROMPT"),
+            BTreeSet::from(["LOM_PICK_PROMPT".to_owned()]),
+            "a name inside a comment must not count, or commenting out an assignment \
+             would leave the coupling assertion green"
+        );
+        // `${env:NAME}` is valid PowerShell and must be recognised, not rejected.
+        assert_eq!(
+            env_names_read_by("${env:LOM_PICK_NAME}"),
+            BTreeSet::from(["LOM_PICK_NAME".to_owned()])
         );
     }
 
@@ -4004,7 +4156,12 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         assert!(!no_tool.contains("no graphical display"), "{no_tool}");
         assert_ne!(headless, no_tool);
 
-        // And this host's own refusal, whichever it is, is one of the two.
+        // **What this cannot cover, stated rather than hedged.** `available_flavour` passes
+        // `Platform::current()` and `has_display()` into `no_dialog_reason`, and on a Mac it
+        // returns `Ok`, so the `Err` branch never runs here at all. Hard-coding `true` for the
+        // display at that call site would break the headless message with this test still green.
+        // That argument wiring is uncoverable from one host, like `Platform::current` itself; it
+        // is one line with no logic in it, which is as small as the surface gets.
         if let Err(reason) = available_flavour() {
             assert!(reason == headless || reason == no_tool, "{reason}");
         }
@@ -4150,16 +4307,30 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
     }
 
     /// The `$env:NAME` variables a PowerShell script reads, as whole names.
+    ///
+    /// **Comments are stripped first.** Counting a name inside a `#` comment would mean commenting
+    /// an assignment out left the coupling assertion green, which is the opposite of its purpose.
+    /// `${env:NAME}` is accepted too: it is valid PowerShell and rejecting it would fail on a
+    /// correct script.
     fn env_names_read_by(script: &str) -> BTreeSet<String> {
-        script
-            .split("$env:")
-            .skip(1)
-            .map(|rest| {
-                rest.chars()
+        let code: String = script
+            .lines()
+            .map(|line| line.split('#').next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut names = BTreeSet::new();
+        for form in ["$env:", "${env:"] {
+            for rest in code.split(form).skip(1) {
+                let name: String = rest
+                    .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect::<String>()
-            })
-            .collect()
+                    .collect();
+                if !name.is_empty() {
+                    names.insert(name);
+                }
+            }
+        }
+        names
     }
 
     /// Each flavour runs the program it names.
