@@ -15,9 +15,9 @@
   </form>
   <p class="hint" id="bundle-hint">
     With <code>--pic</code> this field is already filled in — press <b>List</b> and pick a map.
-    <b>Browse cannot enter a <code>.app</code> bundle by clicking</b>, which is where a Wine-wrapper
-    install keeps its maps; that is the macOS folder chooser's rule, not ours. Inside the dialog
-    press <b>Cmd+Shift+G</b> and paste the path, or just use the field above.
+    <span id="bundle-mac-note"><b>Browse cannot enter a <code>.app</code> bundle by clicking</b>, which
+    is where a Wine-wrapper install keeps its maps; that is the macOS folder chooser's rule, not
+    ours.</span> Inside the dialog you can always type a path instead: <span id="type-path-open">press <b>Cmd+Shift+G</b> and paste it</span>, or just use the field above.
   </p>
   <form id="open-form">
     <label>Map file
@@ -53,7 +53,7 @@
       <button id="browse-save" type="button">Browse…</button>
       <button type="submit">Save As</button>
     </form>
-    <p class="hint">Browse here picks a new file anywhere; <b>Cmd+Shift+G</b> types a path.</p>
+    <p class="hint">Browse here picks a new file anywhere; <span id="type-path-save"><b>Cmd+Shift+G</b> types a path</span>.</p>
     <p class="hint">
       Written into the maps directory above, always as a new file. An existing name is refused,
       never overwritten, and the name may not contain a path separator.

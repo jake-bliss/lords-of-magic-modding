@@ -2,6 +2,7 @@ pub mod asset;
 pub mod gamescript;
 pub mod gamescript_vm;
 pub mod imp;
+pub mod imp_anim;
 pub mod map;
 pub mod mpq;
 pub mod native_table;
