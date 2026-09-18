@@ -22,7 +22,7 @@ shift
 prepare_tools
 
 base_profile="$(PYTHONPATH="${project_dir}/tools" python3 -c \
-  'import sys, mod_tree; print(mod_tree.load(sys.argv[1]).manifest.base_profile)' "${mod_dir}")"
+  'import sys, mod_tree; print(mod_tree.load_manifest(sys.argv[1]).base_profile)' "${mod_dir}")"
 game_dir="$(profile_game_dir "${base_profile}")"
 
 echo "== seeding from ${base_profile} =="

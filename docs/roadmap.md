@@ -13,22 +13,22 @@ since PR #51 and did not describe nine merged pull requests.
 |---|---|
 | 1 — Archive inventory | **Complete.** The repack command landed with a block-index shape check. |
 | 2 — Script documentation | **Complete.** 1,535 symbols indexed across three profiles, searchable by code or display name. |
-| **3 — Build and validation pipeline** | **Substantially complete.** `validate`, `build`, `install-dev` and `restore-dev` all exist and are tested. The development profile itself has never been created; that is one attended command. |
-| **4 — First vertical slice** | **Unblocked, not done.** `units\orinf.gs` is picked, built reproducibly and validated; nothing has been in front of the engine. |
+| 3 — Build and validation pipeline | **Complete.** `validate`, `build`, `install-dev` and `restore-dev` exist, are tested, and have been run end to end against the engine. |
+| 4 — First vertical slice | **Complete, Observed in gameplay 2026-09-18.** `units\orinf.gs` built, validated, installed and read off the unit panel; rollback verified. |
 | 5 — Asset pipeline | Substantially done; see the boxes below for what remains. |
 | 6 — Mod direction | Correctly gated on 3 and 4. |
 | Format and engine reverse-engineering | Far ahead of what this document ever planned. See the section below. |
 
-**Phases 3 and 4 are the critical path and nothing else is.** Phase 4 exists to force the complete
+**Phases 3 and 4 were the critical path. Both are now closed.** Phase 4 exists to force the complete
 workflow into being — build reproducibly, validate, install to a development profile, observe the
 change in game, roll back. Everything in Phases 1 and 5 is input to it.
 
 The honest summary used to be that the project had enormous read capability and no delivery
-pipeline. The pipeline now exists ([build pipeline](build-pipeline.md)) and takes a mod source tree
-to a verified, reproducible archive with a change report. What it has still never done is put one of
-those archives in front of `lomse.exe`: no `Lords of Magic Development.app` has been created on any
-machine, so the last two links of the chain -- install and observe -- are written and tested against
-fabricated directories rather than exercised for real.
+pipeline. **That is no longer true.** The pipeline exists ([build pipeline](build-pipeline.md)),
+takes a mod source tree to a verified reproducible archive with a change report, installs it into a
+cloned development profile, and on 2026-09-18 the engine loaded one and rendered the change -- in
+**two** independent places in the interface. Every link of the chain has now been exercised for
+real rather than against fabricated directories.
 
 A second, related caution: a large amount of recent work — multiplayer, the savegame format, the
 GameScript VM, the operator bodies — was **not on this roadmap at all**. It is genuine and it is
@@ -196,38 +196,58 @@ are unstable across a rewrite ([member names](member-names.md)).
 
 ## Phase 4 — First vertical slice
 
-**Unblocked and not done. It is still the project's real proof point.**
+**COMPLETE. Observed in gameplay, 2026-09-18.** The engine loaded an archive this pipeline built,
+and the change was read off the unit panel by a human.
 
-The target is picked: `units\orinf.gs`, Order's Footmen, symbol `orinf`. It was chosen because it
-is the one member class with real engine evidence behind it -- flags `0x80010100` (EXISTS |
-ENCRYPTED | IMPLODE) in the baseline `gs.mpq`, the same compression class as the single attended
-2026-09-16 round trip. `mods/orinf-rebalance` builds reproducibly and validates clean; what remains
-is creating the development profile, installing, and looking at the game.
+The slice was `units\orinf.gs`, Order's Footmen, symbol `orinf`. It was chosen because it is the
+one member class with real engine evidence behind it -- flags `0x80010100` (EXISTS | ENCRYPTED |
+IMPLODE) in the baseline `gs.mpq`, the same compression class as the attended 2026-09-16 round trip.
 
-Choose one deliberately small change that touches the complete workflow. Good candidates:
+| Success criterion | Result |
+|---|---|
+| The archive builds reproducibly | **Yes.** Four fresh packs, byte-identical. Build id is a digest of the tree, base archives and tools, not a timestamp. |
+| Static validation passes | **Yes**, 0 findings -- and the run prints what it could not check. |
+| The development profile launches | **Yes.** Cloned from the baseline in 3.8s for 13.9 MiB (APFS `clonefile`). |
+| The changed behavior is visible in game | **Yes.** The unit panel reads `IRONGUARD`. |
+| Existing baseline and mod profiles remain unchanged | **Yes.** Baseline `gs.mpq` still `6b84ea4c…`, `imp.mpq` `cb5c1068…` across all three, maps 354/354/366. |
+| Rollback succeeds | **Yes**, tested before the engine run and verified against the pristine manifest rather than against the file it copied from. |
 
-1. Rebalance one clearly underpowered unit and update every displayed value.
-2. Correct an artifact behavior plus its tooltip.
-3. Add one new dungeon encounter using existing creatures and rewards.
-4. Add a small custom map with a scripted scenario hook.
+### The first attempt was inconclusive, and why
 
-Candidate 4 is the one the toolchain is most over-equipped for: the map writer re-encodes all 365
-installed maps byte-identically, object editing works on all 365, and the engine has been confirmed
-to accept maps we write ([PR #47](https://github.com/jake-bliss/lords-of-magic-modding/pull/47)).
-Candidate 1 is what was actually picked, for the narrower reason given above: it is the only change
-whose *delivery mechanism* already has engine evidence.
+The slice originally changed `hit_points` from 13 to 26 only. The panel showed `90/90`, which
+confirms nothing: it also showed **attack 10 and armor 6 where `orinf.gs` declares 7 and 5**, and
+neither of those was touched. **The unit panel applies modifiers to declared statistics**, so a
+displayed number is not a raw read of the record and cannot be predicted in advance. A measurement
+whose expected value is unknown is not a measurement.
 
-The missing pieces are no longer Phase 3. They are: create the development profile, install, launch,
-look, and roll back.
+The change was re-cut against a field the panel prints **verbatim**: the unit's name,
+`/name"Footmen"def` -> `/name"Ironguard"def`. There is no formula to invert, so the observation is
+unambiguous. The build carried both changes, so the panel's `90/90` is now known to be the
+**modified** value and vanilla reads half of it.
 
-Success criteria:
+The lesson generalises and belongs with the others in this file: **pick an observable whose
+expected value you can state before you look.** Choosing `hit_points` meant checking the subject
+with an uncalibrated instrument.
 
-- The archive builds reproducibly.
-- Static validation passes.
-- The development profile launches.
-- The changed behavior is visible in game.
-- Existing baseline and mod profiles remain unchanged.
-- Rollback succeeds.
+### What this does and does not establish
+
+**Established, Observed in gameplay:** the engine accepts an archive produced by
+`scripts/mod-build.sh` -> `scripts/repack-archive.sh` for an `MPQ_FILE_IMPLODE` member of `gs.mpq`,
+installed into a cloned profile, and applies the changed record. The full loop -- seed, edit,
+validate, build, install, observe, roll back -- works end to end.
+
+The rename was observed in **two independent places**: the selected-unit panel on the map, and the
+**barracks recruitment panel**. That matters more than one sighting, because it shows the engine is
+reading the changed record into the unit *type* rather than patching a single already-instantiated
+army. The recruitment panel is also the obvious place to look for **undecorated** declared values,
+since it describes a unit that does not exist yet and so has no level, leader or terrain modifier
+applied -- which is what the map panel demonstrably does have. A future numeric slice should be read
+there, not on the map.
+
+**Not established.** This is one member, one archive, one compression class. A `pic.mpq`
+replacement has still **never** faced the engine and its compression choice remains **Inferred**.
+Adding a member rather than replacing one has never been tried. Nothing here says a *large* mod
+loads, only that a correct one-member rewrite does.
 
 ## Phase 5 — Asset pipeline
 
