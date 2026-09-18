@@ -341,6 +341,161 @@ impl SaveContainer {
         self.locations.iter().map(|location| location.tag).collect()
     }
 
+    /// The **structural checks**: the format's own requirements, re-derived from the raw bytes.
+    ///
+    /// Two deliberate properties.
+    ///
+    /// **They are computed here, not from the parsed sections.** An invariant read off a struct
+    /// that `parse` already validated cannot report a failure -- `parse` rejected the file before
+    /// the caller ever saw it. These re-read the words out of `source` and redo the arithmetic, so
+    /// they are a second implementation that can genuinely disagree with the first.
+    ///
+    /// **They hang off the container, not off [`SaveFile`], so they run when parsing fails.** That
+    /// is the whole point: on a file this parser refuses, these are what say *which* section is
+    /// malformed and by how much. A check reachable only after a successful parse is a check that
+    /// never fires on the files that need it.
+    pub fn structural_checks(&self, source: &[u8]) -> Vec<Invariant> {
+        let word = |offset: usize| -> Option<u32> {
+            source
+                .get(offset..offset + 4)
+                .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("four bytes")))
+        };
+        let structural = |name, measured, passed| {
+            Invariant::new(name, InvariantKind::Structural, measured, passed)
+        };
+        let mut checks = Vec::new();
+
+        checks.push(structural(
+            "container: nine tags, each exactly once",
+            format!(
+                "{}/9 ({})",
+                self.census.tags_seen_exactly_once(),
+                self.census.describe_anomalies()
+            ),
+            self.census.is_well_formed(),
+        ));
+
+        let mult = self.location(SectionTag::Multiplayer);
+        let declared = word(mult.payload_offset);
+        // The slot block's presence depends on the version, which lives in a different section --
+        // so this arithmetic has to reach across to `LS_VER_` exactly as the engine's handlers do
+        // through their shared singleton.
+        let version = word(self.location(SectionTag::Version).payload_offset);
+        let slot_bytes = match version {
+            Some(version) if (version as i32) >= (MULTIPLAYER_SLOTS_MIN_VERSION as i32) => {
+                MultiplayerSection::SLOT_COUNT * LordSlot::RECORD_LEN
+            }
+            Some(_) => 0,
+            None => 0,
+        };
+        checks.push(structural(
+            "LS_MULT: 4 + declared_setup + slot block == payload",
+            match declared {
+                Some(declared) => format!(
+                    "4+{declared}+{slot_bytes}={} vs {}",
+                    4 + declared as usize + slot_bytes,
+                    mult.payload_len
+                ),
+                None => "unreadable".to_owned(),
+            },
+            declared.is_some_and(|declared| 4 + declared as usize + slot_bytes == mult.payload_len),
+        ));
+
+        let map = self.location(SectionTag::Map);
+        let map_accounting = (|| {
+            let width = word(map.payload_offset)? as usize;
+            let height = word(map.payload_offset + 4)? as usize;
+            let per_cell = word(map.payload_offset + 8)? as usize;
+            let grid = width.checked_mul(height)?.checked_mul(per_cell)?;
+            let count = word(map.payload_offset + 12 + grid)? as usize;
+            let total = 12 + grid + 4 + count.checked_mul(4)? + 4;
+            Some((grid, count, total))
+        })();
+        checks.push(structural(
+            "LS_MAP_: 12 + w*h*bpc + 4 + 4*count + 4 == payload",
+            match map_accounting {
+                Some((grid, count, total)) => {
+                    format!("12+{grid}+4+{}+4={total} vs {}", count * 4, map.payload_len)
+                }
+                None => "unreadable".to_owned(),
+            },
+            map_accounting.is_some_and(|(_, _, total)| total == map.payload_len),
+        ));
+
+        let user = self.location(SectionTag::User);
+        let expected_user = UserSection::RECORD_COUNT * UserRecord::LEN;
+        checks.push(structural(
+            "LS_USER: payload == 8 records of 784",
+            format!("{} vs {expected_user}", user.payload_len),
+            user.payload_len == expected_user,
+        ));
+
+        let game = self.location(SectionTag::Game);
+        let game_records = game.payload_len.checked_sub(GameSection::FIXED_BYTES);
+        checks.push(structural(
+            "LS_GAME: (payload - 24) % 12 == 0",
+            match game_records {
+                Some(bytes) => format!(
+                    "({} - 24) = {bytes}, % 12 = {}",
+                    game.payload_len,
+                    bytes % GameSection::RECORD_LEN
+                ),
+                None => format!("{} is shorter than the 24-byte head", game.payload_len),
+            },
+            game_records.is_some_and(|bytes| bytes.is_multiple_of(GameSection::RECORD_LEN)),
+        ));
+
+        let player = self.location(SectionTag::Player);
+        let sentinel = player
+            .payload_len
+            .checked_sub(PlayerSection::TAIL_LEN)
+            .and_then(|offset| word(player.payload_offset + offset));
+        checks.push(structural(
+            "LS_PLR_: 0xffffffff terminator at payload_end - 36",
+            match sentinel {
+                Some(value) => format!("{value:#x} at +{}", player.payload_len - 36),
+                None => format!("{} is shorter than the 36-byte tail", player.payload_len),
+            },
+            sentinel == Some(PlayerSection::SENTINEL),
+        ));
+
+        let region = self.location(SectionTag::Region);
+        // **Not** `8 + grid + tail == payload`. The tail is *defined* as the bytes left over, so
+        // that equation is true by construction and can never report anything. What is genuinely
+        // checkable is that the declared grid fits at all.
+        let region_grid = (|| {
+            let width = word(region.payload_offset)? as usize;
+            let height = word(region.payload_offset + 4)? as usize;
+            width
+                .checked_mul(height)?
+                .checked_mul(RegionSection::CELL_LEN)
+        })();
+        checks.push(structural(
+            "LS_REGN: 8 + w*h*6 fits inside the payload",
+            match region_grid {
+                Some(grid) => format!("8+{grid}={} vs {}", 8 + grid, region.payload_len),
+                None => "unreadable".to_owned(),
+            },
+            region_grid.is_some_and(|grid| 8 + grid <= region.payload_len),
+        ));
+
+        let alarm = self.location(SectionTag::Alarm);
+        checks.push(structural(
+            "LS_ALRM: payload holds the 32-byte header",
+            format!("{} vs {}", alarm.payload_len, AlarmSection::HEADER_LEN),
+            alarm.payload_len >= AlarmSection::HEADER_LEN,
+        ));
+
+        let version_section = self.location(SectionTag::Version);
+        checks.push(structural(
+            "LS_VER_: payload is exactly 4 bytes",
+            format!("{}", version_section.payload_len),
+            version_section.payload_len == VersionSection::PAYLOAD_LEN,
+        ));
+
+        checks
+    }
+
     fn payload<'a>(&self, source: &'a [u8], tag: SectionTag) -> Result<&'a [u8], SaveError> {
         let location = self.location(tag);
         source
@@ -416,8 +571,13 @@ impl VersionSection {
 
     /// Whether this version's writer emitted the 16 lord slots, rather than the reader
     /// synthesizing them. See [`MULTIPLAYER_SLOTS_MIN_VERSION`].
+    ///
+    /// **Compared as `i32`, deliberately, because the engine's gates are `jl`/`jge` and those are
+    /// SIGNED.** It matters at the top of the range: for a stored version of `0xFFFFFFFF` the
+    /// engine sees `-1 < 99` and takes the *low* path. An unsigned comparison here would answer
+    /// the opposite and disagree with the engine on exactly the inputs a hostile file would use.
     pub fn stores_multiplayer_slots(&self) -> bool {
-        self.version >= MULTIPLAYER_SLOTS_MIN_VERSION
+        (self.version as i32) >= (MULTIPLAYER_SLOTS_MIN_VERSION as i32)
     }
 }
 
@@ -507,7 +667,15 @@ pub struct MultiplayerSection {
     pub declared_setup_len: u32,
     /// The game-setup struct, copied from `[gameobj+0x520]`. Its fields are **Unknown**.
     pub setup: Vec<u8>,
-    pub slots: [LordSlot; MultiplayerSection::SLOT_COUNT],
+    /// The sixteen lord slots, or `None` when the format version omits the block.
+    ///
+    /// **Observed in a local binary, 2026-09-18; the low-version path is UNEXERCISED by any
+    /// sample.** Below version 99 the reader synthesizes this block from memory instead of reading
+    /// it, so a pre-99 save's `LS_MULT` payload is `4 + declared_setup_len` and stops. This parser
+    /// implements that from the disassembly alone -- the corpus contains only versions 108 and 111,
+    /// both of which store the block, so **nothing here has ever been checked against a real
+    /// pre-99 file.**
+    pub slots: Option<[LordSlot; MultiplayerSection::SLOT_COUNT]>,
 }
 
 impl MultiplayerSection {
@@ -516,7 +684,12 @@ impl MultiplayerSection {
     /// every inspected file.
     pub const SEATED_SLOT_COUNT: usize = 8;
 
-    pub fn parse(payload: &[u8]) -> Result<Self, SaveError> {
+    /// Parse, using `version` to decide whether the slot block is present at all.
+    ///
+    /// The version is a parameter rather than something re-read here because `LS_VER_` is a
+    /// different section: the engine's handlers share the singleton at `0x005AA12C`, and this is
+    /// the one cross-section dependency this parser reproduces.
+    pub fn parse(payload: &[u8], version: &VersionSection) -> Result<Self, SaveError> {
         let tag = SectionTag::Multiplayer;
         let declared_setup_len = read_u32(tag, payload, 0)?;
         let setup_len = usize::try_from(declared_setup_len).map_err(|_| {
@@ -538,6 +711,14 @@ impl MultiplayerSection {
             })?
             .to_vec();
 
+        if !version.stores_multiplayer_slots() {
+            return Ok(Self {
+                declared_setup_len,
+                setup,
+                slots: None,
+            });
+        }
+
         let mut slots = [LordSlot {
             lord_code: LordSlot::UNUSED_CODE,
             name_field: [0; LordSlot::NAME_LEN],
@@ -556,30 +737,38 @@ impl MultiplayerSection {
         Ok(Self {
             declared_setup_len,
             setup,
-            slots,
+            slots: Some(slots),
         })
     }
 
-    /// The bytes this section accounts for: `4 + declared_setup_len + 16 * 36`.
+    /// The bytes this section accounts for: `4 + declared_setup_len`, plus `16 * 36` when the
+    /// version stores the slot block.
     pub fn accounted_len(&self) -> usize {
-        4 + self.setup.len() + Self::SLOT_COUNT * LordSlot::RECORD_LEN
+        4 + self.setup.len()
+            + match self.slots {
+                Some(_) => Self::SLOT_COUNT * LordSlot::RECORD_LEN,
+                None => 0,
+            }
     }
 
-    /// The occupied slots, paired with their index.
+    /// The occupied slots, paired with their index. Empty when the version omits the block.
     pub fn occupied_slots(&self) -> impl Iterator<Item = (usize, &LordSlot)> {
         self.slots
             .iter()
+            .flatten()
             .enumerate()
             .filter(|(_, slot)| slot.is_occupied())
     }
 
-    /// The lord codes of slots `0..8`, in order, for comparison against [`PlayerSection`].
-    pub fn seated_lord_codes(&self) -> [u32; Self::SEATED_SLOT_COUNT] {
+    /// The lord codes of slots `0..8`, in order, for comparison against [`PlayerSection`], or
+    /// `None` when the version omits the block.
+    pub fn seated_lord_codes(&self) -> Option<[u32; Self::SEATED_SLOT_COUNT]> {
+        let slots = self.slots.as_ref()?;
         let mut codes = [0_u32; Self::SEATED_SLOT_COUNT];
         for (index, code) in codes.iter_mut().enumerate() {
-            *code = self.slots[index].lord_code;
+            *code = slots[index].lord_code;
         }
-        codes
+        Some(codes)
     }
 }
 
@@ -860,13 +1049,21 @@ impl UserSection {
 
     pub fn parse(payload: &[u8]) -> Result<Self, SaveError> {
         let tag = SectionTag::User;
-        if !payload.len().is_multiple_of(UserRecord::LEN) {
+        // **Exactly eight, not merely a whole number of records.** The writer `fwrite`s 784 bytes
+        // eight times unconditionally, so zero records is not something the engine can produce --
+        // and an empty payload is a multiple of 784, so a divisibility test accepts it and hands
+        // every caller an empty `records`. That is not hypothetical: it panicked the survey on the
+        // first byte-level probe of this parser, at `records[0]`. This repository has already
+        // shipped one decode path that killed a process; the guard belongs here, at the parse.
+        let expected = UserSection::RECORD_COUNT * UserRecord::LEN;
+        if payload.len() != expected {
             return Err(SaveError::section(
                 tag,
                 format!(
-                    "payload of {} bytes is not a whole number of {}-byte records",
+                    "payload is {} bytes; the user section is exactly {} records of {} = {expected}",
                     payload.len(),
-                    UserRecord::LEN
+                    UserSection::RECORD_COUNT,
+                    UserRecord::LEN,
                 ),
             ));
         }
@@ -1286,11 +1483,17 @@ pub struct SaveFile {
 impl SaveFile {
     pub fn parse(source: &[u8]) -> Result<Self, SaveError> {
         let container = SaveContainer::locate(source)?;
+        // Explicit ordering, not a struct literal: `LS_MULT`'s shape depends on `LS_VER_`, and
+        // relying on struct-literal field-evaluation order to sequence a real data dependency is
+        // the kind of thing that survives until someone reorders the fields alphabetically.
+        let version = VersionSection::parse(container.payload(source, SectionTag::Version)?)?;
+        let multiplayer = MultiplayerSection::parse(
+            container.payload(source, SectionTag::Multiplayer)?,
+            &version,
+        )?;
         Ok(Self {
-            version: VersionSection::parse(container.payload(source, SectionTag::Version)?)?,
-            multiplayer: MultiplayerSection::parse(
-                container.payload(source, SectionTag::Multiplayer)?,
-            )?,
+            version,
+            multiplayer,
             map: MapSection::parse(container.payload(source, SectionTag::Map)?)?,
             sprites: SpriteSection::parse(container.payload(source, SectionTag::Sprites)?)?,
             users: UserSection::parse(container.payload(source, SectionTag::User)?)?,
@@ -1325,40 +1528,21 @@ impl SaveFile {
     /// Measured values are not optional decoration. The `LS_ALRM` off-by-one that this module
     /// corrects passed a pass/fail check for months -- *some* field equalled the turn, so the
     /// invariant "held"; it was the wrong field. Printing the number is what catches that.
-    pub fn invariants(&self) -> Vec<Invariant> {
+    /// The **corpus regularities**: things every inspected save happens to do, which nothing in
+    /// the format requires.
+    ///
+    /// These are deliberately *not* mixed in with [`SaveContainer::structural_checks`]. A real save
+    /// that breaks one of these is a **discovery**, not a malformed file -- `N - live_count` being
+    /// 71 is an unexplained constant over seven game states, and a save with 72 would be the most
+    /// interesting file in the corpus. Reporting it as a failure and exiting nonzero would train a
+    /// reader to ignore exactly the signal worth acting on.
+    pub fn regularities(&self) -> Vec<Invariant> {
         let mut checks = Vec::new();
+        let regularity = |name, measured, passed| {
+            Invariant::new(name, InvariantKind::Regularity, measured, passed)
+        };
 
-        checks.push(Invariant::new(
-            "container: nine tags, each exactly once",
-            format!("{}/9", self.container.census().tags_seen_exactly_once()),
-            self.container.census().is_well_formed(),
-        ));
-
-        let mult = self.container.location(SectionTag::Multiplayer);
-        checks.push(Invariant::new(
-            "LS_MULT: 4 + declared_setup + 16*36 == payload",
-            format!(
-                "4+{}+576={} vs {}",
-                self.multiplayer.setup.len(),
-                self.multiplayer.accounted_len(),
-                mult.payload_len
-            ),
-            self.multiplayer.accounted_len() == mult.payload_len,
-        ));
-
-        let map = self.container.location(SectionTag::Map);
-        checks.push(Invariant::new(
-            "LS_MAP_: 12 + w*h*8 + 4 + 4*count + 4 == payload",
-            format!(
-                "12+{}+4+{}+4={} vs {}",
-                self.map.map.cells.len() * 8,
-                self.map.plane.len() * 4,
-                self.map.accounted_len(),
-                map.payload_len
-            ),
-            self.map.accounted_len() == map.payload_len,
-        ));
-        checks.push(Invariant::new(
+        checks.push(regularity(
             "LS_MAP_: plane count == cell count",
             format!(
                 "count={} cells={}",
@@ -1367,19 +1551,15 @@ impl SaveFile {
             ),
             self.map.plane_covers_every_cell(),
         ));
-
-        let user = self.container.location(SectionTag::User);
-        checks.push(Invariant::new(
-            "LS_USER: payload == 8 * 784",
-            format!(
-                "{} = {} x {}",
-                user.payload_len,
-                self.users.records.len(),
-                UserRecord::LEN
-            ),
-            user.payload_len == UserSection::RECORD_COUNT * UserRecord::LEN,
+        checks.push(regularity(
+            "LS_MAP_: visibility levels are a subset of {0, 63, 128}",
+            format!("{:?}", self.map.visibility_histogram()),
+            self.map
+                .visibility_histogram()
+                .keys()
+                .all(|level| OBSERVED_VISIBILITY_LEVELS.contains(level)),
         ));
-        checks.push(Invariant::new(
+        checks.push(regularity(
             "LS_USER: record[i].index == i",
             format!(
                 "{:?}",
@@ -1391,18 +1571,7 @@ impl SaveFile {
             ),
             self.users.indexes_are_positional(),
         ));
-
-        let game = self.container.location(SectionTag::Game);
-        checks.push(Invariant::new(
-            "LS_GAME: (payload - 24) % 12 == 0",
-            format!(
-                "({} - 24) % 12 = {}",
-                game.payload_len,
-                game.payload_len.saturating_sub(GameSection::FIXED_BYTES) % GameSection::RECORD_LEN
-            ),
-            self.game.accounted_len() == game.payload_len,
-        ));
-        checks.push(Invariant::new(
+        checks.push(regularity(
             "LS_GAME: N - live_count == 71",
             format!(
                 "{} - {} = {}",
@@ -1412,45 +1581,30 @@ impl SaveFile {
             ),
             self.game.record_surplus() == OBSERVED_GAME_RECORD_SURPLUS,
         ));
-        checks.push(Invariant::new(
+        checks.push(regularity(
             "LS_GAME: stored record size == 12",
             format!("{}", self.game.declared_record_size),
             usize::try_from(self.game.declared_record_size) == Ok(GameSection::RECORD_LEN),
         ));
-
-        let player = self.container.location(SectionTag::Player);
-        checks.push(Invariant::new(
-            "LS_PLR_: -1 terminator at payload_end - 36",
-            format!(
-                "+{} of {} holds {:#x}",
-                self.players.sentinel_offset(),
-                player.payload_len,
-                self.players.sentinel
-            ),
-            self.players.sentinel_offset() + PlayerSection::TAIL_LEN == player.payload_len
-                && self.players.sentinel == PlayerSection::SENTINEL,
-        ));
-        checks.push(Invariant::new(
+        checks.push(regularity(
             "LS_PLR_: 8 lord codes == LS_MULT slots 0..8",
-            format!("{:?}", self.players.lord_codes),
-            self.players.lord_codes == self.multiplayer.seated_lord_codes(),
-        ));
-
-        let region = self.container.location(SectionTag::Region);
-        checks.push(Invariant::new(
-            "LS_REGN: 8 + w*h*6 + tail == payload",
             format!(
-                "8+{}+{}={} vs {}",
-                self.regions.grid_len(),
-                self.regions.tail_len(),
-                8 + self.regions.grid_len() + self.regions.tail_len(),
-                region.payload_len
+                "{:?} vs {:?}",
+                self.players.lord_codes,
+                self.multiplayer.seated_lord_codes()
             ),
-            8 + self.regions.grid_len() + self.regions.tail_len() == region.payload_len,
+            self.multiplayer
+                .seated_lord_codes()
+                .is_some_and(|codes| codes == self.players.lord_codes),
+        ));
+        checks.push(regularity(
+            "LS_REGN: tail length is one of 8998 / 9389 / 9780",
+            format!("{}", self.regions.tail_len()),
+            OBSERVED_REGION_TAIL_LENGTHS.contains(&self.regions.tail_len()),
         ));
 
         let (game_turn, alarm_turn, countdown_turn) = self.turn_readings();
-        checks.push(Invariant::new(
+        checks.push(regularity(
             "turn: LS_GAME[0] == LS_ALRM[2] == 1000001 - LS_ALRM[5]",
             format!(
                 "{game_turn} / {alarm_turn} / {}",
@@ -1460,7 +1614,7 @@ impl SaveFile {
             ),
             self.turn_agreement(),
         ));
-        checks.push(Invariant::new(
+        checks.push(regularity(
             "LS_ALRM: header[3,4,6,7] == 15, 1, 0, 16",
             format!("{:?}", self.alarms.header),
             self.alarms.header[3] == 15
@@ -1469,35 +1623,46 @@ impl SaveFile {
                 && self.alarms.header[7] == 16,
         ));
 
-        checks.push(Invariant::new(
-            "LS_MAP_: visibility field takes only 0, 63, 128",
-            format!("{:?}", self.map.visibility_histogram()),
-            self.map
-                .visibility_histogram()
-                .keys()
-                .all(|level| OBSERVED_VISIBILITY_LEVELS.contains(level)),
-        ));
-
         checks
     }
+}
+
+/// The `LS_REGN` tail lengths the corpus contains. Unexplained; see `docs/save-format.md`.
+pub const OBSERVED_REGION_TAIL_LENGTHS: [usize; 3] = [8998, 9389, 9780];
+
+/// Whether a check is a format requirement or an empirical regularity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvariantKind {
+    /// A genuine requirement of the format. A violation means the file is malformed, or that this
+    /// project's model of the container is wrong. A caller should treat it as an error.
+    Structural,
+    /// Something every inspected save happens to do, which nothing in the format requires. A
+    /// violation is a **discovery** and must not be reported as a malformed file.
+    Regularity,
 }
 
 /// One invariant check, carrying **what was measured** as well as whether it held.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invariant {
     pub name: &'static str,
+    pub kind: InvariantKind,
     /// The measured value, formatted. Always populated, including on a pass.
     pub measured: String,
     pub passed: bool,
 }
 
 impl Invariant {
-    fn new(name: &'static str, measured: String, passed: bool) -> Self {
+    fn new(name: &'static str, kind: InvariantKind, measured: String, passed: bool) -> Self {
         Self {
             name,
+            kind,
             measured,
             passed,
         }
+    }
+
+    pub fn is_structural(&self) -> bool {
+        self.kind == InvariantKind::Structural
     }
 }
 
@@ -1516,9 +1681,15 @@ mod tests {
         version: u32,
         map_width: u32,
         map_height: u32,
+        /// The `LS_MAP_` plane's stored word count. `None` means `width * height`.
+        map_plane_words: Option<u32>,
         region_width: u32,
         region_height: u32,
         region_tail: usize,
+        /// `Some` forces the slot block on or off; `None` decides from the fixture's own literal
+        /// threshold. **Never from `MULTIPLAYER_SLOTS_MIN_VERSION`** -- a fixture generated from
+        /// the constant it is testing moves with the constant and cannot fail on it.
+        emit_mult_slots: Option<bool>,
         turn: u32,
         /// `LS_ALRM` header words 0, 1, 3, 4, 6, 7. Word 2 is the turn and word 5 is derived.
         alarm_filler: [u32; 6],
@@ -1542,9 +1713,11 @@ mod tests {
                 version: 111,
                 map_width: 96,
                 map_height: 64,
+                map_plane_words: None,
                 region_width: 96,
                 region_height: 64,
-                region_tail: 37,
+                region_tail: 8998,
+                emit_mult_slots: None,
                 turn: 42,
                 alarm_filler: [0, 7, 15, 1, 0, 16],
                 game_live_count: 9,
@@ -1605,7 +1778,12 @@ mod tests {
                     out.extend(
                         (0..self.declared_setup_len).map(|index| (index % 251) as u8 | 0x80),
                     );
-                    for slot in 0..MultiplayerSection::SLOT_COUNT {
+                    // The fixture's own threshold, written as a literal.
+                    let emit = self.emit_mult_slots.unwrap_or((self.version as i32) >= 99);
+                    if !emit {
+                        return out;
+                    }
+                    for slot in 0..16_usize {
                         push_u32(&mut out, self.lord_codes[slot]);
                         let name = self.lord_names[slot].as_bytes();
                         let mut field = [self.name_padding_fill; LordSlot::NAME_LEN];
@@ -1622,12 +1800,15 @@ mod tests {
                     for index in 0..cells {
                         // Visibility in the high half, tile slot in the low half, and the two are
                         // deliberately different numbers so a reader that confused them fails.
-                        let visibility = OBSERVED_VISIBILITY_LEVELS[(index % 3) as usize] as u16;
+                        // Literal levels. Indexing `OBSERVED_VISIBILITY_LEVELS` here made a
+                        // `63 -> 62` mutation self-consistent and it survived the suite.
+                        let visibility = [0_u16, 63, 128][(index % 3) as usize];
                         push_u32(&mut out, (u32::from(visibility) << 16) | (index % 600));
                         push_u32(&mut out, 1.5_f32.to_bits());
                     }
-                    push_u32(&mut out, cells);
-                    for index in 0..cells {
+                    let plane_words = self.map_plane_words.unwrap_or(cells);
+                    push_u32(&mut out, plane_words);
+                    for index in 0..plane_words {
                         push_u32(&mut out, index * 3);
                     }
                     push_u32(&mut out, 1);
@@ -1637,8 +1818,11 @@ mod tests {
                     out.extend((0..self.sprite_body).map(|index| (index % 97) as u8 | 0x80));
                 }
                 SectionTag::User => {
-                    for index in 0..UserSection::RECORD_COUNT {
-                        let mut record = vec![0_u8; UserRecord::LEN];
+                    // Literal 8 and literal 784. Generating this from `UserSection::RECORD_COUNT`
+                    // and `UserRecord::LEN` made both the fixture and the assertion move with the
+                    // constants, and a `RECORD_COUNT` 8 -> 7 mutation survived the whole suite.
+                    for index in 0..8_usize {
+                        let mut record = vec![0_u8; 784];
                         record[0..4].copy_from_slice(&(index as u32).to_le_bytes());
                         record[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
                         record[12..16].copy_from_slice(&1.0_f32.to_bits().to_le_bytes());
@@ -1660,7 +1844,9 @@ mod tests {
                 }
                 SectionTag::Player => {
                     out.extend((0..self.player_records).map(|index| (index % 89) as u8 | 0x80));
-                    push_u32(&mut out, PlayerSection::SENTINEL);
+                    // Literal, not `PlayerSection::SENTINEL`: writing the constant here let a
+                    // `SENTINEL` mutation change both sides together and survive.
+                    push_u32(&mut out, 0xffff_ffff);
                     for code in self.lord_codes.iter().take(8) {
                         push_u32(&mut out, *code);
                     }
@@ -1718,13 +1904,46 @@ mod tests {
         assert_eq!(save.map.map.height, 64);
         assert_eq!(save.map.map.cells.len(), 96 * 64);
         assert_eq!(save.container.tag_order(), fixture.order);
-        for invariant in save.invariants() {
-            assert!(
-                invariant.passed,
-                "{} failed: {}",
-                invariant.name, invariant.measured
-            );
+
+        let bytes = fixture.build();
+        let structural = save.container.structural_checks(&bytes);
+        assert_eq!(structural.len(), 9);
+        for check in &structural {
+            assert!(check.is_structural());
+            assert!(check.passed, "{} failed: {}", check.name, check.measured);
         }
+        let regularities = save.regularities();
+        assert_eq!(regularities.len(), 9);
+        for check in &regularities {
+            assert!(!check.is_structural());
+            assert!(check.passed, "{} failed: {}", check.name, check.measured);
+        }
+    }
+
+    /// A synthetic save may legitimately break a **corpus regularity** without being malformed.
+    /// That is the whole reason the two classes are separate: a region tail of 37 bytes is a
+    /// perfectly well-formed save that simply is not one of the three lengths this corpus happens
+    /// to contain, and calling it malformed would bury a real discovery under a parse error.
+    #[test]
+    fn a_broken_regularity_is_not_a_broken_structure() {
+        let fixture = Fixture {
+            region_tail: 37,
+            ..Fixture::default()
+        };
+        let bytes = fixture.build();
+        let save = SaveFile::parse(&bytes).unwrap();
+
+        for check in save.container.structural_checks(&bytes) {
+            assert!(check.passed, "{} failed: {}", check.name, check.measured);
+        }
+        let broken: Vec<Invariant> = save
+            .regularities()
+            .into_iter()
+            .filter(|check| !check.passed)
+            .collect();
+        assert_eq!(broken.len(), 1);
+        assert!(broken[0].name.contains("tail length"));
+        assert_eq!(broken[0].measured, "37");
     }
 
     /// Order is irrelevant to the engine, so it must be irrelevant here: the same nine payloads in
@@ -1869,18 +2088,107 @@ mod tests {
                 ..Fixture::default()
             };
             let save = SaveFile::parse(&fixture.build()).unwrap();
+            let slots = save.multiplayer.slots.expect("v111 stores the slot block");
             assert_eq!(save.multiplayer.declared_setup_len, declared);
             assert_eq!(save.multiplayer.setup.len() as u32, declared);
             assert_eq!(
                 save.multiplayer.accounted_len(),
                 save.container.location(SectionTag::Multiplayer).payload_len
             );
-            assert_eq!(save.multiplayer.slots[2].name_lossy(), "ccc");
+            assert_eq!(slots[2].name_lossy(), "ccc");
         }
     }
 
     /// Reading the declared length as data means a corrupt one must be refused, not trusted into
     /// an out-of-bounds read.
+    /// Below version 99 the reader synthesizes the slot block instead of reading it, so the
+    /// payload stops after the setup struct. **Unexercised by any real file** -- this is
+    /// implemented from the disassembly and the corpus has only versions 108 and 111.
+    ///
+    /// The fixture must actually omit the block. A fixture that emitted it anyway would make this
+    /// test pass against a parser that ignored the version entirely, which is what the previous
+    /// version of this test did.
+    #[test]
+    fn a_pre_version_99_multiplayer_section_has_no_slot_block() {
+        let fixture = Fixture {
+            version: 50,
+            emit_mult_slots: Some(false),
+            ..Fixture::default()
+        };
+        let bytes = fixture.build();
+        let save = SaveFile::parse(&bytes).unwrap();
+
+        assert!(!save.version.stores_multiplayer_slots());
+        assert_eq!(save.multiplayer.slots, None);
+        assert_eq!(save.multiplayer.setup.len(), 164);
+        assert_eq!(save.multiplayer.accounted_len(), 4 + 164);
+        assert_eq!(
+            save.container.location(SectionTag::Multiplayer).payload_len,
+            168
+        );
+        assert_eq!(save.multiplayer.occupied_slots().count(), 0);
+        assert_eq!(save.multiplayer.seated_lord_codes(), None);
+
+        for check in save.container.structural_checks(&bytes) {
+            assert!(check.passed, "{} failed: {}", check.name, check.measured);
+        }
+        // The lord-code cross-check cannot be made, and must report that rather than pass.
+        let check = save
+            .regularities()
+            .into_iter()
+            .find(|check| check.name.contains("lord codes"))
+            .expect("check is present");
+        assert!(!check.passed);
+        assert!(check.measured.contains("None"), "{}", check.measured);
+    }
+
+    /// A pre-99 save that carries the block anyway must not silently decode it.
+    #[test]
+    fn a_pre_version_99_payload_carrying_slots_does_not_account() {
+        let fixture = Fixture {
+            version: 50,
+            emit_mult_slots: Some(true),
+            ..Fixture::default()
+        };
+        let bytes = fixture.build();
+        let save = SaveFile::parse(&bytes).unwrap();
+
+        assert_eq!(save.multiplayer.slots, None);
+        let check = save
+            .container
+            .structural_checks(&bytes)
+            .into_iter()
+            .find(|check| check.name.contains("LS_MULT"))
+            .expect("check is present");
+        assert!(!check.passed);
+        assert_eq!(check.measured, "4+164+0=168 vs 744");
+    }
+
+    /// The engine's version gates are `jl`/`jge`, which are **signed**. At `0xFFFFFFFF` the engine
+    /// sees `-1` and takes the low path; an unsigned comparison answers the opposite.
+    #[test]
+    fn the_version_gate_is_signed_like_the_engines_jl_jge() {
+        let stores = |version: u32, emit: bool| {
+            let fixture = Fixture {
+                version,
+                emit_mult_slots: Some(emit),
+                ..Fixture::default()
+            };
+            SaveFile::parse(&fixture.build())
+                .unwrap()
+                .version
+                .stores_multiplayer_slots()
+        };
+        // Literal versions either side of the threshold, not the constant under test.
+        assert!(!stores(50, false));
+        assert!(!stores(98, false));
+        assert!(stores(99, true));
+        assert!(stores(111, true));
+        // The signed cases. `0x80000000` and `0xffffffff` are negative to the engine.
+        assert!(!stores(0x8000_0000, false));
+        assert!(!stores(u32::MAX, false));
+    }
+
     #[test]
     fn refuses_a_declared_setup_length_the_payload_cannot_hold() {
         let fixture = Fixture::default();
@@ -1914,10 +2222,15 @@ mod tests {
 
         let first = SaveFile::parse(&first_bytes).unwrap();
         let second = SaveFile::parse(&second_bytes).unwrap();
+        let first_slots = first.multiplayer.slots.expect("v111 stores the slot block");
+        let second_slots = second
+            .multiplayer
+            .slots
+            .expect("v111 stores the slot block");
 
-        for slot in 0..MultiplayerSection::SLOT_COUNT {
-            let left = &first.multiplayer.slots[slot];
-            let right = &second.multiplayer.slots[slot];
+        for slot in 0..16_usize {
+            let left = &first_slots[slot];
+            let right = &second_slots[slot];
             assert_eq!(left.name(), right.name(), "slot {slot} name");
             assert_ne!(
                 left.name_padding(),
@@ -1945,11 +2258,12 @@ mod tests {
         fixture.lord_names[5] = "ghost";
 
         let save = SaveFile::parse(&fixture.build()).unwrap();
+        let slots = save.multiplayer.slots.expect("v111 stores the slot block");
 
-        assert!(save.multiplayer.slots[3].is_occupied());
-        assert!(save.multiplayer.slots[3].name().is_empty());
-        assert!(!save.multiplayer.slots[5].is_occupied());
-        assert_eq!(save.multiplayer.slots[5].name_lossy(), "ghost");
+        assert!(slots[3].is_occupied());
+        assert!(slots[3].name().is_empty());
+        assert!(!slots[5].is_occupied());
+        assert_eq!(slots[5].name_lossy(), "ghost");
         let occupied: Vec<usize> = save
             .multiplayer
             .occupied_slots()
@@ -1963,38 +2277,64 @@ mod tests {
     /// The whole point of the Corrected note in `docs/save-format.md`: a matching **total** proves
     /// nothing about the **terms**. Here the byte total still accounts exactly, and the structure
     /// is nonetheless wrong, because the plane does not cover the cells.
+    /// The regrouping the Corrected note in `docs/save-format.md` is about: a map whose byte total
+    /// accounts **exactly** and whose structure is nonetheless wrong.
+    ///
+    /// The previous version of this test only lowered the plane count, which breaks the total as
+    /// well -- so a mutant implementing `plane_covers_every_cell` as the total-accounting check
+    /// passed it, and the test did not check the thing its name claimed. This constructs the real
+    /// case: a **96x32** map with a **12,288**-word plane occupies exactly as many bytes as a
+    /// 96x64 map with a 6,144-word plane, because `8*3072 + 4*12288 == 8*6144 + 4*6144`. The total
+    /// is identical and the plane covers four times the cells.
     #[test]
     fn a_matching_byte_total_does_not_make_the_map_accounting_right() {
-        let fixture = Fixture::default();
-        let mut bytes = fixture.build();
-        let map = SaveContainer::locate(&bytes)
-            .unwrap()
-            .location(SectionTag::Map);
-        let cells = (fixture.map_width * fixture.map_height) as usize;
-        let count_offset = map.payload_offset + 12 + cells * 8;
+        let regrouped = Fixture {
+            map_height: 32,
+            map_plane_words: Some(12_288),
+            ..Fixture::default()
+        };
+        let bytes = regrouped.build();
+        let baseline = Fixture::default().build();
 
-        // Halve the plane count and hand the freed words to a longer trailing run, so the payload
-        // length is untouched.
-        let halved = (cells / 2) as u32;
-        bytes[count_offset..count_offset + 4].copy_from_slice(&halved.to_le_bytes());
+        let map = |source: &[u8]| {
+            SaveContainer::locate(source)
+                .unwrap()
+                .location(SectionTag::Map)
+                .payload_len
+        };
+        assert_eq!(
+            map(&bytes),
+            map(&baseline),
+            "the two shapes must occupy the same bytes, or this proves nothing"
+        );
 
         let save = SaveFile::parse(&bytes).unwrap();
-        let accounting = |name: &str| {
-            save.invariants()
-                .into_iter()
-                .find(|check| check.name.contains(name))
-                .expect("invariant is present")
-        };
 
-        // The total no longer accounts, *and* the structural check is independently false. The
-        // second is the one that would still fire if a future layout made the totals coincide.
-        assert!(!save.map.plane_covers_every_cell());
-        assert!(!accounting("plane count == cell count").passed);
+        // The total accounts exactly, and the structural byte check therefore PASSES.
+        assert_eq!(save.map.accounted_len(), map(&bytes));
+        let total_check = save
+            .container
+            .structural_checks(&bytes)
+            .into_iter()
+            .find(|check| check.name.contains("LS_MAP_"))
+            .expect("check is present");
         assert!(
-            accounting("plane count == cell count")
-                .measured
-                .contains(&halved.to_string())
+            total_check.passed,
+            "the byte total must still account: {}",
+            total_check.measured
         );
+
+        // And the structure is still wrong. This is the check a sum cannot make.
+        assert_eq!(save.map.map.cells.len(), 3072);
+        assert_eq!(save.map.plane.len(), 12_288);
+        assert!(!save.map.plane_covers_every_cell());
+        let coverage = save
+            .regularities()
+            .into_iter()
+            .find(|check| check.name.contains("plane count == cell count"))
+            .expect("check is present");
+        assert!(!coverage.passed);
+        assert_eq!(coverage.measured, "count=12288 cells=3072");
     }
 
     #[test]
@@ -2059,7 +2399,7 @@ mod tests {
         let histogram = save.map.visibility_histogram();
         assert_eq!(histogram.get(&64), Some(&1));
         let check = save
-            .invariants()
+            .regularities()
             .into_iter()
             .find(|check| check.name.contains("visibility"))
             .expect("invariant is present");
@@ -2114,6 +2454,48 @@ mod tests {
 
     // -- LS_USER ------------------------------------------------------------
 
+    /// The proof-of-concept that panicked the survey: a **valid nine-section save with an empty
+    /// `LS_USER`**. Zero is a multiple of 784, so a divisibility test accepts it, `records` comes
+    /// back empty, and the first caller to touch `records[0]` dies. The guard is at the parse.
+    #[test]
+    fn refuses_an_empty_user_payload_rather_than_yielding_zero_records() {
+        let fixture = Fixture::default();
+        let mut bytes = fixture.build();
+        let user = SaveContainer::locate(&bytes)
+            .unwrap()
+            .location(SectionTag::User);
+        bytes.drain(user.payload_offset..user.payload_end());
+
+        let error = SaveFile::parse(&bytes).unwrap_err();
+        assert!(error.to_string().starts_with("LS_USER:"), "{error}");
+        assert!(error.to_string().contains("6272"), "{error}");
+
+        // And the container-level check names it too, without needing a successful parse.
+        let container = SaveContainer::locate(&bytes).unwrap();
+        let check = container
+            .structural_checks(&bytes)
+            .into_iter()
+            .find(|check| check.name.contains("LS_USER"))
+            .expect("check is present");
+        assert!(!check.passed);
+        assert_eq!(check.measured, "0 vs 6272");
+    }
+
+    /// Seven records is also not eight. A divisibility test accepts this too.
+    #[test]
+    fn refuses_a_user_payload_of_seven_records() {
+        let fixture = Fixture::default();
+        let mut bytes = fixture.build();
+        let user = SaveContainer::locate(&bytes)
+            .unwrap()
+            .location(SectionTag::User);
+        bytes.drain(user.payload_offset..user.payload_offset + 784);
+
+        let error = SaveFile::parse(&bytes).unwrap_err();
+        assert!(error.to_string().starts_with("LS_USER:"), "{error}");
+        assert!(error.to_string().contains("5488"), "{error}");
+    }
+
     #[test]
     fn refuses_a_user_payload_that_is_not_a_whole_number_of_records() {
         let fixture = Fixture::default();
@@ -2141,7 +2523,7 @@ mod tests {
         let save = SaveFile::parse(&bytes).unwrap();
         assert!(!save.users.indexes_are_positional());
         let check = save
-            .invariants()
+            .regularities()
             .into_iter()
             .find(|check| check.name.contains("record[i].index"))
             .expect("invariant is present");
@@ -2172,7 +2554,7 @@ mod tests {
         let save = SaveFile::parse(&broken.build()).unwrap();
         assert_eq!(save.game.record_surplus(), 40);
         let check = save
-            .invariants()
+            .regularities()
             .into_iter()
             .find(|check| check.name.contains("N - live_count"))
             .expect("invariant is present");
@@ -2225,7 +2607,7 @@ mod tests {
             assert_eq!(save.players.records_raw.len(), records);
             assert_eq!(save.players.lord_codes, [1, 2, 3, 4, 5, 6, 7, 8]);
             assert_eq!(
-                save.players.lord_codes,
+                Some(save.players.lord_codes),
                 save.multiplayer.seated_lord_codes()
             );
         }
@@ -2246,6 +2628,39 @@ mod tests {
         assert!(error.to_string().contains("terminator"), "{error}");
     }
 
+    /// The structural checks must report on a file `SaveFile::parse` **refuses**. That is the case
+    /// they exist for, and it is only reachable through the container, so it needs its own test --
+    /// a mutant stubbing this check to `true` survived the whole suite without one.
+    #[test]
+    fn the_structural_checks_report_on_a_file_that_fails_to_parse() {
+        let fixture = Fixture::default();
+        let mut bytes = fixture.build();
+        let player = SaveContainer::locate(&bytes)
+            .unwrap()
+            .location(SectionTag::Player);
+        let sentinel = player.payload_end() - PlayerSection::TAIL_LEN;
+        bytes[sentinel..sentinel + 4].copy_from_slice(&0x1234_5678_u32.to_le_bytes());
+
+        // The full parse refuses, so nothing downstream of it can report anything.
+        assert!(SaveFile::parse(&bytes).is_err());
+
+        // The container-level check still runs, and names the value it found.
+        let container = SaveContainer::locate(&bytes).unwrap();
+        let checks = container.structural_checks(&bytes);
+        let terminator = checks
+            .iter()
+            .find(|check| check.name.contains("terminator"))
+            .expect("check is present");
+        assert!(!terminator.passed);
+        assert!(
+            terminator.measured.contains("0x12345678"),
+            "{}",
+            terminator.measured
+        );
+        // And it is the ONLY structural failure: nothing else about the file changed.
+        assert_eq!(checks.iter().filter(|check| !check.passed).count(), 1);
+    }
+
     #[test]
     fn the_lord_code_cross_check_fails_when_the_two_sections_disagree() {
         let fixture = Fixture::default();
@@ -2258,7 +2673,7 @@ mod tests {
 
         let save = SaveFile::parse(&bytes).unwrap();
         let check = save
-            .invariants()
+            .regularities()
             .into_iter()
             .find(|check| check.name.contains("lord codes"))
             .expect("invariant is present");
@@ -2351,7 +2766,7 @@ mod tests {
         let save = SaveFile::parse(&bytes).unwrap();
         assert!(!save.turn_agreement());
         let check = save
-            .invariants()
+            .regularities()
             .into_iter()
             .find(|check| check.name.starts_with("turn:"))
             .expect("invariant is present");
@@ -2389,7 +2804,7 @@ mod tests {
         assert_eq!(save.alarms.turn_from_countdown(), None);
         assert!(!save.turn_agreement());
         let check = save
-            .invariants()
+            .regularities()
             .into_iter()
             .find(|check| check.name.starts_with("turn:"))
             .expect("invariant is present");

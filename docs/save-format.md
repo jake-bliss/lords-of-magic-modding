@@ -2,22 +2,58 @@
 
 ## Status
 
-**The container is solved and six of the nine sections decode completely.** A native Rust parser
-(`spikes/asset-viewer/src/save.rs`) reads every save in every install on this machine without
-modifying it, and `examples/save_survey.rs` checks fifteen invariants per file. Current result on
-the whole corpus: **14 files parsed, 0 failed, 0 invariant failures, 15/15 invariants holding on
-14/14 files.**
+**The container is solved. Five of the nine sections decode completely: `LS_VER_`, `LS_MULT`,
+`LS_MAP_`, `LS_USER` and `LS_GAME`.** A native Rust parser (`spikes/asset-viewer/src/save.rs`) reads
+every save in every install on this machine without modifying it, and `examples/save_survey.rs`
+checks nine structural requirements and nine corpus regularities per file.
 
-**Three of the nine sections resist decoding and are carried verbatim rather than guessed at**:
-`LS_SPR_`'s records are polymorphic and variable-length, `LS_PLR_`'s record size is not established
-for format version 111, and `LS_REGN`'s tail has no known structure. `LS_ALRM`'s header is decoded
-and its records are not. See [What is not determined](#what-is-not-determined).
+**Four sections decode only in part, and the undecoded bytes are carried verbatim rather than
+guessed at**: `LS_SPR_` yields its record count only, because the records are polymorphic and
+variable-length; `LS_PLR_` yields only its tail, because the record size is not established for
+format version 111; `LS_REGN` yields its header and grid but not its tail; `LS_ALRM` yields its
+header but not its records. See [What is not determined](#what-is-not-determined).
+
+### The corpus is seven game states, not twenty files
+
+Current result: **20 files, 20/20 on all 18 checks — but those 20 files carry only SEVEN distinct
+game states.** The six shipped demo saves are byte-identical across all three installs, and the two
+turn-315 files are one state written twice. **The file count is duplication, not corroboration**, and
+a 20/20 line that reads as twenty independent confirmations is exactly the inflated-denominator
+trap.
+
+Worse, **six of the seven states are authored demo scenarios shipped together**, so they may share a
+generator; their agreement on any structural property is weaker evidence than it looks. **Exactly one
+state — the turn-315 save — is genuine play.** Where an invariant holds, it holding *there* matters
+more than the other six combined. Read every "holds in all N files" claim below through this.
 
 **No original save data is stored in Git.** The survey takes a directory at runtime; every test uses
 synthetic fixtures built in code.
 
 Evidence classes used throughout, as elsewhere in this repository: **Observed in a local binary**,
 **Observed in gameplay**, **Documented**, **Inferred**, **Refuted**, **Corrected**.
+
+### Structural requirements versus corpus regularities
+
+The survey reports two kinds of check and treats them differently, because they are different
+claims.
+
+**Structural checks** are the format's own requirements — the `LS_MULT` length arithmetic, the
+`LS_MAP_` accounting, `LS_USER` being exactly eight records, the `LS_PLR_` terminator. A violation
+means the file is malformed or this project's model is wrong. These **fail the run**.
+
+**Corpus regularities** are things every inspected save happens to do that nothing in the format
+requires: `N - live_count == 71`, visibility taking only three values, the `LS_REGN` tail being one
+of three lengths, the three turn fields agreeing. **A real save that breaks one of these is a
+discovery, not a bad file** — a save with a surplus of 72 would be the most interesting file in the
+corpus. These are reported with their measured values and **do not fail the run**. Reporting them as
+errors would train a reader to ignore exactly the signal worth acting on.
+
+The structural checks are also **computed from the raw bytes on the container, not from the parsed
+structs, and they run even when parsing fails.** An invariant read off a struct that `parse` already
+validated cannot report a failure — `parse` rejected the file before the caller saw it, which is the
+same defect as a test that cannot fail. Re-deriving them from the bytes makes them a second
+implementation that can genuinely disagree with the first, and hanging them off the container is
+what lets them say *which* section is malformed on a file the parser refuses.
 
 ---
 
@@ -58,10 +94,29 @@ not a fixed sequence: it reads eight bytes, `memcmp`s the first **seven** of the
 is never examined — and jumps through the 9-entry table at `0x00483970`. An unrecognised tag aborts
 the load.
 
-So **section order in the file is irrelevant to the engine.** Every file inspected here happens to
-store VER, MULT, MAP, SPR, USER, GAME, PLR, REGN, ALRM in that order, and nothing may depend on it.
-The parser sorts located sections by offset purely to report them; the tests permute the order and
-assert the decoded content is unchanged.
+So the reader **structurally accepts any order** (**Observed in a local binary**). Every file
+inspected here happens to store VER, MULT, MAP, SPR, USER, GAME, PLR, REGN, ALRM in that order, and
+the parser depends on none of it — the tests permute the order and assert the decoded content is
+unchanged.
+
+**But structural order-freedom is not semantic order-independence, and the earlier draft of this
+section overstated it.** The nine handlers share the singleton at `0x005AA12C`, and at least one of
+them reads a field another writes: **`LS_MULT`'s handler consults the version that `LS_VER_`'s
+handler stores** (**Observed in a local binary** — it is the gate at
+[`MULTIPLAYER_SLOTS_MIN_VERSION`](#ls_ver_--the-format-version) that decides whether the 576-byte
+slot block is present). Put `LS_MULT` before `LS_VER_` in a pre-99 save and the `LS_MULT` handler
+reads whatever version the singleton happened to hold.
+
+So, precisely:
+
+| claim | class |
+| --- | --- |
+| the reader structurally accepts the nine sections in any order | **Observed in a local binary** |
+| `LS_VER_` -> `LS_MULT` is a real semantic ordering dependency through the shared singleton | **Observed in a local binary** |
+| full semantic order-independence | **not established** — the other handlers' singleton reads have not been audited |
+
+This parser reproduces the one known dependency explicitly: `SaveFile::parse` parses `LS_VER_` first
+and passes it into `MultiplayerSection::parse`.
 
 ### Sections are not skippable, which is why this parser scans
 
@@ -77,7 +132,21 @@ payload data, and nothing in the format forbids it. `SaveContainer::locate` ther
 so a caller diagnosing a refused file can see the counts without a parse. A test plants a duplicate
 `LS_GAME` tag inside `LS_REGN`'s payload and asserts the refusal.
 
-Measured on the corpus: **9/9 in all 14 files**, so no payload accidentally contains a tag.
+Measured on the corpus: **9/9 in all 20 files**, so no payload in any of them accidentally contains
+a tag.
+
+**What the census does and does not prove.** It bounds *accidental misparsing*; it is **not integrity
+checking**, and the distinction matters in both directions:
+
+- **A count of one does not prove the located occurrence is the real tag.** A tag sequence hidden
+  inside the opaque `LS_REGN` tail, combined with a corrupted real tag, still yields a census of one
+  each — and the parser would then happily carve the file at the wrong offset.
+- **A perfectly valid save is rejected if its payload happens to contain a seven-byte tag
+  sequence.** Nothing in the format forbids it. This is a false positive the design accepts
+  deliberately, because carving at a wrong offset silently is worse than refusing loudly.
+
+The guard is still the right guard — it correctly refused a `.DS_Store` when the survey was pointed
+at the wrong directory — but it is a sanity bound, not a checksum. The format has no checksum.
 
 ### Three functions own the format
 
@@ -120,8 +189,7 @@ bytes and plaintext unit names. One caveat applies to `LS_REGN` alone and is rec
 
 ### `LS_VER_` — the format version
 
-**Observed in a local binary, 2026-09-18.** The payload is exactly four bytes. `111` in thirteen of
-the fourteen files and `108` in `quickstart`.
+**Observed in a local binary, 2026-09-18.** The payload is exactly four bytes. `111` in nineteen of the twenty files and `108` in `quickstart`.
 
 **The engine's version handling is a monotone feature gate that never rejects.** The handler's only
 error path is a short read. Every subsequent test against `[0x005AA12C]` is `jl` or `jge`; there is
@@ -138,7 +206,7 @@ One version-gated behaviour is known: **below version 99 the reader synthesizes 
 
 ### `LS_MULT` — game setup and the sixteen lord slots
 
-**Observed in a local binary, 2026-09-18.** 744 bytes in all fourteen files, accounting exactly:
+**Observed in a local binary, 2026-09-18.** 744 bytes in all twenty files, accounting exactly:
 
 ```text
   u32 = 164          a hardcoded sizeof; the reader USES it as the read length
@@ -202,7 +270,7 @@ separately, so a caller must opt in to the leak rather than receive it silently.
 
 ### `LS_MAP_` — the world map
 
-**Observed in a local binary, 2026-09-18.** 196,628 bytes in all fourteen files, accounting exactly
+**Observed in a local binary, 2026-09-18.** 196,628 bytes in all twenty files, accounting exactly
 with no slack:
 
 ```text
@@ -254,7 +322,7 @@ confirms the structural check fails independently of the byte total.
 
 #### The `+2` field: visibility
 
-**Observed in a local binary, 2026-09-18.** Across all cells of all fourteen files, the `+2` field
+**Observed in a local binary, 2026-09-18.** Across all cells of all twenty files, the `+2` field
 takes **exactly three values and no others: 0, 63 and 128.**
 
 **Inferred, 2026-09-18: these are visibility levels — unexplored, dim, fully visible.** The evidence
@@ -275,7 +343,13 @@ demo saves are almost entirely `128`. It agrees with the dimming expression `(0x
 at `0x00519ced`.
 
 **What is Observed is only that the field takes exactly three values.** The full `0..128` range and
-any saturation behaviour are **not** observed and are not asserted anywhere.
+any saturation behaviour are **not** observed, and nothing in this project asserts them.
+
+The three-value set *is* asserted — `OBSERVED_VISIBILITY_LEVELS`, and the survey reports a violation
+— but **as a corpus regularity, not as a format requirement**, so a save with a fourth level is
+reported as a finding and does not fail the run. An earlier draft of this paragraph claimed the
+assertion did not exist at all, which was simply wrong: it exists, and what matters is which class
+it sits in.
 
 #### Refuted: `0x00800000` is not a flag
 
@@ -306,16 +380,27 @@ In-memory object sizes per class — **sizes in RAM, not on disk**:
 | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | ---: |
 | bytes | 1500 | 96 | 148 | 844 | 120 | invalid | invalid | factory `0x0047CBD0` | 88 | 328 |
 
-**That no fixed stride exists is confirmed from the file side, independently of the disassembly.**
-For every candidate header size `0..=1024`, the set of sizes for which
-`(payload_len - header) % count == 0` has an **empty intersection** across the corpus. The survey
-re-measures this on every run rather than quoting the result, and prints each file's own candidate
-set — `combat.sav` admits exactly one (717), `quickstart` one, `magic` two, `merc` three. **The
-no-stride property is a property of the corpus, not of any one file**, which is why the survey
-computes it once at the end rather than reporting a per-file pass.
+**The primary evidence for variable-length records is the disassembly**: virtual dispatch through
+the 10-entry table above, with each class reader consuming what its own structure needs. The section
+also contains **length-prefixed strings** (`u32 len` then `len` raw bytes, **no NUL**) at irregular
+offsets, so variable length is directly visible in the bytes without any arithmetic at all.
 
-The section also contains length-prefixed strings (`u32 len` then `len` raw bytes, **no NUL**) at
-irregular offsets, so variable length is directly visible in the bytes.
+A file-side search corroborates this, and **its bound is part of the result.** For every candidate
+header size `0..=1024`, the set of sizes for which `(payload_len - header) % count == 0` has an
+**empty intersection** across the corpus. Stated exactly: *no common fixed stride exists with a
+per-section header of at most 1024 bytes.* A larger header was not tried, so this is a bounded
+search and not a proof that no stride exists. The survey prints the bound alongside the result
+rather than reporting "no stride exists".
+
+Two further qualifications, because the arithmetic is weaker than it first looks:
+
+- **The no-stride property belongs to the corpus, not to any one file.** Individual files do admit a
+  dividing header size — `combat.sav` exactly one (717), `quickstart` one, `magic` two, `merc`
+  three. Only the intersection is empty, so the survey computes it once at the end instead of
+  reporting a per-file pass.
+- **Seven states is a small intersection to rest on.** With more files the intersection can only
+  shrink, but with seven it could in principle have been empty by chance. That is why the
+  disassembly leads and the arithmetic corroborates, rather than the other way round.
 
 **So: parse the count and stop.** `SpriteSection.raw` carries the rest verbatim.
 
@@ -331,7 +416,7 @@ happened to be checked.
 
 ### `LS_USER` — eight per-player records
 
-**Observed in a local binary, 2026-09-18.** 6,272 bytes in all fourteen files, which is `8 × 784`
+**Observed in a local binary, 2026-09-18.** 6,272 bytes in all twenty files, which is `8 × 784`
 with zero remainder. Block *i* begins at `payload + 784*i` and its first `u32` is exactly *i*. The
 writer does `push 0x310` (784) and `fwrite` eight times; note its **in-memory** stride is `0x400`,
 so the on-disk record is the struct's first 784 bytes and not the whole struct.
@@ -353,7 +438,7 @@ Most of the remainder is a repeating `(-1, -1, 0)` 12-byte pattern.
 
 ### `LS_GAME` — the turn counter and a record table
 
-**Observed in a local binary, 2026-09-18.** Holds in all fourteen files with zero exceptions:
+**Observed in a local binary, 2026-09-18.** Holds in all twenty files with zero exceptions:
 
 ```text
   u32 turn
@@ -365,7 +450,7 @@ Most of the remainder is a repeating `(-1, -1, 0)` 12-byte pattern.
   u32 trailer
 ```
 
-`(payload_len - 24) % 12 == 0` in all fourteen, and **`N - live_count == 71` in all fourteen**:
+`(payload_len - 24) % 12 == 0` in all twenty, and **`N - live_count == 71` in all twenty**:
 
 | file | N | live_count | surplus |
 | --- | ---: | ---: | ---: |
@@ -393,9 +478,9 @@ The trailer varies (1, 319, 801 observed) and its meaning is **Unknown**.
 by `u32 -1`, then **eight `u32` lord codes** matching `LS_MULT` slots 0..8 in order. The reader
 validates `0 <= slot_index < 16`.
 
-The `-1` sentinel sits at exactly `payload_end - 36` in **all fourteen files**, which is what makes
+The `-1` sentinel sits at exactly `payload_end - 36` in **all twenty files**, which is what makes
 the tail parseable from the end regardless of what the records are. The eight lord codes match
-`LS_MULT` in all fourteen.
+`LS_MULT` in all twenty.
 
 **The record size is not established for version 111.** See
 [What is not determined](#what-is-not-determined).
@@ -445,7 +530,7 @@ Runs to end of file.
 
 **Corrected, 2026-09-18.** An earlier reading gave the header as
 `[0][turn][15][1][1000000][0]` — turn at index 1, with a constant 1,000,000. Both halves are wrong.
-Measured across all fourteen files the header is eight words:
+Measured across all twenty files the header is eight words:
 
 | file | header |
 | --- | --- |
@@ -457,7 +542,7 @@ Measured across all fourteen files the header is eight words:
 | `quickstart` | `0, 1, 1, 15, 1, 1000000, 0, 16` |
 | `lastsave.lom` / `Merlin I` | `0, 1, 315, 15, 1, 999686, 0, 16` |
 
-**The turn is index 2. Word 5 is exactly `1000001 - turn`** in all fourteen. Whether the engine
+**The turn is index 2. Word 5 is exactly `1000001 - turn`** in all twenty. Whether the engine
 stores a deadline or a remaining budget is **Unknown**; `COUNTDOWN_BASE` records the arithmetic only.
 Index 1 is `1` in seven states and `7` in `temple.sav`, so it is left unnamed.
 
@@ -475,7 +560,7 @@ beside it is demonstrably doing work the degenerate one cannot.
 #### The turn reading is Observed, and the correction strengthened it
 
 The turn now appears **three times per file** — `LS_GAME[0]`, `LS_ALRM[2]`, and derived from
-`LS_ALRM[5]` — agreeing in all fourteen. Three independent fields agreeing across seven distinct
+`LS_ALRM[5]` — agreeing in all twenty. Three independent fields agreeing across seven distinct
 game states is why this is **Observed** and not a guess. The survey asserts all three and prints all
 three values.
 
@@ -492,7 +577,7 @@ The count tracks activity: 96 at turn 1, 394 at turn 69. **The record layout is 
 
 ## What is not determined
 
-Five gaps, stated as gaps. "Not determined" is the honest answer for each; a confident wrong answer
+Six gaps, stated as gaps. "Not determined" is the honest answer for each; a confident wrong answer
 would cost far more.
 
 ### 1. `LS_PLR_`'s record size at format version 111
@@ -528,7 +613,19 @@ The number of fixed `u32` fields before the trailing length word **varies betwee
 one case, 10 in another — so alarm records carry variable argument lists. The callback name at the
 end of each record is readable; the arguments before it are not.
 
-### 5. The `[0x0054D0D8]` / `[0x0054D0DC]` imports
+### 5. The pre-version-99 `LS_MULT` layout is implemented but unexercised
+
+Below version 99 the reader synthesizes the 576-byte slot block from memory instead of reading it,
+so a pre-99 `LS_MULT` payload is `4 + declared_setup_len` and stops. The parser implements this and
+threads `LS_VER_` into `LS_MULT` to decide, and there are tests for both branches.
+
+**No sample exercises it.** The corpus contains exactly two format versions, 108 and 111, and both
+store the block. This path is written **from the disassembly alone** and has never met a real pre-99
+file. It is also the one place where a wrong reading would be invisible: a pre-99 save would parse
+"successfully" with a plausible-looking setup block and no slots, and nothing here could tell that
+from correct behaviour.
+
+### 6. The `[0x0054D0D8]` / `[0x0054D0DC]` imports
 
 Unresolved, and they bracket `LS_REGN`'s I/O at `0x004C7390`. Almost certainly a lock/unlock pair.
 Until resolved, the no-encryption claim carries an asterisk **for `LS_REGN` only**. See
@@ -541,9 +638,11 @@ Until resolved, the no-encryption claim carries an asterisk **for `LS_REGN` only
 Every claim above is bounded by what these files can show. The limits are sharp and some of them
 have already produced wrong readings.
 
-**14 files, but only 7 distinct game states.** The six shipped demo saves are byte-identical across
-all three installs, so the Steam and 3.02 copies are the same seven states counted twice. The survey
-reports this by grouping on decoded content.
+**20 files, but only 7 distinct game states.** The six shipped demo saves are byte-identical across
+all three installs, so the Steam, 3.02 and GS5R3 copies are the same six states counted three times.
+The survey reports this by grouping on **normalized decoded bytes** — every decoded field, with the
+leaked name padding excluded — compared directly rather than hashed, since the group count is a
+headline number.
 
 **`lastsave.lom` and `Merlin I` are ONE state, not two.** They have different md5s, which is real,
 and eight of their nine sections are byte-identical, which is also real. Their entire difference is
@@ -594,11 +693,45 @@ five different lengths, and player record areas of four different sizes.
 compared; the stride search is asserted to be the arithmetic it claims rather than a table of past
 results; the plane-coverage check is independent of the byte total.
 
-**Every test was mutation-checked.** 31 mutations of meaningful behaviour, applied by script;
-**30 caught, 0 survivors**, 1 rejected by the compiler rather than by a test. Four rounds were
-needed: the first run left five survivors, of which three were tests phrased in terms of the very
-constant they were testing — the countdown fixture built its value from `COUNTDOWN_BASE`, the
-version-gate assertion compared against `MULTIPLAYER_SLOTS_MIN_VERSION`, and the stride search never
-looked past the section length. Those are now asserted against literals and wider ranges. The other
-two "survivors" were **no-op mutations** that could not change behaviour, and were replaced with
-genuine ones rather than counted either way.
+**Every test was mutation-checked, and the first numbers reported were wrong.**
+
+The current figure is **43 mutations, 43 caught, 0 survivors, 0 unapplied.** The previously reported
+"31 mutations, 0 survivors" was true of the mutations chosen and **not of the behaviour** — an
+independent review then mutated `UserSection::RECORD_COUNT` from 8 to 7 and it survived the entire
+suite. Two more survived the same way: `PlayerSection::SENTINEL`, and the visibility level `63` in
+the `63 -> 62` direction.
+
+All three were the **same defect, and it is the one this repository keeps re-learning**: a fixture
+generated from the constant it is testing moves with that constant, so both sides of the assertion
+shift together and the mutation is invisible. The fixture built its user records from
+`RECORD_COUNT`, its terminator from `SENTINEL`, and its cell visibility by indexing
+`OBSERVED_VISIBILITY_LEVELS`. All three now use literals, with a comment at each site saying why.
+
+Note the asymmetry that hid the visibility one: mutating `63 -> 64` **was** caught, because a
+separate test plants the value 64 and asserts it is rejected. Only the `63 -> 62` direction
+survived. A mutation set that tries one direction per constant will report a clean sweep it has not
+earned.
+
+**The real-corpus survey does catch the `RECORD_COUNT` mutation** — `7 * 784 != 6272` — so the
+regression was never reachable on real files. That is worth stating rather than hiding behind the
+fix: the unit tests were the layer that failed, and the corpus check was the layer that would have
+caught it.
+
+Four mutations target the **structural checks specifically**, because those are a deliberate second
+implementation and a second implementation that merely restates the first is worthless. One of them
+— stubbing the `LS_PLR_` terminator check to `true` — survived until a test was added that runs the
+container-level checks on a file `SaveFile::parse` **refuses**, which is the case those checks exist
+for.
+
+Two earlier "survivors" were **no-op mutations** that could not change behaviour (`& 0xffff` versus
+`& 0xffffff` under an `as u16`; swapping two locals that feed only symmetric arithmetic). They were
+replaced with genuine ones rather than counted either way.
+
+### A decode path that killed the process
+
+The review also found that the survey **panicked** on a save with an empty `LS_USER`: zero is a
+multiple of 784, so the divisibility check accepted it, `records` came back empty, and printing
+`records[0]` aborted. This repository has already shipped one decode panic that killed a process, so
+the fix is at the parse rather than at the caller: `LS_USER` must be **exactly** eight records,
+which is what the writer emits unconditionally. The survey additionally uses `.first()` rather than
+`[0]`. Both branches have tests, built from the proof-of-concept file's shape.

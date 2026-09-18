@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use lom_asset_viewer::save::{
-    AlarmSection, SECTION_TAGS, SaveError, SaveFile, TagCensus, UserRecord,
+    AlarmSection, SECTION_TAGS, SaveContainer, SaveError, SaveFile, TagCensus, UserRecord,
 };
 
 /// How far the `LS_SPR_` fixed-stride search looks for a plausible per-section header.
@@ -61,9 +61,13 @@ fn main() -> ExitCode {
 
     let mut parsed = 0_usize;
     let mut failed = 0_usize;
-    let mut invariant_failures = 0_usize;
+    let mut structural_failures = 0_usize;
+    let mut regularity_failures = 0_usize;
     let mut invariant_totals: BTreeMap<&'static str, (usize, usize)> = BTreeMap::new();
-    let mut content_digests: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // Grouped on the **normalized bytes themselves**, not on a hash of them. "7 distinct states"
+    // is a headline claim, and a 64-bit non-cryptographic digest is not something a headline claim
+    // should rest on when the exact bytes are right there.
+    let mut states: Vec<(Vec<u8>, Vec<String>)> = Vec::new();
     // `LS_SPR_`'s no-fixed-stride argument is a property of the corpus, **not of any one file**:
     // individual files do admit a header size that divides evenly, and `combat.sav` admits exactly
     // one (717). Only the intersection across files is empty. Reporting it per file would be
@@ -84,6 +88,45 @@ fn main() -> ExitCode {
         println!("{}", "=".repeat(96));
         println!("{label}   {} bytes", bytes.len());
 
+        // Locate first and report from the container, so the section map and the structural
+        // checks both appear even when the full parse refuses the file. A diagnostic reachable
+        // only after a successful parse never fires on the files that need it.
+        let located = SaveContainer::locate(&bytes);
+        if let Ok(container) = &located {
+            println!(
+                "  tag order  {}",
+                container
+                    .tag_order()
+                    .iter()
+                    .map(|tag| tag.name())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            println!("  sections");
+            for location in container.locations() {
+                println!(
+                    "    {:<8} tag @ {:>8}  payload @ {:>8}  {:>8} bytes",
+                    location.tag.name(),
+                    location.tag_offset,
+                    location.payload_offset,
+                    location.payload_len,
+                );
+            }
+            println!("  structural checks");
+            for check in container.structural_checks(&bytes) {
+                let verdict = if check.passed { "PASS" } else { "FAIL" };
+                if !check.passed {
+                    structural_failures += 1;
+                }
+                let entry = invariant_totals.entry(check.name).or_insert((0, 0));
+                entry.1 += 1;
+                if check.passed {
+                    entry.0 += 1;
+                }
+                println!("    {verdict} {:<56} {}", check.name, check.measured);
+            }
+        }
+
         let save = match SaveFile::parse(&bytes) {
             Ok(save) => save,
             Err(error) => {
@@ -97,26 +140,6 @@ fn main() -> ExitCode {
         };
         parsed += 1;
 
-        println!(
-            "  tag order  {}",
-            save.container
-                .tag_order()
-                .iter()
-                .map(|tag| tag.name())
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
-        println!("  sections");
-        for location in save.container.locations() {
-            println!(
-                "    {:<8} tag @ {:>8}  payload @ {:>8}  {:>8} bytes",
-                location.tag.name(),
-                location.tag_offset,
-                location.payload_offset,
-                location.payload_len,
-            );
-        }
-
         println!("  fields");
         println!(
             "    LS_VER_  version {}  (stores multiplayer slots: {})",
@@ -124,10 +147,13 @@ fn main() -> ExitCode {
             save.version.stores_multiplayer_slots()
         );
         println!(
-            "    LS_MULT  declared setup {} bytes, {} of {} slots occupied",
+            "    LS_MULT  declared setup {} bytes, slot block {}, {} slots occupied",
             save.multiplayer.declared_setup_len,
+            match save.multiplayer.slots {
+                Some(_) => "present",
+                None => "absent (version < 99)",
+            },
             save.multiplayer.occupied_slots().count(),
-            save.multiplayer.slots.len()
         );
         for (index, slot) in save.multiplayer.occupied_slots() {
             println!(
@@ -174,15 +200,20 @@ fn main() -> ExitCode {
                 .map(UserRecord::index)
                 .collect::<Vec<_>>()
         );
-        println!(
-            "             record 0: +4 {:#x}  +8 {}  +12 {:#x} ({})  +16 {}  +20 {}",
-            save.users.records[0].unknown_4(),
-            save.users.records[0].unknown_8(),
-            save.users.records[0].unknown_12_bits(),
-            save.users.records[0].unknown_12_as_f32(),
-            save.users.records[0].unknown_16(),
-            save.users.records[0].unknown_20(),
-        );
+        // `.first()`, never `[0]`. `UserSection::parse` now guarantees eight records, and this
+        // stays defensive anyway: the panic this replaces was a decode path killing the process,
+        // and the cost of not repeating it is one `if let`.
+        if let Some(record) = save.users.records.first() {
+            println!(
+                "             record 0: +4 {:#x}  +8 {}  +12 {:#x} ({})  +16 {}  +20 {}",
+                record.unknown_4(),
+                record.unknown_8(),
+                record.unknown_12_bits(),
+                record.unknown_12_as_f32(),
+                record.unknown_16(),
+                record.unknown_20(),
+            );
+        }
         println!(
             "    LS_GAME  turn {}  unknown_4 {}  live_count {}  records {}  surplus {}  trailer {}",
             save.game.turn,
@@ -215,38 +246,39 @@ fn main() -> ExitCode {
             save.alarms.records_raw.len(),
         );
 
-        println!("  invariants");
-        for invariant in save.invariants() {
-            let verdict = if invariant.passed { "PASS" } else { "FAIL" };
-            if !invariant.passed {
-                invariant_failures += 1;
+        println!("  corpus regularities (a failure here is a DISCOVERY, not a bad file)");
+        for check in save.regularities() {
+            let verdict = if check.passed { "  ok" } else { "NEW!" };
+            if !check.passed {
+                regularity_failures += 1;
             }
-            let entry = invariant_totals.entry(invariant.name).or_insert((0, 0));
+            let entry = invariant_totals.entry(check.name).or_insert((0, 0));
             entry.1 += 1;
-            if invariant.passed {
+            if check.passed {
                 entry.0 += 1;
             }
-            println!(
-                "    {verdict} {:<56} {}",
-                invariant.name, invariant.measured
-            );
+            println!("    {verdict} {:<56} {}", check.name, check.measured);
         }
 
         // Two files in the corpus are the same game state under two names, and they differ on disk
         // only in the leaked name padding. Group by a digest that excludes that padding, so the
         // survey reports distinct *states* rather than distinct files.
-        content_digests
-            .entry(content_digest(&save))
-            .or_default()
-            .push(label);
+        let normalized = normalized_state(&save);
+        match states.iter_mut().find(|(bytes, _)| *bytes == normalized) {
+            Some((_, names)) => names.push(label),
+            None => states.push((normalized, vec![label])),
+        }
     }
 
     println!("{}", "=".repeat(96));
     println!("files\t{}", paths.len());
     println!("parsed\t{parsed}");
     println!("failed\t{failed}");
-    println!("invariant-failures\t{invariant_failures}");
-    println!("\nper-invariant, passed of attempted:");
+    println!("structural-failures\t{structural_failures}");
+    println!(
+        "regularity-failures\t{regularity_failures}   (a nonzero count here is a finding, not an error)"
+    );
+    println!("\nper-check, passed of attempted:");
     for (name, (passed, attempted)) in &invariant_totals {
         println!("  {passed:>3}/{attempted:<3} {name}");
     }
@@ -258,19 +290,27 @@ fn main() -> ExitCode {
     println!(
         "  -> {}",
         if strides.is_empty() {
-            "empty, so no fixed record stride exists -- measured here, not quoted from a past run"
+            "no common candidate exists WITH A HEADER OF AT MOST 1024 BYTES. That is a bounded\n     search, not a proof of no stride: a larger header was not tried. The primary evidence\n     for variable-length records is the disassembly -- virtual dispatch through the 10-entry\n     table at 0x004F73B8 -- and the length-prefixed strings embedded at irregular offsets.\n     This arithmetic corroborates them; it does not carry the claim on its own."
         } else {
             "NOT empty: a fixed stride may exist after all, and this claim needs revisiting"
         }
     );
 
-    println!("\ndistinct game states (digest ignores the leaked name padding):");
-    for (index, names) in content_digests.values().enumerate() {
+    println!(
+        "\ndistinct game states (compared on normalized bytes; the leaked name padding is excluded):"
+    );
+    for (index, (_, names)) in states.iter().enumerate() {
         println!("  state {:>2}  {}", index + 1, names.join(", "));
     }
-    println!("distinct-states\t{}", content_digests.len());
+    println!("distinct-states\t{}", states.len());
+    println!(
+        "  -> {} file(s) carrying {} state(s). The file count is duplication across installs, NOT\n     corroboration; the six shipped demo saves are authored scenarios that may share a\n     generator, so agreement among them is weaker evidence than the count suggests.",
+        paths.len(),
+        states.len()
+    );
 
-    if failed > 0 || invariant_failures > 0 || !strides.is_empty() {
+    // Regularity failures deliberately do NOT fail the run. They are findings.
+    if failed > 0 || structural_failures > 0 || !strides.is_empty() {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
@@ -314,48 +354,87 @@ fn format_histogram(histogram: &BTreeMap<i16, usize>) -> String {
         .join(" ")
 }
 
-/// A cheap order-independent digest of everything decoded, with the uninitialised name padding
-/// left out. Not cryptographic; it only has to separate the corpus's game states.
-fn content_digest(save: &SaveFile) -> String {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    let mut eat = |bytes: &[u8]| {
-        for byte in bytes {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x100_0000_01b3);
+/// Every decoded field, serialized, with the uninitialised name padding left out.
+///
+/// Used to group files by **game state** rather than by bytes, because two saves of one state
+/// differ on disk in the leaked name padding. Compared directly rather than hashed: the caller
+/// publishes the group count as a headline number, and a 64-bit non-cryptographic hash is the
+/// wrong thing to rest that on when the bytes are available.
+///
+/// Every field the parser decodes goes in. An earlier version omitted the map dimensions, the
+/// trailer words, the plane count, `LS_GAME`'s four non-turn head fields, the player lord codes and
+/// the region dimensions -- so two saves differing only in `game.unknown_4` collapsed into one
+/// state, in the very function whose job is to tell states apart.
+fn normalized_state(save: &SaveFile) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut word = |value: u32| out.extend_from_slice(&value.to_le_bytes());
+
+    word(save.version.version);
+
+    word(save.multiplayer.declared_setup_len);
+    out.extend_from_slice(&save.multiplayer.setup);
+    match &save.multiplayer.slots {
+        None => out.push(0),
+        Some(slots) => {
+            out.push(1);
+            for slot in slots {
+                out.extend_from_slice(&slot.lord_code.to_le_bytes());
+                // The name only, never the padding past its terminator.
+                out.extend_from_slice(slot.name());
+                out.push(0);
+            }
         }
-    };
-    eat(&save.version.version.to_le_bytes());
-    eat(&save.multiplayer.setup);
-    for slot in &save.multiplayer.slots {
-        eat(&slot.lord_code.to_le_bytes());
-        eat(slot.name());
     }
+
+    out.extend_from_slice(&save.map.map.width.to_le_bytes());
+    out.extend_from_slice(&save.map.map.height.to_le_bytes());
+    out.extend_from_slice(&save.map.map.bits_per_pixel.to_le_bytes());
+    out.extend_from_slice(&save.map.plane_count.to_le_bytes());
+    out.extend_from_slice(&save.map.trailer.to_le_bytes());
     for cell in &save.map.map.cells {
-        eat(&cell.tag.to_le_bytes());
-        eat(&cell.value_bits.to_le_bytes());
+        out.extend_from_slice(&cell.tag.to_le_bytes());
+        out.extend_from_slice(&cell.value_bits.to_le_bytes());
     }
-    for word in &save.map.plane {
-        eat(&word.to_le_bytes());
+    for value in &save.map.plane {
+        out.extend_from_slice(&value.to_le_bytes());
     }
-    eat(&save.sprites.record_count.to_le_bytes());
-    eat(save.sprites.records_raw());
+
+    out.extend_from_slice(&save.sprites.record_count.to_le_bytes());
+    out.extend_from_slice(save.sprites.records_raw());
+
     for record in &save.users.records {
-        eat(&record.raw);
+        out.extend_from_slice(&record.raw);
     }
-    eat(&save.game.turn.to_le_bytes());
+
+    out.extend_from_slice(&save.game.turn.to_le_bytes());
+    out.extend_from_slice(&save.game.unknown_4.to_le_bytes());
+    out.extend_from_slice(&save.game.zero_8.to_le_bytes());
+    out.extend_from_slice(&save.game.live_count.to_le_bytes());
+    out.extend_from_slice(&save.game.declared_record_size.to_le_bytes());
+    out.extend_from_slice(&save.game.trailer.to_le_bytes());
     for record in &save.game.records {
-        eat(&record.id.to_le_bytes());
-        eat(&record.a.to_le_bytes());
-        eat(&record.b.to_le_bytes());
+        out.extend_from_slice(&record.id.to_le_bytes());
+        out.extend_from_slice(&record.a.to_le_bytes());
+        out.extend_from_slice(&record.b.to_le_bytes());
     }
-    eat(&save.players.records_raw);
+
+    out.extend_from_slice(&save.players.records_raw);
+    out.extend_from_slice(&save.players.sentinel.to_le_bytes());
+    for code in &save.players.lord_codes {
+        out.extend_from_slice(&code.to_le_bytes());
+    }
+
+    out.extend_from_slice(&save.regions.width.to_le_bytes());
+    out.extend_from_slice(&save.regions.height.to_le_bytes());
     for cell in &save.regions.cells {
-        eat(cell);
+        out.extend_from_slice(cell);
     }
-    eat(&save.regions.tail_raw);
-    for word in &save.alarms.header {
-        eat(&word.to_le_bytes());
+    out.extend_from_slice(&save.regions.tail_raw);
+
+    for value in &save.alarms.header {
+        out.extend_from_slice(&value.to_le_bytes());
     }
-    eat(&save.alarms.records_raw);
-    format!("{hash:016x}")
+    out.extend_from_slice(&save.alarms.records_raw);
+
+    out
 }
