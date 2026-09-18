@@ -158,6 +158,24 @@ impl<'a> PeImage<'a> {
         self.bytes
     }
 
+    /// Every executable section as `(virtual address, raw file offset, raw size)`.
+    ///
+    /// Exposed so that a caller can sweep the code the same way this module bounds it, rather than
+    /// hardcoding a section layout that is true of exactly one executable.
+    pub fn executable_ranges(&self) -> Vec<(u32, usize, usize)> {
+        self.sections
+            .iter()
+            .filter(|section| section.executable)
+            .filter_map(|section| {
+                Some((
+                    self.image_base.checked_add(section.virtual_address)?,
+                    section.raw_offset as usize,
+                    section.raw_size as usize,
+                ))
+            })
+            .collect()
+    }
+
     /// Read a NUL-terminated operator name at a virtual address.
     ///
     /// The name must be lexable as a GameScript executable name. That is the filter which rejects

@@ -3417,3 +3417,104 @@ reporting; `COMBAT_TILESET_ARRAY_CANDIDATES` is what an encounter may *reach* an
 so the paint gate never refuses it. **Reporting is precise; refusing is permissive.** Refusing the
 engine's own answer is the bug that shipped on this branch once already, and the permissive side of
 the gate is where that lesson lives.
+
+## 2026-09-17 — Multiplayer is lockstep, the transport is DirectPlay, and the `.snp` files are Blizzard's
+
+Full findings in [`docs/multiplayer.md`](multiplayer.md); this entry records what changed and the
+two things I got wrong on the way.
+
+### The answer
+
+**Observed.** The game is a lockstep, deterministic, peer-to-peer simulation. Four independent lines
+of evidence, none of which depends on the others:
+
+1. The engine compares six checksums between computers and reports `Divergence` — `'EXE' version`,
+   `'PlayAnimation Count'`, `'Random-Seed'`, `'IMP' files`, `'GS' files`, `'Player-Stats'` —
+   per message ID and per tick. Reporting code at `0x004b4fc0`–`0x004b5260`.
+2. Vanilla `gs/network.gs` hands `setchecksumproc` a procedure that checksums every army's location
+   and facing and every unit's type, health, hit points, movement points, champion type, experience,
+   unique ID and seven modifier words, plus each player's gold, food and crystals. The engine reads
+   that procedure back at `0x004b4c81`, inside the checksum module.
+3. The ~100 wire message types at file offsets `0x159c1c`–`0x15a1f0` are overwhelmingly *orders* —
+   `MOVE_ARMY`, `ORDERS`, `BATCH_ORDERS`, `BUY_UNIT`, `END_TURN`, `SCRIPTCALLBACK` — with a smaller
+   state-poke vocabulary and a `RESYNC_*`/`XFER` recovery path.
+4. The state dump at `0x15a248`–`0x15a4f5` carries `gameseed`, `random count`, `halt_ticks`,
+   `skip_ticks`, `half_speed_ticks`, `go_countdown`, `late_messages`.
+
+**So the homelab verdict is negative on the thing that matters.** Desync is a determinism problem;
+a better network cannot fix it. The actionable finding is that `'GS' files` and `'EXE' version` are
+divergence classes, which means every peer needs byte-identical archives — mixed 3.02/GS5R3/vanilla
+installs cannot stay in step. That needs no infrastructure at all.
+
+### `netlockgame`, the operator that defeated the arity walker
+
+**Observed.** Six instructions at `0x004b6020`: load the provider pointer, null-check it, load the
+vtable, `jmp dword [eax+58h]`. It is nullary, pushes nothing, and the walker was right to refuse an
+indirect branch. Slot 22 on the DirectPlay class is `0x0044b440`, which is `jmp 0x004b7dd0` — the
+base member that returns the local computer id, the same one `thiscomputer` and `ishost` call. The
+operator discards the result.
+
+**On the transport the game uses, `netlockgame` locks nothing.** The shipped corpus calls it exactly
+once, in `gs/Dlg/multidlg.gs`, immediately before `startnetgame`, where it was evidently meant to
+close the lobby.
+
+### Refuted: the `.snp` files are not DirectPlay service providers
+
+**Refuted.** `Battle.snp` and `Standard.snp` export `SnpBind`/`SnpQuery` — the **Storm** Network
+Provider interface, Blizzard's. `Standard.snp` declares `Direct Cable Connection` (`SERIAL.CPP`),
+`Modem` (`MODEM.CPP`) and `Local Area Network (IPX)` (`IPX.CPP`) and imports no sockets library at
+all. `Battle.snp` is Blizzard's Battle.net client verbatim, help text and all, describing a *Diablo*
+chat screen and hardcoding `209.67.136.170;exodus.battle.net`.
+
+**Observed.** `lomse.exe` imports 26 `STORM.dll` ordinals, every call site of which is in the archive
+and Storm-wrapper modules plus the two allocator ordinals, and three `DPLAYX.dll` functions —
+`DirectPlayCreate`, `DirectPlayEnumerateA`, `DirectPlayLobbyCreateA`. It carries a complete set of
+source-level assertion strings for a class named `CDPlay`. The transport is DirectPlay; the `.snp`
+files came in the box with Storm and are not loaded.
+
+There are **four** classes in the provider hierarchy, recovered automatically from the constructor
+stores that install their vtables: an abstract base (`0x0054dbf0`), `CDPlay` (`0x0054d548`),
+`CSigs` (`0x0054d838`) and a Storm/SNet class (`0x0054d8b0`). `CSigs` is largely stubbed — five of
+its slots, including `selectprovider` and `joinnetworkgame`, are `xor eax,eax / ret 4`.
+
+### The correction that cost the most
+
+**Corrected.** I first reported `0x005d1e84` as a global pointer with 110 reads and **zero** writes,
+and concluded the provider abstraction was dead code in this build. Two independent scans agreed —
+a byte-pattern search over the whole file and an `iced` sweep with real operand-access analysis —
+and both were right about what they measured and wrong about what it meant.
+
+`0x005d1e84` is field `+0x4b2c` of the singleton at `0x005cd358`. It is written at `0x004b6290` as
+`mov [edi+4B2Ch],eax`. No absolute store exists to find because the compiler addresses a static
+object's fields absolutely on *reads* while the writer holds the base in a register. **A global with
+many reads and no writes is the signature of either an unassigned pointer or a static object's
+field, and only the arithmetic tells them apart.** Two agreeing scans are one shared assumption, not
+a confirmation. `native_dispatch::static_object_field` now makes that check one call, with a test.
+
+The second, smaller error: my first draft of the survey tool annotated *every* singleton whose
+address was below the pointer as "contains it", which named a dozen owners for one field. It now
+reports only the nearest base below the pointer.
+
+### What is now committed
+
+`spikes/asset-viewer/src/native_dispatch.rs` recognises three dispatch shapes — virtual on a global
+pointer, non-virtual member on a global pointer, and `thiscall` on a static singleton — reads
+vtables, recovers the vtable a constructor installs, and finds every vtable in the image from the
+stores that install it. Ten unit tests over synthetic PE images; two mutations confirmed to fail the
+suite (dropping the `ecx`-provenance tracking, and dropping the requirement that a vtable be loaded
+out of the object before an indirect call is read as virtual).
+
+`spikes/asset-viewer/examples/multiplayer_survey.rs` drives it. Nothing is hardcoded to the
+addresses this branch found: the provider pointer comes out of `netlockgame`'s own body, the vtable
+candidates come from the constructor stores, and the slot span comes from the operators. It reports
+which slots **no** operator reaches — slots 0, 1, 9–17, 19–21, 23, 24, 26 — which is where the send
+and receive paths live (`CDPlay` slots 20 and 21, `0x0044b210` and `0x0044b130`).
+
+### Concrete "touchy" mechanisms, for the record
+
+**Observed**, all with addresses in `docs/multiplayer.md`: a 257-byte message payload cap on a fixed
+receive buffer; `EnumSessions` with a **50 ms** timeout; a send path that `Sleep`s on the game thread
+to rate-limit itself, with a 100 ms default post-send wait set in the base constructor; a
+per-destination sequence number kept as a dword but sent as **one byte**; a silent drop path for a
+flagged peer; and no IP-address field anywhere in the shipped UI, so discovery is broadcast-only and
+`Join` refuses any name not already in the enumerated list.

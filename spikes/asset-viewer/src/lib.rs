@@ -4,6 +4,7 @@ pub mod gamescript_vm;
 pub mod imp;
 pub mod map;
 pub mod mpq;
+pub mod native_dispatch;
 pub mod native_table;
 pub mod operator_arity;
 pub mod paths;
