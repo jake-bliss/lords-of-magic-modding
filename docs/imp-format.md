@@ -413,6 +413,89 @@ hypothesis:
 Using byte 2 as a frame rate in the viewer would be a guess dressed as metadata. It is not what the
 engine does.
 
+## Pixel layout: what "no frame is row-padded" rests on, and where it stops
+
+A frame's pixels are a bitstream, and at 1, 2 and 4 bits per pixel there are two legal ways to lay
+one out. **Tight** runs the bits straight through and pads only the very end. **Row-padded**
+restarts each scanline on a byte boundary. Nothing in the file says which a frame used. The decoder
+in `src/imp.rs` picks one — `pixel_layout_for` states the rule — and a re-encoder that picked
+differently would change a frame's stored length, which in a real file moves every payload after it.
+
+Measured over the shipped `imp.mpq` by `--imp-roundtrip`, 1,800 members and 41,373 payload-carrying
+frames:
+
+| | frames |
+| --- | ---: |
+| the two layouts emit the same bytes, so the frame records no choice | 38,831 |
+| the two layouts differ and the stored size names **tight** | 2,395 |
+| 1bpp, final partial byte omitted (`tight_floor`) | 102 |
+| the two layouts are the same **length** and different **bytes** | 45 |
+| the two layouts differ and the stored size names **row-padded** | **0** |
+
+Reproduce with:
+
+```
+cargo run --release --bin lom-asset-viewer -- --imp-roundtrip imp.mpq --listfile LISTFILE
+```
+
+That zero is what makes a single-frame replacement possible at all: a frame's stored size is
+reproducible from its own pixels, so a replacement does not have to guess a layout. It is a
+**bounded** negative, and the bound is worth stating precisely, because this repository's standing
+lesson is that a negative is only as strong as the instrument that looked for it.
+
+### Why 752 frames cannot be reached by this instrument
+
+The instrument is the decoder, and the decoder cannot see a row-padded layout on one class of frame.
+
+A payload's length is declared in the frame record's `encoded_size` field on `record_variant != 0`
+records. **A `record_variant == 0` record declares nothing.** Its reader — `decode_rle_until_size` —
+consumes RLE packets and stops at the *first* length `packed_sizes` accepts, which is the smallest.
+For a frame where the tight and row-padded lengths differ, tight is always the smaller, so a
+variant-0 compressed frame that really was written row-padded is read as tight, its trailing bytes
+are never consumed, and it is counted in the "names tight" row above. The sweep reports the
+population directly:
+
+```
+layout-unobservable-by-this-decoder            752
+layout-unobservable-and-not-cleared-by-gaps    752
+```
+
+752 of 41,373 is **1.8%**. Rounding it to "no frame is row-padded, full stop" would be claiming the
+instrument reached where it does not.
+
+### Why the payload alignment cannot clear the last 752
+
+There is a second, independent line of evidence, and it very nearly works. Every payload in the
+archive starts on an 8-byte boundary — 41,373 of 41,373, counted directly as
+`payload-starts-8-byte-aligned`, and visible again in the gaps between consecutive payloads, which
+are 0 through 7 in roughly equal numbers. So if a variant-0 stream really stopped early, the bytes
+it failed to consume would have to show up as an oversized gap before the next payload.
+
+They would — but only if the shortfall were big enough to escape the alignment. A row-padded frame
+read as tight leaves `row_padded - tight_ceil` packed bytes unread, which costs at least two stored
+bytes per RLE repeat packet, so at least `2 * ceil(delta / 130)` stored bytes (130 is the longest
+run one IMP repeat packet expresses). Where that minimum is **8 or more**, a gap of 8 or more would
+have to exist somewhere, and the measured gap histogram tops out at 7. Where it is **under 8**, the
+shortfall fits inside the padding the archive already leaves and the histogram says nothing at all.
+
+For all 752 frames the minimum is under 8. The gap evidence clears none of them, which is why the
+sweep prints the two counters and why they are equal.
+
+### What probe would close it
+
+Not built, and deliberately so — it needs the engine, not more reading of the archive.
+
+Pick one of the 752 frames at a shape where the two layouts differ, replace its palette with
+entries that make every index visually distinct, run the game to a screen that draws that frame, and
+capture it. A tight read and a row-padded read of the same bytes produce **different pictures**, not
+different byte counts, so the capture decides it outright: one of the two predicted images matches
+and the other does not. The same run answers the 45 equal-length ambiguous frames, which no amount
+of arithmetic over the file can touch, because there the two layouts are indistinguishable in every
+measurable property except the pixels they draw.
+
+Until then: 0 of 41,373 frames are observed row-padded, 40,621 of them by an instrument that could
+have seen it, and 752 by one that could not.
+
 ## What is still open
 
 1. **The engine's animation tick period in milliseconds.** The counter is `0x005AF134`. Establishing
@@ -432,6 +515,11 @@ engine does.
    value there** — `0xF8` in 265, `0xC0` in 182, `0x78` in 52, `0xE0` in 2 — and those patterns
    correlate with byte 1 taking `0x81`, `0xCC` and `0xFF`. Something wrote them deliberately.
 7. **Byte 1 bits 0–6.** Same story: set in 448 records, never tested.
+8. **Whether any frame is stored row-padded.** 0 of 41,373 are observed to be, but 752 of them are
+   `record_variant == 0` frames whose reader could not have seen it, and 45 more have a shape where
+   the two layouts are indistinguishable in the file. See
+   [pixel layout](#pixel-layout-what-no-frame-is-row-padded-rests-on-and-where-it-stops) for the
+   probe that would close it.
 
 ## Test coverage
 
