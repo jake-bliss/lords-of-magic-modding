@@ -2,7 +2,7 @@
 
 ## Status
 
-**Lexical and vocabulary milestones complete; the engine's operator tables and their arity are recovered from the binary; the experimental VM core executes shipped utility code with native stubs.** What remains is loading a second engine-light module end to end ([issue #5](https://github.com/jake-bliss/lords-of-magic-modding/issues/5)). The native Rust tool tokenizes every named `.gs` member in the preserved baseline, 3.02, and GS5R3 archives, inventories names and static `run` references, and correlates executable tokens with strings embedded in each profile's `lomse.exe`. A deliberately small interpreter now supports enough stack, collection, dictionary, definition, procedure, conditional, and numeric behavior to load the 3.02 `gs\standard.gs` utility module and execute two of its procedures.
+**Lexical, vocabulary and language milestones complete; the engine's operator tables and their arity are recovered from the binary; the VM executes shipped utility code and stops, traceably, at the engine boundary.** What remains is module loading ([issue #5](https://github.com/jake-bliss/lords-of-magic-modding/issues/5)). The native Rust tool tokenizes every named `.gs` member in the preserved baseline, 3.02, and GS5R3 archives, inventories names and static `run` references, and correlates executable tokens with strings embedded in each profile's `lomse.exe`. The interpreter implements 68 language primitives plus GameScript's two non-PostScript features — procedure locals and typed dictionary keys — which is enough to load 3.02's `gs\standard.gs` and run its whole utility surface, and enough for 406 of that profile's 1,681 members to execute with no engine support at all. The candidate vocabulary is now partitioned against the operator table rather than guessed at.
 
 This is the first Stage 2 preservation-engine result. It establishes that the source language is tractable enough for a bounded parser and experimental interpreter. It does **not** prove that the native host API, simulation, or complete game can be reproduced economically.
 
@@ -492,20 +492,135 @@ The analyzer records a dependency only for the adjacent token pattern:
 
 It resolves the normalized, case-insensitive path against every member in the same MPQ. Dynamic path construction, conditional catalogs, aliases, and loose files remain outside this model. The graph is therefore useful for entry-point and subsystem discovery, not proof that an installation is complete.
 
-## Experimental VM checkpoint
+## Line endings: bare CR is a line ending here
 
-The VM currently implements:
+`gs.mpq` mixes all three conventions. In a local GS5R3 install: **1,123 members CRLF, 242 bare CR, 63 bare LF**, and 501 with no line terminator at all (the `fonts\*.gs` members are single-line). Evidence class: Observed in a local binary.
 
-- numbers, booleans, strings, literal/executable names, procedures, arrays, and dictionaries;
-- an operand stack, dictionary stack, name lookup, definitions, and procedure calls;
-- bounded execution with a one-million-step default ceiling;
-- array/dictionary construction plus `get`, `put`, and the observed procedure-metadata `replace` pattern;
-- a small operator subset covering stack manipulation, numeric arithmetic/comparison, `if`, and `ifelse`;
-- structured errors containing the unknown executable name, VM step, and procedure call stack.
+This is not a cosmetic detail. A `;` comment runs to the end of its line, so a reader that splits on LF sees a single comment swallow dozens of live statements — which is how this project once harvested commented-out code as if it were bindings. The lexer terminates comments at `\r` or `\n`, counts a bare CR as a line ending, and counts a CRLF pair once; `a_comment_ends_at_a_bare_carriage_return` and `line_numbers_count_bare_carriage_returns_and_pair_crlf` fail if either rule is removed.
 
-The 3.02 `gs\standard.gs` member loads in 339 VM steps, leaves the operand stack empty, and defines 36 names. Evaluating `3 5 min 3 5 max` afterward executes the real script-defined `min` and `max` procedures and leaves numeric values `3` and `5` on the stack.
+The corpus relies on it. GS5R3's `gs\standard.gs` comments out its inherited `min`/`max` at lines 68 and 70 and redefines them at 73 and 74; reading the commented pair as live would give the wrong bodies.
 
-This is intentionally not a general GameScript VM yet. Collection mutability and procedure metadata use a minimum model sufficient for the observed utility-module load, and many operators, object types, file/module behavior, and native host calls remain absent.
+## Procedure locals: `replace` and the slot-zero dictionary
+
+GameScript procedures carry private storage, which PostScript has no equivalent of. Two forms appear, used interchangeably for structurally identical procedures:
+
+```text
+/NAME {...} /dummy 5 dict replace bind def     ; attach a dictionary under a name
+/NAME {...} dup 0 5 dict put bind def          ; attach one in slot zero
+```
+
+`PROC /name VALUE replace` leaves `PROC` on the stack and attaches `VALUE` under `name`. While that procedure runs, the name resolves to the attached value, so:
+
+- `/dummy begin ... end` opens the procedure's private dictionary, and `def` inside writes into it;
+- `/dummy /low known` and `/high undef` operate on that dictionary;
+- `/char_array exch get` in `gs\standard.gs`'s `char_cvs` indexes a private *array*, and `gs\autochat.gs`'s `/dummy length` measures one.
+
+Values other than dictionaries are attached the same way, so the mechanism is "named local", not "local dictionary". Evidence class: Observed in a local binary for the shape (`standard.gs`, `autochat.gs`, `chess.gs`, `citytest.gs`); Inferred for the meaning — it is the reading under which every one of those bodies resolves and produces the expected results.
+
+Slot zero is read as the name `dummy` because every procedure using the `put` form opens with `/dummy begin`, and the `replace` form of the same procedures names it `dummy` explicitly. Evidence class: Inferred.
+
+**This changed the definition scanner.** The old three-token definition window could not see past `dup 0 N dict put bind` or `/dummy N dict replace bind`, so `standard.gs`'s own `writestring`, `pushonstack`, `popoffstack` and `onstack?` were filed as names nothing in the corpus defines. The window now admits a short list of definition-finishing operators (`bind`, `dup`, `put`, `dict`, `array`, `string`, `replace`, `currentdict`, `begin`, `end`) beyond the first three tokens, and stops at any other operator so `/invoke_spell cvx` is still not a definition. Evidence class: Corrected.
+
+## Dictionary keys are typed
+
+`gs\spells\weaken.gs` ships `/level_advantage_table << 3 1.0 0 0.5 -1 0 >> def`, and `standard.gs`'s `interpolate` walks it with `forall` and compares each key numerically. Keys are therefore numbers or names, not strings, and `forall` on a dictionary pushes key then value. Evidence class: Observed in a local binary.
+
+## Conditions may be integers
+
+`standard.gs`'s `getflagvalue` is `1 exch bitshift and {true}{false} ifelse`. `and` on two integers yields an integer, which `ifelse` then consumes. A boolean-only `if`/`ifelse` cannot run the shipped flag helpers at all, so a number is a condition and zero is false. Evidence class: Inferred.
+
+## VM checkpoint: what executes now
+
+The interpreter implements 68 language primitives, listed in `gamescript_vm::PRIMITIVE_NAMES`:
+
+- **stack** — `dup pop exch copy index roll count clear`
+- **arithmetic** — `add sub mul div idiv mod neg abs sqrt sin cos round truncate floor ceiling bitshift`
+- **comparison and logic** — `eq ne gt lt ge le and or xor not`
+- **control flow** — `if ifelse repeat for loop exit forall exec`
+- **aggregates** — `array dict string [ ] << >> get put length known undef load currentdict begin end def replace`
+- **conversion** — `cvx cvlit cvi cvr cvs type bind`
+
+`sin` and `cos` take **radians**, unlike PostScript's degree-taking pair: `standard.gs` defines `/radians {180 div 3.141596 mul}` and applies it before every call. Evidence class: Inferred.
+
+`PRIMITIVE_NAMES` is checked against the dispatch itself by a test that reads the match arms back out of the source, because the vocabulary classification below calls a name a native host call precisely when the engine lists it and this VM does not implement it.
+
+### The `standard.gs` battery
+
+`cargo run --example gamescript_standard` loads 3.02's `gs\standard.gs` (339 VM steps, 37 names, empty operand stack) and then runs 31 exercises whose expected stacks were worked out from the shipped bodies rather than recorded from output. **All 31 behave as expected**: 22 produce a stated stack, and 9 stop on a named engine call. Six were wrong on the first run and the run said so, which is the point of stating the expectation first.
+
+Three findings fell out of executing rather than reading:
+
+1. **`get_if_known`'s header comment states its operands backwards.** The comment says `;val dict key get_if_known`; the code's `3 1 roll` requires `dictionary key default`. Evidence class: Corrected.
+2. **`dump_flags` does nothing to its operand.** After the first iteration its `2 copy` reads the loop counter rather than the flags, and the trailing `pop` discards the one index it kept. `5 dump_flags` leaves `5`. Evidence class: Observed in a local binary, by execution.
+3. **GS5R3 ships `min` and `max` swapped.** Vanilla and 3.02 both define `/min{2 copy gt{exch pop}{pop}ifelse}`. GS5R3 comments that line out and redefines the gt-body as `max` and the lt-body as `min`, so under GS5R3 `3 7 min` is `7` and `3 7 max` is `3`. The same battery run against GS5R3 flags exactly those two exercises. Evidence class: Observed in a local binary. (GS5R3 also has no `string_cvi` or `char_cvs`; those are 3.02 additions.)
+
+The nine engine names the battery reached, with their `lomse.exe` entry points where the operator table lists them:
+
+| Name | Class | Entry point | Reached through |
+| --- | --- | --- | --- |
+| `additem` | operator | `0x00490be0` | `addrect` |
+| `dialogisopen?` | operator | `0x00505830` | `closeifopen` |
+| `free` | operator | `0x004dc600` | `free_stack_elements` |
+| `gettemppath` | operator | `0x005053f0` | `eval` |
+| `rand` | operator | `0x004c9f20` | `makeregion` |
+| `write` | operator | `0x004cc120` | `writestring` |
+| `build_statement` | unresolved | — | `retrievefromstack` |
+| `sysdlg` | unresolved | — | `exitapplication` |
+| `unitdictxref` | unresolved | — | `geteasyunitdata` |
+
+The three unresolved ones are **not** engine calls: `build_statement` is defined in `gs\text.gs`, `sysdlg` in `gs\dlg\sysdlg.gs`, `unitdictxref` in `units\easyunit.gs`. They are the module-loading gap, not the host-API gap.
+
+`standard.gs`'s whole static debt to the engine is 21 names — 17 in the operator table, 4 unresolved.
+
+## Vocabulary classification
+
+`cargo run --example gamescript_vocabulary` partitions every distinct executable name in a profile, in the order the interpreter resolves: script definition, then language primitive, then native host call, then constant, then nothing. It writes `reports/gs/vocabulary-<profile>.tsv` (name, uses, class, whether the old broad heuristic admitted it, operator entry point).
+
+| Class | vanilla | patch302 | gs5r3 |
+| --- | ---: | ---: | ---: |
+| script-definition | 10,365 | 10,967 | 12,417 |
+| language-primitive | 55 | 55 | 54 |
+| native-host-call | 1,383 | 1,414 | 1,390 |
+| constant-or-data | 647 | 734 | 675 |
+| heuristic-false-positive | 1,630 | 2,004 | 2,319 |
+| **distinct executable names** | **14,080** | **15,174** | **16,855** |
+
+Restricted to the broad "likely hardcoded engine name" candidate list, which is what issue #5 asked to partition:
+
+| Class | vanilla | patch302 | gs5r3 |
+| --- | ---: | ---: | ---: |
+| language-primitive | 55 | 55 | 54 |
+| native-host-call | 1,383 | 1,414 | 1,390 |
+| constant-or-data | 643 | 709 | 670 |
+| heuristic-false-positive | 32 | 33 | 34 |
+| **broad candidates** | **2,113** | **2,211** | **2,148** |
+
+So **roughly 98.5% of the broad candidate list is real** — a primitive, an operator the engine registers, or a constant — and about 33 names per profile are coincidences. `script-definition` is zero there by construction: the heuristic already excludes anything the corpus defines.
+
+The full-vocabulary `heuristic-false-positive` class is the interesting residue: names the corpus calls, nothing defines, the engine does not register, and which are not constant-shaped. It is dominated by cross-member references the definition scanner still cannot see (`build_statement`, 340 uses, is defined in `gs\text.gs` with its value spanning more than the attachment window) and by mixed-case engine type names such as `Type_GraphicPage` that `is_screaming_case` does not match.
+
+Names the corpus defines that the engine *also* registers are reported separately — 15 in 3.02, including `exec`, `ne`, `type`, `run` and `sleep`. The dictionary wins at run time, so these are script overrides of engine behaviour.
+
+## How much of the corpus is pure language
+
+`--survey` loads every `.gs` member on its own machine and records what stopped it. On 3.02's 1,681 members:
+
+| Outcome | Members |
+| --- | ---: |
+| loaded to completion with no engine support at all | 406 |
+| stopped on a name | 1,267 |
+| failed some other way | 8 |
+
+Of the 1,267 stops, classified by what the **first** blocking name is:
+
+| First blocker | Members |
+| --- | ---: |
+| defined in another member | 640 |
+| engine constant | 480 |
+| engine operator | 124 |
+| unresolved | 23 |
+
+Read that as a lower bound on what loading would unblock, not a projection: resolving a member's first blocker only reveals its second.
 
 ## Command
 
@@ -549,26 +664,46 @@ target/release/lom-asset-viewer \
 
 Omit `--exe` to skip binary correlation. The command is read-only and emits tab-separated summary and diagnostic lines to standard output.
 
+The two example drivers are read-only as well and print tab-separated lines:
+
+```sh
+# Load gs\standard.gs, run the 31-exercise battery, and trace every engine name it reaches.
+# Non-zero exit if any exercise disagrees with its stated expectation.
+cargo run --example gamescript_standard -- \
+  --gs '/path/to/English/gs.mpq' --exe '/path/to/English/lomse.exe'
+
+# Add --survey to load every .gs member on its own machine and tabulate what stopped each one.
+cargo run --release --example gamescript_standard -- \
+  --gs '/path/to/English/gs.mpq' --exe '/path/to/English/lomse.exe' --survey
+
+# Classify a profile's whole executable vocabulary and write the derived table.
+cargo run --example gamescript_vocabulary -- \
+  --profile patch302 --gs '/path/to/English/gs.mpq' --exe '/path/to/English/lomse.exe' \
+  --out ../../reports/gs
+```
+
 ## Stop/go assessment
 
-**Go for the next bounded VM experiment.** The first interpreter checkpoint also passes. Reasons:
+**Go, and the scope is now measured rather than estimated.**
 
-- every known script can be tokenized with a small, bounds-checked implementation;
-- module loads and definition/call vocabularies are statically discoverable;
-- the three preserved lineages can be measured with one tool;
-- malformed source fragments can be isolated without weakening fatal byte/string checks;
-- an actual shipped utility module loads without stack residue, and two script-defined comparison procedures return the expected values.
+- every known script tokenizes with a small, bounds-checked implementation, across all three line-ending conventions;
+- 406 of 3.02's 1,681 `.gs` members execute to completion with **no** engine support at all;
+- `gs\standard.gs` loads and 31 stated expectations over its utility procedures all hold, including three that contradicted a reading of the source;
+- the broad engine-name heuristic is now resolved: ~98.5% of it is real, ~33 names per profile are coincidence;
+- unknown engine names stop with a trace naming the operator's entry point, and no host call has been guessed.
 
-The principal risk remains the native host surface. The current executable-name heuristic is too broad to support a full-engine estimate or a Stage 2 completion claim.
+The residual risk is unchanged in kind and smaller in size: the native host surface is 1,414 operators in 3.02, and nothing here executes any of them.
 
-## Next slice and gate
+## Next slice and gate: continue for module loading
 
-The continuing checkpoint is tracked in [GitHub issue #5](https://github.com/jake-bliss/lords-of-magic-modding/issues/5). Expand the interpreter only as required to classify and run additional engine-light utilities. Unknown executable names stop with a structured trace rather than being guessed. Use those failures plus static call sites to split the candidate vocabulary into:
+**Continue.** The measurement that decides it: of the 1,267 members that stop on a name, the single largest group — **640** — stops on a name **another member of the same archive defines**. Those are resolved by loading, not by implementing engine behaviour. The three "unresolved" names the `standard.gs` battery hit are all of this kind (`build_statement` in `gs\text.gs`, `sysdlg` in `gs\dlg\sysdlg.gs`, `unitdictxref` in `units\easyunit.gs`), and the static `run` reference graph already resolves against the archive.
 
-- core language operators;
-- script-defined procedures;
-- native engine/UI/simulation procedures;
-- constants or data names;
-- heuristic false positives.
+The next slice is therefore:
 
-Continue toward read-only module loading now that deterministic synthetic fixtures and representative utility procedures pass. Park a complete VM if the next representative subsystem immediately requires a large, inseparable native game state.
+1. `run` backed by the archive, with a load set and cycle detection, so `"gs/standard.gs" run` resolves inside the VM;
+2. a declared engine-constant table — the second-largest blocking group, 480 members, is faith and resource names such as `GOLD`, `ORDER`, `AIR`;
+3. a per-module load report, **not** a boot. `START.GS` reaches `protectdictstack` and `dialog` almost immediately, so attempting to load the tree as the engine does will stop early and tell us little.
+
+Constants must be *declared*, with their values stated as inputs, exactly as `--stub` already works. An engine constant whose value is invented is the same failure mode as an invented host call, one step further from being noticed.
+
+**Park if** the next subsystem's first blocker stops being a script definition. The moment the dominant blocker class flips from `defined-in-another-member` to `engine-operator`, further VM work is buying simulation, not loading, and the honest move is to stop.

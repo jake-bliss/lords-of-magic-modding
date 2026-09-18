@@ -211,9 +211,19 @@ impl GameScriptDocument {
         }
     }
 
-    /// How many tokens after a literal name a `def` may appear and still be read as that
-    /// name's definition. Three covers the observed forms without spanning statements.
+    /// How many tokens after a literal name may be *anything at all* and still leave a following
+    /// `def` reading as that name's definition. A nested `{...}`, `[...]` or `<<...>>` group
+    /// counts as one. Three covers `/NAME{...}def`, `/NAME 3 def` and `/a exch def`.
     const DEFINITION_WINDOW: usize = 3;
+
+    /// The hard cap once only [`DEFINITION_MODIFIERS`] are allowed through.
+    ///
+    /// Three tokens alone was too few: it missed both of the corpus's procedure-local attachment
+    /// forms, so `gs\standard.gs`'s own `writestring`, `pushonstack`, `popoffstack` and `onstack?`
+    /// were filed as names nothing in the corpus defines. Executing the module is what exposed
+    /// that. This cap is wide enough for the longest observed form,
+    /// `/NAME {...} dup 0 N dict put bind def`. Evidence class: Corrected.
+    const DEFINITION_ATTACHMENT_WINDOW: usize = 10;
 
     /// Decide whether the literal name at `index` occupies a definition position.
     fn is_definition_site(&self, index: usize) -> bool {
@@ -226,9 +236,7 @@ impl GameScriptDocument {
                         | TokenKind::StringLiteral(_)
                         | TokenKind::ExecutableName(_)
                         | TokenKind::LiteralName(_)
-                        | TokenKind::Delimiter(
-                            Delimiter::ProcedureOpen | Delimiter::ArrayOpen
-                        )
+                        | TokenKind::Delimiter(Delimiter::ProcedureOpen | Delimiter::ArrayOpen)
                 )
             );
         }
@@ -248,15 +256,27 @@ impl GameScriptDocument {
                         return false;
                     }
                 }
-                TokenKind::ExecutableName(name) if depth == 0 && name.eq_ignore_ascii_case("def") => {
-                    return true;
+                TokenKind::ExecutableName(name) if depth == 0 => {
+                    if name.eq_ignore_ascii_case("def") {
+                        return true;
+                    }
+                    if seen >= Self::DEFINITION_WINDOW
+                        && !DEFINITION_MODIFIERS
+                            .iter()
+                            .any(|modifier| name.eq_ignore_ascii_case(modifier))
+                    {
+                        // Past the short window, only the operators that finish a definition may
+                        // stand between the value and its `def`. Any other operator is doing
+                        // something else, so the `def` further on belongs to a later statement.
+                        return false;
+                    }
                 }
                 _ => {}
             }
             // A nested group counts as one token, matching `/NAME{...}def`.
             if depth == 0 {
                 seen += 1;
-                if seen > Self::DEFINITION_WINDOW {
+                if seen > Self::DEFINITION_ATTACHMENT_WINDOW {
                     return false;
                 }
             }
@@ -276,6 +296,25 @@ impl GameScriptDocument {
         depth
     }
 }
+
+/// Operators that may stand between a name's value and its `def` without ending the statement.
+///
+/// These are exactly the operators the corpus uses to finish a definition: `bind`, and the two
+/// forms that attach a procedure's private storage, `dup 0 N dict put` and `/name VALUE replace`.
+/// Anything else at the same nesting depth means the `def` further on belongs to a different
+/// statement -- which is what keeps `/invoke_spell cvx ... def` out of the definition set.
+const DEFINITION_MODIFIERS: &[&str] = &[
+    "bind",
+    "dup",
+    "put",
+    "dict",
+    "array",
+    "string",
+    "replace",
+    "currentdict",
+    "begin",
+    "end",
+];
 
 struct Lexer<'a> {
     source: &'a [u8],
@@ -440,7 +479,15 @@ impl<'a> Lexer<'a> {
             return;
         };
         self.offset += 1;
-        if byte == b'\n' {
+        // GameScript members use every line ending: `gs.mpq` in a local GS5R3 install holds 1,123
+        // CRLF members, 242 with **bare CR**, and 63 with bare LF. Evidence class: Observed in a
+        // local binary. A bare CR is a line ending, so it has to advance the line counter, and a
+        // CRLF pair has to advance it once rather than twice -- otherwise every position this
+        // lexer reports in a Mac-line-ended member is line 1, which is exactly the sort of report
+        // that sends a reader to the wrong statement.
+        let ends_line =
+            byte == b'\n' || (byte == b'\r' && self.source.get(self.offset) != Some(&b'\n'));
+        if ends_line {
             self.line += 1;
             self.column = 1;
         } else {
@@ -533,6 +580,20 @@ mod tests {
         assert_eq!(analysis.definition_names["extra_strong?"], 1);
     }
 
+    /// Both attachment forms end in `def` and both define the name they open with. Missing them
+    /// filed four of `gs\standard.gs`'s own procedures as names nothing in the corpus defines.
+    #[test]
+    fn counts_the_procedure_local_attachment_forms_as_definitions() {
+        let source = b"/writestring{1}dup 0 3 dict put bind def /onstack?{2}/dummy 2 dict replace bind def /char_cvs{3}/char_array[0 1 2]replace bind def";
+        let analysis = GameScriptDocument::parse(source).unwrap().analyze();
+
+        assert_eq!(analysis.definition_names["writestring"], 1);
+        assert_eq!(analysis.definition_names["onstack?"], 1);
+        assert_eq!(analysis.definition_names["char_cvs"], 1);
+        // The attached local is script-bound data too, not a call into the engine.
+        assert_eq!(analysis.definition_names["char_array"], 1);
+    }
+
     #[test]
     fn does_not_treat_a_distant_def_as_a_definition() {
         // `def` beyond the window belongs to a later statement, not to `/first`.
@@ -541,6 +602,48 @@ mod tests {
 
         assert!(!analysis.definition_names.contains_key("first"));
         assert_eq!(analysis.definition_names["second"], 1);
+    }
+
+    /// Bare CR is a line ending in this corpus, and treating it as ordinary text is the
+    /// project's known way to harvest commented-out code as if it were live: a `;` comment then
+    /// appears to run to the end of the member and every following statement disappears.
+    ///
+    /// 242 members of a local GS5R3 `gs.mpq` use bare CR. Evidence class: Observed in a local
+    /// binary. This fixture reproduces the shape rather than shipping one of them.
+    #[test]
+    fn a_comment_ends_at_a_bare_carriage_return() {
+        let source = b"; a Mac-line-ended header comment\r/kept{1}def\r; another comment\r/also_kept{2}def\r";
+        let document = GameScriptDocument::parse(source).unwrap();
+        let analysis = document.analyze();
+
+        assert_eq!(document.comment_count, 2);
+        assert_eq!(analysis.definition_names["kept"], 1);
+        assert_eq!(analysis.definition_names["also_kept"], 1);
+        assert_eq!(analysis.executable_names["def"], 2);
+
+        // The same bytes with LF line endings must tokenize identically; if they do not, the
+        // lexer is treating one of the two as text.
+        let with_line_feeds: Vec<u8> = source
+            .iter()
+            .map(|byte| if *byte == b'\r' { b'\n' } else { *byte })
+            .collect();
+        let converted = GameScriptDocument::parse(&with_line_feeds).unwrap();
+        let kinds: Vec<_> = document.tokens.iter().map(|token| &token.kind).collect();
+        let converted_kinds: Vec<_> = converted.tokens.iter().map(|token| &token.kind).collect();
+        assert_eq!(kinds, converted_kinds);
+    }
+
+    /// A position report is only useful if the line is the line a reader would count.
+    #[test]
+    fn line_numbers_count_bare_carriage_returns_and_pair_crlf() {
+        // Bare CR: the stray `}` is on the fourth line.
+        let document = GameScriptDocument::parse(b"/a{1}def\r/b{2}def\r/c{3}def\r}").unwrap();
+        assert_eq!(document.procedure_anomalies.len(), 1);
+        assert_eq!(document.procedure_anomalies[0].line, 4);
+
+        // CRLF: the same four lines, and the pair must advance the counter once, not twice.
+        let document = GameScriptDocument::parse(b"/a{1}def\r\n/b{2}def\r\n/c{3}def\r\n}").unwrap();
+        assert_eq!(document.procedure_anomalies[0].line, 4);
     }
 
     #[test]

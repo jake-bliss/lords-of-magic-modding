@@ -3417,3 +3417,92 @@ reporting; `COMBAT_TILESET_ARRAY_CANDIDATES` is what an encounter may *reach* an
 so the paint gate never refuses it. **Reporting is precise; refusing is permissive.** Refusing the
 engine's own answer is the bug that shipped on this branch once already, and the permissive side of
 the gate is where that lesson lives.
+
+## 2026-09-17 — The GameScript VM slice: the language runs, the engine boundary holds
+
+Issue #5. The lexer already read all 4,692 `.gs` members; the question was whether the *language*
+could be executed well enough to tell a script definition from an engine call, and whether the
+~2,100-name candidate vocabulary could be partitioned rather than guessed at.
+
+### What the VM can now execute
+
+68 language primitives — stack (`index`, `roll`, `count`, `clear`), arithmetic, comparison and
+bitwise logic, `if`/`ifelse`/`repeat`/`for`/`loop`/`exit`/`forall`, array/dictionary/string
+construction and access, `known`/`undef`/`load`, and the conversions `cvx`/`cvi`/`cvs`/`type`.
+
+Two features are not PostScript and had to come out of the corpus:
+
+- **Procedure locals.** `PROC /name VALUE replace` attaches a value to a procedure under a name,
+  and `PROC dup 0 N dict put` does the same in slot zero. While that procedure runs the name
+  resolves to the attached value, which is what makes `/dummy begin`, `/dummy /low known`,
+  `/char_array exch get` and `/dummy length` all mean something.
+- **Typed dictionary keys.** `gs\spells\weaken.gs` keys a table by number and `standard.gs`'s
+  `interpolate` reads it back numerically, so keys are numbers or names, never strings.
+
+And one type rule: `ifelse` accepts an integer condition, because `getflagvalue` feeds it the
+result of `bitshift and`.
+
+### The battery, and why the expectations were written first
+
+`examples/gamescript_standard.rs` loads 3.02's `gs\standard.gs` and runs 31 exercises, each
+stating the stack it must produce, worked out from the shipped bodies. **Six of the 31 were wrong
+on the first run.** Five were my arithmetic on the module's array-backed stack — every entry point
+consumes the array reference, which reading the body had not made obvious. One, an `exit` inside a
+`for`, was simply mis-traced. All six were my error, not the VM's, and I only know that because the
+expectation was committed before the run. A battery that recorded its own output would have been
+green and worthless.
+
+Three findings came out of executing rather than reading:
+
+1. `get_if_known`'s header comment lists its operands backwards. The comment says
+   `;val dict key`; the `3 1 roll` in the body requires `dictionary key default`. **Corrected.**
+2. `dump_flags` does nothing to its operand. After the first iteration its `2 copy` reads the loop
+   counter instead of the flags, and the trailing `pop` discards the one index it kept.
+3. **GS5R3 ships `min` and `max` swapped.** Vanilla and 3.02 both define
+   `/min{2 copy gt{exch pop}{pop}ifelse}`. GS5R3 comments that pair out at lines 68 and 70 and
+   redefines them at 73 and 74 with the bodies exchanged, so under GS5R3 `3 7 min` is `7`. Running
+   the same battery against GS5R3 flags exactly those two exercises and nothing else.
+
+Nine distinct engine names were reached. Six are in the operator table with entry points; three —
+`build_statement`, `sysdlg`, `unitdictxref` — are not engine calls at all but definitions in
+`gs\text.gs`, `gs\dlg\sysdlg.gs` and `units\easyunit.gs`. None was guessed at.
+
+### Bare CR, confirmed present and load-bearing
+
+The corpus uses every line ending: in GS5R3's `gs.mpq`, 1,123 members CRLF, **242 bare CR**, 63
+bare LF. The lexer terminated comments correctly but counted lines only on LF, so every position
+it reported in a Mac-line-ended member was line 1. Fixed, with two tests that were confirmed to
+fail when each rule is removed. The `min`/`max` finding above depends directly on reading
+`;`-commented lines as dead — the swapped definitions sit two lines below the commented originals.
+
+### The definition scanner was under-counting, and executing is what showed it
+
+The three-token definition window could not see past `dup 0 N dict put bind` or
+`/dummy N dict replace bind`, so `standard.gs`'s own `writestring`, `pushonstack`, `popoffstack`
+and `onstack?` were filed as names nothing in the corpus defines. The window now admits only
+definition-finishing operators past the first three tokens, which keeps `/invoke_spell cvx` out.
+3.02's script-definition count moved 10,017 → 10,967 and its unexplained residue 2,951 → 2,004.
+**Corrected.**
+
+### The vocabulary, partitioned
+
+`examples/gamescript_vocabulary.rs` writes `reports/gs/vocabulary-<profile>.tsv`. A name is a
+native host call exactly when `lomse.exe` registers it and the VM does not implement it, so the
+boundary is a lookup. `PRIMITIVE_NAMES` is checked against the dispatch by a test that reads the
+match arms back out of the source, because a stale list would silently move names between classes.
+
+Restricted to the broad candidate list issue #5 asked about (3.02: 2,211 names): 55 primitives,
+1,414 native host calls, 709 constants, **33 coincidences**. The heuristic was ~98.5% right; it
+just could not say which 98.5%.
+
+### Continue or park: continue, for module loading
+
+`--survey` loads each member on its own machine. 406 of 1,681 execute with no engine support.
+Of the 1,267 that stop, the first blocking name is **defined in another member for 640 of them**,
+an engine constant for 480, a real engine operator for only 124. The largest obstacle to loading
+the corpus is loading the corpus.
+
+So: `run` backed by the archive, a *declared* engine-constant table, and a per-module load report
+rather than a boot — `START.GS` reaches `dialog` almost immediately. Park the moment the dominant
+first-blocker class flips from `defined-in-another-member` to `engine-operator`; past that point
+the work is simulation, not loading.
