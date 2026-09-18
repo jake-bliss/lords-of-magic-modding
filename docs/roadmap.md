@@ -279,7 +279,10 @@ The `pic.mpq` half of this paragraph was closed on 2026-09-18; see the `pic.mpq`
 - [ ] Build batch conversion, IMP **pixel** reimport, and lossless repack tests.
 - [ ] Evaluate AI upscaling on portraits and interface art.
 - [ ] Compare Lanczos runtime scaling against remastered source assets.
-- [ ] Add automated dimension and palette validation.
+- [x] Add automated dimension and palette validation. `tools/asset_validate.py` decodes every `.lbm` member a mod tree replaces and checks the IFF chunk walk, the BMHD's dimensions, planes and compression, the CMAP's size, and **every pixel index against the palette that member carries**; `tools/mod_validate.py` runs it and no longer claims those members are uninspected. Swept across the 3,463 images extracted from the three installed profiles' `pic.mpq`: zero errors.
+  (3,467 image entries exist and 3,464 carry a name; extraction yields 3,463 files because GS5R3's
+  `pic.mpq` holds `portrait\AIpotM.lbm` twice under one byte-identical name. All three counts are
+  correct and `tools/asset_validate.py` states which is which.) Two rules were measured rather than assumed, and both would have rejected shipped content otherwise -- ByteRun1 rows are padded to an even byte count (88 of vanilla's 1,045 images are odd-width and decode only under that rule), and a single trailing 0x00 in the BODY is the chunk's even-size pad (65 images have one). The one member that still draws a warning, GS5R3's `PORTRAIT/decr5p00.lbm`, is a genuine defect in shipped art: 30 packets overrun their rows from row 36 on, 1,353 pixels are discarded by the clamp that makes it render, and the last 531 bytes of its BODY are unreachable.
 
 ### The `pic.mpq` slice, Observed in gameplay 2026-09-18
 

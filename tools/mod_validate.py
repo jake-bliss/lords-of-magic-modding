@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Static validation of a mod source tree, before anything is packed.
 
-This opens no installed game file for writing and needs no StormLib. Its inputs are all files
+This opens no installed game file for writing and needs no StormLib. Its inputs are mostly files
 somebody else produced: `lom-mpq manifest` output for each base archive, `lom-asset-viewer
 --gs-facts` output for the base archive and for the mod tree, and the committed corpus vocabulary
-in `reports/gs/`. That is what makes every check here testable against a machine with no game on
-it.
+in `reports/gs/`. The one exception is image members, which have no fact file and are decoded here
+from the mod tree's own bytes by `tools/asset_validate.py`. Everything remains testable against a
+machine with no game on it.
 
 Two rules govern what this module reports.
 
@@ -40,9 +41,10 @@ from mod_tree import (  # noqa: E402
 from mod_tree import load as load_mod_tree  # noqa: E402
 from mpq_shape import Member, read_manifest  # noqa: E402
 
-ERROR = "error"
-WARNING = "warning"
-NOTE = "note"
+# Severity names live in `asset_validate` because it is the lower-level module: it produces
+# findings and must not import this one. They are re-exported here so callers keep one import.
+from asset_validate import ERROR, NOTE, WARNING  # noqa: E402
+from asset_validate import is_image_member, validate_image  # noqa: E402
 
 SEVERITY_ORDER = {ERROR: 0, WARNING: 1, NOTE: 2}
 
@@ -617,14 +619,85 @@ def check_run_targets_and_assets(
     )
 
 
+def check_image_content(tree: ModTree, report: ValidationReport) -> None:
+    """Decode every image member and check its dimensions, its palette and every pixel index.
+
+    This is the one check in this module that reads a mod file's bytes directly rather than a
+    record some other tool produced, because an image has no fact file: `tools/asset_validate.py`
+    is the reader, and it was measured against the 3,463 images extracted from the three installed
+    profiles' `pic.mpq` before any rule here was written. See `asset_validate`'s module docstring for
+    why that is 3,463 and not the 3,464 named or 3,467 total entries -- the three counts are all
+    correct and describe different populations.
+    """
+    validated = 0
+    refused = 0
+    unreadable = 0
+    pixels = 0
+    for source in tree.members:
+        if not is_image_member(source.member):
+            continue
+        try:
+            data = source.path.read_bytes()
+        except OSError as error:
+            report.add(ERROR, "image", source.relative, f"cannot be read: {error}")
+            # Counted, because `check_unvalidatable_content` excludes image members from its own
+            # unread list. Without this the member would appear in NO coverage bucket at all and
+            # would simply vanish from the honesty block.
+            unreadable += 1
+            continue
+        findings, summary = validate_image(data)
+        for finding in findings:
+            report.add(finding.severity, finding.check, source.relative, finding.message)
+        # A member counts as content-validated only when it actually decoded. `validate_image`
+        # returns `summary is None` when it gave up at the magic, the chunk walk or the BMHD, and
+        # counting those as validated would publish a coverage figure that asserts checks which
+        # demonstrably did not run.
+        if summary is None:
+            refused += 1
+        else:
+            validated += 1
+            pixels += summary.pixels_checked
+
+    report.coverage.record(
+        "image-members-content-validated",
+        validated,
+        "members named .lbm that decoded as IFF PBM and had their chunk walk, dimensions, palette "
+        "size and every pixel index checked against the palette",
+    )
+    report.coverage.record(
+        "image-members-refused-before-decoding",
+        refused,
+        "members named .lbm that did NOT decode -- the magic, the chunk walk or the BMHD failed, so "
+        "the checks above never ran on them. Each one carries its own error above",
+    )
+    report.coverage.record(
+        "image-members-unreadable",
+        unreadable,
+        "members named .lbm whose bytes could not be read off disk at all, so nothing was checked",
+    )
+    report.coverage.record(
+        "image-pixels-checked-against-their-palette",
+        pixels,
+        "pixels whose index was confirmed to address a colour the member's own CMAP holds. Pixels "
+        "the check REFUTED are excluded, so this is what passed rather than what was examined. It "
+        "says the image is internally consistent; it says NOTHING about whether the colours are "
+        "the ones the rest of the interface expects, which no static check can tell",
+    )
+
+
 def check_unvalidatable_content(tree: ModTree, report: ValidationReport) -> None:
     """Say plainly what this validator does not read at all."""
-    non_script = [source for source in tree.members if not source.is_gamescript]
+    unread = [
+        source
+        for source in tree.members
+        if not source.is_gamescript and not is_image_member(source.member)
+    ]
     report.coverage.record(
         "members-with-no-content-validation",
-        len(non_script),
-        "non-.gs members. Their bytes are packed as given and nothing here inspects them: there "
-        "is no image, sprite or map validation in this pipeline",
+        len(unread),
+        "members that are neither .gs nor .lbm. Their bytes are packed as given and nothing here "
+        "inspects them: .lbm images are decoded and palette-checked, but sprite (.imp), map "
+        "(.scn/.smp/.lgd), tileset (.til) and audio members are not",
     )
     pic_members = [source for source in tree.members if source.archive == "pic.mpq"]
     if pic_members:
@@ -632,12 +705,13 @@ def check_unvalidatable_content(tree: ModTree, report: ValidationReport) -> None
             WARNING,
             "engine-acceptance",
             str(tree.root),
-            f"{len(pic_members)} member(s) target pic.mpq. A rewritten pic.mpq has NEVER been "
-            "put in front of the engine. Storage class is NOT the open question: every one of "
-            "the 1,071 members of the baseline pic.mpq carries flags 0x80010100 "
-            "(EXISTS | ENCRYPTED | IMPLODE), measured 2026-09-18, which is the same class as the "
-            "gs.mpq member the engine accepted on 2026-09-16. What is untested is whether the "
-            "engine reads a rewritten pic.mpq at all.",
+            f"{len(pic_members)} member(s) target pic.mpq. The engine DOES read a rewritten "
+            "pic.mpq -- Observed in gameplay 2026-09-18, mods/newgame-picslice -- so this is a "
+            "note about scope, not a warning that the archive is untried. What that run covered "
+            "was ONE member, REPLACED rather than added, edited WITHOUT changing its length. A "
+            "member whose size changes has not been put in front of the engine, and neither has "
+            "an added one. Storage class is not in question: all 1,071 members are 0x80010100 "
+            "(EXISTS | ENCRYPTED | IMPLODE), the class the engine accepted on 2026-09-16.",
         )
 
 
@@ -660,6 +734,7 @@ def validate(
     check_encoding(tree, mod_facts, base_facts, resolved, report)
     check_symbols(tree, mod_facts, base_facts, vocabulary, resolved, report)
     check_run_targets_and_assets(tree, mod_facts, manifests, report)
+    check_image_content(tree, report)
     check_unvalidatable_content(tree, report)
     return report
 
