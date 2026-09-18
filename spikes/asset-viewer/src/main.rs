@@ -8,6 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use lom_asset_viewer::asset::{AssetKind, probe};
+use lom_asset_viewer::gameplay_symbols;
 use lom_asset_viewer::gamescript::GameScriptDocument;
 use lom_asset_viewer::gamescript_vm::{
     GameScriptVm, GameScriptVmError, Value as GameScriptValue,
@@ -186,6 +187,16 @@ enum Command {
         stubs: Vec<(String, GameScriptValue)>,
         executable: Option<PathBuf>,
     },
+    /// Look one gameplay symbol up in the committed index.
+    GameplaySymbol {
+        name: String,
+        reports: PathBuf,
+    },
+    /// List the gameplay symbols whose name matches a glob.
+    GameplaySymbolsLike {
+        pattern: String,
+        reports: PathBuf,
+    },
     ScanMapDirectory(PathBuf),
     ValidateImp(Source),
     ViewImp {
@@ -349,6 +360,10 @@ fn run() -> Result<(), String> {
         Command::ScanNatives { executable, source } => {
             scan_native_table(&executable, source.as_ref())
         }
+        Command::GameplaySymbol { name, reports } => gameplay_symbol(&name, &reports),
+        Command::GameplaySymbolsLike { pattern, reports } => {
+            gameplay_symbols_like(&pattern, &reports)
+        }
         Command::ProbeGameScript {
             source,
             member,
@@ -379,6 +394,7 @@ fn parse_args() -> Result<Command, String> {
     let listfile = take_option(&mut args, "--listfile")?.map(PathBuf::from);
     let executable = take_option(&mut args, "--exe")?.map(PathBuf::from);
     let expression = take_option(&mut args, "--eval")?;
+    let reports = take_option(&mut args, "--reports")?.map(PathBuf::from);
     let hotspot = take_option(&mut args, "--hotspot")?
         .map(|value| {
             value
@@ -697,6 +713,20 @@ fn parse_args() -> Result<Command, String> {
                 executable,
             })
         }
+        "--gameplay-symbol" => {
+            require_len(&args, 2)?;
+            Ok(Command::GameplaySymbol {
+                name: args[1].clone(),
+                reports: reports.clone().unwrap_or_else(default_gameplay_reports),
+            })
+        }
+        "--gameplay-symbols-like" => {
+            require_len(&args, 2)?;
+            Ok(Command::GameplaySymbolsLike {
+                pattern: args[1].clone(),
+                reports: reports.clone().unwrap_or_else(default_gameplay_reports),
+            })
+        }
         "--scan-natives" => {
             if args.len() != 2 && args.len() != 3 {
                 return Err(usage());
@@ -885,7 +915,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -4620,6 +4650,143 @@ impl MapCellTile for lom_asset_viewer::map::MapCell {
     }
 }
 
+
+/// Where the committed gameplay index lives when `--reports` is not given.
+///
+/// The binary is normally run from `spikes/asset-viewer`, so the default is the repository's
+/// `reports/gameplay`. A checkout with no game installed can still answer every query from it,
+/// which is the point of making the index the query path's only input.
+fn default_gameplay_reports() -> PathBuf {
+    PathBuf::from("../../reports/gameplay")
+}
+
+fn read_gameplay_index(reports: &Path) -> Result<Vec<gameplay_symbols::IndexRow>, String> {
+    let path = reports.join("symbols.tsv");
+    let text = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "could not read {}: {error}. Pass --reports DIR, or regenerate with \
+             `cargo run --release --example gameplay_symbols`.",
+            path.display()
+        )
+    })?;
+    gameplay_symbols::parse_index(&text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// Print everything the database records about one symbol.
+///
+/// The query is matched against the symbol's code first and, only if nothing matches there, against
+/// its display name -- so `aicav` and `Windriders` both reach the Windriders unit. A name may
+/// legitimately answer more than once (`potion_health` is registered as both an artifact and a
+/// spell), and a display name may be shared outright, so an ambiguous query lists its candidates
+/// rather than picking one.
+fn gameplay_symbol(name: &str, reports: &Path) -> Result<(), String> {
+    let rows = read_gameplay_index(reports)?;
+    let (matches, matched_on) = gameplay_symbols::lookup_rows(name, &rows);
+    if matches.is_empty() {
+        // A miss states the size of what was searched, so "no such symbol" is a statement about a
+        // known index rather than an unbounded claim about the game.
+        println!(
+            "no gameplay symbol whose code or display name is {name}, in {} indexed symbols",
+            rows.len()
+        );
+        let near: Vec<String> = rows
+            .iter()
+            .filter(|row| {
+                let needle = name.to_ascii_lowercase();
+                row.name.to_ascii_lowercase().contains(&needle)
+                    || gameplay_symbols::row_display_name(row)
+                        .is_some_and(|display| display.to_ascii_lowercase().contains(&needle))
+            })
+            .map(|row| match gameplay_symbols::row_display_name(row) {
+                Some(display) => format!("{} ({display})", row.name),
+                None => row.name.clone(),
+            })
+            .take(10)
+            .collect();
+        if !near.is_empty() {
+            println!("containing that text: {}", near.join(", "));
+        }
+        return Ok(());
+    }
+    // Several rows sharing a *code* are all the answer -- `potion_health` really is both an
+    // artifact and a spell -- so those are printed in full. Several rows sharing a *display name*
+    // are a question, not an answer: sixteen spells are labelled "Dispel Magic" and only one is
+    // meant. Those are listed as candidates and nothing is printed in full, because printing
+    // sixteen records would bury the fact that the query did not identify one.
+    if matches.len() > 1 && matched_on == gameplay_symbols::MatchedField::DisplayName {
+        println!(
+            "{name} is a display name shared by {} symbols. Re-run with one of these codes:",
+            matches.len()
+        );
+        for row in &matches {
+            println!("candidate\t{}\t{}\t{}", row.name, row.kind, row.member);
+        }
+        return Ok(());
+    }
+    if matches.len() > 1 {
+        println!(
+            "{name} names {} symbols, of different kinds. All are shown.\n",
+            matches.len()
+        );
+    }
+    for row in matches {
+        println!("name\t{}", row.name);
+        println!("kind\t{}", row.kind);
+        println!("evidence\t{}", row.evidence);
+        println!("profiles\t{}", row.profiles.join(","));
+        println!("display-name\t{}", row.display_name);
+        println!("display-source\t{}", row.display_source);
+        println!("defined-in\t{}", row.member);
+        println!("line\t{}", row.line);
+        println!("byte-offset\t{}", row.byte_offset);
+        println!("registered-in\t{}", row.registered_in);
+        println!("fields\t{}", row.fields);
+        println!("static-references\t{}", row.references);
+        println!(
+            "reference-anchor\treports/gameplay/reference.md#{}",
+            row.anchor
+        );
+        println!();
+    }
+    Ok(())
+}
+
+/// List the symbols whose code **or display name** matches a glob.
+///
+/// Searching the code alone made the reference unusable by anyone who did not already know the
+/// code: `Windrider*` returned nothing while `aicav` returned the unit called "Windriders". The
+/// `matched` column says which field produced each hit, because a result nobody can explain is a
+/// result nobody can trust.
+fn gameplay_symbols_like(pattern: &str, reports: &Path) -> Result<(), String> {
+    let rows = read_gameplay_index(reports)?;
+    let mut shown = 0_usize;
+    println!("name\tdisplay-name\tmatched\tkind\tevidence\tprofiles\tmember");
+    for row in &rows {
+        let Some(matched) = gameplay_symbols::match_row(pattern, row) else {
+            continue;
+        };
+        shown += 1;
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            row.name,
+            gameplay_symbols::row_display_name(row).unwrap_or("-"),
+            matched.label(),
+            row.kind,
+            row.evidence,
+            row.profiles.join(","),
+            row.member
+        );
+    }
+    // How many rows could not have matched by display name at all, so a thin result is explainable
+    // rather than mysterious.
+    let without = rows
+        .iter()
+        .filter(|row| gameplay_symbols::row_display_name(row).is_none())
+        .count();
+    println!("\nmatched\t{shown}\tof\t{}", rows.len());
+    println!("rows-with-no-display-name-to-match\t{without}");
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {

@@ -5380,3 +5380,199 @@ mutants (an `MPQ_FILE_EXISTS` bit that is already set as `MPQ_FILE_REPLACEEXISTI
 read guard), one that needs two members sharing a name (no fixture can build one), and two on the
 determinism-failure branch, which no fixture can reach because no fixture produces nondeterministic
 output.
+
+## 2026-09-18 — Gameplay symbol/index database (Phase 2 close-out)
+
+Built a semantic symbol/index database over the GameScript corpus of all three profiles, plus the
+searchable reference that was Phase 2's stated deliverable. Full writeup:
+[gameplay reference](gameplay-reference.md). Generator:
+`spikes/asset-viewer/examples/gameplay_symbols.rs` over `src/gameplay_symbols.rs`; committed output
+in `reports/gameplay/`; query verbs `--gameplay-symbol` and `--gameplay-symbols-like`.
+
+### Classification
+
+- **Observed:** three of the six kinds are declared by a named engine operator, not by a directory.
+  `/bolt_fire "gs/spells/FIRE/bolt_fire.gs" define_spell def` carries the symbol name, the kind and
+  the defining member in one token triple. Units use a delimited block —
+  `begin_unit_definition` … `end_unit_definition` — bound by the `/name exch def` that follows it,
+  and **that binding, not the filename, is the symbol's name**.
+- **Observed:** 854 symbols in vanilla, 854 in 3.02, 1,012 in GS5R3; 1,535 distinct (kind, name)
+  pairs across all three.
+- **Inferred:** encounters are catalog entries. Their kind comes from the catalog's identity rather
+  than from any operator, and they have no script-level bound name, so the member path below
+  `gs/dungeons/` is the identity.
+- Every record carries an evidence class in the row itself, because the six kinds do not share one.
+
+### Accuracy and completeness, measured as two numbers
+
+A second extractor was written in Python over the raw extracted bytes with its own comment stripper,
+sharing no code with the Rust tokenizer. Over the four well-served kinds in all three profiles:
+**2,660 symbol identities agreed, 0 were only in the database, 3 were only in the independent
+extractor.** Accuracy 100.00%; completeness 100.00% for spells, artifacts and encounters and 99.4%
+for units. The three residuals are the same name in each profile, `lastunittype`, and are a **false
+positive of the validator** — `units\easyunit.gs` writes it as a procedure local, not a unit.
+
+### What the instrument could not reach, counted rather than assumed
+
+Each figure below is from a **raw byte scan**, which shares no mechanism with the tokenizer.
+
+- **Observed:** vanilla excludes 373 archive entries by extension because its listfile cannot name
+  them, and 12 of those contain `begin_unit_definition`. Admitting them on the byte marker recovered
+  the unit `boat`, which no named member defines. 3.02 and GS5R3 have zero such entries.
+- **Observed:** GS5R3's `gs\dungeons.gs` is a **stale catalog** — 266 of its 312 encounter paths no
+  longer exist in its own archive, because GS5R3 moved the tree into per-faith subdirectories and
+  catalogs them from `gs\DUNGEONS5.gs`. Reading one hardcoded catalog found 46 of 314 encounters and
+  reported the other 268 as missing dependencies. Scanning every member for `run` edges fixed it.
+- **Observed:** naming an encounter by basename merges 59 of vanilla's 306 into 247. `earth/encounter11`
+  and `hidden/encounter11` are different encounters. Found by the collision report, not by review.
+- **Observed:** 18 symbol-name collisions in vanilla and 3.02, 1 in GS5R3, all genuine corpus facts:
+  `units\gate.gs` binds three units in one member, and eight members bind `gate` in vanilla.
+  `units\licr3old.gs`, `units\holdchwmi.gs` and GS5R3's `units\test.gs` are superseded copies binding
+  live names.
+
+### 3.02 changes no gameplay record at all
+
+- **Observed:** all 1,535 symbols have a byte-identical defining member in vanilla and 3.02. This is
+  not a broken comparison: 3.02 does modify 14 members — `START.GS`, `gs\standard.gs`,
+  `gs\textdict.gs`, `gs\buttons.gs`, `gs\hotkey.gs`, `gs\makearmy.gs`, `gs\modeinfo.gs` and six
+  `gs\Dlg\*` — and **none of them defines a unit, spell, artifact or encounter**. At the level of
+  gameplay data, 3.02 is an interface, hotkey, text and standard-library patch.
+
+### GS5R3, and why the diff's own headline is misleading
+
+- **Observed:** gs5r3 vs vanilla is 26 identical, 2 formatting-only, 303 token-level, 523 only in
+  vanilla/3.02 and 681 only in GS5R3.
+- **Corrected reading:** those last two rows are *not* 1,204 additions and removals. GS5R3 renamed
+  its spell and artifact sets wholesale — vanilla's `lightning_spll` in `gs/spells/lightning.gs` is
+  GS5R3's `bolt_air` in `gs/spells/AIR/bolt_air.gs` — so a name-keyed diff reports each rename as one
+  removal plus one addition. Matching on the **token fingerprint of the defining member** recovers
+  **294 unedited renames**. That is a lower bound and the largest known gap: a symbol renamed *and*
+  edited has no matching fingerprint, which is exactly the renamed-spell case, and how many of the
+  523/681 are edited renames is **not established**.
+
+### A corpus-observed maximum is not an engine-enforced bound, and the corpus proves it
+
+- **Refuted:** that unit magic resistances are capped at 100. In vanilla and 3.02 all eight
+  resistances max at exactly 100 across 88 units, which looks precisely like a hard cap. **GS5R3
+  reaches 125 on `air`/`life`/`water` and 150 on `earth`** — and the three installs differ only in
+  `gs.mpq`, with a byte-identical `lomse.exe`. The same engine accepts 150, so 100 is a design
+  convention of the vanilla data.
+- **Unknown:** every other candidate limit. `armor` ≤ 99, spell `research_cost` and `range` ≤ 256,
+  spell `level` ∈ 0…9, `military_units` ∈ 1…3 are all corpus-observed maxima only. An engine-enforced
+  bound would have to be shown as a comparison and a clamp in `operator_bodies.rs`, and no such
+  search was run. **No limit in this work is claimed as engine-enforced.**
+- The reports name the column `modal-value`, not `default`: the mode is the most common written
+  value, and a true default is what the engine uses when a record omits the field — not observable
+  from scripts.
+
+### Scope boundary
+
+Well served: **units, spells, artifacts, encounters** — 1,515 of 1,535 symbols. Thin, and stated as
+findings rather than gaps:
+
+- **Factions (8 symbols).** Nothing in any profile defines `FIRE`; scripts only select on it. The
+  eight faiths are recovered from the corpus's own `/faith` values. **GameScript has no faction
+  record** — everything a faith is lives in `lomse.exe` or is spread across the records naming it.
+- **Buildings (12 symbols, 3 fields).** No record file and no registrar. Per-level data reaches the
+  engine as positional arguments to `define_building_levels`, one of whose "procedure" operands is
+  not braced (`buildingdict /strongholdbeginturn get`), so a strict positional walk misaligns. Only
+  the type name, level bounds and four-character code are taken; the rest is **refused rather than
+  recorded wrongly**. Upgrade costs and requirements need a stack model, which is VM work.
+
+### Two pre-existing defects found on the way — reported, not fixed
+
+- **`gamescript.rs` lexes the shipped unit code `INF` as floating-point infinity.** Token
+  classification is `name.parse::<f64>().is_ok()`, and Rust's `f64::from_str` accepts `inf`,
+  `infinity` and `nan` case-insensitively. Eight units per profile are affected and a naive range
+  over `code` reads `inf … inf`. This module guards locally — a non-finite number keeps its text but
+  is never summarised — and the lexer is left alone because its token counts are load-bearing
+  elsewhere. Anything reading `TokenKind::Number` has the same exposure. Evidence class: Observed.
+- **`tools/gs_syntax.py` terminates a `;` comment at `\n` only**, but bare CR is a line ending in
+  this corpus and **25 GS5R3 members contain a comment and no LF at all**. In those the first comment
+  swallows the file: `gs\dungeons\water\wacave.gs` is 5,347 bytes and normalises to **six tokens**.
+  It feeds `compare_trees.py`'s token hash, so the "Layout/comments only" column in
+  `reports/gs/summary.md` is unreliable for those members. This is the exact failure
+  [gamescript-format.md](gamescript-format.md#line-endings-bare-cr-is-a-line-ending-here) already
+  warns about, surviving in a tool the warning did not reach. The profile diff here is computed from
+  the Rust lexer for that reason. Evidence class: Observed.
+
+### Tests
+
+27 unit tests and 5 corpus-gated integration tests (passing on all three profiles). Fixtures probe
+shapes the corpus does **not** contain — a repeated top-level key, a value of two numbers, an
+unclosed procedure, a decoy `/decoy bind def` before the real unit binding — because a suite built
+only from corpus-shaped input cannot fail on what the corpus never does. No integration test compares
+a count to a constant; one fails if the registrar rule and the directory rule ever stop disagreeing,
+which is what keeps the classification falsifiable.
+
+**Mutation run: 31 mutations, 31 caught, 0 survivors**, constants mutated in both directions. Seven
+survivors from the first run were each closed with a test rather than argued away. The mutation
+harness itself was corrected mid-run: it labelled every catch a "compile error" because it matched
+`"error: "`, which is what cargo prints for an ordinary assertion failure.
+
+## 2026-09-18 — Gameplay reference: searching by the name a person actually knows
+
+Follow-up to the entry above, after review found the deliverable's search unusable by anyone who did
+not already know a symbol's internal code. `--gameplay-symbols-like 'Windrider*'` matched nothing
+while the unit it names sat in the index as `aicav` with the display name `Windriders`.
+
+### The search now matches both names and says which one hit
+
+- `--gameplay-symbols-like` matches the code **and** the display name, case-insensitively, and every
+  hit carries a `matched` column of `code`, `display-name` or `code+display-name`.
+- `--gameplay-symbol` accepts either. An **exact code match wins outright**, so a symbol cannot be
+  made ambiguous by another merely being *called* that code.
+- The two kinds of multiplicity are handled differently, because they mean different things.
+  Several symbols sharing a **code** are all the answer — `potion_health` is registered as both an
+  artifact and a spell — and all print in full. Several sharing a **display name** are a question:
+  16 spells are labelled "Dispel Magic", so the query lists the candidate codes and prints no
+  record, rather than burying the ambiguity under 16 blocks of detail.
+
+### The review's premise was wrong, and the correction is the useful part
+
+- **Corrected:** the claim that all 1,535 symbols have a display name. At the time, **602 had none**
+  — 524 encounters, 51 artifacts, 12 buildings, 8 factions, 7 units. A display-name-only search
+  would have missed 39% of the database. Two sources were added, and coverage is now **1,439 of
+  1,535**: `declared-name` 933, `encounter-key` 450, `text-table` 56, none 96. Every row carries a
+  `display-source` column, and every listing prints how many rows had no display name to match, so a
+  thin result is explainable rather than mysterious.
+- The remaining 96 are 74 encounters whose name is computed at runtime, 12 buildings, 8 factions and
+  2 artifacts — kinds with no human-facing label in GameScript at all.
+
+### A field reader defect of my own, found while closing the gap
+
+- **Corrected:** the field scanner stopped at any literal name appearing before a statement's
+  terminating `def`. That guard exists because `/invoke_spell cvx` defers a *native call*, and a
+  scanner running past it would swallow the rest of the member. But it also fired on the corpus's
+  text-table idiom, `/name textdict /T_artifact_name_adventsword get def`, where the inner literal
+  is a dictionary key about to be read. Two failures at once: the record **lost its `name` and
+  `description`**, and the *key* was filed as a field of its own valued `get`.
+- **Observed:** the idiom is not rare — **246 definitions in vanilla and 3.02, 416 in GS5R3**,
+  including 56 `name` and 48 `description` in vanilla. All of them use `get` and nothing else.
+- The scanner now passes a literal followed by a key-consuming operator, and that list is `["get"]`
+  alone. Admitting `known`, `load` or `undef` on plausibility would admit shapes the corpus does not
+  contain, and every name admitted there is a name the deferred-call guard stops protecting. Two
+  corpus-gated tests hold both halves: no looked-up key may become a field, and `invoke_spell` may
+  never become one either.
+- Resolving the recovered `/name` values against the corpus's text tables supplies the 56
+  `text-table` display names. Keys two members define **differently** are dropped rather than
+  resolved to whichever was read last — 230 to 243 per profile — so no symbol is named on the
+  strength of archive order.
+
+### A near miss worth recording
+
+The generator wrote `symbols.tsv`'s header from a **second copy** of the column list. A column added
+to the rows and to the reader but not to that string produced a file whose every value sat under the
+previous column's name — the exact failure `the_index_is_parsed_against_its_declared_columns` was
+written for, and it caught it on the next run. The header is now emitted from `INDEX_COLUMNS`, the
+same constant the reader checks against, so the two cannot drift again.
+
+### Gates
+
+`cargo test` 373 + 61 + 14 Rust and 219 Python, clippy clean, 7 corpus-gated tests passing on all
+three profiles. **Mutation run: 49 mutations, 49 caught, 0 survivors**, and every mutation compiled
+and ran — a mutation that fails to build is not a caught mutation, so the harness now distinguishes
+a rustc diagnostic from `error: test failed`. The 18 new mutations cover the search (code-only,
+display-name-only, each `MatchedField` swapped for each other, the `-` sentinel made searchable,
+both case folds removed) and the key-lookup fix (exception removed, any operator accepted, the
+`get` requirement dropped).
