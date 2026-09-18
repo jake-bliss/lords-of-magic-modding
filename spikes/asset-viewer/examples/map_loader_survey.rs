@@ -93,7 +93,12 @@ struct RecordKindDispatch {
 }
 
 /// How many rounds of `this`-forwarding to follow when collecting map-object methods.
-const MAP_METHOD_ROUNDS: usize = 4;
+const MAP_METHOD_ROUNDS: usize = 8;
+
+/// Instructions decoded per analysis entry before giving up. A function longer than this is
+/// surveyed only as far as the limit, which is a loss path, so the number of entries that hit it is
+/// reported rather than left implicit.
+const DECODE_LIMIT: usize = 2400;
 
 /// Iteration cap for the per-function taint fixpoint. A cap rather than a proof of termination:
 /// the lattice is finite and decreasing so it does terminate, but a decoder that walked off the
@@ -726,11 +731,19 @@ fn report_cell_tag_bits(image: &PeImage<'_>) -> Vec<CellReference> {
     let mut references: Vec<CellReference> = Vec::new();
     let mut seen: BTreeSet<u32> = BTreeSet::new();
     let mut unclassified: BTreeSet<u32> = BTreeSet::new();
+    let mut unreached_blocks = 0_usize;
+    let mut truncated = 0_usize;
+    let mut undecodable = 0_usize;
     for (entry, seed) in &entries {
-        let Ok(instructions) = disassemble(image, *entry, 1200) else {
+        let Ok(instructions) = disassemble(image, *entry, DECODE_LIMIT) else {
+            undecodable += 1;
             continue;
         };
-        let (found, dropped) = cell_references(&instructions, seed.clone());
+        let (found, dropped, unreached) = cell_references(&instructions, seed.clone());
+        unreached_blocks += unreached;
+        if instructions.len() >= DECODE_LIMIT {
+            truncated += 1;
+        }
         for reference in found {
             if seen.insert(reference.address) {
                 references.push(reference);
@@ -745,6 +758,21 @@ fn report_cell_tag_bits(image: &PeImage<'_>) -> Vec<CellReference> {
     println!("cell-unclassified\t{}", unclassified.len());
     for address in &unclassified {
         println!("cell-unclassified-site\t{address:#010x}");
+    }
+
+    // `cell-unclassified` counts operands the taint *reached* and could not decode. It says nothing
+    // about operands the analysis never reached at all, which is a different and larger hole. These
+    // three count the parts of that hole which are countable; the parts that are not are named in
+    // the scope note printed at the end.
+    println!("survey-entries\t{}", entries.len());
+    println!("survey-entries-undecodable\t{undecodable}");
+    println!("survey-functions-truncated-at-{DECODE_LIMIT}-instructions\t{truncated}");
+    println!("survey-unreached-blocks-with-cell-shaped-operands\t{unreached_blocks}");
+    // The taint-independent form of the result. See `masked_strided_operands`.
+    let masked = masked_strided_operands(image, &entries);
+    println!("survey-masked-stride8-operands-ignoring-taint\t{}", masked.len());
+    for address in &masked {
+        println!("survey-masked-stride8-site\t{address:#010x}");
     }
 
     println!(
@@ -875,6 +903,17 @@ fn report_cell_tag_bits(image: &PeImage<'_>) -> Vec<CellReference> {
     // map-object methods.
     let indirect = indirect_call_sites(image, &methods);
     println!("cell-survey-ceiling\tdirectly-called-map-object-methods-only");
+    // Loss paths that cannot be counted, named so the negative is read against them. An operand
+    // lost to any of these is absent from both the results and every counter above.
+    for path in [
+        "object-pointer-spilled-to-a-stack-slot-and-reloaded",
+        "object-or-cell-pointer-passed-as-a-function-argument",
+        "cell-pointer-stored-into-another-object-field",
+        "pointer-arithmetic-forms-the-taint-does-not-model",
+        "access-routes-to-the-object-beyond-the-four-found",
+    ] {
+        println!("cell-survey-uncounted-loss-path\t{path}");
+    }
     println!("cell-survey-indirect-calls-in-surveyed-methods\t{indirect}");
     references
 }
@@ -1143,6 +1182,7 @@ fn map_object_methods(image: &PeImage<'_>) -> BTreeSet<u32> {
     // that function is a map-object method too. Without this round the survey sees only the first
     // layer and reports a suspiciously small set of cell accesses -- which would read as "the
     // engine barely touches the cell tag" when it means "the analysis stopped early".
+    let mut converged = false;
     for _ in 0..MAP_METHOD_ROUNDS {
         let mut discovered: BTreeSet<u32> = BTreeSet::new();
         for method in &methods {
@@ -1185,8 +1225,14 @@ fn map_object_methods(image: &PeImage<'_>) -> BTreeSet<u32> {
         let before = methods.len();
         methods.extend(discovered);
         if methods.len() == before {
+            converged = true;
             break;
         }
+    }
+    if !converged {
+        println!(
+            "survey-discovery-did-not-converge-in\t{MAP_METHOD_ROUNDS}\trounds"
+        );
     }
     methods
 }
@@ -1200,7 +1246,7 @@ fn map_object_methods(image: &PeImage<'_>) -> BTreeSet<u32> {
 fn cell_references(
     instructions: &[Instruction],
     seed: TaintState,
-) -> (Vec<CellReference>, Vec<u32>) {
+) -> (Vec<CellReference>, Vec<u32>, usize) {
     let positions: BTreeMap<u64, usize> = instructions
         .iter()
         .enumerate()
@@ -1297,7 +1343,31 @@ fn cell_references(
         references.extend(block_references);
         unclassified.extend(block_unclassified);
     }
-    (references, unclassified)
+    // Blocks the dataflow never assigned an entry state are blocks this analysis did not look at
+    // at all -- reachable in the real program only through an indirect jump, or through a path the
+    // successor computation does not model, or (most of them) simply lying past the end of the
+    // function because the decoder overshot.
+    //
+    // A raw count of those is a bad instrument: raising the decode limit inflates it, because it is
+    // dominated by junk past the function end. What matters is how many of them contain something
+    // *shaped like* a cell access, because those are the ones that could have changed a result. A
+    // count of zero there is a real statement; a count of zero blocks is not.
+    let unreached = entry_states
+        .iter()
+        .enumerate()
+        .filter(|(_, state)| state.is_none())
+        .filter(|(block, _)| {
+            let first = blocks[*block];
+            let last = blocks.get(block + 1).copied().unwrap_or(instructions.len());
+            instructions[first..last].iter().any(|instruction| {
+                instruction.memory_index_scale() == 8
+                    || (instruction.op1_kind() == OpKind::Memory
+                        && instruction.memory_index() == Register::None
+                        && instruction.memory_displacement64() == u64::from(MAP_CELLS_FIELD))
+            })
+        })
+        .count();
+    (references, unclassified, unreached)
 }
 
 /// Which registers hold the map object, the cell array, or a pointer into one cell.
@@ -1737,6 +1807,56 @@ fn lane_access(info: &mut InstructionInfoFactory, instruction: &Instruction) -> 
         (false, true) => "write",
         _ => "read",
     }
+}
+
+/// Every masking instruction in the surveyed code whose operand is eight-byte strided, **ignoring
+/// the taint entirely**.
+///
+/// This is the most robust form of the no-masks result, because it does not depend on the taint
+/// analysis being complete. It over-counts freely -- any eight-byte array in any surveyed function
+/// qualifies, and there are several -- so a non-zero answer would need triage. A **zero** answer is
+/// a statement no amount of missed taint can weaken: within this code there is no masking
+/// instruction against an eight-byte-strided operand at a cell-lane displacement at all, whether or
+/// not the analysis could prove the base was the cell array.
+fn masked_strided_operands(
+    image: &PeImage<'_>,
+    entries: &[(u32, TaintState)],
+) -> BTreeSet<u32> {
+    let mut found: BTreeSet<u32> = BTreeSet::new();
+    for (entry, _) in entries {
+        let Ok(instructions) = disassemble(image, *entry, DECODE_LIMIT) else {
+            continue;
+        };
+        for instruction in &instructions {
+            if instruction.memory_index_scale() != 8
+                || instruction.memory_base() == Register::None
+                || instruction.mnemonic() == Mnemonic::Lea
+            {
+                continue;
+            }
+            let lane = (instruction.memory_displacement64() as i64).rem_euclid(8);
+            if !matches!(lane, 0 | 2 | 4) {
+                continue;
+            }
+            let masks = matches!(
+                instruction.mnemonic(),
+                Mnemonic::And
+                    | Mnemonic::Test
+                    | Mnemonic::Or
+                    | Mnemonic::Xor
+                    | Mnemonic::Shr
+                    | Mnemonic::Sar
+                    | Mnemonic::Bt
+                    | Mnemonic::Bts
+                    | Mnemonic::Btr
+            ) && (0..instruction.op_count())
+                .any(|operand| is_immediate(instruction.op_kind(operand)));
+            if masks {
+                found.insert(instruction.ip() as u32);
+            }
+        }
+    }
+    found
 }
 
 /// How many calls inside the surveyed methods go through a register or memory operand.

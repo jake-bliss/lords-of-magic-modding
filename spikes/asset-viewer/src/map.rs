@@ -29,6 +29,27 @@ pub const CELL_TAG_UPPER_FIELD: u32 = 0xffff_0000;
 
 /// The value `0x0080` of the cell's second 16-bit field, i.e. `0x00800000` of the whole word.
 ///
+/// **Observed in a local binary, 2026-09-17: this is a value of a signed scalar, not a bit.** Cell
+/// offset `+2` holds a signed 16-bit quantity. All eleven of its readers in `lomse.exe` load it with
+/// `movsx` and **none of them masks it**; `0x00519d00` uses it as `(0x80 - field) * k >> 7`, so
+/// `0x80` is an arithmetic scale base, and `0x004c5cc2` compares it against map object `+0x4c`
+/// rather than against a constant. Reading this value as a flag of any kind is retired.
+///
+/// **Inferred, and deliberately not asserted here:** that the field's range is *closed* at `0..128`
+/// and therefore that `0x0080` is that range saturated. Nothing disassembled clamps the field. A
+/// scale base of `0x80` is what you would use for a fraction in `0..128` and equally what you would
+/// use for a fixed-point value that can exceed it; the instructions do not choose between them. The
+/// separate Observed fact is that the corpus puts only `0x0000` and `0x0080` in this field across
+/// 353 maps and 1,040,384 cells.
+///
+/// **Refuted in a local binary, 2026-09-17: `forcetexture` does not set it.** An earlier gameplay
+/// run concluded it did, because `clearmap` calls `forcetexture` on every cell and a `clearmap`
+/// save carried the value on all 4,096. But `forcetexture`'s worker at `0x004a5ed0` touches exactly
+/// two cell operands in the whole function -- a 16-bit read at `0x004a5efe` and a 16-bit write at
+/// `0x004a5f06`, both of lane `+0` -- and a 16-bit store to `+0` cannot alter `+2`. Something else
+/// `clearmap` does writes the field; the grid initialiser at `0x004a50e6`, which fills every cell's
+/// `+2` from map object `+0x48`, is the **Inferred** candidate.
+///
 /// **Refuted in gameplay, 2026-09-17.** This constant used to be called
 /// `CELL_TAG_FORCED_TEXTURE`, on the corpus reasoning that the bit appears only in `.smp` files
 /// and often on exactly a map's perimeter, which looked like the editor's `forcetexture`
@@ -37,9 +58,10 @@ pub const CELL_TAG_UPPER_FIELD: u32 = 0xffff_0000;
 /// bit set.** Forcing a texture does not set it, so it does not mean "forced texture". The
 /// reasoning is kept here so nobody re-derives it from the same corpus shape.
 ///
-/// **Observed in gameplay, 2026-09-17: `forcetexture` sets this bit and `resetvisibility` clears
-/// it.** Isolated with five fresh maps, one renderer call each -- fresh because once the bit is
-/// cleared it stays cleared:
+/// **Observed in gameplay, 2026-09-17: something `clearmap` does sets this value and
+/// `resetvisibility` clears it.** (The attribution to `forcetexture` is refuted above; the
+/// measurement is unaffected.) Isolated with five fresh maps, one renderer call each -- fresh
+/// because once the value is cleared it stays cleared:
 ///
 /// | sequence | bit, across all 4,096 cells of a 64x64 map |
 /// | --- | --- |
@@ -2826,6 +2848,13 @@ mod tests {
 
     #[test]
     fn the_corpus_exercises_every_gate_it_is_able_to() {
+        // A review claimed this test would still pass with an empty `ENGINE_RECORD_GATES`, since it
+        // derives its gate list from the constant it validates. **Adjudicated against, 2026-09-17,
+        // by running it:** the constant is typed `[(u32, u32, u32); 5]`, so an empty array does not
+        // compile and is not a reachable mutation; and mutating the first gate's threshold from 98
+        // to 99 gives `FAILED. 216 passed; 1 failed`. The claim was static reasoning from a
+        // reviewer whose sandbox could not take the cargo lock.
+        //
         // The corpus pins each threshold only to an interval: it contains 73 and 76, so it cannot
         // tell 74 from 75, and the exact value comes from the binary. What the corpus *can*
         // falsify is a gate the agreement test never exercises. One gate is genuinely beyond it --

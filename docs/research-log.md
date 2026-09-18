@@ -3635,12 +3635,14 @@ entirely:
 ```
 
 `(0x80 - field) * k >> 7` is a linear interpolation whose denominator **is** `0x80`. The same shape
-is at `0x00517b6f`. And `0x004c5cc7` compares the field against map object `+0x4c` rather than
-against a constant. So the `+2` field is a **level on a 0..128 scale**, and the `0x00800000` this
-project has chased for two days — through "forced texture" (refuted), then "a bit whose meaning is
-unknown" — is that scale **saturated**. It was never a flag. Every reading of it as a bit was
-looking at a maxed-out scalar, which is why the corpus pattern (exactly the perimeter ring of 146
-`.smp` files) looked like a flag: a perimeter at full value.
+is at `0x00517b6f`. And `0x004c5cc2` compares the field against map object `+0x4c` rather than
+against a constant.
+
+**The next entry corrects the conclusion I drew from that.** I wrote "so the `+2` field is a level on
+a 0..128 scale and `0x00800000` is that scale saturated" as though the disassembly established it.
+The arithmetic establishes `0x80` as a *scale base*; the closed range and the saturation are a
+further inference. What the arithmetic does settle, and settles firmly, is that the value was never
+a flag.
 
 Eleven readers exist, spread across the binary, and **every single one is a `movsx`**. Not one is a
 mask. That is what makes the two-`u16` split solid rather than merely consistent: a bitfield packed
@@ -3682,3 +3684,100 @@ cross-model gate is therefore unmet on this work, and the three `+2` read sites 
 were nonetheless real and correct. Its one substantive error was direction: it described the field
 as monotonically *raised*, where `cmp ecx,ebx; jle` reaches the store only when the stored value is
 strictly greater, so it is lowered. A real Codex pass on the fixed branch is still owed.
+
+### 2026-09-17, third pass — a real Codex review, and an overclaim of mine that it caught
+
+The first "Codex" review of this branch was not Codex. This one was, and it disputed four of six
+items. One of the four is the headline claim, and I got it wrong in the direction this project is
+most prone to: I took an Observed arithmetic fact and wrote an Inferred conclusion in the same
+sentence, at the same confidence.
+
+**What I claimed:** the `+2` field is "a level on a 0..128 scale" and the corpus's `0x0080` is "that
+scale saturated", labelled **Observed in a local binary**.
+
+**What the instructions actually show:** the field is read sign-extended at all 11 readers, none of
+them masks it, it is used as `(0x80 - field) * k >> 7`, and it is compared against map object
+`+0x4c`. That makes `0x80` an arithmetic **scale base**. It does not make the field's range *closed*
+at `0..128`, and **nothing disassembled so far clamps it**. A base of `0x80` is what you would use
+for a fraction in `0..128` and equally what you would use for a fixed-point quantity that can exceed
+it; the instructions do not choose. The corpus holding only `0x0000` and `0x0080` is a separate
+Observed fact, and "therefore `0x0080` is saturation" is the Inferred step joining the two.
+
+Now split into a table in `map-format.md` with each row carrying its own class. The part that
+survives unchanged is the part worth having: **the bitfield reading is dead.** Eleven sign-extending
+reads and no mask anywhere.
+
+This is the same error as `feedback_agreement_is_not_confirmation`, in a new costume: the arithmetic
+and the census agreed with each other, and I recorded their agreement as a measurement of the thing
+they agree about.
+
+**A second finding fell out of the sweep the review asked for, and it is a real refutation.** Four
+older passages still described `0x00800000` in single-bit language, including "`forcetexture` — which
+`clearmap` calls on every cell — *does* set the bit". Checking that against the 16-bit field model
+refutes it: `forcetexture`'s worker at `0x004a5ed0` touches exactly two cell operands in the whole
+function, a 16-bit read at `0x004a5efe` and a 16-bit write at `0x004a5f06`, both of lane `+0`. **A
+16-bit store to `+0` cannot alter `+2`.** The gameplay measurement (a `clearmap` save carries the
+value on all 4,096 cells) was right; the attribution was wrong, because `clearmap` does more than
+call `forcetexture` on every cell. The grid initialiser at `0x004a50e6`, which fills every cell's
+`+2` from map object `+0x48`, is the Inferred culprit.
+
+And it rehabilitates a step this file had itself disowned. An earlier section said the
+"`forcetexture` never sets it" observation "was an artefact of operation order and should not be
+relied on". It was correct all along, for a reason neither gameplay run could see: the two
+operations write different fields.
+
+**The `cell-unclassified` counter was the right idea in the wrong place.** Codex's objection: it
+"genuinely reaches zero only after taint reaches `cell_lane`" — it counts what arrives, not what
+never arrived. Fair, and adding counters for the reachable parts of that hole proved it immediately:
+
+| Counter | Value |
+| --- | ---: |
+| `cell-unclassified` | 0 |
+| `survey-entries` | 388 |
+| `survey-functions-truncated-at-2400-instructions` | 1 |
+| `survey-unreached-blocks-with-cell-shaped-operands` | 20 |
+
+The discovery loop also **reported that it had not converged** within its round cap the moment a
+counter existed for it. Raising the cap showed the method set was already complete at 169 — the cap
+was failing to *prove* convergence rather than losing methods — but I would not have known that
+without measuring, and "4 rounds looked like enough" is exactly the reasoning that produced the
+other four blind spots.
+
+One counter I tried and rejected: a raw count of unreached basic blocks. It is dominated by junk past
+the end of a function and **grows when the decode limit is raised**, which makes it an instrument
+that gets worse as the analysis gets better. Filtered to blocks containing an eight-byte-strided
+operand, 20 is a real number.
+
+**The fix that actually answers the objection is a taint-independent scan.** The survey now checks
+every instruction it decodes, *ignoring the taint entirely*, for a masking instruction whose operand
+is eight-byte strided at a cell-lane displacement. It over-counts freely — any eight-byte array in
+any surveyed function qualifies — and it finds **zero**. That is a statement no amount of missed
+taint can weaken, and it covers the 20 unreached blocks too, since it reads them regardless of
+reachability. It does not cover the scale-1 form, whose lanes cannot be identified without the taint,
+nor any function the four routes never found.
+
+**Four routes is the number found, not the number that exist.** Said that way now. Every one of the
+four was discovered only after a negative result looked wrong, and there is no argument that the
+list is closed: a pointer copied into another object's field, spilled and reloaded, passed as an
+argument, or formed by arithmetic the taint does not model would be a fifth.
+
+**One item I did not act on, because the coordinator adjudicated it against Codex and I reproduced
+the adjudication.** Codex claimed `the_corpus_exercises_every_gate_it_is_able_to` would pass with an
+empty `ENGINE_RECORD_GATES`. The constant is typed `[(u32, u32, u32); 5]`, so an empty array does
+not compile; and mutating the first threshold from 98 to 99 gives `FAILED. 216 passed; 1 failed`,
+which I ran. The claim was static reasoning from a reviewer whose sandbox could not take the cargo
+lock. The test stays, and the adjudication is recorded in a comment on it so the next reader does
+not re-litigate it.
+
+**Calibration note on this review.** It returned six verdict lines and no detailed body, so its
+silence on anything else is "not looked for", not "not present". Its four disputes were all
+specific, all checkable, and three of the four were right.
+
+### The pattern across all three reviews of this branch
+
+Every defect found in the survey itself was an instrument that could not find what it was looking
+for; every defect found in the *write-up* was an inference recorded at the confidence of the
+observation next to it. Those are the two failure modes, and they need different countermeasures. The
+first is answered by counters and by taint-independent cross-checks. The second is answered only by
+splitting the evidence classes in the sentence where the claim is made — which is why the `+2`
+finding now carries a six-row table instead of a paragraph.
