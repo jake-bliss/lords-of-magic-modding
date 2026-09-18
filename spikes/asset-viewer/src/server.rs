@@ -336,26 +336,30 @@ impl Editor {
         }
     }
 
-    /// Open a map, or refuse **without disturbing the map already held**.
+    /// The maps directory a standard install implies: `map/` beside `pic.mpq`.
     ///
-    /// A failed open used to leave the client saying "No map open." while the server went on
-    /// holding the previous session, and Save As was not gated on the client's belief -- so a typo
-    /// in the path, followed by a save, wrote a file the user had been told did not exist. Dropping
-    /// the session instead would be worse: a typo would destroy an unsaved session outright. So the
-    /// session survives and the refusal **names what is still held**, and the client says so.
-    /// What the page can fill in for the user without being told.
+    /// Suggested only when it exists, and only ever as a **default** -- in a field the user can
+    /// change, and as a dialog's starting point. Nothing here decides what is opened.
     ///
-    /// In a standard install the maps sit in `map/` beside `pic.mpq`, so `--pic` already names the
-    /// directory. Suggested only when it exists, and only as a default in a field the user can
-    /// change -- nothing here decides what is opened.
-    fn config(&self) -> HttpResponse {
-        let suggestion = match &self.source {
+    /// Shared with [`Self::pick`] deliberately. The folder dialog opening at the user's own maps
+    /// is the whole value of the picker on macOS, because the maps live *inside* a `.app` bundle
+    /// and the chooser greys bundles out -- a user who lands anywhere else cannot click their way
+    /// in at all. Taking this from the client alone was not enough: on a freshly loaded page the
+    /// client has no directory yet, so the first Browse -- the one that matters most -- opened
+    /// wherever macOS happened to be.
+    fn suggested_maps_directory(&self) -> Option<PathBuf> {
+        match &self.source {
             TileSetSource::Archive(archive) => archive
                 .parent()
                 .map(|parent| parent.join("map"))
                 .filter(|directory| directory.is_dir()),
             TileSetSource::Loose { .. } => None,
-        };
+        }
+    }
+
+    /// What the page can fill in for the user without being told.
+    fn config(&self) -> HttpResponse {
+        let suggestion = self.suggested_maps_directory();
         HttpResponse::json(format!(
             "{{\"ok\":true,\"mapsDirectory\":{},\"undoDepth\":{UNDO_DEPTH},\"notes\":[]}}",
             suggestion.map_or_else(
@@ -375,7 +379,8 @@ impl Editor {
             .get("dir")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
-            .filter(|directory| directory.is_dir());
+            .filter(|directory| directory.is_dir())
+            .or_else(|| self.suggested_maps_directory());
         let request = PickRequest {
             kind,
             start_in,
@@ -401,6 +406,13 @@ impl Editor {
         }
     }
 
+    /// Open a map, or refuse **without disturbing the map already held**.
+    ///
+    /// A failed open used to leave the client saying "No map open." while the server went on
+    /// holding the previous session, and Save As was not gated on the client's belief -- so a typo
+    /// in the path, followed by a save, wrote a file the user had been told did not exist. Dropping
+    /// the session instead would be worse: a typo would destroy an unsaved session outright. So the
+    /// session survives and the refusal **names what is still held**, and the client says so.
     fn open(&mut self, fields: &BTreeMap<String, String>) -> HttpResponse {
         let mut notes = Vec::new();
         match self.open_map(fields, &mut notes) {
@@ -865,13 +877,24 @@ const APPLESCRIPT_USER_CANCELLED: &str = "-128";
 /// from standard input; after `-e` it is not consumed and arrives as `item 1 of argv`, which put
 /// the prompt in item 2 and the directory in item 3. Measured against `osascript` on 2026-09-17,
 /// and every string would have been off by one.
+/// **`showing package contents` is what makes this usable on a Wine-wrapper install.**
+///
+/// macOS's folder chooser greys out `.app` bundles and will not descend into one, and this
+/// community's game is very often inside a wrapper: on the install this was found on the maps sit
+/// at `…/Lords of Magic GS5R3.app/Contents/SharedSupport/prefix/drive_c/Program Files (x86)/…/map`.
+/// Without this parameter the maps are unreachable through the dialog no matter where it starts.
+///
+/// **Observed, 2026-09-17:** the parameter compiles and the dialog launches with it and with a
+/// default location inside a bundle. Whether a person can then click all the way through has not
+/// been watched -- that needs a human at a desktop -- so the `Cmd+Shift+G` escape hatch stays in
+/// the UI text and the seeded field plus List stays the path that is known to work.
 const CHOOSE_FOLDER: &str = r#"on run argv
-    set chosen to choose folder with prompt (item 1 of argv)
+    set chosen to choose folder with prompt (item 1 of argv) with showing package contents
     return POSIX path of chosen
 end run"#;
 
 const CHOOSE_FOLDER_IN: &str = r#"on run argv
-    set chosen to choose folder with prompt (item 1 of argv) default location (POSIX file (item 2 of argv))
+    set chosen to choose folder with prompt (item 1 of argv) default location (POSIX file (item 2 of argv)) with showing package contents
     return POSIX path of chosen
 end run"#;
 
@@ -2874,6 +2897,78 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
     }
 
     #[test]
+    fn the_first_browse_opens_at_the_maps_directory_although_the_page_knows_of_none_yet() {
+        // **This is the Browse that matters.** On a freshly loaded page the client has no
+        // directory to send, and without a fallback the dialog opened wherever macOS happened to
+        // be -- which on this install is nowhere near the maps. The suggestion the config endpoint
+        // already derives from `--pic` is the same one the dialog should start at.
+        let dir = scratch_dir("browse-fallback");
+        let archive = dir.join("pic.mpq");
+        fs::write(&archive, b"not really an archive").unwrap();
+        let maps = dir.join("map");
+        fs::create_dir(&maps).unwrap();
+
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<PickRequest>>> = Default::default();
+        let mut editor = Editor::new(TileSetSource::Archive(archive.clone()), FIXTURE_PORT);
+        let recorder = std::sync::Arc::clone(&seen);
+        editor.set_picker(Box::new(move |request| {
+            recorder.lock().unwrap().push(request.clone());
+            PickOutcome::Cancelled
+        }));
+
+        // No `dir` at all: the page has just loaded.
+        editor.handle(&own_page("POST", "/api/pick-directory", ""));
+        assert_eq!(seen.lock().unwrap()[0].start_in, Some(maps.clone()));
+        // An empty one, which is what an untouched field actually sends.
+        editor.handle(&own_page("POST", "/api/pick-directory", "dir="));
+        assert_eq!(seen.lock().unwrap()[1].start_in, Some(maps.clone()));
+        // A directory that no longer exists falls back too, rather than being handed to a chooser
+        // that errors on it.
+        editor.handle(&own_page("POST", "/api/pick-directory", "dir=/gone"));
+        assert_eq!(seen.lock().unwrap()[2].start_in, Some(maps.clone()));
+        // Save As gets the same starting point, so a first save does not land in the home folder.
+        editor.handle(&own_page("POST", "/api/pick-save", ""));
+        assert_eq!(seen.lock().unwrap()[3].start_in, Some(maps.clone()));
+
+        // A directory the page *does* name still wins: the fallback is a fallback.
+        let elsewhere = dir.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        editor.handle(&own_page(
+            "POST",
+            "/api/pick-directory",
+            &format!("dir={}", encode(&elsewhere.display().to_string())),
+        ));
+        assert_eq!(seen.lock().unwrap()[4].start_in, Some(elsewhere));
+
+        // And with nothing to derive -- the loose `.til`/`.lbm` form -- there is no starting point
+        // rather than an invented one.
+        let mut loose = Editor::new(
+            TileSetSource::Loose {
+                definition: dir.join("a.til"),
+                atlas: dir.join("a.lbm"),
+            },
+            FIXTURE_PORT,
+        );
+        let recorder = std::sync::Arc::clone(&seen);
+        loose.set_picker(Box::new(move |request| {
+            recorder.lock().unwrap().push(request.clone());
+            PickOutcome::Cancelled
+        }));
+        loose.handle(&own_page("POST", "/api/pick-directory", ""));
+        assert_eq!(seen.lock().unwrap()[5].start_in, None);
+
+        // The dialog's starting point and the field's default are the same derivation, so they
+        // cannot drift into disagreeing about where this install keeps its maps.
+        let config = String::from_utf8(editor.handle(&own_page("GET", "/api/config", "")).body)
+            .unwrap();
+        assert!(
+            config.contains(&json_string(&maps.display().to_string())),
+            "{config}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn the_file_dialog_is_a_post_and_gets_the_same_guards_as_everything_else() {
         let mut fixture = Fixture::new("picker-guards");
         fixture.editor.set_picker(Box::new(|_| {
@@ -3027,6 +3122,29 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
                 assert!(reason.contains("could not start"), "{reason}")
             }
             other => panic!("a missing dialog program was read as {other:?}"),
+        }
+    }
+
+    /// The folder chooser must be told to enter `.app` bundles, or it cannot reach the maps on a
+    /// Wine-wrapper install -- which is how most of this community runs the game.
+    ///
+    /// Not a hypothetical: on the install this was found on, the maps are at
+    /// `Lords of Magic GS5R3.app/Contents/SharedSupport/prefix/drive_c/Program Files (x86)/…/map`
+    /// and the user reported the bundle greyed out in the chooser. Without the parameter, where
+    /// the dialog *starts* does not matter, because it cannot descend.
+    #[test]
+    fn the_folder_chooser_is_allowed_into_app_bundles() {
+        for script in [CHOOSE_FOLDER, CHOOSE_FOLDER_IN] {
+            assert!(
+                script.contains("showing package contents"),
+                "the chooser cannot reach maps inside a .app bundle without this:\n{script}"
+            );
+        }
+        // `choose file name` has no such parameter, and that is not a gap worth closing: saving
+        // *into* the game's own bundle is the one place this tool should make awkward, because the
+        // loose `map/` directory has no backup.
+        for script in [CHOOSE_SAVE_NAME, CHOOSE_SAVE_NAME_IN] {
+            assert!(!script.contains("showing package contents"));
         }
     }
 

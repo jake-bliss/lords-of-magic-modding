@@ -197,11 +197,41 @@ one-liner; they need a crate such as `rfd`, and **that is the packaging gap befo
 community**. On any other platform the endpoint reports itself unavailable and says to type the path
 instead.
 
+**On a Wine-wrapper install the folder dialog may not be able to reach your maps at all, and that
+is macOS's rule rather than ours.** This community mostly runs the game inside a wrapper, so the
+maps end up somewhere like
+`…/Lords of Magic GS5R3.app/Contents/SharedSupport/prefix/drive_c/Program Files (x86)/…/English/map`
+— *inside a `.app` bundle*. The folder chooser greys bundles out and will not descend into one by
+clicking. Three things follow, and the first is the one to remember:
+
+1. **The route that works needs no dialog.** With `--pic`, the maps directory is already in the
+   field when the page loads; press **List** and pick a map. That is zero typing and it does not
+   touch the chooser.
+2. `choose folder` is now asked `with showing package contents`, which is the documented way to let
+   a chooser enter a bundle. **Observed 2026-09-17:** the script compiles and the dialog launches
+   with it, and with a default location inside a bundle. Whether a person can then click all the
+   way through has not been watched — that needs a human at a desktop — so it is an improvement
+   offered, not a fix claimed.
+3. Inside any macOS dialog, **`Cmd+Shift+G`** accepts a typed path and ignores the bundle rule.
+   That is said on the page next to the Browse button, because a note in this file is worth nothing
+   to somebody standing in front of the dialog right now.
+
+Browse is not going anywhere: it is right for maps kept somewhere ordinary, and for a save target,
+which is the case where the user genuinely has to name a new place. `choose file name` has no
+package-contents parameter and is not given one — saving *into* the game's own bundle is the one
+thing this tool should make awkward, because the loose `map/` directory has no backup.
+
 Four things this gets right on purpose:
 
 - **The typed fields are unchanged and are not second-class.** They survive SSH and a headless box,
-  they are what most of the tests drive, and Browse is an accelerator for them — the chosen path is
-  written into the field, where it can still be edited.
+  they are what most of the tests drive, they are the only route that works on a wrapper install,
+  and Browse is an accelerator for them — the chosen path is written into the field, where it can
+  still be edited.
+- **The dialog starts at the maps directory, including the first time.** `start_in` used to come
+  only from the page, and on a freshly loaded page there is no directory yet — so the *first*
+  Browse, the one that matters most, opened wherever macOS happened to be. It now falls back to the
+  same `--pic`-derived suggestion the field is seeded from, so the two cannot disagree about where
+  this install keeps its maps.
 - **Cancelling is not an error.** Dismissing the dialog answers `"ok": true, "cancelled": true`,
   changes nothing and logs nothing. `osascript` exits non-zero for a cancel as well as a failure, so
   the two are told apart by AppleScript's error **number** `-128` rather than by the text "User
@@ -267,9 +297,19 @@ the page does with each of the file dialog's three answers. A missing `node` fai
 than skipping it.
 
 **What no test covers, because it needs a human and a desktop:** that the macOS dialog actually
-appears, that it is usable, and that a real cancel from a real click produces the `-128` this code
-reads. The scripts were confirmed to compile and reach the dialog by running each one under a
-short kill timer; everything past that point is the seam's stub.
+appears, that it is usable, that `with showing package contents` really lets a person click into a
+`.app` bundle, and that a real cancel from a real click produces the `-128` this code reads. The
+scripts were confirmed to compile and reach the dialog by running each one under a short kill timer,
+including with a default location inside the user's own bundle; everything past that point is the
+seam's stub.
+
+**Filed, not built: remembering the last-used maps directory between runs.** It would sidestep the
+dialog entirely after one successful List, and it is the obvious next thing. It is not in v1 because
+the `--pic` suggestion already covers the standard install with zero typing, and because persistent
+state that silently overrides a derived default is a new way for the tool to be confidently wrong
+about where the maps are — after a reinstall or a second copy of the game, a stale entry and a fresh
+derivation look identical to the user. If it is added it must be a default only, fall back silently
+when missing or gone, and never widen where a save may write.
 
 ## Writing sprite placement
 

@@ -21,7 +21,9 @@ button:disabled { opacity: .45; cursor: default; }
 label { display: block; margin: 4px 0; }
 label input[type=text] { display: block; margin-top: 2px; }
 .row { display: flex; gap: 10px; align-items: center; }
-.hint { color: #8d97a8; margin: 6px 0; }
+.hint { color: #8d97a8; margin: 6px 0; max-width: 62em; }
+.hint code { color: #b6bdc9; }
+.hint b { color: #c8cfdb; font-weight: 600; }
 .palette { display: flex; flex-wrap: wrap; gap: 4px; }
 .swatch { display: flex; align-items: center; gap: 5px; padding: 2px 5px 2px 2px; border: 1px solid #39414e; border-radius: 3px; background: #1d2128; cursor: pointer; }
 .swatch.selected { border-color: #d8b25a; background: #2c2a20; }

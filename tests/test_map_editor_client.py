@@ -229,6 +229,53 @@ class NativeFileDialog(unittest.TestCase):
         )
 
 
+class BundleLimitationIsOnScreen(unittest.TestCase):
+    """The `.app` bundle warning has to be where the user is when it bites.
+
+    On a Wine-wrapper install -- which is how most of this community runs the game -- the maps live
+    inside a `.app` bundle, and macOS's folder chooser greys bundles out and will not descend into
+    one by clicking. A note in the README is useless to somebody standing in front of the dialog
+    right now, so it is on the page, next to the button.
+    """
+
+    def setUp(self):
+        self.html = (
+            ROOT / "spikes" / "asset-viewer" / "src" / "ui" / "index.html"
+        ).read_text()
+
+    def test_the_page_names_the_escape_hatch_beside_the_browse_button(self):
+        # Cmd+Shift+G is the only way into a bundle from the chooser, and it is worth nothing in a
+        # document the user is not reading at that moment.
+        self.assertIn("Cmd+Shift+G", self.html)
+        # Adjacent, and said as "nothing comes between them" rather than as a character budget: a
+        # budget generous enough not to be brittle is generous enough to let a paragraph or two
+        # slide in, which is exactly the drift it was meant to catch.
+        browse = self.html.index('id="browse-dir"')
+        # The hint's own opening tag, not the id inside it -- otherwise the `<p` being looked for
+        # below is the hint's own and the check can never fail.
+        hint = self.html.index('<p class="hint" id="bundle-hint"')
+        self.assertLess(browse, hint, "the warning comes before the button it is about")
+        between = self.html[browse:hint]
+        self.assertNotIn(
+            "<p",
+            between,
+            "another paragraph has come between the Browse button and its warning",
+        )
+        self.assertNotIn("<form", between, "the warning has moved out of the open form")
+        # The real gap is one closing button and one closing form tag. Held tight on purpose.
+        self.assertLess(len(between), 160, f"the warning has drifted: {between!r}")
+
+    def test_the_page_says_which_path_actually_works(self):
+        # The reliable route on the install this was found on is the pre-seeded field plus List,
+        # not the dialog. Saying so is the difference between a user who gets to a map and one who
+        # concludes the tool is broken.
+        hint = self.html[self.html.index('id="bundle-hint"'):]
+        hint = hint[: hint.index("</p>")]
+        self.assertIn("List", hint)
+        self.assertIn(".app", hint)
+        self.assertIn("Cmd+Shift+G", hint)
+
+
 class CanvasSizingContract(unittest.TestCase):
     """The stylesheet invariant the pixel mapping rests on.
 
