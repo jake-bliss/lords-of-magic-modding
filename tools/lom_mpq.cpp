@@ -385,8 +385,20 @@ void add_member(HANDLE archive, const std::string &archived_name,
   }
 }
 
+// `extra_listfile` supplies names the source archive does not carry itself.
+// Without it this verb cannot address `pic.mpq`, `imp.mpq`, `sndfx.mpq` or
+// `special.mpq` at all: none of the four has a `(listfile)`, so every member
+// lists under the `File%08u.xxx` pseudo-name, and **Observed 2026-09-18** both
+// ways round that fail. Naming a real member is refused below because the flags
+// map has no such key; naming the pseudo-name reaches SFileAddFileEx, which
+// rejects it with StormLib error 22 -- the pseudo-name is a read-side
+// convenience that resolves by block position, and nothing ever hashes it into
+// the hash table. A recovered name does hash to the member's existing
+// hash-table entry, which is what makes the replacement a replacement rather
+// than an addition.
 int repack_archive(const fs::path &source_path, const fs::path &output_path,
-                   const std::vector<std::string> &assignments, bool compact) {
+                   const std::vector<std::string> &assignments, bool compact,
+                   const fs::path &extra_listfile) {
   if (fs::exists(output_path)) {
     throw std::runtime_error("output archive already exists: " +
                              output_path.string());
@@ -398,7 +410,7 @@ int repack_archive(const fs::path &source_path, const fs::path &output_path,
   std::map<std::string, std::uint32_t> storage_flags;
   {
     Archive source(source_path);
-    for (const auto &entry : list_entries(source.handle)) {
+    for (const auto &entry : list_entries(source.handle, extra_listfile)) {
       // Keep the FIRST entry for a duplicated name, matching the entry that
       // StormLib resolves that name to.
       storage_flags.emplace(entry.name, entry.flags & kPreservedStorageFlags);
@@ -549,8 +561,8 @@ void print_usage(const char *program) {
             << " extract ARCHIVE.mpq OUTPUT_DIR [--listfile NAMES.txt]\n"
             << "  " << program << " manifest ARCHIVE.mpq [--listfile NAMES.txt]\n"
             << "  " << program
-            << " repack SOURCE.mpq OUTPUT.mpq [--compact] --replace "
-               "'NAME=LOCAL' ...\n"
+            << " repack SOURCE.mpq OUTPUT.mpq [--compact] "
+               "[--listfile NAMES.txt] --replace 'NAME=LOCAL' ...\n"
             << "  " << program
             << " create OUTPUT.mpq [--implode|--compress|--store] "
                "[--no-listfile] [--add 'NAME=LOCAL'] "
@@ -648,18 +660,22 @@ int main(int argc, char **argv) {
     if (argc >= 5 && std::string(argv[1]) == "repack") {
       std::vector<std::string> assignments;
       bool compact = false;
+      fs::path repack_listfile;
       for (int index = 4; index < argc; ++index) {
         const std::string option(argv[index]);
         if (option == "--compact") {
           compact = true;
         } else if (option == "--replace" && index + 1 < argc) {
           assignments.emplace_back(argv[++index]);
+        } else if (option == "--listfile" && index + 1 < argc) {
+          repack_listfile = argv[++index];
         } else {
           print_usage(argv[0]);
           return 2;
         }
       }
-      return repack_archive(argv[2], argv[3], assignments, compact);
+      return repack_archive(argv[2], argv[3], assignments, compact,
+                            repack_listfile);
     }
     if (argc >= 3 && std::string(argv[1]) == "create") {
       std::vector<std::string> assignments;

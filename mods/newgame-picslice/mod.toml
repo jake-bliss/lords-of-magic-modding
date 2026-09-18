@@ -1,0 +1,31 @@
+# The pic.mpq vertical slice: an image, taken end to end.
+#
+# Phase 4 proved the loop for one `MPQ_FILE_IMPLODE` member of `gs.mpq`. This mod exists to answer
+# the question that left open and that docs/roadmap.md named as the largest one on the board: no
+# rewritten `pic.mpq` had ever faced the engine.
+#
+# `lbm\newgame.lbm` is the full-screen doors image the game shows when a new game is started. It was
+# chosen for three reasons:
+#
+#   * it is on the direct path a human already takes to start a game, so observing it costs no
+#     extra navigation -- and macOS will not let this project drive the Wine window itself, so
+#     every click is a request to a person;
+#   * it is a 640x480 full-screen image, so a change to it cannot be mistaken for a UI artefact;
+#   * it is not a statistic, so nothing the engine does can decorate it. The Phase 4 first attempt
+#     was inconclusive because the unit panel applies modifiers to a declared number. A bitmap has
+#     no modifier, so the expected value can be stated exactly -- and it is stated, as a rendered
+#     PNG, before the engine ever runs.
+#
+# Every member of `pic.mpq` carries flags 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), which is the
+# SAME storage class as the gs.mpq member Phase 4 proved. So compression is not the open question
+# here; it was already answered by the flag histogram. What is open is whether the engine accepts a
+# rewritten `pic.mpq` at all.
+id = "newgame-picslice"
+name = "New-game screen slice"
+version = "0.1.0"
+description = "Repaint part of the new-game screen, as the first pic.mpq member ever put in front of the engine."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false

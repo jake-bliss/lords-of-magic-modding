@@ -43,8 +43,15 @@ for specification in "$@"; do
   [[ -e "${target}" ]] && die "refusing to overwrite ${target}
 Delete it yourself if you mean to discard the edits in it."
 
+  # pic.mpq names none of its own members, so the recovered list is what makes `${member}`
+  # resolvable at all. See profile_listfile in lib-mod-pipeline.sh.
+  archive_listfile="$(profile_listfile "${base_profile}" "${archive}")"
+  listfile_options=()
+  [[ -n "${archive_listfile}" ]] && listfile_options=(--listfile "${archive_listfile}")
+
   mkdir -p "$(dirname "${target}")"
-  "${viewer_tool}" --extract "${game_dir}/${archive}" "${member}" "${target}" >/dev/null \
+  "${viewer_tool}" "${listfile_options[@]}" \
+    --extract "${game_dir}/${archive}" "${member}" "${target}" >/dev/null \
     || die "could not extract ${member} from ${archive}"
   echo "  ${archive}  ${member}"
   echo "    -> ${target}"

@@ -27,7 +27,11 @@ manifest_arguments=()
 for archive in "${PIPELINE_ARCHIVES[@]}"; do
   source_archive="${game_dir}/${archive}"
   [[ -f "${source_archive}" ]] || die "base profile ${base_profile} has no ${archive}: ${source_archive}"
-  "${mpq_tool}" manifest "${source_archive}" > "${work_dir}/${archive}.tsv"
+  archive_listfile="$(profile_listfile "${base_profile}" "${archive}")"
+  listfile_options=()
+  [[ -n "${archive_listfile}" ]] && listfile_options=(--listfile "${archive_listfile}")
+  "${mpq_tool}" manifest "${source_archive}" "${listfile_options[@]}" \
+    > "${work_dir}/${archive}.tsv"
   manifest_arguments+=(--base-manifest "${archive}=${work_dir}/${archive}.tsv")
 done
 

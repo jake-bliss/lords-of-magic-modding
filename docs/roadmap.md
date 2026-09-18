@@ -15,8 +15,8 @@ since PR #51 and did not describe nine merged pull requests.
 | 2 — Script documentation | **Complete.** 1,535 symbols indexed across three profiles, searchable by code or display name. |
 | 3 — Build and validation pipeline | **Complete.** `validate`, `build`, `install-dev` and `restore-dev` exist, are tested, and have been run end to end against the engine. |
 | 4 — First vertical slice | **Complete, Observed in gameplay 2026-09-18.** `units\orinf.gs` built, validated, installed and read off the unit panel; rollback verified. |
-| 5 — Asset pipeline | Substantially done; see the boxes below for what remains. |
-| 6 — Mod direction | Correctly gated on 3 and 4. |
+| 5 — Asset pipeline | **18 of 22 boxes.** A rewritten `pic.mpq` now runs in the engine (2026-09-18). What is left needs a pixel encoder, which does not exist, or an attended session. |
+| 6 — Mod direction | Gated on 3 and 4, and **that gate is now open**. |
 | Format and engine reverse-engineering | Far ahead of what this document ever planned. See the section below. |
 
 **Phases 3 and 4 were the critical path. Both are now closed.** Phase 4 exists to force the complete
@@ -71,9 +71,12 @@ reasons that recovery does not touch:
 - a rebuild must reproduce each member's flags, locale and storage decisions, which nothing here
   addresses.
 
-Shape preserved is not the same as playable. The only engine evidence remains the attended
-2026-09-16 round trip, and that was an `MPQ_FILE_IMPLODE` member of `gs.mpq`; the compression choice
-for a `pic.mpq` replacement is **Inferred** and has never faced the engine.
+Shape preserved is not the same as playable. **Updated 2026-09-18:** this paragraph used to end
+"the compression choice for a `pic.mpq` replacement is **Inferred** and has never faced the engine."
+Both halves are now settled, and neither the way it expected. Compression was never the open
+question: every one of the 1,071 members of the baseline `pic.mpq` carries flags `0x80010100`
+(EXISTS | ENCRYPTED | IMPLODE), the same class as the `gs.mpq` member of the 2026-09-16 round trip.
+And a rewritten `pic.mpq` has now faced the engine and been read by it -- see Phase 5 below.
 
 Delivered: [MPQ inventory](mpq-inventory.md), tracked comparison summaries, and reproducible extraction commands.
 
@@ -244,10 +247,11 @@ since it describes a unit that does not exist yet and so has no level, leader or
 applied -- which is what the map panel demonstrably does have. A future numeric slice should be read
 there, not on the map.
 
-**Not established.** This is one member, one archive, one compression class. A `pic.mpq`
-replacement has still **never** faced the engine and its compression choice remains **Inferred**.
-Adding a member rather than replacing one has never been tried. Nothing here says a *large* mod
-loads, only that a correct one-member rewrite does.
+**Not established by Phase 4.** This was one member, one archive, one compression class. Adding a
+member rather than replacing one has still never been tried, and nothing here says a *large* mod
+loads -- only that a correct one-member rewrite does.
+
+The `pic.mpq` half of this paragraph was closed on 2026-09-18; see the `pic.mpq` slice under Phase 5.
 
 ## Phase 5 — Asset pipeline
 
@@ -267,13 +271,76 @@ loads, only that a correct one-member rewrite does.
 - [x] IMP placement write-back (`--set-imp-placement`, `--imp-placement-for`).
 - [x] Bind `.smp` tilesets per encounter rather than per map class; 169 of 337 resolve and 168 honestly refuse.
 - [x] A map editor drivable with a mouse (`--serve`), loopback-only, with terrain paint, undo and Save As.
+- [x] Put a rewritten `pic.mpq` in front of the engine. **Observed in gameplay 2026-09-18** — see the section below.
+- [x] Resolve the IMP chroma key and the shadow blend against the game (2026-09-17). Shadow index 1 draws the background at half brightness as a **palette remap, not per-pixel arithmetic**, on 100% of the 903 and 889 pixels measured; palette entries are stored **B, R, G, pad**, not RGB, and the decoder was corrected. Both are in [hotspots](hotspots.md). The `[ ]` box below is what is LEFT of issue #2, not the whole of it.
 - [x] Decode IMP animation records ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2) partially — the timing premise it was filed on is **Refuted**; see the issue for the three-way split it became).
 - [ ] Prove candidate placed-sprite field behavior, and find out what the six layouts' constant tail words mean — which the corpus cannot answer, since each is constant within its layout ([issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4)). A record minted into any layout but the 49-byte one is Inferred and has never been handed to the engine.
-- [ ] Resolve uncommon IMP metadata variants and verify chroma keys and the shadow blend against the game ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)).
+- [ ] Resolve the uncommon IMP metadata variants, wire the recovered `AnimRules` into the viewer in place of its provisional fixed 100 ms interval, and anchor direction 0 to a compass bearing ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)). Only the last of those three needs the running game. **Issue #2's own acceptance criterion is partly unsatisfiable as written**, because it asks the viewer to derive playback timing from verified metadata and there is no timing in the file: [imp-format](imp-format.md) records "there is none in the file" and "the playback object has no timer". It needs restating before it can be closed.
 - [ ] Build batch conversion, IMP **pixel** reimport, and lossless repack tests.
 - [ ] Evaluate AI upscaling on portraits and interface art.
 - [ ] Compare Lanczos runtime scaling against remastered source assets.
 - [ ] Add automated dimension and palette validation.
+
+### The `pic.mpq` slice, Observed in gameplay 2026-09-18
+
+The engine read an archive this pipeline built from `pic.mpq`, and a human read the change off the
+screen. This was the largest open item the roadmap named, and closing it needed a correction first.
+
+**The stated risk was the wrong one.** The roadmap said the compression choice for a `pic.mpq`
+replacement was **Inferred**. It is not, and one histogram settled it: every one of the 1,071 members
+of the baseline `pic.mpq` carries flags `0x80010100` (EXISTS | ENCRYPTED | IMPLODE) -- the *same*
+storage class as the `gs.mpq` member Phase 4 proved. `imp.mpq` is the same again; `sndfx.mpq` and
+`special.mpq` are `0x80010000`, stored rather than imploded.
+
+**The real blocker was addressing, and it was total.** `pic.mpq` has no `(listfile)` and **no
+self-named member at all**, so every member lists under a `File%08u.xxx` pseudo-name, and both ways
+round it fail. Naming a real member is refused for not being in the archive's own catalogue. Naming
+the pseudo-name reaches `SFileAddFileEx`, which rejects it with **StormLib error 22** -- the
+pseudo-name resolves by *block position* and nothing ever hashes it into the hash table. Until the
+names recovered in PR #66 were threaded through the pipeline, **`pic.mpq` could not be packed at
+all**, and no amount of care about compression would have found that.
+
+The fix is `--listfile` on `lom-mpq repack`, threaded by `scripts/repack-archive.sh` through the
+repack *and both manifests* -- naming one side and not the other would compare two different
+addressings of one archive. `gs.mpq` is deliberately left alone: it carries its own `(listfile)`,
+and supplying recovered names for its 372 unnamed entries would re-address them inside the shape
+check, changing the exact path Phase 4 proved.
+
+Measured on the baseline: **1 of 1,071 members changed, block index 141 preserved, no `(listfile)`
+injected** (the entry count holds at 1,071), and three repacks byte-identical.
+
+| Success criterion | Result |
+|---|---|
+| The archive builds reproducibly | **Yes.** Three packs, byte-identical. |
+| Static validation passes | **Yes**, 0 errors; the one warning is the engine-acceptance notice this run retires. |
+| The changed image is visible in game | **Yes.** The top third of the main menu renders spattered red. |
+| The change is confined to the declared member | **Yes.** `lbm\start01.lbm`, a different member of the same rewritten archive, renders correctly. |
+| Baseline, 3.02 and GS5R3 unchanged | **Yes.** `pic.mpq` `d0df8b92`, `d0df8b92`, `5c784a67`. |
+| Rollback succeeds | **Yes**, tested before the engine run, and afterwards verified by extracting the member and comparing bytes to the pristine seed. |
+
+**How the expected value was fixed in advance.** Phase 4's lesson was to pick an observable whose
+value can be stated before looking. Here it was not *stated*, it was **rendered**: the build's
+`pic.mpq` digest is byte-identical to an archive our own decoder had already exported to PNG, so the
+screen was compared against a picture rather than against a description. The edit also carries its
+own control -- rows 160 and below are untouched, so "red top, correct bottom" is a different
+observation from "the image is broken" and the two cannot be confused.
+
+**The mechanism, and why the edit looks like that.** There is no PBM or LBM *encoder* in this
+repository, so an edit that has to re-compress could not be made. `BMHD.compression` is 1, ByteRun1,
+which leaves exactly one opening: a *repeat* packet is two bytes standing for up to 128 pixels, so
+rewriting the second of them repaints those pixels and the file keeps its byte count.
+`tools/pbm_patch.py` does only that, refuses to split a run straddling the edge, and never touches a
+literal packet. The repainted region therefore has a ragged, speckled edge. That is the shape of the
+mechanism, not damage, and it was visible in the render before it was visible on screen.
+
+**A naming trap worth recording.** `lbm\newgame.lbm` is the **main menu**, not a screen shown during
+new-game setup. The name means "the new-game menu". An instruction to the human observer based on
+reading the image rather than on knowing where the engine draws it was wrong about where to look;
+the observation succeeded anyway because the main menu is the first thing drawn.
+
+**Not established.** One member of one `pic.mpq`, replaced rather than added, with a
+length-preserving edit. An edit that changes a member's *size* has not been put in front of the
+engine, and neither has an added member. `imp.mpq`, `sndfx.mpq` and `special.mpq` remain untested.
 
 Note that painting has never been verified by a probe loading a painted map, and the core tile
 family, road in either role, and painting across an existing boundary are refused rather than

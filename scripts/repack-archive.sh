@@ -12,6 +12,14 @@
 #   scripts/repack-archive.sh SOURCE.mpq OUTPUT.mpq 'ARCHIVE\NAME=local/file' ...
 #
 # Options:
+#   --listfile NAMES.txt   supply member names the source archive does not carry
+#                          itself. Required for pic.mpq, imp.mpq, sndfx.mpq and
+#                          special.mpq, none of which has a (listfile): without
+#                          it every member lists under a File%08u.xxx
+#                          pseudo-name, which cannot be written to. The same
+#                          names are used for BOTH manifests, because a shape
+#                          check that named one side and not the other would be
+#                          comparing two different addressings of one archive.
 #   --determinism-runs N   repack N extra times into throwaway paths and report
 #                          whether every run produced the same bytes
 #   --install PROFILE      refuses; archive installation is Phase 3
@@ -20,14 +28,20 @@ set -euo pipefail
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
-  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
 }
 
 determinism_runs=0
 determinism_failed=0
+listfile=""
 positional=()
 while (( $# )); do
   case "$1" in
+    --listfile)
+      [[ $# -ge 2 ]] || { echo "--listfile needs a path" >&2; exit 2; }
+      listfile="$2"
+      shift 2
+      ;;
     --determinism-runs)
       [[ $# -ge 2 ]] || { echo "--determinism-runs needs a count" >&2; exit 2; }
       determinism_runs="$2"
@@ -88,6 +102,12 @@ file_hash() {
   shasum -a 256 "$1" | cut -d' ' -f1
 }
 
+listfile_arguments=()
+if [[ -n "${listfile}" ]]; then
+  [[ -f "${listfile}" ]] || { echo "listfile not found: ${listfile}" >&2; exit 1; }
+  listfile_arguments=(--listfile "${listfile}")
+fi
+
 repack_arguments=()
 expectation_arguments=()
 for replacement in "${replacements[@]}"; do
@@ -102,11 +122,14 @@ output_manifest="${output_archive}.manifest.tsv"
 echo "== source =="
 echo "  ${source_archive}"
 echo "  sha256 $(file_hash "${source_archive}")"
-"${mpq_tool}" manifest "${source_archive}" > "${source_manifest}"
+"${mpq_tool}" manifest "${source_archive}" "${listfile_arguments[@]}" \
+  > "${source_manifest}"
 
 echo "== repacking =="
-"${mpq_tool}" repack "${source_archive}" "${output_archive}" "${repack_arguments[@]}"
-"${mpq_tool}" manifest "${output_archive}" > "${output_manifest}"
+"${mpq_tool}" repack "${source_archive}" "${output_archive}" \
+  "${listfile_arguments[@]}" "${repack_arguments[@]}"
+"${mpq_tool}" manifest "${output_archive}" "${listfile_arguments[@]}" \
+  > "${output_manifest}"
 
 echo "== shape check =="
 if ! python3 "${project_dir}/tools/mpq_shape.py" \
@@ -131,7 +154,7 @@ if (( determinism_runs > 0 )); then
   for (( run = 2; run <= determinism_runs + 1; run++ )); do
     repeat_archive="${determinism_dir}/run-${run}.mpq"
     "${mpq_tool}" repack "${source_archive}" "${repeat_archive}" \
-      "${repack_arguments[@]}" >/dev/null
+      "${listfile_arguments[@]}" "${repack_arguments[@]}" >/dev/null
     repeat_hash="$(file_hash "${repeat_archive}")"
     if [[ "${repeat_hash}" == "${reference_hash}" ]]; then
       echo "  run ${run} ${repeat_hash}"

@@ -632,10 +632,12 @@ def check_unvalidatable_content(tree: ModTree, report: ValidationReport) -> None
             WARNING,
             "engine-acceptance",
             str(tree.root),
-            f"{len(pic_members)} member(s) target pic.mpq. A rewritten pic.mpq has NEVER been put "
-            "in front of the engine, and the compression choice for one is Inferred. The single "
-            "engine-verified round trip (2026-09-16) replaced an MPQ_FILE_IMPLODE member of "
-            "gs.mpq.",
+            f"{len(pic_members)} member(s) target pic.mpq. A rewritten pic.mpq has NEVER been "
+            "put in front of the engine. Storage class is NOT the open question: every one of "
+            "the 1,071 members of the baseline pic.mpq carries flags 0x80010100 "
+            "(EXISTS | ENCRYPTED | IMPLODE), measured 2026-09-18, which is the same class as the "
+            "gs.mpq member the engine accepted on 2026-09-16. What is untested is whether the "
+            "engine reads a rewritten pic.mpq at all.",
         )
 
 
