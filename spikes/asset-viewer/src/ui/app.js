@@ -515,3 +515,36 @@ window.addEventListener("mouseup", (event) => {
   drawSelection(null);
   paint(rect);
 });
+
+
+// The dialog's "just type a path" escape hatch, which is a different key on every platform.
+//
+// This text used to say `Cmd+Shift+G` unconditionally, which was true while the only dialog was
+// macOS's. Now that Browse opens a GTK, Qt or Windows chooser too, an unqualified macOS keystroke
+// is an instruction that does nothing for most of the people following it -- and the page is the
+// surface that matters here, because a note in a README is worth nothing to somebody standing in
+// front of the dialog right now.
+function typePathShortcut(platform) {
+  if (/mac/i.test(platform)) {
+    return { mac: true, open: "press Cmd+Shift+G and paste it", save: "Cmd+Shift+G types a path" };
+  }
+  if (/win/i.test(platform)) {
+    // Windows' common dialog has no shortcut: the File name box accepts a full path directly.
+    return { mac: false, open: "type it into the File name box", save: "the File name box takes a full path" };
+  }
+  // GTK and Qt both open a location bar on Ctrl+L.
+  return { mac: false, open: "press Ctrl+L and paste it", save: "Ctrl+L types a path" };
+}
+
+function applyPlatformHints() {
+  const platform = navigator.userAgentData?.platform || navigator.platform || "";
+  const hint = typePathShortcut(platform);
+  document.getElementById("type-path-open").textContent = hint.open;
+  document.getElementById("type-path-save").textContent = hint.save;
+  // The `.app` bundle warning is macOS's rule, so it is only shown there. Leaving it up elsewhere
+  // sends a Linux user looking for a problem their chooser does not have.
+  const bundleNote = document.getElementById("bundle-mac-note");
+  bundleNote.style.display = hint.mac ? "" : "none";
+}
+
+applyPlatformHints();

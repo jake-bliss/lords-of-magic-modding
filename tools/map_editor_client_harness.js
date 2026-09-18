@@ -88,11 +88,19 @@ function makeElement(id) {
   return element;
 }
 
-const IDS = [
-  "dir-form", "maps-dir", "browse-dir", "map-file", "open-form", "map-summary", "palette", "seed",
-  "undo", "zoom", "save-form", "save-name", "browse-save", "map", "overlay", "centre",
-  "cursor-cell", "log",
-];
+// **Read out of `index.html` rather than listed here.** A literal list lets the page drop an
+// element while every test stays green: `app.js` would throw on `null.textContent`, and because
+// the platform hints are applied by the last statement in the file, the editor would keep working
+// while every Linux and Windows user was shown the macOS-only instruction. Deriving the list means
+// a removed id fails as a missing stub instead.
+const INDEX_HTML = fs.readFileSync(
+  path.join(__dirname, "..", "spikes", "asset-viewer", "src", "ui", "index.html"),
+  "utf8",
+);
+const IDS = [...INDEX_HTML.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
+if (IDS.length === 0) {
+  throw new Error("no ids found in index.html; the harness would stub nothing");
+}
 const elements = new Map(IDS.map((id) => [id, makeElement(id)]));
 
 // The zoom slider's bounds come from `index.html` rather than being repeated here, so a change to
@@ -170,6 +178,18 @@ const sandbox = {
   JSON,
   Error,
   Promise,
+  // **Both sources, driven independently.** `navigator.userAgentData` is present on
+  // `http://127.0.0.1` in every Chromium browser -- a secure context -- so it is the branch most
+  // users actually take, and its values are different strings ("macOS", "Windows", "Linux") from
+  // the legacy `navigator.platform` ones ("MacIntel", "Win32"). Stubbing only the legacy source
+  // left the majority path untested: deleting it from the chain, or reversing the chain, passed
+  // the whole suite.
+  navigator: {
+    userAgentData: process.env.LOM_TEST_UA_PLATFORM
+      ? { platform: process.env.LOM_TEST_UA_PLATFORM }
+      : undefined,
+    platform: process.env.LOM_TEST_PLATFORM || "MacIntel",
+  },
   document: {
     getElementById(id) {
       const element = elements.get(id);
@@ -258,6 +278,17 @@ async function cellAt(clientX, clientY) {
   measurements.startupRequests = requests.map((request) => request.url.split("?")[0]);
   measurements.seededDirectory = elements.get("maps-dir").value;
   measurements.pickerOptions = elements.get("map-file").children.map((option) => option.value);
+
+  // The "type a path instead" hint, which is a different key on every platform. `LOM_TEST_PLATFORM`
+  // picks which one the stub `navigator` reports, so all three are checkable from one machine.
+  measurements.platformHints = {
+    // Both sources, so a test can tell which one the chain actually used.
+    uaPlatform: sandbox.navigator.userAgentData?.platform ?? null,
+    platform: sandbox.navigator.platform,
+    open: elements.get("type-path-open").textContent,
+    save: elements.get("type-path-save").textContent,
+    bundleNoteHidden: elements.get("bundle-mac-note").style.display === "none",
+  };
 
   // Open the map the picker offers, through the real submit handler.
   requests.length = 0;

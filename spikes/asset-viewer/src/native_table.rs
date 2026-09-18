@@ -57,9 +57,11 @@ impl std::error::Error for NativeTableError {}
 #[derive(Debug, Clone, Copy)]
 struct Section {
     virtual_address: u32,
+    virtual_size: u32,
     raw_offset: u32,
     raw_size: u32,
     executable: bool,
+    writable: bool,
 }
 
 /// A parsed 32-bit PE image: enough of the headers to translate addresses and classify sections.
@@ -100,6 +102,8 @@ impl<'a> PeImage<'a> {
         let mut sections = Vec::with_capacity(section_count);
         for index in 0..section_count {
             let offset = table_offset + index * 40;
+            let virtual_size = read_u32(bytes, offset + 8)
+                .ok_or_else(|| NativeTableError::new("truncated section table"))?;
             let virtual_address = read_u32(bytes, offset + 12)
                 .ok_or_else(|| NativeTableError::new("truncated section table"))?;
             let raw_size = read_u32(bytes, offset + 16)
@@ -110,10 +114,16 @@ impl<'a> PeImage<'a> {
                 .ok_or_else(|| NativeTableError::new("truncated section table"))?;
             sections.push(Section {
                 virtual_address,
+                virtual_size,
                 raw_offset,
                 raw_size,
                 // IMAGE_SCN_MEM_EXECUTE
                 executable: characteristics & 0x2000_0000 != 0,
+                // IMAGE_SCN_MEM_WRITE. The distinction matters: `.rdata` here is `0x40000040`
+                // and `.data` is `0xc0000040`, so a check that only asked "not executable" put
+                // the arithmetic operators' float pool in the same bucket as the engine's state
+                // and reported `abs` as touching engine data.
+                writable: characteristics & 0x8000_0000 != 0,
             });
         }
         if sections.is_empty() {
@@ -136,6 +146,76 @@ impl<'a> PeImage<'a> {
             }
         }
         None
+    }
+
+    /// The address the image is linked to load at.
+    pub fn image_base(&self) -> u32 {
+        self.image_base
+    }
+
+    /// Whether an address falls inside any section's **virtual** extent.
+    ///
+    /// Deliberately not `file_offset(..).is_some()`: `.data` here declares 0x81b3c bytes of virtual
+    /// space behind 0x23200 bytes of raw data, so every zero-initialised global lives at an address
+    /// with no file offset at all. A reference to one of those is still a reference to engine
+    /// state, and a check written against raw size would silently drop the whole tail.
+    pub fn is_mapped_address(&self, address: u32) -> bool {
+        self.section_containing(address).is_some()
+    }
+
+    /// Whether an address falls inside a mapped, non-executable section: engine data rather than
+    /// engine code. Says nothing about whether the data is mutable — see
+    /// `is_writable_data_address`.
+    pub fn is_data_address(&self, address: u32) -> bool {
+        self.section_containing(address)
+            .is_some_and(|section| !section.executable)
+    }
+
+    /// Whether an address falls inside mapped, non-executable, **writable** data: engine state.
+    ///
+    /// This is the test a claim about state must use. A read-only data address is a constant the
+    /// compiler emitted — a float literal, a jump table, a string — and reading one says nothing
+    /// about the engine's state at all.
+    pub fn is_writable_data_address(&self, address: u32) -> bool {
+        self.section_containing(address)
+            .is_some_and(|section| !section.executable && section.writable)
+    }
+
+    fn section_containing(&self, address: u32) -> Option<&Section> {
+        self.sections.iter().find(|section| {
+            let Some(start) = self.image_base.checked_add(section.virtual_address) else {
+                return false;
+            };
+            let Some(end) = start.checked_add(section.virtual_size.max(section.raw_size)) else {
+                return false;
+            };
+            (start..end).contains(&address)
+        })
+    }
+
+    /// Every executable section, as `(virtual address, file offset, size of its file-backed bytes)`.
+    ///
+    /// The size is the section's **raw** size, not its virtual size. Scans want the bytes that
+    /// exist: a section's virtual tail beyond its raw data is zero-fill the loader supplies and is
+    /// not in this buffer at all. `.text` in `lomse.exe` 3.02 is 0x14B200 raw against 0x14B535
+    /// virtual, and those 309 bytes hold nothing to decode.
+    ///
+    /// The file offset is carried alongside because a caller that decodes the bytes needs both:
+    /// the virtual address to report, and the offset to read from.
+    ///
+    /// Added so callers stop hardcoding the length of the code section.
+    pub fn executable_ranges(&self) -> Vec<(u32, usize, usize)> {
+        self.sections
+            .iter()
+            .filter(|section| section.executable)
+            .filter_map(|section| {
+                Some((
+                    self.image_base.checked_add(section.virtual_address)?,
+                    section.raw_offset as usize,
+                    section.raw_size as usize,
+                ))
+            })
+            .collect()
     }
 
     pub fn is_code_address(&self, address: u32) -> bool {
@@ -385,7 +465,15 @@ mod tests {
     #[test]
     fn recovers_an_operator_table_with_names_and_entry_points() {
         let names = [
-            "pop", "def", "undef", "begin", "end", "exch", "dup", "getarmydata", "setarmydata",
+            "pop",
+            "def",
+            "undef",
+            "begin",
+            "end",
+            "exch",
+            "dup",
+            "getarmydata",
+            "setarmydata",
         ];
         let image = synthetic_image(&names);
         let runs = extract(&image).expect("synthetic image parses");
@@ -397,9 +485,12 @@ mod tests {
         assert_eq!(recovered, names);
         let first = &runs[0].entries[0];
         assert_eq!(first.entry_point, 0x0040_1000);
-        assert!(runs[0].entries.windows(2).all(|pair| {
-            pair[1].record_offset - pair[0].record_offset == RECORD_SIZE
-        }));
+        assert!(
+            runs[0]
+                .entries
+                .windows(2)
+                .all(|pair| { pair[1].record_offset - pair[0].record_offset == RECORD_SIZE })
+        );
     }
 
     #[test]
@@ -425,7 +516,15 @@ mod tests {
     #[test]
     fn classifies_a_name_the_engine_implements_as_an_operator() {
         let image = synthetic_image(&[
-            "pop", "def", "undef", "begin", "end", "exch", "dup", "getarmydata", "setarmydata",
+            "pop",
+            "def",
+            "undef",
+            "begin",
+            "end",
+            "exch",
+            "dup",
+            "getarmydata",
+            "setarmydata",
         ]);
         let index = OperatorIndex::from_image(&image).expect("synthetic image parses");
         assert_eq!(index.len(), 9);
@@ -446,7 +545,15 @@ mod tests {
     #[test]
     fn classifies_screaming_case_names_as_engine_constants() {
         let image = synthetic_image(&[
-            "pop", "def", "undef", "begin", "end", "exch", "dup", "getarmydata", "setarmydata",
+            "pop",
+            "def",
+            "undef",
+            "begin",
+            "end",
+            "exch",
+            "dup",
+            "getarmydata",
+            "setarmydata",
         ]);
         let index = OperatorIndex::from_image(&image).expect("synthetic image parses");
         assert_eq!(index.classify("SD_MANA"), NameClass::EngineConstant);

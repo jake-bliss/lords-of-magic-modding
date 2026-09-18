@@ -192,10 +192,55 @@ is what the server has to read and write. The server is on the user's own machin
 opens the dialog** — `POST /api/pick-directory` and `POST /api/pick-save` shell out to the OS
 chooser and get the genuine path back.
 
-**macOS only, through `osascript`, with no new dependency.** Windows and Linux have no equivalent
-one-liner; they need a crate such as `rfd`, and **that is the packaging gap before this goes to the
-community**. On any other platform the endpoint reports itself unavailable and says to type the path
-instead.
+**All three platforms, through programs rather than a linked crate, so there is still no new
+dependency.** macOS uses `osascript`, Windows uses PowerShell driving `System.Windows.Forms`, and
+Linux uses `zenity` or `kdialog`, whichever is on `PATH`. Where none is available — a Linux box with
+neither installed — the endpoint reports itself unavailable and names what to install, and the typed
+field keeps working.
+
+**A dialog program on `PATH` is not a dialog that can be shown.** (One known false refusal: a
+Qt or GTK kiosk target — `QT_QPA_PLATFORM=eglfs`, `GDK_BACKEND=broadway` — can draw without either
+variable set, and this refuses it. The typed field still works, so the cost is a refusal rather than
+a failure, and the trade is worth it.) Running the editor over SSH on a
+headless box is supported, and there `zenity` is very often installed with no display at all — it
+then fails `gtk_init` and exits 1 with empty stdout, which is indistinguishable from a cancel. So
+`DISPLAY` or `WAYLAND_DISPLAY` is required before a Unix flavour is claimed at all. Without that
+check Browse became a button that did nothing, logged nothing, and no amount of retrying fixed.
+
+**What is verified, and what is not.** Only the macOS dialog has been watched by a human. The
+Windows and Linux builders are asserted at the level of the argument list, the environment, and the
+cancel/failure reading; nobody has clicked through either. That is a real limit, so it is worth
+saying what those assertions are actually worth: the one bug this feature has already shipped was an
+argument-order mistake that no test then covered, and argument lists are exactly what is covered
+now. The flavour is carried as a value rather than decided by `cfg!`, specifically so that **a Mac
+builds and asserts the Windows and Linux commands too** — `cfg`-gating them would leave two dialogs
+that no test anywhere could look at.
+
+Per-platform details that are easy to get wrong, each pinned by a test:
+
+- **`-NoProfile` is the load-bearing Windows flag**: a user profile that writes anything to stdout
+  corrupts the path read back off it. `-STA` is passed too, but as explicit insurance rather than a
+  fix — an earlier version of this note claimed PowerShell 5 runs `-Command` as MTA and that is
+  **wrong**: STA has been the default since PowerShell 3.0 and `-MTA` is the opt-out. Codex caught
+  that; the Claude reviewer did not.
+- **A cancel exits with a reserved code, not 1.** The scripts are ours, so they can say
+  "dismissed" unambiguously — and they must, because the interesting Windows failures exit 1 with
+  stderr only, which is the exact shape of a cancel. `Add-Type` failing on a box with no .NET
+  Desktop runtime is the real case; a lost `-STA` would be another.
+- **The scripts set their output encoding to UTF-8.** `[Console]::Out` otherwise uses the console
+  code page, and Rust decodes as UTF-8 unconditionally, so a user whose path contains non-ASCII
+  characters would get replacement characters and a path that does not exist.
+- **The Windows strings travel as environment variables, never interpolated into the script.** A
+  path like `C:\Program Files (x86)\…` is full of PowerShell metacharacters, and needing to type
+  such a path is the problem this feature exists to remove — re-introducing it as a quoting bug
+  would be a poor trade. With no starting directory the variable is *removed* rather than inherited,
+  so a stale value cannot send the dialog somewhere nobody asked for.
+- **zenity's `--filename` needs its trailing separator** to mean "start inside this directory"
+  rather than "select this directory"; without it the chooser opens one level up.
+- **kdialog needs a positional start directory**; given the flag alone it prints usage and exits
+  non-zero, which would surface to the user as a broken dialog. Its positionals are also parsed as
+  options, so anything beginning with `-` is prefixed `./` — otherwise a file named `--help` makes
+  kdialog print help and exit *successfully*, and the help text becomes the chosen path.
 
 **On a Wine-wrapper install the folder dialog may not be able to reach your maps at all, and that
 is macOS's rule rather than ours.** This community mostly runs the game inside a wrapper, so the
@@ -232,13 +277,20 @@ Four things this gets right on purpose:
   Browse, the one that matters most, opened wherever macOS happened to be. It now falls back to the
   same `--pic`-derived suggestion the field is seeded from, so the two cannot disagree about where
   this install keeps its maps.
-- **Cancelling is not an error.** Dismissing the dialog answers `"ok": true, "cancelled": true`,
-  changes nothing and logs nothing. `osascript` exits non-zero for a cancel as well as a failure, so
-  the two are told apart by AppleScript's error **number** `-128` rather than by the text "User
-  canceled", which is localised.
+- **Cancelling is not an error**, and each platform says so differently. Dismissing the dialog
+  answers `"ok": true, "cancelled": true`, changes nothing and logs nothing. `osascript` exits
+  non-zero for a cancel as well as a failure, so the two are told apart by AppleScript's error
+  **number** `-128` rather than by the text "User canceled", which is localised. zenity, kdialog and
+  our PowerShell scripts instead exit non-zero with **nothing on stdout**, and their stderr is not a
+  signal at all — GTK and Qt both emit warnings on a perfectly ordinary run, so reading a non-empty
+  stderr as failure would report a cancel as an error to anyone on a noisy desktop. That rule errs
+  toward reading an ambiguous failure as a cancel, deliberately: a cancel misreported as an error
+  puts an alarming refusal in front of someone who did nothing but change their mind, and teaches
+  them to ignore the log, which is the one place this editor says things that matter. The reverse
+  mistake costs a silent no-op they can simply retry.
 - **A dialog that never appears is killed, not waited on.** The request loop is single-threaded, so
   a child blocked on a window that will never be drawn freezes the whole editor; there is a 120
-  second bound and the child is killed at it. A missing `osascript` is reported the same way.
+  second bound and the child is killed at it. A missing dialog program is reported the same way.
 - **A picked path is trusted exactly as far as a typed one.** It goes through the same guards. In
   particular the native save dialog asks its own "replace?" question and hands back an existing path
   when the user says yes — **and we refuse it anyway**, with a refusal that says why: the map
@@ -276,8 +328,7 @@ not offered. Ctrl-scroll or a trackpad pinch over the map zooms **to the cursor*
 pans the pane.
 
 Not in this version: creating a map, sprite placement or removal, elevation, flag editing, redo,
-navigating between directories, a native file dialog anywhere but macOS, and opening more than one
-map at a time. **One process holds one
+navigating between directories, and opening more than one map at a time. **One process holds one
 map**, so a second browser tab does not get a second session — it gets a handle the server then
 refuses, which is the loud version of a tab silently painting into a map it is not showing.
 
@@ -296,12 +347,23 @@ live, that a refused open cannot leave the page saying "No map open." over a liv
 the page does with each of the file dialog's three answers. A missing `node` fails that file rather
 than skipping it.
 
-**What no test covers, because it needs a human and a desktop:** that the macOS dialog actually
-appears, that it is usable, that `with showing package contents` really lets a person click into a
-`.app` bundle, and that a real cancel from a real click produces the `-128` this code reads. The
-scripts were confirmed to compile and reach the dialog by running each one under a short kill timer,
-including with a default location inside the user's own bundle; everything past that point is the
-seam's stub.
+**What no test covers, because it needs a human and a desktop:** that a dialog actually appears,
+that it is usable, that `with showing package contents` really lets a person click into a `.app`
+bundle, and that a real cancel from a real click produces the `-128` this code reads. **Only the
+four AppleScript scripts** were confirmed to compile and reach the dialog, by running each under a
+short kill timer, including with a default location inside the user's own bundle. The PowerShell
+scripts have never been executed at all — they are asserted as text, against the variable names and
+exit code the Rust side actually uses, and nothing more.
+
+Two limits are known and **not** closed, both raised in review:
+
+- `Child::kill` is not a process-tree kill. None of `osascript`, `zenity`, `kdialog` or
+  `powershell.exe` launches its dialog as a separate child, but a distribution that shims one into
+  a wrapper script would leave the window up after a timeout — and a descendant still holding the
+  pipes could make the editor block, which is the one outcome there is no recovering from.
+- `kdialog` writes its path with Qt's `toLocal8Bit`, so on a machine whose locale is not UTF-8 a
+  non-ASCII path arrives mis-encoded. The PowerShell scripts set their output encoding to sidestep
+  exactly this; `kdialog` has no equivalent switch and converting would need a dependency.
 
 **Filed, not built: remembering the last-used maps directory between runs.** It would sidestep the
 dialog entirely after one successful List, and it is the obvious next thing. It is not in v1 because
@@ -423,6 +485,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/map.rs` — bounded common header/cell-grid parsing, packed `y * width + x` coordinates, terrain tags, the measured terrain-type-to-tile table, and the six placed-object record layouts for SCN/SMP/LGD files.
 - `src/tile.rs` — parser for `.til` atlas geometry, terrain types, and the full eight-column neighbour constraints, plus the constraint matcher `--map-paint-terrain` re-tiles from.
 - `examples/paint_refusal_survey.rs` — plan a 3x3 paint of every terrain the tileset draws at **every position it legally fits** on one map, and report how often the declared constraints refuse and how many cells per accepted paint were drawn at random. A coarser stride is an optional argument; it used to be the only behaviour, and the disjoint sample it produced was published as a rate over all paints. Plans only: nothing is applied and nothing is written. Takes a map and a `.til`, because neither is committed.
+- `examples/operator_bodies.rs` — walk all 1,906 native operator bodies and write the classification table, the global-address clusters and the summary to a directory. Every absolute data reference, every direct call, every PE import, and a path-sensitive operand count that disagrees with the recorded site count for 71 operators. `--function ADDR` dumps one body instead, which is how a callee the table only names gets measured rather than guessed at. Takes `lomse.exe`, because it is not committed; the output is, in `reports/natives/`. See [inside the native operator bodies](../../docs/native-operator-bodies.md).
 - `examples/parse_all_tilesets.rs` — parse every `.til` in a directory and report atlas size, terrain-id range and any row that fails to declare all eight constraints. Reading columns the parser used to discard can only *add* failure modes for `--view-map`, so this is the check that it has not: 26 parsed, 0 failed, 0 incomplete on the GS5R3 set. Takes a path, because no tileset is committed.
 - `src/gamescript.rs` — bounded GameScript lexer, procedure diagnostics, name inventory, and static `run` references.
 - `src/gamescript_vm.rs` — experimental bounded value stack, dictionaries, procedures, core operators, and structured execution failures.
