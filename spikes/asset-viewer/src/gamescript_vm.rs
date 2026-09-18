@@ -52,6 +52,11 @@ impl DictKey {
     }
 
     /// The value this key pushes when a dictionary is walked with `forall`.
+    ///
+    /// The `unwrap_or` is unreachable rather than a silent fallback: a `DictKey::Number` is only
+    /// ever built by `number_key_text`, which formats an `f64`, so the text here is always one
+    /// Rust wrote and can read back. No token text reaches this arm. Evidence class: Observed in
+    /// a local binary (the sole construction site is `Value::as_dictionary_key`).
     pub fn to_value(&self) -> Value {
         match self {
             Self::Name(name) => Value::LiteralName(name.clone()),
@@ -1349,6 +1354,9 @@ fn compile_sequence(
             TokenKind::ExecutableName(name) => values.push(Value::ExecutableName(name.clone())),
             TokenKind::LiteralName(name) => values.push(Value::LiteralName(name.clone())),
             TokenKind::Number(number) => {
+                // Every form `gamescript::is_number_token` admits is also accepted by
+                // `f64::from_str`, so this error is unreachable for tokens from that lexer; it
+                // stays as the honest failure for a `Token` assembled by hand.
                 let number = number.parse::<f64>().map_err(|_| {
                     compile_error(format!("could not parse numeric token {number}"))
                 })?;

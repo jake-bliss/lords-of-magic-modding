@@ -42,6 +42,26 @@ while tracking `.tsv`, so the repository had already chosen aggregate TSV as the
 No script text is in any of it. A field whose value is a procedure, dictionary or array is recorded
 as its shape and token count, never its body.
 
+**A flat value is published whole; only prose is bounded.** The two classes are treated differently
+on purpose, and a bounded value says so in the value itself:
+
+| Value class | What `fields.tsv` holds | Longest in the corpus |
+| --- | --- | ---: |
+| procedure, dictionary, array | `<procedure 12 tokens>` — shape and size only | — |
+| number, name, expression | the whole value, every token intact | 2,951 chars (`alt_spells_id` on `chalice_chaos`) |
+| text (a lone string literal) | up to 120 characters, cut on a **word** boundary, then `<truncated, N chars>` | 709 chars before the cut |
+
+This replaced a single `.chars().take(120)` that cut both classes mid-token with no marker. It had
+severed 414 values, publishing the flag names `CAN_USE_R`, `CAN_USE_LE` and `CAN_TRAN` — which the
+game does not have — and a bare `o` that had been the operator `or`. A consumer could only detect
+the cut by noticing a length of exactly 120. Evidence class: Corrected.
+
+**The cut was hiding a real cross-profile difference.** `unit:dethf` and `unit:waldf` have `flags`
+values whose first 120 characters are identical across all three profiles and which diverge after
+them: GS5R3 adds `CAN_USE_RIGHT_ARTIFACT` to `dethf` and `NO_DEFEND_ANIM` to `waldf`. Both are now
+listed in the `changed-fields` column of `reports/gameplay/profile-diff.tsv`, where the truncated
+comparison had reported no difference at all. Evidence class: Corrected.
+
 ## Reproducing it
 
 ```sh
@@ -505,11 +525,9 @@ strength of archive order.
 
 ## Two pre-existing defects found on the way
 
-Both are outside this work's scope and are **not fixed here**; both affect other published figures.
+### A defect in the shared lexer — since fixed
 
-### A defect in the shared lexer
-
-`gamescript.rs` classifies a token as a number when `name.parse::<f64>()` succeeds. Rust's
+`gamescript.rs` used to classify a token as a number when `name.parse::<f64>()` succeeded. Rust's
 `f64::from_str` accepts `inf`, `infinity` and `nan`, case-insensitively. The shipped infantry unit
 code is the literal `INF`:
 
@@ -517,12 +535,17 @@ code is the literal `INF`:
 /code INF def
 ```
 
-So eight units per profile have `code` lexed as **floating-point infinity** rather than as an
-executable name, and the naive range over that field reads `inf … inf`. This module guards against
-it locally — a non-finite number keeps its text and its shape but is never summarised, and
-`a_non_finite_number_token_is_never_summarised_as_a_value` fails if the guard is removed. The lexer
-itself is untouched, because its token counts are load-bearing for the vocabulary work. Anything
-else in the repository reading `TokenKind::Number` has the same exposure. Evidence class: Observed.
+So eight units per profile had `code` lexed as **floating-point infinity** rather than as an
+executable name, and the naive range over that field read `inf … inf`. The lexer now classifies
+with `gamescript::is_number_token`, which models PostScript's integer and real forms rather than
+Rust's parser, so those eight units per profile carry the `name` shape and the `code` row of
+`reports/gameplay/field-ranges.tsv` reads `name:151` for vanilla and 3.02 and `name:166` for GS5R3,
+where it read `number:8 name:143` and `number:8 name:158`. Evidence class: Corrected.
+
+This module's own guard stays: a non-finite number keeps its text and its shape but is never
+summarised, and `a_non_finite_number_token_is_never_summarised_as_a_value` fails if the guard is
+removed. It is now defence against an overflowing literal rather than against a spelled-out
+infinity, which the lexer no longer produces.
 
 ### A defect in `tools/gs_syntax.py`
 
@@ -549,15 +572,18 @@ profile diff here is computed from the Rust lexer instead. Evidence class: Obser
 
 ## Tests
 
-- `src/gameplay_symbols.rs` — 39 unit tests. Fixtures are written to probe shapes the corpus does
+- `src/gameplay_symbols.rs` — 42 unit tests. Fixtures are written to probe shapes the corpus does
   **not** contain as well as ones it does: a repeated top-level key, a value of two numbers, an
   unclosed procedure, a decoy `/decoy bind def` before the real unit binding, a literal followed by
   `put def` rather than `get def`. A suite built only from corpus-shaped input cannot fail on what
   the corpus happens never to do.
-- `tests/gameplay_symbols.rs` — 7 corpus-gated tests (`LOM_GS_MPQ`, `#[ignore]`d), passing on all
+- `tests/gameplay_symbols.rs` — 9 corpus-gated tests (`LOM_GS_MPQ`, `#[ignore]`d), passing on all
   three profiles. None compares a count to a constant; each states a property the corpus must have
   if the rule is right. One fails if the registrar rule and the directory rule ever stop disagreeing;
-  another fails if any looked-up dictionary key becomes a field name.
+  another fails if any looked-up dictionary key becomes a field name; another fails if any published
+  value contains a word the archive does not, which is what a mid-token cut leaves behind, and it
+  is checked against the corpus's own vocabulary rather than against the four names that were
+  severed.
 - **Mutation run: 49 mutations, 49 caught, 0 survivors**, and every mutation compiled and ran —
   a mutation that fails to build is not a caught mutation. Constants mutated in both directions
   (minimum→maximum and maximum→minimum; `== 1`→`>= 1` and `== 1`→`== 2`; marker search forced to

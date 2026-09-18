@@ -7,7 +7,9 @@ Every heading is a stable anchor: a symbol named `bolt_fire` classified as a spe
 [gameplay-reference.md](../../docs/gameplay-reference.md); this file is the index.
 
 Aggregate values only. A field whose value is a procedure, dictionary or array is shown as
-its shape and token count, never its body.
+its shape and token count, never its body. A flat value -- a number, a name, or an
+expression of them -- is shown whole; only prose is bounded, and a bounded value is cut on
+a word boundary and marked `<truncated, N chars>`.
 
 ## unit (168)
 
@@ -296,7 +298,7 @@ its shape and token count, never its body.
 | `earth_resistance` | number | `-50` |
 | `faith` | name | `AIR` |
 | `fire_resistance` | number | `25` |
-| `flags` | expression | `UNITTYPEAIR UNITTYPEMISSILE or CAN_ATTACK or CAN_DEFEND or CAN_CAST_BREATH or CANT_COMBINE or NO_DEFEND_ANIM or CAN_TRAN` |
+| `flags` | expression | `UNITTYPEAIR UNITTYPEMISSILE or CAN_ATTACK or CAN_DEFEND or CAN_CAST_BREATH or CANT_COMBINE or NO_DEFEND_ANIM or CAN_TRANSFER_ARTIFACT or` |
 | `food_to_build` | number | `150` |
 | `food_used_per_turn` | number | `3` |
 | `frames_per_grid` | number | `4` |
@@ -351,7 +353,7 @@ its shape and token count, never its body.
 | `code` | name | `FIT` |
 | `dexterity` | number | `4` |
 | `faith` | name | `AIR` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `55` |
 | `food_used_per_turn` | number | `1` |
 | `frames_per_grid` | number | `5` |
@@ -392,7 +394,7 @@ its shape and token count, never its body.
 | `attack` | number | `5` |
 | `attack_recovery_ticks` | number | `8` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `14` |
 | `faith` | name | `AIR` |
 | `flags` | expression | `UNITTYPEAIR CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -442,7 +444,7 @@ its shape and token count, never its body.
 | `code` | name | `LDF` |
 | `dexterity` | number | `6` |
 | `faith` | name | `AIR` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `5` |
 | `get_hit_recovery_ticks` | number | `0` |
 | `health_bar_x` | number | `-16` |
@@ -480,7 +482,7 @@ its shape and token count, never its body.
 | `code` | name | `LDT` |
 | `dexterity` | number | `13` |
 | `faith` | name | `AIR` |
-| `flags` | expression | `UNITTYPEAIR UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LE` |
+| `flags` | expression | `UNITTYPEAIR UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `4` |
 | `get_hit_recovery_ticks` | number | `1` |
 | `health_bar_x` | number | `-16` |
@@ -666,7 +668,7 @@ its shape and token count, never its body.
 | `code` | name | `THF` |
 | `dexterity` | number | `12` |
 | `faith` | name | `AIR` |
-| `flags` | expression | `UNITTYPEAIR UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LE` |
+| `flags` | expression | `UNITTYPEAIR UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `4` |
@@ -1231,7 +1233,7 @@ its shape and token count, never its body.
 | `code` | name | `FIT` |
 | `dexterity` | number | `8` |
 | `faith` | name | `CHAOS` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `45` |
 | `food_used_per_turn` | number | `1` |
 | `frames_per_grid` | number | `5` |
@@ -1275,7 +1277,7 @@ its shape and token count, never its body.
 | `attack` | number | `8` |
 | `attack_recovery_ticks` | number | `12` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `8` |
 | `faith` | name | `CHAOS` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -1326,7 +1328,7 @@ its shape and token count, never its body.
 | `death_resistance` | number | `25` |
 | `dexterity` | number | `18` |
 | `faith` | name | `CHAOS` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or CAN_TRANSFER_ARTIFACT or NO_DEFEND_ANIM or` |
 | `food_to_build` | number | `200` |
 | `food_used_per_turn` | number | `1` |
 | `frames_per_grid` | number | `5` |
@@ -1386,7 +1388,7 @@ its shape and token count, never its body.
 | `earth_resistance` | number | `25` |
 | `faith` | name | `CHAOS` |
 | `fire_resistance` | number | `25` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SPELLS or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or CAN_TRANSFER_A` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SPELLS or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or CAN_TRANSFER_ARTIFACT or` |
 | `food_to_build` | number | `25` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `6` |
@@ -1439,7 +1441,7 @@ its shape and token count, never its body.
 | `code` | name | `LDF` |
 | `dexterity` | number | `8` |
 | `faith` | name | `CHAOS` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `5` |
 | `get_hit_recovery_ticks` | number | `2` |
 | `health_bar_x` | number | `-16` |
@@ -1478,7 +1480,7 @@ its shape and token count, never its body.
 | `code` | name | `LDT` |
 | `dexterity` | number | `11` |
 | `faith` | name | `CHAOS` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `6` |
 | `get_hit_recovery_ticks` | number | `1` |
 | `health_bar_x` | number | `-16` |
@@ -1662,7 +1664,7 @@ its shape and token count, never its body.
 | `code` | name | `THF` |
 | `dexterity` | number | `10` |
 | `faith` | name | `CHAOS` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `6` |
@@ -1885,7 +1887,7 @@ its shape and token count, never its body.
 | `code` | name | `WMF` |
 | `dexterity` | number | `6` |
 | `faith` | name | `CHAOS` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_used_per_turn` | number | `1` |
 | `frames_per_grid` | number | `5` |
 | `get_hit_recovery_ticks` | number | `4` |
@@ -1930,7 +1932,7 @@ its shape and token count, never its body.
 | `death_resistance` | number | `25` |
 | `dexterity` | number | `15` |
 | `faith` | name | `CHAOS` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `80` |
 | `food_used_per_turn` | number | `1` |
 | `frames_per_grid` | number | `6` |
@@ -2119,7 +2121,7 @@ its shape and token count, never its body.
 | `code` | name | `WMT` |
 | `dexterity` | number | `10` |
 | `faith` | name | `CHAOS` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `6` |
@@ -2601,7 +2603,7 @@ its shape and token count, never its body.
 | `code` | name | `FIT` |
 | `dexterity` | number | `10` |
 | `faith` | name | `DEATH` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `32` |
 | `food_used_per_turn` | number | `1` |
 | `frames_per_grid` | number | `5` |
@@ -2645,7 +2647,7 @@ its shape and token count, never its body.
 | `attack` | number | `6` |
 | `attack_recovery_ticks` | number | `12` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `9` |
 | `faith` | name | `DEATH` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -2699,7 +2701,7 @@ its shape and token count, never its body.
 | `earth_resistance` | number | `25` |
 | `faith` | name | `DEATH` |
 | `fire_resistance` | number | `-50` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SPELLS or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or CAN_TRANSFER_A` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SPELLS or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or CAN_TRANSFER_ARTIFACT or` |
 | `food_to_build` | number | `100` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `5` |
@@ -2753,7 +2755,7 @@ its shape and token count, never its body.
 | `code` | name | `LDF` |
 | `dexterity` | number | `10` |
 | `faith` | name | `DEATH` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `5` |
 | `get_hit_recovery_ticks` | number | `0` |
 | `health_bar_x` | number | `-13` |
@@ -2799,7 +2801,7 @@ its shape and token count, never its body.
 | `earth_resistance` | number | `50` |
 | `faith` | name | `DEATH` |
 | `fire_resistance` | number | `50` |
-| `flags` | expression | `UNITTYPEAIR UNITTYPEMISSILE or CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_SPELLS or CAN_USE_RIGHT_A` |
+| `flags` | expression | `UNITTYPEAIR UNITTYPEMISSILE or CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_SPELLS or CAN_USE_RIGHT_ARTIFACT or CAN_USE_LEFT_ARTIFACT or` |
 | `frames_per_grid` | number | `4` |
 | `get_hit_recovery_ticks` | number | `2` |
 | `health_bar_x` | number | `-16` |
@@ -2848,7 +2850,7 @@ its shape and token count, never its body.
 | `code` | name | `LDT` |
 | `dexterity` | number | `13` |
 | `faith` | name | `DEATH` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `5` |
 | `get_hit_recovery_ticks` | number | `1` |
 | `health_bar_x` | number | `-14` |
@@ -3035,7 +3037,7 @@ its shape and token count, never its body.
 | `code` | name | `THF` |
 | `dexterity` | number | `12` |
 | `faith` | name | `DEATH` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `5` |
@@ -3612,7 +3614,7 @@ its shape and token count, never its body.
 | `code` | name | `FIT` |
 | `dexterity` | number | `7` |
 | `faith` | name | `EARTH` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `29` |
 | `food_used_per_turn` | number | `1` |
 | `frames_per_grid` | number | `8` |
@@ -3655,7 +3657,7 @@ its shape and token count, never its body.
 | `attack` | number | `7` |
 | `attack_recovery_ticks` | number | `15` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `5` |
 | `faith` | name | `EARTH` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -3709,7 +3711,7 @@ its shape and token count, never its body.
 | `earth_resistance` | number | `75` |
 | `faith` | name | `EARTH` |
 | `fire_resistance` | number | `25` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_RIGHT_ARTIFACT or CAN_USE_` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_RIGHT_ARTIFACT or CAN_USE_LEFT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `5` |
@@ -3763,7 +3765,7 @@ its shape and token count, never its body.
 | `code` | name | `LDF` |
 | `dexterity` | number | `8` |
 | `faith` | name | `EARTH` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_RIGHT_ARTIFACT or CAN_USE_` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_RIGHT_ARTIFACT or CAN_USE_LEFT_ARTIFACT or` |
 | `frames_per_grid` | number | `8` |
 | `get_hit_recovery_ticks` | number | `3` |
 | `health_bar_x` | number | `-16` |
@@ -3801,7 +3803,7 @@ its shape and token count, never its body.
 | `code` | name | `LDT` |
 | `dexterity` | number | `12` |
 | `faith` | name | `EARTH` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `8` |
 | `get_hit_recovery_ticks` | number | `1` |
 | `health_bar_x` | number | `-16` |
@@ -3985,7 +3987,7 @@ its shape and token count, never its body.
 | `code` | name | `THF` |
 | `dexterity` | number | `11` |
 | `faith` | name | `EARTH` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `8` |
@@ -4434,7 +4436,7 @@ its shape and token count, never its body.
 | `earth_resistance` | number | `-25` |
 | `faith` | name | `FIRE` |
 | `fire_resistance` | number | `100` |
-| `flags` | expression | `UNITTYPEMISSILE CAN_ATTACK or CAN_DEFEND or CAN_CAST_BREATH or CANT_COMBINE or NO_DEFEND_ANIM or CAN_TRANSFER_ARTIFACT o` |
+| `flags` | expression | `UNITTYPEMISSILE CAN_ATTACK or CAN_DEFEND or CAN_CAST_BREATH or CANT_COMBINE or NO_DEFEND_ANIM or CAN_TRANSFER_ARTIFACT or` |
 | `food_to_build` | number | `100` |
 | `food_used_per_turn` | number | `2` |
 | `frames_per_grid` | number | `4` |
@@ -4489,7 +4491,7 @@ its shape and token count, never its body.
 | `code` | name | `FIT` |
 | `dexterity` | number | `4` |
 | `faith` | name | `FIRE` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `41` |
 | `food_used_per_turn` | number | `1` |
 | `frames_per_grid` | number | `6` |
@@ -4532,7 +4534,7 @@ its shape and token count, never its body.
 | `attack` | number | `8` |
 | `attack_recovery_ticks` | number | `12` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `8` |
 | `faith` | name | `FIRE` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -4581,7 +4583,7 @@ its shape and token count, never its body.
 | `code` | name | `LDF` |
 | `dexterity` | number | `5` |
 | `faith` | name | `FIRE` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `6` |
 | `get_hit_recovery_ticks` | number | `0` |
 | `health_bar_x` | number | `-16` |
@@ -4619,7 +4621,7 @@ its shape and token count, never its body.
 | `code` | name | `LDT` |
 | `dexterity` | number | `9` |
 | `faith` | name | `FIRE` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `7` |
 | `get_hit_recovery_ticks` | number | `1` |
 | `health_bar_x` | number | `-16` |
@@ -4803,7 +4805,7 @@ its shape and token count, never its body.
 | `code` | name | `THF` |
 | `dexterity` | number | `8` |
 | `faith` | name | `FIRE` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `7` |
@@ -5231,7 +5233,7 @@ its shape and token count, never its body.
 | `code` | name | `FIT` |
 | `dexterity` | number | `10` |
 | `faith` | name | `LIFE` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `16` |
 | `food_used_per_turn` | number | `1` |
 | `frames_per_grid` | number | `4` |
@@ -5275,7 +5277,7 @@ its shape and token count, never its body.
 | `attack` | number | `5` |
 | `attack_recovery_ticks` | number | `10` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `9` |
 | `faith` | name | `LIFE` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -5324,7 +5326,7 @@ its shape and token count, never its body.
 | `code` | name | `LDF` |
 | `dexterity` | number | `10` |
 | `faith` | name | `LIFE` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `4` |
 | `get_hit_recovery_ticks` | number | `2` |
 | `health_bar_x` | number | `-16` |
@@ -5394,7 +5396,7 @@ its shape and token count, never its body.
 | `code` | name | `LDT` |
 | `dexterity` | number | `13` |
 | `faith` | name | `LIFE` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `5` |
 | `get_hit_recovery_ticks` | number | `1` |
 | `health_bar_x` | number | `-16` |
@@ -5581,7 +5583,7 @@ its shape and token count, never its body.
 | `code` | name | `THF` |
 | `dexterity` | number | `12` |
 | `faith` | name | `LIFE` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `5` |
@@ -6070,7 +6072,7 @@ its shape and token count, never its body.
 | `code` | name | `FIT` |
 | `dexterity` | number | `7` |
 | `faith` | name | `ORDER` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `34` |
 | `food_used_per_turn` | number | `1` |
 | `frames_per_grid` | number | `6` |
@@ -6121,7 +6123,7 @@ its shape and token count, never its body.
 | `earth_resistance` | number | `0` |
 | `faith` | name | `ORDER` |
 | `fire_resistance` | number | `0` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `264` |
 | `food_used_per_turn` | number | `2` |
 | `frames_per_grid` | number | `5` |
@@ -6169,7 +6171,7 @@ its shape and token count, never its body.
 | `attack` | number | `7` |
 | `attack_recovery_ticks` | number | `10` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `7` |
 | `faith` | name | `ORDER` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -6218,7 +6220,7 @@ its shape and token count, never its body.
 | `code` | name | `LD1` |
 | `dexterity` | number | `11` |
 | `faith` | name | `ORDER` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `4` |
 | `get_hit_recovery_ticks` | number | `0` |
 | `health_bar_x` | number | `-16` |
@@ -6257,7 +6259,7 @@ its shape and token count, never its body.
 | `code` | name | `LD2` |
 | `dexterity` | number | `8` |
 | `faith` | name | `ORDER` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `3` |
 | `get_hit_recovery_ticks` | number | `0` |
 | `health_bar_x` | number | `-16` |
@@ -6297,7 +6299,7 @@ its shape and token count, never its body.
 | `code` | name | `LD3` |
 | `dexterity` | number | `8` |
 | `faith` | name | `ORDER` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `6` |
 | `get_hit_recovery_ticks` | number | `0` |
 | `health_bar_x` | number | `-16` |
@@ -6337,7 +6339,7 @@ its shape and token count, never its body.
 | `code` | name | `LDF` |
 | `dexterity` | number | `8` |
 | `faith` | name | `ORDER` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `6` |
 | `get_hit_recovery_ticks` | number | `1` |
 | `health_bar_x` | number | `-16` |
@@ -6376,7 +6378,7 @@ its shape and token count, never its body.
 | `code` | name | `LDT` |
 | `dexterity` | number | `10` |
 | `faith` | name | `ORDER` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `7` |
 | `get_hit_recovery_ticks` | number | `1` |
 | `health_bar_x` | number | `-16` |
@@ -6560,7 +6562,7 @@ its shape and token count, never its body.
 | `code` | name | `THF` |
 | `dexterity` | number | `9` |
 | `faith` | name | `ORDER` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `7` |
@@ -7222,7 +7224,7 @@ its shape and token count, never its body.
 | `code` | name | `FIT` |
 | `dexterity` | number | `8` |
 | `faith` | name | `WATER` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `21` |
 | `food_used_per_turn` | number | `1` |
 | `frames_per_grid` | number | `5` |
@@ -7266,7 +7268,7 @@ its shape and token count, never its body.
 | `attack` | number | `6` |
 | `attack_recovery_ticks` | number | `12` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `8` |
 | `faith` | name | `WATER` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -7317,7 +7319,7 @@ its shape and token count, never its body.
 | `earth_resistance` | number | `-25` |
 | `faith` | name | `WATER` |
 | `fire_resistance` | number | `-25` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `6` |
@@ -7374,7 +7376,7 @@ its shape and token count, never its body.
 | `earth_resistance` | number | `0` |
 | `faith` | name | `WATER` |
 | `fire_resistance` | number | `0` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or NO_DEFEND_ANIM or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `4` |
@@ -7427,7 +7429,7 @@ its shape and token count, never its body.
 | `code` | name | `LDF` |
 | `dexterity` | number | `8` |
 | `faith` | name | `WATER` |
-| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_R` |
+| `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_SURRENDER or CAN_BERSERK or CAN_RALLY or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `5` |
 | `get_hit_recovery_ticks` | number | `0` |
 | `health_bar_x` | number | `-16` |
@@ -7466,7 +7468,7 @@ its shape and token count, never its body.
 | `code` | name | `LDT` |
 | `dexterity` | number | `11` |
 | `faith` | name | `WATER` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `frames_per_grid` | number | `7` |
 | `get_hit_recovery_ticks` | number | `1` |
 | `health_bar_x` | number | `-16` |
@@ -7687,7 +7689,7 @@ its shape and token count, never its body.
 | `code` | name | `TF1` |
 | `dexterity` | number | `10` |
 | `faith` | name | `WATER` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `7` |
@@ -7733,7 +7735,7 @@ its shape and token count, never its body.
 | `code` | name | `THF` |
 | `dexterity` | number | `10` |
 | `faith` | name | `WATER` |
-| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_L` |
+| `flags` | expression | `UNITTYPELAND UNITTYPEMISSILE or CAN_SURRENDER or CAN_SUBDUE or CAN_AIMED or CAN_STEALTH or CAN_DETECT_THIEF or CAN_USE_LEFT_ARTIFACT or CAN_USE_RIGHT_ARTIFACT or` |
 | `food_to_build` | number | `0` |
 | `food_used_per_turn` | number | `0` |
 | `frames_per_grid` | number | `7` |
@@ -9007,9 +9009,9 @@ its shape and token count, never its body.
 | `mode` | expression | `COMBAT_SPELL CANNOT_RESEARCH or` |
 | `name` | text | `Bolt of Fury` |
 | `permanent_modifications` | dictionary | `<dictionary 19 tokens>` |
-| `random_aura` | expression | `aura_dict begin [ sparrow_aura curse_aura ribolt_aura blades_aura fireball_aura freeze_aura rocksling_aura ballsocold_au` |
+| `random_aura` | expression | `aura_dict begin [ sparrow_aura curse_aura ribolt_aura blades_aura fireball_aura freeze_aura rocksling_aura ballsocold_aura ] end replace bind` |
 | `random_faith` | procedure | `<procedure 5 tokens>` |
-| `random_missile` | expression | `missiledict begin [ fireball_type blobs ribolt_type blades_type fire_breath_type spray rocksling_type frost_breath_type ` |
+| `random_missile` | expression | `missiledict begin [ fireball_type blobs ribolt_type blades_type fire_breath_type spray rocksling_type frost_breath_type ] end replace bind` |
 | `range` | number | `-1` |
 | `recover_ticks` | number | `8` |
 | `research_cost` | number | `32` |
@@ -21169,7 +21171,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
 | `defend_proc` | procedure | `<procedure 11 tokens>` |
-| `description` | text | `Any Champion in Urak may wear this pendant to receive +(1/3X) Armor and +1X% Magic Resistance.  However, Mages wearing t` |
+| `description` | text | `Any Champion in Urak may wear this pendant to receive +(1/3X) Armor and +1X% Magic Resistance. However, Mages wearing <truncated, 246 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -21210,7 +21212,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
-| `description` | text | `Any champion, except Air champions, may wear this amulet to receive +3 Armor and Dexterity, +15% Magic Resistance but +2` |
+| `description` | text | `Any champion, except Air champions, may wear this amulet to receive +3 Armor and Dexterity, +15% Magic Resistance but <truncated, 434 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -21257,7 +21259,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
 | `defend_proc` | procedure | `<procedure 11 tokens>` |
-| `description` | text | `Any Champion may wear this amulet which grants +(1/3X) Armor, +(1/5X) Sight Radius and the ability to cast Detect Chaos.` |
+| `description` | text | `Any Champion may wear this amulet which grants +(1/3X) Armor, +(1/5X) Sight Radius and the ability to cast Detect Chaos. <truncated, 247 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -21297,7 +21299,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
-| `description` | text | `Any champion, except for Water champions, may wear this relic to receive +4 Movement, Sight Radius and Luck, +25% Magic ` |
+| `description` | text | `Any champion, except for Water champions, may wear this relic to receive +4 Movement, Sight Radius and Luck, +25% Magic <truncated, 257 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -21344,7 +21346,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `defend_proc` | procedure | `<procedure 153 tokens>` |
-| `description` | text | `Any Champion, except for Order Champions, may wear this chaotic amulet to receive +5 Dexterity, Stealth and Luck, +25% M` |
+| `description` | text | `Any Champion, except for Order Champions, may wear this chaotic amulet to receive +5 Dexterity, Stealth and Luck, +25% <truncated, 515 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
@@ -21388,7 +21390,7 @@ its shape and token count, never its body.
 | `category` | number | `4` |
 | `colorizetext?` | name | `false` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Any Champion may wear this pendant which provides +50% Physical Resistance, +8 Hit Recovery, reduces all Magic Resistanc` |
+| `description` | text | `Any Champion may wear this pendant which provides +50% Physical Resistance, +8 Hit Recovery, reduces all Magic <truncated, 449 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
@@ -21431,7 +21433,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 47 tokens>` |
-| `description` | text | `Any Champion may wear this amulet to receive +3 Armor, +10 maximum health, +5 Luck and the ability to cast Hand of Fate.` |
+| `description` | text | `Any Champion may wear this amulet to receive +3 Armor, +10 maximum health, +5 Luck and the ability to cast Hand of Fate. <truncated, 292 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `CHAOS` |
@@ -21474,7 +21476,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 47 tokens>` |
-| `description` | text | `Any Champion, except for Life Champions, may wield this artifact for +3 Strength, Armor and Luck with the ability to cas` |
+| `description` | text | `Any Champion, except for Life Champions, may wield this artifact for +3 Strength, Armor and Luck with the ability to <truncated, 251 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -21544,7 +21546,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Any mage in Urak will gain +2 Armor and +20% magic resistance. Casts possesion once per day. Order mages also get +50% r` |
+| `description` | text | `Any mage in Urak will gain +2 Armor and +20% magic resistance. Casts possesion once per day. Order mages also get +50% <truncated, 145 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `2` |
@@ -21604,7 +21606,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Any thief gains +2 Dexterity, +3 Luck, +1 gold per level of the wielder each turn, and ability to cast Polymorph Self on` |
+| `description` | text | `Any thief gains +2 Dexterity, +3 Luck, +1 gold per level of the wielder each turn, and ability to cast Polymorph Self <truncated, 186 chars>` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `end_turn_proc` | procedure | `<procedure 54 tokens>` |
 | `faith` | name | `CHAOS` |
@@ -21664,7 +21666,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `Any Champion gains +2 Armor, +10 maximum hit points and +1 Luck.  Chaos wielders have a 10% chance to freeze stricken en` |
+| `description` | text | `Any Champion gains +2 Armor, +10 maximum hit points and +1 Luck. Chaos wielders have a 10% chance to freeze stricken <truncated, 257 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `CHAOS` |
 | `image` | number | `2` |
@@ -21692,7 +21694,7 @@ its shape and token count, never its body.
 |---|---|---|
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
-| `description` | text | `Any Order, Life or Water worshipper gains +2 Armor, +2 Strength and 25% magic resistance.  Order followers will regenera` |
+| `description` | text | `Any Order, Life or Water worshipper gains +2 Armor, +2 Strength and 25% magic resistance. Order followers will <truncated, 183 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 24 tokens>` |
@@ -21777,7 +21779,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Any thief gets +2 Armor, +4 Movement, +2 sight radius, and can cast Detect Death.  Restores full health at the end of ev` |
+| `description` | text | `Any thief gets +2 Armor, +4 Movement, +2 sight radius, and can cast Detect Death. Restores full health at the end of <truncated, 131 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `end_combat_proc` | procedure | `<procedure 13 tokens>` |
 | `faith` | name | `LIFE` |
@@ -21811,7 +21813,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 166 tokens>` |
-| `description` | text | `Any Champion may hold this bauble for +3 Strength, Armor, Rate of Fire and Stealth, +50% Life resistance, negated Health` |
+| `description` | text | `Any Champion may hold this bauble for +3 Strength, Armor, Rate of Fire and Stealth, +50% Life resistance, negated Health <truncated, 617 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `3 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 21 tokens>` |
@@ -21858,7 +21860,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 75 tokens>` |
-| `description` | text | `Any Champion, except for Death Champions, may wear this revered amulet to receive +5/3X% Death Resistance, +4 Armor, Mov` |
+| `description` | text | `Any Champion, except for Death Champions, may wear this revered amulet to receive +5/3X% Death Resistance, +4 Armor, <truncated, 337 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 5 tokens>` |
@@ -21902,7 +21904,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 82 tokens>` |
-| `description` | text | `Any champion, except Fire champions, may wear this amulet which provides the wearer with +3 Armor, Dexterity and Stealth` |
+| `description` | text | `Any champion, except Fire champions, may wear this amulet which provides the wearer with +3 Armor, Dexterity and <truncated, 295 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -21946,7 +21948,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 95 tokens>` |
-| `description` | text | `Any Champion, except Earth Champions, may wear this pendent to receive +3 Armor, +25% Physical Resistance, 1X% Magic Res` |
+| `description` | text | `Any Champion, except Earth Champions, may wear this pendent to receive +3 Armor, +25% Physical Resistance, 1X% Magic <truncated, 485 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 5 tokens>` |
@@ -21986,7 +21988,7 @@ its shape and token count, never its body.
 |---|---|---|
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
-| `description` | text | `This ring, usable by any thief makes its wearer supreme in combat, but it does seem to be cursed, for those who wear it ` |
+| `description` | text | `This ring, usable by any thief makes its wearer supreme in combat, but it does seem to be cursed, for those who wear it <truncated, 151 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `end_combat_proc` | procedure | `<procedure 13 tokens>` |
 | `faith` | name | `WATER` |
@@ -22066,7 +22068,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `All thieves get +2 Armor, +1 sight radius, and one Area Stun spell per day (affecting enemies in a large radius) from th` |
+| `description` | text | `All thieves get +2 Armor, +1 sight radius, and one Area Stun spell per day (affecting enemies in a large radius) from <truncated, 165 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `AIR` |
 | `image` | number | `2` |
@@ -22097,7 +22099,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 72 tokens>` |
-| `description` | text | `Order, Death, Chaos or Earth warriors may wear this armor, crafted with purest of alloys, to receive +5 Armor and Hit Re` |
+| `description` | text | `Order, Death, Chaos or Earth warriors may wear this armor, crafted with purest of alloys, to receive +5 Armor and Hit <truncated, 583 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 45 tokens>` |
@@ -22143,7 +22145,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 241 tokens>` |
-| `description` | text | `Fire, Chaos or Air Warriors may wear this Dragonborne armor to receive +10 health, +5 Armor and Hit Recovery, +5X% Air, ` |
+| `description` | text | `Fire, Chaos or Air Warriors may wear this Dragonborne armor to receive +10 health, +5 Armor and Hit Recovery, +5X% Air, <truncated, 552 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 45 tokens>` |
@@ -22189,7 +22191,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 210 tokens>` |
-| `description` | text | `Death, Order, Chaos, Water Warriors may wear this unholy plate to receive +5 Armor, +5 Hit Recovery, +(10/3)X% Life Resi` |
+| `description` | text | `Death, Order, Chaos, Water Warriors may wear this unholy plate to receive +5 Armor, +5 Hit Recovery, +(10/3)X% Life <truncated, 535 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
@@ -22233,7 +22235,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 217 tokens>` |
-| `description` | text | `Life or Water Warriors may wear this holy chain mail to receive +3 Armor, Dexterity and Hit Reovery, +2X% Magic Resistan` |
+| `description` | text | `Life or Water Warriors may wear this holy chain mail to receive +3 Armor, Dexterity and Hit Reovery, +2X% Magic <truncated, 574 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 45 tokens>` |
@@ -22279,7 +22281,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 219 tokens>` |
-| `description` | text | `This featherweight armor grants Air, Chaos or Fire warriors +3 Armor, Dexterity and Hit Recovery, +4 Overland Movement, ` |
+| `description` | text | `This featherweight armor grants Air, Chaos or Fire warriors +3 Armor, Dexterity and Hit Recovery, +4 Overland Movement, <truncated, 585 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 45 tokens>` |
@@ -22326,7 +22328,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
-| `description` | text | `Earth, Chaos, Death, or Order Warriors may wear this sable plate to receive +5 Armor and Hit Recovery, +(10/3)X% Air Res` |
+| `description` | text | `Earth, Chaos, Death, or Order Warriors may wear this sable plate to receive +5 Armor and Hit Recovery, +(10/3)X% Air <truncated, 552 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 45 tokens>` |
@@ -22369,7 +22371,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 25 tokens>` |
-| `description` | text | `Death, Earth, and Order warriors get +2 Armor from this mail, which can 'lash out' at attackers 10% of the time.  The ar` |
+| `description` | text | `Death, Earth, and Order warriors get +2 Armor from this mail, which can 'lash out' at attackers 10% of the time. The <truncated, 194 chars>` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `8` |
@@ -22401,7 +22403,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `false` |
 | `category` | number | `3` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Usable by all Champions, this lightweight armor will grant the wearer +2 Armor, +4 points of Health and +2 health recove` |
+| `description` | text | `Usable by all Champions, this lightweight armor will grant the wearer +2 Armor, +4 points of Health and +2 health <truncated, 245 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 43 tokens>` |
@@ -22496,7 +22498,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Chaos or Earth Warriors may wield this axe, which is infused with the portents of Chaos, to receive +5 Luck, +1000 Exper` |
+| `description` | text | `Chaos or Earth Warriors may wield this axe, which is infused with the portents of Chaos, to receive +5 Luck, +1000 <truncated, 280 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `CHAOS` |
@@ -22535,7 +22537,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Chaos or Earth Warriors may wield this great axe to receive +(1/3X) Attack, +(1/5X) Rate of Attack and the ability to ca` |
+| `description` | text | `Chaos or Earth Warriors may wield this great axe to receive +(1/3X) Attack, +(1/5X) Rate of Attack and the ability to <truncated, 224 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -22575,7 +22577,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 42 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Earth and Chaos Warriors may wield this powerfully heavy axe to receive +5 Attack, +5 Rate of Attack, +1000 Experience p` |
+| `description` | text | `Earth and Chaos Warriors may wield this powerfully heavy axe to receive +5 Attack, +5 Rate of Attack, +1000 Experience <truncated, 329 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -22617,7 +22619,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Gives Chaos and Earth warriors -2 to +6 Attack, -2 to +4 rate of attack and -2 to +4 hit recovery.  Chaos warriors also ` |
+| `description` | text | `Gives Chaos and Earth warriors -2 to +6 Attack, -2 to +4 rate of attack and -2 to +4 hit recovery. Chaos warriors also <truncated, 237 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `dummy2` | expression | `spelldict begin [ petrify fireball icycoff morpho ] end replace bind` |
 | `end_combat_proc` | procedure | `<procedure 7 tokens>` |
@@ -22647,7 +22649,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Chaos warriors gain +2 Attack and can cast Tremor.  Earth warriors get +3 Attack, +3 rate of attack, +2000 Experience, +` |
+| `description` | text | `Chaos warriors gain +2 Attack and can cast Tremor. Earth warriors get +3 Attack, +3 rate of attack, +2000 Experience, +1 <truncated, 153 chars>` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `5` |
@@ -22723,7 +22725,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Earth or Chaos Warriors may wield this swift axe for +(1/3X) Attack, +(1/5X) Rate of Attack and the ability to cast Dete` |
+| `description` | text | `Earth or Chaos Warriors may wield this swift axe for +(1/3X) Attack, +(1/5X) Rate of Attack and the ability to cast <truncated, 215 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -22761,7 +22763,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Only Balkoth may wield.  Cast Locust once daily.  Can claim victim's soul in combat (5% chance). +2 hit point Vampyric l` |
+| `description` | text | `Only Balkoth may wield. Cast Locust once daily. Can claim victim's soul in combat (5% chance). +2 hit point Vampyric <truncated, 162 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `dummy2` | expression | `currentdict /mod_proc get replace bind` |
 | `faith` | name | `DEATH` |
@@ -22822,7 +22824,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `false` |
 | `category` | number | `3` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Any Champion may wear this large belt to receive +2 Armor, Strength and Health Recovery.  Health Recovery provided by th` |
+| `description` | text | `Any Champion may wear this large belt to receive +2 Armor, Strength and Health Recovery. Health Recovery provided by <truncated, 383 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
@@ -22863,7 +22865,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Only Water thieves may use.  Makes a chilling attack that has a 5% chance of sealing an enemy in ice.  Casts Icebolt six` |
+| `description` | text | `Only Water thieves may use. Makes a chilling attack that has a 5% chance of sealing an enemy in ice. Casts Icebolt six <truncated, 191 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `WATER` |
 | `image` | number | `6` |
@@ -22895,7 +22897,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 4 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Water Thieves who wield this blowgun are granted +5 Ranged Attack, Missile Range, Rate of Fire and Stealth with the abil` |
+| `description` | text | `Water Thieves who wield this blowgun are granted +5 Ranged Attack, Missile Range, Rate of Fire and Stealth with the <truncated, 382 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -22937,7 +22939,7 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Usable by all Champions, these quiet boots will grant the wearer +2 Stealth, Movement and Dexterity.  Additionally, Thie` |
+| `description` | text | `Usable by all Champions, these quiet boots will grant the wearer +2 Stealth, Movement and Dexterity. Additionally, <truncated, 395 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `FIRE` |
@@ -22975,7 +22977,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `Any thief gets +1 sight radius, +4 Movement, 20% magic resistance and +2 combat speed.  Fire thieves also get +3 sight r` |
+| `description` | text | `Any thief gets +1 sight radius, +4 Movement, 20% magic resistance and +2 combat speed. Fire thieves also get +3 sight <truncated, 149 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `FIRE` |
 | `image` | number | `2` |
@@ -23006,7 +23008,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Earth, Life or Air Thieves may wield this earthly bow which grants +5 Ranged Attack, Missile Range, Rate of Fire and Ste` |
+| `description` | text | `Earth, Life or Air Thieves may wield this earthly bow which grants +5 Ranged Attack, Missile Range, Rate of Fire and <truncated, 396 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -23047,7 +23049,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Air, Life and Earth thieves get +1 ranged attack, +2 missile range and +3 rate of fire, and can cast Spirit Arrow thrice` |
+| `description` | text | `Air, Life and Earth thieves get +1 ranged attack, +2 missile range and +3 rate of fire, and can cast Spirit Arrow thrice <truncated, 209 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `LIFE` |
 | `image` | number | `6` |
@@ -23076,7 +23078,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Earth, Life and Air thieves gain +2 ranged attack, +1 missile range and +3 rate of fire, and can cast Rocksling six time` |
+| `description` | text | `Earth, Life and Air thieves gain +2 ranged attack, +1 missile range and +3 rate of fire, and can cast Rocksling six <truncated, 191 chars>` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `6` |
@@ -23105,7 +23107,7 @@ its shape and token count, never its body.
 | `attack_proc` | procedure | `<procedure 393 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
-| `description` | text | `Air and Life thieves gain +2 Dexterity, +2 ranged attack, +2 missile range and +3 rate of fire.  Air thieves have a 20% ` |
+| `description` | text | `Air and Life thieves gain +2 Dexterity, +2 ranged attack, +2 missile range and +3 rate of fire. Air thieves have a 20% <truncated, 157 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `AIR` |
 | `image` | number | `6` |
@@ -23133,7 +23135,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Earth, Life and Air Thieves may use this supple bow to receive +(1/3X) Ranged Attack, +(1/3X) Missile Range, +(1/5X) Rat` |
+| `description` | text | `Earth, Life and Air Thieves may use this supple bow to receive +(1/3X) Ranged Attack, +(1/3X) Missile Range, +(1/5X) <truncated, 260 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -23174,7 +23176,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Life, Air or Earth Thieves may use this holy bow which bestows  +3 Ranged Attack and Missile Range, +5 Dexterity and Rat` |
+| `description` | text | `Life, Air or Earth Thieves may use this holy bow which bestows +3 Ranged Attack and Missile Range, +5 Dexterity and Rate <truncated, 323 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -23218,7 +23220,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Air, Life or Earth thieves may wield this tornadic bow to receive +5 Dexterity and Rate of Fire, +3 Ranged Attack and Mi` |
+| `description` | text | `Air, Life or Earth thieves may wield this tornadic bow to receive +5 Dexterity and Rate of Fire, +3 Ranged Attack and <truncated, 409 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -23316,7 +23318,7 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `colorizetext?` | name | `false` |
 | `defend_proc` | procedure | `<procedure 84 tokens>` |
-| `description` | text | `Fire Thieves may wear this devilish cap to receive +2 Health, Armor, Hit Recovery, Health Recovery, Stealth, Sight Radiu` |
+| `description` | text | `Fire Thieves may wear this devilish cap to receive +2 Health, Armor, Hit Recovery, Health Recovery, Stealth, Sight <truncated, 438 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `FIRE` |
@@ -23361,7 +23363,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
-| `description` | text | `Any Champion, except Order Champions, may wield this chaotic chakram to cast Change of Fate.  Additionally, Chaos Thieve` |
+| `description` | text | `Any Champion, except Order Champions, may wield this chaotic chakram to cast Change of Fate. Additionally, Chaos Thieves <truncated, 504 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -23402,7 +23404,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `1` |
-| `description` | text | `Gives Chaos thief +3 ranged attack, +2 missile range, +1 rate of fire and 30% resistance to missile attacks.  There is a` |
+| `description` | text | `Gives Chaos thief +3 ranged attack, +2 missile range, +1 rate of fire and 30% resistance to missile attacks. There is a <truncated, 198 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `CHAOS` |
 | `image` | number | `6` |
@@ -23428,7 +23430,7 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `alt_spells_id` | expression | `spelldict begin [ enchant_weapon_death enchant_weapon_life enchant_weapon_chaos enchant_weapon_order enchant_weapon_wate` |
+| `alt_spells_id` | expression | `spelldict begin [ enchant_weapon_death enchant_weapon_life enchant_weapon_chaos enchant_weapon_order enchant_weapon_water enchant_weapon_fire enchant_weapon_air enchant_weapon_earth recover_life bolt_life march_life holy_enchantment commune_with_nature missile_protection terrain_life cure_wounds blessed_armor sanctuary teleport_artifact_life dispel_magic_life bless turn_undead heal_life regenerate_life holy_visit resurrect pacify summon_creature_life seer_life regenerate_army ray_of_hope detect_life recover_death bolt_death march_death strength_death balkoths_word primal_fear visage_of_horror embrace_of_golgoth raise_skeleton raise_zombie golgoths_gift dispel_magic_death teleport_artifact_death infest_cave decay locust terrain_death lost_soul raise_shade poison seer_death locust_swarm leeches unturn_undead dark_shadow death_touch animate_dead lower_resistance_death transform_death recover_order bolt_order march_order inspire falcons_eye watch_tower terrain_order righteous_cause teleport_artifact_order dispel_magic_order seer_order leadership protection reflection_shield justice heroic_demise crusade summon_creature_order possession morale neutralize resist_magic_order body_and_spirit holy_ghost invulnerability recover_chaos hand_of_fate march_chaos invoke_fate blind_rage gamble roulette summon_creature_chaos terrain_chaos blink teleport_artifact_chaos minor_fate dispel_magic_chaos shimmering_veil confusion polymorph_self vortex reincarnation polymorph_other summon_creature_chaos seer_chaos destruction blades_of_fury prismatic_hand change_of_fate tin_armor recover_fire bolt_fire march_fire fireworks immolation frenzy terrain_fire fury_fire strength_fire heat_shield teleport_artifact_fire dispel_magic_fire heat_metal fireball burning_skin meteor_shower flame_arrows inferno spark summon_creature_fire heal_fire seer_fire explode backdraft transform_fire recover_water bolt_water march_water light_rain quick_silver fog blood_lust terrain_water teleport_artifact_water dispel_magic_water seer_water whisper_of_the_waves heal_self gift_of_life rust guardian_waves cloud_of_steam freeze healing_waters summon_creature_water flood frozen_armor erosion minor_rust icy_coffin drowning ice_comet hypothermia recover_earth bolt_earth march_earth gold_rush earth_bind rangers_vision terrain_earth slow stone_hands stone_skin teleport_artifact_earth dispel_magic_earth detect_cave entangle earth_meld earthquake summon_creature_earth turn_to_stone seer_earth petrify trick sands_of_sleep aftershock clay_armor iron_skin tremor stone_touch transform_earth mud_slide raise_elevation mighty_blow recover_air bolt_air stun_spell march_air swiftness guardian_winds terrain_air wind_mills teleport_artifact_air dispel_magic_air seer_air guardian_winds cloud_of_war headwind poison_cloud blizzard cone_of_cold lightning_charge summon_creature_air chain_lightning feather_sword pixies alchemy bolt_air2 raise_frozen_shade transform_air ] end` |
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 4 tokens>` |
@@ -23479,7 +23481,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 52 tokens>` |
-| `description` | text | `Any Champion, except for Death Champions, may hold this chalice which will produce, per turn, ale equal to the upkeep of` |
+| `description` | text | `Any Champion, except for Death Champions, may hold this chalice which will produce, per turn, ale equal to the upkeep of <truncated, 478 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 14 tokens>` |
@@ -23521,7 +23523,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Any champion from Life, Water or Order may wield this artifact.  The chalice will produce, per turn, ale equal to the al` |
+| `description` | text | `Any champion from Life, Water or Order may wield this artifact. The chalice will produce, per turn, ale equal to the ale <truncated, 272 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `LIFE` |
 | `image` | number | `8` |
@@ -23553,7 +23555,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 32 tokens>` |
-| `description` | text | `Any Champion may hold this chalice which imparts +5 Wisdom, +6/5X Ale/turn and the ability to cast Alchemy.  Water Champ` |
+| `description` | text | `Any Champion may hold this chalice which imparts +5 Wisdom, +6/5X Ale/turn and the ability to cast Alchemy. Water <truncated, 401 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 12 tokens>` |
@@ -23648,7 +23650,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 72 tokens>` |
-| `description` | text | `Any champion may wear this firey cloak which provides +5 Armor and the ability to cast Frenzy.  Additionally, Fire Champ` |
+| `description` | text | `Any champion may wear this firey cloak which provides +5 Armor and the ability to cast Frenzy. Additionally, Fire <truncated, 448 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 11 tokens>` |
@@ -23692,7 +23694,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 27 tokens>` |
-| `description` | text | `Any Champion may wear this cloak which grants +3 Armor, +3 Stealth, +5 Wisdom and the ability to cast Justice.  In comba` |
+| `description` | text | `Any Champion may wear this cloak which grants +3 Armor, +3 Stealth, +5 Wisdom and the ability to cast Justice. In <truncated, 265 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
@@ -23734,7 +23736,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 47 tokens>` |
-| `description` | text | `Death, Chaos, Earth or Fire champions may wear this unholy cloak which bestows +5 Armor, +5 Mana, +50% Life Resistance, ` |
+| `description` | text | `Death, Chaos, Earth or Fire champions may wear this unholy cloak which bestows +5 Armor, +5 Mana, +50% Life Resistance, <truncated, 539 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 5 tokens>` |
@@ -23779,7 +23781,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 48 tokens>` |
-| `description` | text | `Any Champion, except Order Champions, may wear this cloak to receive +4 Armor, +4 Movement, +1X magic resistance and the` |
+| `description` | text | `Any Champion, except Order Champions, may wear this cloak to receive +4 Armor, +4 Movement, +1X magic resistance and the <truncated, 295 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `CHAOS` |
@@ -23817,7 +23819,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
-| `description` | text | `Any Champion, except for Air Champions, may wear this cloak for +3 Strength and Armor, +33% Air Resistance and the abili` |
+| `description` | text | `Any Champion, except for Air Champions, may wear this cloak for +3 Strength and Armor, +33% Air Resistance and the <truncated, 334 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `EARTH` |
@@ -23997,7 +23999,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `Death, Order and Chaos warriors get +2 Armor, +2 Strength, 50% resistance to Fire and 30% resistance to all other magics` |
+| `description` | text | `Death, Order and Chaos warriors get +2 Armor, +2 Strength, 50% resistance to Fire and 30% resistance to all other <truncated, 170 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `WATER` |
 | `image` | number | `7` |
@@ -24028,7 +24030,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Order and Fire Thieves may use this well-balanced Crossbow which provides +5 Ranged Attack, Missile Range, Rate of Fire ` |
+| `description` | text | `Order and Fire Thieves may use this well-balanced Crossbow which provides +5 Ranged Attack, Missile Range, Rate of Fire <truncated, 355 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -24072,7 +24074,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Fire and Order Thieves may wield this fire hurling crossbow to partake +5 Ranged Attack, Missile Range and Rate of Fire ` |
+| `description` | text | `Fire and Order Thieves may wield this fire hurling crossbow to partake +5 Ranged Attack, Missile Range and Rate of Fire <truncated, 359 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -24113,7 +24115,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Fire thieves gain +2 ranged attack, +1 missile range and +2 rate of fire.  Order thieves get +3 ranged attack, +2 missil` |
+| `description` | text | `Fire thieves gain +2 ranged attack, +1 missile range and +2 rate of fire. Order thieves get +3 ranged attack, +2 missile <truncated, 224 chars>` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `6` |
@@ -24146,7 +24148,7 @@ its shape and token count, never its body.
 | `category` | number | `4` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `When worn by an Order, Earth, Chaos or Life champion this crown provides +3 Armor, +5 Strength, +25% Magic Resistance, +` |
+| `description` | text | `When worn by an Order, Earth, Chaos or Life champion this crown provides +3 Armor, +5 Strength, +25% Magic Resistance, <truncated, 214 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `dummy2` | expression | `spelldict begin [ blessed_armor ] end replace bind` |
@@ -24229,7 +24231,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `Valuable to any warrior, who will gain +2 Armor, +2 hit recovery and 40% resistance to Air magic.  Earth warriors also g` |
+| `description` | text | `Valuable to any warrior, who will gain +2 Armor, +2 hit recovery and 40% resistance to Air magic. Earth warriors also <truncated, 210 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `end_combat_proc` | procedure | `<procedure 24 tokens>` |
 | `faith` | name | `EARTH` |
@@ -24258,7 +24260,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `Only Earth mages can use this artifact, which imparts +3 Mana, +1000 experience and +2 crystals per level of the wielder` |
+| `description` | text | `Only Earth mages can use this artifact, which imparts +3 Mana, +1000 experience and +2 crystals per level of the <truncated, 121 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `2` |
@@ -24287,7 +24289,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
-| `description` | text | `Any Thief, except for Fire Thieves, may wield this dagger to gain +4 Attack, Stealth, Dexterity and Movement with the ab` |
+| `description` | text | `Any Thief, except for Fire Thieves, may wield this dagger to gain +4 Attack, Stealth, Dexterity and Movement with the <truncated, 322 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `WATER` |
@@ -24329,7 +24331,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Any Thief may wield this dark dagger to receive +(1/3X) Attack and the ability to cast Detect Life.  However, Death Thie` |
+| `description` | text | `Any Thief may wield this dark dagger to receive +(1/3X) Attack and the ability to cast Detect Life. However, Death <truncated, 336 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -24370,7 +24372,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `3` |
-| `description` | text | `Any thief may use this this gale dagger to receive +(1/3X) Attack, +(1/5X) Dexterity, +1X% Melee Resistance.  Death Thie` |
+| `description` | text | `Any thief may use this this gale dagger to receive +(1/3X) Attack, +(1/5X) Dexterity, +1X% Melee Resistance. Death <truncated, 274 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -24412,7 +24414,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Any Thief may use this dagger to receive +(1/3X) Attack, +(1/3X) Strength and the ability to cast Detect Water.  Death T` |
+| `description` | text | `Any Thief may use this dagger to receive +(1/3X) Attack, +(1/3X) Strength and the ability to cast Detect Water. Death <truncated, 275 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -24453,7 +24455,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Any Thief may wield this feral dagger to receive +(1/3X) Attack and +(1/3X) Dexterity with the ability to cast Roulette.` |
+| `description` | text | `Any Thief may wield this feral dagger to receive +(1/3X) Attack and +(1/3X) Dexterity with the ability to cast Roulette. <truncated, 356 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -24494,7 +24496,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `6` |
-| `description` | text | `Any Thief, except for Life Thieves, may wield this vile blade to receive +3 Attack and Rate of Attack.  Death Thieves al` |
+| `description` | text | `Any Thief, except for Life Thieves, may wield this vile blade to receive +3 Attack and Rate of Attack. Death Thieves <truncated, 626 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -24539,7 +24541,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Any Thief may wield this light dagger to receive +(1/3X) Attack and +(1/5X) Rate of Attack;  additionally Death Thieves ` |
+| `description` | text | `Any Thief may wield this light dagger to receive +(1/3X) Attack and +(1/5X) Rate of Attack; additionally Death Thieves <truncated, 226 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -24580,7 +24582,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Thieves wielding this dagger receive +3 Attack, Rate of Attack and Stealth, untold Luck and the ability to cast Stone Ha` |
+| `description` | text | `Thieves wielding this dagger receive +3 Attack, Rate of Attack and Stealth, untold Luck and the ability to cast Stone <truncated, 427 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `EARTH` |
@@ -24624,7 +24626,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Thieves which acquire this dagger will lose their range ability, but in return receive many combat bonuses (Attack, Stre` |
+| `description` | text | `Thieves which acquire this dagger will lose their range ability, but in return receive many combat bonuses (Attack, <truncated, 338 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -24751,7 +24753,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 60 tokens>` |
-| `description` | text | `Air and Fire warriors gain +3 Armor, 50% resistance to Water magic, and 75% Fire resistance.  If armor is worn by Fire u` |
+| `description` | text | `Air and Fire warriors gain +3 Armor, 50% resistance to Water magic, and 75% Fire resistance. If armor is worn by Fire <truncated, 192 chars>` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `FIRE` |
 | `image` | number | `7` |
@@ -25062,7 +25064,7 @@ its shape and token count, never its body.
 |---|---|---|
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
-| `description` | text | `This plate mail, crafted in a dwarven smithy, can only be worn by Order warriors.  When equipped, it will give the beare` |
+| `description` | text | `This plate mail, crafted in a dwarven smithy, can only be worn by Order warriors. When equipped, it will give the bearer <truncated, 162 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `FIRE` |
 | `image` | number | `12` |
@@ -25112,7 +25114,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 43 tokens>` |
-| `description` | text | `Death, Order and Earth warriors gain +2 Armor and 25% resistance to magic.  Death warriors derive +3 Armor and 50% resis` |
+| `description` | text | `Death, Order and Earth warriors gain +2 Armor and 25% resistance to magic. Death warriors derive +3 Armor and 50% <truncated, 203 chars>` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `7` |
@@ -25141,7 +25143,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 34 tokens>` |
-| `description` | text | `Life and Water warriors gain +3 Armor, +1 Fame, 20% resistance to all magic and 40% resistance to Death magic.  If a Lif` |
+| `description` | text | `Life and Water warriors gain +3 Armor, +1 Fame, 20% resistance to all magic and 40% resistance to Death magic. If a Life <truncated, 223 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `LIFE` |
 | `image` | number | `7` |
@@ -25168,7 +25170,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `This holy relic enhances the skill and power of Fire followers.  Increases life force, extending it beyond its limits, a` |
+| `description` | text | `This holy relic enhances the skill and power of Fire followers. Increases life force, extending it beyond its limits, <truncated, 249 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 24 tokens>` |
@@ -25285,7 +25287,7 @@ its shape and token count, never its body.
 |---|---|---|
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
-| `description` | text | `Air and Fire warriors gain +3 Armor and 50% Earth Resistance.  Air warriors also get +2 Dexterity, +2 Overland movement,` |
+| `description` | text | `Air and Fire warriors gain +3 Armor and 50% Earth Resistance. Air warriors also get +2 Dexterity, +2 Overland movement, <truncated, 156 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `AIR` |
 | `image` | number | `7` |
@@ -25632,7 +25634,7 @@ its shape and token count, never its body.
 |---|---|---|
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
-| `description` | text | `To the east of the Fire capital lies the Pass of Ice through the high ridge.  Beyond the path lies a Great Temple of Ear` |
+| `description` | text | `To the east of the Fire capital lies the Pass of Ice through the high ridge. Beyond the path lies a Great Temple of <truncated, 184 chars>` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `FIRE` |
 | `image` | number | `11` |
@@ -25762,7 +25764,7 @@ its shape and token count, never its body.
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `The wearer of these finely crafted gloves benefit from +2 Rate of Attack and Dexterity.  Additionally, Ranged Champions ` |
+| `description` | text | `The wearer of these finely crafted gloves benefit from +2 Rate of Attack and Dexterity. Additionally, Ranged Champions <truncated, 372 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `ORDER` |
@@ -25857,7 +25859,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `All mages gain +1 Attack, +1 armor and +3 wisdom, and can cast Petrify once a day, which turns one victim to stone regar` |
+| `description` | text | `All mages gain +1 Attack, +1 armor and +3 wisdom, and can cast Petrify once a day, which turns one victim to stone <truncated, 249 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `4` |
@@ -26019,7 +26021,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `1` |
-| `description` | text | `Death and Water warriors get +2 Attack, +2 Luck, +2 rate of attack, and +1 Fame per turn per level.  Order warriors furt` |
+| `description` | text | `Death and Water warriors get +2 Attack, +2 Luck, +2 rate of attack, and +1 Fame per turn per level. Order warriors <truncated, 273 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `5` |
@@ -26078,7 +26080,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `Chaos warriors gain +4 Armor, +2 sight radius, 25% magic resistance and 50% resistance to Order magic.  Earth warriors g` |
+| `description` | text | `Chaos warriors gain +4 Armor, +2 sight radius, 25% magic resistance and 50% resistance to Order magic. Earth warriors <truncated, 163 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `CHAOS` |
 | `image` | number | `7` |
@@ -26110,7 +26112,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `false` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
-| `description` | text | `Earth, Air or Chaos Warriors may wear this helmet, crafted from Dwarven ore, to receive +3 Armor, Hit Recovery and Sight` |
+| `description` | text | `Earth, Air or Chaos Warriors may wear this helmet, crafted from Dwarven ore, to receive +3 Armor, Hit Recovery and Sight <truncated, 332 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -26156,7 +26158,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 186 tokens>` |
-| `description` | text | `A helmet crafted for only the strongest of warriors; Chaos, Air or Earth Warriors may receive +5 Luck, +1000 experience,` |
+| `description` | text | `A helmet crafted for only the strongest of warriors; Chaos, Air or Earth Warriors may receive +5 Luck, +1000 experience, <truncated, 485 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
@@ -26298,7 +26300,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `1` |
-| `description` | text | `This cold crystalline blade may be wielded by Water, Order and Death warriors, who acquire +1 Attack, +1 Fame per turn, ` |
+| `description` | text | `This cold crystalline blade may be wielded by Water, Order and Death warriors, who acquire +1 Attack, +1 Fame per turn, <truncated, 133 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `AIR` |
 | `image` | number | `5` |
@@ -26376,7 +26378,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Air, Life, and Order Champions can wear this ring, getting +1 Armor and +2 Overland movement.  The ring casts Heal once ` |
+| `description` | text | `Air, Life, and Order Champions can wear this ring, getting +1 Armor and +2 Overland movement. The ring casts Heal once <truncated, 171 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `end_combat_proc` | procedure | `<procedure 13 tokens>` |
 | `faith` | name | `AIR` |
@@ -26502,7 +26504,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `Only a Death thief can use this vile blade, gaining +2 Attack, +2 ranged attack, +1 missile range and +1 rate of fire.  ` |
+| `description` | text | `Only a Death thief can use this vile blade, gaining +2 Attack, +2 ranged attack, +1 missile range and +1 rate of fire. <truncated, 203 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `dummy` | expression | `1 dict replace bind` |
 | `faith` | name | `DEATH` |
@@ -26586,7 +26588,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 41 tokens>` |
-| `description` | text | `Death, Fire, Chaos and Earth mages get +2 Armor and +3 Mana , 50% resistance to Life, 33% resistance to Air, Water and O` |
+| `description` | text | `Death, Fire, Chaos and Earth mages get +2 Armor and +3 Mana , 50% resistance to Life, 33% resistance to Air, Water and <truncated, 226 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `8` |
@@ -26706,7 +26708,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `All residents of Urak value this stone from the sky, which bestows +3 Luck, a small boost to many other skills, and 33% ` |
+| `description` | text | `All residents of Urak value this stone from the sky, which bestows +3 Luck, a small boost to many other skills, and 33% <truncated, 144 chars>` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `2` |
@@ -26907,7 +26909,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `Earth, Death and Order warriors regain all hit points after combat and get +2 Armor. Earth warriors get +3 Armor, 3 gold` |
+| `description` | text | `Earth, Death and Order warriors regain all hit points after combat and get +2 Armor. Earth warriors get +3 Armor, 3 gold <truncated, 202 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 13 tokens>` |
@@ -27051,7 +27053,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Air, Chaos and Life thieves can unleash Pixies, reducing targets' sight radius by 2 and dexterity by 1.  In combat, redu` |
+| `description` | text | `Air, Chaos and Life thieves can unleash Pixies, reducing targets' sight radius by 2 and dexterity by 1. In combat, <truncated, 183 chars>` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `AIR` |
 | `image` | number | `1` |
@@ -27103,7 +27105,7 @@ its shape and token count, never its body.
 |---|---|---|
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
-| `description` | text | `This plate mail, crafted in a dwarven smithy, can only be worn by Fire and Earth warriors.  When equipped, it will give ` |
+| `description` | text | `This plate mail, crafted in a dwarven smithy, can only be worn by Fire and Earth warriors. When equipped, it will give <truncated, 143 chars>` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `FIRE` |
 | `image` | number | `12` |
@@ -27906,7 +27908,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
 | `defend_proc` | procedure | `<procedure 47 tokens>` |
-| `description` | text | `Any Champion may wield this moist ring to receive +(1/3X) Armor and the ability to cast Detect Fire.  In addition, Thiev` |
+| `description` | text | `Any Champion may wield this moist ring to receive +(1/3X) Armor and the ability to cast Detect Fire. In addition, <truncated, 265 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -27946,7 +27948,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 73 tokens>` |
-| `description` | text | `Any champion, but Death champions, may wear this holy ring which imparts +3 Armor, +25% Elemental Resistance, +33% Arcan` |
+| `description` | text | `Any champion, but Death champions, may wear this holy ring which imparts +3 Armor, +25% Elemental Resistance, +33% <truncated, 311 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -27989,7 +27991,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
-| `description` | text | `Any Champion, save for Barbarians, may wield the ring of the Archons which grants +5 Armor, +25% Magic Resistance, +1X r` |
+| `description` | text | `Any Champion, save for Barbarians, may wield the ring of the Archons which grants +5 Armor, +25% Magic Resistance, +1X <truncated, 707 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 11 tokens>` |
@@ -28037,7 +28039,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 35 tokens>` |
-| `description` | text | `Only Fire followers may preside over this charred ring for +10 Health, +4 movement and the ability to cast Fireheal.  Wa` |
+| `description` | text | `Only Fire followers may preside over this charred ring for +10 Health, +4 movement and the ability to cast Fireheal. <truncated, 281 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `FIRE` |
@@ -28078,7 +28080,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 24 tokens>` |
-| `description` | text | `Any Champion, except for Chaos champions, may wield this highly concentrated ring to receive +8 Health, +4 Health Recove` |
+| `description` | text | `Any Champion, except for Chaos champions, may wield this highly concentrated ring to receive +8 Health, +4 Health <truncated, 358 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -28166,7 +28168,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 72 tokens>` |
-| `description` | text | `Any champion, except for Fire Champions, may wear this scintillating ring to receive +3 Armor, +33% Elemental Resistance` |
+| `description` | text | `Any champion, except for Fire Champions, may wear this scintillating ring to receive +3 Armor, +33% Elemental Resistance <truncated, 300 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `WATER` |
@@ -28208,7 +28210,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
-| `description` | text | `Any champion, except Water champions, may wear this blazing ring to receive +3 Armor, +3 Mana, +10/3X% Water Resistance,` |
+| `description` | text | `Any champion, except Water champions, may wear this blazing ring to receive +3 Armor, +3 Mana, +10/3X% Water Resistance, <truncated, 333 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -28251,7 +28253,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
 | `defend_proc` | procedure | `<procedure 21 tokens>` |
-| `description` | text | `Any Champion may wear this ring to receive +(1/3X) Armor and the ability to cast Detect Earth.  In addition, Thieves als` |
+| `description` | text | `Any Champion may wear this ring to receive +(1/3X) Armor and the ability to cast Detect Earth. In addition, Thieves also <truncated, 240 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -28291,7 +28293,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
 | `defend_proc` | procedure | `<procedure 46 tokens>` |
-| `description` | text | `Any Champion may wear this ring for +(1/3X) Armor and the ability to cast Detect Water.  In addition, ranged units also ` |
+| `description` | text | `Any Champion may wear this ring for +(1/3X) Armor and the ability to cast Detect Water. In addition, ranged units also <truncated, 223 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -28330,7 +28332,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
-| `description` | text | `Any Champion, except for Earth Champions, may wear this gusty ring to receive +3 Armor, +25% Missile Resistance, +(5/2)X` |
+| `description` | text | `Any Champion, except for Earth Champions, may wear this gusty ring to receive +3 Armor, +25% Missile Resistance, <truncated, 358 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `AIR` |
@@ -28372,7 +28374,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
-| `description` | text | `Any Champion, except for Earth or Death Champions, may wear this wispy ring to receive +4 Armor, +4 Overland movement an` |
+| `description` | text | `Any Champion, except for Earth or Death Champions, may wear this wispy ring to receive +4 Armor, +4 Overland movement <truncated, 298 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 5 tokens>` |
@@ -28414,7 +28416,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
-| `description` | text | `All but Death worshippers may wear this ring to receive +3 Armor, +10 Health, +2 Health Recovery and the power to cast H` |
+| `description` | text | `All but Death worshippers may wear this ring to receive +3 Armor, +10 Health, +2 Health Recovery and the power to cast <truncated, 346 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 6 tokens>` |
@@ -28501,7 +28503,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 73 tokens>` |
-| `description` | text | `Any Champion, except for Life Champions, may wield this vile ring which imparts +3 Armor, +3 Strength, +33% Life Resista` |
+| `description` | text | `Any Champion, except for Life Champions, may wield this vile ring which imparts +3 Armor, +3 Strength, +33% Life <truncated, 401 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `DEATH` |
@@ -28625,7 +28627,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
 | `defend_proc` | procedure | `<procedure 48 tokens>` |
-| `description` | text | `Any Champion may wield this skill endowed ring to receive +(1/3X) Armor and the ability to cast Detect Death; additional` |
+| `description` | text | `Any Champion may wield this skill endowed ring to receive +(1/3X) Armor and the ability to cast Detect Death; <truncated, 258 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -28664,7 +28666,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 47 tokens>` |
-| `description` | text | `Any Champion, except for Life Champions, may wear this dark ring which imparts +3 Armor, +(5/2X)% Magic Resistance and t` |
+| `description` | text | `Any Champion, except for Life Champions, may wear this dark ring which imparts +3 Armor, +(5/2X)% Magic Resistance and <truncated, 311 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `DEATH` |
@@ -28702,7 +28704,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Any mage can wear this ring, and get +1 resources per level, randomly selected each turn.  When used, this ring will hav` |
+| `description` | text | `Any mage can wear this ring, and get +1 resources per level, randomly selected each turn. When used, this ring will have <truncated, 261 chars>` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `dummy` | expression | `1 dict replace bind` |
 | `faith` | name | `CHAOS` |
@@ -28732,7 +28734,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Any mage may cast Dispel Magic 3 times a day, gains 25% resistance to elemental magic and 33% resistence to arcane magic` |
+| `description` | text | `Any mage may cast Dispel Magic 3 times a day, gains 25% resistance to elemental magic and 33% resistence to arcane <truncated, 165 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `LIFE` |
 | `image` | number | `1` |
@@ -28761,7 +28763,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Any mage who wears this ring gains +1 Armor, +3 Mana, and can cast Decay once per day.  Death mages gain 25% magic resis` |
+| `description` | text | `Any mage who wears this ring gains +1 Armor, +3 Mana, and can cast Decay once per day. Death mages gain 25% magic <truncated, 126 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `1` |
@@ -28791,7 +28793,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 33 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `All Fire followers can wear this ring and cast Fireheal 6 times a day, restoring 5 hit points in 10 seconds. Wielder get` |
+| `description` | text | `All Fire followers can wear this ring and cast Fireheal 6 times a day, restoring 5 hit points in 10 seconds. Wielder <truncated, 179 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `end_combat_proc` | procedure | `<procedure 24 tokens>` |
 | `faith` | name | `FIRE` |
@@ -28822,7 +28824,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `1` |
-| `description` | text | `Any thief adds +4 to maximum hit points, +2 sight radius and +3 Luck.  Order thieves also get +4 Movement and +500 exper` |
+| `description` | text | `Any thief adds +4 to maximum hit points, +2 sight radius and +3 Luck. Order thieves also get +4 Movement and +500 <truncated, 126 chars>` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `1` |
@@ -28876,7 +28878,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 42 tokens>` |
-| `description` | text | `Fire, Death, and Chaos mages get +2 Armor, 33% resistance to Water magic, and 20% resistance to other magics. Fire mages` |
+| `description` | text | `Fire, Death, and Chaos mages get +2 Armor, 33% resistance to Water magic, and 20% resistance to other magics. Fire mages <truncated, 220 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `FIRE` |
 | `image` | number | `1` |
@@ -28904,7 +28906,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `All thieves covet this ring, which imparts +1 Armor, +2 Dexterity and +4 Movement, plus the ability to cast Entanglement` |
+| `description` | text | `All thieves covet this ring, which imparts +1 Armor, +2 Dexterity and +4 Movement, plus the ability to cast Entanglement <truncated, 139 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `1` |
@@ -28961,7 +28963,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `All but Death worshippers may use this ring, which adds +1 Armor and +10 hit points, and restores full health after a ba` |
+| `description` | text | `All but Death worshippers may use this ring, which adds +1 Armor and +10 hit points, and restores full health after a <truncated, 166 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `end_combat_proc` | procedure | `<procedure 14 tokens>` |
 | `faith` | name | `LIFE` |
@@ -28991,7 +28993,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Champions of Death get +1 Armor and +1 Strength, and can cast Leeches three times a day, transferring 4 hit points from ` |
+| `description` | text | `Champions of Death get +1 Armor and +1 Strength, and can cast Leeches three times a day, transferring 4 hit points from <truncated, 145 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `1` |
@@ -29049,7 +29051,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Any thief will gain +2 Strength, +4 Movement and the ability to cast Confusion once a day.  Chaos thieves also gain +2 s` |
+| `description` | text | `Any thief will gain +2 Strength, +4 Movement and the ability to cast Confusion once a day. Chaos thieves also gain +2 <truncated, 132 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `CHAOS` |
 | `image` | number | `1` |
@@ -29078,7 +29080,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Order followers get +2 Armor, +6 Mana and 50% magic resistance.  Each turn, one aspect of production gains +2 per level ` |
+| `description` | text | `Order followers get +2 Armor, +6 Mana and 50% magic resistance. Each turn, one aspect of production gains +2 per level <truncated, 247 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `end_turn_proc` | procedure | `<procedure 246 tokens>` |
 | `faith` | name | `ORDER` |
@@ -29138,7 +29140,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `All thieves in Urak get +2 Attack, +1 Armor and +2 Luck, and causes Confusion when striking enemies 10% of the time.  Li` |
+| `description` | text | `All thieves in Urak get +2 Attack, +1 Armor and +2 Luck, and causes Confusion when striking enemies 10% of the time. <truncated, 153 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `LIFE` |
 | `image` | number | `1` |
@@ -29224,7 +29226,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
-| `description` | text | `Any mage can wear this ring and receive +2 Armor, +3 Mana, and 33% resistance to elemental magic.  Water mages resist el` |
+| `description` | text | `Any mage can wear this ring and receive +2 Armor, +3 Mana, and 33% resistance to elemental magic. Water mages resist <truncated, 141 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `WATER` |
 | `image` | number | `1` |
@@ -29251,7 +29253,7 @@ its shape and token count, never its body.
 |---|---|---|
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
-| `description` | text | `Any mage gets +1 Armor, +3 Mana and 25% magic resistance.  Air followers also gain 25% resistance to missiles, and +3 ar` |
+| `description` | text | `Any mage gets +1 Armor, +3 Mana and 25% magic resistance. Air followers also gain 25% resistance to missiles, and +3 <truncated, 125 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `AIR` |
 | `image` | number | `1` |
@@ -29320,7 +29322,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
 | `defend_proc` | procedure | `<procedure 14 tokens>` |
-| `description` | text | `Any Champion may wear this ring to receive +(1/3X) Armor, +(2/5X) Movement, +1X% Magic Resistance per level and the abil` |
+| `description` | text | `Any Champion may wear this ring to receive +(1/3X) Armor, +(2/5X) Movement, +1X% Magic Resistance per level and the <truncated, 206 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -29361,7 +29363,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
 | `defend_proc` | procedure | `<procedure 13 tokens>` |
-| `description` | text | `Any Champion may wear this tricky ring to receive +(1/3X) Armor and the ability to cast Detect Order.  In addition, Thie` |
+| `description` | text | `Any Champion may wear this tricky ring to receive +(1/3X) Armor and the ability to cast Detect Order. In addition, <truncated, 212 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -29442,7 +29444,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 48 tokens>` |
-| `description` | text | `Any Champion, except Fire Champions, may wear this ring to receive +3 Armor, +50% Water Resistance, +50% Fire Resistance` |
+| `description` | text | `Any Champion, except Fire Champions, may wear this ring to receive +3 Armor, +50% Water Resistance, +50% Fire Resistance <truncated, 344 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
@@ -29486,7 +29488,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
-| `description` | text | `Any Champion, but Air Champions, may hold this leafy ring to receive +3 Armor, Stealth, Attack Recovery and Hit Recovery` |
+| `description` | text | `Any Champion, but Air Champions, may hold this leafy ring to receive +3 Armor, Stealth, Attack Recovery and Hit <truncated, 375 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -29570,7 +29572,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Any Champion gains +2 Wisdom, and +1 ale per level per turn. The Chalice will create a random effect every time it is us` |
+| `description` | text | `Any Champion gains +2 Wisdom, and +1 ale per level per turn. The Chalice will create a random effect every time it is <truncated, 240 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `end_turn_proc` | procedure | `<procedure 44 tokens>` |
 | `faith` | name | `CHAOS` |
@@ -29605,7 +29607,7 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Order, Death or Water Warriors may take up this fine scabbard to empower their blades with +(1/3X) Rate of Attack and Lu` |
+| `description` | text | `Order, Death or Water Warriors may take up this fine scabbard to empower their blades with +(1/3X) Rate of Attack and <truncated, 285 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -29644,7 +29646,7 @@ its shape and token count, never its body.
 | `category` | number | `1` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Any Champion who reads this scroll will permanently gain +1 Dexterity.  Thieves instead will permanently gain +2 Dexteri` |
+| `description` | text | `Any Champion who reads this scroll will permanently gain +1 Dexterity. Thieves instead will permanently gain +2 <truncated, 123 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `AIR` |
@@ -29678,7 +29680,7 @@ its shape and token count, never its body.
 | `category` | number | `1` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `The player whose champion takes this scroll in hand shall better understand his enemies and neighbors through diplomatic` |
+| `description` | text | `The player whose champion takes this scroll in hand shall better understand his enemies and neighbors through diplomatic <truncated, 129 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `faith` | name | `LIFE` |
 | `image` | number | `11` |
@@ -29809,7 +29811,7 @@ its shape and token count, never its body.
 | `category` | number | `1` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `This scroll will advance the reader to their next experience level or +3000 experience, whichever is greater, for any wh` |
+| `description` | text | `This scroll will advance the reader to their next experience level or +3000 experience, whichever is greater, for any <truncated, 130 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `CHAOS` |
@@ -29874,7 +29876,7 @@ its shape and token count, never its body.
 | `category` | number | `1` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Any Champion who reads this scroll will permanently gain Hit Points.  Thieves and Mages will receive +2 maximum hit poin` |
+| `description` | text | `Any Champion who reads this scroll will permanently gain Hit Points. Thieves and Mages will receive +2 maximum hit <truncated, 174 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `FIRE` |
@@ -29976,7 +29978,7 @@ its shape and token count, never its body.
 | `category` | number | `1` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Any Champion who reads this scroll will permanently gain +2 Movement.  Thieves will instead permanently gain +4 Movement` |
+| `description` | text | `Any Champion who reads this scroll will permanently gain +2 Movement. Thieves will instead permanently gain +4 Movement. <truncated, 121 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `AIR` |
@@ -30046,7 +30048,7 @@ its shape and token count, never its body.
 | `category` | number | `1` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Any Champion who reads this scroll will receive 25% resistance to one randomly determined faith, or will receive +5 resi` |
+| `description` | text | `Any Champion who reads this scroll will receive 25% resistance to one randomly determined faith, or will receive +5 <truncated, 141 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `11` |
@@ -30075,7 +30077,7 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `alt_spells_id` | expression | `spelldict begin [ enchant_weapon_death enchant_weapon_life enchant_weapon_chaos enchant_weapon_order enchant_weapon_wate` |
+| `alt_spells_id` | expression | `spelldict begin [ enchant_weapon_death enchant_weapon_life enchant_weapon_chaos enchant_weapon_order enchant_weapon_water enchant_weapon_fire enchant_weapon_air enchant_weapon_earth recover_life bolt_life march_life holy_enchantment commune_with_nature missile_protection terrain_life cure_wounds blessed_armor sanctuary teleport_artifact_life dispel_magic_life bless turn_undead heal_life regenerate_life holy_visit resurrect pacify summon_creature_life seer_life regenerate_army ray_of_hope detect_life recover_death bolt_death march_death strength_death balkoths_word primal_fear visage_of_horror embrace_of_golgoth raise_skeleton raise_zombie golgoths_gift dispel_magic_death teleport_artifact_death infest_cave decay locust terrain_death lost_soul raise_shade poison seer_death locust_swarm leeches unturn_undead dark_shadow death_touch animate_dead lower_resistance_death transform_death recover_order bolt_order march_order inspire falcons_eye watch_tower terrain_order righteous_cause teleport_artifact_order dispel_magic_order seer_order leadership protection reflection_shield justice heroic_demise crusade summon_creature_order possession morale neutralize resist_magic_order body_and_spirit holy_ghost invulnerability recover_chaos hand_of_fate march_chaos invoke_fate blind_rage gamble roulette summon_creature_chaos terrain_chaos blink teleport_artifact_chaos minor_fate dispel_magic_chaos shimmering_veil confusion polymorph_self vortex reincarnation polymorph_other summon_creature_chaos seer_chaos destruction blades_of_fury prismatic_hand change_of_fate tin_armor recover_fire bolt_fire march_fire fireworks immolation frenzy terrain_fire fury_fire strength_fire heat_shield teleport_artifact_fire dispel_magic_fire heat_metal fireball burning_skin meteor_shower flame_arrows inferno spark summon_creature_fire heal_fire seer_fire explode backdraft transform_fire recover_water bolt_water march_water light_rain quick_silver fog blood_lust terrain_water teleport_artifact_water dispel_magic_water seer_water whisper_of_the_waves heal_self gift_of_life rust guardian_waves cloud_of_steam freeze healing_waters summon_creature_water flood frozen_armor erosion minor_rust icy_coffin drowning ice_comet hypothermia recover_earth bolt_earth march_earth gold_rush earth_bind rangers_vision terrain_earth slow stone_hands stone_skin teleport_artifact_earth dispel_magic_earth detect_cave entangle earth_meld earthquake summon_creature_earth turn_to_stone seer_earth petrify trick sands_of_sleep aftershock clay_armor iron_skin tremor stone_touch transform_earth mud_slide raise_elevation mighty_blow recover_air bolt_air stun_spell march_air swiftness guardian_winds terrain_air wind_mills teleport_artifact_air dispel_magic_air seer_air guardian_winds cloud_of_war headwind poison_cloud blizzard cone_of_cold lightning_charge summon_creature_air chain_lightning feather_sword pixies alchemy bolt_air2 raise_frozen_shade transform_air ] end` |
 | `attack_proc` | procedure | `<procedure 2 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 51 tokens>` |
@@ -30118,7 +30120,7 @@ its shape and token count, never its body.
 | `category` | number | `1` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Any Champion who reads this scroll will permanently gain +1 Strength.  Warriors instead will permanently gain +2 Strengt` |
+| `description` | text | `Any Champion who reads this scroll will permanently gain +1 Strength. Warriors instead will permanently gain +2 <truncated, 122 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `EARTH` |
@@ -30187,7 +30189,7 @@ its shape and token count, never its body.
 | `category` | number | `7` |
 | `colorizetext?` | name | `false` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Any Champion may wield Balkoth's Scythe, as it grants Vampiric Life Stealing, converting damage to health (1/4 melee, 1/` |
+| `description` | text | `Any Champion may wield Balkoth's Scythe, as it grants Vampiric Life Stealing, converting damage to health (1/4 melee, <truncated, 378 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict /end_combat_proc get replace bind` |
 | `dummy2` | expression | `currentdict /mod_proc get replace bind` |
@@ -30279,7 +30281,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `The faithful of Water gain +2 Strength and +1000 experience, and health will regenerate during combat, recovering fully ` |
+| `description` | text | `The faithful of Water gain +2 Strength and +1000 experience, and health will regenerate during combat, recovering fully <truncated, 188 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 13 tokens>` |
@@ -30360,7 +30362,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
-| `description` | text | `Water, Chaos, Order or Death Warriors may wield this half shell to receive +3 Armor, +3 Strength, +3 Hit Recovery, +(10/` |
+| `description` | text | `Water, Chaos, Order or Death Warriors may wield this half shell to receive +3 Armor, +3 Strength, +3 Hit Recovery, <truncated, 624 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `dummy2` | expression | `spelldict begin [ rust minor_rust ] end replace bind` |
@@ -30403,7 +30405,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Order, Chaos, Death and Water warriors gain +1 Armor, and can cast Leadership once per day.  Order warriors get +500 exp` |
+| `description` | text | `Order, Chaos, Death and Water warriors gain +1 Armor, and can cast Leadership once per day. Order warriors get +500 <truncated, 149 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `7` |
@@ -30437,7 +30439,7 @@ its shape and token count, never its body.
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
 | `defend_proc` | procedure | `<procedure 13 tokens>` |
-| `description` | text | `Order, Chaos, Water or Death Warriors gain +(X/3) Armor and +(X/5) Hit Recovery while wearing this shield.  This shield ` |
+| `description` | text | `Order, Chaos, Water or Death Warriors gain +(X/3) Armor and +(X/5) Hit Recovery while wearing this shield. This shield <truncated, 231 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -30477,7 +30479,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `defend_proc` | procedure | `<procedure 40 tokens>` |
-| `description` | text | `Order, Chaos, Death or Water Warriors may wield this holy shield to receive +3 Armor, +3 Hit Recovery, +1000 experience ` |
+| `description` | text | `Order, Chaos, Death or Water Warriors may wield this holy shield to receive +3 Armor, +3 Hit Recovery, +1000 experience <truncated, 450 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
@@ -30574,7 +30576,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Water and Order warriors gain +2 Attack and +2 rate of attack, and may cast Curse 6 times a day.  Death warriors get sam` |
+| `description` | text | `Water and Order warriors gain +2 Attack and +2 rate of attack, and may cast Curse 6 times a day. Death warriors get <truncated, 239 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `5` |
@@ -30608,7 +30610,7 @@ its shape and token count, never its body.
 | `category` | number | `7` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Usable only by the Valkyrie, this Javelin provides her with improved attack, ranged attack, missile range, attack speed,` |
+| `description` | text | `Usable only by the Valkyrie, this Javelin provides her with improved attack, ranged attack, missile range, attack speed, <truncated, 574 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -30727,7 +30729,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Order thieves gain +2 ranged attack, +1 missile range and +1 missile speed.  Fire thieves get +3 ranged attack, +2 missi` |
+| `description` | text | `Order thieves gain +2 ranged attack, +1 missile range and +1 missile speed. Fire thieves get +3 ranged attack, +2 <truncated, 217 chars>` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `faith` | name | `FIRE` |
 | `image` | number | `6` |
@@ -30759,7 +30761,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `With this frothy staff, any Mage receives +(1/3X) Attack, +(1/5X) Armor, +(1/3X) Mana with the ability to cast Detect Ea` |
+| `description` | text | `With this frothy staff, any Mage receives +(1/3X) Attack, +(1/5X) Armor, +(1/3X) Mana with the ability to cast Detect <truncated, 273 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -30800,7 +30802,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Any mage, except for Fire mages, may use this watery staff to receive +3 Attack, +3 Armor, +5 Attack Rate, +10 Mana, +50` |
+| `description` | text | `Any mage, except for Fire mages, may use this watery staff to receive +3 Attack, +3 Armor, +5 Attack Rate, +10 Mana, <truncated, 429 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -30844,7 +30846,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `With this shocking staff, any mage receives +5 Attack, +3 Armor, +10 Mana, +50% Earth Resistance, +25% Magic Resistance ` |
+| `description` | text | `With this shocking staff, any mage receives +5 Attack, +3 Armor, +10 Mana, +50% Earth Resistance, +25% Magic Resistance <truncated, 428 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `AIR` |
@@ -30887,7 +30889,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
-| `description` | text | `Any mage, save for Chaos mages, may wield this divine staff to receive +3 Attack, Armor, Wisdom and Mana, +2000 experien` |
+| `description` | text | `Any mage, save for Chaos mages, may wield this divine staff to receive +3 Attack, Armor, Wisdom and Mana, +2000 <truncated, 338 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -30931,7 +30933,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Any mage may command this fiery staff to receive +(1/3X) Attack, +(1/3X) Mana, +(2/5X) movement and the ability to cast ` |
+| `description` | text | `Any mage may command this fiery staff to receive +(1/3X) Attack, +(1/3X) Mana, +(2/5X) movement and the ability to cast <truncated, 279 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -30972,7 +30974,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Any Mage may wield this rod for +(1/3X) Mana, +(2/5X) movement, +(3/5X) Gold/turn and the ability to cast Detect Air.  I` |
+| `description` | text | `Any Mage may wield this rod for +(1/3X) Mana, +(2/5X) movement, +(3/5X) Gold/turn and the ability to cast Detect Air. In <truncated, 266 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -31013,7 +31015,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Only Earth, Chaos, Death and Fire mages may wield this stoney rod to receive +3 Attack, Armor, Strength, Dexterity, Wisd` |
+| `description` | text | `Only Earth, Chaos, Death and Fire mages may wield this stoney rod to receive +3 Attack, Armor, Strength, Dexterity, <truncated, 363 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `EARTH` |
@@ -31057,7 +31059,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 19 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Any Mage may carry this staff to receive +(1/5X) Attack, +(1/3X) Armor, +(1/3X) Health Recovery and the ability to cast ` |
+| `description` | text | `Any Mage may carry this staff to receive +(1/5X) Attack, +(1/3X) Armor, +(1/3X) Health Recovery and the ability to cast <truncated, 371 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -31098,7 +31100,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Any mage, save for Water mages, may wield this burning staff which imparts +5 Attack, +3 Armor, +10 mana, +50% Water Res` |
+| `description` | text | `Any mage, save for Water mages, may wield this burning staff which imparts +5 Attack, +3 Armor, +10 mana, +50% Water <truncated, 435 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -31141,7 +31143,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 19 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Life Warriors or Any Mage, except Death mages, may wield this brilliant staff to receive +3 Attack, Rate of Attack, Hit ` |
+| `description` | text | `Life Warriors or Any Mage, except Death mages, may wield this brilliant staff to receive +3 Attack, Rate of Attack, Hit <truncated, 569 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -31186,7 +31188,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Any mage, except for Death mages, may wield this glorified staff to receive +3 Attack and Armor, +8 Mana, +50% Death Res` |
+| `description` | text | `Any mage, except for Death mages, may wield this glorified staff to receive +3 Attack and Armor, +8 Mana, +50% Death <truncated, 513 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 12 tokens>` |
@@ -31227,7 +31229,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `All mages receive +1 Armor and can cast Raise Shade twice per day.  Casts Cure Wounds on wielder at start of combat.  De` |
+| `description` | text | `All mages receive +1 Armor and can cast Raise Shade twice per day. Casts Cure Wounds on wielder at start of combat. <truncated, 165 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `4` |
@@ -31258,7 +31260,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `All mages gain +6 Mana, +2 armor and the ability to cast Asphyxiate once per day.  Air mages get 60% resistance to Earth` |
+| `description` | text | `All mages gain +6 Mana, +2 armor and the ability to cast Asphyxiate once per day. Air mages get 60% resistance to Earth <truncated, 237 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `AIR` |
 | `image` | number | `4` |
@@ -31288,7 +31290,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Any mage can cast drowning twice per day, (Heals water units, slowly drowns other units in a radius) gains +6 mana, and ` |
+| `description` | text | `Any mage can cast drowning twice per day, (Heals water units, slowly drowns other units in a radius) gains +6 mana, and <truncated, 253 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `WATER` |
 | `image` | number | `4` |
@@ -31347,7 +31349,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Mages get +6 mana and can cast Backdraft twice a day, a multiple Fireball spell.  Fire mages gain +3 Armor, 50% resistan` |
+| `description` | text | `Mages get +6 mana and can cast Backdraft twice a day, a multiple Fireball spell. Fire mages gain +3 Armor, 50% <truncated, 220 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `FIRE` |
 | `image` | number | `4` |
@@ -31376,7 +31378,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Life warriors and mages gain +4 Attack and +2 Armor, and can cast Ray of Hope twice a day.  Casts Holy Visit at the begi` |
+| `description` | text | `Life warriors and mages gain +4 Attack and +2 Armor, and can cast Ray of Hope twice a day. Casts Holy Visit at the <truncated, 218 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 24 tokens>` |
@@ -31409,7 +31411,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Any mage gains +3 Attack and +6 Wisdom, and can cast Polymorph Other twice a day.  Chaos mages also get +2 Armor, and a ` |
+| `description` | text | `Any mage gains +3 Attack and +6 Wisdom, and can cast Polymorph Other twice a day. Chaos mages also get +2 Armor, and a <truncated, 193 chars>` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `CHAOS` |
 | `image` | number | `4` |
@@ -31439,7 +31441,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Any mage gains +2 Armor, +4 Mana, and ability to cast Resurrection twice a day.  Life mages gain 75% Death resistance, h` |
+| `description` | text | `Any mage gains +2 Armor, +4 Mana, and ability to cast Resurrection twice a day. Life mages gain 75% Death resistance, <truncated, 246 chars>` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 24 tokens>` |
@@ -31474,7 +31476,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 20 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Any Mage may wield this staff to receive +(1/3X) Attack, +(1/5X) Armor and the ability to cast Nature Walk.  In combat, ` |
+| `description` | text | `Any Mage may wield this staff to receive +(1/3X) Attack, +(1/5X) Armor and the ability to cast Nature Walk. In combat, <truncated, 371 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -31560,7 +31562,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 20 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Any Mage may carry this staff that taps the shadowlands for +(1/3X) Attack, +(1/5X) Armor, +(1/3X) Mana and the ability ` |
+| `description` | text | `Any Mage may carry this staff that taps the shadowlands for +(1/3X) Attack, +(1/5X) Armor, +(1/3X) Mana and the ability <truncated, 374 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -31600,7 +31602,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Any Mage, except for Order mages, may wield this disorderly staff to receive +5 Attack, Mana and Wisdom, +3 Armor, +50% ` |
+| `description` | text | `Any Mage, except for Order mages, may wield this disorderly staff to receive +5 Attack, Mana and Wisdom, +3 Armor, +50% <truncated, 597 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `dummy2` | expression | `spelldict begin [ poison leeches fireball ice_comet prismatic_hand balkoths_word ] end replace bind` |
@@ -31644,7 +31646,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Any Mage, except for Life Mages, may wield this unholy staff to receive +3 & (1/7X) Attack and Armor, +10 Mana and the a` |
+| `description` | text | `Any Mage, except for Life Mages, may wield this unholy staff to receive +3 & (1/7X) Attack and Armor, +10 Mana and the <truncated, 482 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 5 tokens>` |
@@ -31688,7 +31690,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Any mage may wield this rod to receive +(1/3X) Attack, +(1/5X) Armor, +(1/3X) Maximum Mana and the ability to cast Detec` |
+| `description` | text | `Any mage may wield this rod to receive +(1/3X) Attack, +(1/5X) Armor, +(1/3X) Maximum Mana and the ability to cast <truncated, 273 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -31913,7 +31915,7 @@ its shape and token count, never its body.
 | `category` | number | `5` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Any Mage can use this artifact which grants the wearer the +2 Luck.  During combat, the wearer regenerates 1 hp/12 sec. ` |
+| `description` | text | `Any Mage can use this artifact which grants the wearer the +2 Luck. During combat, the wearer regenerates 1 hp/12 sec. <truncated, 256 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 59 tokens>` |
@@ -31956,7 +31958,7 @@ its shape and token count, never its body.
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Any Champion who holds this earthly stone will benefit with more Luck, a small boost to many stats (Strength, Dexterity,` |
+| `description` | text | `Any Champion who holds this earthly stone will benefit with more Luck, a small boost to many stats (Strength, Dexterity, <truncated, 208 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32044,7 +32046,7 @@ its shape and token count, never its body.
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Any Champion who takes this stone in hand shall benefit from heightened combat abilities never before experienced, but a` |
+| `description` | text | `Any Champion who takes this stone in hand shall benefit from heightened combat abilities never before experienced, but <truncated, 136 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32079,7 +32081,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `description` | text | `Any mage acquires +2 Armor, 15% resistance to all magic and the power to cast Clay Earth once a day.  Earth mages enjoy ` |
+| `description` | text | `Any mage acquires +2 Armor, 15% resistance to all magic and the power to cast Clay Earth once a day. Earth mages enjoy <truncated, 172 chars>` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `1` |
@@ -32162,7 +32164,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Fire or Air Warriors may wield this firey blade to receive +(1/3X) Attack and Rate of Attack, +(1/5X) Armor and the abil` |
+| `description` | text | `Fire or Air Warriors may wield this firey blade to receive +(1/3X) Attack and Rate of Attack, +(1/5X) Armor and the <truncated, 334 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32204,7 +32206,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `false` |
 | `category` | number | `6` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Order, Death or Water Warriors may wield this valiant blade which provides +3 Attack, Strength, Attack Rate and Luck.  A` |
+| `description` | text | `Order, Death or Water Warriors may wield this valiant blade which provides +3 Attack, Strength, Attack Rate and Luck. At <truncated, 405 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32248,7 +32250,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 20 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Death, Order or Water Warriors may wield this vile sword which bestows +(1/3X) Attack, +(1/5X) Rate of Attack, +(2/5X) p` |
+| `description` | text | `Death, Order or Water Warriors may wield this vile sword which bestows +(1/3X) Attack, +(1/5X) Rate of Attack, +(2/5X) <truncated, 340 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32291,7 +32293,7 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `colorizeborder?` | name | `false` |
 | `colorizetext?` | name | `false` |
-| `description` | text | `Order, Death or Water Warriors may wield this sage blade to receive +2 Attack and +4 Wisdom.  Values bestowed increase w` |
+| `description` | text | `Order, Death or Water Warriors may wield this sage blade to receive +2 Attack and +4 Wisdom. Values bestowed increase <truncated, 279 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32334,7 +32336,7 @@ its shape and token count, never its body.
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
-| `description` | text | `Fire and Air Warriors may wield this volcanic sword which bestows +5 Attack, Dexterity and Luck, +1 Armor and +1X Rate o` |
+| `description` | text | `Fire and Air Warriors may wield this volcanic sword which bestows +5 Attack, Dexterity and Luck, +1 Armor and +1X Rate <truncated, 448 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32379,7 +32381,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Water, Order and Death Warriors may wield this chilling sword to receive +(1/3X) Attack, +(1/5X) Attack Rate, +(3/5X) Fa` |
+| `description` | text | `Water, Order and Death Warriors may wield this chilling sword to receive +(1/3X) Attack, +(1/5X) Attack Rate, +(3/5X) <truncated, 354 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32418,7 +32420,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Air warriors gain +3 to attack, +1 attack speed, and +1 armor.  Fire warriors gain +3 attack, +3 armor, +3 luck, +5 atta` |
+| `description` | text | `Air warriors gain +3 to attack, +1 attack speed, and +1 armor. Fire warriors gain +3 attack, +3 armor, +3 luck, +5 <truncated, 224 chars>` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `faith` | name | `FIRE` |
 | `image` | number | `5` |
@@ -32479,7 +32481,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 20 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `Order, Death or Water Warriors may take up this blade to receive +(1/3X) Attack, +(1/5X) Attack Rate, +(1/5X) Sight Radi` |
+| `description` | text | `Order, Death or Water Warriors may take up this blade to receive +(1/3X) Attack, +(1/5X) Attack Rate, +(1/5X) Sight <truncated, 334 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32520,7 +32522,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 44 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Death, Order and Water Warriors may wield this unholy blade which bestows +3 Attack, Strength and Dexterty, +3 Rate of A` |
+| `description` | text | `Death, Order and Water Warriors may wield this unholy blade which bestows +3 Attack, Strength and Dexterty, +3 Rate of <truncated, 390 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32558,7 +32560,7 @@ its shape and token count, never its body.
 | field | shape | value |
 |---|---|---|
 | `alt_spell_id` | expression | `spelldict /enchant_weapon_death get` |
-| `alt_spells_id` | expression | `spelldict begin [ enchant_weapon_death enchant_weapon_life enchant_weapon_chaos enchant_weapon_order enchant_weapon_wate` |
+| `alt_spells_id` | expression | `spelldict begin [ enchant_weapon_death enchant_weapon_life enchant_weapon_chaos enchant_weapon_order enchant_weapon_water enchant_weapon_fire enchant_weapon_air enchant_weapon_earth ] end` |
 | `attack_proc` | procedure | `<procedure 2 tokens>` |
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
@@ -32569,7 +32571,7 @@ its shape and token count, never its body.
 | `description` | procedure | `<procedure 20 tokens>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
-| `dummy2` | expression | `spelldict begin [ enchant_weapon_death enchant_weapon_life enchant_weapon_chaos enchant_weapon_order enchant_weapon_wate` |
+| `dummy2` | expression | `spelldict begin [ enchant_weapon_death enchant_weapon_life enchant_weapon_chaos enchant_weapon_order enchant_weapon_water enchant_weapon_fire enchant_weapon_air enchant_weapon_earth ] end replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `163` |
@@ -32608,7 +32610,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 45 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Air or Fire Warriors may wield this light and thunderous blade to receive +3 Attack, +3 Strength, +1X Rate of Attack and` |
+| `description` | text | `Air or Fire Warriors may wield this light and thunderous blade to receive +3 Attack, +3 Strength, +1X Rate of Attack and <truncated, 492 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32651,7 +32653,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 42 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `description` | text | `Water, Order or Death Warriors may wield this fluid blade to receive +3 Attack, Dexterity and Rate of Attack and the abi` |
+| `description` | text | `Water, Order or Death Warriors may wield this fluid blade to receive +3 Attack, Dexterity and Rate of Attack and the <truncated, 449 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32693,7 +32695,7 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `description` | text | `With this blade of storms, Air or Fire Warriors receive +(1/3X) Attack, +(1/3X) Rate of Attack, +(1/5X) Armor and the ab` |
+| `description` | text | `With this blade of storms, Air or Fire Warriors receive +(1/3X) Attack, +(1/3X) Rate of Attack, +(1/5X) Armor and the <truncated, 347 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
@@ -32755,7 +32757,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Air and Fire warriors gain +4 Attack, +2 Armor, +1 attack speed, and may cast one Thunderclap per day, stunning enemies ` |
+| `description` | text | `Air and Fire warriors gain +4 Attack, +2 Armor, +1 attack speed, and may cast one Thunderclap per day, stunning enemies <truncated, 201 chars>` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `dummy` | expression | `1 dict replace bind` |
 | `faith` | name | `AIR` |
@@ -32786,7 +32788,7 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `description` | text | `Water, Death, or Order warriors get +2 Attack, +2 Dexterity, +1 rate of attack and can cast Ice Bolt 6 times a day.  In ` |
+| `description` | text | `Water, Death, or Order warriors get +2 Attack, +2 Dexterity, +1 rate of attack and can cast Ice Bolt 6 times a day. In <truncated, 226 chars>` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `faith` | name | `WATER` |
 | `image` | number | `5` |
@@ -32814,7 +32816,7 @@ its shape and token count, never its body.
 |---|---|---|
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `0` |
-| `description` | text | `This token represents the Insane Mode difficulty modifier.  If a human player's Lord possesses this, then it shall cause` |
+| `description` | text | `This token represents the Insane Mode difficulty modifier. If a human player's Lord possesses this, then it shall cause <truncated, 153 chars>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `dummy2` | expression | `currentdict /mod_proc get replace bind` |

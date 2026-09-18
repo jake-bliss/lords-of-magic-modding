@@ -544,28 +544,48 @@ fn classify_value(value: &[Token], line: usize) -> FieldValue {
 
     // Aggregate values are recorded as their shape and size, never their contents. That keeps
     // script text out of the generated reports and keeps a row a row.
+    //
+    // **The two remaining classes are bounded differently, on purpose.** A single `.chars()
+    // .take(120)` used to cover both, and it cut 414 rows mid-token with nothing to say it had:
+    // `reports/gameplay/fields.tsv` carried the severed flag names `CAN_USE_R`, `CAN_USE_LE` and
+    // `CAN_TRAN`, and a bare `o` that had been the operator `or`. A consumer could only detect the
+    // cut by noticing the length was exactly 120, and had to throw away the trailing partial token
+    // to avoid republishing a name the game does not have. Evidence class: Corrected.
+    //
+    // - A **symbolic** value -- a number, a name, or an expression of names, numbers and operators
+    //   -- is emitted **in full**. It is the field's value, not a body: every braced or bracketed
+    //   aggregate has already been replaced by its shape above, so what reaches here is flat. Unit
+    //   `flags` is the case that matters, a constant expression that means nothing partial. The
+    //   longest in the corpus is 227 tokens / 2,951 characters (`alt_spells_id` on `chalice_chaos`
+    //   and `scroll_sages`), and four expressions in all three profiles contain a string, each an
+    //   asset path (`iface/ordragb.imp`). Evidence class: Observed in a local binary.
+    // - A **prose** value -- a lone string literal, which is how artifact `description` reaches the
+    //   reports -- keeps a bound, because that is the class the no-script-text rule is about. It is
+    //   cut on a word boundary and says so in the value itself.
     let text = match shape {
         ValueShape::Procedure | ValueShape::Dictionary | ValueShape::Array => {
             format!("<{} {} tokens>", shape.label(), value.len())
         }
-        _ => value
-            .iter()
-            .map(token_text)
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
-            .take(120)
-            .collect(),
+        ValueShape::Text => bounded_prose(&joined_tokens(value)),
+        ValueShape::Number | ValueShape::Name | ValueShape::Expression => joined_tokens(value),
     };
 
-    // Finite values only. The shared lexer calls a token a number when `f64::from_str` accepts it,
-    // and Rust accepts `inf`, `infinity` and `nan` case-insensitively -- so the corpus's infantry
-    // unit code, the literal `INF`, arrives here as floating-point infinity. Eight units per
-    // profile carry it, and admitting them reported the `code` field's range as `inf..inf`.
+    // Finite values only. This used to be the whole defence against the lexer calling a token a
+    // number whenever `f64::from_str` accepted it: Rust takes `inf`, `infinity` and `nan`
+    // case-insensitively, so the corpus's infantry unit code `INF` arrived here as floating-point
+    // infinity and reported the `code` field's range as `inf..inf`. `gamescript::is_number_token`
+    // now models the language instead, so such a word never reaches this line as a `Number`
+    // token and those eight units per profile take the `name` shape. Evidence class: Corrected.
     //
-    // This does not fix the lexer, which is outside this module and whose published token counts
-    // other work depends on; it stops a non-finite value being summarised as if it were a
-    // measurement. Such a field keeps its `number` shape and its text, and is simply not counted.
+    // The filter stays, and the order matters: parse first, test finiteness second, because what
+    // it now defends against is **overflow**, which only exists after the parse. A number the
+    // predicate correctly accepts can still exceed `f64` -- `1e400`, or a 400-digit integer -- and
+    // would arrive here as infinity through a lexer doing its job. No shipped member does that:
+    // across all three profiles there are **zero** non-finite number tokens, the largest magnitude
+    // is `300000000` and the longest numeric token is `3.14159265`, ten characters against the 309
+    // it would take to overflow. Evidence class: Observed in a local binary. So the guard is
+    // unexercised by the corpus rather than dead -- a mod is not bound by what shipped -- and a
+    // field that trips it keeps its shape and its text and is simply not counted.
     let number = match (&shape, &value[0].kind) {
         (ValueShape::Number, TokenKind::Number(text)) => {
             text.parse::<f64>().ok().filter(|value| value.is_finite())
@@ -579,6 +599,54 @@ fn classify_value(value: &[Token], line: usize) -> FieldValue {
         number,
         line,
     }
+}
+
+/// How much of a prose value is published before it is cut.
+///
+/// Prose is the only class this module bounds by length, and the number is a policy choice rather
+/// than a measurement: these reports are published, and a shipped string is game content. It is
+/// stated here once so a reader can see what the cut costs -- 268 of the corpus's 6,413 string
+/// values exceed it, the longest being 709 characters.
+const PROSE_BUDGET: usize = 120;
+
+/// The value's tokens as text, in source order.
+fn joined_tokens(value: &[Token]) -> String {
+    value.iter().map(token_text).collect::<Vec<_>>().join(" ")
+}
+
+/// A prose value cut to `PROSE_BUDGET`, on a word boundary, saying so.
+///
+/// Two properties the previous `.chars().take(120)` had neither of: the cut never lands inside a
+/// word, and the result announces itself. A consumer reads the marker instead of inferring
+/// truncation from a length that happens to equal the cap. A value with no whitespace to cut on
+/// is emitted whole rather than severed -- one word is one token, and a partial token is the thing
+/// being fixed.
+fn bounded_prose(text: &str) -> String {
+    if text.chars().count() <= PROSE_BUDGET {
+        return text.to_owned();
+    }
+    let mut kept = String::new();
+    for word in text.split_whitespace() {
+        let extra = word.chars().count() + usize::from(!kept.is_empty());
+        if !kept.is_empty() && kept.chars().count() + extra > PROSE_BUDGET {
+            break;
+        }
+        if !kept.is_empty() {
+            kept.push(' ');
+        }
+        kept.push_str(word);
+        if kept.chars().count() >= PROSE_BUDGET {
+            break;
+        }
+    }
+    if kept.is_empty() {
+        // No whitespace at all within the budget: emit the first whole word rather than half of it.
+        kept = text.split_whitespace().next().unwrap_or(text).to_owned();
+    }
+    if kept.chars().count() >= text.chars().count() {
+        return text.to_owned();
+    }
+    format!("{kept} <truncated, {} chars>", text.chars().count())
 }
 
 fn token_text(token: &Token) -> String {
@@ -1254,19 +1322,32 @@ mod tests {
 
     #[test]
     fn a_non_finite_number_token_is_never_summarised_as_a_value() {
-        // `INF` is the corpus's infantry unit code. Rust's `f64::from_str` accepts it, so the
-        // shared lexer hands it over as a number token -- and a range computed over it reads
-        // `inf..inf`. Both spellings the parser accepts are checked, and a real number alongside
-        // them, so the guard cannot pass by rejecting everything.
-        let (fields, _) = record_fields(&parse("/code INF def /other NaN def /armor 6 def"));
+        // Two routes to a non-finite value, and both must end in `None`. `INF` is the corpus's
+        // infantry unit code: the lexer once handed it over as a number token because Rust's
+        // `f64::from_str` accepts the spelling, and a range computed over it read `inf..inf`. It
+        // is now a name, so it cannot reach the guard at all -- which is asserted here, because a
+        // regression in the lexer would put it back. `1e400` is the route that survives a correct
+        // lexer: a well-formed number that simply exceeds `f64` and parses to infinity. A real
+        // number sits alongside them so the guard cannot pass by rejecting everything.
+        let (fields, _) = record_fields(&parse(
+            "/code INF def /other 1e400 def /armor 6 def /third -1e400 def",
+        ));
+        assert_eq!(fields["code"].shape, ValueShape::Name, "INF is a unit code");
         assert_eq!(fields["code"].number, None, "INF was summarised as a value");
         assert_eq!(
-            fields["other"].number, None,
-            "NaN was summarised as a value"
+            fields["other"].shape,
+            ValueShape::Number,
+            "1e400 is a well-formed number; it is the value that overflows, not the token"
         );
+        assert_eq!(
+            fields["other"].number, None,
+            "an overflowing literal was summarised as a value"
+        );
+        assert_eq!(fields["third"].number, None);
         assert_eq!(fields["armor"].number, Some(6.0));
         // The text is still reported, so the record does not lose what the corpus actually says.
         assert_eq!(field_text(&fields, "code"), "INF");
+        assert_eq!(field_text(&fields, "other"), "1e400");
 
         // And such a field contributes to neither the range nor the mode.
         let mut symbols = BTreeMap::new();
@@ -1292,6 +1373,86 @@ mod tests {
         assert_eq!(code.numeric, 0);
         assert_eq!(code.minimum, None);
         assert_eq!(code.maximum, None);
+    }
+
+    #[test]
+    fn a_symbolic_value_is_never_cut_however_long_it_gets() {
+        // The defect this replaces: a flags expression cut at 120 characters published the names
+        // `CAN_USE_R`, `CAN_USE_LE` and `CAN_TRAN`, none of which the game has. The fixture is
+        // built long enough to have tripped the old cap several times over, and the assertion is
+        // that every name survives whole -- not that the text is short.
+        let flags: Vec<String> = (0..40)
+            .map(|index| format!("CAN_USE_ARTIFACT_{index:02}"))
+            .collect();
+        let source = format!("/flags {} or def", flags.join(" "));
+        let (fields, _) = record_fields(&parse(&source));
+        let text = field_text(&fields, "flags");
+        assert!(
+            text.chars().count() > PROSE_BUDGET * 5,
+            "the fixture must be long enough to have been cut before: {} chars",
+            text.chars().count()
+        );
+        for flag in &flags {
+            assert!(text.contains(flag.as_str()), "{flag} did not survive whole");
+        }
+        assert!(
+            text.ends_with(" or"),
+            "the trailing operator was lost: {text}"
+        );
+        assert!(
+            !text.contains("<truncated"),
+            "a symbolic value must not be bounded at all"
+        );
+        // And no word of it is a prefix of a longer word that should have been there -- which is
+        // exactly what a mid-token cut leaves behind.
+        let words: Vec<&str> = text.split(' ').collect();
+        assert_eq!(words.len(), flags.len() + 1);
+    }
+
+    #[test]
+    fn a_prose_value_is_cut_on_a_word_boundary_and_says_so() {
+        let word_count = 200;
+        let prose = std::iter::repeat_n("Champion", word_count)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (fields, _) = record_fields(&parse(&format!("/description \"{prose}\" def")));
+        let text = field_text(&fields, "description");
+
+        assert!(
+            text.contains("<truncated"),
+            "a cut value must announce itself rather than leave a length to be noticed: {text}"
+        );
+        assert!(
+            text.ends_with(&format!("<truncated, {} chars>", prose.chars().count())),
+            "the marker must state the true length: {text}"
+        );
+        let kept = text
+            .split(" <truncated")
+            .next()
+            .expect("the marker splits the value");
+        assert!(prose.starts_with(kept), "the kept part must be a prefix");
+        // Word-aligned in both directions: it stops on a whole word, and the very next character
+        // of the original is a space rather than the middle of one.
+        assert!(kept.split(' ').all(|word| word == "Champion"));
+        assert_eq!(
+            prose.chars().nth(kept.chars().count()),
+            Some(' '),
+            "the cut landed inside a word: {kept}"
+        );
+        assert!(kept.chars().count() <= PROSE_BUDGET);
+    }
+
+    #[test]
+    fn prose_within_the_budget_and_a_single_long_word_are_both_left_whole() {
+        let (fields, _) = record_fields(&parse(r#"/description "A short line." def"#));
+        assert_eq!(field_text(&fields, "description"), "A short line.");
+        assert!(!field_text(&fields, "description").contains("<truncated"));
+
+        // One word longer than the budget has no boundary to cut on. Half a token is the thing
+        // being fixed, so it is emitted whole.
+        let word = "x".repeat(PROSE_BUDGET * 2);
+        let (fields, _) = record_fields(&parse(&format!("/description \"{word}\" def")));
+        assert_eq!(field_text(&fields, "description"), word);
     }
 
     #[test]

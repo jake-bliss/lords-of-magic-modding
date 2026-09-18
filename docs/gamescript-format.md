@@ -54,7 +54,7 @@ Measured read-only on 2026-09-12 with the same public listfile used by the asset
 | Source bytes | 4,455,555 | 5,098,841 | 10,058,269 |
 | Tokens | 557,649 | 633,525 | 1,149,348 |
 | Comments | 1 | 843 | 17,007 |
-| Distinct executable names | 14,080 | 15,174 | 16,855 |
+| Distinct executable names | 14,081 | 15,176 | 16,856 |
 | Distinct literal names | 14,160 | 15,162 | 17,641 |
 | Maximum observed procedure depth | 19 | 19 | 20 |
 | Procedure-brace anomalies | 4 | 6 | 1 |
@@ -132,14 +132,14 @@ does not have, so it is left in and bounded instead. On 3.02: of 12,979 names th
 admitted, **83** (0.64%) had no sound definition site anywhere in the corpus; fixing the three
 shapes above reclassified **12** of them, and the rest are this residual. Of the **1,131** names
 the definition-window widening newly admitted, **6** were bad-shape-only — so the widening itself
-was ~99.5% sound. The 10,901 script-definition figure is still an upper bound; it is an upper bound
+was ~99.5% sound. The 10,902 script-definition figure is still an upper bound; it is an upper bound
 whose error is now measured at well under one percent rather than unknown.
 
 Measured on GS5R3: 17,641 distinct literal names and **14,917 definitions**, so 2,724 literals were
-never definitions. The native-candidate count is **2,198**. Two corrections moved it from the
+never definitions. The native-candidate count is **2,199**. Two corrections moved it from the
 13,609 definitions and 2,151 candidates that the flat three-token rule produced: the widened rule
 recognised definitions the window had missed, which removes candidates, and the case-fold
-correction added back 47 engine constants that a lowercase definition of the same word had been
+correction added back 48 engine constants that a lowercase definition of the same word had been
 suppressing. The net is +44. Both are described below and both are labelled Corrected. The scan reports `distinct-definition-names` alongside the
 literal count, and `LOM_CANDIDATE_LIMIT` raises the 50-line display cap for cataloguing the full
 vocabulary.
@@ -189,16 +189,16 @@ widening, the case-fold correction and the three rejected shapes; the figures we
 | Class | Count | Reading |
 | --- | ---: | --- |
 | Confirmed operators | 1,446 | present in the table with an entry point |
-| SCREAMING_CASE | 717 | engine **constants** pushed by name, not operators |
+| SCREAMING_CASE | 718 | engine **constants** pushed by name, not operators |
 | Remainder | 35 | see below |
-| **Candidates** | **2,198** | |
+| **Candidates** | **2,199** | |
 
 The heuristic's stated weakness — *"can contain false positives from unrelated binary strings"* — is
 now measured rather than assumed. Two thirds of the vocabulary are confirmed procedures, and almost
 all of the rest are a category the heuristic could not distinguish: **constants are not operators**,
 so they are absent from the table by construction rather than by error. The constant count rose by
-46 as the net of both corrections; the case-fold fix alone recovered 47 names for GS5R3 — `GOLD`,
-`FOOD`, `CRYSTALS` and the rest — of which 46 are SCREAMING_CASE. Those were always constants and
+47 as the net of both corrections; the case-fold fix alone recovered 48 names for GS5R3 — `GOLD`,
+`FOOD`, `CRYSTALS` and the rest — of which 47 are SCREAMING_CASE. Those were always constants and
 were always absent from the operator table, but they had been absent from the *candidate list* too,
 which is the part that was wrong.
 
@@ -696,13 +696,13 @@ The tool reports `standard.gs`'s static debt as 21 names. One of them, `outfilen
 
 | Class | vanilla | patch302 | gs5r3 |
 | --- | ---: | ---: | ---: |
-| script-definition | 10,305 | 10,901 | 12,355 |
+| script-definition | 10,305 | 10,902 | 12,355 |
 | language-primitive | 56 | 56 | 55 |
 | native-host-call | 1,383 | 1,414 | 1,391 |
-| constant-or-data | 693 | 786 | 722 |
+| constant-or-data | 694 | 787 | 723 |
 | engine-dictionary-key | 112 | 113 | 126 |
 | unclassified-residue | 1,531 | 1,904 | 2,206 |
-| **distinct executable names** | **14,080** | **15,174** | **16,855** |
+| **distinct executable names** | **14,081** | **15,176** | **16,856** |
 
 Restricted to the broad "likely hardcoded engine name" candidate list, which is what issue #5 asked to partition:
 
@@ -710,10 +710,10 @@ Restricted to the broad "likely hardcoded engine name" candidate list, which is 
 | --- | ---: | ---: | ---: |
 | language-primitive | 56 | 56 | 55 |
 | native-host-call | 1,383 | 1,414 | 1,391 |
-| constant-or-data | 689 | 760 | 717 |
+| constant-or-data | 690 | 761 | 718 |
 | engine-dictionary-key | 0 | 0 | 1 |
 | unclassified-residue | 32 | 33 | 34 |
-| **broad candidates** | **2,160** | **2,263** | **2,198** |
+| **broad candidates** | **2,161** | **2,264** | **2,199** |
 
 So **roughly 98.5% of the broad candidate list is real** — a primitive, an operator the engine registers, or a constant — and about 33 names per profile are coincidences of the string filter. `script-definition` is zero there, now for a principled reason rather than by construction: a candidate is by definition a name the corpus does not define, and both sides of that comparison are case-sensitive.
 
@@ -721,9 +721,9 @@ So **roughly 98.5% of the broad candidate list is real** — a primitive, an ope
 
 | | vanilla | patch302 | gs5r3 |
 | --- | ---: | ---: | ---: |
-| candidates, case-sensitive | 2,160 | 2,263 | 2,198 |
+| candidates, case-sensitive | 2,161 | 2,264 | 2,199 |
 | under the old fold | 2,114 | 2,212 | 2,151 |
-| recovered | 46 | 51 | 47 |
+| recovered | 47 | 52 | 48 |
 
 Every recovered name is an engine constant (`GOLD`, `FOOD`, `CRYSTALS`, `WARRIOR`, `WIZARD`, `TARGET_ARMY`, `CITY_OWNER`), which is the class the filter exists to surface. Both the scanner and the classifier report the same deltas from independently written code, and both print them (`engine-names-recovered-from-the-old-case-fold`, `broad-candidates-recovered-from-the-old-case-fold`) so the movement is stated rather than silent. Evidence class: Corrected.
 

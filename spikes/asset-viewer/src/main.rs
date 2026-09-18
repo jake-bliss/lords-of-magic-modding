@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use lom_asset_viewer::asset::{AssetKind, probe};
 use lom_asset_viewer::gameplay_symbols;
-use lom_asset_viewer::gamescript::GameScriptDocument;
+use lom_asset_viewer::gamescript::{GameScriptDocument, is_number_token};
 use lom_asset_viewer::gamescript_vm::{
     GameScriptVm, GameScriptVmError, Value as GameScriptValue,
 };
@@ -880,9 +880,19 @@ fn parse_native_stub(specification: &str) -> Result<(String, GameScriptValue), S
     let value = match value {
         "true" => GameScriptValue::Boolean(true),
         "false" => GameScriptValue::Boolean(false),
-        other => GameScriptValue::Number(other.parse::<f64>().map_err(|_| {
-            format!("--stub value must be a number, true, or false, got {other}")
-        })?),
+        // Classified with the lexer's own predicate, not `f64::from_str`, so `--stub x=inf` is
+        // the error it reads as rather than a silent infinity on the stub's stack. Evidence
+        // class: Corrected.
+        other if is_number_token(other) => {
+            GameScriptValue::Number(other.parse::<f64>().map_err(|_| {
+                format!("--stub value must be a number, true, or false, got {other}")
+            })?)
+        }
+        other => {
+            return Err(format!(
+                "--stub value must be a number, true, or false, got {other}"
+            ));
+        }
     };
     Ok((name.to_owned(), value))
 }
@@ -4791,10 +4801,10 @@ fn gameplay_symbols_like(pattern: &str, reports: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        GENERATED_HEADER_WORD, MapEdit, TRANSITION_RING_OFFSETS, create_map, edit_map,
-        parse_coordinate, parse_dimension, parse_elevation, parse_offset, parse_sprite_type,
-        parse_terrain_type, roundtrip_maps, set_imp_placement, sprite_types, terrain_sprite_name,
-        transition_rings,
+        GENERATED_HEADER_WORD, GameScriptValue, MapEdit, TRANSITION_RING_OFFSETS, create_map,
+        edit_map, parse_coordinate, parse_dimension, parse_elevation, parse_native_stub,
+        parse_offset, parse_sprite_type, parse_terrain_type, roundtrip_maps, set_imp_placement,
+        sprite_types, terrain_sprite_name, transition_rings,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
@@ -6868,5 +6878,36 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
         assert_eq!(section.records[0].sprite_type, 470);
         assert_eq!(written.record_coordinates(&section.records[0]), (3, 2));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+
+    #[test]
+    fn a_stub_value_spelled_as_an_infinity_is_refused_rather_than_pushed() {
+        // `--stub` takes a value from a person, so the lexer's predicate is what decides whether
+        // it is a number; `f64::from_str` would have made every one of these an infinity or a NaN
+        // on the stub's stack, silently.
+        for spelling in [
+            "inf", "INF", "Inf", "infinity", "INFINITY", "nan", "NaN", "NAN", "+inf", "-INF",
+        ] {
+            assert!(
+                spelling.parse::<f64>().is_ok(),
+                "{spelling} is meant to be the hole f64::from_str leaves open"
+            );
+            let error = parse_native_stub(&format!("getgold={spelling}"))
+                .expect_err("a spelled-out infinity is not a stub value");
+            assert!(
+                error.contains(spelling),
+                "the error should quote {spelling}"
+            );
+        }
+        let (name, value) = parse_native_stub("getgold=-12.5").expect("a real is a stub value");
+        assert_eq!(name, "getgold");
+        assert_eq!(value, GameScriptValue::Number(-12.5));
+        assert_eq!(
+            parse_native_stub("getmultiplayerflag=false")
+                .expect("a boolean is a stub value")
+                .1,
+            GameScriptValue::Boolean(false)
+        );
     }
 }

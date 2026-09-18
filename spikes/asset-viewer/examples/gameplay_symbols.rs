@@ -12,7 +12,10 @@
 //!
 //! **What is emitted.** Counts, names, classifications, numeric field values, and positions. A
 //! field whose value is a procedure, dictionary or array is recorded as its shape and size, never
-//! its body, so no script text reaches the reports.
+//! its body, so no script text reaches the reports. A flat value -- a number, a name, or an
+//! expression of them -- is published whole, because half of `CAN_USE_RIGHT_ARTIFACT` is not a
+//! shorter fact, it is a wrong one. Only prose, meaning a lone string literal, is bounded, and a
+//! bounded value carries a `<truncated, N chars>` marker and is cut on a word boundary.
 //!
 //! Usage:
 //!
@@ -924,7 +927,9 @@ fn write_reference(
          `#spell-bolt-fire`. The narrative, the annotated examples and the coverage boundary are in\n\
          [gameplay-reference.md](../../docs/gameplay-reference.md); this file is the index.\n\n\
          Aggregate values only. A field whose value is a procedure, dictionary or array is shown as\n\
-         its shape and token count, never its body.\n\n",
+         its shape and token count, never its body. A flat value -- a number, a name, or an\n\
+         expression of them -- is shown whole; only prose is bounded, and a bounded value is cut on\n\
+         a word boundary and marked `<truncated, N chars>`.\n\n",
     );
     for kind in SymbolKind::ALL {
         let names: Vec<&String> = every_symbol

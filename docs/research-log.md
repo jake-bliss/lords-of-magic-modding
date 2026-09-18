@@ -5481,6 +5481,8 @@ findings rather than gaps:
 
 ### Two pre-existing defects found on the way — reported, not fixed
 
+*(The first of these was fixed on 2026-09-18; see [the entry below](#2026-09-18--inf-is-a-unit-code-not-an-infinity-the-number-predicate-now-models-the-language).)*
+
 - **`gamescript.rs` lexes the shipped unit code `INF` as floating-point infinity.** Token
   classification is `name.parse::<f64>().is_ok()`, and Rust's `f64::from_str` accepts `inf`,
   `infinity` and `nan` case-insensitively. Eight units per profile are affected and a naive range
@@ -5576,3 +5578,122 @@ a rustc diagnostic from `error: test failed`. The 18 new mutations cover the sea
 display-name-only, each `MatchedField` swapped for each other, the `-` sentinel made searchable,
 both case folds removed) and the key-lookup fix (exception removed, any operator accepted, the
 `get` requirement dropped).
+
+## 2026-09-18 — `INF` is a unit code, not an infinity: the number predicate now models the language
+
+The lexer in `spikes/asset-viewer/src/gamescript.rs` classified a bare word as a number with
+`name.parse::<f64>().is_ok()`. Rust's `f64::from_str` accepts `inf`, `infinity` and `nan`
+case-insensitively with an optional sign, and the shipped infantry unit code is the bare word
+`INF`, so every infantry reference in the corpus lexed as floating-point infinity. It is replaced
+by `gamescript::is_number_token`, which accepts PostScript's integer and real forms and nothing
+else. Evidence class: Corrected.
+
+**What the corpus actually contains.** Surveyed over all three profiles' `gs.mpq`, counting every
+bare word (evidence class: Observed in a local binary):
+
+| form | uses | distinct | example |
+| --- | ---: | ---: | --- |
+| integer | 302,015 | 1,411 | `90` |
+| signed integer | 32,097 | 80 | `-1` |
+| real (`d.d`, `.d`) | 6,409 | 242 | `1.75`, `.6` |
+| signed real | 549 | 25 | `-.5` |
+| exponent (`1e5`) | 0 | 0 | — |
+| radix (`16#FF`) | 0 | 0 | — |
+| `inf` family | 118 | 2 | `INF`, `inf` |
+
+No token containing `#` occurs in any profile, and no real carries a trailing dot with no fraction
+digits. The predicate accepts the exponent and trailing-dot forms anyway, because both are
+PostScript reals and both were already accepted by the rule being replaced, so admitting them
+reclassifies nothing — they are stated as **unexercised by the corpus** rather than as measured.
+The radix form is deliberately **not** accepted: there is no corpus evidence for it and the shipped
+engine's handling of it is unverified, so accepting it would reclassify words on nothing.
+
+**Both `INF` and lowercase `inf` are real names.** `inf` stands beside `fit`, `thf`, `mis` and
+`cav` in the corpus's own unit lists, and `INF` beside `CAV` in `/unit_code_strings["INF""MIS"
+"CAV"…]`. That neighbour relation is what the corpus-gated tests assert against: the unit-code
+alphabet is read out of `/unit_code_strings` at test time rather than listed in the test.
+
+**What moved in the published reports.**
+
+| | vanilla | patch302 | gs5r3 |
+| --- | ---: | ---: | ---: |
+| `INF` uses, previously absent from the vocabulary | 32 | 35 | 38 |
+| `CAV` uses, for comparison | 32 | 35 | 38 |
+| `inf` uses, previously absent | — | 5 | — |
+| distinct executable names | 14,080 → 14,081 | 15,174 → 15,176 | 16,855 → 16,856 |
+| broad candidates | 2,160 → 2,161 | 2,263 → 2,264 | 2,198 → 2,199 |
+
+`reports/gameplay/fields.tsv` changed 24 rows — the eight infantry units per profile whose `code`
+field carried shape `number` with the text `INF` and now carries shape `name` — and the `code` row
+of `reports/gameplay/field-ranges.tsv` reads `name:151`/`name:151`/`name:166` where it read
+`number:8 name:143` and `number:8 name:158`. The three `reports/gs/standard-run-*.tsv` transcripts
+regenerate **byte-identical**, so no VM exercise depended on the defect.
+
+**The other four `parse::<f64>` sites.** `src/gameplay_symbols.rs` filters `is_finite()` after the
+parse, which is the right order and now catches only an overflowing literal, since a spelled-out
+infinity can no longer arrive as a `Number` token; the filter stays and its comment is corrected.
+`src/gamescript_vm.rs`'s `DictKey::to_value` has a silent `unwrap_or(f64::NAN)` that is
+**unreachable rather than lenient** — a `DictKey::Number` is only ever built by `number_key_text`,
+which formats an `f64`, so no token text reaches it. `compile_sequence`'s parse error is likewise
+unreachable for tokens from this lexer, because every form the predicate admits is also accepted by
+`f64::from_str`. `src/main.rs`'s `--stub NAME=VALUE` **did** have the same hole and is fixed: it
+classifies with `is_number_token` first, so `--stub x=inf` is now the error the help text promises
+instead of an infinity on the stub's stack.
+
+## 2026-09-18 — The `value` column was cut mid-token; prose and data now differ
+
+`gameplay_symbols.rs` built every non-aggregate field value with one rule,
+`.chars().take(120)`. It cut **414 of 62,211 rows** in `reports/gameplay/fields.tsv` — the maximum
+length in the committed file was exactly 120 and the histogram was a cliff, 119:2 then 120:414 —
+and it cut them **mid-token with no marker**. The published data therefore contained the flag names
+`CAN_USE_R`, `CAN_USE_LE` and `CAN_TRAN`, which the game does not have, and a bare `o` that had
+been the operator `or`. A consumer could only detect the cut by noticing a length of exactly 120,
+and had to discard the trailing partial token by hand. Evidence class: Corrected.
+
+**The two classes are now bounded differently, because they are different things.**
+
+| Value class | Rule | Longest in the corpus |
+| --- | --- | ---: |
+| procedure, dictionary, array | unchanged: `<procedure 12 tokens>`, shape and size only | — |
+| number, name, expression | emitted **in full** | 2,951 chars / 227 tokens |
+| text (a lone string literal) | up to 120 chars, cut on a **word** boundary, then `<truncated, N chars>` | 709 chars |
+
+Emitting a symbolic value whole does not reopen the no-script-text rule the cap was there to serve:
+every braced or bracketed aggregate has already been replaced by its shape, so what reaches this
+point is flat. Measured across all three profiles, expressions are 3,010 values with a median well
+under 20 tokens; the longest is `alt_spells_id` on `chalice_chaos` and `scroll_sages`, a list of
+spell names, and exactly **four** expression values contain a string at all, each the asset path
+`iface/ordragb.imp`. Prose keeps a bound because a shipped description is game content and these
+reports are published. Evidence class: Observed in a local binary.
+
+**Before and after, `reports/gameplay/fields.tsv`:**
+
+| | before | after |
+| --- | ---: | ---: |
+| rows | 62,211 | 62,211 |
+| values cut | 414 | 0 cut, 264 bounded and marked |
+| rows changed | — | 412 (264 artifact `description`, 142 unit `flags`, 6 spell and artifact expressions) |
+| longest value | 120 | 2,951 |
+| values at exactly 120 | 414 | 2, both complete `ring_of_shelter` descriptions |
+
+**The cut was hiding a real cross-profile difference.** `unit:dethf` and `unit:waldf` have `flags`
+whose first 120 characters are identical in all three profiles and which diverge after them: GS5R3
+adds `CAN_USE_RIGHT_ARTIFACT` to `dethf` and `NO_DEFEND_ANIM` to `waldf`. Both now appear in the
+`changed-fields` column of `reports/gameplay/profile-diff.tsv`, which had reported no difference.
+That is the concrete cost of a silent truncation: not only was the published value wrong, the
+*comparison* built on it was wrong in the direction that hides a mod's changes. Evidence class:
+Corrected.
+
+No prose in `docs/` quoted a figure derived from the truncated column; the counts that moved are
+the two `profile-diff` rows above and the test counts in
+[gameplay-reference.md](gameplay-reference.md#tests).
+
+**The finiteness guard stays, and now has a different job.** With the lexer fixed, `INF` can no
+longer arrive as a number token, so the guard's original case is gone. It is not redundant:
+a number the predicate correctly accepts can still exceed `f64` — `1e400`, or a 400-digit integer —
+and would reach it as infinity through a lexer doing its job. The shipped corpus does not exercise
+that: across all three profiles there are **zero** non-finite number tokens, the largest magnitude
+is `300000000`, and the longest numeric token is `3.14159265` at ten characters against the 309 it
+would take to overflow. So the guard is unexercised rather than dead, and the unit test now drives
+it with `1e400` and `-1e400` instead of `INF`, which would no longer reach it. Evidence class:
+Observed in a local binary.
