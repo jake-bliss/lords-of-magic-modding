@@ -109,8 +109,49 @@ void load_internal_listfile(HANDLE archive) {
   }
 }
 
-std::vector<Entry> list_entries(HANDLE archive) {
+// Load a catalogue of recovered names, so that members the archive itself
+// cannot name are still enumerated and extracted under their real names.
+//
+// The names are **candidates**, not an addressing table. StormLib resolves each
+// one against the archive in front of it, by hash, at the moment of use; a name
+// the archive does not hold simply does not appear. Nothing is keyed on the
+// `File%08u.xxx` pseudo-name, which is a block position and moves when an
+// archive is rewritten.
+void load_external_listfile(HANDLE archive, const fs::path &path) {
+  std::ifstream input(path);
+  if (!input) {
+    throw std::runtime_error("could not read listfile: " + path.string());
+  }
+  std::vector<std::string> names;
+  for (std::string line; std::getline(input, line);) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    if (!line.empty()) {
+      names.push_back(std::move(line));
+    }
+  }
+  std::vector<const char *> pointers;
+  pointers.reserve(names.size());
+  for (const auto &name : names) {
+    pointers.push_back(name.c_str());
+  }
+  if (pointers.empty()) {
+    return;
+  }
+  if (SFileAddListFileEntries(archive, pointers.data(),
+                              static_cast<DWORD>(pointers.size())) !=
+      ERROR_SUCCESS) {
+    throw std::runtime_error("could not load listfile: " + path.string());
+  }
+}
+
+std::vector<Entry> list_entries(HANDLE archive,
+                                const fs::path &extra_listfile = fs::path()) {
   load_internal_listfile(archive);
+  if (!extra_listfile.empty()) {
+    load_external_listfile(archive, extra_listfile);
+  }
   SFILE_FIND_DATA data{};
   HANDLE search = SFileFindFirstFile(archive, "*", &data, nullptr);
   if (search == nullptr) {
@@ -225,9 +266,10 @@ std::pair<std::string, fs::path> parse_assignment(const std::string &argument) {
   return {argument.substr(0, separator), fs::path(argument.substr(separator + 1))};
 }
 
-int manifest_archive(const fs::path &archive_path) {
+int manifest_archive(const fs::path &archive_path,
+                     const fs::path &extra_listfile) {
   Archive archive(archive_path);
-  const auto entries = list_entries(archive.handle);
+  const auto entries = list_entries(archive.handle, extra_listfile);
 
   std::cout << "path\tblock_index\thash_index\tsize\tcompressed_size\tflags"
                "\tlocale\tsha256\n";
@@ -242,6 +284,85 @@ int manifest_archive(const fs::path &archive_path) {
               << std::setfill('0') << entry.flags << std::dec
               << std::setfill(' ') << '\t' << entry.locale << '\t'
               << sha256_hex(contents) << '\n';
+  }
+  return 0;
+}
+
+// Probe an archive for a candidate NAME without consulting its own
+// `(listfile)`. SFileOpenFileEx hashes the name and looks it up in the hash
+// table, so a successful open is a property of the archive's own hash table and
+// is independent of whatever catalogue supplied the name. The block index and
+// hash index come back from StormLib, which is what lets a caller join the hit
+// onto a block-index-addressed manifest and demand that the digests agree.
+//
+// The internal listfile is deliberately NOT loaded here. Loading it would let a
+// name that the target already knows resolve through StormLib's name cache
+// rather than through the hash table, and the point of this verb is that the
+// lookup mechanism is the same for a name the archive knows and a name it does
+// not.
+int probe_names(const fs::path &archive_path, const fs::path &names_path) {
+  Archive archive(archive_path);
+
+  // `-` reads the candidate list from standard input. A search wide enough to
+  // make a bounded negative worth anything is wide enough that materialising it
+  // as a file is the expensive part: 1.9 billion names is 31 GB on disk and
+  // nothing on a pipe.
+  std::ifstream file;
+  if (names_path != "-") {
+    file.open(names_path);
+    if (!file) {
+      throw std::runtime_error("could not read candidate name list: " +
+                               names_path.string());
+    }
+  }
+  std::istream &input = names_path == "-" ? std::cin : file;
+
+  std::cout << "name\tstatus\tblock_index\thash_index\tsize\tsha256\n";
+  for (std::string line; std::getline(input, line);) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    if (line.empty()) {
+      continue;
+    }
+
+    HANDLE file = nullptr;
+    if (!SFileOpenFileEx(archive.handle, line.c_str(), SFILE_OPEN_FROM_MPQ,
+                         &file)) {
+      std::cout << line << "\tabsent\t\t\t\t\n";
+      continue;
+    }
+
+    DWORD block_index = 0;
+    DWORD hash_index = 0;
+    const bool have_block =
+        SFileGetFileInfo(file, SFileInfoFileIndex, &block_index,
+                         sizeof(block_index), nullptr);
+    const bool have_hash =
+        SFileGetFileInfo(file, SFileInfoHashIndex, &hash_index,
+                         sizeof(hash_index), nullptr);
+
+    const DWORD size = SFileGetFileSize(file, nullptr);
+    if (size == SFILE_INVALID_SIZE) {
+      SFileCloseFile(file);
+      throw std::runtime_error("could not size member opened by name: " + line);
+    }
+    std::string contents(size, '\0');
+    DWORD bytes_read = 0;
+    const bool read_ok =
+        size == 0 ||
+        SFileReadFile(file, contents.data(), size, &bytes_read, nullptr);
+    SFileCloseFile(file);
+    if (!read_ok || bytes_read != size) {
+      throw std::runtime_error("could not read member opened by name: " + line);
+    }
+    if (!have_block || !have_hash) {
+      throw std::runtime_error("could not locate member opened by name: " +
+                               line);
+    }
+
+    std::cout << line << "\tpresent\t" << block_index << '\t' << hash_index
+              << '\t' << size << '\t' << sha256_hex(contents) << '\n';
   }
   return 0;
 }
@@ -353,7 +474,7 @@ int repack_archive(const fs::path &source_path, const fs::path &output_path,
 // names differing only in case. It is not a mod packaging command.
 int create_archive(const fs::path &output_path,
                    const std::vector<std::string> &assignments,
-                   std::uint32_t storage_flags) {
+                   std::uint32_t storage_flags, bool with_listfile) {
   if (fs::exists(output_path)) {
     throw std::runtime_error("output archive already exists: " +
                              output_path.string());
@@ -378,12 +499,37 @@ int create_archive(const fs::path &output_path,
   // reserves one slot.
   const DWORD capacity =
       static_cast<DWORD>(members.empty() ? 1 : members.size() + 1);
-  if (!SFileCreateArchive(output_path.c_str(),
-                          MPQ_CREATE_LISTFILE | MPQ_CREATE_ARCHIVE_V1, capacity,
-                          &handle)) {
-    throw std::runtime_error("could not create archive: " +
-                             output_path.string() + " (StormLib error " +
-                             std::to_string(SErrGetLastError()) + ")");
+  // An archive with no `(listfile)` holds members it cannot name -- the shipped
+  // corpus's normal condition, and the only fixture on which `--listfile` has
+  // anything to do. MPQ_CREATE_LISTFILE on the simple SFileCreateArchive does
+  // not achieve that: **Observed 2026-09-18**, omitting it still produced a
+  // `(listfile)` member, because the simple entry point sets the internal-file
+  // flags to their defaults regardless. Suppressing it needs
+  // SFileCreateArchive2 with dwFileFlags1 = 0.
+  if (with_listfile) {
+    if (!SFileCreateArchive(output_path.c_str(),
+                            MPQ_CREATE_LISTFILE | MPQ_CREATE_ARCHIVE_V1,
+                            capacity, &handle)) {
+      throw std::runtime_error("could not create archive: " +
+                               output_path.string() + " (StormLib error " +
+                               std::to_string(SErrGetLastError()) + ")");
+    }
+  } else {
+    SFILE_CREATE_MPQ create_info{};
+    create_info.cbSize = sizeof(create_info);
+    create_info.dwMpqVersion = MPQ_FORMAT_VERSION_1;
+    create_info.dwFileFlags1 = 0;
+    create_info.dwFileFlags2 = 0;
+    create_info.dwFileFlags3 = 0;
+    // A zero sector size crashes StormLib 9.40 rather than defaulting; 4096 is
+    // the value the simple entry point uses.
+    create_info.dwSectorSize = 0x1000;
+    create_info.dwMaxFileCount = capacity;
+    if (!SFileCreateArchive2(output_path.c_str(), &create_info, &handle)) {
+      throw std::runtime_error("could not create archive: " +
+                               output_path.string() + " (StormLib error " +
+                               std::to_string(SErrGetLastError()) + ")");
+    }
   }
   Archive created{};
   created.handle = handle;
@@ -398,21 +544,26 @@ int create_archive(const fs::path &output_path,
 
 void print_usage(const char *program) {
   std::cerr << "Usage:\n"
-            << "  " << program << " list ARCHIVE.mpq\n"
-            << "  " << program << " extract ARCHIVE.mpq OUTPUT_DIR\n"
-            << "  " << program << " manifest ARCHIVE.mpq\n"
+            << "  " << program << " list ARCHIVE.mpq [--listfile NAMES.txt]\n"
+            << "  " << program
+            << " extract ARCHIVE.mpq OUTPUT_DIR [--listfile NAMES.txt]\n"
+            << "  " << program << " manifest ARCHIVE.mpq [--listfile NAMES.txt]\n"
             << "  " << program
             << " repack SOURCE.mpq OUTPUT.mpq [--compact] --replace "
                "'NAME=LOCAL' ...\n"
             << "  " << program
             << " create OUTPUT.mpq [--implode|--compress|--store] "
-               "[--add 'NAME=LOCAL'] "
-               "...\n";
+               "[--no-listfile] [--add 'NAME=LOCAL'] "
+               "...\n"
+            << "  " << program
+            << " probe-names ARCHIVE.mpq NAMES.txt   (NAMES.txt may be `-` "
+               "for stdin)\n";
 }
 
-int list_archive(const fs::path &archive_path) {
+int list_archive(const fs::path &archive_path,
+                 const fs::path &extra_listfile) {
   Archive archive(archive_path);
-  const auto entries = list_entries(archive.handle);
+  const auto entries = list_entries(archive.handle, extra_listfile);
 
   std::cout << "path\tsize\tcompressed_size\tflags\tlocale\n";
   for (const auto &entry : entries) {
@@ -424,9 +575,10 @@ int list_archive(const fs::path &archive_path) {
   return 0;
 }
 
-int extract_archive(const fs::path &archive_path, const fs::path &output_dir) {
+int extract_archive(const fs::path &archive_path, const fs::path &output_dir,
+                    const fs::path &extra_listfile) {
   Archive archive(archive_path);
-  const auto entries = list_entries(archive.handle);
+  const auto entries = list_entries(archive.handle, extra_listfile);
   if (fs::exists(output_dir)) {
     if (!fs::is_directory(output_dir) || !fs::is_empty(output_dir)) {
       throw std::runtime_error("output directory must be new or empty: " +
@@ -471,14 +623,27 @@ int extract_archive(const fs::path &archive_path, const fs::path &output_dir) {
 
 int main(int argc, char **argv) {
   try {
-    if (argc == 3 && std::string(argv[1]) == "list") {
-      return list_archive(argv[2]);
+    // `--listfile NAMES.txt` may trail list/extract/manifest. Recovered names
+    // are supplied this way rather than being written into any archive: the
+    // archive stays read-only and untouched, and each name is re-resolved
+    // against it on every run.
+    fs::path extra_listfile;
+    int positional_argc = argc;
+    if (argc >= 3 && std::string(argv[argc - 2]) == "--listfile") {
+      extra_listfile = argv[argc - 1];
+      positional_argc = argc - 2;
     }
-    if (argc == 4 && std::string(argv[1]) == "extract") {
-      return extract_archive(argv[2], argv[3]);
+    if (positional_argc == 3 && std::string(argv[1]) == "list") {
+      return list_archive(argv[2], extra_listfile);
     }
-    if (argc == 3 && std::string(argv[1]) == "manifest") {
-      return manifest_archive(argv[2]);
+    if (positional_argc == 4 && std::string(argv[1]) == "extract") {
+      return extract_archive(argv[2], argv[3], extra_listfile);
+    }
+    if (positional_argc == 3 && std::string(argv[1]) == "manifest") {
+      return manifest_archive(argv[2], extra_listfile);
+    }
+    if (argc == 4 && std::string(argv[1]) == "probe-names") {
+      return probe_names(argv[2], argv[3]);
     }
     if (argc >= 5 && std::string(argv[1]) == "repack") {
       std::vector<std::string> assignments;
@@ -499,9 +664,12 @@ int main(int argc, char **argv) {
     if (argc >= 3 && std::string(argv[1]) == "create") {
       std::vector<std::string> assignments;
       std::uint32_t storage_flags = MPQ_FILE_IMPLODE;
+      bool with_listfile = true;
       for (int index = 3; index < argc; ++index) {
         const std::string option(argv[index]);
-        if (option == "--store") {
+        if (option == "--no-listfile") {
+          with_listfile = false;
+        } else if (option == "--store") {
           storage_flags = 0;
         } else if (option == "--compress") {
           storage_flags = MPQ_FILE_COMPRESS;
@@ -514,7 +682,7 @@ int main(int argc, char **argv) {
           return 2;
         }
       }
-      return create_archive(argv[2], assignments, storage_flags);
+      return create_archive(argv[2], assignments, storage_flags, with_listfile);
     }
     print_usage(argv[0]);
     return 2;

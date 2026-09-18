@@ -7,7 +7,7 @@ The baseline, community 3.02, and GS5R3 `gs.mpq` and `pic.mpq` archives have bee
 The most useful conclusions are:
 
 - Community 3.02 is a focused code patch. It adds three `.gs` files and makes token-level changes in thirteen existing scripts. Its `pic.mpq` is byte-for-byte identical to the Steam baseline.
-- The 3.02 archive also recovers real names for 363 entries that are anonymous in the baseline listfile. Those are catalog improvements, not gameplay changes.
+- The 3.02 archive also recovers real names for 363 entries that are anonymous in the baseline listfile. Those are catalog improvements, not gameplay changes. **Confirmed directly 2026-09-18**: all 363 names open in the vanilla archive and return the bytes the block-index manifest recorded ([member names](member-names.md)).
 - GS5R3 is a broad fork, not a small balance overlay. Its entry script loads many replacement `*5.gs` subsystems, and PIC5R3 adds or replaces hundreds of visual assets.
 - Vanilla and 3.02 can be compared cleanly at script level. GS5R3 requires subsystem-level study because filenames, layout, code, and assets all changed together.
 
@@ -41,16 +41,29 @@ Extracted copyrighted game data is intentionally excluded from Git. Only tools, 
 
 ## Archive measurements
 
-`Named` includes the internal `(listfile)` where present. `Unknown` denotes StormLib placeholders such as `File00000372.xxx`, not a real file extension.
+`Named` includes the internal `(listfile)` where present. `Unknown` denotes StormLib placeholders such as `File00000372.xxx`, not a real file extension. `Unnamed after recovery` is what remains once every available catalogue has been pooled and confirmed against the archive — see [member names](member-names.md).
 
-| Profile/archive | Bytes | SHA-256 | Entries | Named | Unknown |
-|---|---:|---|---:|---:|---:|
-| Vanilla `gs.mpq` | 1,795,987 | `6b84ea4c…8196f86a` | 1,688 | 1,316 | 372 |
-| 3.02 `gs.mpq` | 2,089,412 | `0f017a4c…6304437` | 1,691 | 1,682 | 9 |
-| GS5R3 `gs.mpq` | 3,337,814 | `2d394279…0b8d095` | 1,700 | 1,700 | 0 |
-| Vanilla `pic.mpq` | 68,777,986 | `d0df8b92…cc62ca8` | 1,071 | 0 | 1,071 |
-| 3.02 `pic.mpq` | 68,777,986 | `d0df8b92…cc62ca8` | 1,071 | 0 | 1,071 |
-| GS5R3 `pic.mpq` | 73,114,396 | `5c784a6a…078ccf` | 1,406 | 997 | 409 |
+| Profile/archive | Bytes | SHA-256 | Entries | Named | Unknown | Unnamed after recovery |
+|---|---:|---|---:|---:|---:|---:|
+| Vanilla `gs.mpq` | 1,795,987 | `6b84ea4c…8196f86a` | 1,688 | 1,316 | 372 | 9 |
+| 3.02 `gs.mpq` | 2,089,412 | `0f017a4c…6304437` | 1,691 | 1,682 | 9 | 9 |
+| GS5R3 `gs.mpq` | 3,337,814 | `2d394279…0b8d095` | 1,700 | 1,700 | 0 | 0 |
+| Vanilla `pic.mpq` | 68,777,986 | `d0df8b92…cc62ca8` | 1,071 | 0 | 1,071 | 1 |
+| 3.02 `pic.mpq` | 68,777,986 | `d0df8b92…cc62ca8` | 1,071 | 0 | 1,071 | 1 |
+| GS5R3 `pic.mpq` | 73,114,396 | `5c784a6a…078ccf` | 1,406 | 997 | 409 | 1 |
+
+**Corrected 2026-09-18:** `Unknown` was previously counted by matching StormLib's `File%08u.xxx`
+placeholder only. That undercounts, because the extension in a placeholder is a **guess from the
+member's first bytes** and `.xxx` is only the fallback when StormLib cannot guess. `sndfx.mpq`
+(1,880 entries) and `special.mpq` (1,218 entries) list entirely as `File00000000.wav`-style names in
+all three profiles and were therefore easy to read as fully catalogued; they carry no internal
+`(listfile)` at all and **none of their members had a name**. The same is true of `imp.mpq` (3,600
+entries per profile). All three are now fully named by recovery.
+
+Worse than a miscount: such a name is not merely a label StormLib prints, it is one StormLib
+**resolves by block position**, ignoring everything after the digits — `File00000022.wavZQNOTREAL`
+opens block 22. Any name-recovery or comparison work must exclude that shape, or it will confirm
+block numbers as names. Measured, with the exact accepted form, in [member names](member-names.md).
 
 GS5R3 `gs.mpq` identifies 1,696 `.gs` files, two text files, one URL, and its listfile. PIC5R3 identifies 994 LBM images, two BMP images, and its listfile. The remaining 409 picture entries lack names.
 
@@ -115,7 +128,7 @@ This evidence reinforces the profile policy: do not stack 3.02 and GS5R3. Treat 
 - The tool reads the archive's internal listfile into StormLib before enumeration, recovering names when the archive provides them.
 - Extraction rejects absolute paths and `..` components.
 - Extraction requires a new or empty destination and warns when an archive contains duplicate case-insensitive paths.
-- Uncatalogued entries can be extracted and hashed, but their placeholder names are archive-slot labels only.
+- Uncatalogued entries can be extracted and hashed, but their placeholder names are archive-slot labels only — and the slot moves, both between archives and when an archive is rewritten. `list`, `manifest` and `extract` accept `--listfile NAMES.txt` so recovered names can be supplied to the reader without writing to any archive; `lom-mpq probe-names ARCHIVE NAMES.txt` tests candidate names against an archive directly. See [member names](member-names.md).
 - The earlier `.gs` lexical normalizer remains suitable for change triage. The newer bounded lexer tokenizes every named script across all three profiles and inventories definitions, calls, and static loads; it is still not a complete parser or proof of behavioral equivalence. See the [GameScript probe](gamescript-format.md).
 - Archive repacking now exists as a verified, non-installing command: `lom-mpq repack` plus the manifest shape check in `tools/mpq_shape.py`, driven by `scripts/repack-archive.sh`. It produces byte-identical output across repeated runs on both GS5R3 archives and refuses any output that lost a member. It does **not** install, and no repacked archive has been put in front of the engine. See [deterministic MPQ repack](repack.md).
 - `lom-asset-viewer --set-imp-placement` writes **loose** IMP files (identical length, re-parsed and read back before writing, non-overwriting).
