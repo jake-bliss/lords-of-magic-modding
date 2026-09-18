@@ -45,6 +45,31 @@ profile_game_dir() {
   echo "${applications_dir}/$(profile_app "$1")/${game_subpath}"
 }
 
+# The recovered name list for a profile's archive, or empty when the archive names itself.
+#
+# Only archives that carry NO `(listfile)` get one. `gs.mpq` does carry one, and supplying the
+# recovered names for its 372 unnamed entries would re-address those entries from an unnamed
+# multiset to per-block named members inside the shape check -- a change to the exact path Phase 4
+# proved against the engine on 2026-09-18. There is no evidence that would be an improvement and
+# there is evidence the current path works, so `gs.mpq` is left alone.
+#
+# `pic.mpq` has no `(listfile)` and no self-named member at all, so without this every member lists
+# under a `File%08u.xxx` pseudo-name and cannot be written: **Observed 2026-09-18**, StormLib
+# refuses SFileAddFileEx on a pseudo-name with error 22, and a real name is refused earlier for not
+# being in the archive's own catalogue.
+profile_listfile() {
+  local profile="$1" archive="$2" names="${project_dir}/reports/member-names"
+  case "${archive}" in
+    pic.mpq)
+      case "${profile}" in
+        vanilla|patch302) echo "${names}/vanilla-and-302-pic-recovered.txt" ;;
+        gs5r3) echo "${names}/gs5r3-pic-recovered.txt" ;;
+      esac
+      ;;
+    *) echo "" ;;
+  esac
+}
+
 # Rebuild both tools and export their paths and digests.
 #
 # The digests go into build.json so a build that behaves differently from another can be traced to
