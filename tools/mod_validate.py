@@ -705,12 +705,13 @@ def check_unvalidatable_content(tree: ModTree, report: ValidationReport) -> None
             WARNING,
             "engine-acceptance",
             str(tree.root),
-            f"{len(pic_members)} member(s) target pic.mpq. A rewritten pic.mpq has NEVER been "
-            "put in front of the engine. Storage class is NOT the open question: every one of "
-            "the 1,071 members of the baseline pic.mpq carries flags 0x80010100 "
-            "(EXISTS | ENCRYPTED | IMPLODE), measured 2026-09-18, which is the same class as the "
-            "gs.mpq member the engine accepted on 2026-09-16. What is untested is whether the "
-            "engine reads a rewritten pic.mpq at all.",
+            f"{len(pic_members)} member(s) target pic.mpq. The engine DOES read a rewritten "
+            "pic.mpq -- Observed in gameplay 2026-09-18, mods/newgame-picslice -- so this is a "
+            "note about scope, not a warning that the archive is untried. What that run covered "
+            "was ONE member, REPLACED rather than added, edited WITHOUT changing its length. A "
+            "member whose size changes has not been put in front of the engine, and neither has "
+            "an added one. Storage class is not in question: all 1,071 members are 0x80010100 "
+            "(EXISTS | ENCRYPTED | IMPLODE), the class the engine accepted on 2026-09-16.",
         )
 
 

@@ -550,15 +550,22 @@ class RunTargetTest(ValidateTestCase):
 
 
 class CoverageTest(ValidateTestCase):
-    def test_a_pic_member_carries_the_engine_acceptance_warning(self) -> None:
-        relative = self.write("pic.mpq/LBM/ART.lbm", b"\x00")
+    def test_a_pic_member_carries_the_engine_acceptance_note(self) -> None:
+        """The note states what the 2026-09-18 run did NOT cover, not that pic.mpq is untried.
+
+        It used to assert the word "NEVER", from when no rewritten pic.mpq had faced the engine.
+        One has (mods/newgame-picslice), so asserting that again would pin a false claim.
+        """
+        self.write("pic.mpq/LBM/ART.lbm", b"\x00")
         report = self.run_validate(
             manifests={"gs.mpq": [], "pic.mpq": [base_member("LBM\\ART.lbm")]},
             mod_facts={},
         )
         finding = self.findings(report, "engine-acceptance")[0]
         self.assertEqual(finding.severity, WARNING)
-        self.assertIn("NEVER", finding.message)
+        self.assertNotIn("NEVER been", finding.message)
+        for scope in ("ONE member", "REPLACED", "WITHOUT changing its length"):
+            self.assertIn(scope, finding.message, "the note must name what is still uncovered")
 
     def test_a_member_no_reader_here_understands_is_counted_as_unvalidated(self) -> None:
         """A .til tileset is packed as given; 26 of them sit in pic.mpq beside the images."""
