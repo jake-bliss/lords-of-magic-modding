@@ -2,6 +2,10 @@
 //!
 //! Usage: mpq_replace ARCHIVE 'member\name' LOCAL_FILE
 //! The archive is modified in place, so always run it against a copy.
+//!
+//! Superseded for all new work by `lom-mpq repack`, which writes a new archive and refuses one that
+//! lost members -- see docs/repack.md. This probe survives only because the attended engine probe in
+//! scripts/install-engine-probe.sh deliberately edits an installed archive in place.
 use std::ffi::CString;
 use std::os::raw::c_char;
 
