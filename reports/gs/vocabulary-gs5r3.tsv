@@ -475,6 +475,7 @@ Human_Surv	1	script-definition	no	-
 Human_player_id	2	script-definition	no	-
 Human_special	1	script-definition	no	-
 INACTIVE_DOORWAY	2	constant-or-data	yes	-
+INF	38	constant-or-data	yes	-
 INF1	2	script-definition	no	-
 INF2	2	script-definition	no	-
 INFANTRY_CLASS	9	constant-or-data	yes	-

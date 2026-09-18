@@ -417,6 +417,7 @@ Human_Surv	1	script-definition	no	-
 Human_player_id	2	script-definition	no	-
 Human_special	1	script-definition	no	-
 INACTIVE_DOORWAY	2	constant-or-data	yes	-
+INF	35	constant-or-data	yes	-
 INFANTRY_CLASS	13	constant-or-data	yes	-
 INFO_ARTIFACTS	3	constant-or-data	yes	-
 INFO_BUILDINGS_LEVEL	1	constant-or-data	yes	-
@@ -8659,6 +8660,7 @@ indexoffset	4	script-definition	no	-
 indicate_category	2	script-definition	no	-
 indicate_tone	1	script-definition	no	-
 indicator_page	21	script-definition	no	-
+inf	5	script-definition	no	-
 inferno	10	script-definition	no	-
 inferno_aura	1	unclassified-residue	no	-
 info_agility	5	unclassified-residue	no	-

@@ -450,7 +450,7 @@ impl<'a> Lexer<'a> {
             }
             _ => {
                 let name = self.read_name(offset, line, column)?;
-                if name.parse::<f64>().is_ok() {
+                if is_number_token(&name) {
                     TokenKind::Number(name)
                 } else {
                     TokenKind::ExecutableName(name)
@@ -567,6 +567,83 @@ impl<'a> Lexer<'a> {
     }
 }
 
+/// Whether a bare word is a GameScript number rather than an executable name.
+///
+/// **Why this is not `f64::from_str`.** Rust's parser accepts `inf`, `infinity` and `nan`
+/// case-insensitively, with an optional sign. The shipped infantry unit code is the bare word
+/// `INF`, so classifying with `parse::<f64>().is_ok()` lexed every infantry reference in the
+/// corpus as floating-point infinity: `reports/gs/vocabulary-vanilla.tsv` had no `INF` row while
+/// its neighbour `CAV` had one, and `reports/gameplay/fields.tsv` typed the `code` field of the
+/// eight infantry units as a number. Evidence class: Corrected.
+///
+/// **What the grammar is.** GameScript is PostScript-derived, so the reference syntax is
+/// PostScript's number: an integer `[+-]?digits`, or a real with a fraction and/or an exponent.
+/// What the corpus actually holds, measured over all three profiles' `gs.mpq` (evidence class:
+/// Observed in a local binary):
+///
+/// | form | uses | example |
+/// |---|---|---|
+/// | integer | 302,015 | `90` |
+/// | signed integer | 32,097 | `-1` |
+/// | real `d.d` / `.d` | 6,409 | `1.75`, `.6` |
+/// | signed real | 549 | `-.5` |
+/// | exponent (`1e5`) | 0 | — |
+/// | radix (`16#FF`) | 0 | — |
+///
+/// So two accepted forms are **unexercised by the corpus**: the exponent, and a real with a
+/// trailing dot and no fraction digits (`4.`). Both are PostScript reals and both were already
+/// accepted by the predicate this replaces, so admitting them changes no existing classification.
+///
+/// PostScript's radix form `base#digits` is deliberately **not** accepted. No token containing
+/// `#` occurs anywhere in any profile, the shipped lexer's support for it is unverified, and
+/// accepting it would reclassify words on no evidence. Evidence class for its absence from the
+/// corpus: Observed in a local binary; for the engine's own handling of it: unknown.
+///
+/// Every word this accepts is also accepted by `f64::from_str`, which is what lets the callers
+/// that convert an already-classified `TokenKind::Number` keep parsing with Rust.
+pub fn is_number_token(text: &str) -> bool {
+    let body = match text.as_bytes().first() {
+        Some(b'+' | b'-') => &text[1..],
+        _ => text,
+    };
+    if body.is_empty() {
+        return false;
+    }
+    // Split off an exponent first, so the mantissa rule does not have to know about it.
+    let (mantissa, exponent) = match body.bytes().position(|byte| byte == b'e' || byte == b'E') {
+        Some(position) => (&body[..position], Some(&body[position + 1..])),
+        None => (body, None),
+    };
+    if let Some(exponent) = exponent {
+        let digits = match exponent.as_bytes().first() {
+            Some(b'+' | b'-') => &exponent[1..],
+            _ => exponent,
+        };
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return false;
+        }
+    }
+    is_decimal_mantissa(mantissa)
+}
+
+/// `digits`, `digits.digits`, `digits.` or `.digits` -- ASCII digits only, at least one of them.
+fn is_decimal_mantissa(text: &str) -> bool {
+    let (whole, fraction) = match text.split_once('.') {
+        Some((whole, fraction)) => (whole, fraction),
+        None => (text, ""),
+    };
+    if whole.is_empty() && fraction.is_empty() {
+        return false;
+    }
+    if fraction.contains('.') {
+        return false;
+    }
+    whole
+        .bytes()
+        .chain(fraction.bytes())
+        .all(|byte| byte.is_ascii_digit())
+}
+
 fn is_separator(byte: u8) -> bool {
     byte.is_ascii_whitespace()
         || matches!(
@@ -577,7 +654,7 @@ fn is_separator(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Delimiter, GameScriptDocument, TokenKind};
+    use super::{Delimiter, GameScriptDocument, TokenKind, is_number_token};
 
     #[test]
     fn tokenizes_comments_strings_names_and_runtime_containers() {
@@ -783,6 +860,88 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "unterminated string at byte 0, line 1, column 1"
+        );
+    }
+
+    /// Every ASCII-case spelling of a word, so the rejection set is generated rather than listed.
+    fn case_variants(word: &str) -> Vec<String> {
+        let letters: Vec<char> = word.chars().collect();
+        (0..1_u32 << letters.len())
+            .map(|mask| {
+                letters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, letter)| {
+                        if mask & (1 << index) == 0 {
+                            letter.to_ascii_lowercase()
+                        } else {
+                            letter.to_ascii_uppercase()
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn rejects_every_spelling_of_infinity_and_not_a_number() {
+        let mut checked = 0_usize;
+        for word in ["inf", "infinity", "nan"] {
+            for variant in case_variants(word) {
+                for sign in ["", "+", "-"] {
+                    let spelling = format!("{sign}{variant}");
+                    // The guard: if Rust ever stopped accepting these, this suite would be
+                    // asserting a rule against a hole that no longer exists.
+                    assert!(
+                        spelling.parse::<f64>().is_ok(),
+                        "{spelling} is meant to be the hole f64::from_str leaves open"
+                    );
+                    assert!(!is_number_token(&spelling), "{spelling} lexed as a number");
+                    checked += 1;
+                }
+            }
+        }
+        assert_eq!(checked, (8 + 256 + 8) * 3);
+    }
+
+    #[test]
+    fn accepts_postscript_integers_and_reals_and_rejects_names() {
+        for accepted in [
+            "0", "90", "120", "0090", "-1", "+1", "1.75", "0.1", ".6", "-.5", "-0.075", "99.0",
+            // Unexercised by the corpus, accepted because PostScript reals allow them and the
+            // predicate this replaced already did.
+            "4.", "-4.", "1e5", "1E5", "1.5e-3", ".5E+2",
+        ] {
+            assert!(is_number_token(accepted), "{accepted} should be a number");
+            assert!(
+                accepted.parse::<f64>().is_ok_and(f64::is_finite),
+                "{accepted} must also be readable by the converters downstream"
+            );
+        }
+        for rejected in [
+            "INF", "CAV", "MIS", "FIT", "d", "def", "", "+", "-", ".", "-.", "+-1", "1.2.3",
+            "1..2", "e5", "1e", "1e+", "1e1.5", "16#FF", "0x10", "1_000", "٣", "1 2",
+        ] {
+            assert!(
+                !is_number_token(rejected),
+                "{rejected} should not be a number"
+            );
+        }
+    }
+
+    #[test]
+    fn lexes_the_infantry_unit_code_as_a_name_beside_its_neighbours() {
+        let document =
+            GameScriptDocument::parse(b"unit_code INF eq unit_code CAV eq or 90 -.5 def").unwrap();
+        let kinds: Vec<&TokenKind> = document.tokens.iter().map(|token| &token.kind).collect();
+        assert_eq!(kinds[1], &TokenKind::ExecutableName("INF".to_owned()));
+        assert_eq!(kinds[4], &TokenKind::ExecutableName("CAV".to_owned()));
+        let analysis = document.analyze();
+        assert_eq!(analysis.number_count, 2, "only `90` and `-.5` are numbers");
+        assert_eq!(analysis.executable_names["INF"], 1);
+        assert_eq!(
+            analysis.executable_names["INF"], analysis.executable_names["CAV"],
+            "the two unit codes stand in the same position and must lex alike"
         );
     }
 }

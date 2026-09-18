@@ -5481,6 +5481,8 @@ findings rather than gaps:
 
 ### Two pre-existing defects found on the way — reported, not fixed
 
+*(The first of these was fixed on 2026-09-18; see [the entry below](#2026-09-18--inf-is-a-unit-code-not-an-infinity-the-number-predicate-now-models-the-language).)*
+
 - **`gamescript.rs` lexes the shipped unit code `INF` as floating-point infinity.** Token
   classification is `name.parse::<f64>().is_ok()`, and Rust's `f64::from_str` accepts `inf`,
   `infinity` and `nan` case-insensitively. Eight units per profile are affected and a naive range
@@ -5576,3 +5578,64 @@ a rustc diagnostic from `error: test failed`. The 18 new mutations cover the sea
 display-name-only, each `MatchedField` swapped for each other, the `-` sentinel made searchable,
 both case folds removed) and the key-lookup fix (exception removed, any operator accepted, the
 `get` requirement dropped).
+
+## 2026-09-18 — `INF` is a unit code, not an infinity: the number predicate now models the language
+
+The lexer in `spikes/asset-viewer/src/gamescript.rs` classified a bare word as a number with
+`name.parse::<f64>().is_ok()`. Rust's `f64::from_str` accepts `inf`, `infinity` and `nan`
+case-insensitively with an optional sign, and the shipped infantry unit code is the bare word
+`INF`, so every infantry reference in the corpus lexed as floating-point infinity. It is replaced
+by `gamescript::is_number_token`, which accepts PostScript's integer and real forms and nothing
+else. Evidence class: Corrected.
+
+**What the corpus actually contains.** Surveyed over all three profiles' `gs.mpq`, counting every
+bare word (evidence class: Observed in a local binary):
+
+| form | uses | distinct | example |
+| --- | ---: | ---: | --- |
+| integer | 302,015 | 1,411 | `90` |
+| signed integer | 32,097 | 80 | `-1` |
+| real (`d.d`, `.d`) | 6,409 | 242 | `1.75`, `.6` |
+| signed real | 549 | 25 | `-.5` |
+| exponent (`1e5`) | 0 | 0 | — |
+| radix (`16#FF`) | 0 | 0 | — |
+| `inf` family | 118 | 2 | `INF`, `inf` |
+
+No token containing `#` occurs in any profile, and no real carries a trailing dot with no fraction
+digits. The predicate accepts the exponent and trailing-dot forms anyway, because both are
+PostScript reals and both were already accepted by the rule being replaced, so admitting them
+reclassifies nothing — they are stated as **unexercised by the corpus** rather than as measured.
+The radix form is deliberately **not** accepted: there is no corpus evidence for it and the shipped
+engine's handling of it is unverified, so accepting it would reclassify words on nothing.
+
+**Both `INF` and lowercase `inf` are real names.** `inf` stands beside `fit`, `thf`, `mis` and
+`cav` in the corpus's own unit lists, and `INF` beside `CAV` in `/unit_code_strings["INF""MIS"
+"CAV"…]`. That neighbour relation is what the corpus-gated tests assert against: the unit-code
+alphabet is read out of `/unit_code_strings` at test time rather than listed in the test.
+
+**What moved in the published reports.**
+
+| | vanilla | patch302 | gs5r3 |
+| --- | ---: | ---: | ---: |
+| `INF` uses, previously absent from the vocabulary | 32 | 35 | 38 |
+| `CAV` uses, for comparison | 32 | 35 | 38 |
+| `inf` uses, previously absent | — | 5 | — |
+| distinct executable names | 14,080 → 14,081 | 15,174 → 15,176 | 16,855 → 16,856 |
+| broad candidates | 2,160 → 2,161 | 2,263 → 2,264 | 2,198 → 2,199 |
+
+`reports/gameplay/fields.tsv` changed 24 rows — the eight infantry units per profile whose `code`
+field carried shape `number` with the text `INF` and now carries shape `name` — and the `code` row
+of `reports/gameplay/field-ranges.tsv` reads `name:151`/`name:151`/`name:166` where it read
+`number:8 name:143` and `number:8 name:158`. The three `reports/gs/standard-run-*.tsv` transcripts
+regenerate **byte-identical**, so no VM exercise depended on the defect.
+
+**The other four `parse::<f64>` sites.** `src/gameplay_symbols.rs` filters `is_finite()` after the
+parse, which is the right order and now catches only an overflowing literal, since a spelled-out
+infinity can no longer arrive as a `Number` token; the filter stays and its comment is corrected.
+`src/gamescript_vm.rs`'s `DictKey::to_value` has a silent `unwrap_or(f64::NAN)` that is
+**unreachable rather than lenient** — a `DictKey::Number` is only ever built by `number_key_text`,
+which formats an `f64`, so no token text reaches it. `compile_sequence`'s parse error is likewise
+unreachable for tokens from this lexer, because every form the predicate admits is also accepted by
+`f64::from_str`. `src/main.rs`'s `--stub NAME=VALUE` **did** have the same hole and is fixed: it
+classifies with `is_number_token` first, so `--stub x=inf` is now the error the help text promises
+instead of an infinity on the stub's stack.

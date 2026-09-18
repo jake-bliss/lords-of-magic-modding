@@ -12938,7 +12938,7 @@ vanilla	aiinf	unit	armor	number	0	1
 vanilla	aiinf	unit	attack	number	5	1
 vanilla	aiinf	unit	attack_recovery_ticks	number	8	1
 vanilla	aiinf	unit	barracks_required	number	1	1
-vanilla	aiinf	unit	code	number	INF	1
+vanilla	aiinf	unit	code	name	INF	1
 vanilla	aiinf	unit	dexterity	number	14	1
 vanilla	aiinf	unit	faith	name	AIR	1
 vanilla	aiinf	unit	flags	expression	UNITTYPEAIR CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -13612,7 +13612,7 @@ vanilla	chinf	unit	armor	number	2	1
 vanilla	chinf	unit	attack	number	8	1
 vanilla	chinf	unit	attack_recovery_ticks	number	12	1
 vanilla	chinf	unit	barracks_required	number	1	1
-vanilla	chinf	unit	code	number	INF	1
+vanilla	chinf	unit	code	name	INF	1
 vanilla	chinf	unit	dexterity	number	8	1
 vanilla	chinf	unit	faith	name	CHAOS	1
 vanilla	chinf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -14431,7 +14431,7 @@ vanilla	deinf	unit	armor	number	3	1
 vanilla	deinf	unit	attack	number	6	1
 vanilla	deinf	unit	attack_recovery_ticks	number	12	1
 vanilla	deinf	unit	barracks_required	number	1	1
-vanilla	deinf	unit	code	number	INF	1
+vanilla	deinf	unit	code	name	INF	1
 vanilla	deinf	unit	dexterity	number	9	1
 vanilla	deinf	unit	faith	name	DEATH	1
 vanilla	deinf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -15102,7 +15102,7 @@ vanilla	eainf	unit	armor	number	5	1
 vanilla	eainf	unit	attack	number	7	1
 vanilla	eainf	unit	attack_recovery_ticks	number	15	1
 vanilla	eainf	unit	barracks_required	number	1	1
-vanilla	eainf	unit	code	number	INF	1
+vanilla	eainf	unit	code	name	INF	1
 vanilla	eainf	unit	dexterity	number	5	1
 vanilla	eainf	unit	faith	name	EARTH	1
 vanilla	eainf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -15733,7 +15733,7 @@ vanilla	fiinf	unit	armor	number	2	1
 vanilla	fiinf	unit	attack	number	8	1
 vanilla	fiinf	unit	attack_recovery_ticks	number	12	1
 vanilla	fiinf	unit	barracks_required	number	1	1
-vanilla	fiinf	unit	code	number	INF	1
+vanilla	fiinf	unit	code	name	INF	1
 vanilla	fiinf	unit	dexterity	number	8	1
 vanilla	fiinf	unit	faith	name	FIRE	1
 vanilla	fiinf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -16289,7 +16289,7 @@ vanilla	liinf	unit	armor	number	2	1
 vanilla	liinf	unit	attack	number	5	1
 vanilla	liinf	unit	attack_recovery_ticks	number	10	1
 vanilla	liinf	unit	barracks_required	number	1	1
-vanilla	liinf	unit	code	number	INF	1
+vanilla	liinf	unit	code	name	INF	1
 vanilla	liinf	unit	dexterity	number	9	1
 vanilla	liinf	unit	faith	name	LIFE	1
 vanilla	liinf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -16974,7 +16974,7 @@ vanilla	orinf	unit	armor	number	5	1
 vanilla	orinf	unit	attack	number	7	1
 vanilla	orinf	unit	attack_recovery_ticks	number	10	1
 vanilla	orinf	unit	barracks_required	number	1	1
-vanilla	orinf	unit	code	number	INF	1
+vanilla	orinf	unit	code	name	INF	1
 vanilla	orinf	unit	dexterity	number	7	1
 vanilla	orinf	unit	faith	name	ORDER	1
 vanilla	orinf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -17796,7 +17796,7 @@ vanilla	wainf	unit	armor	number	3	1
 vanilla	wainf	unit	attack	number	6	1
 vanilla	wainf	unit	attack_recovery_ticks	number	12	1
 vanilla	wainf	unit	barracks_required	number	1	1
-vanilla	wainf	unit	code	number	INF	1
+vanilla	wainf	unit	code	name	INF	1
 vanilla	wainf	unit	dexterity	number	8	1
 vanilla	wainf	unit	faith	name	WATER	1
 vanilla	wainf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -31102,7 +31102,7 @@ patch302	aiinf	unit	armor	number	0	1
 patch302	aiinf	unit	attack	number	5	1
 patch302	aiinf	unit	attack_recovery_ticks	number	8	1
 patch302	aiinf	unit	barracks_required	number	1	1
-patch302	aiinf	unit	code	number	INF	1
+patch302	aiinf	unit	code	name	INF	1
 patch302	aiinf	unit	dexterity	number	14	1
 patch302	aiinf	unit	faith	name	AIR	1
 patch302	aiinf	unit	flags	expression	UNITTYPEAIR CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -31776,7 +31776,7 @@ patch302	chinf	unit	armor	number	2	1
 patch302	chinf	unit	attack	number	8	1
 patch302	chinf	unit	attack_recovery_ticks	number	12	1
 patch302	chinf	unit	barracks_required	number	1	1
-patch302	chinf	unit	code	number	INF	1
+patch302	chinf	unit	code	name	INF	1
 patch302	chinf	unit	dexterity	number	8	1
 patch302	chinf	unit	faith	name	CHAOS	1
 patch302	chinf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -32595,7 +32595,7 @@ patch302	deinf	unit	armor	number	3	1
 patch302	deinf	unit	attack	number	6	1
 patch302	deinf	unit	attack_recovery_ticks	number	12	1
 patch302	deinf	unit	barracks_required	number	1	1
-patch302	deinf	unit	code	number	INF	1
+patch302	deinf	unit	code	name	INF	1
 patch302	deinf	unit	dexterity	number	9	1
 patch302	deinf	unit	faith	name	DEATH	1
 patch302	deinf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -33266,7 +33266,7 @@ patch302	eainf	unit	armor	number	5	1
 patch302	eainf	unit	attack	number	7	1
 patch302	eainf	unit	attack_recovery_ticks	number	15	1
 patch302	eainf	unit	barracks_required	number	1	1
-patch302	eainf	unit	code	number	INF	1
+patch302	eainf	unit	code	name	INF	1
 patch302	eainf	unit	dexterity	number	5	1
 patch302	eainf	unit	faith	name	EARTH	1
 patch302	eainf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -33897,7 +33897,7 @@ patch302	fiinf	unit	armor	number	2	1
 patch302	fiinf	unit	attack	number	8	1
 patch302	fiinf	unit	attack_recovery_ticks	number	12	1
 patch302	fiinf	unit	barracks_required	number	1	1
-patch302	fiinf	unit	code	number	INF	1
+patch302	fiinf	unit	code	name	INF	1
 patch302	fiinf	unit	dexterity	number	8	1
 patch302	fiinf	unit	faith	name	FIRE	1
 patch302	fiinf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -34453,7 +34453,7 @@ patch302	liinf	unit	armor	number	2	1
 patch302	liinf	unit	attack	number	5	1
 patch302	liinf	unit	attack_recovery_ticks	number	10	1
 patch302	liinf	unit	barracks_required	number	1	1
-patch302	liinf	unit	code	number	INF	1
+patch302	liinf	unit	code	name	INF	1
 patch302	liinf	unit	dexterity	number	9	1
 patch302	liinf	unit	faith	name	LIFE	1
 patch302	liinf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -35138,7 +35138,7 @@ patch302	orinf	unit	armor	number	5	1
 patch302	orinf	unit	attack	number	7	1
 patch302	orinf	unit	attack_recovery_ticks	number	10	1
 patch302	orinf	unit	barracks_required	number	1	1
-patch302	orinf	unit	code	number	INF	1
+patch302	orinf	unit	code	name	INF	1
 patch302	orinf	unit	dexterity	number	7	1
 patch302	orinf	unit	faith	name	ORDER	1
 patch302	orinf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -35960,7 +35960,7 @@ patch302	wainf	unit	armor	number	3	1
 patch302	wainf	unit	attack	number	6	1
 patch302	wainf	unit	attack_recovery_ticks	number	12	1
 patch302	wainf	unit	barracks_required	number	1	1
-patch302	wainf	unit	code	number	INF	1
+patch302	wainf	unit	code	name	INF	1
 patch302	wainf	unit	dexterity	number	8	1
 patch302	wainf	unit	faith	name	WATER	1
 patch302	wainf	unit	flags	expression	UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or	1
@@ -55564,7 +55564,7 @@ gs5r3	aiinf	unit	armor	number	8	8
 gs5r3	aiinf	unit	attack	number	4	7
 gs5r3	aiinf	unit	attack_recovery_ticks	number	12	17
 gs5r3	aiinf	unit	barracks_required	number	1	40
-gs5r3	aiinf	unit	code	number	INF	3
+gs5r3	aiinf	unit	code	name	INF	3
 gs5r3	aiinf	unit	dexterity	number	12	10
 gs5r3	aiinf	unit	earth_resistance	number	-25	35
 gs5r3	aiinf	unit	faith	name	AIR	6
@@ -56330,7 +56330,7 @@ gs5r3	chinf	unit	attack	number	11	7
 gs5r3	chinf	unit	attack_recovery_ticks	number	16	17
 gs5r3	chinf	unit	barracks_required	number	1	40
 gs5r3	chinf	unit	chaos_resistance	number	25	33
-gs5r3	chinf	unit	code	number	INF	3
+gs5r3	chinf	unit	code	name	INF	3
 gs5r3	chinf	unit	death_resistance	number	25	34
 gs5r3	chinf	unit	dexterity	number	6	10
 gs5r3	chinf	unit	faith	name	CHAOS	6
@@ -57546,7 +57546,7 @@ gs5r3	deinf	unit	attack	number	11	7
 gs5r3	deinf	unit	attack_recovery_ticks	number	16	13
 gs5r3	deinf	unit	barracks_required	number	1	40
 gs5r3	deinf	unit	chaos_resistance	number	25	34
-gs5r3	deinf	unit	code	number	INF	3
+gs5r3	deinf	unit	code	name	INF	3
 gs5r3	deinf	unit	death_resistance	number	25	33
 gs5r3	deinf	unit	dexterity	number	7	10
 gs5r3	deinf	unit	faith	name	DEATH	6
@@ -58452,7 +58452,7 @@ gs5r3	eainf	unit	armor	number	5	8
 gs5r3	eainf	unit	attack	number	11	7
 gs5r3	eainf	unit	attack_recovery_ticks	number	20	17
 gs5r3	eainf	unit	barracks_required	number	1	40
-gs5r3	eainf	unit	code	number	INF	3
+gs5r3	eainf	unit	code	name	INF	3
 gs5r3	eainf	unit	dexterity	number	5	10
 gs5r3	eainf	unit	earth_resistance	number	25	33
 gs5r3	eainf	unit	faith	name	EARTH	6
@@ -59235,7 +59235,7 @@ gs5r3	fiinf	unit	armor	number	3	8
 gs5r3	fiinf	unit	attack	number	11	7
 gs5r3	fiinf	unit	attack_recovery_ticks	number	18	17
 gs5r3	fiinf	unit	barracks_required	number	1	40
-gs5r3	fiinf	unit	code	number	INF	3
+gs5r3	fiinf	unit	code	name	INF	3
 gs5r3	fiinf	unit	dexterity	number	6	10
 gs5r3	fiinf	unit	earth_resistance	number	25	34
 gs5r3	fiinf	unit	faith	name	FIRE	6
@@ -59900,7 +59900,7 @@ gs5r3	liinf	unit	attack	number	7	7
 gs5r3	liinf	unit	attack_recovery_ticks	number	14	13
 gs5r3	liinf	unit	barracks_required	number	1	40
 gs5r3	liinf	unit	chaos_resistance	number	-25	36
-gs5r3	liinf	unit	code	number	INF	3
+gs5r3	liinf	unit	code	name	INF	3
 gs5r3	liinf	unit	death_resistance	number	-25	35
 gs5r3	liinf	unit	dexterity	number	8	10
 gs5r3	liinf	unit	faith	name	LIFE	6
@@ -60706,7 +60706,7 @@ gs5r3	orinf	unit	attack	number	10	7
 gs5r3	orinf	unit	attack_recovery_ticks	number	20	13
 gs5r3	orinf	unit	barracks_required	number	1	40
 gs5r3	orinf	unit	chaos_resistance	number	-25	35
-gs5r3	orinf	unit	code	number	INF	3
+gs5r3	orinf	unit	code	name	INF	3
 gs5r3	orinf	unit	death_resistance	number	-25	36
 gs5r3	orinf	unit	dexterity	number	6	10
 gs5r3	orinf	unit	faith	name	ORDER	6
@@ -61665,7 +61665,7 @@ gs5r3	wainf	unit	armor	number	4	8
 gs5r3	wainf	unit	attack	number	10	7
 gs5r3	wainf	unit	attack_recovery_ticks	number	18	13
 gs5r3	wainf	unit	barracks_required	number	1	40
-gs5r3	wainf	unit	code	number	INF	3
+gs5r3	wainf	unit	code	name	INF	3
 gs5r3	wainf	unit	dexterity	number	7	10
 gs5r3	wainf	unit	earth_resistance	number	-25	35
 gs5r3	wainf	unit	faith	name	WATER	6

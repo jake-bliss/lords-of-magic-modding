@@ -558,14 +558,17 @@ fn classify_value(value: &[Token], line: usize) -> FieldValue {
             .collect(),
     };
 
-    // Finite values only. The shared lexer calls a token a number when `f64::from_str` accepts it,
-    // and Rust accepts `inf`, `infinity` and `nan` case-insensitively -- so the corpus's infantry
-    // unit code, the literal `INF`, arrives here as floating-point infinity. Eight units per
-    // profile carry it, and admitting them reported the `code` field's range as `inf..inf`.
+    // Finite values only. This used to be the whole defence against the lexer calling a token a
+    // number whenever `f64::from_str` accepted it: Rust takes `inf`, `infinity` and `nan`
+    // case-insensitively, so the corpus's infantry unit code `INF` arrived here as floating-point
+    // infinity and reported the `code` field's range as `inf..inf`. `gamescript::is_number_token`
+    // now models the language instead, so such a word never reaches this line as a `Number`
+    // token and those eight units per profile take the `name` shape. Evidence class: Corrected.
     //
-    // This does not fix the lexer, which is outside this module and whose published token counts
-    // other work depends on; it stops a non-finite value being summarised as if it were a
-    // measurement. Such a field keeps its `number` shape and its text, and is simply not counted.
+    // The filter stays because it is the only thing standing between a non-finite value and a
+    // field summarised as if it were a measurement, and it is applied after the parse, which is
+    // the order that catches an overflowing literal as well as a spelled-out infinity. Such a
+    // field keeps its shape and its text, and is simply not counted.
     let number = match (&shape, &value[0].kind) {
         (ValueShape::Number, TokenKind::Number(text)) => {
             text.parse::<f64>().ok().filter(|value| value.is_finite())

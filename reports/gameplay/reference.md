@@ -392,7 +392,7 @@ its shape and token count, never its body.
 | `attack` | number | `5` |
 | `attack_recovery_ticks` | number | `8` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `14` |
 | `faith` | name | `AIR` |
 | `flags` | expression | `UNITTYPEAIR CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -1275,7 +1275,7 @@ its shape and token count, never its body.
 | `attack` | number | `8` |
 | `attack_recovery_ticks` | number | `12` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `8` |
 | `faith` | name | `CHAOS` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -2645,7 +2645,7 @@ its shape and token count, never its body.
 | `attack` | number | `6` |
 | `attack_recovery_ticks` | number | `12` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `9` |
 | `faith` | name | `DEATH` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -3655,7 +3655,7 @@ its shape and token count, never its body.
 | `attack` | number | `7` |
 | `attack_recovery_ticks` | number | `15` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `5` |
 | `faith` | name | `EARTH` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -4532,7 +4532,7 @@ its shape and token count, never its body.
 | `attack` | number | `8` |
 | `attack_recovery_ticks` | number | `12` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `8` |
 | `faith` | name | `FIRE` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -5275,7 +5275,7 @@ its shape and token count, never its body.
 | `attack` | number | `5` |
 | `attack_recovery_ticks` | number | `10` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `9` |
 | `faith` | name | `LIFE` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -6169,7 +6169,7 @@ its shape and token count, never its body.
 | `attack` | number | `7` |
 | `attack_recovery_ticks` | number | `10` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `7` |
 | `faith` | name | `ORDER` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |
@@ -7266,7 +7266,7 @@ its shape and token count, never its body.
 | `attack` | number | `6` |
 | `attack_recovery_ticks` | number | `12` |
 | `barracks_required` | number | `1` |
-| `code` | number | `INF` |
+| `code` | name | `INF` |
 | `dexterity` | number | `8` |
 | `faith` | name | `WATER` |
 | `flags` | expression | `UNITTYPELAND CAN_ATTACK or CAN_DEFEND or CAN_BERSERK or` |

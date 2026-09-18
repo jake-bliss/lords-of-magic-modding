@@ -505,11 +505,9 @@ strength of archive order.
 
 ## Two pre-existing defects found on the way
 
-Both are outside this work's scope and are **not fixed here**; both affect other published figures.
+### A defect in the shared lexer — since fixed
 
-### A defect in the shared lexer
-
-`gamescript.rs` classifies a token as a number when `name.parse::<f64>()` succeeds. Rust's
+`gamescript.rs` used to classify a token as a number when `name.parse::<f64>()` succeeded. Rust's
 `f64::from_str` accepts `inf`, `infinity` and `nan`, case-insensitively. The shipped infantry unit
 code is the literal `INF`:
 
@@ -517,12 +515,17 @@ code is the literal `INF`:
 /code INF def
 ```
 
-So eight units per profile have `code` lexed as **floating-point infinity** rather than as an
-executable name, and the naive range over that field reads `inf … inf`. This module guards against
-it locally — a non-finite number keeps its text and its shape but is never summarised, and
-`a_non_finite_number_token_is_never_summarised_as_a_value` fails if the guard is removed. The lexer
-itself is untouched, because its token counts are load-bearing for the vocabulary work. Anything
-else in the repository reading `TokenKind::Number` has the same exposure. Evidence class: Observed.
+So eight units per profile had `code` lexed as **floating-point infinity** rather than as an
+executable name, and the naive range over that field read `inf … inf`. The lexer now classifies
+with `gamescript::is_number_token`, which models PostScript's integer and real forms rather than
+Rust's parser, so those eight units per profile carry the `name` shape and the `code` row of
+`reports/gameplay/field-ranges.tsv` reads `name:151` for vanilla and 3.02 and `name:166` for GS5R3,
+where it read `number:8 name:143` and `number:8 name:158`. Evidence class: Corrected.
+
+This module's own guard stays: a non-finite number keeps its text and its shape but is never
+summarised, and `a_non_finite_number_token_is_never_summarised_as_a_value` fails if the guard is
+removed. It is now defence against an overflowing literal rather than against a spelled-out
+infinity, which the lexer no longer produces.
 
 ### A defect in `tools/gs_syntax.py`
 

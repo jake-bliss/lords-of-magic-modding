@@ -204,23 +204,27 @@ savegame container, closed in PR #60 ([savegame format](save-format.md)).
 - [x] Establish how multiplayer works and why it desyncs ([multiplayer](multiplayer.md)). It is lockstep-deterministic, the shipped desync post-mortem is **gated off at load**, and the asterisk in the game list already means the host's build differs from yours. A home server cannot fix desync, because the problem is determinism rather than the network.
 - [ ] Measure difficulty-dependent computer AI behavior in controlled games ([issue #6](https://github.com/jake-bliss/lords-of-magic-modding/issues/6)).
 
-Four known latent defects are recorded rather than fixed, because each needs its own corpus
+Three known latent defects are recorded rather than fixed, because each needs its own corpus
 re-verification:
 
 - `MapCell::tile_index()` in `src/map.rs` still masks `tag & !0x00800000` rather than `tag & 0xffff`,
   which agrees on every shipped map only because the high bits there take just two values.
 - The map editor's `set_tile` preserves a bit it should not — byte-correct on every shipped map and
   wrong in general.
-- **`gamescript.rs` lexes the shipped infantry unit code `INF` as floating-point infinity.** Token
-  classification is `name.parse::<f64>().is_ok()`, and Rust accepts `inf`, `INF`, `nan` and
-  `INFINITY`. `INF` and `CAV` each occur 36 times in vanilla's corpus, side by side in
-  `/unit_code_strings["INF""MIS""CAV"...`, yet `reports/gs/vocabulary-vanilla.tsv` lists `CAV` with
-  32 uses and `INF` not at all. Fixing it will change published vocabulary counts, which is why it
-  is a deliberate follow-up rather than a drive-by.
 - **`tools/gs_syntax.py` ends a `;` comment at `\n` only**, but bare CR is a line ending in
   GameScript. 25 GS5R3 members have a comment and no LF at all; `gs\dungeons\water\wacave.gs` is
   5,347 bytes and normalises to **six tokens**. This feeds `compare_trees.py`'s token hash, so the
   "layout/comments only" column in `reports/gs/summary.md` is unreliable for those members.
+
+**Fixed since:** `gamescript.rs` no longer lexes the shipped infantry unit code `INF` as
+floating-point infinity. Classification was `name.parse::<f64>().is_ok()`, and Rust accepts `inf`,
+`INF`, `nan` and `INFINITY` case-insensitively with an optional sign; it is now
+`gamescript::is_number_token`, which models PostScript's integer and real forms instead. `INF` and
+`CAV` stand side by side in `/unit_code_strings["INF""MIS""CAV"...` and now report the same use
+count in every profile — 32 in vanilla, 35 in 3.02, 38 in GS5R3 — where `reports/gs/vocabulary-vanilla.tsv`
+previously listed `CAV` and had no `INF` row at all. The eight infantry units per profile whose
+`code` field read as a number now read as a name. Published vocabulary and gameplay counts moved
+accordingly and the reports are regenerated. Evidence class: Corrected.
 
 ## AI-assisted workflow
 
