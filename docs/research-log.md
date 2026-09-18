@@ -3417,3 +3417,111 @@ reporting; `COMBAT_TILESET_ARRAY_CANDIDATES` is what an encounter may *reach* an
 so the paint gate never refuses it. **Reporting is precise; refusing is permissive.** Refusing the
 engine's own answer is the bug that shipped on this branch once already, and the permissive side of
 the gate is where that lesson lives.
+
+## 2026-09-17 — Inside the operator bodies: five fetch helpers, 71 arity disagreements, and two controls that failed
+
+The operator tables have been known since #13/#15 — 1,906 names, entry points, and a static count of
+operand-stack traffic. This is the first time anything has read the function bodies. The analyser is
+`spikes/asset-viewer/src/operator_bodies.rs`, the driver is `examples/operator_bodies.rs`, and the
+output is committed as `reports/natives/operator-bodies.tsv`, `global-clusters.tsv` and
+`summary.md`. The prose is [inside the native operator bodies](native-operator-bodies.md).
+
+### The controls first, because two of them failed
+
+Run against operators whose behaviour is known from outside the binary:
+
+| Control | Result |
+| --- | --- |
+| `savescenariomap`/`savespecialmap` write byte-identical files | **Reproduced** — same object `0x005aa12c`, same callee `0x00485550` |
+| the map operators act on one object | **Reproduced** — exactly one address in common, `0x005ae958`, named by 139 operators |
+| `resetvisibility` is nullary | **Reproduced** |
+| `drawimpframe` takes 6 and `getimphotspot` 5 | **Reproduced** by a different method than the hand reading in #15 |
+| `resetvisibility` clears cell bit `0x00800000` | **Failed** |
+| `setterrain` mutates the map | **Failed** — classified `reads-state` |
+
+Both failures are one limitation. The engine is C++ with singletons in `.data`; an operator's body
+is fetch operands, `mov ecx,<singleton>`, call a method, and the store happens frames down through
+`this`. A static direct-call graph cannot follow it, and neither can import evidence: the reach
+curve is printed in the summary and shows that by depth 3, 93% of operators reach `user32`, a timer
+and the allocator, and by depth 5, 90% reach `CreateFileA`. `savescenariomap` reaches the file
+imports at depth 5 — so does `dup`. The classifier therefore reads depth 1 and `savescenariomap` is
+not labelled as file I/O. Saying so is better than a label that would have been produced by the call
+graph's density rather than by the operator.
+
+The one tempting fix was measured and rejected. Attributing a callee's store-through-`this` to the
+singleton the caller named does make `setterrain` a mutator — and it does the same for 55% of the
+table, because the engine's getters cache into their own object. It is carried as its own column and
+never promoted. **`reads-state` in the table means "performs no store of its own", not "has no side
+effects", and `setterrain` is the standing counter-example.**
+
+### The engine has five operand-fetch helpers, and finding one is not enough
+
+`main.rs` already warned that the recorded arity undercounts operators that fetch through the shared
+helper at `0x0040adb0`. Searching for that helper *by shape* — a small function many operators call
+whose own body pops exactly once and pushes nothing — finds five, not one: the `thiscall` fetch that
+hands back the raw `(tag, value)` pair, and four `cdecl` fetches that coerce on the way out. With
+only the first recognised, 144 operators came out nullary that are not. There is also exactly one
+result-push helper, `0x0041d1d0`.
+
+The second bug was worse because it was silent. Labelling each instruction with the operands
+consumed before it, and keeping **one** label per address, makes the answer depend on the order the
+queue happens to visit blocks in: every fetch checks for underflow, and the underflow path of a
+four-operand operator reaches the `ret` first, so the operator was reported as consuming nothing.
+Propagating every distinct count that can reach an instruction fixes it; a count that grows around a
+loop is capped and reported as **unbounded**, which is what a variadic operator is.
+
+### 71 disagreements with the recorded arity, 68 in the expected direction
+
+| | |
+| --- | ---: |
+| one count on every returning path | 544 |
+| paths disagree; nominal count is the successful path | 1,362 |
+| genuinely variadic (count grows around a loop) | 31 |
+| nominal count **higher** than the recorded site count | **68** |
+| nominal count **lower** | **3** |
+
+Largest gaps: `launchmissile` 21 against 2 — 18 distinct fetch sites chained down one path —
+`addbuildinginfo` 15 against 6, `toptriangle` 11 against 3. `getimphotspot` 5 and `drawimpframe` 6
+match the values read by hand in #15, so the disagreement with the table was already known and is
+now measured rather than annotated.
+
+The three the other way are `button`, `setunitdata` and `nsetunitdata`, which pop different numbers
+on different branches; a site count is the larger by construction. They are named in the test rather
+than excused.
+
+The 31 variadic operators include `astore`, `container`, `setformation`, `setregionfaiths` and
+`setregionraces`. `astore` popping a script-determined number of operands is what PostScript's
+`astore` does, and is the best independent check on the loop detection available here.
+
+### Boundaries, reported as a rate
+
+99.9% of bodies walked to completion; one ended at an unresolvable indirect jump. 2.9% ran past the
+next operator entry point, which is the honest **upper bound** on boundary failure rather than a
+count of failures — operators are not laid out contiguously and some tail call far away.
+
+### What the clusters are
+
+Absolute data references — including a displacement behind a register, and an address materialised
+as an immediate, which is how the engine names its singletons — clustered at a `0x100` gap. The gap
+is not fitted; the sweep is printed (247 clusters at `0x20`, 86 at `0x100`, 12 at a page).
+
+`0x005aa12c` is named by **299** operators (`addbuilding`, `addcapitol`, `buybuilding`, both map
+writers) and `0x005ae958` by **139** (`anythingat`, `armyat`, `buildingat`, `cityat`, `cantmovehere`,
+`setterrain`, `terrainspriteat`, `resetvisibility`). Reading those as the scenario object and the
+world object is **inferred** from the operator names; the addresses and the membership are observed.
+Sixteen bytes at `0x00584ae0` are named by 128 operators including `blackbackbuffer` and
+`blackrenderbuffer` — the render targets. `0x0054dbc0` is not state at all: it is the `.rdata` float
+pool `abs`, `add`, `atan`, `cos`, `div` and `eq` share.
+
+The useful part is not that the two biggest clusters are the obvious two. It is that the map API is
+now **enumerable**: 139 named operators, recovered without reading a single one of their names.
+
+### Tests
+
+Relations, not restated numbers, and most of them run without the binary: the two map writers share
+a callee; the map operators intersect on exactly one address; the stack primitives touch no engine
+state; the body walk never undercounts the recorded site count except for the three named branching
+operators; the boundary walk completes for ≥99%; every operand count has a mechanism behind it. With
+`LOM_EXE` set, the committed table is re-derived and required to still match the binary, and the
+helper search is required to find more than one helper — the specific regression that made a third
+of the table look nullary.

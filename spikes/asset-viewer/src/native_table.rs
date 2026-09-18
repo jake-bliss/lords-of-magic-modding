@@ -57,6 +57,7 @@ impl std::error::Error for NativeTableError {}
 #[derive(Debug, Clone, Copy)]
 struct Section {
     virtual_address: u32,
+    virtual_size: u32,
     raw_offset: u32,
     raw_size: u32,
     executable: bool,
@@ -100,6 +101,8 @@ impl<'a> PeImage<'a> {
         let mut sections = Vec::with_capacity(section_count);
         for index in 0..section_count {
             let offset = table_offset + index * 40;
+            let virtual_size = read_u32(bytes, offset + 8)
+                .ok_or_else(|| NativeTableError::new("truncated section table"))?;
             let virtual_address = read_u32(bytes, offset + 12)
                 .ok_or_else(|| NativeTableError::new("truncated section table"))?;
             let raw_size = read_u32(bytes, offset + 16)
@@ -110,6 +113,7 @@ impl<'a> PeImage<'a> {
                 .ok_or_else(|| NativeTableError::new("truncated section table"))?;
             sections.push(Section {
                 virtual_address,
+                virtual_size,
                 raw_offset,
                 raw_size,
                 // IMAGE_SCN_MEM_EXECUTE
@@ -136,6 +140,40 @@ impl<'a> PeImage<'a> {
             }
         }
         None
+    }
+
+    /// The address the image is linked to load at.
+    pub fn image_base(&self) -> u32 {
+        self.image_base
+    }
+
+    /// Whether an address falls inside any section's **virtual** extent.
+    ///
+    /// Deliberately not `file_offset(..).is_some()`: `.data` here declares 0x81b3c bytes of virtual
+    /// space behind 0x23200 bytes of raw data, so every zero-initialised global lives at an address
+    /// with no file offset at all. A reference to one of those is still a reference to engine
+    /// state, and a check written against raw size would silently drop the whole tail.
+    pub fn is_mapped_address(&self, address: u32) -> bool {
+        self.section_containing(address).is_some()
+    }
+
+    /// Whether an address falls inside a mapped, non-executable section: engine data rather than
+    /// engine code.
+    pub fn is_data_address(&self, address: u32) -> bool {
+        self.section_containing(address)
+            .is_some_and(|section| !section.executable)
+    }
+
+    fn section_containing(&self, address: u32) -> Option<&Section> {
+        self.sections.iter().find(|section| {
+            let Some(start) = self.image_base.checked_add(section.virtual_address) else {
+                return false;
+            };
+            let Some(end) = start.checked_add(section.virtual_size.max(section.raw_size)) else {
+                return false;
+            };
+            (start..end).contains(&address)
+        })
     }
 
     pub fn is_code_address(&self, address: u32) -> bool {

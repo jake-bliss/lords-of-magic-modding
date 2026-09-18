@@ -6,6 +6,7 @@ pub mod map;
 pub mod mpq;
 pub mod native_table;
 pub mod operator_arity;
+pub mod operator_bodies;
 pub mod paths;
 pub mod pbm;
 pub mod png_export;
