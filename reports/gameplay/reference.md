@@ -13,7 +13,7 @@ its shape and token count, never its body.
 
 ### unit aicav
 
-- display name: Windriders
+- display name: Windriders (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aicav.gs` line 1
@@ -64,7 +64,7 @@ its shape and token count, never its body.
 
 ### unit aicr1
 
-- display name: Will o' wisp
+- display name: Will o' wisp (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aicr1.gs` line 1
@@ -120,7 +120,7 @@ its shape and token count, never its body.
 
 ### unit aicr2
 
-- display name: Air Elemental
+- display name: Air Elemental (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aicr2.gs` line 1
@@ -176,7 +176,7 @@ its shape and token count, never its body.
 
 ### unit aicr3
 
-- display name: Thunder Drake
+- display name: Thunder Drake (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aicr3.gs` line 1
@@ -235,7 +235,7 @@ its shape and token count, never its body.
 
 ### unit aicr4
 
-- display name: Dragonfly
+- display name: Dragonfly (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aicr4.gs` line 1
@@ -277,7 +277,7 @@ its shape and token count, never its body.
 
 ### unit aicr5
 
-- display name: (none declared)
+- display name: Legendary Creature (text-table)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aicr5.gs` line 1
@@ -285,7 +285,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_legendary1` | name | `get` |
 | `air_resistance` | number | `-25` |
 | `armor` | number | `12` |
 | `attack` | number | `16` |
@@ -321,6 +320,7 @@ its shape and token count, never its body.
 | `morale_bar_x` | number | `-12` |
 | `morale_bar_y` | number | `-200` |
 | `mps` | number | `14` |
+| `name` | expression | `textdict /T_legendary1 get` |
 | `order_resistance` | number | `50` |
 | `race` | name | `LESSER_STORM_GIANT` |
 | `ranged_attack` | number | `18` |
@@ -336,7 +336,7 @@ its shape and token count, never its body.
 
 ### unit aifit
 
-- display name: Storm Warrior
+- display name: Storm Warrior (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aifit.gs` line 1
@@ -380,7 +380,7 @@ its shape and token count, never its body.
 
 ### unit aiinf
 
-- display name: Eagles
+- display name: Eagles (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aiinf.gs` line 1
@@ -427,7 +427,7 @@ its shape and token count, never its body.
 
 ### unit aildf
 
-- display name: Storm Warlord
+- display name: Storm Warlord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aildf.gs` line 1
@@ -466,7 +466,7 @@ its shape and token count, never its body.
 
 ### unit aildt
 
-- display name: Faerie Lord
+- display name: Faerie Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aildt.gs` line 1
@@ -510,7 +510,7 @@ its shape and token count, never its body.
 
 ### unit aildw
 
-- display name: Storm Lord
+- display name: Storm Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aildw.gs` line 1
@@ -552,7 +552,7 @@ its shape and token count, never its body.
 
 ### unit aimis
 
-- display name: Fae Slingers
+- display name: Fae Slingers (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aimis.gs` line 1
@@ -604,7 +604,7 @@ its shape and token count, never its body.
 
 ### unit aishp
 
-- display name: Windjammer
+- display name: Windjammer (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aishp.gs` line 1
@@ -652,7 +652,7 @@ its shape and token count, never its body.
 
 ### unit aithf
 
-- display name: Faerie Thief
+- display name: Faerie Thief (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aithf.gs` line 1
@@ -703,7 +703,7 @@ its shape and token count, never its body.
 
 ### unit aiwiz
 
-- display name: Storm Sorcerer
+- display name: Storm Sorcerer (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aiwiz.gs` line 1
@@ -752,7 +752,7 @@ its shape and token count, never its body.
 
 ### unit aiwm1
 
-- display name: Sprites
+- display name: Sprites (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aiwm1.gs` line 1
@@ -796,7 +796,7 @@ its shape and token count, never its body.
 
 ### unit aiwm2
 
-- display name: Tiger
+- display name: Tiger (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aiwm2.gs` line 1
@@ -836,7 +836,7 @@ its shape and token count, never its body.
 
 ### unit aiwm3
 
-- display name: Spear
+- display name: Spear (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\aiwm3.gs` line 1
@@ -873,7 +873,7 @@ its shape and token count, never its body.
 
 ### unit boat
 
-- display name: Boat
+- display name: Boat (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302
 - defined in: `File00001559.xxx` line 1
@@ -904,7 +904,7 @@ its shape and token count, never its body.
 
 ### unit chcav
 
-- display name: Raiders
+- display name: Raiders (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chcav.gs` line 1
@@ -951,7 +951,7 @@ its shape and token count, never its body.
 
 ### unit chcr1
 
-- display name: Goblins
+- display name: Goblins (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chcr1.gs` line 1
@@ -1005,7 +1005,7 @@ its shape and token count, never its body.
 
 ### unit chcr2
 
-- display name: Ogre
+- display name: Ogre (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chcr2.gs` line 1
@@ -1060,7 +1060,7 @@ its shape and token count, never its body.
 
 ### unit chcr3
 
-- display name: Cyclops
+- display name: Cyclops (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chcr3.gs` line 1
@@ -1119,7 +1119,7 @@ its shape and token count, never its body.
 
 ### unit chcr4
 
-- display name: Wild Cat
+- display name: Wild Cat (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chcr4.gs` line 1
@@ -1161,7 +1161,7 @@ its shape and token count, never its body.
 
 ### unit chcr5
 
-- display name: (none declared)
+- display name: Legendary Creature (text-table)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chcr5.gs` line 1
@@ -1169,7 +1169,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_legendary1` | name | `get` |
 | `air_resistance` | number | `0` |
 | `armor` | number | `12` |
 | `attack` | number | `12` |
@@ -1202,6 +1201,7 @@ its shape and token count, never its body.
 | `morale_bar_x` | number | `-12` |
 | `morale_bar_y` | number | `-140` |
 | `mps` | number | `8` |
+| `name` | expression | `textdict /T_legendary1 get` |
 | `order_resistance` | number | `0` |
 | `race` | name | `BARBARIAN` |
 | `recover_hitpoints` | number | `10` |
@@ -1216,7 +1216,7 @@ its shape and token count, never its body.
 
 ### unit chfit
 
-- display name: Beast Rider
+- display name: Beast Rider (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chfit.gs` line 1
@@ -1263,7 +1263,7 @@ its shape and token count, never its body.
 
 ### unit chinf
 
-- display name: Berserkers
+- display name: Berserkers (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chinf.gs` line 1
@@ -1309,7 +1309,7 @@ its shape and token count, never its body.
 
 ### unit chld1
 
-- display name: Orc Warlord
+- display name: Orc Warlord (declared-name)
 - evidence: `delimited-block`
 - profiles: gs5r3
 - defined in: `units\chld1.gs` line 3
@@ -1365,7 +1365,7 @@ its shape and token count, never its body.
 
 ### unit chld2
 
-- display name: Witch Lord
+- display name: Witch Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: gs5r3
 - defined in: `units\chld2.gs` line 1
@@ -1424,7 +1424,7 @@ its shape and token count, never its body.
 
 ### unit chldf
 
-- display name: Beast Lord
+- display name: Beast Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chldf.gs` line 1
@@ -1464,7 +1464,7 @@ its shape and token count, never its body.
 
 ### unit chldt
 
-- display name: Huntress Lord
+- display name: Huntress Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chldt.gs` line 1
@@ -1507,7 +1507,7 @@ its shape and token count, never its body.
 
 ### unit chldw
 
-- display name: Shaman Lord
+- display name: Shaman Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chldw.gs` line 1
@@ -1549,7 +1549,7 @@ its shape and token count, never its body.
 
 ### unit chmis
 
-- display name: Stickthrowers
+- display name: Stickthrowers (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chmis.gs` line 1
@@ -1600,7 +1600,7 @@ its shape and token count, never its body.
 
 ### unit chshp
 
-- display name: Longboat
+- display name: Longboat (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chshp.gs` line 1
@@ -1648,7 +1648,7 @@ its shape and token count, never its body.
 
 ### unit chthf
 
-- display name: Huntress
+- display name: Huntress (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chthf.gs` line 1
@@ -1698,7 +1698,7 @@ its shape and token count, never its body.
 
 ### unit chwiz
 
-- display name: Shaman
+- display name: Shaman (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chwiz.gs` line 1
@@ -1747,7 +1747,7 @@ its shape and token count, never its body.
 
 ### unit chwm1
 
-- display name: Wolves
+- display name: Wolves (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chwm1.gs` line 1
@@ -1788,7 +1788,7 @@ its shape and token count, never its body.
 
 ### unit chwm2
 
-- display name: Lions
+- display name: Lions (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chwm2.gs` line 1
@@ -1829,7 +1829,7 @@ its shape and token count, never its body.
 
 ### unit chwmc
 
-- display name: Wolfriders
+- display name: Wolfriders (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chwmc.gs` line 1
@@ -1871,7 +1871,7 @@ its shape and token count, never its body.
 
 ### unit chwmf
 
-- display name: Orc Chieftain
+- display name: Orc Chieftain (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chwmf.gs` line 1
@@ -1913,7 +1913,7 @@ its shape and token count, never its body.
 
 ### unit chwmf2
 
-- display name: Orc Warrior
+- display name: Orc Warrior (declared-name)
 - evidence: `delimited-block`
 - profiles: gs5r3
 - defined in: `units\chfit2.gs` line 2
@@ -1968,7 +1968,7 @@ its shape and token count, never its body.
 
 ### unit chwmi
 
-- display name: Orcs
+- display name: Orcs (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chwmi.gs` line 1
@@ -2009,7 +2009,7 @@ its shape and token count, never its body.
 
 ### unit chwmm
 
-- display name: Goblin Archers
+- display name: Goblin Archers (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chwmm.gs` line 1
@@ -2054,7 +2054,7 @@ its shape and token count, never its body.
 
 ### unit chwmm2
 
-- display name: Wild Men Archers
+- display name: Wild Men Archers (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chwmm2.gs` line 1
@@ -2105,7 +2105,7 @@ its shape and token count, never its body.
 
 ### unit chwmt
 
-- display name: Wild Men Thief
+- display name: Wild Men Thief (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302
 - defined in: `units\holdchwmt.gs` line 1
@@ -2152,7 +2152,7 @@ its shape and token count, never its body.
 
 ### unit chwmw
 
-- display name: Witch
+- display name: Witch (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chwmw.gs` line 1
@@ -2197,7 +2197,7 @@ its shape and token count, never its body.
 
 ### unit chwz2
 
-- display name: Witch
+- display name: Witch (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\chwz2.gs` line 1
@@ -2252,7 +2252,7 @@ its shape and token count, never its body.
 
 ### unit chwz22
 
-- display name: Transmuter
+- display name: Transmuter (declared-name)
 - evidence: `delimited-block`
 - profiles: gs5r3
 - defined in: `units\chwiz2.gs` line 1
@@ -2310,7 +2310,7 @@ its shape and token count, never its body.
 
 ### unit decav
 
-- display name: Dark Horsemen
+- display name: Dark Horsemen (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\decav.gs` line 1
@@ -2341,7 +2341,7 @@ its shape and token count, never its body.
 
 ### unit decr1
 
-- display name: Skeleton
+- display name: Skeleton (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `File00000297.xxx` line 1
@@ -2389,7 +2389,7 @@ its shape and token count, never its body.
 
 ### unit decr2
 
-- display name: Death Shade
+- display name: Death Shade (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\decr2.gs` line 1
@@ -2448,7 +2448,7 @@ its shape and token count, never its body.
 
 ### unit decr2b
 
-- display name: Frozen Shade
+- display name: Frozen Shade (declared-name)
 - evidence: `delimited-block`
 - profiles: gs5r3
 - defined in: `units\decr2b.gs` line 1
@@ -2507,7 +2507,7 @@ its shape and token count, never its body.
 
 ### unit decr3
 
-- display name: Vampire
+- display name: Vampire (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\decr3.gs` line 1
@@ -2562,7 +2562,7 @@ its shape and token count, never its body.
 
 ### unit decr4
 
-- display name: Bat
+- display name: Bat (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\decr4.gs` line 1
@@ -2586,7 +2586,7 @@ its shape and token count, never its body.
 
 ### unit defit
 
-- display name: Dark Warrior
+- display name: Dark Warrior (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\defit.gs` line 1
@@ -2633,7 +2633,7 @@ its shape and token count, never its body.
 
 ### unit deinf
 
-- display name: Dark Halberdiers
+- display name: Dark Halberdiers (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\deinf.gs` line 1
@@ -2679,7 +2679,7 @@ its shape and token count, never its body.
 
 ### unit deld1
 
-- display name: Dread Lich
+- display name: Dread Lich (declared-name)
 - evidence: `delimited-block`
 - profiles: gs5r3
 - defined in: `units\deld1.gs` line 1
@@ -2738,7 +2738,7 @@ its shape and token count, never its body.
 
 ### unit deldf
 
-- display name: Dark Warlord
+- display name: Dark Warlord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\deldf.gs` line 1
@@ -2778,7 +2778,7 @@ its shape and token count, never its body.
 
 ### unit deldr
 
-- display name: Arch Demon
+- display name: Arch Demon (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\deldr.gs` line 1
@@ -2834,7 +2834,7 @@ its shape and token count, never its body.
 
 ### unit deldt
 
-- display name: Assassin Lord
+- display name: Assassin Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\deldt.gs` line 1
@@ -2877,7 +2877,7 @@ its shape and token count, never its body.
 
 ### unit deldw
 
-- display name: Necromancer Lord
+- display name: Necromancer Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\deldw.gs` line 1
@@ -2919,7 +2919,7 @@ its shape and token count, never its body.
 
 ### unit demis
 
-- display name: Dark Javelins
+- display name: Dark Javelins (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\demis.gs` line 1
@@ -2970,7 +2970,7 @@ its shape and token count, never its body.
 
 ### unit deshp
 
-- display name: Death Galley
+- display name: Death Galley (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\deshp.gs` line 1
@@ -3021,7 +3021,7 @@ its shape and token count, never its body.
 
 ### unit dethf
 
-- display name: Assassin
+- display name: Assassin (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\dethf.gs` line 1
@@ -3071,7 +3071,7 @@ its shape and token count, never its body.
 
 ### unit dewiz
 
-- display name: Necromancer
+- display name: Necromancer (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `File00000102.xxx` line 1
@@ -3102,7 +3102,7 @@ its shape and token count, never its body.
 
 ### unit dewm1
 
-- display name: Zombies
+- display name: Zombies (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\dewm1.gs` line 1
@@ -3144,7 +3144,7 @@ its shape and token count, never its body.
 
 ### unit dewm2
 
-- display name: Frozen Shade
+- display name: Frozen Shade (declared-name)
 - evidence: `delimited-block`
 - profiles: gs5r3
 - defined in: `units\dewm2.gs` line 1
@@ -3204,7 +3204,7 @@ its shape and token count, never its body.
 
 ### unit dewz2
 
-- display name: (none declared)
+- display name: Legendary Creature (text-table)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\dewz2.gs` line 1
@@ -3212,7 +3212,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_legendary1` | name | `get` |
 | `air_resistance` | number | `50` |
 | `armor` | number | `4` |
 | `attack` | number | `8` |
@@ -3247,6 +3246,7 @@ its shape and token count, never its body.
 | `morale_bar_x` | number | `-12` |
 | `morale_bar_y` | number | `-60` |
 | `mps` | number | `10` |
+| `name` | expression | `textdict /T_legendary1 get` |
 | `order_resistance` | number | `25` |
 | `race` | name | `DARK_ELF` |
 | `recover_hitpoints` | number | `0` |
@@ -3262,7 +3262,7 @@ its shape and token count, never its body.
 
 ### unit dummy
 
-- display name: dummy
+- display name: dummy (declared-name)
 - evidence: `delimited-block`
 - profiles: gs5r3
 - defined in: `units\dummy.gs` line 1
@@ -3284,7 +3284,7 @@ its shape and token count, never its body.
 
 ### unit eacav
 
-- display name: Riders
+- display name: Riders (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eacav.gs` line 1
@@ -3331,7 +3331,7 @@ its shape and token count, never its body.
 
 ### unit eacr1
 
-- display name: Shambler
+- display name: Shambler (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eacr1.gs` line 1
@@ -3386,7 +3386,7 @@ its shape and token count, never its body.
 
 ### unit eacr2
 
-- display name: Golem
+- display name: Golem (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eacr2.gs` line 1
@@ -3441,7 +3441,7 @@ its shape and token count, never its body.
 
 ### unit eacr3
 
-- display name: Stone Giant
+- display name: Stone Giant (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eacr3.gs` line 1
@@ -3500,7 +3500,7 @@ its shape and token count, never its body.
 
 ### unit eacr4
 
-- display name: Mite
+- display name: Mite (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eacr4.gs` line 1
@@ -3542,7 +3542,7 @@ its shape and token count, never its body.
 
 ### unit eacr5
 
-- display name: (none declared)
+- display name: Legendary Creature (text-table)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eacr5.gs` line 1
@@ -3550,7 +3550,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_legendary1` | name | `get` |
 | `air_resistance` | number | `-50` |
 | `armor` | number | `20` |
 | `attack` | number | `14` |
@@ -3583,6 +3582,7 @@ its shape and token count, never its body.
 | `morale_bar_x` | number | `-11` |
 | `morale_bar_y` | number | `-36` |
 | `mps` | number | `10` |
+| `name` | expression | `textdict /T_legendary1 get` |
 | `order_resistance` | number | `-50` |
 | `race` | name | `LESSER_STONE_GIANT` |
 | `recover_hitpoints` | number | `6` |
@@ -3597,7 +3597,7 @@ its shape and token count, never its body.
 
 ### unit eafit
 
-- display name: Dwarven Warrior
+- display name: Dwarven Warrior (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eafit.gs` line 1
@@ -3643,7 +3643,7 @@ its shape and token count, never its body.
 
 ### unit eainf
 
-- display name: Dwarf Infantry
+- display name: Dwarf Infantry (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eainf.gs` line 1
@@ -3689,7 +3689,7 @@ its shape and token count, never its body.
 
 ### unit eald1
 
-- display name: Troll King
+- display name: Troll King (declared-name)
 - evidence: `delimited-block`
 - profiles: gs5r3
 - defined in: `units\eald1.gs` line 1
@@ -3748,7 +3748,7 @@ its shape and token count, never its body.
 
 ### unit ealdf
 
-- display name: Dwarven Warlord
+- display name: Dwarven Warlord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\ealdf.gs` line 1
@@ -3787,7 +3787,7 @@ its shape and token count, never its body.
 
 ### unit ealdt
 
-- display name: Burglar Lord
+- display name: Burglar Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\ealdt.gs` line 1
@@ -3830,7 +3830,7 @@ its shape and token count, never its body.
 
 ### unit ealdw
 
-- display name: Magician Lord
+- display name: Magician Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\ealdw.gs` line 1
@@ -3872,7 +3872,7 @@ its shape and token count, never its body.
 
 ### unit eamis
 
-- display name: Axe Throwers
+- display name: Axe Throwers (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eamis.gs` line 1
@@ -3923,7 +3923,7 @@ its shape and token count, never its body.
 
 ### unit eashp
 
-- display name: Barge
+- display name: Barge (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eashp.gs` line 1
@@ -3971,7 +3971,7 @@ its shape and token count, never its body.
 
 ### unit eathf
 
-- display name: Burglar
+- display name: Burglar (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eathf.gs` line 1
@@ -4021,7 +4021,7 @@ its shape and token count, never its body.
 
 ### unit eawiz
 
-- display name: Magician
+- display name: Magician (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eawiz.gs` line 1
@@ -4070,7 +4070,7 @@ its shape and token count, never its body.
 
 ### unit eawm1
 
-- display name: Rock Troll
+- display name: Rock Troll (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eawm1.gs` line 1
@@ -4110,7 +4110,7 @@ its shape and token count, never its body.
 
 ### unit eawmi
 
-- display name: Trolls
+- display name: Trolls (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\eawmi.gs` line 1
@@ -4152,7 +4152,7 @@ its shape and token count, never its body.
 
 ### unit ficav
 
-- display name: Flame Raiders
+- display name: Flame Raiders (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\ficav.gs` line 1
@@ -4199,7 +4199,7 @@ its shape and token count, never its body.
 
 ### unit ficr1
 
-- display name: Fire Elemental
+- display name: Fire Elemental (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\ficr1.gs` line 1
@@ -4256,7 +4256,7 @@ its shape and token count, never its body.
 
 ### unit ficr2
 
-- display name: Demon
+- display name: Demon (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\ficr2.gs` line 1
@@ -4314,7 +4314,7 @@ its shape and token count, never its body.
 
 ### unit ficr3
 
-- display name: Dragon
+- display name: Dragon (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\ficr3.gs` line 1
@@ -4373,7 +4373,7 @@ its shape and token count, never its body.
 
 ### unit ficr4
 
-- display name: Imp
+- display name: Imp (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\ficr4.gs` line 1
@@ -4415,7 +4415,7 @@ its shape and token count, never its body.
 
 ### unit ficr5
 
-- display name: (none declared)
+- display name: Legendary Creature (text-table)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\ficr5.gs` line 1
@@ -4423,7 +4423,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_legendary1` | name | `get` |
 | `air_resistance` | number | `25` |
 | `armor` | number | `14` |
 | `attack` | number | `16` |
@@ -4459,6 +4458,7 @@ its shape and token count, never its body.
 | `morale_bar_x` | number | `-12` |
 | `morale_bar_y` | number | `-100` |
 | `mps` | number | `12` |
+| `name` | expression | `textdict /T_legendary1 get` |
 | `order_resistance` | number | `-25` |
 | `race` | name | `LESSER_FIRE_GIANT` |
 | `ranged_attack` | number | `21` |
@@ -4474,7 +4474,7 @@ its shape and token count, never its body.
 
 ### unit fifit
 
-- display name: Fire Warrior
+- display name: Fire Warrior (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\fifit.gs` line 1
@@ -4520,7 +4520,7 @@ its shape and token count, never its body.
 
 ### unit fiinf
 
-- display name: Flame Berserker
+- display name: Flame Berserker (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\fiinf.gs` line 1
@@ -4566,7 +4566,7 @@ its shape and token count, never its body.
 
 ### unit fildf
 
-- display name: Fire Warlord
+- display name: Fire Warlord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\fildf.gs` line 1
@@ -4605,7 +4605,7 @@ its shape and token count, never its body.
 
 ### unit fildt
 
-- display name: Dwarf Thief Lord
+- display name: Dwarf Thief Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\fildt.gs` line 1
@@ -4648,7 +4648,7 @@ its shape and token count, never its body.
 
 ### unit fildw
 
-- display name: Sorceress Lord
+- display name: Sorceress Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\fildw.gs` line 1
@@ -4690,7 +4690,7 @@ its shape and token count, never its body.
 
 ### unit fimis
 
-- display name: Rockhurler
+- display name: Rockhurler (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\fimis.gs` line 1
@@ -4741,7 +4741,7 @@ its shape and token count, never its body.
 
 ### unit fishp
 
-- display name: Ferry
+- display name: Ferry (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\fishp.gs` line 1
@@ -4789,7 +4789,7 @@ its shape and token count, never its body.
 
 ### unit fithf
 
-- display name: Dwarven Thief
+- display name: Dwarven Thief (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\fithf.gs` line 1
@@ -4839,7 +4839,7 @@ its shape and token count, never its body.
 
 ### unit fiwiz
 
-- display name: Fire Sorceress
+- display name: Fire Sorceress (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\fiwiz.gs` line 1
@@ -4888,7 +4888,7 @@ its shape and token count, never its body.
 
 ### unit gate
 
-- display name: DE gate facing 0
+- display name: DE gate facing 0 (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `File00001551.xxx` line 1
@@ -4907,7 +4907,7 @@ its shape and token count, never its body.
 
 ### unit lgate
 
-- display name: city l-gate
+- display name: city l-gate (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\gate.gs` line 1
@@ -4928,7 +4928,7 @@ its shape and token count, never its body.
 
 ### unit licav
 
-- display name: Elven Riders
+- display name: Elven Riders (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\licav.gs` line 1
@@ -4976,7 +4976,7 @@ its shape and token count, never its body.
 
 ### unit licr1
 
-- display name: Dryad
+- display name: Dryad (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\licr1.gs` line 1
@@ -5035,7 +5035,7 @@ its shape and token count, never its body.
 
 ### unit licr2
 
-- display name: Unicorn
+- display name: Unicorn (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\licr2.gs` line 1
@@ -5090,7 +5090,7 @@ its shape and token count, never its body.
 
 ### unit licr3
 
-- display name: Phoenix
+- display name: Phoenix (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `File00000025.xxx` line 1
@@ -5115,7 +5115,7 @@ its shape and token count, never its body.
 
 ### unit licr4
 
-- display name: Brownie
+- display name: Brownie (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\licr4.gs` line 1
@@ -5160,7 +5160,7 @@ its shape and token count, never its body.
 
 ### unit licr5
 
-- display name: (none declared)
+- display name: Legendary Creature (text-table)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\licr5.gs` line 1
@@ -5168,7 +5168,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_legendary1` | name | `get` |
 | `air_resistance` | number | `25` |
 | `armor` | number | `4` |
 | `attack` | number | `16` |
@@ -5201,6 +5200,7 @@ its shape and token count, never its body.
 | `morale_bar_x` | number | `-12` |
 | `morale_bar_y` | number | `-32` |
 | `mps` | number | `16` |
+| `name` | expression | `textdict /T_legendary1 get` |
 | `order_resistance` | number | `50` |
 | `race` | name | `ELF` |
 | `recover_hitpoints` | number | `35` |
@@ -5216,7 +5216,7 @@ its shape and token count, never its body.
 
 ### unit lifit
 
-- display name: Elven Warrior
+- display name: Elven Warrior (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\lifit.gs` line 1
@@ -5263,7 +5263,7 @@ its shape and token count, never its body.
 
 ### unit liinf
 
-- display name: Elven Staffmen
+- display name: Elven Staffmen (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\liinf.gs` line 1
@@ -5309,7 +5309,7 @@ its shape and token count, never its body.
 
 ### unit lildf
 
-- display name: Elven Warlord
+- display name: Elven Warlord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\lildf.gs` line 1
@@ -5349,7 +5349,7 @@ its shape and token count, never its body.
 
 ### unit lildr
 
-- display name: life Leader
+- display name: life Leader (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\lildr.gs` line 1
@@ -5380,7 +5380,7 @@ its shape and token count, never its body.
 
 ### unit lildt
 
-- display name: Elven Thief Lord
+- display name: Elven Thief Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\lildt.gs` line 1
@@ -5423,7 +5423,7 @@ its shape and token count, never its body.
 
 ### unit lildw
 
-- display name: Enchantress Lord
+- display name: Enchantress Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\lildw.gs` line 1
@@ -5465,7 +5465,7 @@ its shape and token count, never its body.
 
 ### unit limis
 
-- display name: Elven Archers
+- display name: Elven Archers (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\limis.gs` line 1
@@ -5516,7 +5516,7 @@ its shape and token count, never its body.
 
 ### unit lishp
 
-- display name: Light Galley
+- display name: Light Galley (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\lishp.gs` line 1
@@ -5567,7 +5567,7 @@ its shape and token count, never its body.
 
 ### unit lithf
 
-- display name: Elven Thief
+- display name: Elven Thief (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\lithf.gs` line 1
@@ -5617,7 +5617,7 @@ its shape and token count, never its body.
 
 ### unit liwiz
 
-- display name: Enchantress
+- display name: Enchantress (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\liwiz.gs` line 1
@@ -5666,7 +5666,7 @@ its shape and token count, never its body.
 
 ### unit liwm1
 
-- display name: Bears
+- display name: Bears (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\liwm1.gs` line 1
@@ -5707,7 +5707,7 @@ its shape and token count, never its body.
 
 ### unit liwm2
 
-- display name: Panthers
+- display name: Panthers (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\liwm2.gs` line 1
@@ -5748,7 +5748,7 @@ its shape and token count, never its body.
 
 ### unit orcav
 
-- display name: Knights
+- display name: Knights (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orcav.gs` line 1
@@ -5796,7 +5796,7 @@ its shape and token count, never its body.
 
 ### unit orcav2
 
-- display name: Holy Knights
+- display name: Holy Knights (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orcav2.gs` line 1
@@ -5844,7 +5844,7 @@ its shape and token count, never its body.
 
 ### unit orcr1
 
-- display name: White Stag
+- display name: White Stag (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orcr1.gs` line 1
@@ -5899,7 +5899,7 @@ its shape and token count, never its body.
 
 ### unit orcr2
 
-- display name: Gargoyle
+- display name: Gargoyle (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orcr2.gs` line 1
@@ -5954,7 +5954,7 @@ its shape and token count, never its body.
 
 ### unit orcr3
 
-- display name: Warrior Spirit
+- display name: Warrior Spirit (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orcr3.gs` line 1
@@ -6013,7 +6013,7 @@ its shape and token count, never its body.
 
 ### unit orcr4
 
-- display name: Hound
+- display name: Hound (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orcr4.gs` line 1
@@ -6055,7 +6055,7 @@ its shape and token count, never its body.
 
 ### unit orfit
 
-- display name: Paladin
+- display name: Paladin (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orfit.gs` line 1
@@ -6102,7 +6102,7 @@ its shape and token count, never its body.
 
 ### unit orft2
 
-- display name: Legendary Knight
+- display name: Legendary Knight (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orft2.gs` line 1
@@ -6157,7 +6157,7 @@ its shape and token count, never its body.
 
 ### unit orinf
 
-- display name: Footmen
+- display name: Footmen (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orinf.gs` line 1
@@ -6203,7 +6203,7 @@ its shape and token count, never its body.
 
 ### unit orld1
 
-- display name: Yeoman Lord
+- display name: Yeoman Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orld1.gs` line 1
@@ -6242,7 +6242,7 @@ its shape and token count, never its body.
 
 ### unit orld2
 
-- display name: Cavalier Lord
+- display name: Cavalier Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orld2.gs` line 1
@@ -6282,7 +6282,7 @@ its shape and token count, never its body.
 
 ### unit orld3
 
-- display name: Paladin Lord
+- display name: Paladin Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orld3.gs` line 1
@@ -6322,7 +6322,7 @@ its shape and token count, never its body.
 
 ### unit orldf
 
-- display name: Paladin Lord
+- display name: Paladin Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orldf.gs` line 1
@@ -6362,7 +6362,7 @@ its shape and token count, never its body.
 
 ### unit orldt
 
-- display name: Ranger Lord
+- display name: Ranger Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orldt.gs` line 1
@@ -6405,7 +6405,7 @@ its shape and token count, never its body.
 
 ### unit orldw
 
-- display name: Wizard Lord
+- display name: Wizard Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orldw.gs` line 1
@@ -6447,7 +6447,7 @@ its shape and token count, never its body.
 
 ### unit ormis
 
-- display name: Crossbowmen
+- display name: Crossbowmen (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\ormis.gs` line 1
@@ -6498,7 +6498,7 @@ its shape and token count, never its body.
 
 ### unit orshp
 
-- display name: Warship
+- display name: Warship (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orshp.gs` line 1
@@ -6546,7 +6546,7 @@ its shape and token count, never its body.
 
 ### unit orthf
 
-- display name: Ranger
+- display name: Ranger (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orthf.gs` line 1
@@ -6596,7 +6596,7 @@ its shape and token count, never its body.
 
 ### unit orwiz
 
-- display name: Wizard
+- display name: Wizard (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orwiz.gs` line 1
@@ -6645,7 +6645,7 @@ its shape and token count, never its body.
 
 ### unit orwmi
 
-- display name: Centaur Swordsmen
+- display name: Centaur Swordsmen (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orwmi.gs` line 1
@@ -6687,7 +6687,7 @@ its shape and token count, never its body.
 
 ### unit orwmm
 
-- display name: Centaur Hunters
+- display name: Centaur Hunters (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\orwmm.gs` line 1
@@ -6733,7 +6733,7 @@ its shape and token count, never its body.
 
 ### unit pychi
 
-- display name: Chicken
+- display name: Chicken (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\pychi.gs` line 1
@@ -6767,7 +6767,7 @@ its shape and token count, never its body.
 
 ### unit pycow
 
-- display name: Cow
+- display name: Cow (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\pycow.gs` line 1
@@ -6801,7 +6801,7 @@ its shape and token count, never its body.
 
 ### unit pyele
 
-- display name: Elephant
+- display name: Elephant (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\pyele.gs` line 1
@@ -6835,7 +6835,7 @@ its shape and token count, never its body.
 
 ### unit pygoa
 
-- display name: Goat
+- display name: Goat (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\pygoa.gs` line 1
@@ -6869,7 +6869,7 @@ its shape and token count, never its body.
 
 ### unit rgate
 
-- display name: city r-gate
+- display name: city r-gate (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\gate.gs` line 1
@@ -6890,7 +6890,7 @@ its shape and token count, never its body.
 
 ### unit wacav
 
-- display name: Heavy Cavalry
+- display name: Heavy Cavalry (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wacav.gs` line 1
@@ -6938,7 +6938,7 @@ its shape and token count, never its body.
 
 ### unit wacr1
 
-- display name: Kraken
+- display name: Kraken (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wacr1.gs` line 1
@@ -6997,7 +6997,7 @@ its shape and token count, never its body.
 
 ### unit wacr2
 
-- display name: Water Elemental
+- display name: Water Elemental (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wacr2.gs` line 1
@@ -7052,7 +7052,7 @@ its shape and token count, never its body.
 
 ### unit wacr3
 
-- display name: Serpent
+- display name: Serpent (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wacr3.gs` line 1
@@ -7111,7 +7111,7 @@ its shape and token count, never its body.
 
 ### unit wacr4
 
-- display name: Seagull
+- display name: Seagull (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wacr4.gs` line 1
@@ -7153,7 +7153,7 @@ its shape and token count, never its body.
 
 ### unit wacr5
 
-- display name: (none declared)
+- display name: Legendary Creature (text-table)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wacr5.gs` line 1
@@ -7161,7 +7161,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_legendary1` | name | `get` |
 | `air_resistance` | number | `-25` |
 | `armor` | number | `5` |
 | `attack` | number | `8` |
@@ -7193,6 +7192,7 @@ its shape and token count, never its body.
 | `morale_bar_x` | number | `-12` |
 | `morale_bar_y` | number | `-40` |
 | `mps` | number | `8` |
+| `name` | expression | `textdict /T_legendary1 get` |
 | `order_resistance` | number | `25` |
 | `race` | name | `AMAZON` |
 | `recover_hitpoints` | number | `4` |
@@ -7207,7 +7207,7 @@ its shape and token count, never its body.
 
 ### unit wafit
 
-- display name: Amazon Warrior
+- display name: Amazon Warrior (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wafit.gs` line 1
@@ -7254,7 +7254,7 @@ its shape and token count, never its body.
 
 ### unit wainf
 
-- display name: Lizardmen
+- display name: Lizardmen (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wainf.gs` line 1
@@ -7300,7 +7300,7 @@ its shape and token count, never its body.
 
 ### unit wald1
 
-- display name: Valkyrie Lord
+- display name: Valkyrie Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: gs5r3
 - defined in: `units\wald1.gs` line 1
@@ -7356,7 +7356,7 @@ its shape and token count, never its body.
 
 ### unit wald2
 
-- display name: Amazon Princess
+- display name: Amazon Princess (declared-name)
 - evidence: `delimited-block`
 - profiles: gs5r3
 - defined in: `units\wald2.gs` line 1
@@ -7412,7 +7412,7 @@ its shape and token count, never its body.
 
 ### unit waldf
 
-- display name: Amazon Warlord
+- display name: Amazon Warlord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\waldf.gs` line 1
@@ -7452,7 +7452,7 @@ its shape and token count, never its body.
 
 ### unit waldt
 
-- display name: Amazon Thief Lord
+- display name: Amazon Thief Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\waldt.gs` line 1
@@ -7495,7 +7495,7 @@ its shape and token count, never its body.
 
 ### unit waldw
 
-- display name: Priestess Lord
+- display name: Priestess Lord (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\waldw.gs` line 1
@@ -7537,7 +7537,7 @@ its shape and token count, never its body.
 
 ### unit wamis
 
-- display name: Slingers
+- display name: Slingers (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wamis.gs` line 1
@@ -7588,7 +7588,7 @@ its shape and token count, never its body.
 
 ### unit wasc1
 
-- display name: Horse
+- display name: Horse (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wasc1.gs` line 1
@@ -7625,7 +7625,7 @@ its shape and token count, never its body.
 
 ### unit washp
 
-- display name: Corsair
+- display name: Corsair (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\washp.gs` line 1
@@ -7673,7 +7673,7 @@ its shape and token count, never its body.
 
 ### unit watf1
 
-- display name: Brunhilde
+- display name: Brunhilde (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\watf1.gs` line 1
@@ -7719,7 +7719,7 @@ its shape and token count, never its body.
 
 ### unit wathf
 
-- display name: Amazon Thief
+- display name: Amazon Thief (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wathf.gs` line 1
@@ -7769,7 +7769,7 @@ its shape and token count, never its body.
 
 ### unit wawiz
 
-- display name: Priestess
+- display name: Priestess (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wawiz.gs` line 1
@@ -7818,7 +7818,7 @@ its shape and token count, never its body.
 
 ### unit wawm2
 
-- display name: Grendel
+- display name: Grendel (declared-name)
 - evidence: `delimited-block`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `units\wawm2.gs` line 1
@@ -7860,7 +7860,7 @@ its shape and token count, never its body.
 
 ### spell aftershock
 
-- display name: After Shock
+- display name: After Shock (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\aftershock.gs` line 1
@@ -7896,7 +7896,7 @@ its shape and token count, never its body.
 
 ### spell air_detect
 
-- display name: Detect Earth
+- display name: Detect Earth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\adetect.gs` line 1
@@ -7925,7 +7925,7 @@ its shape and token count, never its body.
 
 ### spell air_dispell
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\adispell.gs` line 1
@@ -7952,7 +7952,7 @@ its shape and token count, never its body.
 
 ### spell air_seer
 
-- display name: Seer
+- display name: Seer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\air_seer.gs` line 1
@@ -7981,7 +7981,7 @@ its shape and token count, never its body.
 
 ### spell air_telart
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\atelart.gs` line 1
@@ -8008,7 +8008,7 @@ its shape and token count, never its body.
 
 ### spell alchemy
 
-- display name: Alchemy
+- display name: Alchemy (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\alchemy.gs` line 1
@@ -8038,7 +8038,7 @@ its shape and token count, never its body.
 
 ### spell animate_dead
 
-- display name: Animate Dead
+- display name: Animate Dead (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\animate_dead.gs` line 1
@@ -8079,7 +8079,7 @@ its shape and token count, never its body.
 
 ### spell anything
 
-- display name: Anything
+- display name: Anything (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\anything.gs` line 1
@@ -8112,7 +8112,7 @@ its shape and token count, never its body.
 
 ### spell areastun
 
-- display name: Area Stun
+- display name: Area Stun (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\areastun.gs` line 1
@@ -8142,7 +8142,7 @@ its shape and token count, never its body.
 
 ### spell asphyxiate
 
-- display name: Asphyxiate
+- display name: Asphyxiate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\asphyx.gs` line 1
@@ -8177,7 +8177,7 @@ its shape and token count, never its body.
 
 ### spell backdraf
 
-- display name: Backdraft
+- display name: Backdraft (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\backdraf.gs` line 1
@@ -8213,7 +8213,7 @@ its shape and token count, never its body.
 
 ### spell backdraft
 
-- display name: Backdraft
+- display name: Backdraft (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\backdraft.gs` line 1
@@ -8255,7 +8255,7 @@ its shape and token count, never its body.
 
 ### spell balki
 
-- display name: Balkoth's Word
+- display name: Balkoth's Word (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\balkword.gs` line 1
@@ -8286,7 +8286,7 @@ its shape and token count, never its body.
 
 ### spell balkoths_word
 
-- display name: Balkoth's Word
+- display name: Balkoth's Word (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\balkoths_word.gs` line 1
@@ -8325,7 +8325,7 @@ its shape and token count, never its body.
 
 ### spell balleech
 
-- display name: Balkoth's Leeches
+- display name: Balkoth's Leeches (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\balleech.gs` line 1
@@ -8352,7 +8352,7 @@ its shape and token count, never its body.
 
 ### spell berserk
 
-- display name: Blood Lust
+- display name: Blood Lust (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\berserk.gs` line 1
@@ -8384,7 +8384,7 @@ its shape and token count, never its body.
 
 ### spell blades
 
-- display name: Blades of Fury
+- display name: Blades of Fury (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\blades.gs` line 1
@@ -8422,7 +8422,7 @@ its shape and token count, never its body.
 
 ### spell blades_of_fury
 
-- display name: Blades of Fury
+- display name: Blades of Fury (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\blades_of_fury.gs` line 1
@@ -8463,7 +8463,7 @@ its shape and token count, never its body.
 
 ### spell bleeding
 
-- display name: Bleeding
+- display name: Bleeding (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\bleeding.gs` line 1
@@ -8499,7 +8499,7 @@ its shape and token count, never its body.
 
 ### spell bless
 
-- display name: Bless
+- display name: Bless (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\bless.gs` line 1
@@ -8527,7 +8527,7 @@ its shape and token count, never its body.
 
 ### spell blessed_armor
 
-- display name: Blessed Armor
+- display name: Blessed Armor (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\blessed_armor.gs` line 1
@@ -8560,7 +8560,7 @@ its shape and token count, never its body.
 
 ### spell blessing
 
-- display name: Blessing
+- display name: Blessing (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\blessing.gs` line 1
@@ -8588,7 +8588,7 @@ its shape and token count, never its body.
 
 ### spell blind_rage
 
-- display name: Blind Rage
+- display name: Blind Rage (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\blindrage.gs` line 1
@@ -8618,7 +8618,7 @@ its shape and token count, never its body.
 
 ### spell blindness
 
-- display name: Blindness
+- display name: Blindness (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\blindness.gs` line 1
@@ -8650,7 +8650,7 @@ its shape and token count, never its body.
 
 ### spell blink
 
-- display name: Blink
+- display name: Blink (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\gosub.gs` line 1
@@ -8678,7 +8678,7 @@ its shape and token count, never its body.
 
 ### spell blizzard
 
-- display name: Blizzard
+- display name: Blizzard (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\blizzard.gs` line 1
@@ -8722,7 +8722,7 @@ its shape and token count, never its body.
 
 ### spell blood_lust
 
-- display name: Blood Lust
+- display name: Blood Lust (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\blood_lust.gs` line 1
@@ -8760,7 +8760,7 @@ its shape and token count, never its body.
 
 ### spell body_and_spirit
 
-- display name: Body and Spirit
+- display name: Body and Spirit (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\body_and_spirit.gs` line 1
@@ -8796,7 +8796,7 @@ its shape and token count, never its body.
 
 ### spell bolt_air
 
-- display name: Lightning
+- display name: Lightning (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\bolt_air.gs` line 1
@@ -8830,7 +8830,7 @@ its shape and token count, never its body.
 
 ### spell bolt_air2
 
-- display name: Lightning II
+- display name: Lightning II (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\bolt_air2.gs` line 1
@@ -8865,7 +8865,7 @@ its shape and token count, never its body.
 
 ### spell bolt_death
 
-- display name: Curse
+- display name: Curse (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\bolt_death.gs` line 1
@@ -8903,7 +8903,7 @@ its shape and token count, never its body.
 
 ### spell bolt_earth
 
-- display name: Rocksling
+- display name: Rocksling (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\bolt_earth.gs` line 1
@@ -8940,7 +8940,7 @@ its shape and token count, never its body.
 
 ### spell bolt_fire
 
-- display name: Flame Dart
+- display name: Flame Dart (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\bolt_fire.gs` line 1
@@ -8982,7 +8982,7 @@ its shape and token count, never its body.
 
 ### spell bolt_fury
 
-- display name: Bolt of Fury
+- display name: Bolt of Fury (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\bolt_fury.gs` line 1
@@ -9020,7 +9020,7 @@ its shape and token count, never its body.
 
 ### spell bolt_life
 
-- display name: Spirit Arrow
+- display name: Spirit Arrow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\bolt_life.gs` line 1
@@ -9058,7 +9058,7 @@ its shape and token count, never its body.
 
 ### spell bolt_order
 
-- display name: Righteous Bolt
+- display name: Righteous Bolt (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\bolt_order.gs` line 1
@@ -9096,7 +9096,7 @@ its shape and token count, never its body.
 
 ### spell bolt_water
 
-- display name: Ice Bolt
+- display name: Ice Bolt (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\bolt_water.gs` line 1
@@ -9135,7 +9135,7 @@ its shape and token count, never its body.
 
 ### spell bureaucracy
 
-- display name: Bureaucracy
+- display name: Bureaucracy (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\bureaucracy.gs` line 1
@@ -9164,7 +9164,7 @@ its shape and token count, never its body.
 
 ### spell burning_skin
 
-- display name: Burning Skin
+- display name: Burning Skin (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\burning_skin.gs` line 1
@@ -9200,7 +9200,7 @@ its shape and token count, never its body.
 
 ### spell burnskin
 
-- display name: Burning Skin
+- display name: Burning Skin (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\burnskin.gs` line 1
@@ -9231,7 +9231,7 @@ its shape and token count, never its body.
 
 ### spell cauterize
 
-- display name: Cauterize Wounds
+- display name: Cauterize Wounds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\cauterize.gs` line 1
@@ -9259,7 +9259,7 @@ its shape and token count, never its body.
 
 ### spell chain_lightning
 
-- display name: Chain Lightning
+- display name: Chain Lightning (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\chain_lightning.gs` line 1
@@ -9298,7 +9298,7 @@ its shape and token count, never its body.
 
 ### spell change_of_fate
 
-- display name: Change of Fate
+- display name: Change of Fate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\change_of_fate.gs` line 1
@@ -9333,7 +9333,7 @@ its shape and token count, never its body.
 
 ### spell chaos_detect
 
-- display name: Detect Order
+- display name: Detect Order (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\cdetect.gs` line 1
@@ -9362,7 +9362,7 @@ its shape and token count, never its body.
 
 ### spell chaos_dispell
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\cdispell.gs` line 1
@@ -9391,7 +9391,7 @@ its shape and token count, never its body.
 
 ### spell chaos_telart
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ctelart.gs` line 1
@@ -9418,7 +9418,7 @@ its shape and token count, never its body.
 
 ### spell clay
 
-- display name: Clay Earth
+- display name: Clay Earth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\clayearth.gs` line 1
@@ -9445,7 +9445,7 @@ its shape and token count, never its body.
 
 ### spell clay_armor
 
-- display name: Clay Armor
+- display name: Clay Armor (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\clay_armor.gs` line 1
@@ -9475,7 +9475,7 @@ its shape and token count, never its body.
 
 ### spell cleansewounds
 
-- display name: Cleanse Wounds
+- display name: Cleanse Wounds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\cleansewounds.gs` line 1
@@ -9503,7 +9503,7 @@ its shape and token count, never its body.
 
 ### spell cloud_of_steam
 
-- display name: Steam Cloud
+- display name: Steam Cloud (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\cloudsteam.gs` line 1
@@ -9534,7 +9534,7 @@ its shape and token count, never its body.
 
 ### spell cloud_of_war
 
-- display name: Cloud of War
+- display name: Cloud of War (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\cloud_of_war.gs` line 1
@@ -9569,7 +9569,7 @@ its shape and token count, never its body.
 
 ### spell cloudwar
 
-- display name: Cloud of War
+- display name: Cloud of War (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\cloudwar.gs` line 1
@@ -9599,7 +9599,7 @@ its shape and token count, never its body.
 
 ### spell commune_with_nature
 
-- display name: Commune with Nature
+- display name: Commune with Nature (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\commune_with_nature.gs` line 1
@@ -9629,7 +9629,7 @@ its shape and token count, never its body.
 
 ### spell cone_of_cold
 
-- display name: Cone of Cold
+- display name: Cone of Cold (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\cone_of_cold.gs` line 1
@@ -9671,7 +9671,7 @@ its shape and token count, never its body.
 
 ### spell conecold
 
-- display name: Cone of Cold
+- display name: Cone of Cold (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\conecold.gs` line 1
@@ -9707,7 +9707,7 @@ its shape and token count, never its body.
 
 ### spell confusion
 
-- display name: Confusion
+- display name: Confusion (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\confusion.gs` line 1
@@ -9735,7 +9735,7 @@ its shape and token count, never its body.
 
 ### spell cracked_armor
 
-- display name: Cracked Armor
+- display name: Cracked Armor (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\cracked_armor.gs` line 1
@@ -9767,7 +9767,7 @@ its shape and token count, never its body.
 
 ### spell crash
 
-- display name: Crash
+- display name: Crash (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\crash.gs` line 1
@@ -9796,7 +9796,7 @@ its shape and token count, never its body.
 
 ### spell createplain
 
-- display name: Create Plain
+- display name: Create Plain (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\createpl.gs` line 1
@@ -9823,7 +9823,7 @@ its shape and token count, never its body.
 
 ### spell createriver
 
-- display name: Make Land
+- display name: Make Land (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\createri.gs` line 1
@@ -9850,7 +9850,7 @@ its shape and token count, never its body.
 
 ### spell createrocks
 
-- display name: Create Rocks
+- display name: Create Rocks (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\createrock.gs` line 1
@@ -9877,7 +9877,7 @@ its shape and token count, never its body.
 
 ### spell cripple
 
-- display name: Cripple
+- display name: Cripple (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\cripple.gs` line 1
@@ -9910,7 +9910,7 @@ its shape and token count, never its body.
 
 ### spell crusade
 
-- display name: Crusade
+- display name: Crusade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\crusade.gs` line 1
@@ -9936,7 +9936,7 @@ its shape and token count, never its body.
 
 ### spell cure_wounds
 
-- display name: Cure Wounds
+- display name: Cure Wounds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\curewound.gs` line 1
@@ -9967,7 +9967,7 @@ its shape and token count, never its body.
 
 ### spell curse
 
-- display name: Curse
+- display name: Curse (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\curse.gs` line 1
@@ -10002,7 +10002,7 @@ its shape and token count, never its body.
 
 ### spell dark_shadow
 
-- display name: Dark Shadow
+- display name: Dark Shadow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\dark_shadow.gs` line 1
@@ -10035,7 +10035,7 @@ its shape and token count, never its body.
 
 ### spell dcave
 
-- display name: Detect Cave
+- display name: Detect Cave (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\detectcave.gs` line 1
@@ -10064,7 +10064,7 @@ its shape and token count, never its body.
 
 ### spell death_detect
 
-- display name: Detect Life
+- display name: Detect Life (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ddetect.gs` line 1
@@ -10093,7 +10093,7 @@ its shape and token count, never its body.
 
 ### spell death_dispell
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ddispell.gs` line 1
@@ -10120,7 +10120,7 @@ its shape and token count, never its body.
 
 ### spell death_telart
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\dtelart.gs` line 1
@@ -10147,7 +10147,7 @@ its shape and token count, never its body.
 
 ### spell death_touch
 
-- display name: Touch of Death
+- display name: Touch of Death (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\death_touch.gs` line 1
@@ -10177,7 +10177,7 @@ its shape and token count, never its body.
 
 ### spell decay
 
-- display name: Decay
+- display name: Decay (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\decay.gs` line 1
@@ -10210,7 +10210,7 @@ its shape and token count, never its body.
 
 ### spell decoy
 
-- display name: Decoy
+- display name: Decoy (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\decoy.gs` line 1
@@ -10242,7 +10242,7 @@ its shape and token count, never its body.
 
 ### spell deep_wounds
 
-- display name: Deep Wounds
+- display name: Deep Wounds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\deep_wounds.gs` line 1
@@ -10277,7 +10277,7 @@ its shape and token count, never its body.
 
 ### spell destruction
 
-- display name: Destruction
+- display name: Destruction (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\destruction.gs` line 1
@@ -10316,7 +10316,7 @@ its shape and token count, never its body.
 
 ### spell detect_air
 
-- display name: Detect Earth
+- display name: Detect Earth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\detect_air.gs` line 1
@@ -10356,7 +10356,7 @@ its shape and token count, never its body.
 
 ### spell detect_cave
 
-- display name: Detect Cave
+- display name: Detect Cave (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\detect_cave.gs` line 1
@@ -10387,7 +10387,7 @@ its shape and token count, never its body.
 
 ### spell detect_chaos
 
-- display name: Detect Order
+- display name: Detect Order (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\detect_chaos.gs` line 1
@@ -10427,7 +10427,7 @@ its shape and token count, never its body.
 
 ### spell detect_death
 
-- display name: Detect Life
+- display name: Detect Life (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\detect_death.gs` line 1
@@ -10467,7 +10467,7 @@ its shape and token count, never its body.
 
 ### spell detect_earth
 
-- display name: Detect Air
+- display name: Detect Air (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\detect_earth.gs` line 1
@@ -10507,7 +10507,7 @@ its shape and token count, never its body.
 
 ### spell detect_fire
 
-- display name: Detect Water
+- display name: Detect Water (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\detect_fire.gs` line 1
@@ -10546,7 +10546,7 @@ its shape and token count, never its body.
 
 ### spell detect_life
 
-- display name: Detect Death
+- display name: Detect Death (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\detect_life.gs` line 1
@@ -10586,7 +10586,7 @@ its shape and token count, never its body.
 
 ### spell detect_order
 
-- display name: Detect Chaos
+- display name: Detect Chaos (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\detect_order.gs` line 1
@@ -10626,7 +10626,7 @@ its shape and token count, never its body.
 
 ### spell detect_water
 
-- display name: Detect Fire
+- display name: Detect Fire (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\detect_water.gs` line 1
@@ -10666,7 +10666,7 @@ its shape and token count, never its body.
 
 ### spell disguise
 
-- display name: Disguise
+- display name: Disguise (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\disguise.gs` line 1
@@ -10697,7 +10697,7 @@ its shape and token count, never its body.
 
 ### spell dispel_magic_air
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\dispel_magic_air.gs` line 1
@@ -10728,7 +10728,7 @@ its shape and token count, never its body.
 
 ### spell dispel_magic_chaos
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\dispel_magic_chaos.gs` line 1
@@ -10759,7 +10759,7 @@ its shape and token count, never its body.
 
 ### spell dispel_magic_death
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\dispel_magic_death.gs` line 1
@@ -10790,7 +10790,7 @@ its shape and token count, never its body.
 
 ### spell dispel_magic_earth
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\dispel_magic_earth.gs` line 1
@@ -10821,7 +10821,7 @@ its shape and token count, never its body.
 
 ### spell dispel_magic_fire
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\dispel_magic_fire.gs` line 1
@@ -10852,7 +10852,7 @@ its shape and token count, never its body.
 
 ### spell dispel_magic_life
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\dispel_magic_life.gs` line 1
@@ -10883,7 +10883,7 @@ its shape and token count, never its body.
 
 ### spell dispel_magic_order
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\dispel_magic_order.gs` line 1
@@ -10914,7 +10914,7 @@ its shape and token count, never its body.
 
 ### spell dispel_magic_water
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\dispel_magic_water.gs` line 1
@@ -10945,7 +10945,7 @@ its shape and token count, never its body.
 
 ### spell dragon_breath
 
-- display name: Dragon Breath
+- display name: Dragon Breath (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\dragon_breath.gs` line 1
@@ -10985,7 +10985,7 @@ its shape and token count, never its body.
 
 ### spell drowning
 
-- display name: Drowning
+- display name: Drowning (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\drowning.gs` line 1
@@ -11019,7 +11019,7 @@ its shape and token count, never its body.
 
 ### spell dshadows
 
-- display name: Dark Shadow
+- display name: Dark Shadow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\darkshadow.gs` line 1
@@ -11051,7 +11051,7 @@ its shape and token count, never its body.
 
 ### spell eabind
 
-- display name: Earth Bind
+- display name: Earth Bind (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\eabind.gs` line 1
@@ -11080,7 +11080,7 @@ its shape and token count, never its body.
 
 ### spell eameld
 
-- display name: Earth Meld
+- display name: Earth Meld (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\eameld.gs` line 1
@@ -11107,7 +11107,7 @@ its shape and token count, never its body.
 
 ### spell earth_bind
 
-- display name: Earth Bind
+- display name: Earth Bind (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\earth_bind.gs` line 1
@@ -11142,7 +11142,7 @@ its shape and token count, never its body.
 
 ### spell earth_detect
 
-- display name: Detect Air
+- display name: Detect Air (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\edetect.gs` line 1
@@ -11171,7 +11171,7 @@ its shape and token count, never its body.
 
 ### spell earth_dispell
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\edispell.gs` line 1
@@ -11198,7 +11198,7 @@ its shape and token count, never its body.
 
 ### spell earth_meld
 
-- display name: Earth Meld
+- display name: Earth Meld (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\earth_meld.gs` line 1
@@ -11230,7 +11230,7 @@ its shape and token count, never its body.
 
 ### spell earth_telart
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\etelart.gs` line 1
@@ -11257,7 +11257,7 @@ its shape and token count, never its body.
 
 ### spell earthquake
 
-- display name: Earthquake
+- display name: Earthquake (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\earthquake.gs` line 1
@@ -11293,7 +11293,7 @@ its shape and token count, never its body.
 
 ### spell embgolg
 
-- display name: Embrace of Golgotha
+- display name: Embrace of Golgotha (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\embgolg.gs` line 1
@@ -11325,7 +11325,7 @@ its shape and token count, never its body.
 
 ### spell embrace_of_golgoth
 
-- display name: Embrace of Golgoth
+- display name: Embrace of Golgoth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\embrace_of_golgoth.gs` line 1
@@ -11336,7 +11336,6 @@ its shape and token count, never its body.
 | `barter_value_proc` | procedure | `<procedure 3 tokens>` |
 | `book` | name | `SPELL_CATEGORY_DEFEND` |
 | `cast_ticks` | number | `6` |
-| `death_pal` | name | `get` |
 | `do_embrace_health` | procedure | `<procedure 32 tokens>` |
 | `do_embrace_mana` | procedure | `<procedure 25 tokens>` |
 | `duration` | number | `-1` |
@@ -11364,6 +11363,7 @@ its shape and token count, never its body.
 | `research_cost` | number | `64` |
 | `spellcondition?` | procedure | `<procedure 34 tokens>` |
 | `target` | name | `TARGET_ARMY` |
+| `target_palette_effect` | expression | `palfxdict /death_pal get` |
 | `target_palette_effect_percent` | number | `100` |
 | `temporary_modifications` | dictionary | `<dictionary 2 tokens>` |
 | `tip_buffer` | procedure | `<procedure 8 tokens>` |
@@ -11371,7 +11371,7 @@ its shape and token count, never its body.
 
 ### spell enchant_weapon_air
 
-- display name: Sky Sabre
+- display name: Sky Sabre (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\enchant_weapon_air.gs` line 1
@@ -11403,7 +11403,7 @@ its shape and token count, never its body.
 
 ### spell enchant_weapon_chaos
 
-- display name: Chaotic Sabre
+- display name: Chaotic Sabre (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\enchant_weapon_chaos.gs` line 1
@@ -11435,7 +11435,7 @@ its shape and token count, never its body.
 
 ### spell enchant_weapon_death
 
-- display name: Dark Sabre
+- display name: Dark Sabre (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\enchant_weapon_death.gs` line 1
@@ -11467,7 +11467,7 @@ its shape and token count, never its body.
 
 ### spell enchant_weapon_earth
 
-- display name: Diamond Sabre
+- display name: Diamond Sabre (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\enchant_weapon_earth.gs` line 1
@@ -11499,7 +11499,7 @@ its shape and token count, never its body.
 
 ### spell enchant_weapon_fire
 
-- display name: Lava Sabre
+- display name: Lava Sabre (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\enchant_weapon_fire.gs` line 1
@@ -11531,7 +11531,7 @@ its shape and token count, never its body.
 
 ### spell enchant_weapon_life
 
-- display name: Holy Sabre
+- display name: Holy Sabre (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\enchant_weapon_life.gs` line 1
@@ -11563,7 +11563,7 @@ its shape and token count, never its body.
 
 ### spell enchant_weapon_order
 
-- display name: Lawful Sabre
+- display name: Lawful Sabre (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\enchant_weapon_order.gs` line 1
@@ -11595,7 +11595,7 @@ its shape and token count, never its body.
 
 ### spell enchant_weapon_water
 
-- display name: Rain Sabre
+- display name: Rain Sabre (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\enchant_weapon_water.gs` line 1
@@ -11627,7 +11627,7 @@ its shape and token count, never its body.
 
 ### spell entangle
 
-- display name: Entanglement
+- display name: Entanglement (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\entangle.gs` line 1
@@ -11659,7 +11659,7 @@ its shape and token count, never its body.
 
 ### spell equake
 
-- display name: Earthquake
+- display name: Earthquake (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\equake.gs` line 1
@@ -11688,7 +11688,7 @@ its shape and token count, never its body.
 
 ### spell erosion
 
-- display name: Erosion
+- display name: Erosion (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\erosion.gs` line 1
@@ -11721,7 +11721,7 @@ its shape and token count, never its body.
 
 ### spell ether_gauze
 
-- display name: Ether Gauze
+- display name: Ether Gauze (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ethergauze.gs` line 1
@@ -11749,7 +11749,7 @@ its shape and token count, never its body.
 
 ### spell explode
 
-- display name: Explode
+- display name: Explode (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\explode.gs` line 1
@@ -11783,7 +11783,7 @@ its shape and token count, never its body.
 
 ### spell falcons_eye
 
-- display name: Falcon's Eye
+- display name: Falcon's Eye (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\falcons_eye.gs` line 1
@@ -11813,7 +11813,7 @@ its shape and token count, never its body.
 
 ### spell faleye
 
-- display name: Falcon's Eye
+- display name: Falcon's Eye (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\faleye.gs` line 1
@@ -11842,7 +11842,7 @@ its shape and token count, never its body.
 
 ### spell fdart
 
-- display name: Flame Dart
+- display name: Flame Dart (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\fdart.gs` line 1
@@ -11878,7 +11878,7 @@ its shape and token count, never its body.
 
 ### spell feather_sword
 
-- display name: Feather Sword
+- display name: Feather Sword (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\feather_sword.gs` line 1
@@ -11912,7 +11912,7 @@ its shape and token count, never its body.
 
 ### spell fire_breath
 
-- display name: Fire breath
+- display name: Fire breath (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\firebr.gs` line 1
@@ -11949,7 +11949,7 @@ its shape and token count, never its body.
 
 ### spell fire_detect
 
-- display name: Detect Water
+- display name: Detect Water (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\fdetect.gs` line 1
@@ -11978,7 +11978,7 @@ its shape and token count, never its body.
 
 ### spell fire_dispell
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\fdispell.gs` line 1
@@ -12005,7 +12005,7 @@ its shape and token count, never its body.
 
 ### spell fire_telart
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ftelart.gs` line 1
@@ -12032,7 +12032,7 @@ its shape and token count, never its body.
 
 ### spell fireball
 
-- display name: Fireball
+- display name: Fireball (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\fireball.gs` line 1
@@ -12067,7 +12067,7 @@ its shape and token count, never its body.
 
 ### spell fireheal
 
-- display name: Fireheal
+- display name: Fireheal (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\fireheal.gs` line 1
@@ -12100,7 +12100,7 @@ its shape and token count, never its body.
 
 ### spell fireworks
 
-- display name: Fireworks
+- display name: Fireworks (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\fireworks.gs` line 1
@@ -12131,7 +12131,7 @@ its shape and token count, never its body.
 
 ### spell firstaid
 
-- display name: First Aid
+- display name: First Aid (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\firstaid.gs` line 1
@@ -12159,7 +12159,7 @@ its shape and token count, never its body.
 
 ### spell flame_arrows
 
-- display name: Flame Arrows
+- display name: Flame Arrows (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\flame_arrows.gs` line 1
@@ -12201,7 +12201,7 @@ its shape and token count, never its body.
 
 ### spell flarrow
 
-- display name: Flame Arrow
+- display name: Flame Arrow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\flarrow.gs` line 1
@@ -12236,7 +12236,7 @@ its shape and token count, never its body.
 
 ### spell flood
 
-- display name: Flood
+- display name: Flood (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\flood.gs` line 1
@@ -12273,7 +12273,7 @@ its shape and token count, never its body.
 
 ### spell fog
 
-- display name: fog
+- display name: fog (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\fog.gs` line 1
@@ -12303,7 +12303,7 @@ its shape and token count, never its body.
 
 ### spell formrch
 
-- display name: Forced March
+- display name: Forced March (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\forcmrch.gs` line 1
@@ -12330,7 +12330,7 @@ its shape and token count, never its body.
 
 ### spell freeze
 
-- display name: Freeze
+- display name: Freeze (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\freeze.gs` line 1
@@ -12361,7 +12361,7 @@ its shape and token count, never its body.
 
 ### spell frenzy
 
-- display name: Frenzy
+- display name: Frenzy (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\frenzy.gs` line 1
@@ -12390,7 +12390,7 @@ its shape and token count, never its body.
 
 ### spell frost_breath
 
-- display name: Frost breath
+- display name: Frost breath (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\frostbr.gs` line 1
@@ -12427,7 +12427,7 @@ its shape and token count, never its body.
 
 ### spell frozen_armor
 
-- display name: Frozen Armor
+- display name: Frozen Armor (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\frozen_armor.gs` line 1
@@ -12460,7 +12460,7 @@ its shape and token count, never its body.
 
 ### spell fstorm
 
-- display name: Fire Storm
+- display name: Fire Storm (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\fstorm.gs` line 1
@@ -12490,7 +12490,7 @@ its shape and token count, never its body.
 
 ### spell fsword
 
-- display name: Flame Sword
+- display name: Flame Sword (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\fsword.gs` line 1
@@ -12518,7 +12518,7 @@ its shape and token count, never its body.
 
 ### spell funmrch
 
-- display name: Funeral March
+- display name: Funeral March (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\Funmarch.gs` line 1
@@ -12546,7 +12546,7 @@ its shape and token count, never its body.
 
 ### spell fury
 
-- display name: Fury Fire
+- display name: Fury Fire (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\furyfire.gs` line 1
@@ -12584,7 +12584,7 @@ its shape and token count, never its body.
 
 ### spell fury_fire
 
-- display name: Fury Fire
+- display name: Fury Fire (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\fury_fire.gs` line 1
@@ -12626,7 +12626,7 @@ its shape and token count, never its body.
 
 ### spell gamble
 
-- display name: Gamble
+- display name: Gamble (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\gamble.gs` line 1
@@ -12658,7 +12658,7 @@ its shape and token count, never its body.
 
 ### spell gen_missile
 
-- display name: Gen Missile
+- display name: Gen Missile (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\gen_missile.gs` line 1
@@ -12693,7 +12693,7 @@ its shape and token count, never its body.
 
 ### spell gift_of_life
 
-- display name: Gift of Life
+- display name: Gift of Life (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\gift_of_life.gs` line 1
@@ -12737,7 +12737,7 @@ its shape and token count, never its body.
 
 ### spell giftolife
 
-- display name: Gift of Life
+- display name: Gift of Life (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\gifolife.gs` line 1
@@ -12769,7 +12769,7 @@ its shape and token count, never its body.
 
 ### spell gold_rush
 
-- display name: Gold Rush
+- display name: Gold Rush (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\goldrush.gs` line 1
@@ -12798,7 +12798,7 @@ its shape and token count, never its body.
 
 ### spell golggift
 
-- display name: Golgotha's Gift
+- display name: Golgotha's Gift (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\golgift.gs` line 1
@@ -12834,7 +12834,7 @@ its shape and token count, never its body.
 
 ### spell golgoths_gift
 
-- display name: Golgoth's Gift
+- display name: Golgoth's Gift (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\golgoths_gift.gs` line 1
@@ -12871,7 +12871,7 @@ its shape and token count, never its body.
 
 ### spell guard_waves
 
-- display name: Guardian Waves
+- display name: Guardian Waves (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\guardwav.gs` line 1
@@ -12901,7 +12901,7 @@ its shape and token count, never its body.
 
 ### spell guard_winds
 
-- display name: Guardian Winds
+- display name: Guardian Winds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\guardwin.gs` line 1
@@ -12931,7 +12931,7 @@ its shape and token count, never its body.
 
 ### spell guardian_waves
 
-- display name: Guardian Waves
+- display name: Guardian Waves (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\guardian_waves.gs` line 1
@@ -12964,7 +12964,7 @@ its shape and token count, never its body.
 
 ### spell guardian_winds
 
-- display name: Guardian Winds
+- display name: Guardian Winds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\guardian_winds.gs` line 1
@@ -12998,7 +12998,7 @@ its shape and token count, never its body.
 
 ### spell hand_of_fate
 
-- display name: Hand of Fate
+- display name: Hand of Fate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\hand_of_fate.gs` line 1
@@ -13032,7 +13032,7 @@ its shape and token count, never its body.
 
 ### spell handofate
 
-- display name: Hand of Fate
+- display name: Hand of Fate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\handofate.gs` line 1
@@ -13061,7 +13061,7 @@ its shape and token count, never its body.
 
 ### spell headwind
 
-- display name: Head Wind
+- display name: Head Wind (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\headwind.gs` line 1
@@ -13090,7 +13090,7 @@ its shape and token count, never its body.
 
 ### spell heal
 
-- display name: Heal
+- display name: Heal (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\heal.gs` line 1
@@ -13121,7 +13121,7 @@ its shape and token count, never its body.
 
 ### spell heal_fire
 
-- display name: Fireheal
+- display name: Fireheal (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\heal_fire.gs` line 1
@@ -13162,7 +13162,7 @@ its shape and token count, never its body.
 
 ### spell heal_life
 
-- display name: Heal
+- display name: Heal (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\heal_life.gs` line 1
@@ -13201,7 +13201,7 @@ its shape and token count, never its body.
 
 ### spell heal_self
 
-- display name: Heal Self
+- display name: Heal Self (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\healself.gs` line 1
@@ -13231,7 +13231,7 @@ its shape and token count, never its body.
 
 ### spell healing_waters
 
-- display name: Healing Waters
+- display name: Healing Waters (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\healing_waters.gs` line 1
@@ -13264,7 +13264,7 @@ its shape and token count, never its body.
 
 ### spell healwater
 
-- display name: Healing Waters
+- display name: Healing Waters (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\healw.gs` line 1
@@ -13295,7 +13295,7 @@ its shape and token count, never its body.
 
 ### spell heat
 
-- display name: Heat Metal
+- display name: Heat Metal (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\heat2.gs` line 1
@@ -13325,7 +13325,7 @@ its shape and token count, never its body.
 
 ### spell heat_metal
 
-- display name: Heat Metal
+- display name: Heat Metal (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\heat_metal.gs` line 1
@@ -13360,7 +13360,7 @@ its shape and token count, never its body.
 
 ### spell heat_shield
 
-- display name: Heat Shield
+- display name: Heat Shield (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\heatshil.gs` line 1
@@ -13390,7 +13390,7 @@ its shape and token count, never its body.
 
 ### spell heroic_demise
 
-- display name: Heroic Demise
+- display name: Heroic Demise (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\herodem.gs` line 1
@@ -13420,7 +13420,7 @@ its shape and token count, never its body.
 
 ### spell holy_ench
 
-- display name: Holy Enchantment
+- display name: Holy Enchantment (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\holyench.gs` line 1
@@ -13450,7 +13450,7 @@ its shape and token count, never its body.
 
 ### spell holy_enchantment
 
-- display name: Holy Enchantment
+- display name: Holy Enchantment (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\holy_enchantment.gs` line 1
@@ -13483,7 +13483,7 @@ its shape and token count, never its body.
 
 ### spell holy_ghost
 
-- display name: Holy Ghost
+- display name: Holy Ghost (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\holy_ghost.gs` line 1
@@ -13517,7 +13517,7 @@ its shape and token count, never its body.
 
 ### spell holy_visit
 
-- display name: Holy Visit
+- display name: Holy Visit (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\holyvis.gs` line 1
@@ -13545,7 +13545,7 @@ its shape and token count, never its body.
 
 ### spell hover
 
-- display name: Essence of the Wisp
+- display name: Essence of the Wisp (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\hover.gs` line 1
@@ -13573,7 +13573,7 @@ its shape and token count, never its body.
 
 ### spell hypothermia
 
-- display name: Hypothermia
+- display name: Hypothermia (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\hypothermia.gs` line 1
@@ -13609,7 +13609,7 @@ its shape and token count, never its body.
 
 ### spell ice
 
-- display name: Ice
+- display name: Ice (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ice.gs` line 1
@@ -13636,7 +13636,7 @@ its shape and token count, never its body.
 
 ### spell ice_comet
 
-- display name: Ice Comet
+- display name: Ice Comet (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\ice_comet.gs` line 1
@@ -13671,18 +13671,18 @@ its shape and token count, never its body.
 | `spell_damage` | procedure | `<procedure 77 tokens>` |
 | `spellcondition?` | procedure | `<procedure 9 tokens>` |
 | `target` | name | `TARGET_ARMY` |
+| `target_palette_effect` | expression | `palfxdict /turn_to_ice get` |
 | `target_palette_effect_percent` | number | `80` |
 | `target_radius` | procedure | `<procedure 7 tokens>` |
 | `temp_var0` | procedure | `<procedure 16 tokens>` |
 | `temporary_modifications` | dictionary | `<dictionary 23 tokens>` |
 | `tip_buffer` | procedure | `<procedure 8 tokens>` |
-| `turn_to_ice` | name | `get` |
 | `viability` | procedure | `<procedure 46 tokens>` |
 | `viability_damage` | procedure | `<procedure 20 tokens>` |
 
 ### spell icebolt
 
-- display name: Ice Bolt
+- display name: Ice Bolt (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\icebolt.gs` line 1
@@ -13717,7 +13717,7 @@ its shape and token count, never its body.
 
 ### spell icy_coffin
 
-- display name: Icy Coffin
+- display name: Icy Coffin (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\icy_coffin.gs` line 1
@@ -13756,7 +13756,7 @@ its shape and token count, never its body.
 
 ### spell icycoff
 
-- display name: Icy Coffin
+- display name: Icy Coffin (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\icycoff.gs` line 1
@@ -13786,7 +13786,7 @@ its shape and token count, never its body.
 
 ### spell immolation
 
-- display name: Immolation
+- display name: Immolation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\immolation.gs` line 1
@@ -13824,7 +13824,7 @@ its shape and token count, never its body.
 
 ### spell imolate
 
-- display name: Immolation
+- display name: Immolation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\imolate.gs` line 1
@@ -13854,7 +13854,7 @@ its shape and token count, never its body.
 
 ### spell inferno
 
-- display name: Inferno
+- display name: Inferno (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\inferno.gs` line 1
@@ -13887,7 +13887,7 @@ its shape and token count, never its body.
 
 ### spell infest_cave
 
-- display name: Spawn Cave
+- display name: Spawn Cave (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\infest_cave.gs` line 1
@@ -13920,7 +13920,7 @@ its shape and token count, never its body.
 
 ### spell inspire
 
-- display name: Inspire
+- display name: Inspire (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\inspire.gs` line 1
@@ -13949,7 +13949,7 @@ its shape and token count, never its body.
 
 ### spell invig
 
-- display name: Invigorate
+- display name: Invigorate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\invig.gs` line 1
@@ -13976,7 +13976,7 @@ its shape and token count, never its body.
 
 ### spell invoke_fate
 
-- display name: Invoke Fate
+- display name: Invoke Fate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\invokefa.gs` line 1
@@ -14005,7 +14005,7 @@ its shape and token count, never its body.
 
 ### spell invulnerability
 
-- display name: Invulnerability
+- display name: Invulnerability (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\invulnerability.gs` line 1
@@ -14036,7 +14036,7 @@ its shape and token count, never its body.
 
 ### spell iron_skin
 
-- display name: Iron Skin
+- display name: Iron Skin (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\iron_skin.gs` line 1
@@ -14069,7 +14069,7 @@ its shape and token count, never its body.
 
 ### spell justice
 
-- display name: Justice
+- display name: Justice (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\ribolt2.gs` line 1
@@ -14105,7 +14105,7 @@ its shape and token count, never its body.
 
 ### spell lavaflow
 
-- display name: Lava Flow
+- display name: Lava Flow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\lavaflow.gs` line 1
@@ -14132,7 +14132,7 @@ its shape and token count, never its body.
 
 ### spell lcharge
 
-- display name: Lightning Charge
+- display name: Lightning Charge (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\lcharge.gs` line 1
@@ -14160,7 +14160,7 @@ its shape and token count, never its body.
 
 ### spell leader
 
-- display name: Leadership
+- display name: Leadership (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\leadership.gs` line 1
@@ -14188,7 +14188,7 @@ its shape and token count, never its body.
 
 ### spell leadership
 
-- display name: Leadership
+- display name: Leadership (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\leadership.gs` line 1
@@ -14221,7 +14221,7 @@ its shape and token count, never its body.
 
 ### spell leeches
 
-- display name: Leeches
+- display name: Leeches (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\leeches.gs` line 1
@@ -14248,7 +14248,7 @@ its shape and token count, never its body.
 
 ### spell life_detect
 
-- display name: Detect Death
+- display name: Detect Death (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ldetect.gs` line 1
@@ -14277,7 +14277,7 @@ its shape and token count, never its body.
 
 ### spell life_dispell
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ldispell.gs` line 1
@@ -14306,7 +14306,7 @@ its shape and token count, never its body.
 
 ### spell life_telart
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ltelart.gs` line 1
@@ -14333,7 +14333,7 @@ its shape and token count, never its body.
 
 ### spell light_rain
 
-- display name: Light Rain
+- display name: Light Rain (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\light_rain.gs` line 1
@@ -14371,7 +14371,7 @@ its shape and token count, never its body.
 
 ### spell lightning_charge
 
-- display name: Lightning Charge
+- display name: Lightning Charge (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\lightning_charge.gs` line 1
@@ -14403,7 +14403,7 @@ its shape and token count, never its body.
 
 ### spell lightning_spll
 
-- display name: Lightning
+- display name: Lightning (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\lightning.gs` line 1
@@ -14433,7 +14433,7 @@ its shape and token count, never its body.
 
 ### spell lightrain
 
-- display name: Light Rain
+- display name: Light Rain (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\lightrain.gs` line 1
@@ -14463,7 +14463,7 @@ its shape and token count, never its body.
 
 ### spell locust
 
-- display name: Locust
+- display name: Locust (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\locust.gs` line 1
@@ -14495,7 +14495,7 @@ its shape and token count, never its body.
 
 ### spell locust_swarm
 
-- display name: Locust Swarm
+- display name: Locust Swarm (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\locust_swarm.gs` line 1
@@ -14541,7 +14541,7 @@ its shape and token count, never its body.
 
 ### spell lost_soul
 
-- display name: Lost Soul
+- display name: Lost Soul (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\lost_soul.gs` line 1
@@ -14575,7 +14575,7 @@ its shape and token count, never its body.
 
 ### spell lostsoul
 
-- display name: Lost Soul
+- display name: Lost Soul (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\lostsoul.gs` line 1
@@ -14607,7 +14607,7 @@ its shape and token count, never its body.
 
 ### spell lower_resistance_death
 
-- display name: Lower Resistance
+- display name: Lower Resistance (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\lower_resistance_death.gs` line 1
@@ -14640,7 +14640,7 @@ its shape and token count, never its body.
 
 ### spell march_air
 
-- display name: Windwalk
+- display name: Windwalk (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\march_air.gs` line 1
@@ -14671,7 +14671,7 @@ its shape and token count, never its body.
 
 ### spell march_chaos
 
-- display name: Wanderlust
+- display name: Wanderlust (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\march_chaos.gs` line 1
@@ -14702,7 +14702,7 @@ its shape and token count, never its body.
 
 ### spell march_death
 
-- display name: Funeral March
+- display name: Funeral March (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\march_death.gs` line 1
@@ -14732,7 +14732,7 @@ its shape and token count, never its body.
 
 ### spell march_earth
 
-- display name: Trailblaze
+- display name: Trailblaze (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\march_earth.gs` line 1
@@ -14762,7 +14762,7 @@ its shape and token count, never its body.
 
 ### spell march_fire
 
-- display name: Wildfire
+- display name: Wildfire (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\march_fire.gs` line 1
@@ -14792,7 +14792,7 @@ its shape and token count, never its body.
 
 ### spell march_life
 
-- display name: Nature Walk
+- display name: Nature Walk (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\march_life.gs` line 1
@@ -14822,7 +14822,7 @@ its shape and token count, never its body.
 
 ### spell march_order
 
-- display name: Forced March
+- display name: Forced March (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\march_order.gs` line 1
@@ -14852,7 +14852,7 @@ its shape and token count, never its body.
 
 ### spell march_water
 
-- display name: Riptide
+- display name: Riptide (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\march_water.gs` line 1
@@ -14883,7 +14883,7 @@ its shape and token count, never its body.
 
 ### spell meteor
 
-- display name: Meteor Shower
+- display name: Meteor Shower (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\meteor.gs` line 1
@@ -14912,7 +14912,7 @@ its shape and token count, never its body.
 
 ### spell meteor_shower
 
-- display name: Meteor Shower
+- display name: Meteor Shower (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\meteor_shower.gs` line 1
@@ -14950,7 +14950,7 @@ its shape and token count, never its body.
 
 ### spell mighty_blow
 
-- display name: Mighty Blow
+- display name: Mighty Blow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\mighty_blow.gs` line 1
@@ -14981,7 +14981,7 @@ its shape and token count, never its body.
 
 ### spell mind_control
 
-- display name: Mind Control
+- display name: Mind Control (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\mind_control.gs` line 1
@@ -15013,7 +15013,7 @@ its shape and token count, never its body.
 
 ### spell minor_fate
 
-- display name: Minor Fate
+- display name: Minor Fate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\minor_fate.gs` line 1
@@ -15043,7 +15043,7 @@ its shape and token count, never its body.
 
 ### spell minor_rust
 
-- display name: Minor Rust
+- display name: Minor Rust (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\minor_rust.gs` line 1
@@ -15076,7 +15076,7 @@ its shape and token count, never its body.
 
 ### spell minorust
 
-- display name: Minor Rust
+- display name: Minor Rust (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\minorust.gs` line 1
@@ -15105,7 +15105,7 @@ its shape and token count, never its body.
 
 ### spell missile_protection
 
-- display name: Missile Protection
+- display name: Missile Protection (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\missile_protection.gs` line 1
@@ -15137,7 +15137,7 @@ its shape and token count, never its body.
 
 ### spell morale
 
-- display name: Morale
+- display name: Morale (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\morale.gs` line 1
@@ -15166,7 +15166,7 @@ its shape and token count, never its body.
 
 ### spell morphdwarf
 
-- display name: Disguise
+- display name: Disguise (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\polydwarf.gs` line 1
@@ -15196,7 +15196,7 @@ its shape and token count, never its body.
 
 ### spell morpho
 
-- display name: Polymorph Other
+- display name: Polymorph Other (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\polyother.gs` line 1
@@ -15227,7 +15227,7 @@ its shape and token count, never its body.
 
 ### spell morphs
 
-- display name: Polymorph Self
+- display name: Polymorph Self (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\polyself.gs` line 1
@@ -15257,7 +15257,7 @@ its shape and token count, never its body.
 
 ### spell mud_slide
 
-- display name: Mud Slide
+- display name: Mud Slide (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\mud_slide.gs` line 1
@@ -15291,7 +15291,7 @@ its shape and token count, never its body.
 
 ### spell multi_shot
 
-- display name: Multi Shot
+- display name: Multi Shot (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\multi_shot.gs` line 1
@@ -15328,7 +15328,7 @@ its shape and token count, never its body.
 
 ### spell neutralize
 
-- display name: Neutralize
+- display name: Neutralize (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\neutralize.gs` line 1
@@ -15366,7 +15366,7 @@ its shape and token count, never its body.
 
 ### spell order_detect
 
-- display name: Detect Chaos
+- display name: Detect Chaos (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\odetect.gs` line 1
@@ -15395,7 +15395,7 @@ its shape and token count, never its body.
 
 ### spell order_dispell
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\odispell.gs` line 1
@@ -15424,7 +15424,7 @@ its shape and token count, never its body.
 
 ### spell order_seer
 
-- display name: Seer
+- display name: Seer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\order_seer.gs` line 1
@@ -15453,7 +15453,7 @@ its shape and token count, never its body.
 
 ### spell order_telart
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\otelart.gs` line 1
@@ -15480,7 +15480,7 @@ its shape and token count, never its body.
 
 ### spell pacify
 
-- display name: Pacify
+- display name: Pacify (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\pacify.gs` line 1
@@ -15515,7 +15515,7 @@ its shape and token count, never its body.
 
 ### spell pestilence
 
-- display name: Pestilence
+- display name: Pestilence (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\pestilence.gs` line 1
@@ -15549,7 +15549,7 @@ its shape and token count, never its body.
 
 ### spell petrify
 
-- display name: Petrify
+- display name: Petrify (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\petrify.gs` line 1
@@ -15579,7 +15579,7 @@ its shape and token count, never its body.
 
 ### spell phoenix_grace
 
-- display name: Grace of the Phoenix
+- display name: Grace of the Phoenix (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\phoenix_grace.gs` line 1
@@ -15608,7 +15608,7 @@ its shape and token count, never its body.
 
 ### spell pixies
 
-- display name: Pixies
+- display name: Pixies (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\pixies.gs` line 1
@@ -15643,7 +15643,7 @@ its shape and token count, never its body.
 
 ### spell poison
 
-- display name: Poison
+- display name: Poison (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\poison.gs` line 1
@@ -15679,7 +15679,7 @@ its shape and token count, never its body.
 
 ### spell poison_cloud
 
-- display name: Poison Cloud
+- display name: Poison Cloud (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\poiscld.gs` line 1
@@ -15713,7 +15713,7 @@ its shape and token count, never its body.
 
 ### spell poltice
 
-- display name: Poultice
+- display name: Poultice (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\poltice.gs` line 1
@@ -15741,7 +15741,7 @@ its shape and token count, never its body.
 
 ### spell polymorph_other
 
-- display name: Polymorph Other
+- display name: Polymorph Other (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\polymorph_other.gs` line 1
@@ -15780,7 +15780,7 @@ its shape and token count, never its body.
 
 ### spell polymorph_self
 
-- display name: Polymorph Self
+- display name: Polymorph Self (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\polymorph_self.gs` line 1
@@ -15821,7 +15821,7 @@ its shape and token count, never its body.
 
 ### spell possession
 
-- display name: Possession
+- display name: Possession (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\possession.gs` line 1
@@ -15849,7 +15849,7 @@ its shape and token count, never its body.
 
 ### spell potion_dexterity
 
-- display name: Potion of Dexterity
+- display name: Potion of Dexterity (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\potion_dexterity.gs` line 1
@@ -15885,7 +15885,7 @@ its shape and token count, never its body.
 
 ### spell potion_health
 
-- display name: Potion of Health
+- display name: Potion of Health (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\potion_health.gs` line 1
@@ -15924,7 +15924,7 @@ its shape and token count, never its body.
 
 ### spell potion_luck
 
-- display name: Potion of Luck
+- display name: Potion of Luck (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\potion_luck.gs` line 1
@@ -15958,7 +15958,7 @@ its shape and token count, never its body.
 
 ### spell potion_mana
 
-- display name: Potion of Mana
+- display name: Potion of Mana (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\potion_mana.gs` line 1
@@ -15996,7 +15996,7 @@ its shape and token count, never its body.
 
 ### spell potion_movement
 
-- display name: Potion of Movement
+- display name: Potion of Movement (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\potion_movement.gs` line 1
@@ -16032,7 +16032,7 @@ its shape and token count, never its body.
 
 ### spell potion_power
 
-- display name: Potion of Power
+- display name: Potion of Power (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\potion_power.gs` line 1
@@ -16066,7 +16066,7 @@ its shape and token count, never its body.
 
 ### spell potion_rejuvenation
 
-- display name: Potion of Rejuvenation
+- display name: Potion of Rejuvenation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\potion_rejuvenation.gs` line 1
@@ -16099,7 +16099,7 @@ its shape and token count, never its body.
 
 ### spell potion_resistance
 
-- display name: Potion of Resistance
+- display name: Potion of Resistance (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\potion_resistance.gs` line 1
@@ -16134,7 +16134,7 @@ its shape and token count, never its body.
 
 ### spell potion_strength
 
-- display name: Potion of Strength
+- display name: Potion of Strength (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\potion_strength.gs` line 1
@@ -16170,7 +16170,7 @@ its shape and token count, never its body.
 
 ### spell potion_wisdom
 
-- display name: Potion of Wisdom
+- display name: Potion of Wisdom (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\potion_wisdom.gs` line 1
@@ -16206,7 +16206,7 @@ its shape and token count, never its body.
 
 ### spell potiond
 
-- display name: Potion of Dexterity
+- display name: Potion of Dexterity (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\potiond.gs` line 1
@@ -16236,7 +16236,7 @@ its shape and token count, never its body.
 
 ### spell potionh
 
-- display name: Potion of Healing
+- display name: Potion of Healing (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\potionh.gs` line 1
@@ -16267,7 +16267,7 @@ its shape and token count, never its body.
 
 ### spell potionm
 
-- display name: Potion of Mana
+- display name: Potion of Mana (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\potionm.gs` line 1
@@ -16298,7 +16298,7 @@ its shape and token count, never its body.
 
 ### spell potionr
 
-- display name: Potion of Rejuvination
+- display name: Potion of Rejuvination (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\potionr.gs` line 1
@@ -16329,7 +16329,7 @@ its shape and token count, never its body.
 
 ### spell potions
 
-- display name: Potion of Strength
+- display name: Potion of Strength (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\potions.gs` line 1
@@ -16359,7 +16359,7 @@ its shape and token count, never its body.
 
 ### spell primal_fear
 
-- display name: Primal Fear
+- display name: Primal Fear (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\primal_fear.gs` line 1
@@ -16395,7 +16395,7 @@ its shape and token count, never its body.
 
 ### spell primfear
 
-- display name: Primal Fear
+- display name: Primal Fear (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\primfear.gs` line 1
@@ -16425,7 +16425,7 @@ its shape and token count, never its body.
 
 ### spell prismatic_hand
 
-- display name: Prismatic Hand
+- display name: Prismatic Hand (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\prismatic_hand.gs` line 1
@@ -16459,7 +16459,7 @@ its shape and token count, never its body.
 
 ### spell protect
 
-- display name: Protect
+- display name: Protect (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\protect.gs` line 1
@@ -16487,7 +16487,7 @@ its shape and token count, never its body.
 
 ### spell protection
 
-- display name: Protection
+- display name: Protection (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\protection.gs` line 1
@@ -16515,7 +16515,7 @@ its shape and token count, never its body.
 
 ### spell purgewounds
 
-- display name: Purge Wounds
+- display name: Purge Wounds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\purgewounds.gs` line 1
@@ -16543,7 +16543,7 @@ its shape and token count, never its body.
 
 ### spell purifywounds
 
-- display name: Purify Wounds
+- display name: Purify Wounds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\purifywounds.gs` line 1
@@ -16571,7 +16571,7 @@ its shape and token count, never its body.
 
 ### spell qsilver
 
-- display name: Quick Silver
+- display name: Quick Silver (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\qsilver.gs` line 1
@@ -16599,7 +16599,7 @@ its shape and token count, never its body.
 
 ### spell quick_silver
 
-- display name: Quick Silver
+- display name: Quick Silver (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\quick_silver.gs` line 1
@@ -16634,7 +16634,7 @@ its shape and token count, never its body.
 
 ### spell raise_elevation
 
-- display name: Raise Elevation
+- display name: Raise Elevation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\raise_elevation.gs` line 1
@@ -16665,7 +16665,7 @@ its shape and token count, never its body.
 
 ### spell raise_frozen_shade
 
-- display name: Raise Frozen Shade
+- display name: Raise Frozen Shade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\raise_frozen_shade.gs` line 1
@@ -16694,7 +16694,7 @@ its shape and token count, never its body.
 
 ### spell raise_shade
 
-- display name: Raise Shade
+- display name: Raise Shade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\raise_shade.gs` line 1
@@ -16723,7 +16723,7 @@ its shape and token count, never its body.
 
 ### spell raise_skeleton
 
-- display name: Raise Skeleton
+- display name: Raise Skeleton (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\raise_skeleton.gs` line 1
@@ -16734,7 +16734,6 @@ its shape and token count, never its body.
 | `barter_value_proc` | procedure | `<procedure 3 tokens>` |
 | `book` | name | `SPELL_CATEGORY_GENERAL` |
 | `cast_ticks` | number | `10` |
-| `death_pal` | name | `get` |
 | `dummy` | expression | `13 dict replace bind` |
 | `duration` | number | `-1` |
 | `faith` | name | `DEATH` |
@@ -16751,13 +16750,14 @@ its shape and token count, never its body.
 | `spellcondition?` | procedure | `<procedure 29 tokens>` |
 | `target` | name | `TARGET_ARMY` |
 | `target_aura_channel` | number | `-1` |
+| `target_palette_effect` | expression | `palfxdict /death_pal get` |
 | `target_palette_effect_percent` | number | `300` |
 | `temporary_modifications` | dictionary | `<dictionary 2 tokens>` |
 | `tip_buffer` | procedure | `<procedure 8 tokens>` |
 
 ### spell raise_zombie
 
-- display name: Raise Zombie
+- display name: Raise Zombie (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\raise_zombie.gs` line 1
@@ -16786,7 +16786,7 @@ its shape and token count, never its body.
 
 ### spell random_bolt
 
-- display name: Chaos Bolt
+- display name: Chaos Bolt (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\random_bolt.gs` line 1
@@ -16817,7 +16817,7 @@ its shape and token count, never its body.
 
 ### spell randomi
 
-- display name: Minor Fate
+- display name: Minor Fate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\randomi.gs` line 1
@@ -16845,7 +16845,7 @@ its shape and token count, never its body.
 
 ### spell rangers_vision
 
-- display name: Ranger's Vision
+- display name: Ranger's Vision (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\rangers_vision.gs` line 1
@@ -16875,7 +16875,7 @@ its shape and token count, never its body.
 
 ### spell rangvis
 
-- display name: Ranger's Vision
+- display name: Ranger's Vision (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\rangvis.gs` line 1
@@ -16906,7 +16906,7 @@ its shape and token count, never its body.
 
 ### spell ray_of_hope
 
-- display name: Ray of Hope
+- display name: Ray of Hope (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\ray_of_hope.gs` line 1
@@ -16951,7 +16951,7 @@ its shape and token count, never its body.
 
 ### spell rayohope
 
-- display name: Ray of Hope
+- display name: Ray of Hope (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\Rayhope.gs` line 1
@@ -16983,7 +16983,7 @@ its shape and token count, never its body.
 
 ### spell recon
 
-- display name: Commune with Nature
+- display name: Commune with Nature (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\recon.gs` line 1
@@ -17012,7 +17012,7 @@ its shape and token count, never its body.
 
 ### spell recover_air
 
-- display name: Ether Gauze
+- display name: Ether Gauze (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\recover_air.gs` line 1
@@ -17045,7 +17045,7 @@ its shape and token count, never its body.
 
 ### spell recover_chaos
 
-- display name: Tourniquet
+- display name: Tourniquet (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\recover_chaos.gs` line 1
@@ -17079,7 +17079,7 @@ its shape and token count, never its body.
 
 ### spell recover_death
 
-- display name: Purge Wounds
+- display name: Purge Wounds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\recover_death.gs` line 1
@@ -17112,7 +17112,7 @@ its shape and token count, never its body.
 
 ### spell recover_earth
 
-- display name: Poultice
+- display name: Poultice (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\recover_earth.gs` line 1
@@ -17145,7 +17145,7 @@ its shape and token count, never its body.
 
 ### spell recover_fire
 
-- display name: Cauterize Wounds
+- display name: Cauterize Wounds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\recover_fire.gs` line 1
@@ -17178,7 +17178,7 @@ its shape and token count, never its body.
 
 ### spell recover_life
 
-- display name: Purify Wounds
+- display name: Purify Wounds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\recover_life.gs` line 1
@@ -17211,7 +17211,7 @@ its shape and token count, never its body.
 
 ### spell recover_order
 
-- display name: First Aid
+- display name: First Aid (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\recover_order.gs` line 1
@@ -17244,7 +17244,7 @@ its shape and token count, never its body.
 
 ### spell recover_water
 
-- display name: Cleanse Wounds
+- display name: Cleanse Wounds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\recover_water.gs` line 1
@@ -17277,7 +17277,7 @@ its shape and token count, never its body.
 
 ### spell reflect_missile
 
-- display name: Reflect Missile
+- display name: Reflect Missile (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\reflect_missile.gs` line 1
@@ -17314,7 +17314,7 @@ its shape and token count, never its body.
 
 ### spell reflect_shield
 
-- display name: Reflection Shield
+- display name: Reflection Shield (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\reflctsh.gs` line 1
@@ -17344,7 +17344,7 @@ its shape and token count, never its body.
 
 ### spell reflection_shield
 
-- display name: Reflection Shield
+- display name: Reflection Shield (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\reflection_shield.gs` line 1
@@ -17377,7 +17377,7 @@ its shape and token count, never its body.
 
 ### spell regen
 
-- display name: Regeneration
+- display name: Regeneration (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\regen.gs` line 1
@@ -17410,7 +17410,7 @@ its shape and token count, never its body.
 
 ### spell regen3
 
-- display name: Regeneration 3 Seconds
+- display name: Regeneration 3 Seconds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\regen3.gs` line 1
@@ -17441,7 +17441,7 @@ its shape and token count, never its body.
 
 ### spell regen7
 
-- display name: Regeneration 7 Seconds
+- display name: Regeneration 7 Seconds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\regen7.gs` line 1
@@ -17472,7 +17472,7 @@ its shape and token count, never its body.
 
 ### spell regenerate_army
 
-- display name: Regenerate Army
+- display name: Regenerate Army (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\regenerate_army.gs` line 1
@@ -17511,7 +17511,7 @@ its shape and token count, never its body.
 
 ### spell regenerate_life
 
-- display name: Regeneration
+- display name: Regeneration (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\regenerate_life.gs` line 1
@@ -17552,7 +17552,7 @@ its shape and token count, never its body.
 
 ### spell rein
 
-- display name: Reincarnation
+- display name: Reincarnation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\reincar.gs` line 1
@@ -17581,7 +17581,7 @@ its shape and token count, never its body.
 
 ### spell reincarnation
 
-- display name: Reincarnation
+- display name: Reincarnation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\reincarnation.gs` line 1
@@ -17613,7 +17613,7 @@ its shape and token count, never its body.
 
 ### spell relocarm
 
-- display name: Relocate army
+- display name: Relocate army (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\relocarm.gs` line 1
@@ -17638,7 +17638,7 @@ its shape and token count, never its body.
 
 ### spell relocate_army
 
-- display name: Relocate army
+- display name: Relocate army (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\relocate_army.gs` line 1
@@ -17665,7 +17665,7 @@ its shape and token count, never its body.
 
 ### spell remove_impairments
 
-- display name: Remove Impairments
+- display name: Remove Impairments (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\remove_impairments.gs` line 1
@@ -17696,7 +17696,7 @@ its shape and token count, never its body.
 
 ### spell resist_magic_order
 
-- display name: Resist Magic
+- display name: Resist Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\resist_magic_order.gs` line 1
@@ -17728,7 +17728,7 @@ its shape and token count, never its body.
 
 ### spell resurrect
 
-- display name: Resurrection
+- display name: Resurrection (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\resrect.gs` line 1
@@ -17755,7 +17755,7 @@ its shape and token count, never its body.
 
 ### spell ribolt
 
-- display name: Righteous Bolt
+- display name: Righteous Bolt (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ribolt.gs` line 1
@@ -17790,7 +17790,7 @@ its shape and token count, never its body.
 
 ### spell ricause
 
-- display name: Righteous Cause
+- display name: Righteous Cause (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ricause.gs` line 1
@@ -17818,7 +17818,7 @@ its shape and token count, never its body.
 
 ### spell righteous_cause
 
-- display name: Righteous Cause
+- display name: Righteous Cause (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\righteous_cause.gs` line 1
@@ -17853,7 +17853,7 @@ its shape and token count, never its body.
 
 ### spell ring_of_anything
 
-- display name: Ring of Anything
+- display name: Ring of Anything (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\ringofany.gs` line 1
@@ -17884,7 +17884,7 @@ its shape and token count, never its body.
 
 ### spell riptide
 
-- display name: Riptide
+- display name: Riptide (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\riptide.gs` line 1
@@ -17911,7 +17911,7 @@ its shape and token count, never its body.
 
 ### spell roccapotion
 
-- display name: Rocca's Potion
+- display name: Rocca's Potion (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\roccapotion.gs` line 1
@@ -17942,7 +17942,7 @@ its shape and token count, never its body.
 
 ### spell rocksling
 
-- display name: Rocksling
+- display name: Rocksling (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\rocksling.gs` line 1
@@ -17976,7 +17976,7 @@ its shape and token count, never its body.
 
 ### spell roulette
 
-- display name: Roulette
+- display name: Roulette (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\roulette.gs` line 1
@@ -18007,7 +18007,7 @@ its shape and token count, never its body.
 
 ### spell rust
 
-- display name: Rust
+- display name: Rust (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\rust.gs` line 1
@@ -18037,7 +18037,7 @@ its shape and token count, never its body.
 
 ### spell sanctuary
 
-- display name: Sanctuary
+- display name: Sanctuary (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\sanctu.gs` line 1
@@ -18067,7 +18067,7 @@ its shape and token count, never its body.
 
 ### spell sands_of_sleep
 
-- display name: Sands of Sleep
+- display name: Sands of Sleep (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\sands_of_sleep.gs` line 1
@@ -18102,7 +18102,7 @@ its shape and token count, never its body.
 
 ### spell sandst
 
-- display name: Sand Storm
+- display name: Sand Storm (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\sandst.gs` line 1
@@ -18134,7 +18134,7 @@ its shape and token count, never its body.
 
 ### spell scald
 
-- display name: Scald
+- display name: Scald (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\scald.gs` line 1
@@ -18167,7 +18167,7 @@ its shape and token count, never its body.
 
 ### spell seer_air
 
-- display name: Seer
+- display name: Seer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\seer_air.gs` line 1
@@ -18203,7 +18203,7 @@ its shape and token count, never its body.
 
 ### spell seer_chaos
 
-- display name: Seer
+- display name: Seer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\seer_chaos.gs` line 1
@@ -18236,7 +18236,7 @@ its shape and token count, never its body.
 
 ### spell seer_death
 
-- display name: Seer
+- display name: Seer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\seer_death.gs` line 1
@@ -18269,7 +18269,7 @@ its shape and token count, never its body.
 
 ### spell seer_earth
 
-- display name: Seer
+- display name: Seer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\seer_earth.gs` line 1
@@ -18302,7 +18302,7 @@ its shape and token count, never its body.
 
 ### spell seer_fire
 
-- display name: Seer
+- display name: Seer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\seer_fire.gs` line 1
@@ -18335,7 +18335,7 @@ its shape and token count, never its body.
 
 ### spell seer_life
 
-- display name: Seer
+- display name: Seer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\seer_life.gs` line 1
@@ -18368,7 +18368,7 @@ its shape and token count, never its body.
 
 ### spell seer_order
 
-- display name: Seer
+- display name: Seer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\seer_order.gs` line 1
@@ -18404,7 +18404,7 @@ its shape and token count, never its body.
 
 ### spell seer_water
 
-- display name: Seer
+- display name: Seer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\seer_water.gs` line 1
@@ -18440,7 +18440,7 @@ its shape and token count, never its body.
 
 ### spell shade
 
-- display name: Raise Shade
+- display name: Raise Shade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\raisshad.gs` line 1
@@ -18467,7 +18467,7 @@ its shape and token count, never its body.
 
 ### spell shaken
 
-- display name: Shaken
+- display name: Shaken (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\shaken.gs` line 1
@@ -18499,7 +18499,7 @@ its shape and token count, never its body.
 
 ### spell shands
 
-- display name: Stone Hands
+- display name: Stone Hands (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\shands.gs` line 1
@@ -18527,7 +18527,7 @@ its shape and token count, never its body.
 
 ### spell shim_veil
 
-- display name: Shimmering Veil
+- display name: Shimmering Veil (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\shimveil.gs` line 1
@@ -18555,7 +18555,7 @@ its shape and token count, never its body.
 
 ### spell shimmering_veil
 
-- display name: Shimmering Veil
+- display name: Shimmering Veil (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\shimmering_veil.gs` line 1
@@ -18591,7 +18591,7 @@ its shape and token count, never its body.
 
 ### spell skel
 
-- display name: Raise Skeleton
+- display name: Raise Skeleton (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\raisskel.gs` line 1
@@ -18618,7 +18618,7 @@ its shape and token count, never its body.
 
 ### spell sleep
 
-- display name: Sands of Sleep
+- display name: Sands of Sleep (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\sleep.gs` line 1
@@ -18650,7 +18650,7 @@ its shape and token count, never its body.
 
 ### spell slow
 
-- display name: Slow
+- display name: Slow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\slow.gs` line 1
@@ -18678,7 +18678,7 @@ its shape and token count, never its body.
 
 ### spell spark
 
-- display name: Flame Dart
+- display name: Flame Dart (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\spark.gs` line 1
@@ -18710,7 +18710,7 @@ its shape and token count, never its body.
 
 ### spell sparrow
 
-- display name: Spirit Arrow
+- display name: Spirit Arrow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\sparrow.gs` line 1
@@ -18745,7 +18745,7 @@ its shape and token count, never its body.
 
 ### spell spawn
 
-- display name: Spawn Cave
+- display name: Spawn Cave (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\spawn.gs` line 1
@@ -18775,7 +18775,7 @@ its shape and token count, never its body.
 
 ### spell spawn_mushroom
 
-- display name: Spawn Mushroom
+- display name: Spawn Mushroom (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\spawn_mushroom.gs` line 1
@@ -18806,7 +18806,7 @@ its shape and token count, never its body.
 
 ### spell spider_web
 
-- display name: Spider Web
+- display name: Spider Web (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\spideweb.gs` line 1
@@ -18845,7 +18845,7 @@ its shape and token count, never its body.
 
 ### spell spirit
 
-- display name: Summon Spirit Warrior
+- display name: Summon Spirit Warrior (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\spirt.gs` line 1
@@ -18872,7 +18872,7 @@ its shape and token count, never its body.
 
 ### spell stone_hands
 
-- display name: Stone Hands
+- display name: Stone Hands (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\stone_hands.gs` line 1
@@ -18905,7 +18905,7 @@ its shape and token count, never its body.
 
 ### spell stone_skin
 
-- display name: Stone Skin
+- display name: Stone Skin (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\stone_skin.gs` line 1
@@ -18938,7 +18938,7 @@ its shape and token count, never its body.
 
 ### spell stone_touch
 
-- display name: Stone Touch
+- display name: Stone Touch (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\stone_touch.gs` line 1
@@ -18970,7 +18970,7 @@ its shape and token count, never its body.
 
 ### spell stoneskin
 
-- display name: Stone Skin
+- display name: Stone Skin (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\stoneskin.gs` line 1
@@ -18998,7 +18998,7 @@ its shape and token count, never its body.
 
 ### spell strength_death
 
-- display name: Unholy Strength
+- display name: Unholy Strength (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\strength_death.gs` line 1
@@ -19031,7 +19031,7 @@ its shape and token count, never its body.
 
 ### spell strength_fire
 
-- display name: Fire Giant Strength
+- display name: Fire Giant Strength (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\strength_fire.gs` line 1
@@ -19066,7 +19066,7 @@ its shape and token count, never its body.
 
 ### spell stun
 
-- display name: Stun
+- display name: Stun (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\stun.gs` line 1
@@ -19096,7 +19096,7 @@ its shape and token count, never its body.
 
 ### spell stun_spell
 
-- display name: Stun
+- display name: Stun (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\stun_spell.gs` line 1
@@ -19129,7 +19129,7 @@ its shape and token count, never its body.
 
 ### spell stunned
 
-- display name: Stunned
+- display name: Stunned (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\stunned.gs` line 1
@@ -19162,7 +19162,7 @@ its shape and token count, never its body.
 
 ### spell summon_creature_air
 
-- display name: Summon Air Element
+- display name: Summon Air Element (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\summon_creature_air.gs` line 1
@@ -19192,7 +19192,7 @@ its shape and token count, never its body.
 
 ### spell summon_creature_chaos
 
-- display name: Summon Chaos Spirit
+- display name: Summon Chaos Spirit (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\summon_creature_chaos.gs` line 1
@@ -19222,7 +19222,7 @@ its shape and token count, never its body.
 
 ### spell summon_creature_earth
 
-- display name: Summon Earth Element
+- display name: Summon Earth Element (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\summon_creature_earth.gs` line 1
@@ -19252,7 +19252,7 @@ its shape and token count, never its body.
 
 ### spell summon_creature_fire
 
-- display name: Summon Fire Element
+- display name: Summon Fire Element (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\summon_creature_fire.gs` line 1
@@ -19282,7 +19282,7 @@ its shape and token count, never its body.
 
 ### spell summon_creature_life
 
-- display name: Summon Life Spirit
+- display name: Summon Life Spirit (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\summon_creature_life.gs` line 1
@@ -19312,7 +19312,7 @@ its shape and token count, never its body.
 
 ### spell summon_creature_order
 
-- display name: Summon Order Spirit
+- display name: Summon Order Spirit (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\summon_creature_order.gs` line 1
@@ -19342,7 +19342,7 @@ its shape and token count, never its body.
 
 ### spell summon_creature_water
 
-- display name: Call of the Water
+- display name: Call of the Water (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\summon_creature_water.gs` line 1
@@ -19373,7 +19373,7 @@ its shape and token count, never its body.
 
 ### spell survey
 
-- display name: Survey
+- display name: Survey (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\survey.gs` line 1
@@ -19400,7 +19400,7 @@ its shape and token count, never its body.
 
 ### spell survey2
 
-- display name: Restore Land
+- display name: Restore Land (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\survey2.gs` line 1
@@ -19427,7 +19427,7 @@ its shape and token count, never its body.
 
 ### spell swiftness
 
-- display name: Swiftness
+- display name: Swiftness (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\swiftness.gs` line 1
@@ -19455,7 +19455,7 @@ its shape and token count, never its body.
 
 ### spell teleport_artifact_air
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\teleport_artifact_air.gs` line 1
@@ -19483,7 +19483,7 @@ its shape and token count, never its body.
 
 ### spell teleport_artifact_chaos
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\teleport_artifact_chaos.gs` line 1
@@ -19511,7 +19511,7 @@ its shape and token count, never its body.
 
 ### spell teleport_artifact_death
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\teleport_artifact_death.gs` line 1
@@ -19539,7 +19539,7 @@ its shape and token count, never its body.
 
 ### spell teleport_artifact_earth
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\teleport_artifact_earth.gs` line 1
@@ -19567,7 +19567,7 @@ its shape and token count, never its body.
 
 ### spell teleport_artifact_fire
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\teleport_artifact_fire.gs` line 1
@@ -19595,7 +19595,7 @@ its shape and token count, never its body.
 
 ### spell teleport_artifact_life
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\teleport_artifact_life.gs` line 1
@@ -19623,7 +19623,7 @@ its shape and token count, never its body.
 
 ### spell teleport_artifact_order
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\teleport_artifact_order.gs` line 1
@@ -19651,7 +19651,7 @@ its shape and token count, never its body.
 
 ### spell teleport_artifact_water
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\teleport_artifact_water.gs` line 1
@@ -19679,7 +19679,7 @@ its shape and token count, never its body.
 
 ### spell terrain_air
 
-- display name: Snow
+- display name: Snow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\terrain_air.gs` line 1
@@ -19715,7 +19715,7 @@ its shape and token count, never its body.
 
 ### spell terrain_chaos
 
-- display name: Winds of Change
+- display name: Winds of Change (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\terrain_chaos.gs` line 1
@@ -19751,7 +19751,7 @@ its shape and token count, never its body.
 
 ### spell terrain_death
 
-- display name: Pestilence
+- display name: Pestilence (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\terrain_death.gs` line 1
@@ -19786,7 +19786,7 @@ its shape and token count, never its body.
 
 ### spell terrain_earth
 
-- display name: Clay Earth
+- display name: Clay Earth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\terrain_earth.gs` line 1
@@ -19821,7 +19821,7 @@ its shape and token count, never its body.
 
 ### spell terrain_fire
 
-- display name: Lava Flow
+- display name: Lava Flow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\terrain_fire.gs` line 1
@@ -19858,7 +19858,7 @@ its shape and token count, never its body.
 
 ### spell terrain_life
 
-- display name: Create Plain
+- display name: Create Plain (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\LIFE\terrain_life.gs` line 1
@@ -19893,7 +19893,7 @@ its shape and token count, never its body.
 
 ### spell terrain_order
 
-- display name: Create Plain
+- display name: Create Plain (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\terrain_order.gs` line 1
@@ -19929,7 +19929,7 @@ its shape and token count, never its body.
 
 ### spell terrain_special
 
-- display name: Restore Land
+- display name: Restore Land (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\ORDER\terrain_special.gs` line 1
@@ -19963,7 +19963,7 @@ its shape and token count, never its body.
 
 ### spell terrain_water
 
-- display name: Make Land
+- display name: Make Land (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\terrain_water.gs` line 1
@@ -19998,7 +19998,7 @@ its shape and token count, never its body.
 
 ### spell tin_armor
 
-- display name: Tin Armor
+- display name: Tin Armor (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\CHAOS\tin_armor.gs` line 1
@@ -20032,7 +20032,7 @@ its shape and token count, never its body.
 
 ### spell trailblaze
 
-- display name: Trailblaze
+- display name: Trailblaze (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\trailblaze.gs` line 1
@@ -20059,7 +20059,7 @@ its shape and token count, never its body.
 
 ### spell transform_air
 
-- display name: Draconic Transformation
+- display name: Draconic Transformation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\AIR\transform_air.gs` line 1
@@ -20095,7 +20095,7 @@ its shape and token count, never its body.
 
 ### spell transform_death
 
-- display name: Vampyric Transformation
+- display name: Vampyric Transformation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\transform_death.gs` line 1
@@ -20131,7 +20131,7 @@ its shape and token count, never its body.
 
 ### spell transform_earth
 
-- display name: Stoney Transformation
+- display name: Stoney Transformation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\transform_earth.gs` line 1
@@ -20167,7 +20167,7 @@ its shape and token count, never its body.
 
 ### spell transform_fire
 
-- display name: Demonic Transformation
+- display name: Demonic Transformation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\FIRE\transform_fire.gs` line 1
@@ -20203,7 +20203,7 @@ its shape and token count, never its body.
 
 ### spell tremor
 
-- display name: Tremor
+- display name: Tremor (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\tremor.gs` line 1
@@ -20232,7 +20232,7 @@ its shape and token count, never its body.
 
 ### spell trick
 
-- display name: Trick
+- display name: Trick (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\trick.gs` line 1
@@ -20263,7 +20263,7 @@ its shape and token count, never its body.
 
 ### spell tunnel
 
-- display name: Tunnel
+- display name: Tunnel (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\tunnel.gs` line 1
@@ -20293,7 +20293,7 @@ its shape and token count, never its body.
 
 ### spell turn_to_stone
 
-- display name: Turn to Stone
+- display name: Turn to Stone (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\EARTH\turn_to_stone.gs` line 1
@@ -20333,7 +20333,7 @@ its shape and token count, never its body.
 
 ### spell turn_undead
 
-- display name: Turn Undead
+- display name: Turn Undead (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\turnundea.gs` line 1
@@ -20362,7 +20362,7 @@ its shape and token count, never its body.
 
 ### spell turnicate
 
-- display name: Tourniquet
+- display name: Tourniquet (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\turnicate.gs` line 1
@@ -20390,7 +20390,7 @@ its shape and token count, never its body.
 
 ### spell turnstone
 
-- display name: Turn to stone
+- display name: Turn to stone (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\turn2ston.gs` line 1
@@ -20421,7 +20421,7 @@ its shape and token count, never its body.
 
 ### spell unturn_undead
 
-- display name: Unturn Undead
+- display name: Unturn Undead (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\unturn_undead.gs` line 1
@@ -20455,7 +20455,7 @@ its shape and token count, never its body.
 
 ### spell unword
 
-- display name: Unholy Word
+- display name: Unholy Word (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\unword.gs` line 1
@@ -20483,7 +20483,7 @@ its shape and token count, never its body.
 
 ### spell visage
 
-- display name: Visage of Horror
+- display name: Visage of Horror (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\visage.gs` line 1
@@ -20512,7 +20512,7 @@ its shape and token count, never its body.
 
 ### spell visage_of_horror
 
-- display name: Visage of Horror
+- display name: Visage of Horror (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\DEATH\visage_of_horror.gs` line 1
@@ -20551,7 +20551,7 @@ its shape and token count, never its body.
 
 ### spell vortex
 
-- display name: Vortex
+- display name: Vortex (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\vortex.gs` line 1
@@ -20589,7 +20589,7 @@ its shape and token count, never its body.
 
 ### spell walk
 
-- display name: Walk Among Us
+- display name: Walk Among Us (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\walkus.gs` line 1
@@ -20617,7 +20617,7 @@ its shape and token count, never its body.
 
 ### spell wanderlust
 
-- display name: Wanderlust
+- display name: Wanderlust (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\Wanderlust.gs` line 1
@@ -20644,7 +20644,7 @@ its shape and token count, never its body.
 
 ### spell watch_tower
 
-- display name: Watch Tower
+- display name: Watch Tower (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\watchtwr.gs` line 1
@@ -20674,7 +20674,7 @@ its shape and token count, never its body.
 
 ### spell water_detect
 
-- display name: Detect Fire
+- display name: Detect Fire (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\wdetect.gs` line 1
@@ -20703,7 +20703,7 @@ its shape and token count, never its body.
 
 ### spell water_dispell
 
-- display name: Dispel Magic
+- display name: Dispel Magic (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\wdispell.gs` line 1
@@ -20730,7 +20730,7 @@ its shape and token count, never its body.
 
 ### spell water_seer
 
-- display name: Seer
+- display name: Seer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\water_seer.gs` line 1
@@ -20759,7 +20759,7 @@ its shape and token count, never its body.
 
 ### spell water_telart
 
-- display name: Teleport Artifact
+- display name: Teleport Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\wtelart.gs` line 1
@@ -20786,7 +20786,7 @@ its shape and token count, never its body.
 
 ### spell weaken
 
-- display name: Weaken
+- display name: Weaken (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\_custom\weaken.gs` line 1
@@ -20818,7 +20818,7 @@ its shape and token count, never its body.
 
 ### spell wheel
 
-- display name: Wheel of Fortune
+- display name: Wheel of Fortune (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\wheel.gs` line 1
@@ -20846,7 +20846,7 @@ its shape and token count, never its body.
 
 ### spell whisper_of_the_waves
 
-- display name: Whisper of the Waves
+- display name: Whisper of the Waves (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\spells\WATER\whisper_of_the_waves.gs` line 1
@@ -20879,7 +20879,7 @@ its shape and token count, never its body.
 
 ### spell whiswave
 
-- display name: Whisper of the Waves
+- display name: Whisper of the Waves (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\fishes.gs` line 1
@@ -20908,7 +20908,7 @@ its shape and token count, never its body.
 
 ### spell wildfire
 
-- display name: Wildfire
+- display name: Wildfire (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\wildfire.gs` line 1
@@ -20935,7 +20935,7 @@ its shape and token count, never its body.
 
 ### spell wind_mills
 
-- display name: Wind Mills
+- display name: Wind Mills (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\spells\windmill.gs` line 1
@@ -20964,7 +20964,7 @@ its shape and token count, never its body.
 
 ### spell windsoch
 
-- display name: Winds of Change
+- display name: Winds of Change (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\windsoch.gs` line 1
@@ -20991,7 +20991,7 @@ its shape and token count, never its body.
 
 ### spell windwalk
 
-- display name: Windwalk
+- display name: Windwalk (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\windwalk.gs` line 1
@@ -21019,7 +21019,7 @@ its shape and token count, never its body.
 
 ### spell zaprad
 
-- display name: Chain Lightning
+- display name: Chain Lightning (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\spells\zap_rad.gs` line 1
@@ -21052,7 +21052,7 @@ its shape and token count, never its body.
 
 ### artifact adventsword
 
-- display name: (none declared)
+- display name: The Adventurous Sword (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\adventsword.gs` line 1
@@ -21060,16 +21060,16 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_adventsword` | name | `get` |
-| `T_artifact_name_adventsword` | name | `get` |
 | `attack_proc` | procedure | `<procedure 30 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 25 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_adventsword get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `5` |
 | `mod_proc` | procedure | `<procedure 91 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_adventsword get` |
 | `portrait_code` | text | `dewwep` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -21078,7 +21078,7 @@ its shape and token count, never its body.
 
 ### artifact ai_stat_bonus
 
-- display name: AI Stat Bonus
+- display name: AI Stat Bonus (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\ai_stat_bonus.gs` line 1
@@ -21090,13 +21090,13 @@ its shape and token count, never its body.
 | `category` | number | `0` |
 | `description` | text | `Artifact, designed to improve leader/heir stats based on difficulty level.` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `20` |
 | `name` | text | `AI Stat Bonus` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -21106,7 +21106,7 @@ its shape and token count, never its body.
 
 ### artifact amfireprot
 
-- display name: (none declared)
+- display name: Amulet of Fire Protection (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\amfireprot.gs` line 1
@@ -21114,15 +21114,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_amfireprot` | name | `get` |
-| `T_artifact_name_amfireprot` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 20 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_amfireprot get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `FIRE` |
 | `image` | number | `1` |
 | `mod_proc` | procedure | `<procedure 14 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_amfireprot get` |
 | `portrait_code` | text | `fiamul` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -21131,7 +21131,7 @@ its shape and token count, never its body.
 
 ### artifact amiensbld
 
-- display name: (none declared)
+- display name: Amien's Blood (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\amiensbld.gs` line 1
@@ -21139,14 +21139,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_amiensbld` | name | `get` |
-| `T_artifact_name_amiensbld` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_amiensbld get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `8` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_amiensbld get` |
 | `portrait_code` | text | `eapot1` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -21155,7 +21155,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_chance
 
-- display name: Amulet of Chance
+- display name: Amulet of Chance (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\amulet_chance.gs` line 1
@@ -21171,7 +21171,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 11 tokens>` |
 | `description` | text | `Any Champion in Urak may wear this pendant to receive +(1/3X) Armor and +1X% Magic Resistance.  However, Mages wearing t` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_chaos` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `CHAOS` |
@@ -21183,6 +21182,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_chaos get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -21196,7 +21196,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_crystal
 
-- display name: Crystal Amulet
+- display name: Crystal Amulet (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\amulet_crystal.gs` line 1
@@ -21223,7 +21223,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
-| `recover_earth` | name | `get` |
+| `spell_id` | expression | `spelldict /recover_earth get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -21243,7 +21243,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_defense
 
-- display name: Amulet of Defense
+- display name: Amulet of Defense (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\amulet_defense.gs` line 1
@@ -21259,7 +21259,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 11 tokens>` |
 | `description` | text | `Any Champion may wear this amulet which grants +(1/3X) Armor, +(1/5X) Sight Radius and the ability to cast Detect Chaos.` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_order` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `ORDER` |
@@ -21271,6 +21270,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_order get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -21284,7 +21284,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_demon
 
-- display name: Demon's Torch
+- display name: Demon's Torch (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\amulet_demon.gs` line 1
@@ -21310,7 +21310,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
-| `transform_fire` | name | `get` |
+| `spell_id` | expression | `spelldict /transform_fire get` |
 | `unmod_proc` | procedure | `<procedure 33 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -21329,7 +21329,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_fate
 
-- display name: Legendary - Amulet of Fate
+- display name: Legendary - Amulet of Fate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\amulet_fate.gs` line 1
@@ -21357,7 +21357,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
-| `shimmering_veil` | name | `get` |
+| `spell_id` | expression | `spelldict /shimmering_veil get` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
 | `unmod_proc` | procedure | `<procedure 45 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -21372,7 +21372,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_ghost
 
-- display name: Ghostly Pendant
+- display name: Ghostly Pendant (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\amulet_ghost.gs` line 1
@@ -21401,8 +21401,8 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /transform_death get` |
 | `start_combat_proc` | procedure | `<procedure 4 tokens>` |
-| `transform_death` | name | `get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -21417,7 +21417,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_indecision
 
-- display name: Amulet of Indecision
+- display name: Amulet of Indecision (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\amulet_indecision.gs` line 1
@@ -21435,7 +21435,6 @@ its shape and token count, never its body.
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `CHAOS` |
-| `hand_of_fate` | name | `get` |
 | `image` | number | `2` |
 | `max_charges` | number | `3` |
 | `max_mana` | number | `4` |
@@ -21444,6 +21443,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /hand_of_fate get` |
 | `unmod_proc` | procedure | `<procedure 21 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -21459,7 +21459,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_infestation
 
-- display name: Ashes of Infestation
+- display name: Ashes of Infestation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\amulet_infestation.gs` line 1
@@ -21480,7 +21480,6 @@ its shape and token count, never its body.
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `2` |
-| `infest_cave` | name | `get` |
 | `max_charges` | number | `3` |
 | `max_mana` | number | `6` |
 | `name` | text | `Ashes of Infestation` |
@@ -21488,6 +21487,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /infest_cave get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -21503,7 +21503,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_of_chance
 
-- display name: Amulet of Chance
+- display name: Amulet of Chance (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\amulchan.gs` line 1
@@ -21533,7 +21533,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_of_control
 
-- display name: Amulet of Control
+- display name: Amulet of Control (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\amulcon.gs` line 1
@@ -21552,7 +21552,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 123 tokens>` |
 | `name` | text | `Amulet of Control` |
 | `portrait_code` | text | `oramul` |
-| `possession` | name | `get` |
+| `spell_id` | expression | `spelldict /possession get` |
 | `unmod_proc` | procedure | `<procedure 123 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -21562,7 +21562,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_of_defense
 
-- display name: Amulet of Defense
+- display name: Amulet of Defense (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\amuldefe.gs` line 1
@@ -21576,12 +21576,12 @@ its shape and token count, never its body.
 | `description` | text | `Any thief in Urak will gain +1 Armor and increased stealth.` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `ORDER` |
-| `heal` | name | `get` |
 | `image` | number | `2` |
 | `max_mana` | number | `0` |
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Amulet of Defense` |
 | `portrait_code` | text | `oramul` |
+| `spell_id` | expression | `spelldict /heal get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -21591,7 +21591,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_of_fate
 
-- display name: Greater Artifact - Amulet of Fate
+- display name: Greater Artifact - Amulet of Fate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\amulfate.gs` line 1
@@ -21611,9 +21611,9 @@ its shape and token count, never its body.
 | `image` | number | `2` |
 | `max_mana` | number | `15` |
 | `mod_proc` | procedure | `<procedure 63 tokens>` |
-| `morphs` | name | `get` |
 | `name` | text | `Greater Artifact - Amulet of Fate` |
 | `portrait_code` | text | `chamul` |
+| `spell_id` | expression | `spelldict /morphs get` |
 | `unmod_proc` | procedure | `<procedure 52 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -21623,7 +21623,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_of_illusion
 
-- display name: Amulet of Illusion
+- display name: Amulet of Illusion (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\amulillu.gs` line 1
@@ -21634,7 +21634,6 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `confusion` | name | `get` |
 | `description` | text | `Any Chaos Champion gains +3 Armor, +3 Mana and +4 Movement, plus the ability to cast Confusion once per day.` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `CHAOS` |
@@ -21643,6 +21642,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 70 tokens>` |
 | `name` | text | `Amulet of Illusion` |
 | `portrait_code` | text | `chamul` |
+| `spell_id` | expression | `spelldict /confusion get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -21652,7 +21652,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_of_indecision
 
-- display name: Amulet of Indecision
+- display name: Amulet of Indecision (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\amulinde.gs` line 1
@@ -21667,12 +21667,12 @@ its shape and token count, never its body.
 | `description` | text | `Any Champion gains +2 Armor, +10 maximum hit points and +1 Luck.  Chaos wielders have a 10% chance to freeze stricken en` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `CHAOS` |
-| `icycoff` | name | `get` |
 | `image` | number | `2` |
 | `max_mana` | number | `5000` |
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Amulet of Indecision` |
 | `portrait_code` | text | `chamul` |
+| `spell_id` | expression | `spelldict /icycoff get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -21682,7 +21682,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_of_order
 
-- display name: Amulet of Order
+- display name: Amulet of Order (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\amuorder.gs` line 1
@@ -21709,7 +21709,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_of_persuasion
 
-- display name: Amulet of Persuasion
+- display name: Amulet of Persuasion (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\amulpers.gs` line 1
@@ -21737,7 +21737,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_of_poison
 
-- display name: Amulet of Poison
+- display name: Amulet of Poison (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\amulpois.gs` line 1
@@ -21766,7 +21766,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_of_revelation
 
-- display name: Amulet of Revelation
+- display name: Amulet of Revelation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\amulrev.gs` line 1
@@ -21782,11 +21782,11 @@ its shape and token count, never its body.
 | `end_combat_proc` | procedure | `<procedure 13 tokens>` |
 | `faith` | name | `LIFE` |
 | `image` | number | `2` |
-| `life_detect` | name | `get` |
 | `max_mana` | number | `8` |
 | `mod_proc` | procedure | `<procedure 50 tokens>` |
 | `name` | text | `Amulet of Revelation` |
 | `portrait_code` | text | `liamul` |
+| `spell_id` | expression | `spelldict /life_detect get` |
 | `unmod_proc` | procedure | `<procedure 19 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -21796,7 +21796,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_poison
 
-- display name: Amulet of Poison
+- display name: Amulet of Poison (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\amulet_poison.gs` line 1
@@ -21810,7 +21810,6 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
-| `decay` | name | `get` |
 | `defend_proc` | procedure | `<procedure 166 tokens>` |
 | `description` | text | `Any Champion may hold this bauble for +3 Strength, Armor, Rate of Fire and Stealth, +50% Life resistance, negated Health` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
@@ -21825,6 +21824,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /decay get` |
 | `start_combat_proc` | procedure | `<procedure 46 tokens>` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -21844,7 +21844,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_revelation
 
-- display name: Amulet of Revelation
+- display name: Amulet of Revelation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\amulet_revelation.gs` line 1
@@ -21871,8 +21871,8 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /turn_undead get` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
-| `turn_undead` | name | `get` |
 | `unmod_proc` | procedure | `<procedure 33 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -21888,7 +21888,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_serpent
 
-- display name: Amulet of the Serpent
+- display name: Amulet of the Serpent (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\amulet_serpent.gs` line 1
@@ -21907,7 +21907,6 @@ its shape and token count, never its body.
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `WATER` |
-| `heal_self` | name | `get` |
 | `image` | number | `2` |
 | `max_charges` | number | `3` |
 | `max_mana` | number | `4` |
@@ -21916,6 +21915,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /heal_self get` |
 | `unmod_proc` | procedure | `<procedure 33 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -21932,7 +21932,7 @@ its shape and token count, never its body.
 
 ### artifact amulet_wisp
 
-- display name: Amulet of the Wisp
+- display name: Amulet of the Wisp (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\amulet_wisp.gs` line 1
@@ -21945,7 +21945,6 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 4 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
-| `cloud_of_war` | name | `get` |
 | `defend_proc` | procedure | `<procedure 95 tokens>` |
 | `description` | text | `Any Champion, except Earth Champions, may wear this pendent to receive +3 Armor, +25% Physical Resistance, 1X% Magic Res` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
@@ -21960,6 +21959,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /cloud_of_war get` |
 | `start_combat_proc` | procedure | `<procedure 34 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -21976,7 +21976,7 @@ its shape and token count, never its body.
 
 ### artifact andvari_ring
 
-- display name: Andvari's Ring
+- display name: Andvari's Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\ringand.gs` line 1
@@ -22001,7 +22001,7 @@ its shape and token count, never its body.
 
 ### artifact anti_tarnaxe
 
-- display name: Antitarnaxe
+- display name: Antitarnaxe (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\antitarnaxe.gs` line 1
@@ -22026,7 +22026,7 @@ its shape and token count, never its body.
 
 ### artifact aquaring
 
-- display name: Aquaring
+- display name: Aquaring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\aquaring.gs` line 1
@@ -22040,12 +22040,12 @@ its shape and token count, never its body.
 | `description` | text | `Any thief in Urak will gain +1 Armor and +1 missile range.` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `WATER` |
-| `heal` | name | `get` |
 | `image` | number | `1` |
 | `max_mana` | number | `0` |
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Aquaring` |
 | `portrait_code` | text | `waring` |
+| `spell_id` | expression | `spelldict /heal get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -22055,7 +22055,7 @@ its shape and token count, never its body.
 
 ### artifact aramoug_amulet
 
-- display name: Aramoug's Amulet
+- display name: Aramoug's Amulet (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\aramoug.gs` line 1
@@ -22063,7 +22063,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `areastun` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
@@ -22075,6 +22074,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 39 tokens>` |
 | `name` | text | `Aramoug's Amulet` |
 | `portrait_code` | text | `aiamul` |
+| `spell_id` | expression | `spelldict /areastun get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -22084,7 +22084,7 @@ its shape and token count, never its body.
 
 ### artifact armor_archon
 
-- display name: Armor of the Archons
+- display name: Armor of the Archons (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\armor_archon.gs` line 1
@@ -22099,7 +22099,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 72 tokens>` |
 | `description` | text | `Order, Death, Chaos or Earth warriors may wear this armor, crafted with purest of alloys, to receive +5 Armor and Hit Re` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_order` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 45 tokens>` |
 | `end_turn_proc` | procedure | `<procedure 37 tokens>` |
@@ -22111,6 +22110,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_order get` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
 | `unmod_proc` | procedure | `<procedure 12 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -22130,7 +22130,7 @@ its shape and token count, never its body.
 
 ### artifact armor_dragonscale
 
-- display name: Dragonscale Armor
+- display name: Dragonscale Armor (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\armor_dragonscale.gs` line 1
@@ -22145,7 +22145,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 241 tokens>` |
 | `description` | text | `Fire, Chaos or Air Warriors may wear this Dragonborne armor to receive +10 health, +5 Armor and Hit Recovery, +5X% Air, ` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_fire` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 45 tokens>` |
 | `faith` | name | `FIRE` |
@@ -22156,6 +22155,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_fire get` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
 | `unmod_proc` | procedure | `<procedure 35 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -22176,7 +22176,7 @@ its shape and token count, never its body.
 
 ### artifact armor_ebony_plate
 
-- display name: Ebony Plate of the Void
+- display name: Ebony Plate of the Void (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\armor_ebony_plate.gs` line 1
@@ -22191,7 +22191,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 210 tokens>` |
 | `description` | text | `Death, Order, Chaos, Water Warriors may wear this unholy plate to receive +5 Armor, +5 Hit Recovery, +(10/3)X% Life Resi` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
 | `faith` | name | `DEATH` |
@@ -22203,6 +22202,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -22220,7 +22220,7 @@ its shape and token count, never its body.
 
 ### artifact armor_elven_chain
 
-- display name: Elven Chain Mail
+- display name: Elven Chain Mail (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\armor_elven_chain.gs` line 1
@@ -22235,7 +22235,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 217 tokens>` |
 | `description` | text | `Life or Water Warriors may wear this holy chain mail to receive +3 Armor, Dexterity and Hit Reovery, +2X% Magic Resistan` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_life` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 45 tokens>` |
 | `faith` | name | `LIFE` |
@@ -22246,6 +22245,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_life get` |
 | `start_combat_proc` | procedure | `<procedure 42 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -22266,7 +22266,7 @@ its shape and token count, never its body.
 
 ### artifact armor_feather_chain
 
-- display name: Feather Chain Mail
+- display name: Feather Chain Mail (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\armor_feather_chain.gs` line 1
@@ -22281,7 +22281,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 219 tokens>` |
 | `description` | text | `This featherweight armor grants Air, Chaos or Fire warriors +3 Armor, Dexterity and Hit Recovery, +4 Overland Movement, ` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_air` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 45 tokens>` |
 | `faith` | name | `AIR` |
@@ -22293,6 +22292,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_air get` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
 | `unmod_proc` | procedure | `<procedure 33 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -22313,7 +22313,7 @@ its shape and token count, never its body.
 
 ### artifact armor_obsidian
 
-- display name: Obsidian Plate
+- display name: Obsidian Plate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\armor_obsidian.gs` line 1
@@ -22328,7 +22328,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
 | `description` | text | `Earth, Chaos, Death, or Order Warriors may wear this sable plate to receive +5 Armor and Hit Recovery, +(10/3)X% Air Res` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_earth` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 45 tokens>` |
 | `faith` | name | `EARTH` |
@@ -22340,6 +22339,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_earth get` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -22357,7 +22357,7 @@ its shape and token count, never its body.
 
 ### artifact armor_of_inspiration
 
-- display name: Armor of Inspiration
+- display name: Armor of Inspiration (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\armorins.gs` line 1
@@ -22365,7 +22365,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `backdraf` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `2` |
@@ -22378,6 +22377,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 39 tokens>` |
 | `name` | text | `Armor of Inspiration` |
 | `portrait_code` | text | `orarm1` |
+| `spell_id` | expression | `spelldict /backdraf get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -22387,7 +22387,7 @@ its shape and token count, never its body.
 
 ### artifact armor_urak
 
-- display name: Urakian Armor
+- display name: Urakian Armor (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\armor_urak.gs` line 1
@@ -22403,7 +22403,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Usable by all Champions, this lightweight armor will grant the wearer +2 Armor, +4 points of Health and +2 health recove` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_death` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 43 tokens>` |
 | `faith` | name | `DEATH` |
@@ -22415,6 +22414,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /detect_death get` |
 | `unmod_proc` | procedure | `<procedure 36 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -22429,7 +22429,7 @@ its shape and token count, never its body.
 
 ### artifact artart
 
-- display name: artart
+- display name: artart (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\artart.gs` line 1
@@ -22452,7 +22452,7 @@ its shape and token count, never its body.
 
 ### artifact ashes_of_infestation
 
-- display name: Ashes of Infestation
+- display name: Ashes of Infestation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ashesinf.gs` line 1
@@ -22472,7 +22472,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Ashes of Infestation` |
 | `portrait_code` | text | `deamul` |
-| `spawn` | name | `get` |
+| `spell_id` | expression | `spelldict /spawn get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -22482,7 +22482,7 @@ its shape and token count, never its body.
 
 ### artifact axe_annihilation
 
-- display name: Legendary - Axe of Annihilation
+- display name: Legendary - Axe of Annihilation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\axe_annihilation.gs` line 1
@@ -22493,7 +22493,6 @@ its shape and token count, never its body.
 | `attack_proc` | procedure | `<procedure 98 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 42 tokens>` |
-| `blind_rage` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
@@ -22509,6 +22508,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /blind_rage get` |
 | `unmod_proc` | procedure | `<procedure 32 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -22521,7 +22521,7 @@ its shape and token count, never its body.
 
 ### artifact axe_great
 
-- display name: Great Axe
+- display name: Great Axe (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\axe_great.gs` line 1
@@ -22537,7 +22537,6 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `description` | text | `Chaos or Earth Warriors may wield this great axe to receive +(1/3X) Attack, +(1/5X) Rate of Attack and the ability to ca` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_chaos` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `CHAOS` |
@@ -22549,6 +22548,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_chaos get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -22561,7 +22561,7 @@ its shape and token count, never its body.
 
 ### artifact axe_lode
 
-- display name: Legendary - Lode Axe
+- display name: Legendary - Lode Axe (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\axe_lode.gs` line 1
@@ -22588,7 +22588,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
-| `tremor` | name | `get` |
+| `spell_id` | expression | `spelldict /tremor get` |
 | `unmod_proc` | procedure | `<procedure 33 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -22604,7 +22604,7 @@ its shape and token count, never its body.
 
 ### artifact axe_of_chaos
 
-- display name: Greater Artifact - Axe of Chaos
+- display name: Greater Artifact - Axe of Chaos (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\axechaos.gs` line 1
@@ -22636,7 +22636,7 @@ its shape and token count, never its body.
 
 ### artifact axe_of_mauling
 
-- display name: Greater Artifact - Axe of Mauling
+- display name: Greater Artifact - Axe of Mauling (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\axemaul.gs` line 1
@@ -22655,7 +22655,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 92 tokens>` |
 | `name` | text | `Greater Artifact - Axe of Mauling` |
 | `portrait_code` | text | `eawwep` |
-| `tremor` | name | `get` |
+| `spell_id` | expression | `spelldict /tremor get` |
 | `unmod_proc` | procedure | `<procedure 92 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -22665,7 +22665,7 @@ its shape and token count, never its body.
 
 ### artifact axe_orcs
 
-- display name: Axe of the Orcs
+- display name: Axe of the Orcs (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\axe_orcs.gs` line 1
@@ -22692,10 +22692,10 @@ its shape and token count, never its body.
 | `max_mana` | number | `2` |
 | `name` | text | `Axe of the Orcs` |
 | `portrait_code` | text | `GREEN_CH_AXE` |
-| `random_bolt` | name | `get` |
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /random_bolt get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -22709,7 +22709,7 @@ its shape and token count, never its body.
 
 ### artifact axe_swift
 
-- display name: Swift Axe
+- display name: Swift Axe (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\axe_swift.gs` line 1
@@ -22725,7 +22725,6 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `description` | text | `Earth or Chaos Warriors may wield this swift axe for +(1/3X) Attack, +(1/5X) Rate of Attack and the ability to cast Dete` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_earth` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `EARTH` |
@@ -22737,6 +22736,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_earth get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -22749,7 +22749,7 @@ its shape and token count, never its body.
 
 ### artifact balkoth_scythe
 
-- display name: Unique Artifact - Balkoth's Scythe
+- display name: Unique Artifact - Balkoth's Scythe (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\balkscyt.gs` line 1
@@ -22763,13 +22763,14 @@ its shape and token count, never its body.
 | `category` | number | `1` |
 | `description` | text | `Only Balkoth may wield.  Cast Locust once daily.  Can claim victim's soul in combat (5% chance). +2 hit point Vampyric l` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
+| `dummy2` | expression | `currentdict /mod_proc get replace bind` |
 | `faith` | name | `DEATH` |
 | `image` | number | `9` |
-| `locust` | name | `get` |
 | `max_mana` | number | `8` |
 | `mod_proc` | procedure | `<procedure 23 tokens>` |
 | `name` | text | `Unique Artifact - Balkoth's Scythe` |
 | `portrait_code` | text | `descyt` |
+| `spell_id` | expression | `spelldict /locust get` |
 | `unmod_proc` | procedure | `<procedure 12 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -22779,7 +22780,7 @@ its shape and token count, never its body.
 
 ### artifact banner_artifact
 
-- display name: Banner
+- display name: Banner (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\banner_artifact.gs` line 1
@@ -22807,7 +22808,7 @@ its shape and token count, never its body.
 
 ### artifact belt_trollhide
 
-- display name: Trollhide Belt
+- display name: Trollhide Belt (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\belt_trollhide.gs` line 1
@@ -22823,7 +22824,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Any Champion may wear this large belt to receive +2 Armor, Strength and Health Recovery.  Health Recovery provided by th` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_earth` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
 | `faith` | name | `EARTH` |
@@ -22835,6 +22835,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /detect_earth get` |
 | `start_combat_proc` | procedure | `<procedure 40 tokens>` |
 | `unmod_proc` | procedure | `<procedure 37 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -22850,7 +22851,7 @@ its shape and token count, never its body.
 
 ### artifact blowgun_of_the_amazons
 
-- display name: Greater Artifact-Blowgun of the Amazons
+- display name: Greater Artifact-Blowgun of the Amazons (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\blowamaz.gs` line 1
@@ -22865,12 +22866,12 @@ its shape and token count, never its body.
 | `description` | text | `Only Water thieves may use.  Makes a chilling attack that has a 5% chance of sealing an enemy in ice.  Casts Icebolt six` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `WATER` |
-| `icebolt` | name | `get` |
 | `image` | number | `6` |
 | `max_mana` | number | `12` |
 | `mod_proc` | procedure | `<procedure 41 tokens>` |
 | `name` | text | `Greater Artifact-Blowgun of the Amazons` |
 | `portrait_code` | text | `warngw` |
+| `spell_id` | expression | `spelldict /icebolt get` |
 | `unmod_proc` | procedure | `<procedure 41 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -22880,7 +22881,7 @@ its shape and token count, never its body.
 
 ### artifact blowgun_waterspitter
 
-- display name: Legendary - Water Spitter
+- display name: Legendary - Water Spitter (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\blowgun_waterspitter.gs` line 1
@@ -22892,7 +22893,6 @@ its shape and token count, never its body.
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 4 tokens>` |
-| `bolt_water` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `description` | text | `Water Thieves who wield this blowgun are granted +5 Ranged Attack, Missile Range, Rate of Fire and Stealth with the abil` |
@@ -22909,6 +22909,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /bolt_water get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -22923,7 +22924,7 @@ its shape and token count, never its body.
 
 ### artifact boots_stealth
 
-- display name: Boots of Stealth
+- display name: Boots of Stealth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\boots_stealth.gs` line 1
@@ -22938,7 +22939,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Usable by all Champions, these quiet boots will grant the wearer +2 Stealth, Movement and Dexterity.  Additionally, Thie` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_fire` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `FIRE` |
 | `image` | number | `153` |
@@ -22949,6 +22949,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /detect_fire get` |
 | `unmod_proc` | procedure | `<procedure 34 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -22963,7 +22964,7 @@ its shape and token count, never its body.
 
 ### artifact borchert_torch
 
-- display name: Borchert's Torch
+- display name: Borchert's Torch (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\bortorch.gs` line 1
@@ -22991,7 +22992,7 @@ its shape and token count, never its body.
 
 ### artifact bow_earthshaker
 
-- display name: Legendary - Earthshaker Bow
+- display name: Legendary - Earthshaker Bow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\bow_earthshaker.gs` line 1
@@ -23003,7 +23004,6 @@ its shape and token count, never its body.
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
-| `bolt_earth` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `description` | text | `Earth, Life or Air Thieves may wield this earthly bow which grants +5 Ranged Attack, Missile Range, Rate of Fire and Ste` |
@@ -23020,6 +23020,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /bolt_earth get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -23035,7 +23036,7 @@ its shape and token count, never its body.
 
 ### artifact bow_of_bakal
 
-- display name: Greater Artifact - Bow of Bakal
+- display name: Greater Artifact - Bow of Bakal (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\bowbakal.gs` line 1
@@ -23054,7 +23055,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 74 tokens>` |
 | `name` | text | `Greater Artifact - Bow of Bakal` |
 | `portrait_code` | text | `lirngw` |
-| `sparrow` | name | `get` |
+| `spell_id` | expression | `spelldict /sparrow get` |
 | `unmod_proc` | procedure | `<procedure 74 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -23064,7 +23065,7 @@ its shape and token count, never its body.
 
 ### artifact bow_of_balladrine
 
-- display name: Greater Artifact - Bow of Balladrine
+- display name: Greater Artifact - Bow of Balladrine (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\bowballa.gs` line 1
@@ -23083,7 +23084,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 73 tokens>` |
 | `name` | text | `Greater Artifact - Bow of Balladrine` |
 | `portrait_code` | text | `earngw` |
-| `rocksling` | name | `get` |
+| `spell_id` | expression | `spelldict /rocksling get` |
 | `unmod_proc` | procedure | `<procedure 73 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -23093,7 +23094,7 @@ its shape and token count, never its body.
 
 ### artifact bow_of_quaal
 
-- display name: Greater Artifact - Bow of Quaal
+- display name: Greater Artifact - Bow of Quaal (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\bowquaal.gs` line 1
@@ -23118,7 +23119,7 @@ its shape and token count, never its body.
 
 ### artifact bow_reed
 
-- display name: Reed Bow
+- display name: Reed Bow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\bow_reed.gs` line 1
@@ -23134,7 +23135,6 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `description` | text | `Earth, Life and Air Thieves may use this supple bow to receive +(1/3X) Ranged Attack, +(1/3X) Missile Range, +(1/5X) Rat` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_earth` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `EARTH` |
@@ -23146,6 +23146,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_earth get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -23159,7 +23160,7 @@ its shape and token count, never its body.
 
 ### artifact bow_spirit
 
-- display name: Legendary - Spirit Bow
+- display name: Legendary - Spirit Bow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\bow_spirit.gs` line 1
@@ -23171,7 +23172,6 @@ its shape and token count, never its body.
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
-| `bolt_life` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `description` | text | `Life, Air or Earth Thieves may use this holy bow which bestows  +3 Ranged Attack and Missile Range, +5 Dexterity and Rat` |
@@ -23188,6 +23188,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /bolt_life get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -23203,7 +23204,7 @@ its shape and token count, never its body.
 
 ### artifact bow_tornado
 
-- display name: Legendary - Tornado Bow
+- display name: Legendary - Tornado Bow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\bow_tornado.gs` line 1
@@ -23215,7 +23216,6 @@ its shape and token count, never its body.
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
-| `bolt_air` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `description` | text | `Air, Life or Earth thieves may wield this tornadic bow to receive +5 Dexterity and Rate of Fire, +3 Ranged Attack and Mi` |
@@ -23232,6 +23232,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /bolt_air get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -23247,7 +23248,7 @@ its shape and token count, never its body.
 
 ### artifact burning_blade
 
-- display name: Burning Blade
+- display name: Burning Blade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\burnblad.gs` line 1
@@ -23262,12 +23263,12 @@ its shape and token count, never its body.
 | `description` | text | `Fire and Air warriors enjoy +1 Attack, +1 Armor, and +2 luck with this sword.` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `FIRE` |
-| `fdart` | name | `get` |
 | `image` | number | `5` |
 | `max_mana` | number | `0` |
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Burning Blade` |
 | `portrait_code` | text | `fiwwep` |
+| `spell_id` | expression | `spelldict /fdart get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -23277,7 +23278,7 @@ its shape and token count, never its body.
 
 ### artifact burnskin_artifact
 
-- display name: Burnskin
+- display name: Burnskin (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\burnart.gs` line 1
@@ -23302,7 +23303,7 @@ its shape and token count, never its body.
 
 ### artifact cap_jester
 
-- display name: Jester's Cap
+- display name: Jester's Cap (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\cap_jester.gs` line 1
@@ -23317,7 +23318,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 84 tokens>` |
 | `description` | text | `Fire Thieves may wear this devilish cap to receive +2 Health, Armor, Hit Recovery, Health Recovery, Stealth, Sight Radiu` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_fire` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `FIRE` |
 | `image` | number | `219` |
@@ -23328,6 +23328,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /detect_fire get` |
 | `unmod_proc` | procedure | `<procedure 35 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -23346,7 +23347,7 @@ its shape and token count, never its body.
 
 ### artifact chakram_entropy
 
-- display name: Chakram of Entropy
+- display name: Chakram of Entropy (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\chakram_entropy.gs` line 1
@@ -23360,7 +23361,6 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
-| `change_of_fate` | name | `get` |
 | `description` | text | `Any Champion, except Order Champions, may wield this chaotic chakram to cast Change of Fate.  Additionally, Chaos Thieve` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
@@ -23375,6 +23375,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /change_of_fate get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -23389,7 +23390,7 @@ its shape and token count, never its body.
 
 ### artifact chakram_of_entropy
 
-- display name: Chakram of Entropy
+- display name: Chakram of Entropy (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\chakentr.gs` line 1
@@ -23410,7 +23411,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 53 tokens>` |
 | `name` | text | `Chakram of Entropy` |
 | `portrait_code` | text | `Chrngw` |
-| `rocksling` | name | `get` |
+| `spell_id` | expression | `spelldict /rocksling get` |
 | `unmod_proc` | procedure | `<procedure 53 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -23419,7 +23420,7 @@ its shape and token count, never its body.
 
 ### artifact chalice_chaos
 
-- display name: Chalice of Chaos
+- display name: Chalice of Chaos (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\chalice_chaos.gs` line 1
@@ -23444,10 +23445,10 @@ its shape and token count, never its body.
 | `max_mana` | number | `0` |
 | `name` | text | `Chalice of Chaos` |
 | `portrait_code` | text | `chart1` |
-| `random_bolt` | name | `get` |
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `1` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /random_bolt get` |
 | `start_combat_proc` | procedure | `<procedure 43 tokens>` |
 | `unmod_proc` | procedure | `<procedure 36 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -23464,7 +23465,7 @@ its shape and token count, never its body.
 
 ### artifact chalice_life
 
-- display name: Chalice of Life
+- display name: Chalice of Life (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\chalice_life.gs` line 1
@@ -23475,7 +23476,6 @@ its shape and token count, never its body.
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
-| `bless` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `5` |
 | `defend_proc` | procedure | `<procedure 52 tokens>` |
@@ -23493,6 +23493,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /bless get` |
 | `start_combat_proc` | procedure | `<procedure 43 tokens>` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -23509,7 +23510,7 @@ its shape and token count, never its body.
 
 ### artifact chalice_of_life
 
-- display name: Chalice Of Life
+- display name: Chalice Of Life (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\challife.gs` line 1
@@ -23518,7 +23519,6 @@ its shape and token count, never its body.
 | field | shape | value |
 |---|---|---|
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
-| `bless` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
 | `description` | text | `Any champion from Life, Water or Order may wield this artifact.  The chalice will produce, per turn, ale equal to the al` |
@@ -23529,6 +23529,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 53 tokens>` |
 | `name` | text | `Chalice Of Life` |
 | `portrait_code` | text | `liart1` |
+| `spell_id` | expression | `spelldict /bless get` |
 | `unmod_proc` | procedure | `<procedure 35 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -23538,7 +23539,7 @@ its shape and token count, never its body.
 
 ### artifact chalice_rocca
 
-- display name: Rocca's Chalice
+- display name: Rocca's Chalice (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\chalice_rocca.gs` line 1
@@ -23546,7 +23547,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `alchemy` | name | `get` |
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
@@ -23566,6 +23566,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `4` |
+| `spell_id` | expression | `spelldict /alchemy get` |
 | `start_combat_proc` | procedure | `<procedure 41 tokens>` |
 | `unmod_proc` | procedure | `<procedure 33 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -23581,7 +23582,7 @@ its shape and token count, never its body.
 
 ### artifact champion_stat_bonus
 
-- display name: Stat Bonus (Combat Only)
+- display name: Stat Bonus (Combat Only) (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\champion_stat_bonus.gs` line 1
@@ -23593,13 +23594,13 @@ its shape and token count, never its body.
 | `category` | number | `0` |
 | `description` | text | `Combat artifact, designed to improve prime stats based on difficulty level.` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `20` |
 | `name` | text | `Stat Bonus (Combat Only)` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -23609,7 +23610,7 @@ its shape and token count, never its body.
 
 ### artifact choice_artifact
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\choiceart.gs` line 1
@@ -23633,7 +23634,7 @@ its shape and token count, never its body.
 
 ### artifact cloak_flame
 
-- display name: Cloak of the Eternal Flame
+- display name: Cloak of the Eternal Flame (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\cloak_flame.gs` line 1
@@ -23653,7 +23654,6 @@ its shape and token count, never its body.
 | `end_combat_proc` | procedure | `<procedure 11 tokens>` |
 | `end_turn_proc` | procedure | `<procedure 40 tokens>` |
 | `faith` | name | `FIRE` |
-| `frenzy` | name | `get` |
 | `image` | number | `105` |
 | `max_charges` | number | `6` |
 | `max_mana` | number | `9` |
@@ -23662,6 +23662,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /frenzy get` |
 | `start_combat_proc` | procedure | `<procedure 58 tokens>` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -23677,7 +23678,7 @@ its shape and token count, never its body.
 
 ### artifact cloak_justice
 
-- display name: Cloak of Justice
+- display name: Cloak of Justice (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\cloak_justice.gs` line 1
@@ -23697,7 +23698,6 @@ its shape and token count, never its body.
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `37` |
-| `justice` | name | `get` |
 | `max_charges` | number | `1` |
 | `max_mana` | number | `0` |
 | `name` | text | `Cloak of Justice` |
@@ -23705,6 +23705,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /justice get` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -23720,7 +23721,7 @@ its shape and token count, never its body.
 
 ### artifact cloak_lich
 
-- display name: Cloak of the Lich
+- display name: Cloak of the Lich (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\cloak_lich.gs` line 1
@@ -23746,7 +23747,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
-| `recover_death` | name | `get` |
+| `spell_id` | expression | `spelldict /recover_death get` |
 | `start_combat_proc` | procedure | `<procedure 5 tokens>` |
 | `unmod_proc` | procedure | `<procedure 69 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -23765,7 +23766,7 @@ its shape and token count, never its body.
 
 ### artifact cloak_spirit
 
-- display name: Raimant of the Spirits
+- display name: Raimant of the Spirits (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\cloak_spirit.gs` line 1
@@ -23790,7 +23791,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
-| `recover_chaos` | name | `get` |
+| `spell_id` | expression | `spelldict /recover_chaos get` |
 | `unmod_proc` | procedure | `<procedure 34 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -23803,7 +23804,7 @@ its shape and token count, never its body.
 
 ### artifact cloak_wyrm
 
-- display name: Cloak of the Wyrm
+- display name: Cloak of the Wyrm (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\cloak_wyrm.gs` line 1
@@ -23811,7 +23812,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `aftershock` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
@@ -23829,6 +23829,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /aftershock get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -23847,7 +23848,7 @@ its shape and token count, never its body.
 
 ### artifact cloaktarn
 
-- display name: (none declared)
+- display name: Cloak of Tarnhelm (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\cloaktarn.gs` line 1
@@ -23855,15 +23856,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_cloaktarn` | name | `get` |
-| `T_artifact_name_cloaktarn` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
 | `defend_proc` | procedure | `<procedure 52 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_cloaktarn get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `15` |
 | `mod_proc` | procedure | `<procedure 26 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_cloaktarn get` |
 | `portrait_code` | text | `ornea4` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_LEFT` |
@@ -23872,7 +23873,7 @@ its shape and token count, never its body.
 
 ### artifact cloudstaff
 
-- display name: Cloudstaff
+- display name: Cloudstaff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\cloudstf.gs` line 1
@@ -23880,7 +23881,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `asphyxiate` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `1` |
@@ -23892,6 +23892,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 38 tokens>` |
 | `name` | text | `Cloudstaff` |
 | `portrait_code` | text | `aistaf` |
+| `spell_id` | expression | `spelldict /asphyxiate get` |
 | `unmod_proc` | procedure | `<procedure 38 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -23901,7 +23902,7 @@ its shape and token count, never its body.
 
 ### artifact cloudsteam_artifact
 
-- display name: Cloud Steam
+- display name: Cloud Steam (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\cloustart.gs` line 1
@@ -23925,7 +23926,7 @@ its shape and token count, never its body.
 
 ### artifact combat_attacking
 
-- display name: Combat Attacking
+- display name: Combat Attacking (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\combat_attacking.gs` line 1
@@ -23939,13 +23940,13 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
 | `description` | text | `Artifact, designed for on-attack effects..` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `20` |
 | `name` | text | `Combat Attacking` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -23955,7 +23956,7 @@ its shape and token count, never its body.
 
 ### artifact combat_defending
 
-- display name: Combat Defending
+- display name: Combat Defending (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\combat_defending.gs` line 1
@@ -23969,13 +23970,13 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
 | `description` | text | `Artifact, designed for on-defend effects..` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `20` |
 | `name` | text | `Combat Defending` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -23985,7 +23986,7 @@ its shape and token count, never its body.
 
 ### artifact coral_shield
 
-- display name: Coral Shield
+- display name: Coral Shield (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\corlshld.gs` line 1
@@ -24013,7 +24014,7 @@ its shape and token count, never its body.
 
 ### artifact crossbow_balance
 
-- display name: Legendary - Crossbow of Balance
+- display name: Legendary - Crossbow of Balance (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\crossbow_balance.gs` line 1
@@ -24025,7 +24026,6 @@ its shape and token count, never its body.
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
-| `bolt_order` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `description` | text | `Order and Fire Thieves may use this well-balanced Crossbow which provides +5 Ranged Attack, Missile Range, Rate of Fire ` |
@@ -24042,6 +24042,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /bolt_order get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24057,7 +24058,7 @@ its shape and token count, never its body.
 
 ### artifact crossbow_flamethrower
 
-- display name: Legendary - Flame Thrower
+- display name: Legendary - Flame Thrower (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\crossbow_flamethrower.gs` line 1
@@ -24077,7 +24078,6 @@ its shape and token count, never its body.
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `end_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `FIRE` |
-| `flame_arrows` | name | `get` |
 | `image` | number | `14` |
 | `max_charges` | number | `1` |
 | `max_mana` | number | `12` |
@@ -24086,6 +24086,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /flame_arrows get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24101,7 +24102,7 @@ its shape and token count, never its body.
 
 ### artifact crossbow_of_balance
 
-- display name: Greater Artifact - Crossbow of Balance
+- display name: Greater Artifact - Crossbow of Balance (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\crossbal.gs` line 1
@@ -24120,7 +24121,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 83 tokens>` |
 | `name` | text | `Greater Artifact - Crossbow of Balance` |
 | `portrait_code` | text | `orrngw` |
-| `ribolt` | name | `get` |
+| `spell_id` | expression | `spelldict /ribolt get` |
 | `unmod_proc` | procedure | `<procedure 83 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -24130,7 +24131,7 @@ its shape and token count, never its body.
 
 ### artifact crown_kings
 
-- display name: Crown of Kings
+- display name: Crown of Kings (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\crown_kings.gs` line 1
@@ -24141,7 +24142,6 @@ its shape and token count, never its body.
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
-| `blessed_armor` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
 | `colorizeborder?` | name | `false` |
@@ -24160,6 +24160,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /blessed_armor get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24174,7 +24175,7 @@ its shape and token count, never its body.
 
 ### artifact crown_noble
 
-- display name: Noble Crown
+- display name: Noble Crown (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\crown_noble.gs` line 1
@@ -24182,6 +24183,7 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
+| `alt_spell_id` | expression | `spelldict /protection get` |
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
@@ -24196,15 +24198,14 @@ its shape and token count, never its body.
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `225` |
-| `leadership` | name | `get` |
 | `max_charges` | number | `3` |
 | `max_mana` | number | `6` |
 | `name` | text | `Noble Crown` |
 | `portrait_code` | text | `D1_Crown` |
-| `protection` | name | `get` |
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /leadership get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24217,7 +24218,7 @@ its shape and token count, never its body.
 
 ### artifact crystal_ring
 
-- display name: Crystal Ring
+- display name: Crystal Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\crysring.gs` line 1
@@ -24246,7 +24247,7 @@ its shape and token count, never its body.
 
 ### artifact crystalmight
 
-- display name: Crystalmight
+- display name: Crystalmight (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\crysmigt.gs` line 1
@@ -24273,7 +24274,7 @@ its shape and token count, never its body.
 
 ### artifact dagger_aqua
 
-- display name: Aqua Dagger
+- display name: Aqua Dagger (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\dagger_aqua.gs` line 1
@@ -24291,7 +24292,6 @@ its shape and token count, never its body.
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `WATER` |
 | `image` | number | `3` |
-| `light_rain` | name | `get` |
 | `max_charges` | number | `6` |
 | `max_mana` | number | `6` |
 | `name` | text | `Aqua Dagger` |
@@ -24299,6 +24299,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /light_rain get` |
 | `unmod_proc` | procedure | `<procedure 33 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24314,7 +24315,7 @@ its shape and token count, never its body.
 
 ### artifact dagger_death
 
-- display name: Death Dagger
+- display name: Death Dagger (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\dagger_death.gs` line 1
@@ -24330,7 +24331,6 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `description` | text | `Any Thief may wield this dark dagger to receive +(1/3X) Attack and the ability to cast Detect Life.  However, Death Thie` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_death` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `DEATH` |
@@ -24342,6 +24342,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_death get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24355,7 +24356,7 @@ its shape and token count, never its body.
 
 ### artifact dagger_faerie
 
-- display name: Faerie Dagger
+- display name: Faerie Dagger (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\dagger_faerie.gs` line 1
@@ -24378,11 +24379,11 @@ its shape and token count, never its body.
 | `max_charges` | number | `3` |
 | `max_mana` | number | `0` |
 | `name` | text | `Faerie Dagger` |
-| `pixies` | name | `get` |
 | `portrait_code` | text | `aihthk` |
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /pixies get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24396,7 +24397,7 @@ its shape and token count, never its body.
 
 ### artifact dagger_flint
 
-- display name: Flint Dagger
+- display name: Flint Dagger (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\dagger_flint.gs` line 1
@@ -24413,7 +24414,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
 | `description` | text | `Any Thief may use this dagger to receive +(1/3X) Attack, +(1/3X) Strength and the ability to cast Detect Water.  Death T` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_fire` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `FIRE` |
@@ -24425,6 +24425,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_fire get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24438,7 +24439,7 @@ its shape and token count, never its body.
 
 ### artifact dagger_huntress
 
-- display name: Huntress Dagger
+- display name: Huntress Dagger (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\dagger_huntress.gs` line 1
@@ -24465,7 +24466,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
-| `roulette` | name | `get` |
+| `spell_id` | expression | `spelldict /roulette get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24479,7 +24480,7 @@ its shape and token count, never its body.
 
 ### artifact dagger_life_steal
 
-- display name: Legendary - Life Stealing Blade
+- display name: Legendary - Life Stealing Blade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\dagger_life_steal.gs` line 1
@@ -24507,6 +24508,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /visage_of_horror get` |
 | `start_combat_proc` | procedure | `<procedure 46 tokens>` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -24516,7 +24518,6 @@ its shape and token count, never its body.
 | `val_C` | procedure | `<procedure 18 tokens>` |
 | `val_D` | procedure | `<procedure 3 tokens>` |
 | `val_E` | procedure | `<procedure 17 tokens>` |
-| `visage_of_horror` | name | `get` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
 | `wield_champion_types` | procedure | `<procedure 3 tokens>` |
 | `wield_faiths` | procedure | `<procedure 9 tokens>` |
@@ -24524,7 +24525,7 @@ its shape and token count, never its body.
 
 ### artifact dagger_light
 
-- display name: Light Dagger
+- display name: Light Dagger (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\dagger_light.gs` line 1
@@ -24540,7 +24541,6 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `description` | text | `Any Thief may wield this light dagger to receive +(1/3X) Attack and +(1/5X) Rate of Attack;  additionally Death Thieves ` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_life` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `LIFE` |
@@ -24552,6 +24552,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_life get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24565,7 +24566,7 @@ its shape and token count, never its body.
 
 ### artifact dagger_rusted
 
-- display name: Rusted Dagger
+- display name: Rusted Dagger (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\dagger_rusted.gs` line 1
@@ -24591,7 +24592,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
-| `stone_hands` | name | `get` |
+| `spell_id` | expression | `spelldict /stone_hands get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24608,7 +24609,7 @@ its shape and token count, never its body.
 
 ### artifact dagger_silver
 
-- display name: Silver Dagger
+- display name: Silver Dagger (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\dagger_silver.gs` line 1
@@ -24636,7 +24637,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
-| `righteous_cause` | name | `get` |
+| `spell_id` | expression | `spelldict /righteous_cause get` |
 | `start_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `unmod_proc` | procedure | `<procedure 35 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -24656,7 +24657,7 @@ its shape and token count, never its body.
 
 ### artifact darkblade
 
-- display name: Darkblade
+- display name: Darkblade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\darkblad.gs` line 1
@@ -24667,7 +24668,6 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `1` |
-| `curse` | name | `get` |
 | `description` | text | `This sword grants Death, Order and Water warriors +1 Attack and +2 movement.` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `DEATH` |
@@ -24676,6 +24676,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 38 tokens>` |
 | `name` | text | `Darkblade` |
 | `portrait_code` | text | `dewwep` |
+| `spell_id` | expression | `spelldict /curse get` |
 | `unmod_proc` | procedure | `<procedure 19 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -24685,7 +24686,7 @@ its shape and token count, never its body.
 
 ### artifact death_dagger
 
-- display name: Death Dagger
+- display name: Death Dagger (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\deathdag.gs` line 1
@@ -24713,7 +24714,7 @@ its shape and token count, never its body.
 
 ### artifact dragart
 
-- display name: drag
+- display name: drag (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\dragart.gs` line 1
@@ -24738,7 +24739,7 @@ its shape and token count, never its body.
 
 ### artifact dragon_scale
 
-- display name: Dragonscale Armor
+- display name: Dragonscale Armor (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\dragscal.gs` line 1
@@ -24767,7 +24768,7 @@ its shape and token count, never its body.
 
 ### artifact dragonban
 
-- display name: (none declared)
+- display name: Dragon Banner (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\dragonban.gs` line 1
@@ -24775,19 +24776,19 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_dragonban` | name | `get` |
-| `T_artifact_name_dragonban` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_dragonban get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `9` |
-| `leader` | name | `get` |
 | `max_charges` | number | `3` |
 | `mod_proc` | procedure | `<procedure 26 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_dragonban get` |
 | `override_flag` | expression | `iface/ordragb.imp flagimp impplayer` |
 | `portrait_code` | text | `ornea6` |
+| `spell_id` | expression | `spelldict /leader get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
 | `wield_champion_types` | procedure | `<procedure 4 tokens>` |
@@ -24795,7 +24796,7 @@ its shape and token count, never its body.
 
 ### artifact dreamscrl
 
-- display name: (none declared)
+- display name: The Marvellous Vision (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\dreamscrl.gs` line 1
@@ -24803,14 +24804,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_dreamscrl` | name | `get` |
-| `T_artifact_name_dreamscrl` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_dreamscrl get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `11` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_dreamscrl get` |
 | `portrait_code` | text | `orscro` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -24819,7 +24820,7 @@ its shape and token count, never its body.
 
 ### artifact dummy0_artifact
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\dummy_artifact.gs` line 1
@@ -24827,7 +24828,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `bolt_death` | name | `get` |
 | `can_be_used` | name | `false` |
 | `category` | number | `0` |
 | `description` | text | `Just an artifact that does nothing.` |
@@ -24840,6 +24840,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Dummy Artifact` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /bolt_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -24848,7 +24849,7 @@ its shape and token count, never its body.
 
 ### artifact dummy1_artifact
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\dummy_artifact.gs` line 1
@@ -24856,7 +24857,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `bolt_death` | name | `get` |
 | `can_be_used` | name | `false` |
 | `category` | number | `0` |
 | `description` | text | `Just an artifact that does nothing.` |
@@ -24869,6 +24869,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Dummy Artifact` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /bolt_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -24877,7 +24878,7 @@ its shape and token count, never its body.
 
 ### artifact dummy2_artifact
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\dummy_artifact.gs` line 1
@@ -24885,7 +24886,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `bolt_death` | name | `get` |
 | `can_be_used` | name | `false` |
 | `category` | number | `0` |
 | `description` | text | `Just an artifact that does nothing.` |
@@ -24898,6 +24898,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Dummy Artifact` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /bolt_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -24906,7 +24907,7 @@ its shape and token count, never its body.
 
 ### artifact dummy3_artifact
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\dummy_artifact.gs` line 1
@@ -24914,7 +24915,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `bolt_death` | name | `get` |
 | `can_be_used` | name | `false` |
 | `category` | number | `0` |
 | `description` | text | `Just an artifact that does nothing.` |
@@ -24927,6 +24927,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Dummy Artifact` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /bolt_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -24935,7 +24936,7 @@ its shape and token count, never its body.
 
 ### artifact dummy4_artifact
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\dummy_artifact.gs` line 1
@@ -24943,7 +24944,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `bolt_death` | name | `get` |
 | `can_be_used` | name | `false` |
 | `category` | number | `0` |
 | `description` | text | `Just an artifact that does nothing.` |
@@ -24956,6 +24956,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Dummy Artifact` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /bolt_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -24964,7 +24965,7 @@ its shape and token count, never its body.
 
 ### artifact dummy5_artifact
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\dummy_artifact.gs` line 1
@@ -24972,7 +24973,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `bolt_death` | name | `get` |
 | `can_be_used` | name | `false` |
 | `category` | number | `0` |
 | `description` | text | `Just an artifact that does nothing.` |
@@ -24985,6 +24985,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Dummy Artifact` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /bolt_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -24993,7 +24994,7 @@ its shape and token count, never its body.
 
 ### artifact dummy6_artifact
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\dummy_artifact.gs` line 1
@@ -25001,7 +25002,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `bolt_death` | name | `get` |
 | `can_be_used` | name | `false` |
 | `category` | number | `0` |
 | `description` | text | `Just an artifact that does nothing.` |
@@ -25014,6 +25014,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Dummy Artifact` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /bolt_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -25022,7 +25023,7 @@ its shape and token count, never its body.
 
 ### artifact dummy7_artifact
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\dummy_artifact.gs` line 1
@@ -25030,7 +25031,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `bolt_death` | name | `get` |
 | `can_be_used` | name | `false` |
 | `category` | number | `0` |
 | `description` | text | `Just an artifact that does nothing.` |
@@ -25043,6 +25043,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Dummy Artifact` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /bolt_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -25051,7 +25052,7 @@ its shape and token count, never its body.
 
 ### artifact dwarvenplate
 
-- display name: +1 Dwarven Plate Mail
+- display name: +1 Dwarven Plate Mail (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\dwarvenpl.gs` line 1
@@ -25075,7 +25076,7 @@ its shape and token count, never its body.
 
 ### artifact ebelsletter
 
-- display name: (none declared)
+- display name: Sir Ebel's Letter (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\ebelsletter.gs` line 1
@@ -25083,15 +25084,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_ebelsletter` | name | `get` |
-| `T_artifact_name_ebelsletter` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_ebelsletter get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `11` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_ebelsletter get` |
 | `portrait_code` | text | `orscro` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
 | `wield_champion_types` | procedure | `<procedure 5 tokens>` |
@@ -25099,7 +25100,7 @@ its shape and token count, never its body.
 
 ### artifact ebony_plate
 
-- display name: Ebony Plate of the Void
+- display name: Ebony Plate of the Void (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ebonplat.gs` line 1
@@ -25128,7 +25129,7 @@ its shape and token count, never its body.
 
 ### artifact elven_chain
 
-- display name: Elven Chain Mail
+- display name: Elven Chain Mail (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\elvnchai.gs` line 1
@@ -25156,7 +25157,7 @@ its shape and token count, never its body.
 
 ### artifact eternal_flame
 
-- display name: Eternal Flame
+- display name: Eternal Flame (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\eterflam.gs` line 1
@@ -25187,7 +25188,7 @@ its shape and token count, never its body.
 
 ### artifact excalibr
 
-- display name: (none declared)
+- display name: Excalibur and Scabbard (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\excalibr.gs` line 1
@@ -25195,18 +25196,18 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_excalibr` | name | `get` |
-| `T_artifact_name_excalibr` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 27 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_excalibr get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 19 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `16` |
 | `mod_proc` | procedure | `<procedure 14 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_excalibr get` |
 | `portrait_code` | text | `ornea5` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
@@ -25216,7 +25217,7 @@ its shape and token count, never its body.
 
 ### artifact eyes_of_the_hawk
 
-- display name: Eyes of the Hawk
+- display name: Eyes of the Hawk (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\eyeshawk.gs` line 1
@@ -25224,7 +25225,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `air_seer` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
@@ -25236,6 +25236,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 58 tokens>` |
 | `name` | text | `Eyes of the Hawk` |
 | `portrait_code` | text | `aiamul` |
+| `spell_id` | expression | `spelldict /air_seer get` |
 | `unmod_proc` | procedure | `<procedure 58 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -25245,7 +25246,7 @@ its shape and token count, never its body.
 
 ### artifact faerie_ring
 
-- display name: Faerie Ring
+- display name: Faerie Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\faerring.gs` line 1
@@ -25259,12 +25260,12 @@ its shape and token count, never its body.
 | `description` | text | `Any Champion thief in Urak gains +1 Armor and +1 to ranged attacks.` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `AIR` |
-| `heal` | name | `get` |
 | `image` | number | `1` |
 | `max_mana` | number | `0` |
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Faerie Ring` |
 | `portrait_code` | text | `airing` |
+| `spell_id` | expression | `spelldict /heal get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -25274,7 +25275,7 @@ its shape and token count, never its body.
 
 ### artifact feather_chain
 
-- display name: Feather Chain Mail
+- display name: Feather Chain Mail (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\feachain.gs` line 1
@@ -25298,7 +25299,7 @@ its shape and token count, never its body.
 
 ### artifact flameshaft
 
-- display name: Flameshaft
+- display name: Flameshaft (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\flameshf.gs` line 1
@@ -25306,7 +25307,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `asphyxiate` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `1` |
@@ -25318,6 +25318,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 47 tokens>` |
 | `name` | text | `Flameshaft` |
 | `portrait_code` | text | `fistaf` |
+| `spell_id` | expression | `spelldict /asphyxiate get` |
 | `unmod_proc` | procedure | `<procedure 28 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -25327,7 +25328,7 @@ its shape and token count, never its body.
 
 ### artifact flint_ring
 
-- display name: Flint Ring
+- display name: Flint Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\flintrng.gs` line 1
@@ -25341,12 +25342,12 @@ its shape and token count, never its body.
 | `description` | text | `Any thief in Urak will gain +1 Armor and +3 rate of fire while wearing this ring.` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `FIRE` |
-| `fireball` | name | `get` |
 | `image` | number | `1` |
 | `max_mana` | number | `0` |
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Flint Ring` |
 | `portrait_code` | text | `firing` |
+| `spell_id` | expression | `spelldict /fireball get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -25356,7 +25357,7 @@ its shape and token count, never its body.
 
 ### artifact gaidonart
 
-- display name: Gaidon
+- display name: Gaidon (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\gaidonart.gs` line 1
@@ -25381,7 +25382,7 @@ its shape and token count, never its body.
 
 ### artifact game_token1
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\tokens\game_token1.gs` line 1
@@ -25405,7 +25406,7 @@ its shape and token count, never its body.
 
 ### artifact game_token2
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\tokens\game_token2.gs` line 1
@@ -25429,7 +25430,7 @@ its shape and token count, never its body.
 
 ### artifact game_token3
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\tokens\game_token3.gs` line 1
@@ -25453,7 +25454,7 @@ its shape and token count, never its body.
 
 ### artifact game_token4
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\tokens\game_token4.gs` line 1
@@ -25477,7 +25478,7 @@ its shape and token count, never its body.
 
 ### artifact game_token5
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\tokens\game_token5.gs` line 1
@@ -25501,7 +25502,7 @@ its shape and token count, never its body.
 
 ### artifact game_token6
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\tokens\game_token6.gs` line 1
@@ -25525,7 +25526,7 @@ its shape and token count, never its body.
 
 ### artifact game_token7
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\tokens\game_token7.gs` line 1
@@ -25549,7 +25550,7 @@ its shape and token count, never its body.
 
 ### artifact game_token8
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\tokens\game_token8.gs` line 1
@@ -25573,7 +25574,7 @@ its shape and token count, never its body.
 
 ### artifact game_token9
 
-- display name: Dummy Artifact
+- display name: Dummy Artifact (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\tokens\game_token9.gs` line 1
@@ -25597,7 +25598,7 @@ its shape and token count, never its body.
 
 ### artifact gateway_artifact
 
-- display name: Gateway
+- display name: Gateway (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\gateway.gs` line 1
@@ -25621,7 +25622,7 @@ its shape and token count, never its body.
 
 ### artifact gateway_map
 
-- display name: Gateway Map
+- display name: Gateway Map (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\gatemap.gs` line 1
@@ -25643,7 +25644,7 @@ its shape and token count, never its body.
 
 ### artifact generic_artifact
 
-- display name: Amulet of Genric
+- display name: Amulet of Genric (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\generic.gs` line 1
@@ -25668,7 +25669,7 @@ its shape and token count, never its body.
 
 ### artifact generic_stat_bonus
 
-- display name: Stat Bonus (Combat Only)
+- display name: Stat Bonus (Combat Only) (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\generic_stat_bonus.gs` line 1
@@ -25680,13 +25681,13 @@ its shape and token count, never its body.
 | `category` | number | `0` |
 | `description` | text | `Combat artifact, designed to improve prime stats based on difficulty level.` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `20` |
 | `name` | text | `Stat Bonus (Combat Only)` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -25696,7 +25697,7 @@ its shape and token count, never its body.
 
 ### artifact giantkirtle
 
-- display name: (none declared)
+- display name: Giant's Kirtle (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\giantkirtle.gs` line 1
@@ -25704,15 +25705,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_giantkirtle` | name | `get` |
-| `T_artifact_name_giantkirtle` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_giantkirtle get` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `8` |
 | `mod_proc` | procedure | `<procedure 39 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_giantkirtle get` |
 | `portrait_code` | text | `dearm1` |
 | `unmod_proc` | procedure | `<procedure 8 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_LEFT` |
@@ -25721,7 +25722,7 @@ its shape and token count, never its body.
 
 ### artifact gilbertclo
 
-- display name: (none declared)
+- display name: Cloth and Sword of Gilbert the Bastard (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\gilbertclo.gs` line 1
@@ -25729,15 +25730,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_gilbertclo` | name | `get` |
-| `T_artifact_name_gilbertclo` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_gilbertclo get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `dummy` | expression | `5 dict replace bind` |
 | `faith` | name | `ORDER` |
 | `image` | number | `10` |
 | `mod_proc` | procedure | `<procedure 14 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_gilbertclo get` |
 | `portrait_code` | text | `ornea7` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -25746,7 +25747,7 @@ its shape and token count, never its body.
 
 ### artifact gloves_quickness
 
-- display name: Gloves of Quickness
+- display name: Gloves of Quickness (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\gloves_quickness.gs` line 1
@@ -25754,6 +25755,7 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
+| `alt_spell_id` | expression | `spelldict /swiftness get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `4` |
@@ -25769,11 +25771,10 @@ its shape and token count, never its body.
 | `max_mana` | number | `6` |
 | `name` | text | `Gloves of Quickness` |
 | `portrait_code` | text | `WC3_glove` |
-| `quick_silver` | name | `get` |
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
-| `swiftness` | name | `get` |
+| `spell_id` | expression | `spelldict /quick_silver get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -25787,7 +25788,7 @@ its shape and token count, never its body.
 
 ### artifact goldenrod
 
-- display name: Goldenrod
+- display name: Goldenrod (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\goldenrd.gs` line 1
@@ -25795,7 +25796,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `asphyxiate` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `1` |
@@ -25807,6 +25807,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 60 tokens>` |
 | `name` | text | `Goldenrod` |
 | `portrait_code` | text | `eastaf` |
+| `spell_id` | expression | `spelldict /asphyxiate get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -25816,7 +25817,7 @@ its shape and token count, never its body.
 
 ### artifact gonring
 
-- display name: (none declared)
+- display name: Gontherine's Ring (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\gonring.gs` line 1
@@ -25824,18 +25825,18 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_gonring` | name | `get` |
-| `T_artifact_name_gonring` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
+| `description` | expression | `textdict /T_artifact_descript_gonring get` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
-| `eameld` | name | `get` |
 | `faith` | name | `EARTH` |
 | `image` | number | `1` |
 | `max_mana` | number | `10` |
 | `mod_proc` | procedure | `<procedure 138 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_gonring get` |
 | `portrait_code` | text | `earing` |
+| `spell_id` | expression | `spelldict /eameld get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -25844,7 +25845,7 @@ its shape and token count, never its body.
 
 ### artifact gorgon_staff
 
-- display name: Greater Artifact - Gorgon's Staff
+- display name: Greater Artifact - Gorgon's Staff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\gorgstaf.gs` line 1
@@ -25863,8 +25864,8 @@ its shape and token count, never its body.
 | `max_mana` | number | `7` |
 | `mod_proc` | procedure | `<procedure 71 tokens>` |
 | `name` | text | `Greater Artifact - Gorgon's Staff` |
-| `petrify` | name | `get` |
 | `portrait_code` | text | `eastaf` |
+| `spell_id` | expression | `spelldict /petrify get` |
 | `unmod_proc` | procedure | `<procedure 71 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -25874,7 +25875,7 @@ its shape and token count, never its body.
 
 ### artifact grail2
 
-- display name: (none declared)
+- display name: The Holy Grail (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\grail2.gs` line 1
@@ -25882,19 +25883,19 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_grail2` | name | `get` |
-| `T_artifact_name_grail2` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_grail2 get` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `end_combat_proc` | procedure | `<procedure 35 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `18` |
 | `max_mana` | number | `16` |
 | `mod_proc` | procedure | `<procedure 27 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_grail2 get` |
 | `portrait_code` | text | `ornea10` |
-| `survey2` | name | `get` |
+| `spell_id` | expression | `spelldict /survey2 get` |
 | `unmod_proc` | procedure | `<procedure 8 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -25903,7 +25904,7 @@ its shape and token count, never its body.
 
 ### artifact grailshield
 
-- display name: (none declared)
+- display name: Adventurous Shield (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\grailshield.gs` line 1
@@ -25911,15 +25912,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_grailshield` | name | `get` |
-| `T_artifact_name_grailshield` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 25 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_grailshield get` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `7` |
 | `mod_proc` | procedure | `<procedure 169 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_grailshield get` |
 | `portrait_code` | text | `orarmr` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_LEFT` |
@@ -25928,7 +25929,7 @@ its shape and token count, never its body.
 
 ### artifact grailsword
 
-- display name: (none declared)
+- display name: Trebuchet's Broken Sword (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\grailsword.gs` line 1
@@ -25936,15 +25937,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_grailsword` | name | `get` |
-| `T_artifact_name_grailsword` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_grailsword get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `end_combat_proc` | procedure | `<procedure 23 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `3` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_grailsword get` |
 | `portrait_code` | text | `orwwep` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -25953,7 +25954,7 @@ its shape and token count, never its body.
 
 ### artifact great_axe
 
-- display name: Great Axe
+- display name: Great Axe (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\greataxe.gs` line 1
@@ -25972,7 +25973,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Great Axe` |
 | `portrait_code` | text | `chwwep` |
-| `tremor` | name | `get` |
+| `spell_id` | expression | `spelldict /tremor get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -25982,7 +25983,7 @@ its shape and token count, never its body.
 
 ### artifact greenscrf
 
-- display name: (none declared)
+- display name: Green Samite Scarf of Invulnerability (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\greenscrf.gs` line 1
@@ -25990,14 +25991,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_greenscrf` | name | `get` |
-| `T_artifact_name_greenscrf` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_greenscrf get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `17` |
 | `mod_proc` | procedure | `<procedure 27 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_greenscrf get` |
 | `portrait_code` | text | `ornea9` |
 | `unmod_proc` | procedure | `<procedure 12 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -26006,7 +26007,7 @@ its shape and token count, never its body.
 
 ### artifact guardian
 
-- display name: Greater Artifact - Guardian
+- display name: Greater Artifact - Guardian (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\guardian.gs` line 1
@@ -26024,9 +26025,9 @@ its shape and token count, never its body.
 | `image` | number | `5` |
 | `max_mana` | number | `1000` |
 | `mod_proc` | procedure | `<procedure 66 tokens>` |
-| `morale` | name | `get` |
 | `name` | text | `Greater Artifact - Guardian` |
 | `portrait_code` | text | `orwwep` |
+| `spell_id` | expression | `spelldict /morale get` |
 | `start_combat_proc` | procedure | `<procedure 33 tokens>` |
 | `unmod_proc` | procedure | `<procedure 55 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -26037,7 +26038,7 @@ its shape and token count, never its body.
 
 ### artifact healthbringer
 
-- display name: Healthbringer
+- display name: Healthbringer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\healbrin.gs` line 1
@@ -26056,7 +26057,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Healthbringer` |
 | `portrait_code` | text | `listaf` |
-| `rayohope` | name | `get` |
+| `spell_id` | expression | `spelldict /rayohope get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -26066,7 +26067,7 @@ its shape and token count, never its body.
 
 ### artifact helm_of_assymmetry
 
-- display name: Helm Of Asymmetry
+- display name: Helm Of Asymmetry (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\helmassy.gs` line 1
@@ -26085,7 +26086,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 145 tokens>` |
 | `name` | text | `Helm Of Asymmetry` |
 | `portrait_code` | text | `charm` |
-| `turnstone` | name | `get` |
+| `spell_id` | expression | `spelldict /turnstone get` |
 | `unmod_proc` | procedure | `<procedure 145 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -26095,7 +26096,7 @@ its shape and token count, never its body.
 
 ### artifact helmet_stone
 
-- display name: Helmet of Stone
+- display name: Helmet of Stone (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\helmet_stone.gs` line 1
@@ -26120,10 +26121,10 @@ its shape and token count, never its body.
 | `max_mana` | number | `0` |
 | `name` | text | `Helmet of Stone` |
 | `portrait_code` | text | `DARKGREEN_CH_HELM` |
-| `rangers_vision` | name | `get` |
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /rangers_vision get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -26140,7 +26141,7 @@ its shape and token count, never its body.
 
 ### artifact helmet_warlord
 
-- display name: Warlord's Helmet
+- display name: Warlord's Helmet (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\helmet_warlord.gs` line 1
@@ -26157,7 +26158,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 186 tokens>` |
 | `description` | text | `A helmet crafted for only the strongest of warriors; Chaos, Air or Earth Warriors may receive +5 Luck, +1000 experience,` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_chaos` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
 | `faith` | name | `CHAOS` |
@@ -26169,6 +26169,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_chaos get` |
 | `start_combat_proc` | procedure | `<procedure 26 tokens>` |
 | `unmod_proc` | procedure | `<procedure 33 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -26186,7 +26187,7 @@ its shape and token count, never its body.
 
 ### artifact helyesbk
 
-- display name: (none declared)
+- display name: Helyes Mystical Book (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\helyesbk.gs` line 1
@@ -26194,26 +26195,26 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_helyesbk` | name | `get` |
-| `T_artifact_name_helyesbk` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_helyesbk get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `11` |
 | `max_charges` | number | `1` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_helyesbk get` |
 | `portrait_code` | text | `orscro` |
-| `spirit` | name | `get` |
+| `spell_id` | expression | `spelldict /spirit get` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
 | `wield_champion_types` | procedure | `<procedure 4 tokens>` |
 | `wield_faiths` | procedure | `<procedure 10 tokens>` |
 
 ### artifact herladysbld
 
-- display name: (none declared)
+- display name: Sir Hewlewes' Lady's Blood (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\herladysbld.gs` line 1
@@ -26221,14 +26222,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_herladysbld` | name | `get` |
-| `T_artifact_name_herladysbld` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_herladysbld get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `8` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_herladysbld get` |
 | `portrait_code` | text | `eapot1` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -26237,7 +26238,7 @@ its shape and token count, never its body.
 
 ### artifact holygrail
 
-- display name: (none declared)
+- display name: Covered Grail (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\holygrail.gs` line 1
@@ -26245,14 +26246,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_holygrail` | name | `get` |
-| `T_artifact_name_holygrail` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_holygrail get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `13` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_holygrail get` |
 | `portrait_code` | text | `ornea2` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -26261,7 +26262,7 @@ its shape and token count, never its body.
 
 ### artifact hrunting
 
-- display name: (none declared)
+- display name: Hrunting (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\hrunting.gs` line 1
@@ -26269,15 +26270,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_hrunting` | name | `get` |
-| `T_artifact_name_hrunting` | name | `get` |
 | `attack_proc` | procedure | `<procedure 21 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
+| `description` | expression | `textdict /T_artifact_descript_hrunting get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `12` |
 | `mod_proc` | procedure | `<procedure 14 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_hrunting get` |
 | `portrait_code` | text | `eanea1` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -26286,7 +26287,7 @@ its shape and token count, never its body.
 
 ### artifact ice_sword
 
-- display name: Ice Sword
+- display name: Ice Sword (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\icesword.gs` line 1
@@ -26300,12 +26301,12 @@ its shape and token count, never its body.
 | `description` | text | `This cold crystalline blade may be wielded by Water, Order and Death warriors, who acquire +1 Attack, +1 Fame per turn, ` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `AIR` |
-| `icebolt` | name | `get` |
 | `image` | number | `5` |
 | `max_mana` | number | `0` |
 | `mod_proc` | procedure | `<procedure 53 tokens>` |
 | `name` | text | `Ice Sword` |
 | `portrait_code` | text | `wawwep` |
+| `spell_id` | expression | `spelldict /icebolt get` |
 | `unmod_proc` | procedure | `<procedure 53 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -26315,7 +26316,7 @@ its shape and token count, never its body.
 
 ### artifact interpscrol
 
-- display name: (none declared)
+- display name: What the vision betokeneth (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\interpscrol.gs` line 1
@@ -26323,14 +26324,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_interpscrol` | name | `get` |
-| `T_artifact_name_interpscrol` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_interpscrol get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `11` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_interpscrol get` |
 | `portrait_code` | text | `orscro` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -26339,7 +26340,7 @@ its shape and token count, never its body.
 
 ### artifact ival_axe
 
-- display name: (none declared)
+- display name: Ivald's Axe (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\ivaldaxe.gs` line 1
@@ -26347,15 +26348,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_ivaldaxe` | name | `get` |
-| `T_artifact_name_ivaldaxe` | name | `get` |
 | `attack_proc` | procedure | `<procedure 36 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
+| `description` | expression | `textdict /T_artifact_descript_ivaldaxe get` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `5` |
 | `mod_proc` | procedure | `<procedure 26 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_ivaldaxe get` |
 | `portrait_code` | text | `eawwep` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -26364,7 +26365,7 @@ its shape and token count, never its body.
 
 ### artifact kapelke_ring
 
-- display name: Kapelke's Ring
+- display name: Kapelke's Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\kapelke.gs` line 1
@@ -26379,12 +26380,12 @@ its shape and token count, never its body.
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `end_combat_proc` | procedure | `<procedure 13 tokens>` |
 | `faith` | name | `AIR` |
-| `heal` | name | `get` |
 | `image` | number | `1` |
 | `max_mana` | number | `7` |
 | `mod_proc` | procedure | `<procedure 26 tokens>` |
 | `name` | text | `Kapelke's Ring` |
 | `portrait_code` | text | `airing` |
+| `spell_id` | expression | `spelldict /heal get` |
 | `unmod_proc` | procedure | `<procedure 19 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -26394,7 +26395,7 @@ its shape and token count, never its body.
 
 ### artifact kbcrown
 
-- display name: (none declared)
+- display name: Ban's Crown of Earth Resistance (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\kbcrown.gs` line 1
@@ -26402,15 +26403,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_kbcrown` | name | `get` |
-| `T_artifact_name_kbcrown` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 18 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_kbcrown get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `20` |
 | `mod_proc` | procedure | `<procedure 14 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_kbcrown get` |
 | `portrait_code` | text | `ornea12` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_LEFT` |
@@ -26419,7 +26420,7 @@ its shape and token count, never its body.
 
 ### artifact kdavidswrd
 
-- display name: (none declared)
+- display name: Scabbard and Sword of King David (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\kdavidswrd.gs` line 1
@@ -26427,14 +26428,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_kdavidswrd` | name | `get` |
-| `T_artifact_name_kdavidswrd` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_kdavidswrd get` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `5` |
 | `mod_proc` | procedure | `<procedure 59 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_kdavidswrd get` |
 | `portrait_code` | text | `orwwep` |
 | `unmod_proc` | procedure | `<procedure 16 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -26443,7 +26444,7 @@ its shape and token count, never its body.
 
 ### artifact kingryonswd
 
-- display name: (none declared)
+- display name: King Ryons' Sword (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\kingryonswd.gs` line 1
@@ -26451,15 +26452,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_kingryonswd` | name | `get` |
-| `T_artifact_name_kingryonswd` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_kingryonswd get` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `5` |
 | `mod_proc` | procedure | `<procedure 43 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_kingryonswd get` |
 | `portrait_code` | text | `orwwep` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -26468,7 +26469,7 @@ its shape and token count, never its body.
 
 ### artifact kings_writ
 
-- display name: Writ from the king
+- display name: Writ from the king (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\kingwrit.gs` line 1
@@ -26490,7 +26491,7 @@ its shape and token count, never its body.
 
 ### artifact knife_of_lifestealing
 
-- display name: Greater Artifact - Life Stealing Blade
+- display name: Greater Artifact - Life Stealing Blade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\knifelif.gs` line 1
@@ -26519,7 +26520,7 @@ its shape and token count, never its body.
 
 ### artifact lancring
 
-- display name: (none declared)
+- display name: Lancelot's Ring (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\lancring.gs` line 1
@@ -26527,15 +26528,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_lancring` | name | `get` |
-| `T_artifact_name_lancring` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_lancring get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `1` |
 | `mod_proc` | procedure | `<procedure 115 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_lancring get` |
 | `portrait_code` | text | `orring` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -26544,7 +26545,7 @@ its shape and token count, never its body.
 
 ### artifact lcharge_artifact
 
-- display name: lchargeart
+- display name: lchargeart (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\lchargeart.gs` line 1
@@ -26574,7 +26575,7 @@ its shape and token count, never its body.
 
 ### artifact lich_cloak
 
-- display name: Cloak of the Vampire
+- display name: Cloak of the Vampire (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\lichcloa.gs` line 1
@@ -26599,7 +26600,7 @@ its shape and token count, never its body.
 
 ### artifact lich_scepter
 
-- display name: (none declared)
+- display name: Sceptre of the Lich (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\sceptlich.gs` line 1
@@ -26607,7 +26608,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_sceptlich_name` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
 | `description` | text | `This sceptre is a symbol of all that is evil` |
@@ -26615,6 +26615,7 @@ its shape and token count, never its body.
 | `faith` | name | `DEATH` |
 | `image` | number | `12` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_sceptlich_name get` |
 | `portrait_code` | text | `denea1` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
 | `wield_champion_types` | procedure | `<procedure 3 tokens>` |
@@ -26622,7 +26623,7 @@ its shape and token count, never its body.
 
 ### artifact lionbelt
 
-- display name: (none declared)
+- display name: Amien's Belt (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\lionbelt.gs` line 1
@@ -26630,14 +26631,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_lionbelt` | name | `get` |
-| `T_artifact_name_lionbelt` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 28 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_lionbelt get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `8` |
+| `name` | expression | `textdict /T_artifact_name_lionbelt get` |
 | `portrait_code` | text | `orarm1` |
 | `wield` | name | `ARTIFACT_WIELD_LEFT` |
 | `wield_champion_types` | procedure | `<procedure 5 tokens>` |
@@ -26645,7 +26646,7 @@ its shape and token count, never its body.
 
 ### artifact longsper
 
-- display name: (none declared)
+- display name: Spear of Vengeance (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\longsper.gs` line 1
@@ -26653,14 +26654,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_longsper` | name | `get` |
-| `T_artifact_name_longsper` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_longsper get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `19` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_longsper get` |
 | `portrait_code` | text | `ornea11` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -26669,7 +26670,7 @@ its shape and token count, never its body.
 
 ### artifact lovepot
 
-- display name: (none declared)
+- display name: Love Potion (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\lovepot.gs` line 1
@@ -26677,14 +26678,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_lovepot` | name | `get` |
-| `T_artifact_name_lovepot` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_lovepot get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `AIR` |
 | `image` | number | `8` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_lovepot get` |
 | `portrait_code` | text | `aipot1` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -26693,7 +26694,7 @@ its shape and token count, never its body.
 
 ### artifact luckstone
 
-- display name: Luckstone
+- display name: Luckstone (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\luckston.gs` line 1
@@ -26722,7 +26723,7 @@ its shape and token count, never its body.
 
 ### artifact lyonsrng
 
-- display name: (none declared)
+- display name: Lyonors' Ring (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\lyonsrng.gs` line 1
@@ -26730,14 +26731,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_lyonsrng` | name | `get` |
-| `T_artifact_name_lyonsrng` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_lyonsrng get` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `1` |
 | `mod_proc` | procedure | `<procedure 27 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_lyonsrng get` |
 | `portrait_code` | text | `orring` |
 | `unmod_proc` | procedure | `<procedure 8 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -26746,7 +26747,7 @@ its shape and token count, never its body.
 
 ### artifact marrock
 
-- display name: (none declared)
+- display name: Ranger's Clothing (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\marrock.gs` line 1
@@ -26754,13 +26755,13 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_marrock` | name | `get` |
-| `T_artifact_name_marrock` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_marrock get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `10` |
+| `name` | expression | `textdict /T_artifact_name_marrock get` |
 | `portrait_code` | text | `ornea9` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
 | `wield_champion_types` | procedure | `<procedure 2 tokens>` |
@@ -26768,7 +26769,7 @@ its shape and token count, never its body.
 
 ### artifact message_artifact
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\messart.gs` line 1
@@ -26791,7 +26792,7 @@ its shape and token count, never its body.
 
 ### artifact military_stat_bonus
 
-- display name: Military Stat Bonus
+- display name: Military Stat Bonus (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\military_stat_bonus.gs` line 1
@@ -26803,13 +26804,13 @@ its shape and token count, never its body.
 | `category` | number | `0` |
 | `description` | text | `Artifact, designed to improve combat stats for (non-champion) military units based on difficulty level.` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `20` |
 | `name` | text | `Military Stat Bonus` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -26819,7 +26820,7 @@ its shape and token count, never its body.
 
 ### artifact morgmant
 
-- display name: (none declared)
+- display name: Morgan's Mantle (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\morgmant.gs` line 1
@@ -26827,15 +26828,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_morgmant` | name | `get` |
-| `T_artifact_name_morgmant` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 27 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_morgmant get` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `8` |
 | `mod_proc` | procedure | `<procedure 27 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_morgmant get` |
 | `portrait_code` | text | `dearm1` |
 | `unmod_proc` | procedure | `<procedure 30 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -26844,7 +26845,7 @@ its shape and token count, never its body.
 
 ### artifact nagling
 
-- display name: (none declared)
+- display name: Nagling (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\nagling.gs` line 1
@@ -26852,15 +26853,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_nagling` | name | `get` |
-| `T_artifact_name_nagling` | name | `get` |
 | `attack_proc` | procedure | `<procedure 36 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
+| `description` | expression | `textdict /T_artifact_descript_nagling get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `13` |
 | `mod_proc` | procedure | `<procedure 14 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_nagling get` |
 | `portrait_code` | text | `eanea2` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -26869,7 +26870,7 @@ its shape and token count, never its body.
 
 ### artifact nothung
 
-- display name: (none declared)
+- display name: The Nothung Sword (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\nothung.gs` line 1
@@ -26877,16 +26878,16 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_nothung` | name | `get` |
-| `T_artifact_name_nothung` | name | `get` |
 | `attack_proc` | procedure | `<procedure 104 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
+| `description` | expression | `textdict /T_artifact_descript_nothung get` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `dummy` | expression | `5 dict replace bind` |
 | `faith` | name | `ORDER` |
 | `image` | number | `14` |
 | `mod_proc` | procedure | `<procedure 38 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_nothung get` |
 | `portrait_code` | text | `ornea3` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -26895,7 +26896,7 @@ its shape and token count, never its body.
 
 ### artifact obsidian_plate
 
-- display name: Obsidian Plate
+- display name: Obsidian Plate (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\obsplate.gs` line 1
@@ -26926,7 +26927,7 @@ its shape and token count, never its body.
 
 ### artifact orb_wind
 
-- display name: Orb of Wind
+- display name: Orb of Wind (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\orb_wind.gs` line 1
@@ -26941,7 +26942,6 @@ its shape and token count, never its body.
 | `category` | number | `5` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
-| `enchant_weapon_air` | name | `get` |
 | `faith` | name | `AIR` |
 | `image` | number | `2` |
 | `max_charges` | number | `3` |
@@ -26951,6 +26951,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /enchant_weapon_air get` |
 | `unmod_proc` | procedure | `<procedure 25 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -26961,7 +26962,7 @@ its shape and token count, never its body.
 
 ### artifact orfiresword
 
-- display name: (none declared)
+- display name: Giant Sword (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\orfiresword.gs` line 1
@@ -26969,14 +26970,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_orfiresword` | name | `get` |
-| `T_artifact_name_orfiresword` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_orfiresword get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `FIRE` |
 | `image` | number | `5` |
 | `mod_proc` | procedure | `<procedure 14 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_orfiresword get` |
 | `portrait_code` | text | `fiwwep` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -26985,7 +26986,7 @@ its shape and token count, never its body.
 
 ### artifact parzring
 
-- display name: (none declared)
+- display name: Percival's Ring (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\parzring.gs` line 1
@@ -26993,14 +26994,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_parzring` | name | `get` |
-| `T_artifact_name_parzring` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_parzring get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `1` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_parzring get` |
 | `portrait_code` | text | `orring` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -27009,7 +27010,7 @@ its shape and token count, never its body.
 
 ### artifact peacemaker
 
-- display name: Peacemaker
+- display name: Peacemaker (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\peacemak.gs` line 1
@@ -27028,7 +27029,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Peacemaker` |
 | `portrait_code` | text | `liwwep` |
-| `rayohope` | name | `get` |
+| `spell_id` | expression | `spelldict /rayohope get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -27038,7 +27039,7 @@ its shape and token count, never its body.
 
 ### artifact pixiedust
 
-- display name: Pixie Dust
+- display name: Pixie Dust (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\pixiedus.gs` line 1
@@ -27057,8 +27058,8 @@ its shape and token count, never its body.
 | `max_mana` | number | `7` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Pixie Dust` |
-| `pixies` | name | `get` |
 | `portrait_code` | text | `airing` |
+| `spell_id` | expression | `spelldict /pixies get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -27068,7 +27069,7 @@ its shape and token count, never its body.
 
 ### artifact plus1helm
 
-- display name: +1 Helmet
+- display name: +1 Helmet (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\p1helm.gs` line 1
@@ -27092,7 +27093,7 @@ its shape and token count, never its body.
 
 ### artifact plus2armor
 
-- display name: +2 Plate Mail
+- display name: +2 Plate Mail (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\p2dwarch.gs` line 1
@@ -27116,7 +27117,7 @@ its shape and token count, never its body.
 
 ### artifact potion12
 
-- display name: Potion of Mana
+- display name: Potion of Mana (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\potionmana12.gs` line 1
@@ -27136,7 +27137,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Potion of Mana` |
 | `portrait_code` | text | `FIPOT1` |
-| `potionm` | name | `get` |
+| `spell_id` | expression | `spelldict /potionm get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -27145,7 +27146,7 @@ its shape and token count, never its body.
 
 ### artifact potion_dexterity
 
-- display name: Potion of Dexterity
+- display name: Potion of Dexterity (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\potion_dexterity.gs` line 1
@@ -27168,8 +27169,8 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 3 tokens>` |
 | `name` | text | `Potion of Dexterity` |
 | `portrait_code` | text | `AIPOTD` |
-| `potion_dexterity` | name | `get` |
 | `rechargeable?` | name | `false` |
+| `spell_id` | expression | `spelldict /potion_dexterity get` |
 | `unmod_proc` | procedure | `<procedure 16 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 13 tokens>` |
@@ -27182,7 +27183,7 @@ its shape and token count, never its body.
 
 ### artifact potion_health
 
-- display name: Potion of Health
+- display name: Potion of Health (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\potion_health.gs` line 1
@@ -27206,8 +27207,8 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 3 tokens>` |
 | `name` | text | `Potion of Health` |
 | `portrait_code` | text | `AIPOT1` |
-| `potion_health` | name | `get` |
 | `rechargeable?` | name | `false` |
+| `spell_id` | expression | `spelldict /potion_health get` |
 | `start_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `unmod_proc` | procedure | `<procedure 16 tokens>` |
 | `uses_wizard_mana` | name | `false` |
@@ -27219,7 +27220,7 @@ its shape and token count, never its body.
 
 ### artifact potion_luck
 
-- display name: Potion of Luck
+- display name: Potion of Luck (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\potion_luck.gs` line 1
@@ -27242,8 +27243,8 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 3 tokens>` |
 | `name` | text | `Potion of Luck` |
 | `portrait_code` | text | `CHPOTD` |
-| `potion_luck` | name | `get` |
 | `rechargeable?` | name | `false` |
+| `spell_id` | expression | `spelldict /potion_luck get` |
 | `unmod_proc` | procedure | `<procedure 16 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 13 tokens>` |
@@ -27254,7 +27255,7 @@ its shape and token count, never its body.
 
 ### artifact potion_mana
 
-- display name: Potion of Mana
+- display name: Potion of Mana (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\potion_mana.gs` line 1
@@ -27277,8 +27278,8 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 3 tokens>` |
 | `name` | text | `Potion of Mana` |
 | `portrait_code` | text | `FIPOT1` |
-| `potion_mana` | name | `get` |
 | `rechargeable?` | name | `false` |
+| `spell_id` | expression | `spelldict /potion_mana get` |
 | `unmod_proc` | procedure | `<procedure 16 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 13 tokens>` |
@@ -27289,7 +27290,7 @@ its shape and token count, never its body.
 
 ### artifact potion_movement
 
-- display name: Potion of Movement
+- display name: Potion of Movement (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\potion_movement.gs` line 1
@@ -27312,8 +27313,8 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 3 tokens>` |
 | `name` | text | `Potion of Movement` |
 | `portrait_code` | text | `LIPOTD` |
-| `potion_movement` | name | `get` |
 | `rechargeable?` | name | `false` |
+| `spell_id` | expression | `spelldict /potion_movement get` |
 | `unmod_proc` | procedure | `<procedure 16 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 15 tokens>` |
@@ -27324,7 +27325,7 @@ its shape and token count, never its body.
 
 ### artifact potion_of_dexterity
 
-- display name: Potion of Dexterity
+- display name: Potion of Dexterity (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\potiondex.gs` line 1
@@ -27343,7 +27344,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Potion of Dexterity` |
 | `portrait_code` | text | `WAPOT1` |
-| `potiond` | name | `get` |
+| `spell_id` | expression | `spelldict /potiond get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -27352,7 +27353,7 @@ its shape and token count, never its body.
 
 ### artifact potion_of_healing
 
-- display name: Potion of Healing
+- display name: Potion of Healing (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\potionheal.gs` line 1
@@ -27372,7 +27373,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Potion of Healing` |
 | `portrait_code` | text | `AIPOT1` |
-| `potionh` | name | `get` |
+| `spell_id` | expression | `spelldict /potionh get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -27381,7 +27382,7 @@ its shape and token count, never its body.
 
 ### artifact potion_of_mana
 
-- display name: Potion of Mana
+- display name: Potion of Mana (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\potionmana.gs` line 1
@@ -27401,7 +27402,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Potion of Mana` |
 | `portrait_code` | text | `FIPOT1` |
-| `potionm` | name | `get` |
+| `spell_id` | expression | `spelldict /potionm get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -27410,7 +27411,7 @@ its shape and token count, never its body.
 
 ### artifact potion_of_rejuv
 
-- display name: Potion of Rejuvination
+- display name: Potion of Rejuvination (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\potionrejuv.gs` line 1
@@ -27429,7 +27430,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Potion of Rejuvination` |
 | `portrait_code` | text | `EAPOT1` |
-| `potionr` | name | `get` |
+| `spell_id` | expression | `spelldict /potionr get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -27437,7 +27438,7 @@ its shape and token count, never its body.
 
 ### artifact potion_of_strength
 
-- display name: Potion of Strength
+- display name: Potion of Strength (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\potionstr.gs` line 1
@@ -27456,7 +27457,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Potion of Strength` |
 | `portrait_code` | text | `EAPOT1` |
-| `potions` | name | `get` |
+| `spell_id` | expression | `spelldict /potions get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -27465,7 +27466,7 @@ its shape and token count, never its body.
 
 ### artifact potion_power
 
-- display name: Potion of Power
+- display name: Potion of Power (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\potion_power.gs` line 1
@@ -27488,8 +27489,8 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 3 tokens>` |
 | `name` | text | `Potion of Power` |
 | `portrait_code` | text | `DEPOTS` |
-| `potion_power` | name | `get` |
 | `rechargeable?` | name | `false` |
+| `spell_id` | expression | `spelldict /potion_power get` |
 | `unmod_proc` | procedure | `<procedure 16 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 13 tokens>` |
@@ -27500,7 +27501,7 @@ its shape and token count, never its body.
 
 ### artifact potion_rejuvenation
 
-- display name: Potion of Rejuvenation
+- display name: Potion of Rejuvenation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\potion_rejuvenation.gs` line 1
@@ -27523,15 +27524,15 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 3 tokens>` |
 | `name` | text | `Potion of Rejuvenation` |
 | `portrait_code` | text | `WAPOTD` |
-| `potion_rejuvenation` | name | `get` |
 | `rechargeable?` | name | `false` |
+| `spell_id` | expression | `spelldict /potion_rejuvenation get` |
 | `unmod_proc` | procedure | `<procedure 16 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
 
 ### artifact potion_resistance
 
-- display name: Potion of Resistance
+- display name: Potion of Resistance (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\potion_resistance.gs` line 1
@@ -27554,8 +27555,8 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 3 tokens>` |
 | `name` | text | `Potion of Resistance` |
 | `portrait_code` | text | `DEPOTD` |
-| `potion_resistance` | name | `get` |
 | `rechargeable?` | name | `false` |
+| `spell_id` | expression | `spelldict /potion_resistance get` |
 | `unmod_proc` | procedure | `<procedure 16 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 13 tokens>` |
@@ -27566,7 +27567,7 @@ its shape and token count, never its body.
 
 ### artifact potion_strength
 
-- display name: Potion of Strength
+- display name: Potion of Strength (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\potion_strength.gs` line 1
@@ -27589,8 +27590,8 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 3 tokens>` |
 | `name` | text | `Potion of Strength` |
 | `portrait_code` | text | `EAPOTS` |
-| `potion_strength` | name | `get` |
 | `rechargeable?` | name | `false` |
+| `spell_id` | expression | `spelldict /potion_strength get` |
 | `unmod_proc` | procedure | `<procedure 16 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 13 tokens>` |
@@ -27601,7 +27602,7 @@ its shape and token count, never its body.
 
 ### artifact potion_wisdom
 
-- display name: Potion of Wisdom
+- display name: Potion of Wisdom (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\potion_wisdom.gs` line 1
@@ -27624,8 +27625,8 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 3 tokens>` |
 | `name` | text | `Potion of Wisdom` |
 | `portrait_code` | text | `ORPOTD` |
-| `potion_wisdom` | name | `get` |
 | `rechargeable?` | name | `false` |
+| `spell_id` | expression | `spelldict /potion_wisdom get` |
 | `unmod_proc` | procedure | `<procedure 16 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 13 tokens>` |
@@ -27636,7 +27637,7 @@ its shape and token count, never its body.
 
 ### artifact potionheal12
 
-- display name: Potion of Healing
+- display name: Potion of Healing (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\potionheal12.gs` line 1
@@ -27656,7 +27657,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Potion of Healing` |
 | `portrait_code` | text | `AIPOT1` |
-| `potionh` | name | `get` |
+| `spell_id` | expression | `spelldict /potionh get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -27665,7 +27666,7 @@ its shape and token count, never its body.
 
 ### artifact priamblm
 
-- display name: (none declared)
+- display name: Priamus' Balm (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\priamblm.gs` line 1
@@ -27673,21 +27674,21 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_priamblm` | name | `get` |
-| `T_artifact_name_priamblm` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 16 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_priamblm get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `end_turn_proc` | procedure | `<procedure 16 tokens>` |
 | `faith` | name | `WATER` |
-| `heal` | name | `get` |
 | `image` | number | `9` |
 | `max_charges` | number | `4` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_priamblm get` |
 | `portrait_code` | text | `wapot1` |
+| `spell_id` | expression | `spelldict /heal get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -27696,7 +27697,7 @@ its shape and token count, never its body.
 
 ### artifact priamswd
 
-- display name: (none declared)
+- display name: Priamus' Sword (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\priamswd.gs` line 1
@@ -27704,15 +27705,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_priamswd` | name | `get` |
-| `T_artifact_name_priamswd` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_priamswd get` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `5` |
 | `mod_proc` | procedure | `<procedure 26 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_priamswd get` |
 | `portrait_code` | text | `orwwep` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -27721,7 +27722,7 @@ its shape and token count, never its body.
 
 ### artifact pridwen
 
-- display name: (none declared)
+- display name: Pridwen-Arthur's Shield (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\pridwen.gs` line 1
@@ -27729,15 +27730,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_pridwen` | name | `get` |
-| `T_artifact_name_pridwen` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_pridwen get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `7` |
 | `mod_proc` | procedure | `<procedure 71 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_pridwen get` |
 | `portrait_code` | text | `orarmr` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_LEFT` |
@@ -27746,7 +27747,7 @@ its shape and token count, never its body.
 
 ### artifact puresword
 
-- display name: (none declared)
+- display name: Sword of the Red Marble (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\puresword.gs` line 1
@@ -27754,16 +27755,16 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_puresword` | name | `get` |
-| `T_artifact_name_puresword` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 25 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_puresword get` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `dummy` | expression | `10 dict replace bind` |
 | `faith` | name | `ORDER` |
 | `image` | number | `5` |
 | `mod_proc` | procedure | `<procedure 131 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_puresword get` |
 | `portrait_code` | text | `orwwep` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -27772,7 +27773,7 @@ its shape and token count, never its body.
 
 ### artifact ragnlsans
 
-- display name: (none declared)
+- display name: The Answer (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\ragnlsans.gs` line 1
@@ -27780,14 +27781,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_ragnlsans` | name | `get` |
-| `T_artifact_name_ragnlsans` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
+| `description` | expression | `textdict /T_artifact_descript_ragnlsans get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `11` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_ragnlsans get` |
 | `portrait_code` | text | `orscro` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -27796,7 +27797,7 @@ its shape and token count, never its body.
 
 ### artifact reed_bow
 
-- display name: Reed Bow
+- display name: Reed Bow (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\reedbow.gs` line 1
@@ -27815,7 +27816,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Reed Bow` |
 | `portrait_code` | text | `earngw` |
-| `rocksling` | name | `get` |
+| `spell_id` | expression | `spelldict /rocksling get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -27825,7 +27826,7 @@ its shape and token count, never its body.
 
 ### artifact reginart
 
-- display name: reginart
+- display name: reginart (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\reginart.gs` line 1
@@ -27848,7 +27849,7 @@ its shape and token count, never its body.
 
 ### artifact ring_adventure
 
-- display name: Adventurer's Ring
+- display name: Adventurer's Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\ring_adventure.gs` line 1
@@ -27865,7 +27866,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | procedure | `<procedure 3 tokens>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_water` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `LIFE` |
@@ -27877,6 +27877,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /detect_water get` |
 | `start_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `unmod_proc` | procedure | `<procedure 86 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -27891,7 +27892,7 @@ its shape and token count, never its body.
 
 ### artifact ring_aqua
 
-- display name: Aqua Ring
+- display name: Aqua Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\ring_aqua.gs` line 1
@@ -27907,7 +27908,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 47 tokens>` |
 | `description` | text | `Any Champion may wield this moist ring to receive +(1/3X) Armor and the ability to cast Detect Fire.  In addition, Thiev` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_water` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `WATER` |
@@ -27919,6 +27919,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_water get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -27931,7 +27932,7 @@ its shape and token count, never its body.
 
 ### artifact ring_arcana
 
-- display name: Ring of Arcana
+- display name: Ring of Arcana (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\ring_arcana.gs` line 1
@@ -27958,7 +27959,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
-| `recover_life` | name | `get` |
+| `spell_id` | expression | `spelldict /recover_life get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -27974,7 +27975,7 @@ its shape and token count, never its body.
 
 ### artifact ring_archons
 
-- display name: Legendary - Archon Ring
+- display name: Legendary - Archon Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\ring_archons.gs` line 1
@@ -27995,7 +27996,6 @@ its shape and token count, never its body.
 | `end_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `10` |
-| `invulnerability` | name | `get` |
 | `max_charges` | number | `3` |
 | `max_mana` | number | `8` |
 | `name` | text | `Legendary - Archon Ring` |
@@ -28003,6 +28003,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /invulnerability get` |
 | `start_combat_proc` | procedure | `<procedure 39 tokens>` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -28023,7 +28024,7 @@ its shape and token count, never its body.
 
 ### artifact ring_brimstone
 
-- display name: Ring of Brimstone
+- display name: Ring of Brimstone (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\ring_brimstone.gs` line 1
@@ -28040,7 +28041,6 @@ its shape and token count, never its body.
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `FIRE` |
-| `heal_fire` | name | `get` |
 | `image` | number | `1` |
 | `max_charges` | number | `3` |
 | `max_mana` | number | `8` |
@@ -28049,6 +28049,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /heal_fire get` |
 | `unmod_proc` | procedure | `<procedure 57 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -28062,7 +28063,7 @@ its shape and token count, never its body.
 
 ### artifact ring_concentration
 
-- display name: Ring of Concentration
+- display name: Ring of Concentration (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\ring_concentration.gs` line 1
@@ -28086,11 +28087,11 @@ its shape and token count, never its body.
 | `max_charges` | number | `6` |
 | `max_mana` | number | `4` |
 | `name` | text | `Ring of Concentration` |
-| `neutralize` | name | `get` |
 | `portrait_code` | text | `orring` |
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /neutralize get` |
 | `unmod_proc` | procedure | `<procedure 57 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -28111,7 +28112,7 @@ its shape and token count, never its body.
 
 ### artifact ring_dexterity
 
-- display name: Ring of Dexterity
+- display name: Ring of Dexterity (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\ring_dexterity.gs` line 1
@@ -28128,7 +28129,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | procedure | `<procedure 16 tokens>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_air` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `AIR` |
@@ -28140,6 +28140,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /detect_air get` |
 | `start_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -28152,7 +28153,7 @@ its shape and token count, never its body.
 
 ### artifact ring_elements
 
-- display name: Ring of the Elements
+- display name: Ring of the Elements (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\ring_elements.gs` line 1
@@ -28177,7 +28178,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
-| `recover_water` | name | `get` |
+| `spell_id` | expression | `spelldict /recover_water get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -28192,7 +28193,7 @@ its shape and token count, never its body.
 
 ### artifact ring_embers
 
-- display name: Ring of Embers
+- display name: Ring of Embers (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\ring_embers.gs` line 1
@@ -28220,7 +28221,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
-| `recover_fire` | name | `get` |
+| `spell_id` | expression | `spelldict /recover_fire get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -28236,7 +28237,7 @@ its shape and token count, never its body.
 
 ### artifact ring_faerie
 
-- display name: Faerie Ring
+- display name: Faerie Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\ring_faerie.gs` line 1
@@ -28252,7 +28253,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 21 tokens>` |
 | `description` | text | `Any Champion may wear this ring to receive +(1/3X) Armor and the ability to cast Detect Earth.  In addition, Thieves als` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_air` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `AIR` |
@@ -28264,6 +28264,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_air get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -28276,7 +28277,7 @@ its shape and token count, never its body.
 
 ### artifact ring_flint
 
-- display name: Flint Ring
+- display name: Flint Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\ring_flint.gs` line 1
@@ -28292,7 +28293,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 46 tokens>` |
 | `description` | text | `Any Champion may wear this ring for +(1/3X) Armor and the ability to cast Detect Water.  In addition, ranged units also ` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_fire` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `FIRE` |
@@ -28304,6 +28304,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_fire get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -28316,7 +28317,7 @@ its shape and token count, never its body.
 
 ### artifact ring_four_winds
 
-- display name: Ring of the Four Winds
+- display name: Ring of the Four Winds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\ring_four_winds.gs` line 1
@@ -28341,7 +28342,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
-| `recover_air` | name | `get` |
+| `spell_id` | expression | `spelldict /recover_air get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -28357,7 +28358,7 @@ its shape and token count, never its body.
 
 ### artifact ring_giants
 
-- display name: Ring of Giants
+- display name: Ring of Giants (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\ring_giants.gs` line 1
@@ -28370,7 +28371,6 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `4` |
-| `cure_wounds` | name | `get` |
 | `defend_proc` | procedure | `<procedure 74 tokens>` |
 | `description` | text | `Any Champion, except for Earth or Death Champions, may wear this wispy ring to receive +4 Armor, +4 Overland movement an` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
@@ -28385,6 +28385,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /cure_wounds get` |
 | `start_combat_proc` | procedure | `<procedure 22 tokens>` |
 | `unmod_proc` | procedure | `<procedure 33 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -28399,7 +28400,7 @@ its shape and token count, never its body.
 
 ### artifact ring_healing
 
-- display name: Ring of Healing
+- display name: Ring of Healing (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\ring_healing.gs` line 1
@@ -28418,7 +28419,6 @@ its shape and token count, never its body.
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 6 tokens>` |
 | `faith` | name | `LIFE` |
-| `heal_life` | name | `get` |
 | `image` | number | `1` |
 | `max_charges` | number | `6` |
 | `max_mana` | number | `8` |
@@ -28427,6 +28427,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
+| `spell_id` | expression | `spelldict /heal_life get` |
 | `start_combat_proc` | procedure | `<procedure 5 tokens>` |
 | `unmod_proc` | procedure | `<procedure 35 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -28442,7 +28443,7 @@ its shape and token count, never its body.
 
 ### artifact ring_health
 
-- display name: Ring of Health
+- display name: Ring of Health (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\ring_health.gs` line 1
@@ -28459,7 +28460,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | procedure | `<procedure 46 tokens>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_water` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `WATER` |
@@ -28471,6 +28471,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /detect_water get` |
 | `start_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `unmod_proc` | procedure | `<procedure 60 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -28486,7 +28487,7 @@ its shape and token count, never its body.
 
 ### artifact ring_leeches
 
-- display name: Ring of Leeches
+- display name: Ring of Leeches (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\ring_leeches.gs` line 1
@@ -28505,7 +28506,6 @@ its shape and token count, never its body.
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `DEATH` |
 | `image` | number | `1` |
-| `leeches` | name | `get` |
 | `max_charges` | number | `3` |
 | `max_mana` | number | `6` |
 | `name` | text | `Ring of Leeches` |
@@ -28513,6 +28513,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /leeches get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -28527,7 +28528,7 @@ its shape and token count, never its body.
 
 ### artifact ring_luck
 
-- display name: Lucky Ring
+- display name: Lucky Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\ring_luck.gs` line 1
@@ -28556,7 +28557,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
-| `trick` | name | `get` |
+| `spell_id` | expression | `spelldict /trick get` |
 | `unmod_proc` | procedure | `<procedure 12 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -28568,7 +28569,7 @@ its shape and token count, never its body.
 
 ### artifact ring_mana
 
-- display name: Ring of Mana
+- display name: Ring of Mana (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\ring_mana.gs` line 1
@@ -28585,7 +28586,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | procedure | `<procedure 26 tokens>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_water` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `DEATH` |
@@ -28597,6 +28597,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /detect_water get` |
 | `start_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `unmod_proc` | procedure | `<procedure 40 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -28610,7 +28611,7 @@ its shape and token count, never its body.
 
 ### artifact ring_marksmanship
 
-- display name: Ring of Marksmanship
+- display name: Ring of Marksmanship (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\ring_marksmanship.gs` line 1
@@ -28626,7 +28627,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 48 tokens>` |
 | `description` | text | `Any Champion may wield this skill endowed ring to receive +(1/3X) Armor and the ability to cast Detect Death; additional` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_life` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `LIFE` |
@@ -28638,6 +28638,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_life get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -28650,7 +28651,7 @@ its shape and token count, never its body.
 
 ### artifact ring_necromancy
 
-- display name: Ring of Necromancy
+- display name: Ring of Necromancy (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\ring_necromancy.gs` line 1
@@ -28658,7 +28659,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `animate_dead` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
@@ -28676,6 +28676,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /animate_dead get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -28690,7 +28691,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_anything
 
-- display name: Ring of Anything
+- display name: Ring of Anything (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringany.gs` line 1
@@ -28705,13 +28706,12 @@ its shape and token count, never its body.
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `dummy` | expression | `1 dict replace bind` |
 | `faith` | name | `CHAOS` |
-| `fireball` | name | `get` |
 | `image` | number | `1` |
 | `max_mana` | number | `3` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
 | `name` | text | `Ring of Anything` |
 | `portrait_code` | text | `chring` |
-| `ring_of_anything` | name | `get` |
+| `spell_id` | expression | `spelldict /fireball get` |
 | `unmod_proc` | procedure | `<procedure 8 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -28721,7 +28721,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_arcana
 
-- display name: Ring Of Arcana
+- display name: Ring Of Arcana (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringarca.gs` line 1
@@ -28736,11 +28736,11 @@ its shape and token count, never its body.
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `LIFE` |
 | `image` | number | `1` |
-| `life_dispell` | name | `get` |
 | `max_mana` | number | `12` |
 | `mod_proc` | procedure | `<procedure 145 tokens>` |
 | `name` | text | `Ring Of Arcana` |
 | `portrait_code` | text | `liring` |
+| `spell_id` | expression | `spelldict /life_dispell get` |
 | `unmod_proc` | procedure | `<procedure 145 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -28750,7 +28750,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_azz'taruth
 
-- display name: Ring of Azz'taruth
+- display name: Ring of Azz'taruth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringazzt.gs` line 1
@@ -28761,7 +28761,6 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `decay` | name | `get` |
 | `description` | text | `Any mage who wears this ring gains +1 Armor, +3 Mana, and can cast Decay once per day.  Death mages gain 25% magic resis` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `DEATH` |
@@ -28770,6 +28769,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 145 tokens>` |
 | `name` | text | `Ring of Azz'taruth` |
 | `portrait_code` | text | `dering` |
+| `spell_id` | expression | `spelldict /decay get` |
 | `unmod_proc` | procedure | `<procedure 145 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -28779,7 +28779,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_brimstone
 
-- display name: Ring of Brimstone
+- display name: Ring of Brimstone (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringbrim.gs` line 1
@@ -28795,12 +28795,12 @@ its shape and token count, never its body.
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `end_combat_proc` | procedure | `<procedure 24 tokens>` |
 | `faith` | name | `FIRE` |
-| `fireheal` | name | `get` |
 | `image` | number | `1` |
 | `max_mana` | number | `6` |
 | `mod_proc` | procedure | `<procedure 57 tokens>` |
 | `name` | text | `Ring of Brimstone` |
 | `portrait_code` | text | `firing` |
+| `spell_id` | expression | `spelldict /fireheal get` |
 | `unmod_proc` | procedure | `<procedure 19 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -28810,7 +28810,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_concentration
 
-- display name: Ring of Concentraion
+- display name: Ring of Concentraion (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringcon.gs` line 1
@@ -28837,7 +28837,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_dwarves
 
-- display name: Ring of the Dwarves
+- display name: Ring of the Dwarves (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\ringdwar.gs` line 1
@@ -28853,9 +28853,9 @@ its shape and token count, never its body.
 | `faith` | name | `ORDER` |
 | `image` | number | `1` |
 | `max_mana` | number | `13` |
-| `morphdwarf` | name | `get` |
 | `name` | text | `Ring of the Dwarves` |
 | `portrait_code` | text | `orring` |
+| `spell_id` | expression | `spelldict /morphdwarf get` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -28864,7 +28864,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_embers
 
-- display name: Ring of Embers
+- display name: Ring of Embers (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringembr.gs` line 1
@@ -28893,7 +28893,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_entanglement
 
-- display name: Ring of Entanglement
+- display name: Ring of Entanglement (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringentg.gs` line 1
@@ -28906,13 +28906,13 @@ its shape and token count, never its body.
 | `category` | number | `2` |
 | `description` | text | `All thieves covet this ring, which imparts +1 Armor, +2 Dexterity and +4 Movement, plus the ability to cast Entanglement` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
-| `entangle` | name | `get` |
 | `faith` | name | `EARTH` |
 | `image` | number | `1` |
 | `max_mana` | number | `12` |
 | `mod_proc` | procedure | `<procedure 50 tokens>` |
 | `name` | text | `Ring of Entanglement` |
 | `portrait_code` | text | `earing` |
+| `spell_id` | expression | `spelldict /entangle get` |
 | `unmod_proc` | procedure | `<procedure 19 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -28922,7 +28922,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_flame
 
-- display name: Ring of the Dancing Flame
+- display name: Ring of the Dancing Flame (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringflam.gs` line 1
@@ -28950,7 +28950,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_healing
 
-- display name: Ring of Healing
+- display name: Ring of Healing (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringheal.gs` line 1
@@ -28965,12 +28965,12 @@ its shape and token count, never its body.
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `end_combat_proc` | procedure | `<procedure 14 tokens>` |
 | `faith` | name | `LIFE` |
-| `heal` | name | `get` |
 | `image` | number | `1` |
 | `max_mana` | number | `12` |
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Ring of Healing` |
 | `portrait_code` | text | `liring` |
+| `spell_id` | expression | `spelldict /heal get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -28980,7 +28980,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_leeches
 
-- display name: Ring of Leeches
+- display name: Ring of Leeches (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringleec.gs` line 1
@@ -28995,11 +28995,11 @@ its shape and token count, never its body.
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `1` |
-| `leeches` | name | `get` |
 | `max_mana` | number | `12` |
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Ring of Leeches` |
 | `portrait_code` | text | `dering` |
+| `spell_id` | expression | `spelldict /leeches get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -29009,7 +29009,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_marksmanship
 
-- display name: Ring of Marksmanship
+- display name: Ring of Marksmanship (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringmark.gs` line 1
@@ -29023,12 +29023,12 @@ its shape and token count, never its body.
 | `description` | text | `Any thief in Urak will gain +1 ranged attack and +1 missile range from this ring.` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `LIFE` |
-| `heal` | name | `get` |
 | `image` | number | `1` |
 | `max_mana` | number | `0` |
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Ring of Marksmanship` |
 | `portrait_code` | text | `liring` |
+| `spell_id` | expression | `spelldict /heal get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -29038,7 +29038,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_mazes
 
-- display name: Ring of Mazes
+- display name: Ring of Mazes (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringmaze.gs` line 1
@@ -29049,7 +29049,6 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `confusion` | name | `get` |
 | `description` | text | `Any thief will gain +2 Strength, +4 Movement and the ability to cast Confusion once a day.  Chaos thieves also gain +2 s` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `CHAOS` |
@@ -29058,6 +29057,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 60 tokens>` |
 | `name` | text | `Ring of Mazes` |
 | `portrait_code` | text | `chring` |
+| `spell_id` | expression | `spelldict /confusion get` |
 | `unmod_proc` | procedure | `<procedure 19 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -29067,7 +29067,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_productivity
 
-- display name: Greater Artifact-Ring of Productivity
+- display name: Greater Artifact-Ring of Productivity (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringprod.gs` line 1
@@ -29076,7 +29076,6 @@ its shape and token count, never its body.
 | field | shape | value |
 |---|---|---|
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
-| `bureaucracy` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
 | `description` | text | `Order followers get +2 Armor, +6 Mana and 50% magic resistance.  Each turn, one aspect of production gains +2 per level ` |
@@ -29088,6 +29087,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 154 tokens>` |
 | `name` | text | `Greater Artifact-Ring of Productivity` |
 | `portrait_code` | text | `orring` |
+| `spell_id` | expression | `spelldict /bureaucracy get` |
 | `unmod_proc` | procedure | `<procedure 159 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -29097,7 +29097,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_protection
 
-- display name: Ring of Protection
+- display name: Ring of Protection (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringprot.gs` line 1
@@ -29111,12 +29111,12 @@ its shape and token count, never its body.
 | `description` | text | `Any Champion of Urak gains +1 Armor and +2 movement while wearing this ring.` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `ORDER` |
-| `heal` | name | `get` |
 | `image` | number | `1` |
 | `max_mana` | number | `0` |
 | `mod_proc` | procedure | `<procedure 38 tokens>` |
 | `name` | text | `Ring of Protection` |
 | `portrait_code` | text | `orring` |
+| `spell_id` | expression | `spelldict /heal get` |
 | `unmod_proc` | procedure | `<procedure 19 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -29126,7 +29126,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_redemption
 
-- display name: Ring of Redemption
+- display name: Ring of Redemption (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringred.gs` line 1
@@ -29155,7 +29155,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_shelter
 
-- display name: Ring of Shelter
+- display name: Ring of Shelter (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringshel.gs` line 1
@@ -29166,7 +29166,6 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `cloud_of_steam` | name | `get` |
 | `description` | text | `Water, Order and Life thieves gain +2 Armor, 33% resistance to Fire, and can cast a concealing Steam Cloud twice a day. ` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `WATER` |
@@ -29175,6 +29174,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Ring of Shelter` |
 | `portrait_code` | text | `waring` |
+| `spell_id` | expression | `spelldict /cloud_of_steam get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -29184,7 +29184,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_stealth
 
-- display name: Ring of Stealth
+- display name: Ring of Stealth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringstea.gs` line 1
@@ -29198,12 +29198,12 @@ its shape and token count, never its body.
 | `description` | text | `Any thief in Urak who wears this ring gains +1 Armor and improved Stealth.` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `CHAOS` |
-| `heal` | name | `get` |
 | `image` | number | `1` |
 | `max_mana` | number | `0` |
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Ring of Stealth` |
 | `portrait_code` | text | `chring` |
+| `spell_id` | expression | `spelldict /heal get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -29213,7 +29213,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_the_elements
 
-- display name: Ring of the Elements
+- display name: Ring of the Elements (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringelem.gs` line 1
@@ -29241,7 +29241,7 @@ its shape and token count, never its body.
 
 ### artifact ring_of_winds
 
-- display name: Ring of the Four Winds
+- display name: Ring of the Four Winds (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\ringwind.gs` line 1
@@ -29265,7 +29265,7 @@ its shape and token count, never its body.
 
 ### artifact ring_power
 
-- display name: Ring of Power
+- display name: Ring of Power (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\ring_power.gs` line 1
@@ -29282,7 +29282,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | procedure | `<procedure 16 tokens>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_death` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `DEATH` |
@@ -29294,6 +29293,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /detect_death get` |
 | `start_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -29306,7 +29306,7 @@ its shape and token count, never its body.
 
 ### artifact ring_protection
 
-- display name: Ring of Protection
+- display name: Ring of Protection (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\ring_protection.gs` line 1
@@ -29322,7 +29322,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 14 tokens>` |
 | `description` | text | `Any Champion may wear this ring to receive +(1/3X) Armor, +(2/5X) Movement, +1X% Magic Resistance per level and the abil` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_order` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `ORDER` |
@@ -29334,6 +29333,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_order get` |
 | `unmod_proc` | procedure | `<procedure 33 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -29347,7 +29347,7 @@ its shape and token count, never its body.
 
 ### artifact ring_stealth
 
-- display name: Ring of Stealth
+- display name: Ring of Stealth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\ring_stealth.gs` line 1
@@ -29363,7 +29363,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 13 tokens>` |
 | `description` | text | `Any Champion may wear this tricky ring to receive +(1/3X) Armor and the ability to cast Detect Order.  In addition, Thie` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_chaos` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `CHAOS` |
@@ -29375,6 +29374,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_chaos get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -29387,7 +29387,7 @@ its shape and token count, never its body.
 
 ### artifact ring_strength
 
-- display name: Ring of Strength
+- display name: Ring of Strength (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\ring_strength.gs` line 1
@@ -29404,7 +29404,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | procedure | `<procedure 16 tokens>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_fire` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `FIRE` |
@@ -29416,6 +29415,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /detect_fire get` |
 | `start_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -29428,7 +29428,7 @@ its shape and token count, never its body.
 
 ### artifact ring_wave
 
-- display name: Wave Ring
+- display name: Wave Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\ring_wave.gs` line 1
@@ -29447,7 +29447,6 @@ its shape and token count, never its body.
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
 | `faith` | name | `WATER` |
-| `guardian_waves` | name | `get` |
 | `image` | number | `34` |
 | `max_charges` | number | `3` |
 | `max_mana` | number | `4` |
@@ -29456,6 +29455,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /guardian_waves get` |
 | `start_combat_proc` | procedure | `<procedure 34 tokens>` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -29471,7 +29471,7 @@ its shape and token count, never its body.
 
 ### artifact ring_windfall
 
-- display name: Ring of Windfall
+- display name: Ring of Windfall (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\ring_windfall.gs` line 1
@@ -29499,7 +29499,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
-| `trick` | name | `get` |
+| `spell_id` | expression | `spelldict /trick get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 3 tokens>` |
@@ -29518,7 +29518,7 @@ its shape and token count, never its body.
 
 ### artifact ring_wisdom
 
-- display name: Ring of Wisdom
+- display name: Ring of Wisdom (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\ring_wisdom.gs` line 1
@@ -29535,7 +29535,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | procedure | `<procedure 16 tokens>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_air` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `ORDER` |
@@ -29547,6 +29546,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /detect_air get` |
 | `start_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -29559,7 +29559,7 @@ its shape and token count, never its body.
 
 ### artifact rocca_chalice
 
-- display name: Rocca's Chalice
+- display name: Rocca's Chalice (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\rocchal.gs` line 1
@@ -29579,7 +29579,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 53 tokens>` |
 | `name` | text | `Rocca's Chalice` |
 | `portrait_code` | text | `chart1` |
-| `roccapotion` | name | `get` |
+| `spell_id` | expression | `spelldict /roccapotion get` |
 | `unmod_proc` | procedure | `<procedure 44 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -29589,7 +29589,7 @@ its shape and token count, never its body.
 
 ### artifact scabbard_quality
 
-- display name: Scabbard of Quality
+- display name: Scabbard of Quality (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scabbard_quality.gs` line 1
@@ -29610,7 +29610,6 @@ its shape and token count, never its body.
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `ORDER` |
-| `falcons_eye` | name | `get` |
 | `image` | number | `38` |
 | `max_charges` | number | `0` |
 | `max_mana` | number | `0` |
@@ -29619,6 +29618,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /falcons_eye get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -29631,7 +29631,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_dexterity
 
-- display name: Scroll of Dexterity
+- display name: Scroll of Dexterity (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_dexterity.gs` line 1
@@ -29646,7 +29646,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Any Champion who reads this scroll will permanently gain +1 Dexterity.  Thieves instead will permanently gain +2 Dexteri` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_air` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `AIR` |
 | `image` | number | `11` |
@@ -29655,6 +29654,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_air get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 11 tokens>` |
@@ -29665,7 +29665,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_diplomacy
 
-- display name: Scroll of Diplomacy
+- display name: Scroll of Diplomacy (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_diplomacy.gs` line 1
@@ -29680,7 +29680,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `The player whose champion takes this scroll in hand shall better understand his enemies and neighbors through diplomatic` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `faith` | name | `LIFE` |
 | `image` | number | `11` |
 | `name` | text | `Scroll of Diplomacy` |
@@ -29689,6 +29688,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -29697,7 +29697,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_experience_01
 
-- display name: Lesser Scroll of Experience
+- display name: Lesser Scroll of Experience (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_experience_01.gs` line 1
@@ -29712,7 +29712,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `This scroll will bestow one quarter level of experience or +500 experience, whichever is greater, for any who read it.` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_chaos` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `CHAOS` |
 | `image` | number | `11` |
@@ -29721,6 +29720,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_chaos get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -29730,7 +29730,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_experience_02
 
-- display name: Scroll of Experience
+- display name: Scroll of Experience (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_experience_02.gs` line 1
@@ -29745,7 +29745,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `This scroll will bestow one third level of experience or +1000 experience, whichever is greater, for any who read it.` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_chaos` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `CHAOS` |
 | `image` | number | `11` |
@@ -29754,6 +29753,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_chaos get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -29763,7 +29763,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_experience_03
 
-- display name: Greater Scroll of Experience
+- display name: Greater Scroll of Experience (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_experience_03.gs` line 1
@@ -29778,7 +29778,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `This scroll will bestow one half level of experience or +2000 experience, whichever is greater, for any who read it.` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_chaos` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `CHAOS` |
 | `image` | number | `11` |
@@ -29787,6 +29786,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_chaos get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -29796,7 +29796,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_experience_04
 
-- display name: Ultimate Scroll of Experience
+- display name: Ultimate Scroll of Experience (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_experience_04.gs` line 1
@@ -29811,7 +29811,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `This scroll will advance the reader to their next experience level or +3000 experience, whichever is greater, for any wh` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_chaos` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `CHAOS` |
 | `image` | number | `11` |
@@ -29820,6 +29819,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_chaos get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -29829,7 +29829,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_faith
 
-- display name: Scroll of Faith
+- display name: Scroll of Faith (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_faith.gs` line 1
@@ -29844,7 +29844,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Any Champion who reads this scroll will become a new Champion of the same class, but of a different faith.` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `16 dict replace bind` |
 | `faith` | name | `DEATH` |
 | `image` | number | `11` |
@@ -29853,6 +29852,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
@@ -29861,7 +29861,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_health
 
-- display name: Scroll of Health
+- display name: Scroll of Health (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_health.gs` line 1
@@ -29876,7 +29876,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Any Champion who reads this scroll will permanently gain Hit Points.  Thieves and Mages will receive +2 maximum hit poin` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_water` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `FIRE` |
 | `image` | number | `11` |
@@ -29885,6 +29884,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_water get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 11 tokens>` |
@@ -29895,7 +29895,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_health_recovery
 
-- display name: Scroll of Restoration
+- display name: Scroll of Restoration (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_health_recovery.gs` line 1
@@ -29910,7 +29910,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Any Champion who reads this scroll will permanently gain +2 Health Recovery.` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_life` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `LIFE` |
 | `image` | number | `11` |
@@ -29919,6 +29918,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_life get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 3 tokens>` |
@@ -29929,7 +29929,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_mana
 
-- display name: Scroll of Mana
+- display name: Scroll of Mana (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_mana.gs` line 1
@@ -29944,7 +29944,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Any Wizard who reads this scroll will permanently gain +2 Mana.` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_fire` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `WATER` |
 | `image` | number | `11` |
@@ -29953,6 +29952,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_fire get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 11 tokens>` |
@@ -29963,7 +29963,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_movement
 
-- display name: Scroll of Movement
+- display name: Scroll of Movement (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_movement.gs` line 1
@@ -29978,7 +29978,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Any Champion who reads this scroll will permanently gain +2 Movement.  Thieves will instead permanently gain +4 Movement` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_fire` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `AIR` |
 | `image` | number | `11` |
@@ -29987,6 +29986,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_fire get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 13 tokens>` |
@@ -29997,7 +29997,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_power
 
-- display name: Scroll of Power
+- display name: Scroll of Power (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_power.gs` line 1
@@ -30012,7 +30012,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Written and highly valued by Golgothans, any Champion who reads this scroll will permanently gain various stats.` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_water` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `DEATH` |
 | `image` | number | `11` |
@@ -30021,6 +30020,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_water get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 3 tokens>` |
@@ -30033,7 +30033,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_resistance
 
-- display name: Scroll of Resistance
+- display name: Scroll of Resistance (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_resistance.gs` line 1
@@ -30048,7 +30048,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Any Champion who reads this scroll will receive 25% resistance to one randomly determined faith, or will receive +5 resi` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `faith` | name | `DEATH` |
 | `image` | number | `11` |
 | `mod_proc` | procedure | `<procedure 172 tokens>` |
@@ -30057,6 +30056,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 3 tokens>` |
@@ -30067,7 +30067,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_sages
 
-- display name: Scroll of the Sages
+- display name: Scroll of the Sages (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_sages.gs` line 1
@@ -30092,10 +30092,10 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 7 tokens>` |
 | `name` | text | `Scroll of the Sages` |
 | `portrait_code` | text | `descrol` |
-| `random_bolt` | name | `get` |
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /random_bolt get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -30105,7 +30105,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_strength
 
-- display name: Scroll of Strength
+- display name: Scroll of Strength (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_strength.gs` line 1
@@ -30120,7 +30120,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Any Champion who reads this scroll will permanently gain +1 Strength.  Warriors instead will permanently gain +2 Strengt` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_earth` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `EARTH` |
 | `image` | number | `11` |
@@ -30129,6 +30128,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_earth get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 11 tokens>` |
@@ -30139,7 +30139,7 @@ its shape and token count, never its body.
 
 ### artifact scroll_wisdom
 
-- display name: Scroll of Wisdom
+- display name: Scroll of Wisdom (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\scrolls\scroll_wisdom.gs` line 1
@@ -30154,7 +30154,6 @@ its shape and token count, never its body.
 | `colorizetext?` | name | `false` |
 | `description` | text | `Any Champion who reads this scroll will permanently gain +1 Wisdom.  Wizards instead will permanently gain +2 Wisdom.` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_order` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `faith` | name | `ORDER` |
 | `image` | number | `11` |
@@ -30163,6 +30162,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_order get` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `val_A` | procedure | `<procedure 11 tokens>` |
@@ -30173,7 +30173,7 @@ its shape and token count, never its body.
 
 ### artifact scythe_balkoth
 
-- display name: The Scythe of Balkoth
+- display name: The Scythe of Balkoth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\scythe_balkoth.gs` line 1
@@ -30189,20 +30189,19 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
 | `description` | text | `Any Champion may wield Balkoth's Scythe, as it grants Vampiric Life Stealing, converting damage to health (1/4 melee, 1/` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dummy` | expression | `currentdict replace bind` |
-| `end_combat_proc` | expression | `get replace bind` |
+| `dummy` | expression | `currentdict /end_combat_proc get replace bind` |
+| `dummy2` | expression | `currentdict /mod_proc get replace bind` |
 | `faith` | name | `DEATH` |
 | `image` | number | `9` |
-| `locust_swarm` | name | `get` |
 | `max_charges` | number | `1` |
 | `max_mana` | number | `0` |
-| `mod_proc` | expression | `get replace bind` |
 | `name` | text | `The Scythe of Balkoth` |
 | `p1` | procedure | `<procedure 7 tokens>` |
 | `portrait_code` | text | `descyt` |
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /locust_swarm get` |
 | `start_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -30215,7 +30214,7 @@ its shape and token count, never its body.
 
 ### artifact sequence
 
-- display name: (none declared)
+- display name: Sequence, the Sword in the Stone (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\sequence.gs` line 1
@@ -30223,15 +30222,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_sequence` | name | `get` |
-| `T_artifact_name_sequence` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_sequence get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `5` |
 | `mod_proc` | procedure | `<procedure 14 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_sequence get` |
 | `portrait_code` | text | `orwwep` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -30240,7 +30239,7 @@ its shape and token count, never its body.
 
 ### artifact shadowstaff
 
-- display name: Shadowstaff
+- display name: Shadowstaff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\shadowst.gs` line 1
@@ -30248,7 +30247,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `asphyxiate` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `1` |
@@ -30260,6 +30258,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 38 tokens>` |
 | `name` | text | `Shadowstaff` |
 | `portrait_code` | text | `destaf` |
+| `spell_id` | expression | `spelldict /asphyxiate get` |
 | `unmod_proc` | procedure | `<procedure 38 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -30269,7 +30268,7 @@ its shape and token count, never its body.
 
 ### artifact sharktooth
 
-- display name: Sharktooth
+- display name: Sharktooth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\shrktoth.gs` line 1
@@ -30290,7 +30289,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 26 tokens>` |
 | `name` | text | `Sharktooth` |
 | `portrait_code` | text | `waamul` |
-| `qsilver` | name | `get` |
+| `spell_id` | expression | `spelldict /qsilver get` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
 | `unmod_proc` | procedure | `<procedure 26 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -30301,7 +30300,7 @@ its shape and token count, never its body.
 
 ### artifact shield_balkoth
 
-- display name: Shield of Balkoth
+- display name: Shield of Balkoth (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\shield_balkoth.gs` line 1
@@ -30318,18 +30317,18 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 240 tokens>` |
 | `description` | procedure | `<procedure 62 tokens>` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
+| `dummy2` | expression | `currentdict /mod_proc get replace bind` |
 | `faith` | name | `DEATH` |
 | `image` | number | `78` |
 | `max_mana` | number | `100` |
-| `mod_proc` | expression | `get replace bind` |
 | `name` | text | `Shield of Balkoth` |
 | `portrait_code` | text | `PURPLE_DE_SHIELD` |
 | `random_text` | array | `<array 10 tokens>` |
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `start_combat_proc` | procedure | `<procedure 66 tokens>` |
 | `unmod_proc` | procedure | `<procedure 35 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -30349,7 +30348,7 @@ its shape and token count, never its body.
 
 ### artifact shield_coral
 
-- display name: Coral Shield
+- display name: Coral Shield (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\shield_coral.gs` line 1
@@ -30363,7 +30362,6 @@ its shape and token count, never its body.
 | `category` | number | `5` |
 | `description` | text | `Water, Chaos, Order or Death Warriors may wield this half shell to receive +3 Armor, +3 Strength, +3 Hit Recovery, +(10/` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `dispel_magic_water` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `dummy2` | expression | `spelldict begin [ rust minor_rust ] end replace bind` |
 | `end_combat_proc` | procedure | `<procedure 4 tokens>` |
@@ -30375,6 +30373,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /dispel_magic_water get` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -30393,7 +30392,7 @@ its shape and token count, never its body.
 
 ### artifact shield_of_righteousness
 
-- display name: Shield of Righteousness
+- display name: Shield of Righteousness (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\shldrght.gs` line 1
@@ -30408,11 +30407,11 @@ its shape and token count, never its body.
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `7` |
-| `leader` | name | `get` |
 | `max_mana` | number | `3` |
 | `mod_proc` | procedure | `<procedure 60 tokens>` |
 | `name` | text | `Shield of Righteousness` |
 | `portrait_code` | text | `orarmr` |
+| `spell_id` | expression | `spelldict /leader get` |
 | `unmod_proc` | procedure | `<procedure 60 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -30422,7 +30421,7 @@ its shape and token count, never its body.
 
 ### artifact shield_quality
 
-- display name: Shield of Quality
+- display name: Shield of Quality (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\shield_quality.gs` line 1
@@ -30451,7 +30450,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
-| `recover_order` | name | `get` |
+| `spell_id` | expression | `spelldict /recover_order get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -30464,7 +30463,7 @@ its shape and token count, never its body.
 
 ### artifact shield_righteousness
 
-- display name: Shield of Righteousness
+- display name: Shield of Righteousness (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\shield_righteousness.gs` line 1
@@ -30486,12 +30485,12 @@ its shape and token count, never its body.
 | `image` | number | `81` |
 | `max_charges` | number | `3` |
 | `max_mana` | number | `4` |
-| `morale` | name | `get` |
 | `name` | text | `Shield of Righteousness` |
 | `portrait_code` | text | `BLUE_OR_SHIELD` |
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /morale get` |
 | `start_combat_proc` | procedure | `<procedure 12 tokens>` |
 | `unmod_proc` | procedure | `<procedure 33 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -30508,7 +30507,7 @@ its shape and token count, never its body.
 
 ### artifact shieldofval
 
-- display name: (none declared)
+- display name: Shield of Vadalon's Brother (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\shieldofval.gs` line 1
@@ -30516,15 +30515,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_shieldofval` | name | `get` |
-| `T_artifact_name_shieldofval` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 18 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_shieldofval get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `7` |
 | `mod_proc` | procedure | `<procedure 6 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_shieldofval get` |
 | `portrait_code` | text | `orarmr` |
 | `unmod_proc` | procedure | `<procedure 2 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_LEFT` |
@@ -30533,7 +30532,7 @@ its shape and token count, never its body.
 
 ### artifact sleep_artifact
 
-- display name: sleepart
+- display name: sleepart (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\sleepart.gs` line 1
@@ -30563,7 +30562,7 @@ its shape and token count, never its body.
 
 ### artifact soul_stealer
 
-- display name: Greater Artifact - Soul Stealer
+- display name: Greater Artifact - Soul Stealer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\soulstlr.gs` line 1
@@ -30575,7 +30574,6 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
-| `curse` | name | `get` |
 | `description` | text | `Water and Order warriors gain +2 Attack and +2 rate of attack, and may cast Curse 6 times a day.  Death warriors get sam` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
 | `faith` | name | `DEATH` |
@@ -30584,6 +30582,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 61 tokens>` |
 | `name` | text | `Greater Artifact - Soul Stealer` |
 | `portrait_code` | text | `dewwep` |
+| `spell_id` | expression | `spelldict /curse get` |
 | `unmod_proc` | procedure | `<procedure 61 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -30593,7 +30592,7 @@ its shape and token count, never its body.
 
 ### artifact spear_maiden
 
-- display name: Maiden Spear
+- display name: Maiden Spear (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\spear_maiden.gs` line 1
@@ -30605,7 +30604,6 @@ its shape and token count, never its body.
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
-| `bolt_fury` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `7` |
 | `colorizeborder?` | name | `false` |
@@ -30624,6 +30622,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /bolt_fury get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -30639,7 +30638,7 @@ its shape and token count, never its body.
 
 ### artifact special_altar_of_sacrifice
 
-- display name: Altar of Sacrifice
+- display name: Altar of Sacrifice (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\altofsac.gs` line 1
@@ -30664,7 +30663,7 @@ its shape and token count, never its body.
 
 ### artifact special_forge_of_eternal_flame
 
-- display name: Forge of Eternal Flame
+- display name: Forge of Eternal Flame (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\foreflam.gs` line 1
@@ -30690,7 +30689,7 @@ its shape and token count, never its body.
 
 ### artifact special_shrine_of_vitality
 
-- display name: Shrine of Vitality
+- display name: Shrine of Vitality (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\shrineofvit.gs` line 1
@@ -30716,7 +30715,7 @@ its shape and token count, never its body.
 
 ### artifact spitfire
 
-- display name: Greater Artifact - The 'Spitfire'
+- display name: Greater Artifact - The 'Spitfire' (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\spitfire.gs` line 1
@@ -30731,12 +30730,12 @@ its shape and token count, never its body.
 | `description` | text | `Order thieves gain +2 ranged attack, +1 missile range and +1 missile speed.  Fire thieves get +3 ranged attack, +2 missi` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `faith` | name | `FIRE` |
-| `fireball` | name | `get` |
 | `image` | number | `6` |
 | `max_mana` | number | `12` |
 | `mod_proc` | procedure | `<procedure 93 tokens>` |
 | `name` | text | `Greater Artifact - The 'Spitfire'` |
 | `portrait_code` | text | `firngw` |
+| `spell_id` | expression | `spelldict /fireball get` |
 | `unmod_proc` | procedure | `<procedure 98 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -30746,7 +30745,7 @@ its shape and token count, never its body.
 
 ### artifact staff_cloud
 
-- display name: Cloudstaff
+- display name: Cloudstaff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\staff_cloud.gs` line 1
@@ -30762,7 +30761,6 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `description` | text | `With this frothy staff, any Mage receives +(1/3X) Attack, +(1/5X) Armor, +(1/3X) Mana with the ability to cast Detect Ea` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_air` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `AIR` |
@@ -30774,6 +30772,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_air get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -30787,7 +30786,7 @@ its shape and token count, never its body.
 
 ### artifact staff_drowning
 
-- display name: Legendary - Staff of Drowning
+- display name: Legendary - Staff of Drowning (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\staff_drowning.gs` line 1
@@ -30803,7 +30802,6 @@ its shape and token count, never its body.
 | `category` | number | `6` |
 | `description` | text | `Any mage, except for Fire mages, may use this watery staff to receive +3 Attack, +3 Armor, +5 Attack Rate, +10 Mana, +50` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `drowning` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `end_turn_proc` | procedure | `<procedure 3 tokens>` |
@@ -30816,6 +30814,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /drowning get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -30832,7 +30831,7 @@ its shape and token count, never its body.
 
 ### artifact staff_electron
 
-- display name: Legendary - Electron Staff
+- display name: Legendary - Electron Staff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\staff_electron.gs` line 1
@@ -30845,7 +30844,6 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
-| `chain_lightning` | name | `get` |
 | `description` | text | `With this shocking staff, any mage receives +5 Attack, +3 Armor, +10 Mana, +50% Earth Resistance, +25% Magic Resistance ` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
@@ -30858,6 +30856,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /chain_lightning get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -30874,7 +30873,7 @@ its shape and token count, never its body.
 
 ### artifact staff_enlightenment
 
-- display name: Staff of Enlightenment
+- display name: Staff of Enlightenment (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\staff_enlightenment.gs` line 1
@@ -30901,7 +30900,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
-| `summon_creature_order` | name | `get` |
+| `spell_id` | expression | `spelldict /summon_creature_order get` |
 | `unmod_proc` | procedure | `<procedure 61 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -30918,7 +30917,7 @@ its shape and token count, never its body.
 
 ### artifact staff_flameshaft
 
-- display name: Flameshaft
+- display name: Flameshaft (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\staff_flameshaft.gs` line 1
@@ -30934,7 +30933,6 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `description` | text | `Any mage may command this fiery staff to receive +(1/3X) Attack, +(1/3X) Mana, +(2/5X) movement and the ability to cast ` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_fire` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `FIRE` |
@@ -30946,6 +30944,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_fire get` |
 | `unmod_proc` | procedure | `<procedure 60 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -30959,7 +30958,7 @@ its shape and token count, never its body.
 
 ### artifact staff_golden
 
-- display name: Golden Rod
+- display name: Golden Rod (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\staff_golden.gs` line 1
@@ -30975,7 +30974,6 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `description` | text | `Any Mage may wield this rod for +(1/3X) Mana, +(2/5X) movement, +(3/5X) Gold/turn and the ability to cast Detect Air.  I` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_earth` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `EARTH` |
@@ -30987,6 +30985,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_earth get` |
 | `unmod_proc` | procedure | `<procedure 61 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -31000,7 +30999,7 @@ its shape and token count, never its body.
 
 ### artifact staff_gorgon
 
-- display name: Legendary - Gorgon Rod
+- display name: Legendary - Gorgon Rod (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\EARTH\staff_gorgon.gs` line 1
@@ -31008,6 +31007,7 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
+| `alt_spell_id` | expression | `spelldict /stone_touch get` |
 | `attack_proc` | procedure | `<procedure 248 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
@@ -31025,8 +31025,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
-| `sands_of_sleep` | name | `get` |
-| `stone_touch` | name | `get` |
+| `spell_id` | expression | `spelldict /sands_of_sleep get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -31044,7 +31043,7 @@ its shape and token count, never its body.
 
 ### artifact staff_healthbringer
 
-- display name: Healthbringer
+- display name: Healthbringer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\staff_healthbringer.gs` line 1
@@ -31058,7 +31057,6 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 19 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `3` |
-| `commune_with_nature` | name | `get` |
 | `description` | text | `Any Mage may carry this staff to receive +(1/5X) Attack, +(1/3X) Armor, +(1/3X) Health Recovery and the ability to cast ` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
@@ -31072,6 +31070,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /commune_with_nature get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -31085,7 +31084,7 @@ its shape and token count, never its body.
 
 ### artifact staff_incineration
 
-- display name: Legendary - Staff of Incineration
+- display name: Legendary - Staff of Incineration (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\staff_incineration.gs` line 1
@@ -31095,7 +31094,6 @@ its shape and token count, never its body.
 |---|---|---|
 | `attack_proc` | procedure | `<procedure 239 tokens>` |
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
-| `backdraft` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
@@ -31113,6 +31111,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /backdraft get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -31128,7 +31127,7 @@ its shape and token count, never its body.
 
 ### artifact staff_light
 
-- display name: Legendary - Staff of Light
+- display name: Legendary - Staff of Light (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\staff_light.gs` line 1
@@ -31153,10 +31152,10 @@ its shape and token count, never its body.
 | `max_mana` | number | `12` |
 | `name` | text | `Legendary - Staff of Light` |
 | `portrait_code` | text | `liwwep` |
-| `ray_of_hope` | name | `get` |
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /ray_of_hope get` |
 | `start_combat_proc` | procedure | `<procedure 39 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -31173,7 +31172,7 @@ its shape and token count, never its body.
 
 ### artifact staff_lightbringer
 
-- display name: Legendary - Lightbringer Staff
+- display name: Legendary - Lightbringer Staff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\staff_lightbringer.gs` line 1
@@ -31200,7 +31199,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
-| `regenerate_army` | name | `get` |
+| `spell_id` | expression | `spelldict /regenerate_army get` |
 | `start_combat_proc` | procedure | `<procedure 33 tokens>` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -31217,7 +31216,7 @@ its shape and token count, never its body.
 
 ### artifact staff_of_animation
 
-- display name: Greater Artifact - Staff of Animation
+- display name: Greater Artifact - Staff of Animation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\stafanim.gs` line 1
@@ -31236,7 +31235,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 61 tokens>` |
 | `name` | text | `Greater Artifact - Staff of Animation` |
 | `portrait_code` | text | `destaf` |
-| `shade` | name | `get` |
+| `spell_id` | expression | `spelldict /shade get` |
 | `start_combat_proc` | procedure | `<procedure 28 tokens>` |
 | `unmod_proc` | procedure | `<procedure 81 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -31247,7 +31246,7 @@ its shape and token count, never its body.
 
 ### artifact staff_of_asphyxiation
 
-- display name: Greater Artifact-Staff Of Asphyxiation
+- display name: Greater Artifact-Staff Of Asphyxiation (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\stafasph.gs` line 1
@@ -31255,7 +31254,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `asphyxiate` | name | `get` |
 | `attack_proc` | procedure | `<procedure 43 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
@@ -31268,6 +31266,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 214 tokens>` |
 | `name` | text | `Greater Artifact-Staff Of Asphyxiation` |
 | `portrait_code` | text | `aistaf` |
+| `spell_id` | expression | `spelldict /asphyxiate get` |
 | `unmod_proc` | procedure | `<procedure 214 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -31277,7 +31276,7 @@ its shape and token count, never its body.
 
 ### artifact staff_of_drowning
 
-- display name: Greater Artifact - Staff of Drowning
+- display name: Greater Artifact - Staff of Drowning (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\stafdrwn.gs` line 1
@@ -31291,13 +31290,13 @@ its shape and token count, never its body.
 | `category` | number | `1` |
 | `description` | text | `Any mage can cast drowning twice per day, (Heals water units, slowly drowns other units in a radius) gains +6 mana, and ` |
 | `description_table` | dictionary | `<dictionary 10 tokens>` |
-| `drowning` | name | `get` |
 | `faith` | name | `WATER` |
 | `image` | number | `4` |
 | `max_mana` | number | `13` |
 | `mod_proc` | procedure | `<procedure 60 tokens>` |
 | `name` | text | `Greater Artifact - Staff of Drowning` |
 | `portrait_code` | text | `wastaf` |
+| `spell_id` | expression | `spelldict /drowning get` |
 | `unmod_proc` | procedure | `<procedure 60 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -31307,7 +31306,7 @@ its shape and token count, never its body.
 
 ### artifact staff_of_enlightenment
 
-- display name: Staff of Enlightenment
+- display name: Staff of Enlightenment (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\staffenl.gs` line 1
@@ -31321,12 +31320,12 @@ its shape and token count, never its body.
 | `description` | text | `Order, Air and Life mages get +2 Armor and +1000 experience, and can cast Guardian Winds thrice a day.` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `ORDER` |
-| `guard_winds` | name | `get` |
 | `image` | number | `4` |
 | `max_mana` | number | `12` |
 | `mod_proc` | procedure | `<procedure 26 tokens>` |
 | `name` | text | `Staff of Enlightenment` |
 | `portrait_code` | text | `orstaf` |
+| `spell_id` | expression | `spelldict /guard_winds get` |
 | `unmod_proc` | procedure | `<procedure 26 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -31336,7 +31335,7 @@ its shape and token count, never its body.
 
 ### artifact staff_of_incineration
 
-- display name: Greater Artifact-Staff of Incineration
+- display name: Greater Artifact-Staff of Incineration (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\stafinci.gs` line 1
@@ -31345,7 +31344,6 @@ its shape and token count, never its body.
 | field | shape | value |
 |---|---|---|
 | `attack_proc` | procedure | `<procedure 43 tokens>` |
-| `backdraf` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
@@ -31357,6 +31355,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 224 tokens>` |
 | `name` | text | `Greater Artifact-Staff of Incineration` |
 | `portrait_code` | text | `fistaf` |
+| `spell_id` | expression | `spelldict /backdraf get` |
 | `unmod_proc` | procedure | `<procedure 224 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -31366,7 +31365,7 @@ its shape and token count, never its body.
 
 ### artifact staff_of_light
 
-- display name: Greater Artifact - Staff of Light
+- display name: Greater Artifact - Staff of Light (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\stafligh.gs` line 1
@@ -31387,7 +31386,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Greater Artifact - Staff of Light` |
 | `portrait_code` | text | `liwwep` |
-| `rayohope` | name | `get` |
+| `spell_id` | expression | `spelldict /rayohope get` |
 | `start_combat_proc` | procedure | `<procedure 43 tokens>` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -31398,7 +31397,7 @@ its shape and token count, never its body.
 
 ### artifact staff_of_polymorphing
 
-- display name: Greater Artifact - Polymorph Staff
+- display name: Greater Artifact - Polymorph Staff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\stafpoly.gs` line 1
@@ -31416,9 +31415,9 @@ its shape and token count, never its body.
 | `image` | number | `4` |
 | `max_mana` | number | `24` |
 | `mod_proc` | procedure | `<procedure 51 tokens>` |
-| `morpho` | name | `get` |
 | `name` | text | `Greater Artifact - Polymorph Staff` |
 | `portrait_code` | text | `chstaf` |
+| `spell_id` | expression | `spelldict /morpho get` |
 | `unmod_proc` | procedure | `<procedure 51 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -31428,7 +31427,7 @@ its shape and token count, never its body.
 
 ### artifact staff_of_resurrection
 
-- display name: Greater Artifact - Resurrection Staff
+- display name: Greater Artifact - Resurrection Staff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\stafresu.gs` line 1
@@ -31450,7 +31449,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 61 tokens>` |
 | `name` | text | `Greater Artifact - Resurrection Staff` |
 | `portrait_code` | text | `listaf` |
-| `resurrect` | name | `get` |
+| `spell_id` | expression | `spelldict /resurrect get` |
 | `start_combat_proc` | procedure | `<procedure 23 tokens>` |
 | `unmod_proc` | procedure | `<procedure 71 tokens>` |
 | `uses_artifact_mana` | name | `true` |
@@ -31461,7 +31460,7 @@ its shape and token count, never its body.
 
 ### artifact staff_peacemaker
 
-- display name: Peacemaker
+- display name: Peacemaker (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\LIFE\staff_peacemaker.gs` line 1
@@ -31481,7 +31480,6 @@ its shape and token count, never its body.
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `LIFE` |
 | `image` | number | `5` |
-| `march_life` | name | `get` |
 | `max_charges` | number | `1` |
 | `max_mana` | number | `0` |
 | `name` | text | `Peacemaker` |
@@ -31489,6 +31487,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /march_life get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -31501,7 +31500,7 @@ its shape and token count, never its body.
 
 ### artifact staff_quality
 
-- display name: Staff of Quality
+- display name: Staff of Quality (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\staff_quality.gs` line 1
@@ -31513,7 +31512,6 @@ its shape and token count, never its body.
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 3 tokens>` |
-| `bolt_order` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `7` |
 | `colorizeborder?` | name | `false` |
@@ -31532,6 +31530,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /bolt_order get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -31547,7 +31546,7 @@ its shape and token count, never its body.
 
 ### artifact staff_shadow
 
-- display name: Shadowstaff
+- display name: Shadowstaff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\staff_shadow.gs` line 1
@@ -31574,7 +31573,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
-| `recover_death` | name | `get` |
+| `spell_id` | expression | `spelldict /recover_death get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -31588,7 +31587,7 @@ its shape and token count, never its body.
 
 ### artifact staff_turmoil
 
-- display name: Legendary - Staff of Turmoil
+- display name: Legendary - Staff of Turmoil (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\CHAOS\staff_turmoil.gs` line 1
@@ -31603,7 +31602,6 @@ its shape and token count, never its body.
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
 | `description` | text | `Any Mage, except for Order mages, may wield this disorderly staff to receive +5 Attack, Mana and Wisdom, +3 Armor, +50% ` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `destruction` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `dummy2` | expression | `spelldict begin [ poison leeches fireball ice_comet prismatic_hand balkoths_word ] end replace bind` |
 | `faith` | name | `CHAOS` |
@@ -31615,6 +31613,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /destruction get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -31631,7 +31630,7 @@ its shape and token count, never its body.
 
 ### artifact staff_unholy
 
-- display name: Legendary - Staff of the Unholy
+- display name: Legendary - Staff of the Unholy (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\staff_unholy.gs` line 1
@@ -31652,7 +31651,6 @@ its shape and token count, never its body.
 | `end_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `10` |
-| `locust_swarm` | name | `get` |
 | `max_charges` | number | `1` |
 | `max_mana` | number | `12` |
 | `name` | text | `Legendary - Staff of the Unholy` |
@@ -31660,6 +31658,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /locust_swarm get` |
 | `start_combat_proc` | procedure | `<procedure 5 tokens>` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -31675,7 +31674,7 @@ its shape and token count, never its body.
 
 ### artifact staff_water
 
-- display name: Water Staff
+- display name: Water Staff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\staff_water.gs` line 1
@@ -31691,7 +31690,6 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `description` | text | `Any mage may wield this rod to receive +(1/3X) Attack, +(1/5X) Armor, +(1/3X) Maximum Mana and the ability to cast Detec` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_water` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `WATER` |
@@ -31703,6 +31701,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_water get` |
 | `unmod_proc` | procedure | `<procedure 39 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -31716,7 +31715,7 @@ its shape and token count, never its body.
 
 ### artifact staff_wicked
 
-- display name: Wicked Staff
+- display name: Wicked Staff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\staff_wicked.gs` line 1
@@ -31741,11 +31740,11 @@ its shape and token count, never its body.
 | `max_charges` | number | `1` |
 | `max_mana` | number | `0` |
 | `name` | text | `Wicked Staff` |
-| `polymorph_self` | name | `get` |
 | `portrait_code` | text | `chstaf` |
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /polymorph_self get` |
 | `unmod_proc` | procedure | `<procedure 40 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -31760,7 +31759,7 @@ its shape and token count, never its body.
 
 ### artifact stat1_bonus
 
-- display name: Prime Stat Bonus
+- display name: Prime Stat Bonus (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\stat1_bonus.gs` line 1
@@ -31772,13 +31771,13 @@ its shape and token count, never its body.
 | `category` | number | `0` |
 | `description` | text | `Artifact, designed to improve prime stats based on difficulty level.` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `20` |
 | `name` | text | `Prime Stat Bonus` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -31788,7 +31787,7 @@ its shape and token count, never its body.
 
 ### artifact stat2_bonus
 
-- display name: Secondary Stat Bonus
+- display name: Secondary Stat Bonus (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\stat2_bonus.gs` line 1
@@ -31800,13 +31799,13 @@ its shape and token count, never its body.
 | `category` | number | `0` |
 | `description` | text | `Artifact, designed to improve secondary stats based on difficulty level.` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `20` |
 | `name` | text | `Secondary Stat Bonus` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -31816,7 +31815,7 @@ its shape and token count, never its body.
 
 ### artifact stat3_bonus
 
-- display name: Tertiary Stat Bonus
+- display name: Tertiary Stat Bonus (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\stat3_bonus.gs` line 1
@@ -31828,13 +31827,13 @@ its shape and token count, never its body.
 | `category` | number | `0` |
 | `description` | text | `Artifact, designed to improve tertiary stats based on difficulty level.` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `20` |
 | `name` | text | `Tertiary Stat Bonus` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -31844,7 +31843,7 @@ its shape and token count, never its body.
 
 ### artifact stfhlyblt
 
-- display name: (none declared)
+- display name: Staff of Holy Bolt (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\stfhlyblt.gs` line 1
@@ -31852,17 +31851,17 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_stfhlyblt` | name | `get` |
-| `T_artifact_name_stfhlyblt` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
+| `description` | expression | `textdict /T_artifact_descript_stfhlyblt get` |
 | `description_table` | dictionary | `<dictionary 4 tokens>` |
 | `faith` | name | `EARTH` |
-| `fdart` | name | `get` |
 | `image` | number | `4` |
 | `max_mana` | number | `6` |
+| `name` | expression | `textdict /T_artifact_name_stfhlyblt get` |
 | `portrait_code` | text | `eastaf` |
+| `spell_id` | expression | `spelldict /fdart get` |
 | `uses_artifact_mana` | name | `true` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
 | `wield_champion_types` | procedure | `<procedure 3 tokens>` |
@@ -31870,7 +31869,7 @@ its shape and token count, never its body.
 
 ### artifact stone_artifact
 
-- display name: stoneart
+- display name: stoneart (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\stoneart.gs` line 1
@@ -31899,7 +31898,7 @@ its shape and token count, never its body.
 
 ### artifact stone_energy
 
-- display name: Energy Stone
+- display name: Energy Stone (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\stone_energy.gs` line 1
@@ -31917,7 +31916,6 @@ its shape and token count, never its body.
 | `description` | text | `Any Mage can use this artifact which grants the wearer the +2 Luck.  During combat, the wearer regenerates 1 hp/12 sec. ` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
-| `earth_bind` | name | `get` |
 | `end_combat_proc` | procedure | `<procedure 59 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `48` |
@@ -31928,6 +31926,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /earth_bind get` |
 | `start_combat_proc` | procedure | `<procedure 26 tokens>` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -31940,7 +31939,7 @@ its shape and token count, never its body.
 
 ### artifact stone_luck
 
-- display name: Luckstone
+- display name: Luckstone (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\stone_luck.gs` line 1
@@ -31988,7 +31987,7 @@ its shape and token count, never its body.
 
 ### artifact stone_meek
 
-- display name: Meekstone
+- display name: Meekstone (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\stone_meek.gs` line 1
@@ -32028,7 +32027,7 @@ its shape and token count, never its body.
 
 ### artifact stone_might
 
-- display name: Mightstone
+- display name: Mightstone (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\stone_might.gs` line 1
@@ -32069,7 +32068,7 @@ its shape and token count, never its body.
 
 ### artifact stone_ring
 
-- display name: Stone Ring
+- display name: Stone Ring (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\stonring.gs` line 1
@@ -32080,7 +32079,6 @@ its shape and token count, never its body.
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `2` |
-| `clay` | name | `get` |
 | `description` | text | `Any mage acquires +2 Armor, 15% resistance to all magic and the power to cast Clay Earth once a day.  Earth mages enjoy ` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `EARTH` |
@@ -32089,6 +32087,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 193 tokens>` |
 | `name` | text | `Stone Ring` |
 | `portrait_code` | text | `earing` |
+| `spell_id` | expression | `spelldict /clay get` |
 | `unmod_proc` | procedure | `<procedure 193 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -32098,7 +32097,7 @@ its shape and token count, never its body.
 
 ### artifact sundial_key
 
-- display name: Sundial Key
+- display name: Sundial Key (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\sunkey.gs` line 1
@@ -32120,7 +32119,7 @@ its shape and token count, never its body.
 
 ### artifact swift_axe
 
-- display name: Swift Axe
+- display name: Swift Axe (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\swiftaxe.gs` line 1
@@ -32139,7 +32138,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Swift Axe` |
 | `portrait_code` | text | `eawwep` |
-| `tremor` | name | `get` |
+| `spell_id` | expression | `spelldict /tremor get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32149,7 +32148,7 @@ its shape and token count, never its body.
 
 ### artifact sword_burning
 
-- display name: Burning Blade
+- display name: Burning Blade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\sword_burning.gs` line 1
@@ -32165,7 +32164,6 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `description` | text | `Fire or Air Warriors may wield this firey blade to receive +(1/3X) Attack and Rate of Attack, +(1/5X) Armor and the abil` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_fire` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `FIRE` |
@@ -32177,6 +32175,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_fire get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32190,7 +32189,7 @@ its shape and token count, never its body.
 
 ### artifact sword_crusader
 
-- display name: Legendary - Crusader Blade
+- display name: Legendary - Crusader Blade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\sword_crusader.gs` line 1
@@ -32204,7 +32203,6 @@ its shape and token count, never its body.
 | `begin_turn_proc` | procedure | `<procedure 42 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `6` |
-| `crusade` | name | `get` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
 | `description` | text | `Order, Death or Water Warriors may wield this valiant blade which provides +3 Attack, Strength, Attack Rate and Luck.  A` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
@@ -32219,6 +32217,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /crusade get` |
 | `start_combat_proc` | procedure | `<procedure 46 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -32235,7 +32234,7 @@ its shape and token count, never its body.
 
 ### artifact sword_dark
 
-- display name: Dark Blade
+- display name: Dark Blade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\sword_dark.gs` line 1
@@ -32255,7 +32254,6 @@ its shape and token count, never its body.
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `5` |
-| `march_death` | name | `get` |
 | `max_charges` | number | `1` |
 | `max_mana` | number | `0` |
 | `name` | text | `Dark Blade` |
@@ -32263,6 +32261,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /march_death get` |
 | `unmod_proc` | procedure | `<procedure 32 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32276,7 +32275,7 @@ its shape and token count, never its body.
 
 ### artifact sword_enlightenment
 
-- display name: Sword of Enlightenment
+- display name: Sword of Enlightenment (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\sword_enlightenment.gs` line 1
@@ -32295,7 +32294,6 @@ its shape and token count, never its body.
 | `description` | text | `Order, Death or Water Warriors may wield this sage blade to receive +2 Attack and +4 Wisdom.  Values bestowed increase w` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
-| `enchant_weapon_life` | name | `get` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `LIFE` |
 | `image` | number | `72` |
@@ -32306,6 +32304,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /enchant_weapon_life get` |
 | `start_combat_proc` | procedure | `<procedure 46 tokens>` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
@@ -32320,7 +32319,7 @@ its shape and token count, never its body.
 
 ### artifact sword_flames
 
-- display name: Legendary - Sword of Flames
+- display name: Legendary - Sword of Flames (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\FIRE\sword_flames.gs` line 1
@@ -32349,7 +32348,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `3` |
-| `strength_fire` | name | `get` |
+| `spell_id` | expression | `spelldict /strength_fire get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32366,7 +32365,7 @@ its shape and token count, never its body.
 
 ### artifact sword_ice
 
-- display name: Ice Sword
+- display name: Ice Sword (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\sword_ice.gs` line 1
@@ -32386,7 +32385,6 @@ its shape and token count, never its body.
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `WATER` |
 | `image` | number | `5` |
-| `march_water` | name | `get` |
 | `max_charges` | number | `1` |
 | `max_mana` | number | `0` |
 | `name` | text | `Ice Sword` |
@@ -32394,6 +32392,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /march_water get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32407,7 +32406,7 @@ its shape and token count, never its body.
 
 ### artifact sword_of_flames
 
-- display name: Greater Artifact - Sword of Flames
+- display name: Greater Artifact - Sword of Flames (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\swordfla.gs` line 1
@@ -32422,12 +32421,12 @@ its shape and token count, never its body.
 | `description` | text | `Air warriors gain +3 to attack, +1 attack speed, and +1 armor.  Fire warriors gain +3 attack, +3 armor, +3 luck, +5 atta` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `faith` | name | `FIRE` |
-| `fdart` | name | `get` |
 | `image` | number | `5` |
 | `max_mana` | number | `12` |
 | `mod_proc` | procedure | `<procedure 61 tokens>` |
 | `name` | text | `Greater Artifact - Sword of Flames` |
 | `portrait_code` | text | `fiwwep` |
+| `spell_id` | expression | `spelldict /fdart get` |
 | `unmod_proc` | procedure | `<procedure 61 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -32437,7 +32436,7 @@ its shape and token count, never its body.
 
 ### artifact sword_of_quality
 
-- display name: Sword of Quality
+- display name: Sword of Quality (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\swrdqual.gs` line 1
@@ -32452,11 +32451,11 @@ its shape and token count, never its body.
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `5` |
-| `leader` | name | `get` |
 | `max_mana` | number | `0` |
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Sword of Quality` |
 | `portrait_code` | text | `orwwep` |
+| `spell_id` | expression | `spelldict /leader get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32466,7 +32465,7 @@ its shape and token count, never its body.
 
 ### artifact sword_quality
 
-- display name: Sword of Quality
+- display name: Sword of Quality (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\ORDER\sword_quality.gs` line 1
@@ -32486,7 +32485,6 @@ its shape and token count, never its body.
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `5` |
-| `march_order` | name | `get` |
 | `max_charges` | number | `1` |
 | `max_mana` | number | `0` |
 | `name` | text | `Sword of Quality` |
@@ -32494,6 +32492,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /march_order get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32507,7 +32506,7 @@ its shape and token count, never its body.
 
 ### artifact sword_soulstealer
 
-- display name: Legendary - Soul Stealer
+- display name: Legendary - Soul Stealer (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\DEATH\sword_soulstealer.gs` line 1
@@ -32524,7 +32523,6 @@ its shape and token count, never its body.
 | `description` | text | `Death, Order and Water Warriors may wield this unholy blade which bestows +3 Attack, Strength and Dexterty, +3 Rate of A` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
-| `embrace_of_golgoth` | name | `get` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `12` |
@@ -32535,6 +32533,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /embrace_of_golgoth get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32550,7 +32549,7 @@ its shape and token count, never its body.
 
 ### artifact sword_spectral
 
-- display name: Spectral Sword
+- display name: Spectral Sword (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\sword_spectral.gs` line 1
@@ -32558,6 +32557,7 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
+| `alt_spell_id` | expression | `spelldict /enchant_weapon_death get` |
 | `alt_spells_id` | expression | `spelldict begin [ enchant_weapon_death enchant_weapon_life enchant_weapon_chaos enchant_weapon_order enchant_weapon_wate` |
 | `attack_proc` | procedure | `<procedure 2 tokens>` |
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
@@ -32570,8 +32570,6 @@ its shape and token count, never its body.
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
 | `dummy2` | expression | `spelldict begin [ enchant_weapon_death enchant_weapon_life enchant_weapon_chaos enchant_weapon_order enchant_weapon_wate` |
-| `enchant_weapon_death` | name | `get` |
-| `enchant_weapon_order` | name | `get` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `163` |
@@ -32582,6 +32580,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `false` |
 | `rechargeonturn?` | number | `0` |
 | `rechargequantity?` | number | `0` |
+| `spell_id` | expression | `spelldict /enchant_weapon_order get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32595,7 +32594,7 @@ its shape and token count, never its body.
 
 ### artifact sword_thunder
 
-- display name: Legendary - Thunder Blade
+- display name: Legendary - Thunder Blade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\sword_thunder.gs` line 1
@@ -32615,7 +32614,6 @@ its shape and token count, never its body.
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `end_turn_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `AIR` |
-| `feather_sword` | name | `get` |
 | `image` | number | `10` |
 | `max_charges` | number | `3` |
 | `max_mana` | number | `5` |
@@ -32624,6 +32622,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `1` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /feather_sword get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32638,7 +32637,7 @@ its shape and token count, never its body.
 
 ### artifact sword_wave
 
-- display name: Legendary - Wave Blade
+- display name: Legendary - Wave Blade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\WATER\sword_wave.gs` line 1
@@ -32650,7 +32649,6 @@ its shape and token count, never its body.
 | `autocalc_end_combat_proc` | procedure | `<procedure 9 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `begin_turn_proc` | procedure | `<procedure 42 tokens>` |
-| `blood_lust` | name | `get` |
 | `can_be_used` | name | `true` |
 | `category` | number | `6` |
 | `description` | text | `Water, Order or Death Warriors may wield this fluid blade to receive +3 Attack, Dexterity and Rate of Attack and the abi` |
@@ -32666,6 +32664,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /blood_lust get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32680,7 +32679,7 @@ its shape and token count, never its body.
 
 ### artifact sword_windbreaker
 
-- display name: Windbreaker
+- display name: Windbreaker (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\AIR\sword_windbreaker.gs` line 1
@@ -32696,7 +32695,6 @@ its shape and token count, never its body.
 | `category` | number | `3` |
 | `description` | text | `With this blade of storms, Air or Fire Warriors receive +(1/3X) Attack, +(1/3X) Rate of Attack, +(1/5X) Armor and the ab` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
-| `detect_air` | name | `get` |
 | `dummy` | expression | `currentdict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 3 tokens>` |
 | `faith` | name | `AIR` |
@@ -32708,6 +32706,7 @@ its shape and token count, never its body.
 | `rechargeable?` | name | `true` |
 | `rechargeonturn?` | number | `3` |
 | `rechargequantity?` | number | `1` |
+| `spell_id` | expression | `spelldict /detect_air get` |
 | `unmod_proc` | procedure | `<procedure 11 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32721,7 +32720,7 @@ its shape and token count, never its body.
 
 ### artifact thiefart
 
-- display name: thiefart
+- display name: thiefart (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\thiefart.gs` line 1
@@ -32745,7 +32744,7 @@ its shape and token count, never its body.
 
 ### artifact thunderblade
 
-- display name: Greater Artifact - Thunderblade
+- display name: Greater Artifact - Thunderblade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\thunblad.gs` line 1
@@ -32753,7 +32752,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `areastun` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
@@ -32766,6 +32764,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 75 tokens>` |
 | `name` | text | `Greater Artifact - Thunderblade` |
 | `portrait_code` | text | `aiwwep` |
+| `spell_id` | expression | `spelldict /areastun get` |
 | `unmod_proc` | procedure | `<procedure 75 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -32775,7 +32774,7 @@ its shape and token count, never its body.
 
 ### artifact tidalblade
 
-- display name: Greater Artifact - Tidalblade
+- display name: Greater Artifact - Tidalblade (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\tidblade.gs` line 1
@@ -32790,12 +32789,12 @@ its shape and token count, never its body.
 | `description` | text | `Water, Death, or Order warriors get +2 Attack, +2 Dexterity, +1 rate of attack and can cast Ice Bolt 6 times a day.  In ` |
 | `description_table` | dictionary | `<dictionary 12 tokens>` |
 | `faith` | name | `WATER` |
-| `icebolt` | name | `get` |
 | `image` | number | `5` |
 | `max_mana` | number | `12` |
 | `mod_proc` | procedure | `<procedure 75 tokens>` |
 | `name` | text | `Greater Artifact - Tidalblade` |
 | `portrait_code` | text | `wawwep` |
+| `spell_id` | expression | `spelldict /icebolt get` |
 | `unmod_proc` | procedure | `<procedure 75 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `uses_wizard_mana` | name | `false` |
@@ -32805,7 +32804,7 @@ its shape and token count, never its body.
 
 ### artifact token_insane
 
-- display name: Insane Mode Token
+- display name: Insane Mode Token (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\tokens\token_insane.gs` line 1
@@ -32818,9 +32817,9 @@ its shape and token count, never its body.
 | `description` | text | `This token represents the Insane Mode difficulty modifier.  If a human player's Lord possesses this, then it shall cause` |
 | `description_table` | dictionary | `<dictionary 30 tokens>` |
 | `dummy` | expression | `currentdict replace bind` |
+| `dummy2` | expression | `currentdict /mod_proc get replace bind` |
 | `faith` | name | `DEATH` |
 | `image` | number | `24` |
-| `mod_proc` | expression | `get replace bind` |
 | `name` | text | `Insane Mode Token` |
 | `portrait_code` | text | `DEATH` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
@@ -32830,7 +32829,7 @@ its shape and token count, never its body.
 
 ### artifact turn_stat_bonus
 
-- display name: Turn Stat Bonus
+- display name: Turn Stat Bonus (declared-name)
 - evidence: `registered-by-operator`
 - profiles: gs5r3
 - defined in: `gs\artifact\_custom\misc\turn_stat_bonus.gs` line 1
@@ -32842,13 +32841,13 @@ its shape and token count, never its body.
 | `category` | number | `0` |
 | `description` | text | `Aartifact, designed to increase champion's ability to gain resources per turn (upkeep).` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
-| `dispel_magic_death` | name | `get` |
 | `dummy` | expression | `5 dict replace bind` |
 | `end_combat_proc` | procedure | `<procedure 2 tokens>` |
 | `faith` | name | `DEATH` |
 | `image` | number | `20` |
 | `name` | text | `Turn Stat Bonus` |
 | `portrait_code` | text | `descrol` |
+| `spell_id` | expression | `spelldict /dispel_magic_death get` |
 | `unmod_proc` | procedure | `<procedure 10 tokens>` |
 | `uses_wizard_mana` | name | `false` |
 | `wield` | name | `ARTIFACT_WIELD_INVISIBLE` |
@@ -32858,7 +32857,7 @@ its shape and token count, never its body.
 
 ### artifact waterstaff
 
-- display name: Waterstaff
+- display name: Waterstaff (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\waterstf.gs` line 1
@@ -32871,13 +32870,13 @@ its shape and token count, never its body.
 | `category` | number | `1` |
 | `description` | text | `Any mage who wields this rod receives +1 Armor and +2 Mana.` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
-| `drowning` | name | `get` |
 | `faith` | name | `WATER` |
 | `image` | number | `4` |
 | `max_mana` | number | `0` |
 | `mod_proc` | procedure | `<procedure 38 tokens>` |
 | `name` | text | `Waterstaff` |
 | `portrait_code` | text | `wastaf` |
+| `spell_id` | expression | `spelldict /drowning get` |
 | `unmod_proc` | procedure | `<procedure 38 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -32887,7 +32886,7 @@ its shape and token count, never its body.
 
 ### artifact welanhelm
 
-- display name: (none declared)
+- display name: Welan's Helmet (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\welanhelm.gs` line 1
@@ -32895,18 +32894,18 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_welanhelm` | name | `get` |
-| `T_artifact_name_welanhelm` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
+| `description` | expression | `textdict /T_artifact_descript_welanhelm get` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `EARTH` |
-| `healwater` | name | `get` |
 | `image` | number | `16` |
 | `max_charges` | number | `5` |
 | `mod_proc` | procedure | `<procedure 14 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_welanhelm get` |
 | `portrait_code` | text | `charmr` |
+| `spell_id` | expression | `spelldict /healwater get` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_LEFT` |
 | `wield_champion_types` | procedure | `<procedure 3 tokens>` |
@@ -32914,7 +32913,7 @@ its shape and token count, never its body.
 
 ### artifact welanmail
 
-- display name: (none declared)
+- display name: Welan's Mail Hauberk (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\welanmail.gs` line 1
@@ -32922,14 +32921,14 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_welanmail` | name | `get` |
-| `T_artifact_name_welanmail` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
+| `description` | expression | `textdict /T_artifact_descript_welanmail get` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `7` |
 | `mod_proc` | procedure | `<procedure 26 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_welanmail get` |
 | `portrait_code` | text | `eaarmr` |
 | `unmod_proc` | procedure | `<procedure 18 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_LEFT` |
@@ -32938,7 +32937,7 @@ its shape and token count, never its body.
 
 ### artifact welanplate
 
-- display name: (none declared)
+- display name: Welan's Plate Armor (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\welanplate.gs` line 1
@@ -32946,18 +32945,18 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_welanplate` | name | `get` |
-| `T_artifact_name_welanplate` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `true` |
 | `category` | number | `1` |
+| `description` | expression | `textdict /T_artifact_descript_welanplate get` |
 | `description_table` | dictionary | `<dictionary 6 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `7` |
 | `max_mana` | number | `4` |
 | `mod_proc` | procedure | `<procedure 14 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_welanplate get` |
 | `portrait_code` | text | `eaarmr` |
-| `ricause` | name | `get` |
+| `spell_id` | expression | `spelldict /ricause get` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `uses_artifact_mana` | name | `true` |
 | `wield` | name | `ARTIFACT_WIELD_LEFT` |
@@ -32966,7 +32965,7 @@ its shape and token count, never its body.
 
 ### artifact wexcross
 
-- display name: (none declared)
+- display name: Wextan's Crossbow (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\Wexcross.gs` line 1
@@ -32974,15 +32973,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_wexcross` | name | `get` |
-| `T_artifact_name_wexcross` | name | `get` |
 | `attack_proc` | procedure | `<procedure 23 tokens>` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `1` |
+| `description` | expression | `textdict /T_artifact_descript_wexcross get` |
 | `description_table` | dictionary | `<dictionary 8 tokens>` |
 | `faith` | name | `EARTH` |
 | `image` | number | `15` |
 | `mod_proc` | procedure | `<procedure 38 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_wexcross get` |
 | `portrait_code` | text | `firngw` |
 | `unmod_proc` | procedure | `<procedure 7 tokens>` |
 | `wield` | name | `ARTIFACT_WIELD_RIGHT` |
@@ -32991,7 +32990,7 @@ its shape and token count, never its body.
 
 ### artifact windbreaker
 
-- display name: Stormbreaker
+- display name: Stormbreaker (declared-name)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302
 - defined in: `gs\artifact\windbrkr.gs` line 1
@@ -32999,7 +32998,6 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `areastun` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `can_be_used` | name | `false` |
 | `category` | number | `3` |
@@ -33011,6 +33009,7 @@ its shape and token count, never its body.
 | `mod_proc` | procedure | `<procedure 29 tokens>` |
 | `name` | text | `Stormbreaker` |
 | `portrait_code` | text | `aiwwep` |
+| `spell_id` | expression | `spelldict /areastun get` |
 | `unmod_proc` | procedure | `<procedure 29 tokens>` |
 | `uses_artifact_mana` | name | `false` |
 | `uses_wizard_mana` | name | `false` |
@@ -33020,7 +33019,7 @@ its shape and token count, never its body.
 
 ### artifact writofcamd
 
-- display name: (none declared)
+- display name: Writ of Cameliard (text-table)
 - evidence: `registered-by-operator`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\artifact\writofcamd.gs` line 1
@@ -33028,15 +33027,15 @@ its shape and token count, never its body.
 
 | field | shape | value |
 |---|---|---|
-| `T_artifact_descript_writofcamd` | name | `get` |
-| `T_artifact_name_writofcamd` | name | `get` |
 | `barter_proc` | procedure | `<procedure 3 tokens>` |
 | `category` | number | `2` |
 | `defend_proc` | procedure | `<procedure 2 tokens>` |
+| `description` | expression | `textdict /T_artifact_descript_writofcamd get` |
 | `description_table` | dictionary | `<dictionary 2 tokens>` |
 | `faith` | name | `ORDER` |
 | `image` | number | `11` |
 | `mod_proc` | procedure | `<procedure 2 tokens>` |
+| `name` | expression | `textdict /T_artifact_name_writofcamd get` |
 | `portrait_code` | text | `orscro` |
 | `wield` | name | `ARTIFACT_WIELD_EITHER` |
 | `wield_champion_types` | procedure | `<procedure 5 tokens>` |
@@ -33046,7 +33045,7 @@ its shape and token count, never its body.
 
 ### encounter aigtem
 
-- display name: Air Great Temple
+- display name: Air Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\aigtem.gs` line 1
@@ -33072,7 +33071,7 @@ its shape and token count, never its body.
 
 ### encounter air/aicave
 
-- display name: (none declared)
+- display name: Air Cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\air\aicave.gs` line 1
@@ -33120,7 +33119,7 @@ its shape and token count, never its body.
 
 ### encounter air/aidung
 
-- display name: Icey Keep
+- display name: Icey Keep (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\air\aidung.gs` line 1
@@ -33147,7 +33146,7 @@ its shape and token count, never its body.
 
 ### encounter air/aigtem
 
-- display name: Air Great Temple
+- display name: Air Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\air\aigtem.gs` line 1
@@ -33173,7 +33172,7 @@ its shape and token count, never its body.
 
 ### encounter air/aimina
 
-- display name: (none declared)
+- display name: Air Brew (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\air\aimina.gs` line 1
@@ -33202,7 +33201,7 @@ its shape and token count, never its body.
 
 ### encounter air/aiminc
 
-- display name: (none declared)
+- display name: Air Crystal (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\air\aiminc.gs` line 1
@@ -33231,7 +33230,7 @@ its shape and token count, never its body.
 
 ### encounter air/aiming
 
-- display name: (none declared)
+- display name: Air Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\air\aiming.gs` line 1
@@ -33260,7 +33259,7 @@ its shape and token count, never its body.
 
 ### encounter air/aimult
 
-- display name: (none declared)
+- display name: Air Multi (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\air\aimult.gs` line 1
@@ -33286,7 +33285,7 @@ its shape and token count, never its body.
 
 ### encounter air/airmult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\air\airmult.gs` line 1
@@ -33312,7 +33311,7 @@ its shape and token count, never its body.
 
 ### encounter air/aistat
 
-- display name: (none declared)
+- display name: Air Statue (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\air\aistat.gs` line 1
@@ -33341,7 +33340,7 @@ its shape and token count, never its body.
 
 ### encounter air/aitowe
 
-- display name: (none declared)
+- display name: Air Tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\air\aitowe.gs` line 1
@@ -33368,7 +33367,7 @@ its shape and token count, never its body.
 
 ### encounter air/frost_dragoncave
 
-- display name: Frost Dragons' Lair
+- display name: Frost Dragons' Lair (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\air\frost_dragoncave.gs` line 1
@@ -33396,7 +33395,7 @@ its shape and token count, never its body.
 
 ### encounter air/gen_sprite
 
-- display name: Sprite Cave
+- display name: Sprite Cave (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\air\gen_sprite.gs` line 1
@@ -33422,7 +33421,7 @@ its shape and token count, never its body.
 
 ### encounter air/genair
 
-- display name: Cave
+- display name: Cave (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\air\genair.gs` line 1
@@ -33449,7 +33448,7 @@ its shape and token count, never its body.
 
 ### encounter bridge
 
-- display name: (none declared)
+- display name: Troll Bridge (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\bridge.gs` line 1
@@ -33477,7 +33476,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/chaosmult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\chaos\chaosmult.gs` line 1
@@ -33503,7 +33502,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/chcave
 
-- display name: (none declared)
+- display name: Chaos Cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\chaos\chcave.gs` line 1
@@ -33551,7 +33550,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/chdung
 
-- display name: Barbarian Stronghold
+- display name: Barbarian Stronghold (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\chaos\chdung.gs` line 1
@@ -33578,7 +33577,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/chgtem
 
-- display name: Chaos Great Temple
+- display name: Chaos Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\chaos\chgtem.gs` line 1
@@ -33604,7 +33603,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/chmina
 
-- display name: (none declared)
+- display name: Chaos Brew (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\chaos\chmina.gs` line 1
@@ -33633,7 +33632,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/chminc
 
-- display name: (none declared)
+- display name: Chaos Crystal (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\chaos\chminc.gs` line 1
@@ -33662,7 +33661,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/chming
 
-- display name: (none declared)
+- display name: Chaos Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\chaos\chming.gs` line 1
@@ -33691,7 +33690,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/chmult
 
-- display name: (none declared)
+- display name: Chaos Multi (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\chaos\chmult.gs` line 1
@@ -33717,7 +33716,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/chstat
 
-- display name: (none declared)
+- display name: Chaos Statue (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\chaos\chstat.gs` line 1
@@ -33746,7 +33745,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/chtowe
 
-- display name: (none declared)
+- display name: Chaos Tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\chaos\chtowe.gs` line 1
@@ -33773,7 +33772,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/cyclopscave
 
-- display name: (none declared)
+- display name: Cyclops Cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\chaos\cyclopscave.gs` line 1
@@ -33801,7 +33800,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/genchaos
 
-- display name: Chaos Encounter
+- display name: Chaos Encounter (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\chaos\genchaos.gs` line 1
@@ -33828,7 +33827,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/genorc
 
-- display name: Orc Lair
+- display name: Orc Lair (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\chaos\genorc.gs` line 1
@@ -33854,7 +33853,7 @@ its shape and token count, never its body.
 
 ### encounter chaos/witchtowr
 
-- display name: (none declared)
+- display name: Witch Tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\chaos\witchtowr.gs` line 1
@@ -33882,7 +33881,7 @@ its shape and token count, never its body.
 
 ### encounter chgtem
 
-- display name: Chaos Great Temple
+- display name: Chaos Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\chgtem.gs` line 1
@@ -33908,7 +33907,7 @@ its shape and token count, never its body.
 
 ### encounter cyclopscave
 
-- display name: (none declared)
+- display name: Cyclops cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\cyclopscave.gs` line 1
@@ -33936,7 +33935,7 @@ its shape and token count, never its body.
 
 ### encounter death/altosac
 
-- display name: Altar of Sacrifice
+- display name: Altar of Sacrifice (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\death\altosac.gs` line 1
@@ -33962,7 +33961,7 @@ its shape and token count, never its body.
 
 ### encounter death/deathcaves
 
-- display name: (none declared)
+- display name: DEATH - CAVES (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\death\deathcaves.gs` line 1
@@ -33989,7 +33988,7 @@ its shape and token count, never its body.
 
 ### encounter death/deathgt
 
-- display name: (none declared)
+- display name: Death Great Temple (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\death\deathgt.gs` line 1
@@ -34020,7 +34019,7 @@ its shape and token count, never its body.
 
 ### encounter death/deathmult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\death\deathmult.gs` line 1
@@ -34046,7 +34045,7 @@ its shape and token count, never its body.
 
 ### encounter death/decave
 
-- display name: (none declared)
+- display name: Death Cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\decave.gs` line 1
@@ -34093,7 +34092,7 @@ its shape and token count, never its body.
 
 ### encounter death/dedung
 
-- display name: Golgothan Castle
+- display name: Golgothan Castle (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\dedung.gs` line 1
@@ -34120,7 +34119,7 @@ its shape and token count, never its body.
 
 ### encounter death/degtem
 
-- display name: Death Great Temple
+- display name: Death Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\degtem.gs` line 1
@@ -34146,7 +34145,7 @@ its shape and token count, never its body.
 
 ### encounter death/demina
 
-- display name: (none declared)
+- display name: Death Brew (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\demina.gs` line 1
@@ -34175,7 +34174,7 @@ its shape and token count, never its body.
 
 ### encounter death/deminc
 
-- display name: (none declared)
+- display name: Death Crystal (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\deminc.gs` line 1
@@ -34204,7 +34203,7 @@ its shape and token count, never its body.
 
 ### encounter death/deming
 
-- display name: (none declared)
+- display name: Death Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\deming.gs` line 1
@@ -34233,7 +34232,7 @@ its shape and token count, never its body.
 
 ### encounter death/demult
 
-- display name: (none declared)
+- display name: Death Multi (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\demult.gs` line 1
@@ -34259,7 +34258,7 @@ its shape and token count, never its body.
 
 ### encounter death/destat
 
-- display name: (none declared)
+- display name: Death Statue (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\destat.gs` line 1
@@ -34288,7 +34287,7 @@ its shape and token count, never its body.
 
 ### encounter death/detowe
 
-- display name: (none declared)
+- display name: Death Tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\detowe.gs` line 1
@@ -34315,7 +34314,7 @@ its shape and token count, never its body.
 
 ### encounter death/encounter2
 
-- display name: (none declared)
+- display name: DEATH A1E2 - ESTATUE (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\death\encounter2.gs` line 1
@@ -34344,7 +34343,7 @@ its shape and token count, never its body.
 
 ### encounter death/encounter3
 
-- display name: (none declared)
+- display name: DEATH A1E3- HSTATUE (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\death\encounter3.gs` line 1
@@ -34376,7 +34375,7 @@ its shape and token count, never its body.
 
 ### encounter death/encounter4a
 
-- display name: (none declared)
+- display name: DEATH A1E4- LICH (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\death\encounter4a.gs` line 1
@@ -34405,7 +34404,7 @@ its shape and token count, never its body.
 
 ### encounter death/encounter4b
 
-- display name: (none declared)
+- display name: DEATH A1E4B- LICH (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\death\encounter4b.gs` line 1
@@ -34433,7 +34432,7 @@ its shape and token count, never its body.
 
 ### encounter death/encounter4c
 
-- display name: (none declared)
+- display name: DEATH A1E4c- LICH (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\death\encounter4c.gs` line 1
@@ -34463,7 +34462,7 @@ its shape and token count, never its body.
 
 ### encounter death/encounter5
 
-- display name: (none declared)
+- display name: DEATH A1E5 - KING (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\death\encounter5.gs` line 1
@@ -34494,7 +34493,7 @@ its shape and token count, never its body.
 
 ### encounter death/gen_undead
 
-- display name: Undead Village
+- display name: Undead Village (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\gen_undead.gs` line 1
@@ -34522,7 +34521,7 @@ its shape and token count, never its body.
 
 ### encounter death/gendeath
 
-- display name: (none declared)
+- display name: Death Encounter (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\death\gendeath.gs` line 1
@@ -34550,7 +34549,7 @@ its shape and token count, never its body.
 
 ### encounter death/lichcastle
 
-- display name: Lich Castle
+- display name: Lich Castle (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\lichcastle.gs` line 1
@@ -34578,7 +34577,7 @@ its shape and token count, never its body.
 
 ### encounter death/quest/altosac
 
-- display name: Altar of Sacrifice
+- display name: Altar of Sacrifice (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\quest\altosac.gs` line 1
@@ -34604,7 +34603,7 @@ its shape and token count, never its body.
 
 ### encounter death/quest/deathcaves
 
-- display name: (none declared)
+- display name: DEATH - CAVES (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\quest\deathcaves.gs` line 1
@@ -34631,7 +34630,7 @@ its shape and token count, never its body.
 
 ### encounter death/quest/deathgt
 
-- display name: (none declared)
+- display name: Death Great Temple (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\quest\deathgt.gs` line 1
@@ -34662,7 +34661,7 @@ its shape and token count, never its body.
 
 ### encounter death/quest/encounter2
 
-- display name: (none declared)
+- display name: DEATH A1E2 - ESTATUE (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\quest\encounter2.gs` line 1
@@ -34691,7 +34690,7 @@ its shape and token count, never its body.
 
 ### encounter death/quest/encounter3
 
-- display name: (none declared)
+- display name: DEATH A1E3- HSTATUE (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\quest\encounter3.gs` line 1
@@ -34723,7 +34722,7 @@ its shape and token count, never its body.
 
 ### encounter death/quest/encounter4a
 
-- display name: (none declared)
+- display name: DEATH A1E4- LICH (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\quest\encounter4a.gs` line 1
@@ -34752,7 +34751,7 @@ its shape and token count, never its body.
 
 ### encounter death/quest/encounter4b
 
-- display name: (none declared)
+- display name: DEATH A1E4B- LICH (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\quest\encounter4b.gs` line 1
@@ -34780,7 +34779,7 @@ its shape and token count, never its body.
 
 ### encounter death/quest/encounter4c
 
-- display name: (none declared)
+- display name: DEATH A1E4c- LICH (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\quest\encounter4c.gs` line 1
@@ -34810,7 +34809,7 @@ its shape and token count, never its body.
 
 ### encounter death/quest/encounter5
 
-- display name: (none declared)
+- display name: DEATH A1E5 - KING (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\quest\encounter5.gs` line 1
@@ -34841,7 +34840,7 @@ its shape and token count, never its body.
 
 ### encounter death/vamp_nest
 
-- display name: Vampire's Nest
+- display name: Vampire's Nest (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\death\vamp_nest.gs` line 1
@@ -34869,7 +34868,7 @@ its shape and token count, never its body.
 
 ### encounter degtem
 
-- display name: Death Great Temple
+- display name: Death Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\degtem.gs` line 1
@@ -34895,7 +34894,7 @@ its shape and token count, never its body.
 
 ### encounter dragoncave
 
-- display name: (none declared)
+- display name: Dragon's Lair (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\dragoncave.gs` line 1
@@ -34923,7 +34922,7 @@ its shape and token count, never its body.
 
 ### encounter dummy
 
-- display name: Padding Encounter
+- display name: Padding Encounter (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\dummy.gs` line 1
@@ -34947,7 +34946,7 @@ its shape and token count, never its body.
 
 ### encounter eagtem
 
-- display name: Earth Great Temple
+- display name: Earth Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\eagtem.gs` line 1
@@ -34973,7 +34972,7 @@ its shape and token count, never its body.
 
 ### encounter earth/barrow2
 
-- display name: (none declared)
+- display name: Barrow Level2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\barrow2.gs` line 1
@@ -35006,7 +35005,7 @@ its shape and token count, never its body.
 
 ### encounter earth/barrows
 
-- display name: (none declared)
+- display name: Barrows (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\barrows.gs` line 1
@@ -35040,7 +35039,7 @@ its shape and token count, never its body.
 
 ### encounter earth/bridge
 
-- display name: (none declared)
+- display name: Troll Bridge (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\bridge.gs` line 1
@@ -35068,7 +35067,7 @@ its shape and token count, never its body.
 
 ### encounter earth/eacave
 
-- display name: (none declared)
+- display name: Earth Cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\eacave.gs` line 1
@@ -35115,7 +35114,7 @@ its shape and token count, never its body.
 
 ### encounter earth/eadung
 
-- display name: Dwarven Stronghold
+- display name: Dwarven Stronghold (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\eadung.gs` line 1
@@ -35142,7 +35141,7 @@ its shape and token count, never its body.
 
 ### encounter earth/eagtem
 
-- display name: Earth Great Temple
+- display name: Earth Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\eagtem.gs` line 1
@@ -35168,7 +35167,7 @@ its shape and token count, never its body.
 
 ### encounter earth/eamina
 
-- display name: (none declared)
+- display name: Earth Brew (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\eamina.gs` line 1
@@ -35197,7 +35196,7 @@ its shape and token count, never its body.
 
 ### encounter earth/eaminc
 
-- display name: (none declared)
+- display name: Earth Crystal (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\eaminc.gs` line 1
@@ -35226,7 +35225,7 @@ its shape and token count, never its body.
 
 ### encounter earth/eaming
 
-- display name: (none declared)
+- display name: Earth Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\eaming.gs` line 1
@@ -35255,7 +35254,7 @@ its shape and token count, never its body.
 
 ### encounter earth/eamult
 
-- display name: (none declared)
+- display name: Earth Multi (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\eamult.gs` line 1
@@ -35281,7 +35280,7 @@ its shape and token count, never its body.
 
 ### encounter earth/earthmult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\earth\earthmult.gs` line 1
@@ -35307,7 +35306,7 @@ its shape and token count, never its body.
 
 ### encounter earth/eastat
 
-- display name: (none declared)
+- display name: Earth Statue (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\eastat.gs` line 1
@@ -35336,7 +35335,7 @@ its shape and token count, never its body.
 
 ### encounter earth/eatowe
 
-- display name: (none declared)
+- display name: Earth Tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\eatowe.gs` line 1
@@ -35363,7 +35362,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter1
 
-- display name: (none declared)
+- display name: EA A0E1 Home (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter1.gs` line 1
@@ -35394,7 +35393,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter10
 
-- display name: (none declared)
+- display name: EA A3E6 ElvenFort (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter10.gs` line 1
@@ -35424,7 +35423,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter11
 
-- display name: (none declared)
+- display name: EA A3E7 ElvenCity (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter11.gs` line 1
@@ -35449,7 +35448,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter12
 
-- display name: (none declared)
+- display name: EA A4E1 Pantry (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter12.gs` line 1
@@ -35484,7 +35483,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter13
 
-- display name: (none declared)
+- display name: EA A5E2 RuinedFort (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter13.gs` line 1
@@ -35515,7 +35514,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter14
 
-- display name: (none declared)
+- display name: EA A6E1 OrcWarrior (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter14.gs` line 1
@@ -35548,7 +35547,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter15
 
-- display name: (none declared)
+- display name: EA A7E1 Ship4Sale (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter15.gs` line 1
@@ -35580,7 +35579,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter16
 
-- display name: (none declared)
+- display name: EA A7E2 El.Parties (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter16.gs` line 1
@@ -35611,7 +35610,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter17
 
-- display name: (none declared)
+- display name: EA A8E1 King's Ret. (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter17.gs` line 1
@@ -35641,7 +35640,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter18
 
-- display name: (none declared)
+- display name: EA A8E2 N.Village (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter18.gs` line 1
@@ -35672,7 +35671,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter19
 
-- display name: (none declared)
+- display name: EA A8E3 S.Village (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter19.gs` line 1
@@ -35703,7 +35702,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter2
 
-- display name: (none declared)
+- display name: EA A1E1 Hrothgar's (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter2.gs` line 1
@@ -35736,7 +35735,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter20
 
-- display name: (none declared)
+- display name: EA A8E4 W.Village (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter20.gs` line 1
@@ -35767,7 +35766,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter21
 
-- display name: (none declared)
+- display name: EA A8E5 E.Village (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter21.gs` line 1
@@ -35798,7 +35797,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter22
 
-- display name: (none declared)
+- display name: EA A8E6 OrderGTA (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter22.gs` line 1
@@ -35831,7 +35830,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter23
 
-- display name: (none declared)
+- display name: EA A8E7 OrderGTB (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter23.gs` line 1
@@ -35865,7 +35864,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter24
 
-- display name: (none declared)
+- display name: EA A8E8 ORCity (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter24.gs` line 1
@@ -35893,7 +35892,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter25
 
-- display name: (none declared)
+- display name: EA A8E9 Roving (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter25.gs` line 1
@@ -35924,7 +35923,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter26
 
-- display name: (none declared)
+- display name: EA A9E1 Vyrm Att. (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter26.gs` line 1
@@ -35956,7 +35955,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter27
 
-- display name: (none declared)
+- display name: EA A9E2 Hermod's (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter27.gs` line 1
@@ -35987,7 +35986,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter27B
 
-- display name: (none declared)
+- display name: EA A9E2 Hermod's level 2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter27B.gs` line 1
@@ -36019,7 +36018,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter28
 
-- display name: (none declared)
+- display name: EA Orc city (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter28.gs` line 1
@@ -36049,7 +36048,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter28B
 
-- display name: (none declared)
+- display name: EA Orc city level 2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter28B.gs` line 1
@@ -36080,7 +36079,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter29
 
-- display name: (none declared)
+- display name: EA Orc barrack (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter29.gs` line 1
@@ -36110,7 +36109,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter3
 
-- display name: (none declared)
+- display name: EA A2E1 Grendel (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter3.gs` line 1
@@ -36145,7 +36144,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter30
 
-- display name: (none declared)
+- display name: EA Orc thieves guild (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter30.gs` line 1
@@ -36176,7 +36175,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter31
 
-- display name: (none declared)
+- display name: EA Orc wizard tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter31.gs` line 1
@@ -36207,7 +36206,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter32
 
-- display name: (none declared)
+- display name: EA Merc Guild (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter32.gs` line 1
@@ -36238,7 +36237,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter4
 
-- display name: (none declared)
+- display name: EA A3E1 Accosted (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter4.gs` line 1
@@ -36270,7 +36269,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter5
 
-- display name: (none declared)
+- display name: EA A3E2 Animal1 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter5.gs` line 1
@@ -36302,7 +36301,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter6
 
-- display name: (none declared)
+- display name: EA A3E2 Animal2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter6.gs` line 1
@@ -36334,7 +36333,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter7
 
-- display name: (none declared)
+- display name: EA A3E3 Recluse (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter7.gs` line 1
@@ -36366,7 +36365,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter8
 
-- display name: (none declared)
+- display name: EA A3E4 Plainsmen (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter8.gs` line 1
@@ -36397,7 +36396,7 @@ its shape and token count, never its body.
 
 ### encounter earth/encounter9
 
-- display name: (none declared)
+- display name: EA A3E5 Elven Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\encounter9.gs` line 1
@@ -36430,7 +36429,7 @@ its shape and token count, never its body.
 
 ### encounter earth/genbrew
 
-- display name: (none declared)
+- display name: Gen Brewery (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\genbrew.gs` line 1
@@ -36458,7 +36457,7 @@ its shape and token count, never its body.
 
 ### encounter earth/gencrys
 
-- display name: (none declared)
+- display name: Gen Crystal (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\gencrys.gs` line 1
@@ -36486,7 +36485,7 @@ its shape and token count, never its body.
 
 ### encounter earth/genearth
 
-- display name: (none declared)
+- display name: Earth Encounter (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\earth\genearth.gs` line 1
@@ -36514,7 +36513,7 @@ its shape and token count, never its body.
 
 ### encounter earth/gengold
 
-- display name: (none declared)
+- display name: Gen Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\gengold.gs` line 1
@@ -36542,7 +36541,7 @@ its shape and token count, never its body.
 
 ### encounter earth/gentroll
 
-- display name: (none declared)
+- display name: Troll Encounter (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\earth\gentroll.gs` line 1
@@ -36569,7 +36568,7 @@ its shape and token count, never its body.
 
 ### encounter earth/orccave
 
-- display name: Orc Cave
+- display name: Orc Cave (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\orccave.gs` line 1
@@ -36597,7 +36596,7 @@ its shape and token count, never its body.
 
 ### encounter earth/orccaves
 
-- display name: (none declared)
+- display name: OrcCaves (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\orccaves.gs` line 1
@@ -36628,7 +36627,7 @@ its shape and token count, never its body.
 
 ### encounter earth/orccaves2
 
-- display name: (none declared)
+- display name: OrcCaves 2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\orccaves2.gs` line 1
@@ -36657,7 +36656,7 @@ its shape and token count, never its body.
 
 ### encounter earth/orccaves3
 
-- display name: (none declared)
+- display name: OrcCaves 3 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\orccaves3.gs` line 1
@@ -36685,7 +36684,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/barrow2
 
-- display name: (none declared)
+- display name: Barrow Level2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\barrow2.gs` line 1
@@ -36718,7 +36717,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/barrows
 
-- display name: (none declared)
+- display name: Barrows (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\barrows.gs` line 1
@@ -36752,7 +36751,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter1
 
-- display name: (none declared)
+- display name: EA A0E1 Home (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter1.gs` line 1
@@ -36783,7 +36782,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter10
 
-- display name: (none declared)
+- display name: EA A3E6 ElvenFort (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter10.gs` line 1
@@ -36813,7 +36812,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter11
 
-- display name: (none declared)
+- display name: EA A3E7 ElvenCity (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter11.gs` line 1
@@ -36838,7 +36837,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter12
 
-- display name: (none declared)
+- display name: EA A4E1 Pantry (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter12.gs` line 1
@@ -36873,7 +36872,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter13
 
-- display name: (none declared)
+- display name: EA A5E2 RuinedFort (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter13.gs` line 1
@@ -36904,7 +36903,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter14
 
-- display name: (none declared)
+- display name: EA A6E1 OrcWarrior (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter14.gs` line 1
@@ -36937,7 +36936,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter15
 
-- display name: (none declared)
+- display name: EA A7E1 Ship4Sale (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter15.gs` line 1
@@ -36969,7 +36968,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter16
 
-- display name: (none declared)
+- display name: EA A7E2 El.Parties (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter16.gs` line 1
@@ -37000,7 +36999,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter17
 
-- display name: (none declared)
+- display name: EA A8E1 King's Ret. (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter17.gs` line 1
@@ -37030,7 +37029,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter18
 
-- display name: (none declared)
+- display name: EA A8E2 N.Village (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter18.gs` line 1
@@ -37061,7 +37060,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter19
 
-- display name: (none declared)
+- display name: EA A8E3 S.Village (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter19.gs` line 1
@@ -37092,7 +37091,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter2
 
-- display name: (none declared)
+- display name: EA A1E1 Hrothgar's (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter2.gs` line 1
@@ -37125,7 +37124,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter20
 
-- display name: (none declared)
+- display name: EA A8E4 W.Village (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter20.gs` line 1
@@ -37156,7 +37155,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter21
 
-- display name: (none declared)
+- display name: EA A8E5 E.Village (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter21.gs` line 1
@@ -37187,7 +37186,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter22
 
-- display name: (none declared)
+- display name: EA A8E6 OrderGTA (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter22.gs` line 1
@@ -37220,7 +37219,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter23
 
-- display name: (none declared)
+- display name: EA A8E7 OrderGTB (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter23.gs` line 1
@@ -37254,7 +37253,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter24
 
-- display name: (none declared)
+- display name: EA A8E8 ORCity (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter24.gs` line 1
@@ -37282,7 +37281,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter25
 
-- display name: (none declared)
+- display name: EA A8E9 Roving (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter25.gs` line 1
@@ -37313,7 +37312,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter26
 
-- display name: (none declared)
+- display name: EA A9E1 Vyrm Att. (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter26.gs` line 1
@@ -37345,7 +37344,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter27
 
-- display name: (none declared)
+- display name: EA A9E2 Hermod's (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter27.gs` line 1
@@ -37376,7 +37375,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter27B
 
-- display name: (none declared)
+- display name: EA A9E2 Hermod's level 2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter27B.gs` line 1
@@ -37408,7 +37407,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter28
 
-- display name: (none declared)
+- display name: EA Orc city (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter28.gs` line 1
@@ -37438,7 +37437,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter28B
 
-- display name: (none declared)
+- display name: EA Orc city level 2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter28B.gs` line 1
@@ -37469,7 +37468,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter29
 
-- display name: (none declared)
+- display name: EA Orc barrack (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter29.gs` line 1
@@ -37499,7 +37498,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter3
 
-- display name: (none declared)
+- display name: EA A2E1 Grendel (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter3.gs` line 1
@@ -37534,7 +37533,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter30
 
-- display name: (none declared)
+- display name: EA Orc thieves guild (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter30.gs` line 1
@@ -37565,7 +37564,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter31
 
-- display name: (none declared)
+- display name: EA Orc wizard tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter31.gs` line 1
@@ -37596,7 +37595,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter32
 
-- display name: (none declared)
+- display name: EA Merc Guild (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter32.gs` line 1
@@ -37627,7 +37626,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter4
 
-- display name: (none declared)
+- display name: EA A3E1 Accosted (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter4.gs` line 1
@@ -37659,7 +37658,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter5
 
-- display name: (none declared)
+- display name: EA A3E2 Animal1 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter5.gs` line 1
@@ -37691,7 +37690,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter6
 
-- display name: (none declared)
+- display name: EA A3E2 Animal2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter6.gs` line 1
@@ -37723,7 +37722,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter7
 
-- display name: (none declared)
+- display name: EA A3E3 Recluse (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter7.gs` line 1
@@ -37755,7 +37754,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter8
 
-- display name: (none declared)
+- display name: EA A3E4 Plainsmen (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter8.gs` line 1
@@ -37786,7 +37785,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/encounter9
 
-- display name: (none declared)
+- display name: EA A3E5 Elven Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\encounter9.gs` line 1
@@ -37819,7 +37818,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/genbrew
 
-- display name: (none declared)
+- display name: Gen Brewery (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\genbrew.gs` line 1
@@ -37847,7 +37846,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/gencrys
 
-- display name: (none declared)
+- display name: Gen Crystal (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\gencrys.gs` line 1
@@ -37875,7 +37874,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/gengold
 
-- display name: (none declared)
+- display name: Gen Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\gengold.gs` line 1
@@ -37903,7 +37902,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/orccaves
 
-- display name: (none declared)
+- display name: OrcCaves (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\orccaves.gs` line 1
@@ -37934,7 +37933,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/orccaves2
 
-- display name: (none declared)
+- display name: OrcCaves 2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\orccaves2.gs` line 1
@@ -37963,7 +37962,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/orccaves3
 
-- display name: (none declared)
+- display name: OrcCaves 3 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\orccaves3.gs` line 1
@@ -37991,7 +37990,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/spiderwebs
 
-- display name: (none declared)
+- display name: SpiderWebs (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\spiderwebs.gs` line 1
@@ -38021,7 +38020,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/swampcaves
 
-- display name: (none declared)
+- display name: SwampCaves (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\swampcaves.gs` line 1
@@ -38050,7 +38049,7 @@ its shape and token count, never its body.
 
 ### encounter earth/quest/trollcaves
 
-- display name: (none declared)
+- display name: TrollCaves (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\earth\quest\trollcaves.gs` line 1
@@ -38081,7 +38080,7 @@ its shape and token count, never its body.
 
 ### encounter earth/spiderwebs
 
-- display name: (none declared)
+- display name: SpiderWebs (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\spiderwebs.gs` line 1
@@ -38111,7 +38110,7 @@ its shape and token count, never its body.
 
 ### encounter earth/swampcaves
 
-- display name: (none declared)
+- display name: SwampCaves (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\swampcaves.gs` line 1
@@ -38140,7 +38139,7 @@ its shape and token count, never its body.
 
 ### encounter earth/trollcaves
 
-- display name: (none declared)
+- display name: TrollCaves (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\earth\trollcaves.gs` line 1
@@ -38171,7 +38170,7 @@ its shape and token count, never its body.
 
 ### encounter encountert
 
-- display name: name
+- display name: name (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\encountert.gs` line 1
@@ -38208,7 +38207,7 @@ its shape and token count, never its body.
 
 ### encounter figtem
 
-- display name: Fire Great Temple
+- display name: Fire Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\figtem.gs` line 1
@@ -38234,7 +38233,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter1
 
-- display name: (none declared)
+- display name: FIRE A1E1 - King (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter1.gs` line 1
@@ -38264,7 +38263,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter2
 
-- display name: (none declared)
+- display name: FIRE A1E2 - The Forge (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter2.gs` line 1
@@ -38292,7 +38291,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter2alt
 
-- display name: (none declared)
+- display name: FIRE A1E2ALT (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter2alt.gs` line 1
@@ -38320,7 +38319,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter3
 
-- display name: (none declared)
+- display name: FIRE A1E3 - GT (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter3.gs` line 1
@@ -38353,7 +38352,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter4
 
-- display name: (none declared)
+- display name: FIRE A2E1 - Gateway (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter4.gs` line 1
@@ -38384,7 +38383,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter4a
 
-- display name: (none declared)
+- display name: FIRE A2E1 - Gateway (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter4a.gs` line 1
@@ -38414,7 +38413,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter4b
 
-- display name: (none declared)
+- display name: FIRE A2E1b - Gateway (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter4b.gs` line 1
@@ -38446,7 +38445,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter4c
 
-- display name: (none declared)
+- display name: FIRE A2E1C - Gateway (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter4c.gs` line 1
@@ -38479,7 +38478,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter5
 
-- display name: (none declared)
+- display name: FIRE A3E1 - EAVilage  (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter5.gs` line 1
@@ -38510,7 +38509,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter6
 
-- display name: (none declared)
+- display name: FIRE A4E1 - DeVillage  (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter6.gs` line 1
@@ -38542,7 +38541,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter7
 
-- display name: Kraken Start
+- display name: Kraken Start (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter7.gs` line 1
@@ -38568,7 +38567,7 @@ its shape and token count, never its body.
 
 ### encounter fire/encounter8
 
-- display name: (none declared)
+- display name: FIRE A4E3 - ICEDRAG  (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\encounter8.gs` line 1
@@ -38598,7 +38597,7 @@ its shape and token count, never its body.
 
 ### encounter fire/ficave
 
-- display name: (none declared)
+- display name: Fire Cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\ficave.gs` line 1
@@ -38646,7 +38645,7 @@ its shape and token count, never its body.
 
 ### encounter fire/fidung
 
-- display name: Firey Keep
+- display name: Firey Keep (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\fidung.gs` line 1
@@ -38673,7 +38672,7 @@ its shape and token count, never its body.
 
 ### encounter fire/figtem
 
-- display name: Fire Great Temple
+- display name: Fire Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\figtem.gs` line 1
@@ -38699,7 +38698,7 @@ its shape and token count, never its body.
 
 ### encounter fire/fimina
 
-- display name: (none declared)
+- display name: Fire Brew (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\fimina.gs` line 1
@@ -38728,7 +38727,7 @@ its shape and token count, never its body.
 
 ### encounter fire/fiminc
 
-- display name: (none declared)
+- display name: Fire Crystal (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\fiminc.gs` line 1
@@ -38757,7 +38756,7 @@ its shape and token count, never its body.
 
 ### encounter fire/fiming
 
-- display name: (none declared)
+- display name: Fire Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\fiming.gs` line 1
@@ -38786,7 +38785,7 @@ its shape and token count, never its body.
 
 ### encounter fire/fimult
 
-- display name: (none declared)
+- display name: Fire Multi (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\fimult.gs` line 1
@@ -38812,7 +38811,7 @@ its shape and token count, never its body.
 
 ### encounter fire/fire_dragoncave
 
-- display name: Fire Dragons' Lair
+- display name: Fire Dragons' Lair (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\fire_dragoncave.gs` line 1
@@ -38840,7 +38839,7 @@ its shape and token count, never its body.
 
 ### encounter fire/firecaves2
 
-- display name: (none declared)
+- display name: Crystal Cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\fire\firecaves2.gs` line 1
@@ -38870,7 +38869,7 @@ its shape and token count, never its body.
 
 ### encounter fire/firemult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\fire\firemult.gs` line 1
@@ -38897,7 +38896,7 @@ its shape and token count, never its body.
 
 ### encounter fire/fistat
 
-- display name: (none declared)
+- display name: Fire Statue (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\fistat.gs` line 1
@@ -38926,7 +38925,7 @@ its shape and token count, never its body.
 
 ### encounter fire/fitowe
 
-- display name: (none declared)
+- display name: Fire Tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\fitowe.gs` line 1
@@ -38953,7 +38952,7 @@ its shape and token count, never its body.
 
 ### encounter fire/gen_demon
 
-- display name: Demon Cave
+- display name: Demon Cave (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\gen_demon.gs` line 1
@@ -38981,7 +38980,7 @@ its shape and token count, never its body.
 
 ### encounter fire/genfire
 
-- display name: Fire Encounter
+- display name: Fire Encounter (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\fire\genfire.gs` line 1
@@ -39008,7 +39007,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter1
 
-- display name: (none declared)
+- display name: FIRE A1E1 - King (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter1.gs` line 1
@@ -39038,7 +39037,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter2
 
-- display name: (none declared)
+- display name: FIRE A1E2 - The Forge (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter2.gs` line 1
@@ -39066,7 +39065,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter2alt
 
-- display name: (none declared)
+- display name: FIRE A1E2ALT (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter2alt.gs` line 1
@@ -39094,7 +39093,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter3
 
-- display name: (none declared)
+- display name: FIRE A1E3 - GT (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter3.gs` line 1
@@ -39127,7 +39126,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter4
 
-- display name: (none declared)
+- display name: FIRE A2E1 - Gateway (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter4.gs` line 1
@@ -39158,7 +39157,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter4a
 
-- display name: (none declared)
+- display name: FIRE A2E1 - Gateway (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter4a.gs` line 1
@@ -39188,7 +39187,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter4b
 
-- display name: (none declared)
+- display name: FIRE A2E1b - Gateway (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter4b.gs` line 1
@@ -39220,7 +39219,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter4c
 
-- display name: (none declared)
+- display name: FIRE A2E1C - Gateway (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter4c.gs` line 1
@@ -39253,7 +39252,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter5
 
-- display name: (none declared)
+- display name: FIRE A3E1 - EAVilage  (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter5.gs` line 1
@@ -39284,7 +39283,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter6
 
-- display name: (none declared)
+- display name: FIRE A4E1 - DeVillage  (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter6.gs` line 1
@@ -39316,7 +39315,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter7
 
-- display name: Kraken Start
+- display name: Kraken Start (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter7.gs` line 1
@@ -39342,7 +39341,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/encounter8
 
-- display name: (none declared)
+- display name: FIRE A4E3 - ICEDRAG  (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\encounter8.gs` line 1
@@ -39372,7 +39371,7 @@ its shape and token count, never its body.
 
 ### encounter fire/quest/firecaves2
 
-- display name: (none declared)
+- display name: Crystal Cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\fire\quest\firecaves2.gs` line 1
@@ -39402,7 +39401,7 @@ its shape and token count, never its body.
 
 ### encounter generate/aicave
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\aicave.gs` line 1
@@ -39428,7 +39427,7 @@ its shape and token count, never its body.
 
 ### encounter generate/aidung
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\aidung.gs` line 1
@@ -39453,7 +39452,7 @@ its shape and token count, never its body.
 
 ### encounter generate/aimina
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\aimina.gs` line 1
@@ -39479,7 +39478,7 @@ its shape and token count, never its body.
 
 ### encounter generate/aiminc
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\aiminc.gs` line 1
@@ -39505,7 +39504,7 @@ its shape and token count, never its body.
 
 ### encounter generate/aiming
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\aiming.gs` line 1
@@ -39531,7 +39530,7 @@ its shape and token count, never its body.
 
 ### encounter generate/aimult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\aimult.gs` line 1
@@ -39556,7 +39555,7 @@ its shape and token count, never its body.
 
 ### encounter generate/aistat
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\aistat.gs` line 1
@@ -39582,7 +39581,7 @@ its shape and token count, never its body.
 
 ### encounter generate/aitowe
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\aitowe.gs` line 1
@@ -39605,7 +39604,7 @@ its shape and token count, never its body.
 
 ### encounter generate/chcave
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\chcave.gs` line 1
@@ -39630,7 +39629,7 @@ its shape and token count, never its body.
 
 ### encounter generate/chdung
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\chdung.gs` line 1
@@ -39655,7 +39654,7 @@ its shape and token count, never its body.
 
 ### encounter generate/chmina
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\chmina.gs` line 1
@@ -39681,7 +39680,7 @@ its shape and token count, never its body.
 
 ### encounter generate/chminc
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\chminc.gs` line 1
@@ -39707,7 +39706,7 @@ its shape and token count, never its body.
 
 ### encounter generate/chming
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\chming.gs` line 1
@@ -39733,7 +39732,7 @@ its shape and token count, never its body.
 
 ### encounter generate/chmult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\chmult.gs` line 1
@@ -39758,7 +39757,7 @@ its shape and token count, never its body.
 
 ### encounter generate/chstat
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\chstat.gs` line 1
@@ -39784,7 +39783,7 @@ its shape and token count, never its body.
 
 ### encounter generate/chtowe
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\chtowe.gs` line 1
@@ -39807,7 +39806,7 @@ its shape and token count, never its body.
 
 ### encounter generate/decave
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\decave.gs` line 1
@@ -39833,7 +39832,7 @@ its shape and token count, never its body.
 
 ### encounter generate/dedung
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\dedung.gs` line 1
@@ -39858,7 +39857,7 @@ its shape and token count, never its body.
 
 ### encounter generate/demina
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\demina.gs` line 1
@@ -39884,7 +39883,7 @@ its shape and token count, never its body.
 
 ### encounter generate/deminc
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\deminc.gs` line 1
@@ -39910,7 +39909,7 @@ its shape and token count, never its body.
 
 ### encounter generate/deming
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\deming.gs` line 1
@@ -39936,7 +39935,7 @@ its shape and token count, never its body.
 
 ### encounter generate/demult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\demult.gs` line 1
@@ -39961,7 +39960,7 @@ its shape and token count, never its body.
 
 ### encounter generate/destat
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\destat.gs` line 1
@@ -39987,7 +39986,7 @@ its shape and token count, never its body.
 
 ### encounter generate/detowe
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\detowe.gs` line 1
@@ -40010,7 +40009,7 @@ its shape and token count, never its body.
 
 ### encounter generate/eacave
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\eacave.gs` line 1
@@ -40035,7 +40034,7 @@ its shape and token count, never its body.
 
 ### encounter generate/eadung
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\eadung.gs` line 1
@@ -40060,7 +40059,7 @@ its shape and token count, never its body.
 
 ### encounter generate/eamina
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\eamina.gs` line 1
@@ -40086,7 +40085,7 @@ its shape and token count, never its body.
 
 ### encounter generate/eaminc
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\eaminc.gs` line 1
@@ -40112,7 +40111,7 @@ its shape and token count, never its body.
 
 ### encounter generate/eaming
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\eaming.gs` line 1
@@ -40138,7 +40137,7 @@ its shape and token count, never its body.
 
 ### encounter generate/eamult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\eamult.gs` line 1
@@ -40163,7 +40162,7 @@ its shape and token count, never its body.
 
 ### encounter generate/eastat
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\eastat.gs` line 1
@@ -40189,7 +40188,7 @@ its shape and token count, never its body.
 
 ### encounter generate/eatowe
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\eatowe.gs` line 1
@@ -40212,7 +40211,7 @@ its shape and token count, never its body.
 
 ### encounter generate/ficave
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\ficave.gs` line 1
@@ -40238,7 +40237,7 @@ its shape and token count, never its body.
 
 ### encounter generate/fidung
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\fidung.gs` line 1
@@ -40263,7 +40262,7 @@ its shape and token count, never its body.
 
 ### encounter generate/fimina
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\fimina.gs` line 1
@@ -40289,7 +40288,7 @@ its shape and token count, never its body.
 
 ### encounter generate/fiminc
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\fiminc.gs` line 1
@@ -40315,7 +40314,7 @@ its shape and token count, never its body.
 
 ### encounter generate/fiming
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\fiming.gs` line 1
@@ -40341,7 +40340,7 @@ its shape and token count, never its body.
 
 ### encounter generate/fimult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\fimult.gs` line 1
@@ -40366,7 +40365,7 @@ its shape and token count, never its body.
 
 ### encounter generate/fistat
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\fistat.gs` line 1
@@ -40392,7 +40391,7 @@ its shape and token count, never its body.
 
 ### encounter generate/fitowe
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\fitowe.gs` line 1
@@ -40415,7 +40414,7 @@ its shape and token count, never its body.
 
 ### encounter generate/licave
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\licave.gs` line 1
@@ -40440,7 +40439,7 @@ its shape and token count, never its body.
 
 ### encounter generate/lidung
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\lidung.gs` line 1
@@ -40465,7 +40464,7 @@ its shape and token count, never its body.
 
 ### encounter generate/limina
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\limina.gs` line 1
@@ -40491,7 +40490,7 @@ its shape and token count, never its body.
 
 ### encounter generate/liminc
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\liminc.gs` line 1
@@ -40517,7 +40516,7 @@ its shape and token count, never its body.
 
 ### encounter generate/liming
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\liming.gs` line 1
@@ -40543,7 +40542,7 @@ its shape and token count, never its body.
 
 ### encounter generate/limult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\limult.gs` line 1
@@ -40568,7 +40567,7 @@ its shape and token count, never its body.
 
 ### encounter generate/listat
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\listat.gs` line 1
@@ -40594,7 +40593,7 @@ its shape and token count, never its body.
 
 ### encounter generate/litowe
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\litowe.gs` line 1
@@ -40617,7 +40616,7 @@ its shape and token count, never its body.
 
 ### encounter generate/orcave
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\orcave.gs` line 1
@@ -40642,7 +40641,7 @@ its shape and token count, never its body.
 
 ### encounter generate/ordung
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\ordung.gs` line 1
@@ -40667,7 +40666,7 @@ its shape and token count, never its body.
 
 ### encounter generate/ormina
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\ormina.gs` line 1
@@ -40693,7 +40692,7 @@ its shape and token count, never its body.
 
 ### encounter generate/orminc
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\orminc.gs` line 1
@@ -40719,7 +40718,7 @@ its shape and token count, never its body.
 
 ### encounter generate/orming
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\orming.gs` line 1
@@ -40745,7 +40744,7 @@ its shape and token count, never its body.
 
 ### encounter generate/ormult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\ormult.gs` line 1
@@ -40770,7 +40769,7 @@ its shape and token count, never its body.
 
 ### encounter generate/orstat
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\orstat.gs` line 1
@@ -40796,7 +40795,7 @@ its shape and token count, never its body.
 
 ### encounter generate/ortowe
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\ortowe.gs` line 1
@@ -40819,7 +40818,7 @@ its shape and token count, never its body.
 
 ### encounter generate/wacave
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\wacave.gs` line 1
@@ -40844,7 +40843,7 @@ its shape and token count, never its body.
 
 ### encounter generate/wadung
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\wadung.gs` line 1
@@ -40869,7 +40868,7 @@ its shape and token count, never its body.
 
 ### encounter generate/wamina
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\wamina.gs` line 1
@@ -40895,7 +40894,7 @@ its shape and token count, never its body.
 
 ### encounter generate/waminc
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\waminc.gs` line 1
@@ -40921,7 +40920,7 @@ its shape and token count, never its body.
 
 ### encounter generate/waming
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\waming.gs` line 1
@@ -40947,7 +40946,7 @@ its shape and token count, never its body.
 
 ### encounter generate/wamult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\wamult.gs` line 1
@@ -40972,7 +40971,7 @@ its shape and token count, never its body.
 
 ### encounter generate/wastat
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\wastat.gs` line 1
@@ -40998,7 +40997,7 @@ its shape and token count, never its body.
 
 ### encounter generate/watowe
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\generate\watowe.gs` line 1
@@ -41021,7 +41020,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter1
 
-- display name: (none declared)
+- display name: HIDE - A1E1 Giant Lair (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter1.gs` line 1
@@ -41047,7 +41046,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter10
 
-- display name: (none declared)
+- display name: HIDE - A6E1 Hildebrand (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter10.gs` line 1
@@ -41080,7 +41079,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter11
 
-- display name: (none declared)
+- display name: HIDE - A6E2 Hagen (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter11.gs` line 1
@@ -41108,7 +41107,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter12
 
-- display name: (none declared)
+- display name: HIDE - A6E3 Grimhilde (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter12.gs` line 1
@@ -41137,7 +41136,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter2
 
-- display name: (none declared)
+- display name: HIDE - A1E2 Wolves (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter2.gs` line 1
@@ -41167,7 +41166,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter3
 
-- display name: (none declared)
+- display name: HIDE - A1E3 Woden's Ford (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter3.gs` line 1
@@ -41196,7 +41195,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter4
 
-- display name: (none declared)
+- display name: HIDE - A2E1 Axecave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter4.gs` line 1
@@ -41225,7 +41224,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter5
 
-- display name: (none declared)
+- display name: HIDE - A2E2 Hiordis (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter5.gs` line 1
@@ -41252,7 +41251,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter6
 
-- display name: (none declared)
+- display name: HIDE - A3E1 Lyngvi (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter6.gs` line 1
@@ -41282,7 +41281,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter7
 
-- display name: (none declared)
+- display name: HIDE - A4E1A Fafnir (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter7.gs` line 1
@@ -41312,7 +41311,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter8
 
-- display name: (none declared)
+- display name: HIDE - A4E1B Choice (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter8.gs` line 1
@@ -41343,7 +41342,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/encounter9
 
-- display name: (none declared)
+- display name: HIDE - A5E1 Brunhilde (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\encounter9.gs` line 1
@@ -41375,7 +41374,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/genbrew
 
-- display name: (none declared)
+- display name: Gen Brewery (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\genbrew.gs` line 1
@@ -41403,7 +41402,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/gencrys
 
-- display name: (none declared)
+- display name: Gen Crystal (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\gencrys.gs` line 1
@@ -41431,7 +41430,7 @@ its shape and token count, never its body.
 
 ### encounter hidden/gengold
 
-- display name: (none declared)
+- display name: Gen Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\hidden\gengold.gs` line 1
@@ -41459,7 +41458,7 @@ its shape and token count, never its body.
 
 ### encounter lichcastle
 
-- display name: (none declared)
+- display name: Lich Castle (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\lichcastle.gs` line 1
@@ -41487,7 +41486,7 @@ its shape and token count, never its body.
 
 ### encounter life/genbeast
 
-- display name: Wild Beasts
+- display name: Wild Beasts (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\life\genbeast.gs` line 1
@@ -41513,7 +41512,7 @@ its shape and token count, never its body.
 
 ### encounter life/genlife
 
-- display name: Life Encounter
+- display name: Life Encounter (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\life\genlife.gs` line 1
@@ -41540,7 +41539,7 @@ its shape and token count, never its body.
 
 ### encounter life/licave
 
-- display name: (none declared)
+- display name: Life Cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\life\licave.gs` line 1
@@ -41588,7 +41587,7 @@ its shape and token count, never its body.
 
 ### encounter life/lidung
 
-- display name: Elven Keep
+- display name: Elven Keep (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\life\lidung.gs` line 1
@@ -41615,7 +41614,7 @@ its shape and token count, never its body.
 
 ### encounter life/lifemult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\life\lifemult.gs` line 1
@@ -41642,7 +41641,7 @@ its shape and token count, never its body.
 
 ### encounter life/ligtem
 
-- display name: Life Great Temple
+- display name: Life Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\life\ligtem.gs` line 1
@@ -41668,7 +41667,7 @@ its shape and token count, never its body.
 
 ### encounter life/limina
 
-- display name: (none declared)
+- display name: Life Brew (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\life\limina.gs` line 1
@@ -41697,7 +41696,7 @@ its shape and token count, never its body.
 
 ### encounter life/liminc
 
-- display name: (none declared)
+- display name: Life Crystal (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\life\liminc.gs` line 1
@@ -41726,7 +41725,7 @@ its shape and token count, never its body.
 
 ### encounter life/liming
 
-- display name: (none declared)
+- display name: Life Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\life\liming.gs` line 1
@@ -41755,7 +41754,7 @@ its shape and token count, never its body.
 
 ### encounter life/limult
 
-- display name: (none declared)
+- display name: Life Multi (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\life\limult.gs` line 1
@@ -41781,7 +41780,7 @@ its shape and token count, never its body.
 
 ### encounter life/listat
 
-- display name: (none declared)
+- display name: Life Statue (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\life\listat.gs` line 1
@@ -41810,7 +41809,7 @@ its shape and token count, never its body.
 
 ### encounter life/litowe
 
-- display name: (none declared)
+- display name: Life Tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\life\litowe.gs` line 1
@@ -41837,7 +41836,7 @@ its shape and token count, never its body.
 
 ### encounter ligtem
 
-- display name: Life Great Temple
+- display name: Life Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\ligtem.gs` line 1
@@ -41863,7 +41862,7 @@ its shape and token count, never its body.
 
 ### encounter mnstrnospawn
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\mnstrnospawn.gs` line 1
@@ -41890,7 +41889,7 @@ its shape and token count, never its body.
 
 ### encounter orccave
 
-- display name: Orc Cave
+- display name: Orc Cave (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\orccave.gs` line 1
@@ -41918,7 +41917,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter1
 
-- display name: (none declared)
+- display name: or a1e1 - enc1 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter1.gs` line 1
@@ -41950,7 +41949,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter10
 
-- display name: (none declared)
+- display name: ora1e10 - e10 6lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter10.gs` line 1
@@ -41986,7 +41985,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter100
 
-- display name: (none declared)
+- display name: or a6e100 - enc100 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter100.gs` line 1
@@ -42022,7 +42021,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter101
 
-- display name: (none declared)
+- display name: or a6e101 - enc101 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter101.gs` line 1
@@ -42059,7 +42058,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter102
 
-- display name: (none declared)
+- display name: or a6e102 - enc102 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter102.gs` line 1
@@ -42094,7 +42093,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter103
 
-- display name: (none declared)
+- display name: or a6e103 - enc103 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter103.gs` line 1
@@ -42128,7 +42127,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter104
 
-- display name: (none declared)
+- display name: or a6e104 - enc104 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter104.gs` line 1
@@ -42165,7 +42164,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter105
 
-- display name: (none declared)
+- display name: or a6e105 - enc105 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter105.gs` line 1
@@ -42201,7 +42200,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter106
 
-- display name: (none declared)
+- display name: or a6e106 - enc106 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter106.gs` line 1
@@ -42236,7 +42235,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter107
 
-- display name: (none declared)
+- display name: or a6e107 - enc107 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter107.gs` line 1
@@ -42271,7 +42270,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter108
 
-- display name: (none declared)
+- display name: or a6e108 - enc108 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter108.gs` line 1
@@ -42306,7 +42305,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter109
 
-- display name: (none declared)
+- display name: or a6e109 - enc109 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter109.gs` line 1
@@ -42339,7 +42338,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter11
 
-- display name: (none declared)
+- display name: or a1e11 - enc11 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter11.gs` line 1
@@ -42376,7 +42375,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter110
 
-- display name: (none declared)
+- display name: or a6e110 - enc110 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter110.gs` line 1
@@ -42410,7 +42409,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter111
 
-- display name: (none declared)
+- display name: or a6e111 - enc111 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter111.gs` line 1
@@ -42447,7 +42446,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter112
 
-- display name: (none declared)
+- display name: or a6e112 - enc112 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter112.gs` line 1
@@ -42483,7 +42482,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter113
 
-- display name: (none declared)
+- display name: or a6e113 - enc113 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter113.gs` line 1
@@ -42519,7 +42518,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter114
 
-- display name: (none declared)
+- display name: or a6e114 - enc114 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter114.gs` line 1
@@ -42557,7 +42556,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter115
 
-- display name: (none declared)
+- display name: or a6e115 - enc115 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter115.gs` line 1
@@ -42596,7 +42595,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter116
 
-- display name: (none declared)
+- display name: or a6e116 - enc116 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter116.gs` line 1
@@ -42630,7 +42629,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter118
 
-- display name: (none declared)
+- display name: or a6e118 - enc118 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter118.gs` line 1
@@ -42664,7 +42663,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter12
 
-- display name: (none declared)
+- display name: or a1e12 - enc12 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter12.gs` line 1
@@ -42699,7 +42698,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter13
 
-- display name: (none declared)
+- display name: or a1e13 - enc13 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter13.gs` line 1
@@ -42734,7 +42733,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter14
 
-- display name: (none declared)
+- display name: or a1e14 - enc14 6lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter14.gs` line 1
@@ -42769,7 +42768,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter16
 
-- display name: (none declared)
+- display name: or a1e16 - enc16 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter16.gs` line 1
@@ -42807,7 +42806,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter17
 
-- display name: (none declared)
+- display name: or a1e17 - enc17 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter17.gs` line 1
@@ -42842,7 +42841,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter18
 
-- display name: (none declared)
+- display name: or a1e18 - enc18 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter18.gs` line 1
@@ -42876,7 +42875,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter19
 
-- display name: (none declared)
+- display name: ora1e19 - e19 5lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter19.gs` line 1
@@ -42910,7 +42909,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter2
 
-- display name: (none declared)
+- display name: or a1e2 - enc2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter2.gs` line 1
@@ -42946,7 +42945,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter20
 
-- display name: (none declared)
+- display name: or a1e20 - enc20 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter20.gs` line 1
@@ -42982,7 +42981,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter20b
 
-- display name: (none declared)
+- display name: or a1e20b - encounter20b (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter20b.gs` line 1
@@ -43019,7 +43018,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter21
 
-- display name: (none declared)
+- display name: or a1e21 - enc21  (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter21.gs` line 1
@@ -43053,7 +43052,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter22
 
-- display name: (none declared)
+- display name: or a1e22 - enc22  (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter22.gs` line 1
@@ -43090,7 +43089,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter23
 
-- display name: (none declared)
+- display name: or a1e23 - enc23 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter23.gs` line 1
@@ -43125,7 +43124,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter24
 
-- display name: (none declared)
+- display name: or a1e24 - e24 5lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter24.gs` line 1
@@ -43160,7 +43159,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter25
 
-- display name: (none declared)
+- display name: or a1e25 - enc25 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter25.gs` line 1
@@ -43197,7 +43196,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter26
 
-- display name: (none declared)
+- display name: or a1e26 - encounter26 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter26.gs` line 1
@@ -43234,7 +43233,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter27
 
-- display name: (none declared)
+- display name: or a1e27 - enc27 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter27.gs` line 1
@@ -43270,7 +43269,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter28
 
-- display name: (none declared)
+- display name: or a1e28 - enc28 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter28.gs` line 1
@@ -43306,7 +43305,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter29
 
-- display name: (none declared)
+- display name: or a1e29 - enc29 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter29.gs` line 1
@@ -43342,7 +43341,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter3
 
-- display name: (none declared)
+- display name: or A1E3 - enc3 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter3.gs` line 1
@@ -43378,7 +43377,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter30
 
-- display name: (none declared)
+- display name: or a1e30 - enc30 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter30.gs` line 1
@@ -43413,7 +43412,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter31
 
-- display name: (none declared)
+- display name: or a1e31 - enc31 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter31.gs` line 1
@@ -43447,7 +43446,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter32
 
-- display name: (none declared)
+- display name: or a1e32 - enc32 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter32.gs` line 1
@@ -43483,7 +43482,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter33
 
-- display name: (none declared)
+- display name: or a1e33 - enc33 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter33.gs` line 1
@@ -43518,7 +43517,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter34
 
-- display name: (none declared)
+- display name: or a1e34 - enc34 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter34.gs` line 1
@@ -43554,7 +43553,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter35
 
-- display name: (none declared)
+- display name: or a1e35 - enc35 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter35.gs` line 1
@@ -43590,7 +43589,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter36
 
-- display name: (none declared)
+- display name: or a1e36 - encounter36 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter36.gs` line 1
@@ -43626,7 +43625,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter37
 
-- display name: (none declared)
+- display name: or a2e37 - enc37 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter37.gs` line 1
@@ -43665,7 +43664,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter38
 
-- display name: (none declared)
+- display name: or a2e38 - enc38 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter38.gs` line 1
@@ -43700,7 +43699,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter39
 
-- display name: (none declared)
+- display name: or a2e39 - enc39 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter39.gs` line 1
@@ -43735,7 +43734,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter4
 
-- display name: (none declared)
+- display name: or a1e4 - enc4 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter4.gs` line 1
@@ -43772,7 +43771,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter40
 
-- display name: (none declared)
+- display name: or a2e40 - enc40 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter40.gs` line 1
@@ -43807,7 +43806,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter41
 
-- display name: (none declared)
+- display name: or a2e41 - enc41 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter41.gs` line 1
@@ -43842,7 +43841,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter42
 
-- display name: (none declared)
+- display name: or a2e42 - enc42 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter42.gs` line 1
@@ -43877,7 +43876,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter43
 
-- display name: (none declared)
+- display name: or a2e43 - enc43 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter43.gs` line 1
@@ -43913,7 +43912,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter44
 
-- display name: (none declared)
+- display name: or a2e44 - enc44 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter44.gs` line 1
@@ -43949,7 +43948,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter45
 
-- display name: (none declared)
+- display name: or a2e45 - enc45 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter45.gs` line 1
@@ -43983,7 +43982,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter46
 
-- display name: (none declared)
+- display name: or a3e46 - e46 5lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter46.gs` line 1
@@ -44020,7 +44019,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter47
 
-- display name: (none declared)
+- display name: or a3e47 - enc47 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter47.gs` line 1
@@ -44055,7 +44054,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter48
 
-- display name: (none declared)
+- display name: or a3e48 - enc48 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter48.gs` line 1
@@ -44092,7 +44091,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter49
 
-- display name: (none declared)
+- display name: or a3e49 - enc49 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter49.gs` line 1
@@ -44128,7 +44127,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter5
 
-- display name: (none declared)
+- display name: or a1e5 - enc5 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter5.gs` line 1
@@ -44161,7 +44160,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter50
 
-- display name: (none declared)
+- display name: or a3e50 - enc50 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter50.gs` line 1
@@ -44197,7 +44196,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter51
 
-- display name: (none declared)
+- display name: or a3e51 - enc51 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter51.gs` line 1
@@ -44233,7 +44232,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter52
 
-- display name: (none declared)
+- display name: or a3e52 - enc52 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter52.gs` line 1
@@ -44270,7 +44269,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter53
 
-- display name: (none declared)
+- display name: or a3e53 - enc53 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter53.gs` line 1
@@ -44305,7 +44304,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter54
 
-- display name: (none declared)
+- display name: or a3e54 - enc54 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter54.gs` line 1
@@ -44342,7 +44341,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter55
 
-- display name: (none declared)
+- display name: or a3e55 - encounter55 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter55.gs` line 1
@@ -44379,7 +44378,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter56
 
-- display name: (none declared)
+- display name: or a3e56 - encounter56 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter56.gs` line 1
@@ -44416,7 +44415,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter57
 
-- display name: (none declared)
+- display name: or a3e57 - enc57 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter57.gs` line 1
@@ -44453,7 +44452,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter58
 
-- display name: (none declared)
+- display name: or a3e58 - enc58 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter58.gs` line 1
@@ -44490,7 +44489,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter59
 
-- display name: (none declared)
+- display name: or a3e59 - encounter59 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter59.gs` line 1
@@ -44526,7 +44525,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter6
 
-- display name: (none declared)
+- display name: or a1e6 - enc6 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter6.gs` line 1
@@ -44561,7 +44560,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter60
 
-- display name: (none declared)
+- display name: or a4e60 - enc60 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter60.gs` line 1
@@ -44596,7 +44595,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter61
 
-- display name: (none declared)
+- display name: or a4e61 - enc61 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter61.gs` line 1
@@ -44632,7 +44631,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter62
 
-- display name: (none declared)
+- display name: or a4e62 - enc62 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter62.gs` line 1
@@ -44669,7 +44668,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter63
 
-- display name: (none declared)
+- display name: or a4e63 - enc63 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter63.gs` line 1
@@ -44703,7 +44702,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter64
 
-- display name: (none declared)
+- display name: or a4e64 - enc64 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter64.gs` line 1
@@ -44738,7 +44737,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter65
 
-- display name: (none declared)
+- display name: or a4e65 - enc65 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter65.gs` line 1
@@ -44773,7 +44772,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter66
 
-- display name: (none declared)
+- display name: or a4e66 - enc6 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter66.gs` line 1
@@ -44808,7 +44807,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter67
 
-- display name: (none declared)
+- display name: or a4e67 - encounter67 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter67.gs` line 1
@@ -44843,7 +44842,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter68
 
-- display name: (none declared)
+- display name: or a4e68 - enc68 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter68.gs` line 1
@@ -44876,7 +44875,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter69
 
-- display name: (none declared)
+- display name: or a4e69 - enc69 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter69.gs` line 1
@@ -44910,7 +44909,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter7
 
-- display name: (none declared)
+- display name: or a1e7 - enc7 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter7.gs` line 1
@@ -44945,7 +44944,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter70
 
-- display name: (none declared)
+- display name: or a4e70 - enc70 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter70.gs` line 1
@@ -44980,7 +44979,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter71
 
-- display name: (none declared)
+- display name: or a4e71 - enc71 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter71.gs` line 1
@@ -45015,7 +45014,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter72
 
-- display name: (none declared)
+- display name: or a4e72 - enc72 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter72.gs` line 1
@@ -45049,7 +45048,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter73
 
-- display name: (none declared)
+- display name: or a4e73 - enc73 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter73.gs` line 1
@@ -45083,7 +45082,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter74
 
-- display name: (none declared)
+- display name: or a4e74 - enc74 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter74.gs` line 1
@@ -45117,7 +45116,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter75
 
-- display name: (none declared)
+- display name: or a5e75 - enc75 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter75.gs` line 1
@@ -45153,7 +45152,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter76
 
-- display name: (none declared)
+- display name: or a5e76 - enc76 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter76.gs` line 1
@@ -45187,7 +45186,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter77
 
-- display name: (none declared)
+- display name: or a5e77 - enc77 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter77.gs` line 1
@@ -45221,7 +45220,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter78
 
-- display name: (none declared)
+- display name: or a5e78 - enc78 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter78.gs` line 1
@@ -45255,7 +45254,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter79
 
-- display name: (none declared)
+- display name: or a5e79 - enc79 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter79.gs` line 1
@@ -45292,7 +45291,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter8
 
-- display name: (none declared)
+- display name: or a1e8 - e8 5lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter8.gs` line 1
@@ -45323,7 +45322,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter80
 
-- display name: (none declared)
+- display name: or a5e80 - enc80 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter80.gs` line 1
@@ -45358,7 +45357,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter81
 
-- display name: (none declared)
+- display name: or a5e81 - enc81 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter81.gs` line 1
@@ -45393,7 +45392,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter82
 
-- display name: (none declared)
+- display name: or a5e82 - enc82 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter82.gs` line 1
@@ -45428,7 +45427,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter83
 
-- display name: (none declared)
+- display name: or a5e83 - enc83 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter83.gs` line 1
@@ -45463,7 +45462,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter84a
 
-- display name: (none declared)
+- display name: or a5e84A - enc84A (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter84a.gs` line 1
@@ -45499,7 +45498,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter84b
 
-- display name: (none declared)
+- display name: or a5e84B - enc84B (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter84b.gs` line 1
@@ -45534,7 +45533,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter85
 
-- display name: (none declared)
+- display name: or a5e85 - enc85 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter85.gs` line 1
@@ -45569,7 +45568,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter86
 
-- display name: (none declared)
+- display name: or a5e86 - enc86 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter86.gs` line 1
@@ -45605,7 +45604,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter87
 
-- display name: (none declared)
+- display name: or a5e87 - enc87 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter87.gs` line 1
@@ -45639,7 +45638,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter88
 
-- display name: (none declared)
+- display name: or a5e88 - enc88 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter88.gs` line 1
@@ -45673,7 +45672,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter89
 
-- display name: (none declared)
+- display name: or a5e89 - enc89 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter89.gs` line 1
@@ -45708,7 +45707,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter90
 
-- display name: (none declared)
+- display name: or a5e90 - enc90 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter90.gs` line 1
@@ -45747,7 +45746,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter91a
 
-- display name: (none declared)
+- display name: or a5e91A - enc91A (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter91a.gs` line 1
@@ -45782,7 +45781,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter91b
 
-- display name: (none declared)
+- display name: or a5e91B - enc91B (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter91b.gs` line 1
@@ -45819,7 +45818,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter92
 
-- display name: (none declared)
+- display name: or a5e92 - enc92 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter92.gs` line 1
@@ -45850,7 +45849,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter93
 
-- display name: (none declared)
+- display name: or a5e93 - enc93 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter93.gs` line 1
@@ -45885,7 +45884,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter94
 
-- display name: (none declared)
+- display name: or a5e94 - enc94 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter94.gs` line 1
@@ -45919,7 +45918,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter97
 
-- display name: (none declared)
+- display name: or a5e97 - enc97 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter97.gs` line 1
@@ -45955,7 +45954,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter98
 
-- display name: (none declared)
+- display name: or a5e98 - enc98 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter98.gs` line 1
@@ -45987,7 +45986,7 @@ its shape and token count, never its body.
 
 ### encounter order/encounter99
 
-- display name: (none declared)
+- display name: or a5e99 - enc99 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\encounter99.gs` line 1
@@ -46021,7 +46020,7 @@ its shape and token count, never its body.
 
 ### encounter order/gencentaur
 
-- display name: (none declared)
+- display name: Centaur Encounter (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\order\gencentaur.gs` line 1
@@ -46048,7 +46047,7 @@ its shape and token count, never its body.
 
 ### encounter order/genorder
 
-- display name: (none declared)
+- display name: Order Encounter (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\order\genorder.gs` line 1
@@ -46076,7 +46075,7 @@ its shape and token count, never its body.
 
 ### encounter order/guenver
 
-- display name: (none declared)
+- display name: GUENKEY (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\order\guenver.gs` line 1
@@ -46104,7 +46103,7 @@ its shape and token count, never its body.
 
 ### encounter order/orcave
 
-- display name: (none declared)
+- display name: Order Cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\orcave.gs` line 1
@@ -46152,7 +46151,7 @@ its shape and token count, never its body.
 
 ### encounter order/ordermult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\order\ordermult.gs` line 1
@@ -46178,7 +46177,7 @@ its shape and token count, never its body.
 
 ### encounter order/ordung
 
-- display name: Archon Fortress
+- display name: Archon Fortress (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\ordung.gs` line 1
@@ -46205,7 +46204,7 @@ its shape and token count, never its body.
 
 ### encounter order/orgtem
 
-- display name: Order Great Temple
+- display name: Order Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\orgtem.gs` line 1
@@ -46231,7 +46230,7 @@ its shape and token count, never its body.
 
 ### encounter order/ormina
 
-- display name: (none declared)
+- display name: Order Brew (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\ormina.gs` line 1
@@ -46260,7 +46259,7 @@ its shape and token count, never its body.
 
 ### encounter order/orminc
 
-- display name: (none declared)
+- display name: Order Crystal (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\orminc.gs` line 1
@@ -46289,7 +46288,7 @@ its shape and token count, never its body.
 
 ### encounter order/orming
 
-- display name: (none declared)
+- display name: Order Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\orming.gs` line 1
@@ -46318,7 +46317,7 @@ its shape and token count, never its body.
 
 ### encounter order/ormult
 
-- display name: (none declared)
+- display name: Order Multi (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\ormult.gs` line 1
@@ -46344,7 +46343,7 @@ its shape and token count, never its body.
 
 ### encounter order/orstat
 
-- display name: (none declared)
+- display name: Order Statue (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\orstat.gs` line 1
@@ -46373,7 +46372,7 @@ its shape and token count, never its body.
 
 ### encounter order/ortowe
 
-- display name: (none declared)
+- display name: Order Tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\ortowe.gs` line 1
@@ -46400,7 +46399,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter1
 
-- display name: (none declared)
+- display name: or a1e1 - enc1 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter1.gs` line 1
@@ -46432,7 +46431,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter10
 
-- display name: (none declared)
+- display name: ora1e10 - e10 6lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter10.gs` line 1
@@ -46468,7 +46467,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter100
 
-- display name: (none declared)
+- display name: or a6e100 - enc100 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter100.gs` line 1
@@ -46504,7 +46503,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter101
 
-- display name: (none declared)
+- display name: or a6e101 - enc101 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter101.gs` line 1
@@ -46541,7 +46540,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter102
 
-- display name: (none declared)
+- display name: or a6e102 - enc102 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter102.gs` line 1
@@ -46576,7 +46575,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter103
 
-- display name: (none declared)
+- display name: or a6e103 - enc103 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter103.gs` line 1
@@ -46610,7 +46609,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter104
 
-- display name: (none declared)
+- display name: or a6e104 - enc104 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter104.gs` line 1
@@ -46647,7 +46646,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter105
 
-- display name: (none declared)
+- display name: or a6e105 - enc105 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter105.gs` line 1
@@ -46683,7 +46682,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter106
 
-- display name: (none declared)
+- display name: or a6e106 - enc106 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter106.gs` line 1
@@ -46718,7 +46717,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter107
 
-- display name: (none declared)
+- display name: or a6e107 - enc107 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter107.gs` line 1
@@ -46753,7 +46752,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter108
 
-- display name: (none declared)
+- display name: or a6e108 - enc108 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter108.gs` line 1
@@ -46788,7 +46787,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter109
 
-- display name: (none declared)
+- display name: or a6e109 - enc109 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter109.gs` line 1
@@ -46821,7 +46820,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter11
 
-- display name: (none declared)
+- display name: or a1e11 - enc11 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter11.gs` line 1
@@ -46858,7 +46857,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter110
 
-- display name: (none declared)
+- display name: or a6e110 - enc110 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter110.gs` line 1
@@ -46892,7 +46891,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter111
 
-- display name: (none declared)
+- display name: or a6e111 - enc111 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter111.gs` line 1
@@ -46929,7 +46928,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter112
 
-- display name: (none declared)
+- display name: or a6e112 - enc112 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter112.gs` line 1
@@ -46965,7 +46964,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter113
 
-- display name: (none declared)
+- display name: or a6e113 - enc113 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter113.gs` line 1
@@ -47001,7 +47000,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter114
 
-- display name: (none declared)
+- display name: or a6e114 - enc114 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter114.gs` line 1
@@ -47039,7 +47038,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter115
 
-- display name: (none declared)
+- display name: or a6e115 - enc115 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter115.gs` line 1
@@ -47078,7 +47077,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter116
 
-- display name: (none declared)
+- display name: or a6e116 - enc116 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter116.gs` line 1
@@ -47112,7 +47111,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter118
 
-- display name: (none declared)
+- display name: or a6e118 - enc118 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter118.gs` line 1
@@ -47146,7 +47145,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter12
 
-- display name: (none declared)
+- display name: or a1e12 - enc12 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter12.gs` line 1
@@ -47181,7 +47180,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter13
 
-- display name: (none declared)
+- display name: or a1e13 - enc13 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter13.gs` line 1
@@ -47216,7 +47215,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter14
 
-- display name: (none declared)
+- display name: or a1e14 - enc14 6lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter14.gs` line 1
@@ -47251,7 +47250,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter16
 
-- display name: (none declared)
+- display name: or a1e16 - enc16 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter16.gs` line 1
@@ -47289,7 +47288,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter17
 
-- display name: (none declared)
+- display name: or a1e17 - enc17 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter17.gs` line 1
@@ -47324,7 +47323,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter18
 
-- display name: (none declared)
+- display name: or a1e18 - enc18 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter18.gs` line 1
@@ -47358,7 +47357,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter19
 
-- display name: (none declared)
+- display name: ora1e19 - e19 5lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter19.gs` line 1
@@ -47392,7 +47391,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter2
 
-- display name: (none declared)
+- display name: or a1e2 - enc2 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter2.gs` line 1
@@ -47428,7 +47427,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter20
 
-- display name: (none declared)
+- display name: or a1e20 - enc20 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter20.gs` line 1
@@ -47464,7 +47463,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter20b
 
-- display name: (none declared)
+- display name: or a1e20b - encounter20b (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter20b.gs` line 1
@@ -47501,7 +47500,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter21
 
-- display name: (none declared)
+- display name: or a1e21 - enc21  (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter21.gs` line 1
@@ -47535,7 +47534,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter22
 
-- display name: (none declared)
+- display name: or a1e22 - enc22  (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter22.gs` line 1
@@ -47572,7 +47571,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter23
 
-- display name: (none declared)
+- display name: or a1e23 - enc23 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter23.gs` line 1
@@ -47607,7 +47606,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter24
 
-- display name: (none declared)
+- display name: or a1e24 - e24 5lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter24.gs` line 1
@@ -47642,7 +47641,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter25
 
-- display name: (none declared)
+- display name: or a1e25 - enc25 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter25.gs` line 1
@@ -47679,7 +47678,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter26
 
-- display name: (none declared)
+- display name: or a1e26 - encounter26 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter26.gs` line 1
@@ -47716,7 +47715,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter27
 
-- display name: (none declared)
+- display name: or a1e27 - enc27 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter27.gs` line 1
@@ -47752,7 +47751,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter28
 
-- display name: (none declared)
+- display name: or a1e28 - enc28 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter28.gs` line 1
@@ -47788,7 +47787,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter29
 
-- display name: (none declared)
+- display name: or a1e29 - enc29 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter29.gs` line 1
@@ -47824,7 +47823,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter3
 
-- display name: (none declared)
+- display name: or A1E3 - enc3 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter3.gs` line 1
@@ -47860,7 +47859,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter30
 
-- display name: (none declared)
+- display name: or a1e30 - enc30 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter30.gs` line 1
@@ -47895,7 +47894,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter31
 
-- display name: (none declared)
+- display name: or a1e31 - enc31 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter31.gs` line 1
@@ -47929,7 +47928,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter32
 
-- display name: (none declared)
+- display name: or a1e32 - enc32 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter32.gs` line 1
@@ -47965,7 +47964,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter33
 
-- display name: (none declared)
+- display name: or a1e33 - enc33 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter33.gs` line 1
@@ -48000,7 +47999,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter34
 
-- display name: (none declared)
+- display name: or a1e34 - enc34 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter34.gs` line 1
@@ -48036,7 +48035,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter35
 
-- display name: (none declared)
+- display name: or a1e35 - enc35 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter35.gs` line 1
@@ -48072,7 +48071,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter36
 
-- display name: (none declared)
+- display name: or a1e36 - encounter36 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter36.gs` line 1
@@ -48108,7 +48107,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter37
 
-- display name: (none declared)
+- display name: or a2e37 - enc37 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter37.gs` line 1
@@ -48147,7 +48146,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter38
 
-- display name: (none declared)
+- display name: or a2e38 - enc38 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter38.gs` line 1
@@ -48182,7 +48181,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter39
 
-- display name: (none declared)
+- display name: or a2e39 - enc39 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter39.gs` line 1
@@ -48217,7 +48216,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter4
 
-- display name: (none declared)
+- display name: or a1e4 - enc4 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter4.gs` line 1
@@ -48254,7 +48253,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter40
 
-- display name: (none declared)
+- display name: or a2e40 - enc40 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter40.gs` line 1
@@ -48289,7 +48288,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter41
 
-- display name: (none declared)
+- display name: or a2e41 - enc41 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter41.gs` line 1
@@ -48324,7 +48323,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter42
 
-- display name: (none declared)
+- display name: or a2e42 - enc42 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter42.gs` line 1
@@ -48359,7 +48358,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter43
 
-- display name: (none declared)
+- display name: or a2e43 - enc43 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter43.gs` line 1
@@ -48395,7 +48394,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter44
 
-- display name: (none declared)
+- display name: or a2e44 - enc44 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter44.gs` line 1
@@ -48431,7 +48430,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter45
 
-- display name: (none declared)
+- display name: or a2e45 - enc45 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter45.gs` line 1
@@ -48465,7 +48464,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter46
 
-- display name: (none declared)
+- display name: or a3e46 - e46 5lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter46.gs` line 1
@@ -48502,7 +48501,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter47
 
-- display name: (none declared)
+- display name: or a3e47 - enc47 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter47.gs` line 1
@@ -48537,7 +48536,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter48
 
-- display name: (none declared)
+- display name: or a3e48 - enc48 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter48.gs` line 1
@@ -48574,7 +48573,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter49
 
-- display name: (none declared)
+- display name: or a3e49 - enc49 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter49.gs` line 1
@@ -48610,7 +48609,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter5
 
-- display name: (none declared)
+- display name: or a1e5 - enc5 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter5.gs` line 1
@@ -48643,7 +48642,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter50
 
-- display name: (none declared)
+- display name: or a3e50 - enc50 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter50.gs` line 1
@@ -48679,7 +48678,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter51
 
-- display name: (none declared)
+- display name: or a3e51 - enc51 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter51.gs` line 1
@@ -48715,7 +48714,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter52
 
-- display name: (none declared)
+- display name: or a3e52 - enc52 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter52.gs` line 1
@@ -48752,7 +48751,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter53
 
-- display name: (none declared)
+- display name: or a3e53 - enc53 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter53.gs` line 1
@@ -48787,7 +48786,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter54
 
-- display name: (none declared)
+- display name: or a3e54 - enc54 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter54.gs` line 1
@@ -48824,7 +48823,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter55
 
-- display name: (none declared)
+- display name: or a3e55 - encounter55 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter55.gs` line 1
@@ -48861,7 +48860,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter56
 
-- display name: (none declared)
+- display name: or a3e56 - encounter56 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter56.gs` line 1
@@ -48898,7 +48897,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter57
 
-- display name: (none declared)
+- display name: or a3e57 - enc57 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter57.gs` line 1
@@ -48935,7 +48934,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter58
 
-- display name: (none declared)
+- display name: or a3e58 - enc58 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter58.gs` line 1
@@ -48972,7 +48971,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter59
 
-- display name: (none declared)
+- display name: or a3e59 - encounter59 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter59.gs` line 1
@@ -49008,7 +49007,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter6
 
-- display name: (none declared)
+- display name: or a1e6 - enc6 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter6.gs` line 1
@@ -49043,7 +49042,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter60
 
-- display name: (none declared)
+- display name: or a4e60 - enc60 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter60.gs` line 1
@@ -49078,7 +49077,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter61
 
-- display name: (none declared)
+- display name: or a4e61 - enc61 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter61.gs` line 1
@@ -49114,7 +49113,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter62
 
-- display name: (none declared)
+- display name: or a4e62 - enc62 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter62.gs` line 1
@@ -49151,7 +49150,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter63
 
-- display name: (none declared)
+- display name: or a4e63 - enc63 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter63.gs` line 1
@@ -49185,7 +49184,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter64
 
-- display name: (none declared)
+- display name: or a4e64 - enc64 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter64.gs` line 1
@@ -49220,7 +49219,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter65
 
-- display name: (none declared)
+- display name: or a4e65 - enc65 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter65.gs` line 1
@@ -49255,7 +49254,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter66
 
-- display name: (none declared)
+- display name: or a4e66 - enc6 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter66.gs` line 1
@@ -49290,7 +49289,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter67
 
-- display name: (none declared)
+- display name: or a4e67 - encounter67 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter67.gs` line 1
@@ -49325,7 +49324,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter68
 
-- display name: (none declared)
+- display name: or a4e68 - enc68 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter68.gs` line 1
@@ -49358,7 +49357,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter69
 
-- display name: (none declared)
+- display name: or a4e69 - enc69 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter69.gs` line 1
@@ -49392,7 +49391,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter7
 
-- display name: (none declared)
+- display name: or a1e7 - enc7 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter7.gs` line 1
@@ -49427,7 +49426,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter70
 
-- display name: (none declared)
+- display name: or a4e70 - enc70 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter70.gs` line 1
@@ -49462,7 +49461,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter71
 
-- display name: (none declared)
+- display name: or a4e71 - enc71 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter71.gs` line 1
@@ -49497,7 +49496,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter72
 
-- display name: (none declared)
+- display name: or a4e72 - enc72 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter72.gs` line 1
@@ -49531,7 +49530,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter73
 
-- display name: (none declared)
+- display name: or a4e73 - enc73 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter73.gs` line 1
@@ -49565,7 +49564,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter74
 
-- display name: (none declared)
+- display name: or a4e74 - enc74 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter74.gs` line 1
@@ -49599,7 +49598,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter75
 
-- display name: (none declared)
+- display name: or a5e75 - enc75 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter75.gs` line 1
@@ -49635,7 +49634,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter76
 
-- display name: (none declared)
+- display name: or a5e76 - enc76 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter76.gs` line 1
@@ -49669,7 +49668,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter77
 
-- display name: (none declared)
+- display name: or a5e77 - enc77 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter77.gs` line 1
@@ -49703,7 +49702,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter78
 
-- display name: (none declared)
+- display name: or a5e78 - enc78 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter78.gs` line 1
@@ -49737,7 +49736,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter79
 
-- display name: (none declared)
+- display name: or a5e79 - enc79 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter79.gs` line 1
@@ -49774,7 +49773,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter8
 
-- display name: (none declared)
+- display name: or a1e8 - e8 5lvl (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter8.gs` line 1
@@ -49805,7 +49804,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter80
 
-- display name: (none declared)
+- display name: or a5e80 - enc80 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter80.gs` line 1
@@ -49840,7 +49839,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter81
 
-- display name: (none declared)
+- display name: or a5e81 - enc81 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter81.gs` line 1
@@ -49875,7 +49874,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter82
 
-- display name: (none declared)
+- display name: or a5e82 - enc82 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter82.gs` line 1
@@ -49910,7 +49909,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter83
 
-- display name: (none declared)
+- display name: or a5e83 - enc83 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter83.gs` line 1
@@ -49945,7 +49944,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter84a
 
-- display name: (none declared)
+- display name: or a5e84A - enc84A (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter84a.gs` line 1
@@ -49981,7 +49980,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter84b
 
-- display name: (none declared)
+- display name: or a5e84B - enc84B (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter84b.gs` line 1
@@ -50016,7 +50015,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter85
 
-- display name: (none declared)
+- display name: or a5e85 - enc85 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter85.gs` line 1
@@ -50051,7 +50050,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter86
 
-- display name: (none declared)
+- display name: or a5e86 - enc86 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter86.gs` line 1
@@ -50087,7 +50086,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter87
 
-- display name: (none declared)
+- display name: or a5e87 - enc87 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter87.gs` line 1
@@ -50121,7 +50120,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter88
 
-- display name: (none declared)
+- display name: or a5e88 - enc88 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter88.gs` line 1
@@ -50155,7 +50154,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter89
 
-- display name: (none declared)
+- display name: or a5e89 - enc89 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter89.gs` line 1
@@ -50190,7 +50189,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter90
 
-- display name: (none declared)
+- display name: or a5e90 - enc90 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter90.gs` line 1
@@ -50229,7 +50228,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter91a
 
-- display name: (none declared)
+- display name: or a5e91A - enc91A (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter91a.gs` line 1
@@ -50264,7 +50263,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter91b
 
-- display name: (none declared)
+- display name: or a5e91B - enc91B (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter91b.gs` line 1
@@ -50301,7 +50300,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter92
 
-- display name: (none declared)
+- display name: or a5e92 - enc92 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter92.gs` line 1
@@ -50332,7 +50331,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter93
 
-- display name: (none declared)
+- display name: or a5e93 - enc93 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter93.gs` line 1
@@ -50367,7 +50366,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter94
 
-- display name: (none declared)
+- display name: or a5e94 - enc94 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter94.gs` line 1
@@ -50401,7 +50400,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter97
 
-- display name: (none declared)
+- display name: or a5e97 - enc97 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter97.gs` line 1
@@ -50437,7 +50436,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter98
 
-- display name: (none declared)
+- display name: or a5e98 - enc98 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter98.gs` line 1
@@ -50469,7 +50468,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/encounter99
 
-- display name: (none declared)
+- display name: or a5e99 - enc99 (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\encounter99.gs` line 1
@@ -50503,7 +50502,7 @@ its shape and token count, never its body.
 
 ### encounter order/quest/guenver
 
-- display name: (none declared)
+- display name: GUENKEY (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\order\quest\guenver.gs` line 1
@@ -50531,7 +50530,7 @@ its shape and token count, never its body.
 
 ### encounter orgtem
 
-- display name: Order Great Temple
+- display name: Order Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\orgtem.gs` line 1
@@ -50557,7 +50556,7 @@ its shape and token count, never its body.
 
 ### encounter sampexit
 
-- display name: Secret Exit
+- display name: Secret Exit (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\sampexit.gs` line 1
@@ -50585,7 +50584,7 @@ its shape and token count, never its body.
 
 ### encounter sampkrk
 
-- display name: Kraken Start
+- display name: Kraken Start (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\sampkrk.gs` line 1
@@ -50612,7 +50611,7 @@ its shape and token count, never its body.
 
 ### encounter sample
 
-- display name: The Forge
+- display name: The Forge (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\sample.gs` line 1
@@ -50640,7 +50639,7 @@ its shape and token count, never its body.
 
 ### encounter shipwreck
 
-- display name: Shipwreck
+- display name: Shipwreck (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\shipwreck.gs` line 1
@@ -50669,7 +50668,7 @@ its shape and token count, never its body.
 
 ### encounter spiderweb
 
-- display name: (none declared)
+- display name: Spider Web (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\spiderweb.gs` line 1
@@ -50696,7 +50695,7 @@ its shape and token count, never its body.
 
 ### encounter tutorialmult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\tutorialmult.gs` line 1
@@ -50720,7 +50719,7 @@ its shape and token count, never its body.
 
 ### encounter wagtem
 
-- display name: Water Great Temple
+- display name: Water Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\wagtem.gs` line 1
@@ -50746,7 +50745,7 @@ its shape and token count, never its body.
 
 ### encounter water/gen_grendel
 
-- display name: Grendel Village
+- display name: Grendel Village (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\gen_grendel.gs` line 1
@@ -50772,7 +50771,7 @@ its shape and token count, never its body.
 
 ### encounter water/genwater
 
-- display name: Water Encounter
+- display name: Water Encounter (declared-name)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\water\genwater.gs` line 1
@@ -50799,7 +50798,7 @@ its shape and token count, never its body.
 
 ### encounter water/shipwreck
 
-- display name: Shipwreck
+- display name: Shipwreck (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\shipwreck.gs` line 1
@@ -50828,7 +50827,7 @@ its shape and token count, never its body.
 
 ### encounter water/spiderweb
 
-- display name: (none declared)
+- display name: Spider Web (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\spiderweb.gs` line 1
@@ -50855,7 +50854,7 @@ its shape and token count, never its body.
 
 ### encounter water/wacave
 
-- display name: (none declared)
+- display name: Water Cave (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\wacave.gs` line 1
@@ -50903,7 +50902,7 @@ its shape and token count, never its body.
 
 ### encounter water/wadung
 
-- display name: Amazon Keep
+- display name: Amazon Keep (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\wadung.gs` line 1
@@ -50930,7 +50929,7 @@ its shape and token count, never its body.
 
 ### encounter water/wagtem
 
-- display name: Water Great Temple
+- display name: Water Great Temple (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\wagtem.gs` line 1
@@ -50956,7 +50955,7 @@ its shape and token count, never its body.
 
 ### encounter water/wamina
 
-- display name: (none declared)
+- display name: Water Brew (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\wamina.gs` line 1
@@ -50985,7 +50984,7 @@ its shape and token count, never its body.
 
 ### encounter water/waminc
 
-- display name: (none declared)
+- display name: Water Crystal (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\waminc.gs` line 1
@@ -51014,7 +51013,7 @@ its shape and token count, never its body.
 
 ### encounter water/waming
 
-- display name: (none declared)
+- display name: Water Gold (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\waming.gs` line 1
@@ -51043,7 +51042,7 @@ its shape and token count, never its body.
 
 ### encounter water/wamult
 
-- display name: (none declared)
+- display name: Water Multi (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\wamult.gs` line 1
@@ -51069,7 +51068,7 @@ its shape and token count, never its body.
 
 ### encounter water/wastat
 
-- display name: (none declared)
+- display name: Water Statue (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\wastat.gs` line 1
@@ -51098,7 +51097,7 @@ its shape and token count, never its body.
 
 ### encounter water/watermult
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\dungeons\water\watermult.gs` line 1
@@ -51125,7 +51124,7 @@ its shape and token count, never its body.
 
 ### encounter water/watowe
 
-- display name: (none declared)
+- display name: Water Tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\water\watowe.gs` line 1
@@ -51152,7 +51151,7 @@ its shape and token count, never its body.
 
 ### encounter wilderness_land
 
-- display name: Wilderness
+- display name: Wilderness (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\wilderness_land.gs` line 1
@@ -51185,7 +51184,7 @@ its shape and token count, never its body.
 
 ### encounter wilderness_sea
 
-- display name: Briny Deep
+- display name: Briny Deep (declared-name)
 - evidence: `catalog-entry`
 - profiles: gs5r3
 - defined in: `gs\dungeons\wilderness_sea.gs` line 1
@@ -51209,7 +51208,7 @@ its shape and token count, never its body.
 
 ### encounter witchtowr
 
-- display name: (none declared)
+- display name: Witch Tower (encounter-key)
 - evidence: `catalog-entry`
 - profiles: vanilla, patch302
 - defined in: `gs\dungeons\witchtowr.gs` line 1
@@ -51239,7 +51238,7 @@ its shape and token count, never its body.
 
 ### faction AIR
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `engine-constant`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `(no defining member)` line 0
@@ -51251,7 +51250,7 @@ its shape and token count, never its body.
 
 ### faction CHAOS
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `engine-constant`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `(no defining member)` line 0
@@ -51263,7 +51262,7 @@ its shape and token count, never its body.
 
 ### faction DEATH
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `engine-constant`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `(no defining member)` line 0
@@ -51275,7 +51274,7 @@ its shape and token count, never its body.
 
 ### faction EARTH
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `engine-constant`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `(no defining member)` line 0
@@ -51287,7 +51286,7 @@ its shape and token count, never its body.
 
 ### faction FIRE
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `engine-constant`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `(no defining member)` line 0
@@ -51299,7 +51298,7 @@ its shape and token count, never its body.
 
 ### faction LIFE
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `engine-constant`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `(no defining member)` line 0
@@ -51311,7 +51310,7 @@ its shape and token count, never its body.
 
 ### faction ORDER
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `engine-constant`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `(no defining member)` line 0
@@ -51323,7 +51322,7 @@ its shape and token count, never its body.
 
 ### faction WATER
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `engine-constant`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `(no defining member)` line 0
@@ -51337,7 +51336,7 @@ its shape and token count, never its body.
 
 ### building BARRACKS
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1
@@ -51351,7 +51350,7 @@ its shape and token count, never its body.
 
 ### building HUT
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1
@@ -51365,7 +51364,7 @@ its shape and token count, never its body.
 
 ### building KEEP
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1
@@ -51379,7 +51378,7 @@ its shape and token count, never its body.
 
 ### building LIBRARY
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1
@@ -51393,7 +51392,7 @@ its shape and token count, never its body.
 
 ### building MAGISTRATE
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1
@@ -51407,7 +51406,7 @@ its shape and token count, never its body.
 
 ### building MARKETPLACE
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1
@@ -51421,7 +51420,7 @@ its shape and token count, never its body.
 
 ### building SPECIAL_BUILDING
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1
@@ -51435,7 +51434,7 @@ its shape and token count, never its body.
 
 ### building TAVERN
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1
@@ -51449,7 +51448,7 @@ its shape and token count, never its body.
 
 ### building TEMPLE
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1
@@ -51463,7 +51462,7 @@ its shape and token count, never its body.
 
 ### building THIEVES_GUILD
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1
@@ -51477,7 +51476,7 @@ its shape and token count, never its body.
 
 ### building WATCH_TOWER
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1
@@ -51491,7 +51490,7 @@ its shape and token count, never its body.
 
 ### building WIZARDS_TOWER
 
-- display name: (none declared)
+- display name: (none declared) (-)
 - evidence: `call-site-tuple`
 - profiles: vanilla, patch302, gs5r3
 - defined in: `gs\building.gs` line 1

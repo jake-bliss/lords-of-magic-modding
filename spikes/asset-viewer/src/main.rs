@@ -4674,29 +4674,60 @@ fn read_gameplay_index(reports: &Path) -> Result<Vec<gameplay_symbols::IndexRow>
 
 /// Print everything the database records about one symbol.
 ///
-/// The name is matched case-insensitively, and a name may legitimately answer more than once:
-/// `potion_health` is registered as both an artifact and a spell. Every match is printed rather
-/// than the first, because picking one would be picking arbitrarily.
+/// The query is matched against the symbol's code first and, only if nothing matches there, against
+/// its display name -- so `aicav` and `Windriders` both reach the Windriders unit. A name may
+/// legitimately answer more than once (`potion_health` is registered as both an artifact and a
+/// spell), and a display name may be shared outright, so an ambiguous query lists its candidates
+/// rather than picking one.
 fn gameplay_symbol(name: &str, reports: &Path) -> Result<(), String> {
     let rows = read_gameplay_index(reports)?;
-    let matches: Vec<&gameplay_symbols::IndexRow> = rows
-        .iter()
-        .filter(|row| row.name.eq_ignore_ascii_case(name))
-        .collect();
+    let (matches, matched_on) = gameplay_symbols::lookup_rows(name, &rows);
     if matches.is_empty() {
         // A miss states the size of what was searched, so "no such symbol" is a statement about a
         // known index rather than an unbounded claim about the game.
-        println!("no gameplay symbol named {name} in {} indexed symbols", rows.len());
-        let near: Vec<&str> = rows
+        println!(
+            "no gameplay symbol whose code or display name is {name}, in {} indexed symbols",
+            rows.len()
+        );
+        let near: Vec<String> = rows
             .iter()
-            .filter(|row| row.name.to_ascii_lowercase().contains(&name.to_ascii_lowercase()))
-            .map(|row| row.name.as_str())
+            .filter(|row| {
+                let needle = name.to_ascii_lowercase();
+                row.name.to_ascii_lowercase().contains(&needle)
+                    || gameplay_symbols::row_display_name(row)
+                        .is_some_and(|display| display.to_ascii_lowercase().contains(&needle))
+            })
+            .map(|row| match gameplay_symbols::row_display_name(row) {
+                Some(display) => format!("{} ({display})", row.name),
+                None => row.name.clone(),
+            })
             .take(10)
             .collect();
         if !near.is_empty() {
-            println!("names containing that text: {}", near.join(", "));
+            println!("containing that text: {}", near.join(", "));
         }
         return Ok(());
+    }
+    // Several rows sharing a *code* are all the answer -- `potion_health` really is both an
+    // artifact and a spell -- so those are printed in full. Several rows sharing a *display name*
+    // are a question, not an answer: sixteen spells are labelled "Dispel Magic" and only one is
+    // meant. Those are listed as candidates and nothing is printed in full, because printing
+    // sixteen records would bury the fact that the query did not identify one.
+    if matches.len() > 1 && matched_on == gameplay_symbols::MatchedField::DisplayName {
+        println!(
+            "{name} is a display name shared by {} symbols. Re-run with one of these codes:",
+            matches.len()
+        );
+        for row in &matches {
+            println!("candidate\t{}\t{}\t{}", row.name, row.kind, row.member);
+        }
+        return Ok(());
+    }
+    if matches.len() > 1 {
+        println!(
+            "{name} names {} symbols, of different kinds. All are shown.\n",
+            matches.len()
+        );
     }
     for row in matches {
         println!("name\t{}", row.name);
@@ -4704,41 +4735,58 @@ fn gameplay_symbol(name: &str, reports: &Path) -> Result<(), String> {
         println!("evidence\t{}", row.evidence);
         println!("profiles\t{}", row.profiles.join(","));
         println!("display-name\t{}", row.display_name);
+        println!("display-source\t{}", row.display_source);
         println!("defined-in\t{}", row.member);
         println!("line\t{}", row.line);
         println!("byte-offset\t{}", row.byte_offset);
         println!("registered-in\t{}", row.registered_in);
         println!("fields\t{}", row.fields);
         println!("static-references\t{}", row.references);
-        println!("reference-anchor\treports/gameplay/reference.md#{}", row.anchor);
+        println!(
+            "reference-anchor\treports/gameplay/reference.md#{}",
+            row.anchor
+        );
         println!();
     }
     Ok(())
 }
 
-/// List the symbols whose name matches a glob.
+/// List the symbols whose code **or display name** matches a glob.
+///
+/// Searching the code alone made the reference unusable by anyone who did not already know the
+/// code: `Windrider*` returned nothing while `aicav` returned the unit called "Windriders". The
+/// `matched` column says which field produced each hit, because a result nobody can explain is a
+/// result nobody can trust.
 fn gameplay_symbols_like(pattern: &str, reports: &Path) -> Result<(), String> {
     let rows = read_gameplay_index(reports)?;
     let mut shown = 0_usize;
-    println!("name\tkind\tevidence\tprofiles\tmember");
+    println!("name\tdisplay-name\tmatched\tkind\tevidence\tprofiles\tmember");
     for row in &rows {
-        if !gameplay_symbols::matches_pattern(pattern, &row.name) {
+        let Some(matched) = gameplay_symbols::match_row(pattern, row) else {
             continue;
-        }
+        };
         shown += 1;
         println!(
-            "{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
             row.name,
+            gameplay_symbols::row_display_name(row).unwrap_or("-"),
+            matched.label(),
             row.kind,
             row.evidence,
             row.profiles.join(","),
             row.member
         );
     }
+    // How many rows could not have matched by display name at all, so a thin result is explainable
+    // rather than mysterious.
+    let without = rows
+        .iter()
+        .filter(|row| gameplay_symbols::row_display_name(row).is_none())
+        .count();
     println!("\nmatched\t{shown}\tof\t{}", rows.len());
+    println!("rows-with-no-display-name-to-match\t{without}");
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {

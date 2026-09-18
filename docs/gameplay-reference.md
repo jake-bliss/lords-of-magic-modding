@@ -1,5 +1,20 @@
 # Gameplay Data Reference
 
+## Read this first: do not publish a "maximum resistance is 100" table
+
+In vanilla and 3.02, all eight unit magic resistances stop at **exactly 100**, across 88 units.
+That is precisely what a hard engine cap looks like, and it is the single easiest wrong claim to
+take out of this database.
+
+**GS5R3 reaches 125 on air, life and water, and 150 on earth** — running on a `lomse.exe` that is
+**byte-identical** to the other two profiles. The same engine accepts 150. So 100 is a design
+convention of the vanilla data, not a bound the engine enforces.
+
+Everything in `field-ranges.tsv` is a **corpus-observed maximum**. Not one number in it is an
+engine-enforced bound, because nothing in this work asked the engine anything. The distinction is
+the whole of [that section](#corpus-observed-maximum-versus-engine-enforced-bound), and this is the
+case that proves it matters.
+
 ## Status
 
 **A semantic symbol/index database over the GameScript corpus of all three profiles, with a query
@@ -12,7 +27,7 @@ The database is generated, reproducible and committed:
 
 | File | Rows | What it holds |
 | --- | ---: | --- |
-| [`reports/gameplay/symbols.tsv`](../reports/gameplay/symbols.tsv) | 1,535 | one row per symbol: kind, evidence class, profiles, defining member, line, byte offset, reference count, anchor |
+| [`reports/gameplay/symbols.tsv`](../reports/gameplay/symbols.tsv) | 1,535 | one row per symbol: kind, evidence class, profiles, defining member, line, byte offset, display name and its source, reference count, anchor |
 | [`reports/gameplay/fields.tsv`](../reports/gameplay/fields.tsv) | 62,212 | one row per symbol per field per profile |
 | [`reports/gameplay/references.tsv`](../reports/gameplay/references.tsv) | 83,259 | every static reference, with the member and line it occurs in |
 | [`reports/gameplay/field-ranges.tsv`](../reports/gameplay/field-ranges.tsv) | 1,348 | per kind and field: presence, observed range, modal value, shape mix |
@@ -45,15 +60,58 @@ The query path reads the committed TSV and opens no archive, so it answers on a 
 game installed.
 
 ```sh
-lom-asset-viewer --gameplay-symbol aicav
+lom-asset-viewer --gameplay-symbol aicav            # by internal code
+lom-asset-viewer --gameplay-symbol Windriders       # by display name -- same symbol
+lom-asset-viewer --gameplay-symbols-like 'Windrider*'
 lom-asset-viewer --gameplay-symbols-like 'summon_creature_*'
 lom-asset-viewer --gameplay-symbol potion_health --reports path/to/reports/gameplay
 ```
 
-`--gameplay-symbol` matches case-insensitively and prints **every** match, because a name can
-legitimately answer twice — the ten potions are registered as both an artifact and a spell. A miss
-states how many symbols were searched, so "no such symbol" is a statement about a known index rather
-than an unbounded claim about the game.
+### Both names are searched, and the result says which one matched
+
+A visitor knows "Windriders"; the corpus knows `aicav`. Both are searched, case-insensitively, and
+every hit carries a `matched` column of `code`, `display-name` or `code+display-name` — a result
+nobody can explain is a result nobody can trust.
+
+```text
+name    display-name  matched       kind  evidence         profiles                  member
+aicav   Windriders    display-name  unit  delimited-block  vanilla,patch302,gs5r3    units\aicav.gs
+```
+
+**Multiplicity means two different things, and the two are not treated alike.**
+
+- Several symbols sharing a **code** are all the answer. `potion_health` really is registered as
+  both an artifact and a spell, so both records print in full.
+- Several symbols sharing a **display name** are a question, not an answer. Sixteen spells are
+  labelled "Dispel Magic". The query lists the candidate codes and prints no record, because
+  printing sixteen would bury the fact that the query did not identify one.
+
+An **exact code match always wins outright**, so `aicav` can never be made ambiguous by some other
+symbol merely being *called* "aicav".
+
+A miss states how many symbols were searched and offers names containing the text, so "no such
+symbol" is a statement about a known index rather than an unbounded claim about the game.
+
+### Display-name coverage is 1,439 of 1,535 — not all of them
+
+Search the display name alone and you miss 96 symbols. Every listing therefore prints
+`rows-with-no-display-name-to-match`, so a thin result is explainable rather than mysterious.
+
+| Where the display name comes from | Symbols |
+| --- | ---: |
+| `declared-name` — a text `/name` in the record | 933 |
+| `encounter-key` — an encounter's `/key "Air Cave"` | 450 |
+| `text-table` — `/name textdict /T_… get` resolved against the corpus's text tables | 56 |
+| none | 96 |
+
+The `display-source` column carries this per row. The 96 without are 74 encounters whose `/key` is
+computed rather than written, 12 buildings, 8 factions and 2 artifacts — all kinds that have no
+human-facing label in GameScript at all.
+
+`encounter-key` and `text-table` were both **added after a review found the search unusable** —
+before that, only the 933 `declared-name` symbols were findable by the name a person would type.
+`text-table` exists only because a field reader bug was fixed on the way; see
+[the field reader defect](#a-field-reader-defect-of-my-own-fixed).
 
 ## How a symbol is classified
 
@@ -412,6 +470,39 @@ which is VM work rather than scanner work.
   uncounted.
 - **`engine-constant` and `call-site-tuple` are Inferred**, and every row says so.
 
+## A field reader defect of my own, fixed
+
+Found while closing the search gap, and worth recording because the symptom was invisible: the
+records looked complete, they were just missing the one field a human reads.
+
+The corpus's text-table idiom is
+
+```text
+/name textdict /T_artifact_name_adventsword get def
+```
+
+The field scanner stops at a literal name appearing before the terminating `def`, because
+`/invoke_spell cvx` defers a *native call* and a scanner that ran past it would swallow the rest of
+the member into one value. That guard is right, but it also fired on the inner `/T_artifact_…`,
+which is not a deferred call — it is a dictionary key about to be read. Two things went wrong at
+once: the record **lost its `name` and `description`**, and the *key* was filed as a field of its
+own whose value was `get`.
+
+The idiom is not rare — **246 definitions in vanilla and 3.02, 416 in GS5R3**, including 56 `name`
+and 48 `description` in vanilla alone.
+
+The scanner now passes a literal name when it is immediately followed by a key-consuming operator.
+That list is `["get"]` and nothing else, because every one of those 246 and 416 definitions uses
+`get`; adding `known`, `load` or `undef` on the grounds of plausibility would admit shapes the
+corpus does not contain, and every name admitted there is a name the deferred-call guard stops
+protecting. Two corpus-gated tests hold both halves: no looked-up key may become a field, and
+`invoke_spell` may never become one either. Evidence class: Corrected.
+
+Resolving those recovered `/name` values against the corpus's text tables is what supplies the 56
+`text-table` display names. Keys that two members define **differently** are dropped rather than
+resolved to whichever was read last — 230 to 243 per profile — so no symbol gets a name on the
+strength of archive order.
+
 ## Two pre-existing defects found on the way
 
 Both are outside this work's scope and are **not fixed here**; both affect other published figures.
@@ -458,15 +549,17 @@ profile diff here is computed from the Rust lexer instead. Evidence class: Obser
 
 ## Tests
 
-- `src/gameplay_symbols.rs` — 27 unit tests. Fixtures are written to probe shapes the corpus does
+- `src/gameplay_symbols.rs` — 39 unit tests. Fixtures are written to probe shapes the corpus does
   **not** contain as well as ones it does: a repeated top-level key, a value of two numbers, an
-  unclosed procedure, a decoy `/decoy bind def` before the real unit binding. A suite built only
-  from corpus-shaped input cannot fail on what the corpus happens never to do.
-- `tests/gameplay_symbols.rs` — 5 corpus-gated tests (`LOM_GS_MPQ`, `#[ignore]`d), passing on all
+  unclosed procedure, a decoy `/decoy bind def` before the real unit binding, a literal followed by
+  `put def` rather than `get def`. A suite built only from corpus-shaped input cannot fail on what
+  the corpus happens never to do.
+- `tests/gameplay_symbols.rs` — 7 corpus-gated tests (`LOM_GS_MPQ`, `#[ignore]`d), passing on all
   three profiles. None compares a count to a constant; each states a property the corpus must have
-  if the rule is right. One of them fails if the registrar rule and the directory rule ever stop
-  disagreeing.
-- **Mutation run: 31 mutations, 31 caught, 0 survivors.** Constants mutated in both directions
+  if the rule is right. One fails if the registrar rule and the directory rule ever stop disagreeing;
+  another fails if any looked-up dictionary key becomes a field name.
+- **Mutation run: 49 mutations, 49 caught, 0 survivors**, and every mutation compiled and ran —
+  a mutation that fails to build is not a caught mutation. Constants mutated in both directions
   (minimum→maximum and maximum→minimum; `== 1`→`>= 1` and `== 1`→`== 2`; marker search forced to
-  both `true` and `false`). Re-run with
-  `spikes/asset-viewer` as the target; the script is in the session scratchpad and is not committed.
+  both `true` and `false`; code-only and display-name-only search; each `MatchedField` swapped for
+  each other). The script is in the session scratchpad and is not committed.

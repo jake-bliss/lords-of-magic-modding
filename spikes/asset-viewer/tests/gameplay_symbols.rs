@@ -18,7 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use lom_asset_viewer::gameplay_symbols::{
-    RECORD_MARKERS, contains_marker, record_fields, registered_symbols, run_targets, unit_records,
+    RECORD_MARKERS, contains_marker, looked_up_key, record_fields, registered_symbols, run_targets,
+    unit_records,
 };
 use lom_asset_viewer::gamescript::GameScriptDocument;
 use lom_asset_viewer::mpq::Archive;
@@ -279,5 +280,69 @@ fn encounter_paths_identify_encounters_uniquely_but_basenames_do_not() {
         distinct.len() < basenames.len(),
         "every encounter basename is unique in this profile, so naming by path is unmotivated \
          here; check whether the other profiles still justify it"
+    );
+}
+
+#[test]
+#[ignore = "reads a shipped archive; set LOM_GS_MPQ"]
+fn a_text_table_lookup_is_the_field_it_defines_not_the_key_it_reads() {
+    // `/name textdict /T_artifact_name_adventsword get def` defines `name`. Stopping the value scan
+    // at the inner literal dropped that field entirely and filed the *key* as a field whose value
+    // was `get` -- so every artifact written this way lost its name and gained two inventions.
+    //
+    // Asserted as a property of the corpus, not against a copied count: whatever the archive
+    // contains, a key that some record looks up must never itself become a field name.
+    let corpus = corpus();
+    let mut looked_up: BTreeSet<String> = BTreeSet::new();
+    let mut field_names: BTreeSet<String> = BTreeSet::new();
+    let mut lookup_valued_fields = 0_usize;
+
+    for (name, member, _) in registrations(&corpus) {
+        let _ = name;
+        let Some(tokens) = corpus.members.get(&member) else {
+            continue;
+        };
+        let (fields, _) = record_fields(tokens);
+        for (field, value) in &fields {
+            field_names.insert(field.clone());
+            if let Some(key) = looked_up_key(&value.text) {
+                looked_up.insert(key.to_owned());
+                lookup_valued_fields += 1;
+            }
+        }
+    }
+
+    assert!(
+        lookup_valued_fields > 0,
+        "no record in this archive uses the `<dict> /KEY get` idiom, so this test proves nothing \
+         here; check whether the idiom moved"
+    );
+    let keys_that_became_fields: Vec<&String> = looked_up.intersection(&field_names).collect();
+    assert!(
+        keys_that_became_fields.is_empty(),
+        "these dictionary keys were filed as fields of the record: {keys_that_became_fields:?}"
+    );
+}
+
+#[test]
+#[ignore = "reads a shipped archive; set LOM_GS_MPQ"]
+fn a_deferred_native_call_still_stops_the_value_scan() {
+    // The guard the key-lookup exception relaxes. `/invoke_spell cvx` pushes a name for later
+    // execution; if the scan ran past it looking for a `def`, `invoke_spell` would be filed as a
+    // field of whatever record contained it. The corpus really does contain this shape, so the
+    // check is against the archive rather than a fixture.
+    let corpus = corpus();
+    let mut offenders = Vec::new();
+    for (member, tokens) in &corpus.members {
+        let (fields, _) = record_fields(tokens);
+        for deferred in ["invoke_spell", "removeunitmodifiers"] {
+            if fields.contains_key(deferred) {
+                offenders.push(format!("{member}:{deferred}"));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "a deferred native call was read as a record field: {offenders:?}"
     );
 }

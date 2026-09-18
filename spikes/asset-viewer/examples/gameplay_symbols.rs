@@ -30,10 +30,10 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use lom_asset_viewer::gameplay_symbols::{
-    DefinitionDiff, EvidenceClass, FieldValue, RECORD_MARKERS, Reference, Symbol, SymbolDatabase,
-    SymbolKind, ValueShape, anchor_for, compare_definitions, contains_marker, field_statistics,
-    qualified, record_fields, references_in, registered_symbols, run_targets, token_fingerprint,
-    unit_records,
+    DefinitionDiff, EvidenceClass, FieldValue, INDEX_COLUMNS, RECORD_MARKERS, Reference, Symbol,
+    SymbolDatabase, SymbolKind, ValueShape, anchor_for, compare_definitions, contains_marker,
+    field_statistics, qualified, record_fields, references_in, registered_symbols, resolve_display,
+    run_targets, text_table, token_fingerprint, unit_records,
 };
 use lom_asset_viewer::gamescript::{GameScriptDocument, Token, TokenKind};
 use lom_asset_viewer::mpq::Archive;
@@ -368,6 +368,31 @@ fn build(
         }
     }
 
+    // The corpus's text tables. Built from every member by adjacency rather than by naming
+    // `gs\textdict.gs`, so a profile that moved or split its tables still resolves. A key two
+    // members define differently is dropped: resolving it to whichever was read last would put a
+    // name on a symbol on the strength of archive order.
+    let mut seen: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for member in &members {
+        for (key, text) in text_table(&member.tokens) {
+            match seen.get(&key) {
+                Some(Some(existing)) if existing != &text => {
+                    seen.insert(key, None);
+                }
+                Some(_) => {}
+                None => {
+                    seen.insert(key, Some(text));
+                }
+            }
+        }
+    }
+    let ambiguous = seen.values().filter(|text| text.is_none()).count();
+    database.text_table = seen
+        .into_iter()
+        .filter_map(|(key, text)| text.map(|text| (key, text)))
+        .collect();
+    database.ambiguous_text_keys = ambiguous;
+
     // References: every mention of a known symbol name anywhere in the corpus.
     let wanted: BTreeSet<String> = database
         .symbols
@@ -561,6 +586,11 @@ fn report(label: &str, database: &SymbolDatabase) {
             .count();
         println!("evidence\t{}\t{count}", evidence.label());
     }
+    println!("text-table-keys\t{}", database.text_table.len());
+    println!(
+        "text-keys-defined-inconsistently-and-so-unresolved\t{}",
+        database.ambiguous_text_keys
+    );
     println!("references\t{}", database.references.len());
     let unreferenced = database
         .symbols
@@ -587,9 +617,13 @@ fn write_reports(directory: &Path, built: &[Built]) -> Result<(), String> {
         .collect();
 
     // symbols.tsv -- one row per symbol per profile it appears in.
-    let mut text = String::from(
-        "name\tkind\tevidence\tprofiles\tmember\tline\tbyte-offset\tregistered-in\tdisplay-name\tfields\treferences\tanchor\n",
-    );
+    //
+    // The header is emitted from `INDEX_COLUMNS`, which the reader also checks against, rather than
+    // from a second copy of the same list. The two copies had already drifted once: a column added
+    // to the rows and to the reader but not to this string produced a file whose every value sat
+    // under the previous column's name. The reader's header check caught it, and this removes the
+    // way it happened.
+    let mut text = format!("{}\n", INDEX_COLUMNS.join("\t"));
     for name in &every_symbol {
         let present: Vec<&str> = built
             .iter()
@@ -601,6 +635,7 @@ fn write_reports(directory: &Path, built: &[Built]) -> Result<(), String> {
             .find(|(_, database, _)| database.symbols.contains_key(*name))
             .expect("every symbol came from some profile");
         let symbol = &database.symbols[*name];
+        let (display, source) = resolve_display(symbol, &database.text_table);
         let references = database
             .references
             .iter()
@@ -608,7 +643,7 @@ fn write_reports(directory: &Path, built: &[Built]) -> Result<(), String> {
             .count();
         writeln!(
             text,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{references}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{references}\t{}",
             symbol.name,
             symbol.kind.label(),
             symbol.evidence.label(),
@@ -621,7 +656,8 @@ fn write_reports(directory: &Path, built: &[Built]) -> Result<(), String> {
             } else {
                 &symbol.registered_in
             },
-            symbol.display_name().unwrap_or("-"),
+            display.as_deref().unwrap_or("-"),
+            source.label(),
             symbol.fields.len(),
             anchor_for(symbol.kind, &symbol.name),
         )
@@ -915,11 +951,13 @@ fn write_reference(
                 .filter(|(_, database, _)| database.symbols.contains_key(name))
                 .map(|(label, _, _)| label.as_str())
                 .collect();
+            let (display, source) = resolve_display(symbol, &database.text_table);
             writeln!(text, "### {} {}\n", kind.label(), symbol.name).expect("string write");
             writeln!(
                 text,
-                "- display name: {}\n- evidence: `{}`\n- profiles: {}\n- defined in: `{}` line {}\n- references: {}\n",
-                symbol.display_name().unwrap_or("(none declared)"),
+                "- display name: {} ({})\n- evidence: `{}`\n- profiles: {}\n- defined in: `{}` line {}\n- references: {}\n",
+                display.as_deref().unwrap_or("(none declared)"),
+                source.label(),
                 symbol.evidence.label(),
                 present.join(", "),
                 if symbol.member.is_empty() { "(no defining member)" } else { &symbol.member },

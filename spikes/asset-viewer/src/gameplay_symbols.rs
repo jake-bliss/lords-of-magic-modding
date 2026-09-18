@@ -167,13 +167,98 @@ pub struct Symbol {
 }
 
 impl Symbol {
-    /// The symbol's human-facing name, when it declares one.
-    pub fn display_name(&self) -> Option<&str> {
+    /// The symbol's human-facing name as written directly in its own record.
+    ///
+    /// Only a **text** `/name` counts. An encounter writes `/name { ... }` -- it computes its name
+    /// from the terrain sprite it sits under -- and reporting `<procedure 41 tokens>` as a name
+    /// would be worse than reporting none. A vanilla artifact writes
+    /// `/name textdict /T_artifact_name_adventsword get def`, whose value is an expression, not
+    /// text; [`resolve_display`] recovers that one against the corpus's text table.
+    pub fn declared_display_name(&self) -> Option<&str> {
         self.fields
             .get("name")
             .filter(|value| value.shape == ValueShape::Text)
             .map(|value| value.text.as_str())
     }
+}
+
+/// Where a symbol's human-facing name came from. Carried so a search hit is explainable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplaySource {
+    /// A text `/name` in the record itself.
+    DeclaredName,
+    /// A `/name <dict> /KEY get def` resolved against the corpus's text table.
+    TextTable,
+    /// An encounter's `/key "Air Cave"`. Encounters compute `/name` at runtime, but nearly all of
+    /// them label themselves with a text `key` as well.
+    EncounterKey,
+    /// The symbol declares no human-facing name anywhere this scan can see.
+    None,
+}
+
+impl DisplaySource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DeclaredName => "declared-name",
+            Self::TextTable => "text-table",
+            Self::EncounterKey => "encounter-key",
+            Self::None => "-",
+        }
+    }
+}
+
+/// The `/KEY "text"` pairs a member contributes to the corpus's text tables.
+///
+/// `gs\textdict.gs` is one enormous `<< >>` literal of these. The pair is recognised by adjacency
+/// rather than by naming the member, so a profile that moved or split its text tables still
+/// resolves.
+pub fn text_table(tokens: &[Token]) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for window in tokens.windows(2) {
+        let TokenKind::LiteralName(key) = &window[0].kind else {
+            continue;
+        };
+        let TokenKind::StringLiteral(text) = &window[1].kind else {
+            continue;
+        };
+        pairs.push((key.clone(), text.clone()));
+    }
+    pairs
+}
+
+/// The single dictionary key a `<dict> /KEY get` value looks up, if the value has that shape.
+pub fn looked_up_key(value: &str) -> Option<&str> {
+    let mut parts = value.split_whitespace();
+    let _dictionary = parts.next()?;
+    let key = parts.next()?.strip_prefix('/')?;
+    (parts.next() == Some("get") && parts.next().is_none()).then_some(key)
+}
+
+/// A symbol's human-facing name and where it came from.
+///
+/// `text` maps a text-table key to its string, and carries **only unambiguous keys** -- a key two
+/// members define differently is left out rather than resolved to whichever was seen last.
+pub fn resolve_display(
+    symbol: &Symbol,
+    text: &BTreeMap<String, String>,
+) -> (Option<String>, DisplaySource) {
+    if let Some(name) = symbol.declared_display_name() {
+        return (Some(name.to_owned()), DisplaySource::DeclaredName);
+    }
+    if let Some(value) = symbol.fields.get("name")
+        && value.shape == ValueShape::Expression
+        && let Some(key) = looked_up_key(&value.text)
+        && let Some(resolved) = text.get(key)
+    {
+        return (Some(resolved.clone()), DisplaySource::TextTable);
+    }
+    if symbol.kind == SymbolKind::Encounter
+        && let Some(value) = symbol.fields.get("key")
+        && value.shape == ValueShape::Text
+    {
+        return (Some(value.text.clone()), DisplaySource::EncounterKey);
+    }
+    (None, DisplaySource::None)
 }
 
 /// One static reference to a symbol from somewhere in the corpus.
@@ -222,6 +307,11 @@ pub struct SymbolDatabase {
     /// ships a `units\\test.gs` that binds `deldr`. A database reporting one symbol per name
     /// without saying so would hide a superseded definition a modder needs to know about.
     pub name_collisions: Vec<(String, String, String)>,
+    /// The corpus's text tables: `/KEY "text"` pairs, with every key more than one member defines
+    /// differently left out rather than resolved to whichever was seen last.
+    pub text_table: BTreeMap<String, String>,
+    /// Text keys more than one member defines differently, and which are therefore not resolved.
+    pub ambiguous_text_keys: usize,
 }
 
 /// Byte sequences whose presence in a member means it probably holds a record of that kind.
@@ -378,10 +468,22 @@ pub fn record_fields(tokens: &[Token]) -> (BTreeMap<String, FieldValue>, usize) 
                     end = Some(scan);
                     break;
                 }
-                // Another literal name at this depth before any `def` means the first one was not
-                // a field -- it is a dictionary-literal key or a deferred name. Stop rather than
-                // swallow the rest of the file into one giant value.
+                // Another literal name at this depth before any `def` normally means the first one
+                // was not a field -- it is a dictionary-literal key or a deferred name such as
+                // `/invoke_spell cvx`. Stop rather than swallow the rest of the file into one
+                // giant value.
+                //
+                // **Except when it is a key being looked up.** The corpus's text-table idiom is
+                // `/name textdict /T_artifact_name_adventsword get def`, where the inner literal is
+                // a dictionary key consumed by the very next operator. Stopping there dropped the
+                // `name` and `description` of every artifact written that way -- 56 and 48 of them
+                // in vanilla -- and then filed the *key* as a field of its own whose value was
+                // `get`.
                 if matches!(tokens[scan].kind, TokenKind::LiteralName(_)) {
+                    if literal_is_a_looked_up_key(tokens, scan) {
+                        scan += 2;
+                        continue;
+                    }
                     break;
                 }
             }
@@ -407,6 +509,24 @@ pub fn record_fields(tokens: &[Token]) -> (BTreeMap<String, FieldValue>, usize) 
     }
 
     (fields, duplicate_keys)
+}
+
+/// The operators that consume a preceding literal name *as a dictionary key*.
+///
+/// Deliberately just `get`. All 246 key-lookup definitions in vanilla and 3.02, and all 416 in
+/// GS5R3, use `get` and nothing else -- measured over the extracted corpus on 2026-09-18. Adding
+/// `known`, `load` or `undef` on the strength of them being plausible would be admitting shapes the
+/// corpus does not contain, and every name admitted here is a name the deferred-call guard stops
+/// protecting. Extend it when a corpus measurement says to, not before.
+pub const KEY_CONSUMING_OPERATORS: [&str; 1] = ["get"];
+
+/// Whether the literal name at `index` is a dictionary key about to be looked up.
+fn literal_is_a_looked_up_key(tokens: &[Token], index: usize) -> bool {
+    matches!(
+        tokens.get(index + 1).map(|token| &token.kind),
+        Some(TokenKind::ExecutableName(word))
+            if KEY_CONSUMING_OPERATORS.contains(&word.as_str())
+    )
 }
 
 fn classify_value(value: &[Token], line: usize) -> FieldValue {
@@ -754,6 +874,7 @@ pub struct IndexRow {
     pub byte_offset: String,
     pub registered_in: String,
     pub display_name: String,
+    pub display_source: String,
     pub fields: String,
     pub references: String,
     pub anchor: String,
@@ -762,7 +883,7 @@ pub struct IndexRow {
 /// The column order `symbols.tsv` is written in. Parsing checks the header against this rather
 /// than assuming it, so a regenerated file with reordered columns fails loudly instead of
 /// silently reporting one column's values under another column's name.
-pub const INDEX_COLUMNS: [&str; 12] = [
+pub const INDEX_COLUMNS: [&str; 13] = [
     "name",
     "kind",
     "evidence",
@@ -772,6 +893,7 @@ pub const INDEX_COLUMNS: [&str; 12] = [
     "byte-offset",
     "registered-in",
     "display-name",
+    "display-source",
     "fields",
     "references",
     "anchor",
@@ -811,12 +933,87 @@ pub fn parse_index(text: &str) -> Result<Vec<IndexRow>, String> {
             byte_offset: cells[6].to_owned(),
             registered_in: cells[7].to_owned(),
             display_name: cells[8].to_owned(),
-            fields: cells[9].to_owned(),
-            references: cells[10].to_owned(),
-            anchor: cells[11].to_owned(),
+            display_source: cells[9].to_owned(),
+            fields: cells[10].to_owned(),
+            references: cells[11].to_owned(),
+            anchor: cells[12].to_owned(),
         });
     }
     Ok(rows)
+}
+
+/// Which of a row's two searchable names a query matched.
+///
+/// Carried on every hit so a result is explainable. A visitor to a reference knows "Windriders",
+/// not `aicav`, and a hit on one should not look like a hit on the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchedField {
+    Code,
+    DisplayName,
+    /// The query matched both, which happens whenever a pattern is loose enough.
+    Both,
+}
+
+impl MatchedField {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Code => "code",
+            Self::DisplayName => "display-name",
+            Self::Both => "code+display-name",
+        }
+    }
+}
+
+/// A row's display name, or `None` when it has none.
+///
+/// The index writes `-` for "no display name", and `-` is also a string a display name could in
+/// principle be. Treating the sentinel as searchable text would let `--gameplay-symbols-like '-'`
+/// match 602 symbols on the strength of their *not* having a name.
+pub fn row_display_name(row: &IndexRow) -> Option<&str> {
+    (row.display_name != "-").then_some(row.display_name.as_str())
+}
+
+/// Whether `pattern` matches a row, and on which field.
+///
+/// Both fields are searched because the one a human types is the display name, and for 39% of the
+/// index there is no display name to type -- so searching only one of them is wrong in both
+/// directions.
+pub fn match_row(pattern: &str, row: &IndexRow) -> Option<MatchedField> {
+    let code = matches_pattern(pattern, &row.name);
+    let display = row_display_name(row).is_some_and(|name| matches_pattern(pattern, name));
+    match (code, display) {
+        (true, true) => Some(MatchedField::Both),
+        (true, false) => Some(MatchedField::Code),
+        (false, true) => Some(MatchedField::DisplayName),
+        (false, false) => None,
+    }
+}
+
+/// Rows a single-symbol lookup should consider for `query`.
+///
+/// An exact code match wins outright: `aicav` must never be ambiguous because some artifact happens
+/// to be *called* "aicav". Only when nothing matches by code does the display name get a turn, and
+/// then **every** match is returned rather than one chosen -- display names are not unique, and
+/// guessing between two symbols a visitor might have meant is worse than saying which two they are.
+///
+/// The returned [`MatchedField`] matters to the caller because the two kinds of multiplicity are
+/// not the same thing. Several rows sharing a **code** are all the answer -- `potion_health` really
+/// is both an artifact and a spell. Several rows sharing a **display name** are a question: sixteen
+/// different spells are all labelled "Dispel Magic", and only one of them is the one being asked
+/// about.
+pub fn lookup_rows<'a>(query: &str, rows: &'a [IndexRow]) -> (Vec<&'a IndexRow>, MatchedField) {
+    let by_code: Vec<&IndexRow> = rows
+        .iter()
+        .filter(|row| row.name.eq_ignore_ascii_case(query))
+        .collect();
+    if !by_code.is_empty() {
+        return (by_code, MatchedField::Code);
+    }
+    let by_display: Vec<&IndexRow> = rows
+        .iter()
+        .filter(|row| row_display_name(row).is_some_and(|name| name.eq_ignore_ascii_case(query)))
+        .collect();
+    (by_display, MatchedField::DisplayName)
 }
 
 /// Case-insensitive glob match supporting `*` and `?`, for `--gameplay-symbols-like`.
@@ -898,6 +1095,138 @@ mod tests {
             fields.keys().collect::<Vec<_>>(),
             vec!["mana", "targeting_procedure"],
             "a procedure body's locals leaked into the record"
+        );
+    }
+
+    #[test]
+    fn a_text_table_lookup_is_the_field_it_defines_not_the_key_it_reads() {
+        // `/name textdict /T_artifact_name_adventsword get def` defines `name`. Stopping the value
+        // scan at the inner literal dropped it and filed the *key* as a field valued `get`.
+        let (fields, _) = record_fields(&parse(
+            "/name textdict /T_artifact_name_adventsword get def /image 5 def",
+        ));
+        assert_eq!(
+            fields.keys().collect::<Vec<_>>(),
+            vec!["image", "name"],
+            "the looked-up key became a field of its own"
+        );
+        assert_eq!(fields["name"].shape, ValueShape::Expression);
+        assert_eq!(
+            field_text(&fields, "name"),
+            "textdict /T_artifact_name_adventsword get"
+        );
+    }
+
+    #[test]
+    fn only_a_key_consuming_operator_lets_the_value_scan_past_a_literal() {
+        // The exception must stay narrow. A literal followed by anything else is still the
+        // deferred-call shape the guard exists for, and must still stop the scan -- otherwise a
+        // `/invoke_spell cvx` with a later `def` swallows everything between.
+        let (fields, _) = record_fields(&parse("/invoke_spell cvx /mana 3 def"));
+        assert_eq!(fields.keys().collect::<Vec<_>>(), vec!["mana"]);
+
+        // `put` is not a key-consuming operator, so the scan must stop at `/b`. The `def` that
+        // follows is what makes this fixture discriminating: a reader that let *any* operator
+        // stand in for `get` would sail past `/b`, find that `def`, and file `a` as a field.
+        let (fields, _) = record_fields(&parse("/a dict /b put def /c 1 def"));
+        assert_eq!(
+            fields.keys().collect::<Vec<_>>(),
+            vec!["b", "c"],
+            "a literal followed by a non-key operator was treated as a lookup"
+        );
+        // And with `get` in that position the scan does pass, so the exception is doing the work
+        // rather than the fixture being inert.
+        let (fields, _) = record_fields(&parse("/a dict /b get def /c 1 def"));
+        assert_eq!(fields.keys().collect::<Vec<_>>(), vec!["a", "c"]);
+    }
+
+    #[test]
+    fn a_looked_up_key_is_recognised_only_in_the_exact_shape() {
+        assert_eq!(looked_up_key("textdict /T_name get"), Some("T_name"));
+        // Not a lookup: no `get`, trailing tokens, a missing dictionary, or an unmarked key.
+        assert_eq!(looked_up_key("textdict /T_name put"), None);
+        assert_eq!(looked_up_key("textdict /T_name get exec"), None);
+        assert_eq!(looked_up_key("/T_name get"), None);
+        assert_eq!(looked_up_key("textdict T_name get"), None);
+        assert_eq!(looked_up_key(""), None);
+    }
+
+    #[test]
+    fn the_text_table_takes_only_literal_string_pairs() {
+        let pairs = text_table(&parse(
+            r#"/T_one"first" /T_two 5 /T_three"third" 7 "loose""#,
+        ));
+        assert_eq!(
+            pairs,
+            vec![
+                ("T_one".to_owned(), "first".to_owned()),
+                ("T_three".to_owned(), "third".to_owned()),
+            ],
+            "a non-string value or an unkeyed string was collected"
+        );
+    }
+
+    #[test]
+    fn a_display_name_comes_from_the_declared_name_then_the_text_table_then_an_encounter_key() {
+        let text: BTreeMap<String, String> =
+            BTreeMap::from([("T_name".to_owned(), "The Adventurous Sword".to_owned())]);
+        let base = Symbol {
+            name: "x".to_owned(),
+            kind: SymbolKind::Artifact,
+            evidence: EvidenceClass::RegisteredByOperator,
+            member: String::new(),
+            line: 1,
+            offset: 0,
+            registered_in: String::new(),
+            fields: BTreeMap::new(),
+        };
+
+        // A declared text name wins outright, even when a text-table lookup would also resolve.
+        let (fields, _) = record_fields(&parse(r#"/name "Declared" def"#));
+        let declared = Symbol {
+            fields,
+            ..base.clone()
+        };
+        assert_eq!(
+            resolve_display(&declared, &text),
+            (Some("Declared".to_owned()), DisplaySource::DeclaredName)
+        );
+
+        // A lookup resolves through the table.
+        let (fields, _) = record_fields(&parse("/name textdict /T_name get def"));
+        let looked_up = Symbol {
+            fields,
+            ..base.clone()
+        };
+        assert_eq!(
+            resolve_display(&looked_up, &text),
+            (
+                Some("The Adventurous Sword".to_owned()),
+                DisplaySource::TextTable
+            )
+        );
+        // A key the table does not carry resolves to nothing rather than to the key itself.
+        assert_eq!(
+            resolve_display(&looked_up, &BTreeMap::new()),
+            (None, DisplaySource::None)
+        );
+
+        // An encounter falls back to its `/key`; a non-encounter with the same field does not,
+        // because `key` on other kinds is not a label.
+        let (fields, _) = record_fields(&parse(r#"/key "Air Cave" def"#));
+        let encounter = Symbol {
+            kind: SymbolKind::Encounter,
+            fields: fields.clone(),
+            ..base.clone()
+        };
+        assert_eq!(
+            resolve_display(&encounter, &text),
+            (Some("Air Cave".to_owned()), DisplaySource::EncounterKey)
+        );
+        let artifact = Symbol { fields, ..base };
+        assert_eq!(
+            resolve_display(&artifact, &text),
+            (None, DisplaySource::None)
         );
     }
 
@@ -1344,7 +1673,7 @@ mod tests {
             registered_in: String::new(),
             fields,
         };
-        assert_eq!(symbol.display_name(), None);
+        assert_eq!(symbol.declared_display_name(), None);
 
         // Nor is a bare number or a name token. Only text is a display name, so a guard written
         // as "anything but a procedure" is not equivalent.
@@ -1355,7 +1684,7 @@ mod tests {
                 ..symbol.clone()
             };
             assert_eq!(
-                symbol.display_name(),
+                symbol.declared_display_name(),
                 None,
                 "{source} was read as a display name"
             );
@@ -1364,7 +1693,7 @@ mod tests {
         // And a text one still is, so the guard cannot pass by rejecting everything.
         let (fields, _) = record_fields(&parse(r#"/name "Windriders" def"#));
         let symbol = Symbol { fields, ..symbol };
-        assert_eq!(symbol.display_name(), Some("Windriders"));
+        assert_eq!(symbol.declared_display_name(), Some("Windriders"));
     }
 
     #[test]
@@ -1392,7 +1721,7 @@ mod tests {
         let header = INDEX_COLUMNS.join("\t");
         let good = format!(
             "{header}\nbolt_fire\tspell\tregistered-by-operator\tvanilla,gs5r3\t\
-             gs\\spells\\FIRE\\bolt_fire.gs\t1\t0\tgs\\spells.gs\tBolt of Fire\t12\t4\tspell-bolt-fire\n"
+             gs\\spells\\FIRE\\bolt_fire.gs\t1\t0\tgs\\spells.gs\tBolt of Fire\tdeclared-name\t12\t4\tspell-bolt-fire\n"
         );
         let rows = parse_index(&good).expect("parses");
         assert_eq!(rows.len(), 1);
@@ -1400,6 +1729,7 @@ mod tests {
         assert_eq!(rows[0].profiles, vec!["vanilla", "gs5r3"]);
         assert_eq!(rows[0].display_name, "Bolt of Fire");
         assert_eq!(rows[0].byte_offset, "0");
+        assert_eq!(rows[0].display_source, "declared-name");
         assert_eq!(rows[0].anchor, "spell-bolt-fire");
 
         // A reordered header must be refused, not silently misread. This is the failure a reader
@@ -1417,6 +1747,142 @@ mod tests {
             parse_index(&format!("{header}\n")).expect("parses").len(),
             0
         );
+    }
+
+    /// Four rows covering the cases search has to get right: a code with a display name, a code
+    /// whose display name is shared with another symbol, and a row with no display name at all.
+    fn search_fixture() -> Vec<IndexRow> {
+        let row = |name: &str, kind: &str, display: &str| IndexRow {
+            name: name.to_owned(),
+            kind: kind.to_owned(),
+            evidence: "delimited-block".to_owned(),
+            profiles: vec!["vanilla".to_owned()],
+            member: "m.gs".to_owned(),
+            line: "1".to_owned(),
+            byte_offset: "0".to_owned(),
+            registered_in: "-".to_owned(),
+            display_name: display.to_owned(),
+            display_source: if display == "-" { "-" } else { "declared-name" }.to_owned(),
+            fields: "1".to_owned(),
+            references: "0".to_owned(),
+            anchor: format!("{kind}-{name}"),
+        };
+        vec![
+            row("aicav", "unit", "Windriders"),
+            row("licav", "unit", "Gallant Riders"),
+            // Two different symbols sharing one display name -- the ambiguous case.
+            row("degate0", "unit", "Gate"),
+            row("ligate0", "unit", "Gate"),
+            // No display name at all, which is true of 602 of the 1,535 real rows.
+            row("air/aicave", "encounter", "-"),
+        ]
+    }
+
+    #[test]
+    fn a_search_matches_a_display_name_the_code_does_not_contain() {
+        // The gap this closes: `Windrider*` returned nothing while the symbol it names was in the
+        // index the whole time under `aicav`.
+        let rows = search_fixture();
+        let hits: Vec<(&str, MatchedField)> = rows
+            .iter()
+            .filter_map(|row| match_row("Windrider*", row).map(|field| (row.name.as_str(), field)))
+            .collect();
+        assert_eq!(hits, vec![("aicav", MatchedField::DisplayName)]);
+    }
+
+    #[test]
+    fn a_search_still_matches_a_code_whose_display_name_does_not() {
+        let rows = search_fixture();
+        let hits: Vec<(&str, MatchedField)> = rows
+            .iter()
+            .filter_map(|row| match_row("*cav", row).map(|field| (row.name.as_str(), field)))
+            .collect();
+        assert_eq!(
+            hits,
+            vec![("aicav", MatchedField::Code), ("licav", MatchedField::Code)]
+        );
+    }
+
+    #[test]
+    fn a_search_reports_which_field_matched_including_both() {
+        let rows = search_fixture();
+        // `*ate0*` hits only the code; `Gate` hits only the display name; `*a*` hits both.
+        assert_eq!(match_row("*ate0*", &rows[2]), Some(MatchedField::Code));
+        assert_eq!(match_row("Gate", &rows[2]), Some(MatchedField::DisplayName));
+        assert_eq!(match_row("*a*", &rows[2]), Some(MatchedField::Both));
+        assert_eq!(match_row("nothing", &rows[2]), None);
+    }
+
+    #[test]
+    fn search_is_case_insensitive_in_both_directions() {
+        let rows = search_fixture();
+        // A lowercase query against a capitalised display name, and an uppercase query against a
+        // lowercase code. One direction alone would pass with a fold applied to only one side.
+        assert_eq!(
+            match_row("windriders", &rows[0]),
+            Some(MatchedField::DisplayName)
+        );
+        assert_eq!(match_row("AICAV", &rows[0]), Some(MatchedField::Code));
+        assert_eq!(
+            match_row("WiNdRiDeRs", &rows[0]),
+            Some(MatchedField::DisplayName)
+        );
+    }
+
+    #[test]
+    fn a_row_with_no_display_name_is_not_matched_by_the_sentinel() {
+        // The index writes `-` for "none". If that were searched as text, `-` would match all 602
+        // nameless rows on the strength of their having no name.
+        let rows = search_fixture();
+        let nameless = &rows[4];
+        assert_eq!(row_display_name(nameless), None);
+        assert_eq!(match_row("-", nameless), None);
+        // And it is still findable by its code.
+        assert_eq!(match_row("air/*", nameless), Some(MatchedField::Code));
+    }
+
+    #[test]
+    fn a_lookup_by_display_name_resolves_when_unambiguous_and_lists_when_not() {
+        let rows = search_fixture();
+        let (found, matched) = lookup_rows("Windriders", &rows);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "aicav");
+        assert_eq!(matched, MatchedField::DisplayName);
+
+        // Two symbols share the display name "Gate". Both are returned; nothing is guessed.
+        let (ambiguous, matched) = lookup_rows("Gate", &rows);
+        assert_eq!(
+            ambiguous
+                .iter()
+                .map(|row| row.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["degate0", "ligate0"]
+        );
+        assert_eq!(matched, MatchedField::DisplayName);
+
+        assert!(lookup_rows("no such thing", &rows).0.is_empty());
+
+        // Case-insensitive on both sides: an uppercase query against a lowercase code, and a
+        // lowercase query against a capitalised display name. Either fold alone passes one of
+        // these and fails the other.
+        assert_eq!(lookup_rows("AICAV", &rows).0[0].name, "aicav");
+        assert_eq!(lookup_rows("windriders", &rows).0[0].name, "aicav");
+    }
+
+    #[test]
+    fn an_exact_code_match_is_never_made_ambiguous_by_a_display_name() {
+        // A symbol whose *display name* is another symbol's code must not make that code
+        // ambiguous. Looking up `licav` has one right answer even though a decoy is called it.
+        let mut rows = search_fixture();
+        rows[3].display_name = "licav".to_owned();
+        let (found, matched) = lookup_rows("licav", &rows);
+        assert_eq!(
+            found.len(),
+            1,
+            "an exact code match was diluted by a display name"
+        );
+        assert_eq!(found[0].name, "licav");
+        assert_eq!(matched, MatchedField::Code);
     }
 
     #[test]

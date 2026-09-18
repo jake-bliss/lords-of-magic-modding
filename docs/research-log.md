@@ -5442,3 +5442,70 @@ which is what keeps the classification falsifiable.
 survivors from the first run were each closed with a test rather than argued away. The mutation
 harness itself was corrected mid-run: it labelled every catch a "compile error" because it matched
 `"error: "`, which is what cargo prints for an ordinary assertion failure.
+
+## 2026-09-18 — Gameplay reference: searching by the name a person actually knows
+
+Follow-up to the entry above, after review found the deliverable's search unusable by anyone who did
+not already know a symbol's internal code. `--gameplay-symbols-like 'Windrider*'` matched nothing
+while the unit it names sat in the index as `aicav` with the display name `Windriders`.
+
+### The search now matches both names and says which one hit
+
+- `--gameplay-symbols-like` matches the code **and** the display name, case-insensitively, and every
+  hit carries a `matched` column of `code`, `display-name` or `code+display-name`.
+- `--gameplay-symbol` accepts either. An **exact code match wins outright**, so a symbol cannot be
+  made ambiguous by another merely being *called* that code.
+- The two kinds of multiplicity are handled differently, because they mean different things.
+  Several symbols sharing a **code** are all the answer — `potion_health` is registered as both an
+  artifact and a spell — and all print in full. Several sharing a **display name** are a question:
+  16 spells are labelled "Dispel Magic", so the query lists the candidate codes and prints no
+  record, rather than burying the ambiguity under 16 blocks of detail.
+
+### The review's premise was wrong, and the correction is the useful part
+
+- **Corrected:** the claim that all 1,535 symbols have a display name. At the time, **602 had none**
+  — 524 encounters, 51 artifacts, 12 buildings, 8 factions, 7 units. A display-name-only search
+  would have missed 39% of the database. Two sources were added, and coverage is now **1,439 of
+  1,535**: `declared-name` 933, `encounter-key` 450, `text-table` 56, none 96. Every row carries a
+  `display-source` column, and every listing prints how many rows had no display name to match, so a
+  thin result is explainable rather than mysterious.
+- The remaining 96 are 74 encounters whose name is computed at runtime, 12 buildings, 8 factions and
+  2 artifacts — kinds with no human-facing label in GameScript at all.
+
+### A field reader defect of my own, found while closing the gap
+
+- **Corrected:** the field scanner stopped at any literal name appearing before a statement's
+  terminating `def`. That guard exists because `/invoke_spell cvx` defers a *native call*, and a
+  scanner running past it would swallow the rest of the member. But it also fired on the corpus's
+  text-table idiom, `/name textdict /T_artifact_name_adventsword get def`, where the inner literal
+  is a dictionary key about to be read. Two failures at once: the record **lost its `name` and
+  `description`**, and the *key* was filed as a field of its own valued `get`.
+- **Observed:** the idiom is not rare — **246 definitions in vanilla and 3.02, 416 in GS5R3**,
+  including 56 `name` and 48 `description` in vanilla. All of them use `get` and nothing else.
+- The scanner now passes a literal followed by a key-consuming operator, and that list is `["get"]`
+  alone. Admitting `known`, `load` or `undef` on plausibility would admit shapes the corpus does not
+  contain, and every name admitted there is a name the deferred-call guard stops protecting. Two
+  corpus-gated tests hold both halves: no looked-up key may become a field, and `invoke_spell` may
+  never become one either.
+- Resolving the recovered `/name` values against the corpus's text tables supplies the 56
+  `text-table` display names. Keys two members define **differently** are dropped rather than
+  resolved to whichever was read last — 230 to 243 per profile — so no symbol is named on the
+  strength of archive order.
+
+### A near miss worth recording
+
+The generator wrote `symbols.tsv`'s header from a **second copy** of the column list. A column added
+to the rows and to the reader but not to that string produced a file whose every value sat under the
+previous column's name — the exact failure `the_index_is_parsed_against_its_declared_columns` was
+written for, and it caught it on the next run. The header is now emitted from `INDEX_COLUMNS`, the
+same constant the reader checks against, so the two cannot drift again.
+
+### Gates
+
+`cargo test` 373 + 61 + 14 Rust and 219 Python, clippy clean, 7 corpus-gated tests passing on all
+three profiles. **Mutation run: 49 mutations, 49 caught, 0 survivors**, and every mutation compiled
+and ran — a mutation that fails to build is not a caught mutation, so the harness now distinguishes
+a rustc diagnostic from `error: test failed`. The 18 new mutations cover the search (code-only,
+display-name-only, each `MatchedField` swapped for each other, the `-` sentinel made searchable,
+both case folds removed) and the key-lookup fix (exception removed, any operator accepted, the
+`get` requirement dropped).
