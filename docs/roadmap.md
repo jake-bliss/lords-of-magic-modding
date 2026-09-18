@@ -12,7 +12,7 @@ since PR #51 and did not describe nine merged pull requests.
 | Phase | State |
 |---|---|
 | 1 — Archive inventory | **Complete.** The repack command landed with a block-index shape check. |
-| 2 — Script documentation | 2 of 3 boxes. The semantic symbol database and its searchable reference are open. |
+| 2 — Script documentation | **Complete.** 1,535 symbols indexed across three profiles, searchable by code or display name. |
 | **3 — Build and validation pipeline** | **Not started.** |
 | **4 — First vertical slice** | **Not started.** |
 | 5 — Asset pipeline | Substantially done; see the boxes below for what remains. |
@@ -62,12 +62,29 @@ Delivered: [MPQ inventory](mpq-inventory.md), tracked comparison summaries, and 
 
 - [x] Infer and implement the first corpus-wide lexical model.
 - [x] Inventory executable names, literal definitions, and static `run` references across all three profiles.
-- [ ] Build a semantic symbol/index database for units, spells, artifacts, buildings, factions, and encounters.
-- [ ] Compare vanilla behavior with 3.02 fixes and GS5R3 changes.
-- [ ] Document identifiers, references, ranges, defaults, and likely hard limits.
-- [ ] Mark uncertain interpretations and attach evidence examples.
+- [x] Build a semantic symbol/index database for units, spells, artifacts, buildings, factions, and encounters. **1,535 symbols** in `reports/gameplay/`, generated and committed.
+- [x] Compare vanilla behavior with 3.02 fixes and GS5R3 changes.
+- [x] Document identifiers, references, ranges, defaults, and likely hard limits.
+- [x] Mark uncertain interpretations and attach evidence examples.
 
-Deliverable: a searchable gameplay-data reference with annotated examples.
+Deliverable: a searchable gameplay-data reference with annotated examples — [gameplay reference](gameplay-reference.md), queryable with `--gameplay-symbol` / `--gameplay-symbols-like` by internal code or display name.
+
+**Phase 2 is complete**, with its coverage stated rather than implied. Units, spells, artifacts and
+encounters are well served: 1,515 of the 1,535 symbols. **Factions (8) and buildings (12) are thin,
+and that is a finding, not a gap** — GameScript carries no faction or building record, so that data
+lives in `lomse.exe` or in unaligned call-site tuples. 1,439 symbols carry a human-facing display
+name; the 96 that do not are kinds GameScript never labels.
+
+**The result to carry into everything downstream: a corpus-observed maximum is not an engine bound,
+and here the corpus refutes the tempting reading itself.** All eight unit magic resistances stop at
+exactly 100 across 88 vanilla units, which is precisely what a hard cap looks like. GS5R3 reaches
+125 and 150 against a **byte-identical `lomse.exe`**. No limit in the reference is claimed as
+engine-enforced, and `docs/gameplay-reference.md` opens with this rather than burying it.
+
+Two further results worth keeping in view: **3.02 changes no gameplay record at all** — all 1,535
+symbols are byte-identical to vanilla, and its 14 modified members are dialog, hotkeys, text and
+stdlib — and GS5R3's apparent 1,204 add/removes are largely a **wholesale rename** of its spell set,
+294 of which were recovered by token fingerprint.
 
 Work since this phase was written went deeper than it in a different direction — the engine's
 1,906-operator dispatch table, recovered operator arity, the operator bodies, and a GameScript VM
@@ -187,11 +204,23 @@ savegame container, closed in PR #60 ([savegame format](save-format.md)).
 - [x] Establish how multiplayer works and why it desyncs ([multiplayer](multiplayer.md)). It is lockstep-deterministic, the shipped desync post-mortem is **gated off at load**, and the asterisk in the game list already means the host's build differs from yours. A home server cannot fix desync, because the problem is determinism rather than the network.
 - [ ] Measure difficulty-dependent computer AI behavior in controlled games ([issue #6](https://github.com/jake-bliss/lords-of-magic-modding/issues/6)).
 
-Two known latent defects are recorded rather than fixed, because each needs its own corpus
-re-verification: `MapCell::tile_index()` in `src/map.rs` still masks `tag & !0x00800000` rather than
-`tag & 0xffff`, which agrees on every shipped map only because the high bits there take just two
-values; and the map editor's `set_tile` preserves a bit it should not, which is byte-correct on
-every shipped map and wrong in general.
+Four known latent defects are recorded rather than fixed, because each needs its own corpus
+re-verification:
+
+- `MapCell::tile_index()` in `src/map.rs` still masks `tag & !0x00800000` rather than `tag & 0xffff`,
+  which agrees on every shipped map only because the high bits there take just two values.
+- The map editor's `set_tile` preserves a bit it should not — byte-correct on every shipped map and
+  wrong in general.
+- **`gamescript.rs` lexes the shipped infantry unit code `INF` as floating-point infinity.** Token
+  classification is `name.parse::<f64>().is_ok()`, and Rust accepts `inf`, `INF`, `nan` and
+  `INFINITY`. `INF` and `CAV` each occur 36 times in vanilla's corpus, side by side in
+  `/unit_code_strings["INF""MIS""CAV"...`, yet `reports/gs/vocabulary-vanilla.tsv` lists `CAV` with
+  32 uses and `INF` not at all. Fixing it will change published vocabulary counts, which is why it
+  is a deliberate follow-up rather than a drive-by.
+- **`tools/gs_syntax.py` ends a `;` comment at `\n` only**, but bare CR is a line ending in
+  GameScript. 25 GS5R3 members have a comment and no LF at all; `gs\dungeons\water\wacave.gs` is
+  5,347 bytes and normalises to **six tokens**. This feeds `compare_trees.py`'s token hash, so the
+  "layout/comments only" column in `reports/gs/summary.md` is unreliable for those members.
 
 ## AI-assisted workflow
 
