@@ -1,4 +1,5 @@
 pub mod asset;
+pub mod gameplay_symbols;
 pub mod gamescript;
 pub mod gamescript_standard;
 pub mod gamescript_vm;
