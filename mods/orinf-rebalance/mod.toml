@@ -1,0 +1,20 @@
+# The Phase 4 vertical slice: one unit's statistics, taken end to end.
+#
+# `units\orinf.gs` is Order's Footmen. It was chosen because it is the one member class with real
+# engine evidence behind it: flags 0x80010100 (EXISTS | ENCRYPTED | IMPLODE) in the baseline
+# gs.mpq, which is the same compression class as the single attended 2026-09-16 round trip where
+# the engine ran an archive this pipeline's writer produced. Evidence class: Observed in gameplay,
+# once, for that class -- and for that class only.
+id = "orinf-rebalance"
+name = "Order's Footmen rebalance"
+version = "0.1.0"
+description = "Raise Order's Footmen hit points, as the smallest change that is visible in game."
+
+# The profile this mod's source files were taken from and are validated against. The baseline.
+base_profile = "vanilla"
+
+# Members this mod ADDS to an archive, as opposed to replaces. Both of these stay at their
+# defaults here, and should stay there unless somebody has put an added member in front of the
+# engine: nothing in this project ever has. See docs/build-pipeline.md.
+new_members = []
+allow_new_members = false

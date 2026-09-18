@@ -1,0 +1,4 @@
+# Mod source files are extracted from an installed game. No game content lives in this repository,
+# so the working tree of every mod is ignored and only its mod.toml and README are committed.
+# scripts/mod-seed.sh reconstructs the tree from a local install.
+*/archives/

@@ -86,6 +86,26 @@ impl GameScriptError {
             column,
         }
     }
+
+    /// The failure on its own, without the position `Display` appends.
+    ///
+    /// A caller reporting `file:line:column: message` needs the parts separately; re-splitting the
+    /// `Display` string to recover them would break on any message containing " at byte ".
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    pub fn column(&self) -> usize {
+        self.column
+    }
 }
 
 impl fmt::Display for GameScriptError {

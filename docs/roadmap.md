@@ -13,8 +13,8 @@ since PR #51 and did not describe nine merged pull requests.
 |---|---|
 | 1 — Archive inventory | **Complete.** The repack command landed with a block-index shape check. |
 | 2 — Script documentation | **Complete.** 1,535 symbols indexed across three profiles, searchable by code or display name. |
-| **3 — Build and validation pipeline** | **Not started.** |
-| **4 — First vertical slice** | **Not started.** |
+| **3 — Build and validation pipeline** | **Substantially complete.** `validate`, `build`, `install-dev` and `restore-dev` all exist and are tested. The development profile itself has never been created; that is one attended command. |
+| **4 — First vertical slice** | **Unblocked, not done.** `units\orinf.gs` is picked, built reproducibly and validated; nothing has been in front of the engine. |
 | 5 — Asset pipeline | Substantially done; see the boxes below for what remains. |
 | 6 — Mod direction | Correctly gated on 3 and 4. |
 | Format and engine reverse-engineering | Far ahead of what this document ever planned. See the section below. |
@@ -23,10 +23,12 @@ since PR #51 and did not describe nine merged pull requests.
 workflow into being — build reproducibly, validate, install to a development profile, observe the
 change in game, roll back. Everything in Phases 1 and 5 is input to it.
 
-The honest summary is that the project has enormous read capability and no delivery pipeline. Maps
-can be decoded and rewritten byte-exactly across all 365 installed files, archive write-back is
-proven against the running engine, and there is still no repeatable way to get a change into a
-profile that is not a live install.
+The honest summary used to be that the project had enormous read capability and no delivery
+pipeline. The pipeline now exists ([build pipeline](build-pipeline.md)) and takes a mod source tree
+to a verified, reproducible archive with a change report. What it has still never done is put one of
+those archives in front of `lomse.exe`: no `Lords of Magic Development.app` has been created on any
+machine, so the last two links of the chain -- install and observe -- are written and tested against
+fabricated directories rather than exercised for real.
 
 A second, related caution: a large amount of recent work — multiplayer, the savegame format, the
 GameScript VM, the operator bodies — was **not on this roadmap at all**. It is genuine and it is
@@ -98,17 +100,68 @@ compatibility story between profiles.
 
 ## Phase 3 — Build and validation pipeline
 
-**Not started.** No `build`, `validate`, `install-dev` or `restore-dev` exists, and no
-`Lords of Magic Development.app` profile has been created.
+All four commands exist ([build pipeline](build-pipeline.md)). **No `Lords of Magic Development.app`
+has been created**, so the two install boxes are ticked for the command and not for the act.
 
-- [ ] Create a clean source tree for our mod.
-- [ ] Add deterministic MPQ creation or patching.
-- [ ] Validate duplicate IDs, missing references, invalid paths, encoding, and case mismatches.
-- [ ] Produce a change report for every build.
-- [ ] Install builds only into a third `Lords of Magic Development.app` profile.
-- [ ] Add one-command rollback to the last known-good development build.
+- [x] Create a clean source tree for our mod. `mods/<mod-id>/` with `mod.toml` and
+      `archives/<archive>/…`; the path below the archive directory is the member name with `/`
+      turned into `\`. Source files are gitignored -- they are game content -- and
+      `scripts/mod-seed.sh` reconstructs them byte-for-byte from a local install.
+- [x] Add deterministic MPQ creation or patching. Reuses `scripts/repack-archive.sh` rather than
+      adding a second writer. Three runs of the `units\orinf.gs` build were byte-identical.
+- [x] Validate duplicate IDs, missing references, invalid paths, encoding, and case mismatches.
+      Thirteen checks, each with a severity and a `file:line:column`, and a published "what this run
+      could not check" block with counts.
+- [x] Produce a change report for every build. Old and new size and digest per member, and for
+      `.gs` a token-, value- and symbol-level summary -- `hit_points: 13 -> 18` rather than "the
+      bytes differ".
+- [x] Install builds only into a third `Lords of Magic Development.app` profile. Enforced by an
+      allowlist of exactly one directory (`tools/install_guard.py`), not by a check that the target
+      is not the baseline. **The profile has not been created; the command's refusals are tested
+      against fabricated directories.**
+- [x] Add one-command rollback to the last known-good development build. `scripts/restore-dev.sh`,
+      to pristine or `--to MOD_ID BUILD_ID`, verified against an independent record. **Never run
+      against a real profile.**
 
-Deliverable: `build`, `validate`, `install-dev`, and `restore-dev` commands.
+Deliverable: `build`, `validate`, `install-dev`, and `restore-dev` commands. Delivered as
+`scripts/mod-validate.sh`, `scripts/mod-build.sh`, `scripts/install-dev.sh`,
+`scripts/restore-dev.sh`.
+
+Two results from building it are worth carrying forward, because both refute something this file
+previously implied.
+
+**The shape check could not repack vanilla `gs.mpq` at all.** *Observed 2026-09-18*: StormLib
+renumbers unnamed blocks when it rewrites an archive, and an unnamed member's only name is the
+`File%08u.xxx` pseudo-name synthesised from its block index. Replacing `units\orinf.gs` produced an
+archive with all 1,688 entries, all 372 unnamed slots and all 1,316 named members intact and exactly
+one declared change -- and the check refused it as 4 added, 4 missing and 26 undeclared content
+changes. `tools/mpq_shape.py` now compares unnamed members as a multiset of content identities and
+keeps per-block addressing for named ones, which is what the PIC5R3 case needs. Phase 1's "byte-level
+determinism measured" was true and its scope note -- "every number above is from GS5R3" -- was doing
+more work than it looked like.
+
+**The summary "GameScript uses bare CR line endings" is Refuted as a general rule -- though this
+repository never said it.** *Observed 2026-09-18* across all 4,692 `.gs` members of the three
+profiles, as an exclusive partition: **3,050 have no line ending at all**, 1,337 are pure CRLF, 193
+mix CRLF with bare CR, 49 are pure bare CR, 40 mix CRLF with bare LF, 23 are pure bare LF. The
+Phase 4 target is in the 3,050.
+
+That survey was run to check a claim handed in from outside and instead **confirmed
+[gamescript-format.md](gamescript-format.md#line-endings-bare-cr-is-a-line-ending-here) on all six
+of its GS5R3 figures** (1,123 / 242 / 63 / 501 / 49 / 193) and its "3.02 has no bare CR at all". That
+document had already said the counts overlap and are not a partition. Two independent measurements
+agreeing on six counts is confirmation, so nothing there is corrected; what the wider run adds is
+scope -- 1,696 members to 4,692 -- and the fact that **bare CR is a GS5R3 phenomenon only**, absent
+from vanilla and 3.02 entirely.
+
+That also narrows the `gs_syntax.py` bullet below. Measured by comparing its token count against the
+same rule with CR treated as a terminator, **34 members lose tokens, all 34 in GS5R3 and none in
+vanilla or 3.02** -- the 25 already recorded there are a subset. Counting every member containing a
+bare CR would give 242 and overstate the reach sevenfold.
+
+Separately, the only control bytes anywhere in the corpus are TAB, CR and LF, and the 17 members
+with a byte above 0x7e are **none of them valid UTF-8** -- so a validator demanding UTF-8 would
+reject shipped members.
 
 Prior art to build on rather than duplicate: `scripts/restore-game-archives.sh` already encodes the
 repo's safety discipline — it refuses to run while `lomse.exe` is alive and always prints the hashes
@@ -123,7 +176,13 @@ therefore cannot tell 1,406 members from 1,405; it has to address members by blo
 
 ## Phase 4 — First vertical slice
 
-**Not started, and it is the project's real proof point.**
+**Unblocked and not done. It is still the project's real proof point.**
+
+The target is picked: `units\orinf.gs`, Order's Footmen, symbol `orinf`. It was chosen because it
+is the one member class with real engine evidence behind it -- flags `0x80010100` (EXISTS |
+ENCRYPTED | IMPLODE) in the baseline `gs.mpq`, the same compression class as the single attended
+2026-09-16 round trip. `mods/orinf-rebalance` builds reproducibly and validates clean; what remains
+is creating the development profile, installing, and looking at the game.
 
 Choose one deliberately small change that touches the complete workflow. Good candidates:
 
@@ -135,7 +194,11 @@ Choose one deliberately small change that touches the complete workflow. Good ca
 Candidate 4 is the one the toolchain is most over-equipped for: the map writer re-encodes all 365
 installed maps byte-identically, object editing works on all 365, and the engine has been confirmed
 to accept maps we write ([PR #47](https://github.com/jake-bliss/lords-of-magic-modding/pull/47)).
-The missing pieces are all Phase 3.
+Candidate 1 is what was actually picked, for the narrower reason given above: it is the only change
+whose *delivery mechanism* already has engine evidence.
+
+The missing pieces are no longer Phase 3. They are: create the development profile, install, launch,
+look, and roll back.
 
 Success criteria:
 
@@ -212,9 +275,14 @@ re-verification:
 - The map editor's `set_tile` preserves a bit it should not — byte-correct on every shipped map and
   wrong in general.
 - **`tools/gs_syntax.py` ends a `;` comment at `\n` only**, but bare CR is a line ending in
-  GameScript. 25 GS5R3 members have a comment and no LF at all; `gs\dungeons\water\wacave.gs` is
-  5,347 bytes and normalises to **six tokens**. This feeds `compare_trees.py`'s token hash, so the
-  "layout/comments only" column in `reports/gs/summary.md` is unreliable for those members.
+  GameScript. The build pipeline routes around this rather than fixing it -- it lexes through the
+  CR-aware Rust lexer -- and its change report calls `gs_syntax.py` as well and **reports when the
+  two disagree**, so the defect is now visible at the one place it would do damage. 25 GS5R3 members
+  have a comment and no LF at all; `gs\dungeons\water\wacave.gs` is 5,347 bytes and normalises to
+  **six tokens** against its real 712. This feeds `compare_trees.py`'s token hash, so the
+  "layout/comments only" column in `reports/gs/summary.md` is unreliable for those members. Its full
+  reach, measured 2026-09-18 over all three profiles, is **34 members, every one in GS5R3**; the 25
+  are the subset with no LF anywhere.
 
 **Fixed since:** `gamescript.rs` no longer lexes the shipped infantry unit code `INF` as
 floating-point infinity. Classification was `name.parse::<f64>().is_ok()`, and Rust accepts `inf`,

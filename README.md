@@ -27,7 +27,7 @@ All three are stored in `~/Applications/`. They are locally built Wineskin wrapp
 
 The current deliverable is a useful native asset and reverse-engineering tool, not yet a native replacement game. See the [candidate plan](docs/native-engine-plan.md) for scope and estimates.
 
-Concretely, today you can **inspect, decode, render, export, and measure**, and you can write a single sprite placement back into an IMP or replace an archive member by hand. There is no mod build pipeline, no validation command, no packaging, and no native game — Phases 3 and 4 of the [roadmap](docs/roadmap.md) have not started.
+Concretely, today you can **inspect, decode, render, export, measure, validate and build**. A mod source tree goes through static validation and a deterministic repack to a verified archive with a change report ([build pipeline](docs/build-pipeline.md)). What has never happened is the last step: no `Lords of Magic Development.app` has been created and no archive this pipeline built has been in front of the game. There is still no native game — Phase 3 of the [roadmap](docs/roadmap.md) is substantially complete and Phase 4 is unblocked and not done.
 
 ## Start here
 
@@ -44,6 +44,7 @@ Concretely, today you can **inspect, decode, render, export, and measure**, and 
 - [GameScript language and runtime probe](docs/gamescript-format.md) — corpus-derived lexical model, vocabulary measurements, and the next VM gate
 - [MPQ inventory](docs/mpq-inventory.md) — reproducible extraction and baseline/3.02/GS5R3 findings
 - [Deterministic MPQ repack](docs/repack.md) — the repack command, what its shape check proves, and what it does not guarantee
+- [Build and validation pipeline](docs/build-pipeline.md) — the mod source tree, validate/build/install-dev/restore-dev, and what none of it guarantees
 - [Mod ecosystem](docs/mod-ecosystem.md) — 3.02, GS5R3, optional packages, and compatibility
 - [Research log](docs/research-log.md) — evidence and conclusions from the working installation
 - [Roadmap](docs/roadmap.md) — proposed mod SDK and first experiments

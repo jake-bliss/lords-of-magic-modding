@@ -3,6 +3,7 @@ pub mod gameplay_symbols;
 pub mod gamescript;
 pub mod gamescript_standard;
 pub mod gamescript_vm;
+pub mod gs_facts;
 pub mod imp;
 pub mod imp_anim;
 pub mod install_checksum;

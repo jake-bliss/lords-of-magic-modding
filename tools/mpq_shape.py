@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -27,6 +28,27 @@ from pathlib import Path
 # plus an added one. Nothing else is exempt. An added `(attributes)` member, for
 # instance, is a real difference and is reported as one.
 INTERNAL_REWRITABLE_MEMBERS = frozenset({"(listfile)"})
+
+# A member the archive holds no name for. StormLib synthesises `File%08u.xxx` from the member's
+# BLOCK INDEX, and `lom-mpq manifest` reports that synthetic string in the name column.
+#
+# **Observed 2026-09-18** on vanilla `gs.mpq` (1,688 entries, 372 of them unnamed): replacing
+# `units\orinf.gs` -- same size in and out -- produced an archive with 1,688 entries, 372 of them
+# unnamed, every one of the 1,316 named members byte-identical, and exactly the one declared
+# change. StormLib had **renumbered the unnamed blocks**, shifting some by two positions. Because
+# an unnamed member's only name IS its block index, this comparison read a renumbering as 4 added
+# members, 4 missing members and 26 undeclared content changes, and refused a repack that was
+# correct.
+#
+# So an unnamed member cannot be addressed across a rewrite at all. It is compared as part of a
+# multiset instead; see `_compare_unnamed`. Everything named keeps the per-block treatment, which
+# is what the PIC5R3 two-entries-under-one-name case needs.
+UNNAMED_MEMBER_PATTERN = re.compile(r"\AFile\d{8}\.xxx\Z")
+
+
+def is_unnamed(member: "Member") -> bool:
+    return bool(UNNAMED_MEMBER_PATTERN.match(member.path))
+
 
 MANIFEST_COLUMNS = (
     "path",
@@ -134,10 +156,19 @@ def compare(
     repack that silently did nothing must not pass as a successful repack.
     """
     expected_changes = set(expected_changes or ())
-    source_groups = group_by_path(source)
-    output_groups = group_by_path(output)
+    named_source = [member for member in source if not is_unnamed(member)]
+    named_output = [member for member in output if not is_unnamed(member)]
+    source_groups = group_by_path(named_source)
+    output_groups = group_by_path(named_output)
     findings: list[Finding] = []
     unchanged = 0
+
+    unnamed_findings, unnamed_unchanged = _compare_unnamed(
+        [member for member in source if is_unnamed(member)],
+        [member for member in output if is_unnamed(member)],
+    )
+    findings.extend(unnamed_findings)
+    unchanged += unnamed_unchanged
 
     if not output:
         findings.append(
@@ -248,6 +279,74 @@ def compare(
 
     findings = _label_case_folds(findings)
     return ShapeReport(len(source), len(output), unchanged, findings)
+
+
+def _compare_unnamed(
+    source: list[Member], output: list[Member]
+) -> tuple[list[Finding], int]:
+    """Compare the unnamed members as a multiset of content identities.
+
+    This is weaker than the named comparison and the weakening is exact, so it is worth stating
+    rather than glossing:
+
+    - it **cannot** tell two unnamed members with identical content, size, flags and locale apart,
+      so it would not see them swap places -- but neither would anything else, because they are
+      indistinguishable by every property the manifest records;
+    - it **cannot** report *which* unnamed member changed, only that the multiset no longer
+      matches, with the surplus and the deficit listed by digest;
+    - it **can** still see an unnamed member lost, added, or altered in content, size, flags or
+      locale, which is every failure mode the named check catches except identification.
+
+    The alternative -- keeping block-index addressing -- is not stronger. It is wrong: it refuses
+    correct repacks of every archive holding an unnamed member, which is vanilla `gs.mpq` (372),
+    3.02 `gs.mpq` and PIC5R3 `pic.mpq` (409).
+    """
+    if not source and not output:
+        return [], 0
+
+    source_identities = Counter(member.identity() for member in source)
+    output_identities = Counter(member.identity() for member in output)
+
+    if len(source) != len(output):
+        return (
+            [
+                Finding(
+                    "unnamed_member_count_changed",
+                    "(unnamed members)",
+                    f"{len(source)} unnamed entries in the source, {len(output)} in the output",
+                    True,
+                )
+            ],
+            0,
+        )
+
+    if source_identities == output_identities:
+        return [], len(source)
+
+    findings = []
+    for identity, count in sorted((source_identities - output_identities).items()):
+        sha256, size, locale, flags = identity
+        findings.append(
+            Finding(
+                "unnamed_member_missing",
+                "(unnamed members)",
+                f"{count} entr(y/ies) {sha256[:16]} {size}B {flags} locale {locale} "
+                "present in the source and absent from the output",
+                True,
+            )
+        )
+    for identity, count in sorted((output_identities - source_identities).items()):
+        sha256, size, locale, flags = identity
+        findings.append(
+            Finding(
+                "unnamed_member_added",
+                "(unnamed members)",
+                f"{count} entr(y/ies) {sha256[:16]} {size}B {flags} locale {locale} "
+                "present in the output and absent from the source",
+                True,
+            )
+        )
+    return findings, 0
 
 
 def _compare_internal_member(
