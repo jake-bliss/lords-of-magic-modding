@@ -496,6 +496,110 @@ pub enum GlobalAccess {
     Taken,
 }
 
+/// Where the pointer an object field was reached through came from.
+///
+/// The distinction is the whole difference between a field that has an absolute address and one
+/// that does not, and it is **observed**, not assumed: the two forms are different instructions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BaseKind {
+    /// The object *is* at this address. The body materialised it as an immediate — `mov
+    /// ecx,0x5aa12c` — which is how this compiler reaches a statically allocated C++ object. A
+    /// field at offset `n` is therefore also reachable as the absolute address `base + n`, and the
+    /// two instruments must agree.
+    Static,
+    /// The address *holds* a pointer to the object — `mov ecx,[0x5ae958]`. The object is a heap
+    /// allocation and a field at offset `n` has no absolute address at all. This is why the map
+    /// half of the engine's state cannot be recovered from absolute addresses alone.
+    Indirect,
+    /// The object pointer the caller passed in `ecx`. Carries no address of its own; it only means
+    /// something once a caller is found that says which object it passed.
+    This,
+}
+
+impl BaseKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Static => "static",
+            Self::Indirect => "indirect",
+            Self::This => "this",
+        }
+    }
+}
+
+/// An object pointer held in a register, and where it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PointerBase {
+    pub address: u32,
+    pub kind: BaseKind,
+    /// How far into the object the register points.
+    ///
+    /// `lea edi,[ecx+0x50ac]` produces an **interior pointer**: still the same object, but a store
+    /// through `edi` lands at `+0x50ac`, not at `+0`. Without this bias every sub-object and every
+    /// embedded array in the engine reports its fields at the parent's offset 0 — which is how the
+    /// save writer's documented `[gameobj+0x520]` block first came back as a field at zero.
+    pub offset: u32,
+    /// Whether the register holds something *loaded out of* the object rather than the object.
+    ///
+    /// `mov eax,[esi+8]` where `esi` is the map object leaves `eax` holding a **different** object
+    /// — whatever pointer the map stores at `+8`. Attributing that object's offsets to the map
+    /// would merge two structures into one, so a dereferenced base contributes no fields. It is
+    /// still carried, because `writes_through_pointer` — a published column whose members were
+    /// counted before this distinction existed — is defined over exactly this chain.
+    pub dereferenced: bool,
+    /// Whether an index register took part in forming this pointer.
+    ///
+    /// `lea ecx,[gameobj+eax*4]` followed by `lea edi,[ecx+0x50ac]` reaches element *n* of an
+    /// embedded array. The offset that comes out is the field's offset **within element zero**;
+    /// the stride is not recovered. Marking the pointer is what keeps the table from presenting
+    /// such an offset as a scalar field of the containing object.
+    pub element: bool,
+}
+
+impl PointerBase {
+    /// Where an access at `displacement` through this pointer lands in the object.
+    ///
+    /// Saturating rather than wrapping: a negative displacement off a biased pointer is a real
+    /// idiom, and the alternative is a field at `0xfffffff8` in the table.
+    pub fn field_offset(self, displacement: u32) -> Option<u32> {
+        if self.dereferenced {
+            return None;
+        }
+        let offset = self.offset.checked_add(displacement)?;
+        (offset <= MAXIMUM_FIELD_OFFSET).then_some(offset)
+    }
+}
+
+/// One access to a field of an object reached through a tracked pointer.
+///
+/// `offset` is the instruction's displacement and `width` the decoder's operand size, so both are
+/// **observed in a local binary**. `indexed` says a register took part in the effective address,
+/// which makes the displacement the base of an array rather than the address of a scalar — a
+/// distinction that decides whether "a 4-byte field at +0x10" is a field or a stride.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FieldAccess {
+    pub base: u32,
+    pub kind: BaseKind,
+    pub offset: u32,
+    /// Bytes touched, from the decoder's memory-size model.
+    ///
+    /// **Zero means the address was taken and not dereferenced** — `lea eax,[obj+0x520]`. The field
+    /// is there and its offset is observed; its width is not, because the instruction that reads it
+    /// is in a callee this instrument did not follow. Block copies, embedded arrays and sub-objects
+    /// all look like this, and dropping them loses exactly the fields a serialiser writes wholesale.
+    pub width: u8,
+    pub write: bool,
+    pub indexed: bool,
+}
+
+/// Largest displacement believed to be a field of the object in the register.
+///
+/// Not a claim about object size. A shallow taint occasionally survives into code where the
+/// register no longer holds what it held, and an absurd displacement is the cheapest signal of
+/// that. The engine's own structures are far inside this: the save writer copies a 164-byte block
+/// from `[gameobj+0x520]` and a player name sits at `[player+0x50ac]`, so the bound has to clear
+/// `0x5100` to avoid discarding known-real fields.
+const MAXIMUM_FIELD_OFFSET: u32 = 0x1_0000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlobalRef {
     pub address: u32,
@@ -542,6 +646,30 @@ pub struct BodyAnalysis {
     /// this says nothing about engine state — it is the caller's `mov ecx,<global>` that says which
     /// state — so it is only ever combined with a caller that named one.
     pub writes_through_this: bool,
+    /// Every field access made through a tracked object pointer, including through the caller's
+    /// `this` (`kind == BaseKind::This`).
+    ///
+    /// This is the half of the engine's state that absolute addresses cannot see. `writes_through_
+    /// pointer` records only *that* a body stored through a pointer read out of a global; this
+    /// records **where** — the displacement, the width and the direction — so a field map can be
+    /// built instead of a list of objects.
+    pub field_accesses: BTreeSet<FieldAccess>,
+    /// Operand sizes seen at each absolute data address, from the decoder's memory-size model.
+    ///
+    /// Kept beside `globals` rather than folded into it because `globals` is deduplicated on a key
+    /// the published table's counts depend on, and widening that key would silently change them.
+    pub global_widths: BTreeMap<u32, BTreeSet<u8>>,
+    /// For each directly called function, the object pointers held in `ecx` at the call sites.
+    ///
+    /// This is what lets a callee's `[this+n]` accesses be attributed to an object: the caller's
+    /// `mov ecx,<global>` names the object and the callee's body supplies the offsets. A callee
+    /// reached with `BaseKind::This` in `ecx` is forwarding its own `this`, which is how the chain
+    /// continues past one level.
+    pub this_call_bases: BTreeMap<u32, BTreeSet<PointerBase>>,
+    /// Call sites whose `ecx` the taint could not name. The denominator for every statement of the
+    /// form "no operator touches field X": each of these is a method call whose object is unknown,
+    /// so whatever it touches is invisible to this instrument.
+    pub untracked_calls: usize,
     /// Addresses of NUL-terminated printable strings the body references. Addresses only; the text
     /// is game content and stays out of the repository.
     pub string_refs: BTreeSet<u32>,
@@ -691,6 +819,10 @@ fn walk(
         direct_imports: BTreeSet::new(),
         writes_through_pointer: BTreeSet::new(),
         writes_through_this: false,
+        field_accesses: BTreeSet::new(),
+        global_widths: BTreeMap::new(),
+        this_call_bases: BTreeMap::new(),
+        untracked_calls: 0,
         string_refs: BTreeSet::new(),
         inline_pops: 0,
         inline_pushes: 0,
@@ -719,8 +851,19 @@ fn walk(
     // winning, so a `this` moved into a callee-saved register in the prologue is still recognised
     // in the block that stores through it. First-writer-wins is an approximation and errs towards
     // forgetting, which understates mutation rather than inventing it.
-    let mut entry_pointers: BTreeMap<u32, BTreeMap<Register, u32>> =
-        BTreeMap::from([(entry_point, BTreeMap::from([(Register::ECX, THIS_POINTER)]))]);
+    let mut entry_pointers: BTreeMap<u32, BTreeMap<Register, PointerBase>> = BTreeMap::from([(
+        entry_point,
+        BTreeMap::from([(
+            Register::ECX,
+            PointerBase {
+                address: THIS_POINTER,
+                kind: BaseKind::This,
+                offset: 0,
+                dereferenced: false,
+                element: false,
+            },
+        )]),
+    )]);
     let mut info_factory = InstructionInfoFactory::new();
 
     while let Some(start) = starts.pop_front() {
@@ -739,7 +882,7 @@ fn walk(
         let mut tracked: BTreeMap<Register, Adjustment> = BTreeMap::new();
         // Registers currently holding a value read out of a data global, with the global they came
         // from. Per run for the same reason `tracked` is: a value does not survive a branch here.
-        let mut pointers: BTreeMap<Register, u32> =
+        let mut pointers: BTreeMap<Register, PointerBase> =
             entry_pointers.get(&start).cloned().unwrap_or_default();
 
         while decoder.can_decode() {
@@ -850,6 +993,14 @@ fn walk(
                     indexed,
                     !image.is_writable_data_address(displacement),
                 ));
+                let width = used.memory_size().size();
+                if width > 0 && width <= 16 {
+                    analysis
+                        .global_widths
+                        .entry(displacement)
+                        .or_default()
+                        .insert(width as u8);
+                }
             }
             update_pointer_taint(
                 image,
@@ -858,6 +1009,7 @@ fn walk(
                 &written_registers,
                 &mut pointers,
                 &mut analysis.writes_through_pointer,
+                &mut analysis.field_accesses,
             );
 
             for operand in 0..instruction.op_count() {
@@ -881,6 +1033,26 @@ fn walk(
                         false,
                         literal || !image.is_writable_data_address(value),
                     ));
+                    // `mov ecx,<object>` is how this compiler reaches a statically allocated C++
+                    // object, and the fields are then touched as `[ecx+n]` inside the method it
+                    // calls. Tainting the register here is what makes those offsets attributable.
+                    // A string literal is excluded: a format string in `ecx` is not an object.
+                    if !literal
+                        && image.is_writable_data_address(value)
+                        && instruction.mnemonic() == Mnemonic::Mov
+                        && instruction.op0_kind() == OpKind::Register
+                    {
+                        pointers.insert(
+                            instruction.op0_register(),
+                            PointerBase {
+                                address: value,
+                                kind: BaseKind::Static,
+                                offset: 0,
+                                dereferenced: false,
+                                element: false,
+                            },
+                        );
+                    }
                 }
             }
             // x87 mnemonics all begin with `F`; the debug spelling is the only name iced-x86
@@ -902,6 +1074,16 @@ fn walk(
                             analysis.helper_pushes += 1;
                         } else if let Some(counts) = pop_counts {
                             operands_consumed += counts.get(&target).copied().unwrap_or(0);
+                        }
+                        match pointers.get(&Register::ECX) {
+                            Some(base) => {
+                                analysis
+                                    .this_call_bases
+                                    .entry(target)
+                                    .or_default()
+                                    .insert(*base);
+                            }
+                            None => analysis.untracked_calls += 1,
                         }
                         analysis.calls.insert(target);
                     }
@@ -968,6 +1150,16 @@ fn walk(
                                 analysis.helper_pushes += 1;
                             } else if let Some(counts) = pop_counts {
                                 operands_consumed += counts.get(&target).copied().unwrap_or(0);
+                            }
+                            match pointers.get(&Register::ECX) {
+                                Some(base) => {
+                                    analysis
+                                        .this_call_bases
+                                        .entry(target)
+                                        .or_default()
+                                        .insert(*base);
+                                }
+                                None => analysis.untracked_calls += 1,
                             }
                             analysis.tail_calls.insert(target);
                             analysis.returns += 1;
@@ -1060,17 +1252,19 @@ fn walk(
 /// though the destination is not.
 fn virtual_slot(
     instruction: &Instruction,
-    pointers: &BTreeMap<Register, u32>,
+    pointers: &BTreeMap<Register, PointerBase>,
 ) -> Option<(u32, u32)> {
     if instruction.op0_kind() != OpKind::Memory {
         return None;
     }
     let source = *pointers.get(&instruction.memory_base())?;
     // The caller's own `this` is not a named global, so there is nothing to attribute the slot to.
-    if source == THIS_POINTER {
+    // A statically allocated object is excluded for a different reason: its vtable pointer is a
+    // link-time constant, so a slot recovered from one says nothing the relocation does not.
+    if source.kind != BaseKind::Indirect {
         return None;
     }
-    Some((source, instruction.memory_displacement64() as u32))
+    Some((source.address, instruction.memory_displacement64() as u32))
 }
 
 /// Track which registers hold a value read out of a data global, and record stores made through
@@ -1085,22 +1279,66 @@ fn update_pointer_taint(
     instruction: &Instruction,
     memory: &[iced_x86::UsedMemory],
     written_registers: &[Register],
-    pointers: &mut BTreeMap<Register, u32>,
+    pointers: &mut BTreeMap<Register, PointerBase>,
     writes: &mut BTreeSet<u32>,
+    fields: &mut BTreeSet<FieldAccess>,
 ) {
     for used in memory {
         let writing = matches!(
             used.access(),
             OpAccess::Write | OpAccess::CondWrite | OpAccess::ReadWrite | OpAccess::ReadCondWrite
         );
+        // Every access through a tracked pointer is a field access, read or write. The offset is
+        // the instruction's own displacement; the width is the decoder's memory-size model.
+        if let Some(base) = pointers.get(&used.base()) {
+            let width = used.memory_size().size();
+            if let Some(offset) = base.field_offset(used.displacement() as u32)
+                && width > 0
+                && width <= 16
+            {
+                fields.insert(FieldAccess {
+                    base: base.address,
+                    kind: base.kind,
+                    offset,
+                    width: width as u8,
+                    write: writing,
+                    indexed: base.element || used.index() != Register::None,
+                });
+            }
+        }
         if !writing {
             continue;
         }
         for register in [used.base(), used.index()] {
             if let Some(source) = pointers.get(&register) {
-                writes.insert(*source);
+                // A statically allocated object is deliberately excluded from this set. The set
+                // feeds the published `mutates-state` class, whose members were counted before
+                // static bases were tracked at all; folding them in silently would move a number
+                // the documentation quotes. What the static bases add is reported separately.
+                if source.kind != BaseKind::Static {
+                    writes.insert(source.address);
+                }
             }
         }
+    }
+
+    // `lea` computes a field's address without reading it, so the decoder reports no memory access
+    // and the loop above never sees it. That is not a rare corner: the save writer reaches its
+    // 164-byte setup block as `lea eax,[gameobj+0x520]` and a player name as `lea edi,[player+
+    // 0x50ac]`, both of which this analysis would otherwise report as absent.
+    if instruction.mnemonic() == Mnemonic::Lea
+        && instruction.op1_kind() == OpKind::Memory
+        && let Some(base) = pointers.get(&instruction.memory_base()).copied()
+        && let Some(offset) = base.field_offset(instruction.memory_displacement64() as u32)
+    {
+        fields.insert(FieldAccess {
+            base: base.address,
+            kind: base.kind,
+            offset,
+            width: 0,
+            write: false,
+            indexed: base.element || instruction.memory_index() != Register::None,
+        });
     }
 
     let propagating = matches!(instruction.mnemonic(), Mnemonic::Mov | Mnemonic::Lea);
@@ -1114,16 +1352,59 @@ fn update_pointer_taint(
                     && instruction.memory_index() == Register::None
                     && image.is_writable_data_address(displacement)
                 {
-                    Some(displacement)
+                    // `lea reg,[global]` takes the address; `mov reg,[global]` loads what is
+                    // stored there. The first names a statically allocated object, the second a
+                    // pointer variable, and conflating them loses exactly the distinction that
+                    // decides whether a field has an absolute address.
+                    Some(PointerBase {
+                        address: displacement,
+                        kind: if instruction.mnemonic() == Mnemonic::Lea {
+                            BaseKind::Static
+                        } else {
+                            BaseKind::Indirect
+                        },
+                        offset: 0,
+                        dereferenced: false,
+                        element: false,
+                    })
+                } else if instruction.mnemonic() == Mnemonic::Lea {
+                    // An interior pointer into the same object: carry the object and add the bias.
+                    // A `mov` from `[base+n]` loads whatever is *stored* there, which is a
+                    // different object entirely and must drop the taint, not inherit it.
+                    pointers.get(&instruction.memory_base()).map(|base| {
+                        match base.field_offset(instruction.memory_displacement64() as u32) {
+                            Some(offset) => PointerBase {
+                                offset,
+                                element: base.element
+                                    || instruction.memory_index() != Register::None,
+                                ..*base
+                            },
+                            // The bias left the range this analysis believes, so the register is
+                            // still in the object's chain but no longer at a known offset. Keeping
+                            // it is what `writes_through_pointer` is defined over; closing it to
+                            // field mapping is what stops a guessed offset entering the table.
+                            None => PointerBase {
+                                dereferenced: true,
+                                ..*base
+                            },
+                        }
+                    })
                 } else {
-                    pointers.get(&instruction.memory_base()).copied()
+                    // A load out of a tracked object. The value is a different object, so the
+                    // chain is kept for `writes_through_pointer` and closed for field mapping.
+                    pointers
+                        .get(&instruction.memory_base())
+                        .map(|base| PointerBase {
+                            dereferenced: true,
+                            ..*base
+                        })
                 }
             }
             _ => None,
         };
         match source {
-            Some(address) => {
-                pointers.insert(destination, address);
+            Some(base) => {
+                pointers.insert(destination, base);
             }
             None => {
                 pointers.remove(&destination);
@@ -1405,6 +1686,12 @@ impl OperatorReport {
 pub struct Analysis {
     pub reports: Vec<OperatorReport>,
     pub index: ProgramIndex,
+    /// Every function the image calls from anywhere, walked body-local, keyed by entry point.
+    ///
+    /// Published because the operator bodies alone do not contain the engine's field accesses: the
+    /// caller names the object and the callee supplies the offsets, so joining them needs both.
+    /// See `crate::engine_state`.
+    pub bodies: HashMap<u32, BodyAnalysis>,
 }
 
 /// Walk one function body on its own, for inspecting a callee the table only names.
@@ -1521,7 +1808,11 @@ pub fn analyse(
             next_entry_point,
         });
     }
-    Ok(Analysis { reports, index })
+    Ok(Analysis {
+        reports,
+        index,
+        bodies,
+    })
 }
 
 /// At what call depth each import kind, and the first write to engine state, becomes reachable.
@@ -2227,6 +2518,10 @@ mod tests {
                 direct_imports: BTreeSet::new(),
                 writes_through_pointer: BTreeSet::new(),
                 writes_through_this: false,
+                field_accesses: BTreeSet::new(),
+                global_widths: BTreeMap::new(),
+                this_call_bases: BTreeMap::new(),
+                untracked_calls: 0,
                 string_refs: BTreeSet::new(),
                 inline_pops: 0,
                 inline_pushes: 0,
