@@ -154,6 +154,303 @@ impl PbmImage {
     }
 }
 
+/// One IFF chunk, kept in the order it was read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PbmChunk {
+    pub id: [u8; 4],
+    pub data: Vec<u8>,
+}
+
+/// A whole `FORM PBM ` file: the decoded image plus every chunk it was built
+/// from, verbatim and in order.
+///
+/// The decoder models `BMHD`, `CMAP` and `BODY` and ignores the rest, but a
+/// *writer* that only emitted what it models would silently drop `CRNG` colour
+/// cycling, `DPPS`, and the `TINY` thumbnail the game may read. Re-encoding
+/// therefore rewrites `BODY` in place and copies every other chunk untouched --
+/// except `TINY`, which is derived from `BODY` and is dropped rather than
+/// preserved stale when the pixels change. See
+/// [`PbmFile::encode_with_indices`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PbmFile {
+    pub image: PbmImage,
+    pub chunks: Vec<PbmChunk>,
+}
+
+impl PbmFile {
+    pub fn parse(source: &[u8]) -> Result<Self, PbmError> {
+        let image = PbmImage::decode(source)?;
+        let chunks = split_chunks(source)?;
+        Ok(Self { image, chunks })
+    }
+
+    /// Re-encodes the file with its own pixels.
+    pub fn encode(&self) -> Result<Vec<u8>, PbmError> {
+        let indices = self.image.indices.clone();
+        self.encode_with_indices(&indices)
+    }
+
+    /// Re-encodes the file with new palette indices of the same dimensions.
+    ///
+    /// The palette, masking and every unmodelled chunk come from the file this
+    /// was parsed from; only the pixels and the `BMHD` compression byte change.
+    ///
+    /// **`TINY` is the one exception, because it is not independent metadata.**
+    /// It is a thumbnail *derived* from `BODY`: the three 640x480 members
+    /// checked all carry an 80x60 `TINY`, an exact 8x downscale, and 917 of the
+    /// 1,045 shipped PBMs carry one. Copying it verbatim onto rewritten pixels
+    /// would ship a file whose thumbnail is the old artwork. Regenerating it
+    /// would need a downscaler this project has not written, so a pixel-changing
+    /// re-encode drops the chunk instead; that is format-valid on the corpus's
+    /// own evidence, since 128 of the 1,045 carry no `TINY` at all
+    /// (`fonts\balloon2.lbm` is `BMHD`, `CMAP`, `BODY` and nothing else).
+    /// `CRNG` and `DPPS` do not describe pixels and are always preserved.
+    pub fn encode_with_indices(&self, indices: &[u8]) -> Result<Vec<u8>, PbmError> {
+        let width = usize::from(self.image.width);
+        let height = usize::from(self.image.height);
+        let expected = width
+            .checked_mul(height)
+            .ok_or_else(|| PbmError::new("PBM dimensions overflow"))?;
+        if indices.len() != expected {
+            return Err(PbmError::new(format!(
+                "expected {expected} palette indices for {width}x{height}; got {}",
+                indices.len()
+            )));
+        }
+        if let Some(index) = indices
+            .iter()
+            .find(|index| usize::from(**index) >= self.image.palette_entries)
+        {
+            return Err(PbmError::new(format!(
+                "palette index {index} exceeds {} entries",
+                self.image.palette_entries
+            )));
+        }
+        let body = encode_byte_run1_rows(indices, width, height)?;
+        // Same pixels in means the thumbnail still describes them; the
+        // round-trip path (`encode`) therefore keeps `TINY` untouched.
+        let pixels_changed = indices != self.image.indices.as_slice();
+
+        let mut chunks = Vec::with_capacity(self.chunks.len());
+        let mut wrote_body = false;
+        for chunk in &self.chunks {
+            match &chunk.id {
+                b"BODY" => {
+                    chunks.push(PbmChunk {
+                        id: *b"BODY",
+                        data: body.clone(),
+                    });
+                    wrote_body = true;
+                }
+                b"BMHD" => {
+                    if chunk.data.len() < 20 {
+                        return Err(PbmError::new("PBM BMHD chunk is too short"));
+                    }
+                    let mut header = chunk.data.clone();
+                    // The encoder only emits ByteRun1, so an uncompressed source
+                    // must not keep advertising compression 0.
+                    header[10] = 1;
+                    chunks.push(PbmChunk {
+                        id: *b"BMHD",
+                        data: header,
+                    });
+                }
+                // A stale thumbnail is worse than no thumbnail: dropping it is
+                // format-valid, copying it is a lie about the artwork.
+                b"TINY" if pixels_changed => {}
+                _ => chunks.push(chunk.clone()),
+            }
+        }
+        if !wrote_body {
+            return Err(PbmError::new("PBM has no BODY chunk"));
+        }
+
+        Ok(write_form(&chunks))
+    }
+}
+
+/// Splits a `FORM PBM ` file into its chunks without interpreting any of them.
+fn split_chunks(source: &[u8]) -> Result<Vec<PbmChunk>, PbmError> {
+    if source.len() < 12 || &source[0..4] != b"FORM" || &source[8..12] != b"PBM " {
+        return Err(PbmError::new("not an IFF FORM PBM image"));
+    }
+    let form_size = read_u32(source, 4)? as usize;
+    let form_end = 8_usize
+        .checked_add(form_size)
+        .ok_or_else(|| PbmError::new("FORM size overflow"))?;
+    if form_end > source.len() {
+        return Err(PbmError::new("truncated FORM"));
+    }
+
+    let mut chunks = Vec::new();
+    let mut cursor = 12;
+    while cursor + 8 <= form_end {
+        let chunk_size = read_u32(source, cursor + 4)? as usize;
+        let chunk_start = cursor + 8;
+        let chunk_end = chunk_start
+            .checked_add(chunk_size)
+            .ok_or_else(|| PbmError::new("chunk size overflow"))?;
+        if chunk_end > form_end {
+            return Err(PbmError::new("truncated IFF chunk"));
+        }
+        let id: [u8; 4] = source[cursor..cursor + 4]
+            .try_into()
+            .expect("slice length was checked");
+        chunks.push(PbmChunk {
+            id,
+            data: source[chunk_start..chunk_end].to_vec(),
+        });
+        cursor = chunk_end + (chunk_size & 1);
+    }
+    Ok(chunks)
+}
+
+/// Assembles chunks into a `FORM PBM ` file, padding every odd-sized chunk.
+fn write_form(chunks: &[PbmChunk]) -> Vec<u8> {
+    let mut body = Vec::new();
+    for chunk in chunks {
+        body.extend_from_slice(&chunk.id);
+        body.extend_from_slice(&(chunk.data.len() as u32).to_be_bytes());
+        body.extend_from_slice(&chunk.data);
+        if chunk.data.len() % 2 == 1 {
+            body.push(0);
+        }
+    }
+
+    let mut output = Vec::with_capacity(body.len() + 12);
+    output.extend_from_slice(b"FORM");
+    output.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
+    output.extend_from_slice(b"PBM ");
+    output.extend_from_slice(&body);
+    output
+}
+
+/// The pad byte an odd-width `FORM PBM ` scanline carries so every row occupies
+/// an even number of bytes.
+///
+/// **Observed** in the vanilla `pic.mpq`: `LBM\building\LLBRKS1a.lbm` is 143
+/// pixels wide and every one of its 119 rows decodes to exactly 144 bytes, with
+/// the 144th equal to `0x00` in all 119 -- never a copy of the row's last pixel,
+/// which is what a packet merely overrunning the scanline would have produced.
+const ROW_PAD_BYTE: u8 = 0;
+
+/// The longest literal packet ByteRun1 can express: control `127` means "the
+/// next 128 bytes are literal".
+const MAX_LITERAL_RUN: usize = 128;
+
+/// The longest repeat packet ByteRun1 can express: control `129` (`-127`) means
+/// `257 - 129 = 128` copies of the next byte.
+const MAX_REPEAT_RUN: usize = 128;
+
+/// The shortest run worth a repeat packet when a literal is already open.
+///
+/// A repeat always costs two bytes. Two identical pixels appended to an open
+/// literal cost two bytes as well, so only a run of three or more actually
+/// saves anything; breaking on two would cost the extra literal header.
+const MIN_REPEAT_RUN: usize = 3;
+
+/// Encodes 8-bit palette indices as an IFF ByteRun1 `BODY`.
+///
+/// Rows are encoded independently and no packet ever spans a scanline, which is
+/// the property the decoder's per-row clamp depends on. An odd-width row is
+/// padded to an even byte length with [`ROW_PAD_BYTE`] before packing, matching
+/// what the shipped images do.
+pub fn encode_byte_run1_rows(
+    indices: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>, PbmError> {
+    if width == 0 || height == 0 {
+        return Err(PbmError::new("PBM dimensions must be nonzero"));
+    }
+    let expected = width
+        .checked_mul(height)
+        .ok_or_else(|| PbmError::new("PBM dimensions overflow"))?;
+    if indices.len() != expected {
+        return Err(PbmError::new(format!(
+            "expected {expected} palette indices for {width}x{height}; got {}",
+            indices.len()
+        )));
+    }
+
+    let padded_width = (width + 1) & !1;
+    let mut output = Vec::with_capacity(expected);
+    let mut row = Vec::with_capacity(padded_width);
+    for scanline in indices.chunks_exact(width) {
+        row.clear();
+        row.extend_from_slice(scanline);
+        row.resize(padded_width, ROW_PAD_BYTE);
+        encode_byte_run1_row(&row, width, &mut output);
+    }
+    Ok(output)
+}
+
+/// Packs one scanline, already padded to `row.len()` from `content_len` pixels.
+///
+/// **A padded row must never put its pad byte in a packet of its own.** This
+/// decoder (Observed) stops a row as soon as it holds `content_len` pixels, so a
+/// lone trailing pad packet is never consumed and is read as the *next* row's
+/// first packet, shifting every pixel after it. What the *engine's* decoder does
+/// is Inferred, not measured: the shipped images are evidence about the original
+/// packer's choices, and they are equally consistent with a clamping decoder and
+/// with one that fills the padded width. The rule below is safe under both --
+/// verified against an independent strict decoder -- which is why it is applied
+/// without settling that question.
+///
+/// A packet is therefore never allowed to end exactly at `content_len` when a
+/// pad byte follows: it gives up a byte so the pad travels with a real pixel.
+/// It never *swallows* the pad instead, and cannot. A packet that ends at
+/// `content_len` while a pad byte remains is by construction a maximal one:
+/// [`run_length`] only stops short of [`MAX_REPEAT_RUN`] when the next byte
+/// differs, so a repeat that could swallow the pad would have included it
+/// already; and the literal loop only stops before the row's end when a repeat
+/// starts there or the packet is full, and a single trailing pad byte can never
+/// start a repeat. So in both arms the packet is at its maximum and shortening
+/// is the only move available.
+fn encode_byte_run1_row(row: &[u8], content_len: usize, output: &mut Vec<u8>) {
+    let padded = row.len() > content_len;
+    let mut cursor = 0;
+    while cursor < row.len() {
+        let run = run_length(row, cursor);
+        if run >= MIN_REPEAT_RUN {
+            let mut take = run;
+            if padded && cursor + take == content_len {
+                take -= 1;
+            }
+            // `257 - control` copies, so a run of `n` is control `257 - n`.
+            output.push((257 - take) as u8);
+            output.push(row[cursor]);
+            cursor += take;
+            continue;
+        }
+        // Literal: keep taking bytes until a run worth a packet of its own
+        // starts, or until the packet is full.
+        let start = cursor;
+        while cursor < row.len()
+            && cursor - start < MAX_LITERAL_RUN
+            && run_length(row, cursor) < MIN_REPEAT_RUN
+        {
+            cursor += 1;
+        }
+        if padded && cursor == content_len {
+            cursor -= 1;
+        }
+        let literal = &row[start..cursor];
+        output.push((literal.len() - 1) as u8);
+        output.extend_from_slice(literal);
+    }
+}
+
+/// How many identical bytes start at `offset`, capped at one repeat packet.
+fn run_length(row: &[u8], offset: usize) -> usize {
+    let value = row[offset];
+    let mut length = 1;
+    while length < MAX_REPEAT_RUN && offset + length < row.len() && row[offset + length] == value {
+        length += 1;
+    }
+    length
+}
+
 fn decode_byte_run1_rows(source: &[u8], width: usize, height: usize) -> Result<Vec<u8>, PbmError> {
     let expected_size = width
         .checked_mul(height)
@@ -258,6 +555,383 @@ mod tests {
     fn decodes_byte_run1_pbm() {
         let image = PbmImage::decode(&pbm(1, &[1, 0, 1])).unwrap();
         assert_eq!(image.rgba, [10, 20, 30, 255, 40, 50, 60, 255]);
+    }
+
+    /// Builds a `FORM PBM ` from chunks given in order, so a test can decide
+    /// exactly which chunks a file carries and where.
+    fn form(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
+        let chunks: Vec<PbmChunk> = chunks
+            .iter()
+            .map(|(id, data)| PbmChunk {
+                id: *id,
+                data: data.clone(),
+            })
+            .collect();
+        write_form(&chunks)
+    }
+
+    fn bmhd(width: u16, height: u16, compression: u8) -> Vec<u8> {
+        let mut header = Vec::new();
+        header.extend_from_slice(&width.to_be_bytes());
+        header.extend_from_slice(&height.to_be_bytes());
+        header.extend_from_slice(&[0, 0, 0, 0, 8, 0, compression, 0]);
+        header.extend_from_slice(&0_u16.to_be_bytes());
+        header.extend_from_slice(&[1, 1]);
+        header.extend_from_slice(&width.to_be_bytes());
+        header.extend_from_slice(&height.to_be_bytes());
+        header
+    }
+
+    /// 256 distinct-ish entries so any index is legal.
+    fn cmap() -> Vec<u8> {
+        (0..256_u16)
+            .flat_map(|index| [index as u8, (index as u8) ^ 0x5a, (index as u8) ^ 0xa5])
+            .collect()
+    }
+
+    #[test]
+    fn encodes_a_uniform_row_as_one_repeat_packet() {
+        let body = encode_byte_run1_rows(&[7; 10], 10, 1).unwrap();
+        // 257 - 247 = 10 copies of 7.
+        assert_eq!(body, [247, 7]);
+        assert_eq!(decode_byte_run1_rows(&body, 10, 1).unwrap(), [7; 10]);
+    }
+
+    #[test]
+    fn encodes_a_row_with_no_repeats_as_one_literal_packet() {
+        let row: Vec<u8> = (0..10).collect();
+        let body = encode_byte_run1_rows(&row, 10, 1).unwrap();
+        assert_eq!(body[0], 9, "control 9 means the next 10 bytes are literal");
+        assert_eq!(&body[1..], row.as_slice());
+        assert_eq!(decode_byte_run1_rows(&body, 10, 1).unwrap(), row);
+    }
+
+    /// Pins the repeat threshold, which nothing else did -- a mutation to 2
+    /// survived the rest of this module.
+    ///
+    /// A pair costs two bytes either way, so folding it into an open literal
+    /// avoids a second packet header. **The shipped images do the opposite**:
+    /// counting packets in `File00001070.xxx`, `fonts\belwe10.lbm` and
+    /// `LBM\building\LLBRKS1a.lbm` finds 1,975, 214 and 185 repeat packets of
+    /// count 2 respectively, so their packer breaks on two. `fonts\balloon2.lbm`
+    /// has none and caps its runs at 127 rather than 128, so the corpus does not
+    /// even hold one convention. Ours is chosen on cost, not copied, and that is
+    /// why this encoder is not byte-identical to theirs.
+    #[test]
+    fn folds_a_run_of_two_into_the_neighbouring_literal() {
+        let body = encode_byte_run1_rows(&[1, 2, 5, 5, 9, 8], 6, 1).unwrap();
+
+        assert_eq!(body, [5, 1, 2, 5, 5, 9, 8]);
+    }
+
+    #[test]
+    fn encodes_a_run_of_exactly_128_as_a_single_packet() {
+        let body = encode_byte_run1_rows(&[3; 128], 128, 1).unwrap();
+        // 128 is the largest count ByteRun1 can express: 257 - 129 = 128.
+        assert_eq!(body, [129, 3]);
+        assert_eq!(decode_byte_run1_rows(&body, 128, 1).unwrap(), [3; 128]);
+    }
+
+    #[test]
+    fn splits_a_run_of_129_because_128_is_the_packet_maximum() {
+        let mut row = vec![3_u8; 129];
+        row.push(9);
+        let body = encode_byte_run1_rows(&row, 130, 1).unwrap();
+        // 128 threes as a repeat, then the 129th three and the 9 as a literal
+        // pair -- a repeat of 1 does not exist and a repeat of 2 would cost the
+        // same two bytes the literal already spends.
+        assert_eq!(body, [129, 3, 1, 3, 9]);
+        assert_eq!(decode_byte_run1_rows(&body, 130, 1).unwrap(), row);
+    }
+
+    #[test]
+    fn caps_a_literal_packet_at_128_bytes() {
+        let row: Vec<u8> = (0..200).map(|index| index as u8).collect();
+        let body = encode_byte_run1_rows(&row, 200, 1).unwrap();
+        assert_eq!(
+            body[0], 127,
+            "the first literal must be the 128-byte maximum"
+        );
+        assert_eq!(&body[1..129], &row[..128]);
+        assert_eq!(body[129], 71, "72 bytes are left over");
+        assert_eq!(&body[130..], &row[128..]);
+        assert_eq!(decode_byte_run1_rows(&body, 200, 1).unwrap(), row);
+    }
+
+    #[test]
+    fn never_lets_a_packet_cross_a_scanline() {
+        // Twelve identical pixels, but as two rows of six. A packer that ignored
+        // scanlines would emit one count-12 packet (control 245) and the decoder
+        // would then read the second row out of the first row's packet.
+        let body = encode_byte_run1_rows(&[4; 12], 6, 2).unwrap();
+        assert_eq!(body, [251, 4, 251, 4]);
+        assert_eq!(decode_byte_run1_rows(&body, 6, 2).unwrap(), [4; 12]);
+    }
+
+    #[test]
+    fn pads_an_odd_width_row_with_a_zero_byte() {
+        let body = encode_byte_run1_rows(&[1, 2, 3], 3, 1).unwrap();
+        // The row is packed as four bytes, the fourth being the IFF pad.
+        assert_eq!(body, [3, 1, 2, 3, 0]);
+        assert_eq!(decode_byte_run1_rows(&body, 3, 1).unwrap(), [1, 2, 3]);
+    }
+
+    /// Regression, found by the mixed-image round trip: an odd-width row whose
+    /// final run stops exactly at the last pixel used to leave the pad byte in a
+    /// packet of its own. The decoder fills the row and never reads that packet,
+    /// so the *next* row started one packet late and came out shifted.
+    #[test]
+    fn never_leaves_the_pad_byte_in_a_packet_of_its_own() {
+        let pixels = [1, 2, 7, 7, 7, 4, 5, 6, 7, 8];
+
+        let body = encode_byte_run1_rows(&pixels, 5, 2).unwrap();
+
+        assert_eq!(
+            body,
+            [
+                1, 1, 2, // literal 1,2
+                255, 7, // a run of three shortened to two so the pad travels with a pixel
+                1, 7, 0, // the last pixel and the pad in one literal
+                5, 4, 5, 6, 7, 8, 0, // the second row's literal swallows its own pad
+            ]
+        );
+        assert_eq!(decode_byte_run1_rows(&body, 5, 2).unwrap(), pixels);
+    }
+
+    /// The other half of the same rule, on the literal arm: a literal that would
+    /// end on the last pixel is always already at its 128-byte maximum -- that
+    /// is the only reason the literal loop can stop there -- so it gives up a
+    /// byte rather than growing to cover the pad.
+    #[test]
+    fn shortens_a_full_literal_rather_than_stranding_the_pad() {
+        let mut row = vec![6_u8; 3];
+        row.extend((0..128).map(|index| (index as u8) | 0x80));
+        assert_eq!(row.len(), 131);
+        let mut pixels = row.clone();
+        pixels.extend(std::iter::repeat_n(9_u8, 131));
+
+        let body = encode_byte_run1_rows(&pixels, 131, 2).unwrap();
+
+        assert_eq!(body[0], 254, "three 6s as one repeat packet");
+        assert_eq!(body[2], 126, "the 128-byte literal gives up one byte");
+        assert_eq!(decode_byte_run1_rows(&body, 131, 2).unwrap(), pixels);
+    }
+
+    #[test]
+    fn encodes_a_one_pixel_wide_image_row_by_row() {
+        let body = encode_byte_run1_rows(&[5, 6, 7], 1, 3).unwrap();
+        assert_eq!(body, [1, 5, 0, 1, 6, 0, 1, 7, 0]);
+        assert_eq!(decode_byte_run1_rows(&body, 1, 3).unwrap(), [5, 6, 7]);
+    }
+
+    #[test]
+    fn round_trips_a_mixed_image_through_the_encoder() {
+        let width = 37;
+        let height = 11;
+        let pixels: Vec<u8> = (0..width * height)
+            .map(|index| match index % 17 {
+                0..=9 => 200,
+                10 | 11 => 3,
+                value => (value * 7) as u8,
+            })
+            .collect();
+        let body = encode_byte_run1_rows(&pixels, width, height).unwrap();
+        assert_eq!(decode_byte_run1_rows(&body, width, height).unwrap(), pixels);
+    }
+
+    #[test]
+    fn refuses_a_pixel_count_that_does_not_match_the_dimensions() {
+        let error = encode_byte_run1_rows(&[0; 9], 5, 2).unwrap_err();
+        assert!(error.to_string().contains("expected 10"), "{error}");
+    }
+
+    fn file_with_side_chunks(compression: u8, body: &[u8]) -> Vec<u8> {
+        form(&[
+            (*b"BMHD", bmhd(4, 2, compression)),
+            (*b"CMAP", cmap()),
+            (*b"DPPS", vec![9; 7]),
+            (*b"CRNG", vec![1, 2, 3, 4, 5, 6, 7, 8]),
+            (*b"TINY", vec![42; 5]),
+            (*b"BODY", body.to_vec()),
+        ])
+    }
+
+    #[test]
+    fn re_encoding_preserves_every_chunk_the_decoder_ignores() {
+        let source = file_with_side_chunks(0, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let file = PbmFile::parse(&source).unwrap();
+
+        let encoded = file.encode().unwrap();
+
+        let chunks = split_chunks(&encoded).unwrap();
+        let ids: Vec<&[u8]> = chunks.iter().map(|chunk| chunk.id.as_slice()).collect();
+        assert_eq!(
+            ids,
+            [
+                b"BMHD".as_slice(),
+                b"CMAP",
+                b"DPPS",
+                b"CRNG",
+                b"TINY",
+                b"BODY"
+            ],
+            "chunk order and membership must survive a re-encode"
+        );
+        assert_eq!(
+            chunks[2].data,
+            vec![9; 7],
+            "DPPS must survive byte for byte"
+        );
+        assert_eq!(chunks[3].data, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(
+            chunks[4].data,
+            vec![42; 5],
+            "the TINY thumbnail must survive byte for byte"
+        );
+    }
+
+    #[test]
+    fn re_encoding_an_uncompressed_source_declares_byte_run1() {
+        let source = file_with_side_chunks(0, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let file = PbmFile::parse(&source).unwrap();
+
+        let encoded = file.encode().unwrap();
+
+        let reparsed = PbmFile::parse(&encoded).unwrap();
+        assert_eq!(
+            reparsed.image.compression, 1,
+            "the writer only emits ByteRun1, so BMHD must say so"
+        );
+        assert_eq!(reparsed.image.indices, file.image.indices);
+    }
+
+    #[test]
+    fn re_encoding_is_pixel_lossless_and_reparses() {
+        let source = file_with_side_chunks(1, &[3, 1, 2, 3, 4, 3, 5, 6, 7, 8]);
+        let file = PbmFile::parse(&source).unwrap();
+
+        let encoded = file.encode().unwrap();
+
+        let reparsed = PbmFile::parse(&encoded).unwrap();
+        assert_eq!(reparsed.image.indices, file.image.indices);
+        assert_eq!(reparsed.image.rgba, file.image.rgba);
+        assert_eq!(
+            (reparsed.image.width, reparsed.image.height),
+            (file.image.width, file.image.height)
+        );
+    }
+
+    #[test]
+    fn writes_a_form_size_covering_every_chunk() {
+        let source = file_with_side_chunks(1, &[3, 1, 2, 3, 4, 3, 5, 6, 7, 8]);
+        let encoded = PbmFile::parse(&source).unwrap().encode().unwrap();
+
+        let form_size = u32::from_be_bytes(encoded[4..8].try_into().unwrap()) as usize;
+        assert_eq!(
+            form_size + 8,
+            encoded.len(),
+            "the FORM size must cover the whole file"
+        );
+    }
+
+    #[test]
+    fn pads_an_odd_sized_chunk_in_the_written_file() {
+        let source = form(&[
+            (*b"BMHD", bmhd(4, 2, 1)),
+            (*b"CMAP", cmap()),
+            (*b"DPPS", vec![9; 7]),
+            (*b"BODY", vec![3, 1, 2, 3, 4, 3, 5, 6, 7, 8]),
+        ]);
+        let encoded = PbmFile::parse(&source).unwrap().encode().unwrap();
+
+        // A seven-byte DPPS must be followed by one pad byte, or every later
+        // chunk reads misaligned.
+        let position = encoded
+            .windows(4)
+            .position(|window| window == b"DPPS")
+            .expect("DPPS survives");
+        assert_eq!(encoded[position + 8 + 7], 0, "odd chunks carry a pad byte");
+        assert_eq!(&encoded[position + 8 + 8..position + 8 + 12], b"BODY");
+    }
+
+    #[test]
+    fn refuses_indices_that_do_not_fill_the_image() {
+        let source = file_with_side_chunks(1, &[3, 1, 2, 3, 4, 3, 5, 6, 7, 8]);
+        let file = PbmFile::parse(&source).unwrap();
+
+        let error = file.encode_with_indices(&[0; 7]).unwrap_err();
+
+        assert!(error.to_string().contains("expected 8"), "{error}");
+    }
+
+    #[test]
+    fn refuses_an_index_the_palette_does_not_contain() {
+        let source = form(&[
+            (*b"BMHD", bmhd(4, 2, 1)),
+            (*b"CMAP", cmap()[..12].to_vec()),
+            (*b"BODY", vec![3, 1, 2, 3, 0, 3, 1, 2, 3, 0]),
+        ]);
+        let file = PbmFile::parse(&source).unwrap();
+
+        let error = file
+            .encode_with_indices(&[0, 1, 2, 3, 0, 1, 2, 9])
+            .unwrap_err();
+
+        assert!(error.to_string().contains("palette index 9"), "{error}");
+    }
+
+    /// `TINY` is a thumbnail of `BODY`, so carrying it across a pixel-changing
+    /// re-encode would ship the *old* artwork as the file's own preview. It is
+    /// dropped instead; `CRNG` and `DPPS` describe no pixels and stay.
+    #[test]
+    fn changing_the_pixels_drops_the_stale_tiny_thumbnail() {
+        let source = file_with_side_chunks(1, &[3, 1, 2, 3, 4, 3, 5, 6, 7, 8]);
+        let file = PbmFile::parse(&source).unwrap();
+        let replacement = [9_u8, 9, 9, 9, 200, 201, 202, 203];
+        assert_ne!(file.image.indices.as_slice(), replacement.as_slice());
+
+        let encoded = file.encode_with_indices(&replacement).unwrap();
+
+        let chunks = split_chunks(&encoded).unwrap();
+        let ids: Vec<&[u8]> = chunks.iter().map(|chunk| chunk.id.as_slice()).collect();
+        assert_eq!(
+            ids,
+            [b"BMHD".as_slice(), b"CMAP", b"DPPS", b"CRNG", b"BODY"],
+            "a stale TINY must be dropped, and nothing else with it"
+        );
+        assert_eq!(chunks[2].data, vec![9; 7], "DPPS is not derived from BODY");
+        assert_eq!(chunks[3].data, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(PbmFile::parse(&encoded).unwrap().image.indices, replacement);
+    }
+
+    /// The other side of the rule: re-encoding the *same* pixels leaves the
+    /// thumbnail describing them accurately, so it must survive. This is the
+    /// path `--pbm-roundtrip` sweeps the corpus with.
+    #[test]
+    fn re_encoding_the_same_pixels_through_encode_with_indices_keeps_tiny() {
+        let source = file_with_side_chunks(1, &[3, 1, 2, 3, 4, 3, 5, 6, 7, 8]);
+        let file = PbmFile::parse(&source).unwrap();
+        let same = file.image.indices.clone();
+
+        let encoded = file.encode_with_indices(&same).unwrap();
+
+        let chunks = split_chunks(&encoded).unwrap();
+        let tiny = chunks
+            .iter()
+            .find(|chunk| &chunk.id == b"TINY")
+            .expect("an unchanged image keeps its thumbnail");
+        assert_eq!(tiny.data, vec![42; 5]);
+    }
+
+    #[test]
+    fn encode_with_indices_writes_the_new_pixels() {
+        let source = file_with_side_chunks(1, &[3, 1, 2, 3, 4, 3, 5, 6, 7, 8]);
+        let file = PbmFile::parse(&source).unwrap();
+        let replacement = [9_u8, 9, 9, 9, 200, 201, 202, 203];
+
+        let encoded = file.encode_with_indices(&replacement).unwrap();
+
+        assert_eq!(PbmFile::parse(&encoded).unwrap().image.indices, replacement);
     }
 
     #[test]

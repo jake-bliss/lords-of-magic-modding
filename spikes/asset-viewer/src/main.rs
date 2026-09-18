@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -31,8 +31,10 @@ use lom_asset_viewer::native_table;
 use lom_asset_viewer::paths::paths_are_same_file;
 use lom_asset_viewer::server::{TileSetSource, serve};
 use lom_asset_viewer::operator_arity;
-use lom_asset_viewer::pbm::PbmImage;
-use lom_asset_viewer::png_export::{write_imp_frame_png, write_pbm_png, write_rgba_png};
+use lom_asset_viewer::pbm::{PbmChunk, PbmFile, PbmImage};
+use lom_asset_viewer::png_export::{
+    read_indexed_png, write_imp_frame_png, write_pbm_png, write_rgba_png,
+};
 use lom_asset_viewer::tile::{
     Direction, MapClass, TileChoice, TileSelector, TileSetDefinition, TileSetResolution,
     combat_tileset_array_candidates, resolve_tileset, tileset_mismatch,
@@ -203,6 +205,14 @@ enum Command {
         reports: PathBuf,
     },
     ScanMapDirectory(PathBuf),
+    /// Re-encode every PBM in an archive and compare the result with the original.
+    RoundtripPbm(Source),
+    /// Write an indexed PNG back into a PBM, inheriting palette and chunks from a source file.
+    ImportPngPbm {
+        png: PathBuf,
+        template: PathBuf,
+        output: PathBuf,
+    },
     ValidateImp(Source),
     ViewImp {
         source: Source,
@@ -384,6 +394,12 @@ fn run() -> Result<(), String> {
             executable.as_deref(),
         ),
         Command::ScanMapDirectory(path) => scan_map_directory(&path),
+        Command::RoundtripPbm(source) => roundtrip_pbm(&source),
+        Command::ImportPngPbm {
+            png,
+            template,
+            output,
+        } => import_png_pbm(&png, &template, &output),
         Command::ValidateImp(source) => validate_imp_archive(&source),
         Command::ViewImp {
             source,
@@ -683,6 +699,18 @@ fn parse_args() -> Result<Command, String> {
                 output: args[4].clone().into(),
             })
         }
+        "--pbm-roundtrip" => {
+            require_len(&args, 2)?;
+            Ok(Command::RoundtripPbm(source(&args[1], listfile)))
+        }
+        "--import-png-pbm" => {
+            require_len(&args, 4)?;
+            Ok(Command::ImportPngPbm {
+                png: args[1].clone().into(),
+                template: args[2].clone().into(),
+                output: args[3].clone().into(),
+            })
+        }
         "--export-pbm" => {
             require_len(&args, 4)?;
             Ok(Command::ExportPbm {
@@ -958,7 +986,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -1071,6 +1099,296 @@ fn export_pbm(source: &Source, member: &str, output: &PathBuf) -> Result<(), Str
         image.width,
         image.height,
         image.palette_entries,
+    );
+    Ok(())
+}
+
+/// Re-encode every PBM in an archive and report two numbers that must not be
+/// conflated.
+///
+/// **Pixel-lossless** is the correctness claim: the pixels survive a decode,
+/// encode and decode. Anything short of every image is a bug here.
+/// **Byte-identical** is a fidelity observation about the *original* packer's
+/// choices, which nothing in this project has reverse-engineered. A miss there
+/// means our packet boundaries differ from theirs, not that pixels were lost, so
+/// it is reported rather than treated as a failure.
+fn roundtrip_pbm(source: &Source) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let mut checked = 0_usize;
+    let mut pixel_lossless = 0_usize;
+    let mut body_identical = 0_usize;
+    let mut file_identical = 0_usize;
+    let mut odd_width = 0_usize;
+    let mut body_bytes_original = 0_usize;
+    let mut body_bytes_written = 0_usize;
+    let mut failures = Vec::new();
+    let mut differences = Vec::new();
+
+    for entry in &entries {
+        let bytes = match archive.read(&entry.name) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                failures.push(format!("{}: could not read: {error}", entry.name));
+                continue;
+            }
+        };
+        // Only PBM members are in scope. ILBM is planar and this encoder does
+        // not write it, so skipping is honest rather than a silent pass.
+        if !matches!(
+            probe(&entry.name, &bytes).map(|info| info.kind),
+            Ok(AssetKind::IffPbm)
+        ) {
+            continue;
+        }
+        let file = match PbmFile::parse(&bytes) {
+            Ok(file) => file,
+            Err(error) => {
+                failures.push(format!("{}: {error}", entry.name));
+                continue;
+            }
+        };
+        checked += 1;
+        if file.image.width % 2 == 1 {
+            odd_width += 1;
+        }
+
+        let encoded = match file.encode() {
+            Ok(encoded) => encoded,
+            Err(error) => {
+                failures.push(format!("{}: could not re-encode: {error}", entry.name));
+                continue;
+            }
+        };
+        let rewritten = match PbmFile::parse(&encoded) {
+            Ok(rewritten) => rewritten,
+            Err(error) => {
+                failures.push(format!(
+                    "{}: re-encoded file does not parse: {error}",
+                    entry.name
+                ));
+                continue;
+            }
+        };
+        if rewritten.image.indices == file.image.indices {
+            pixel_lossless += 1;
+        } else {
+            let at = rewritten
+                .image
+                .indices
+                .iter()
+                .zip(&file.image.indices)
+                .position(|(wrote, read)| wrote != read);
+            failures.push(format!(
+                "{}: pixels changed (first differing pixel {at:?})",
+                entry.name
+            ));
+        }
+
+        // Pixels surviving is not the whole claim. `BODY` is the only chunk a
+        // re-encode is allowed to rewrite; CRNG colour cycling, DPPS and the
+        // TINY thumbnail must come back byte for byte and in order. Without
+        // this, deleting the chunk-preserving arm of the encoder outright still
+        // printed `failures 0` here while 917 files silently lost them --
+        // `byte-identical-file` is only a handful of members and cannot serve
+        // as the gate. This path re-encodes the *same* pixels, so TINY is
+        // preserved rather than dropped and the assertion covers it too.
+        let original_chunks = chunks_other_than_body(&file);
+        let written_chunks = chunks_other_than_body(&rewritten);
+        if original_chunks != written_chunks {
+            failures.push(format!(
+                "{}: non-BODY chunks changed: theirs={} ours={}",
+                entry.name,
+                describe_chunks(&original_chunks),
+                describe_chunks(&written_chunks),
+            ));
+        }
+
+        let original_body = body_chunk(&file).unwrap_or_default();
+        let written_body = body_chunk(&rewritten).unwrap_or_default();
+        body_bytes_original += original_body.len();
+        body_bytes_written += written_body.len();
+        if original_body == written_body {
+            body_identical += 1;
+        } else {
+            let at = original_body
+                .iter()
+                .zip(written_body)
+                .position(|(read, wrote)| read != wrote)
+                .unwrap_or_else(|| original_body.len().min(written_body.len()));
+            differences.push(format!(
+                "{}\t{}x{}\tfirst-differing-body-byte={at}\ttheirs={}\tours={}\ttheir-body={}\tour-body={}",
+                entry.name,
+                file.image.width,
+                file.image.height,
+                describe_byte(original_body, at),
+                describe_byte(written_body, at),
+                original_body.len(),
+                written_body.len(),
+            ));
+        }
+        if encoded == bytes {
+            file_identical += 1;
+        }
+    }
+
+    println!("checked\t{checked}");
+    println!("pixel-lossless\t{pixel_lossless}");
+    println!("byte-identical-body\t{body_identical}");
+    println!("byte-identical-file\t{file_identical}");
+    println!("odd-width\t{odd_width}");
+    println!("their-body-bytes\t{body_bytes_original}");
+    println!("our-body-bytes\t{body_bytes_written}");
+    println!("body-differences\t{}", differences.len());
+    for difference in differences.iter().take(10) {
+        println!("difference\t{}", clean_field(difference));
+    }
+    println!("failures\t{}", failures.len());
+    for failure in &failures {
+        println!("failure\t{}", clean_field(failure));
+    }
+
+    if !failures.is_empty() {
+        return Err(format!("{} PBM images did not round-trip", failures.len()));
+    }
+    // Zero images checked is not a pass, for the same reason `--map-roundtrip`
+    // refuses an empty sweep: a mistyped archive would otherwise print a green
+    // report about nothing.
+    if checked == 0 {
+        return Err(format!(
+            "no PBM images were checked in {}",
+            source.archive.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Every chunk a re-encode must hand back untouched: `BODY` is the only one it
+/// is allowed to rewrite.
+fn chunks_other_than_body(file: &PbmFile) -> Vec<&PbmChunk> {
+    file.chunks
+        .iter()
+        .filter(|chunk| &chunk.id != b"BODY")
+        .collect()
+}
+
+/// Names a chunk list as `ID:len` pairs, so a mismatch report says which chunk
+/// went missing or changed size rather than dumping its bytes.
+fn describe_chunks(chunks: &[&PbmChunk]) -> String {
+    chunks
+        .iter()
+        .map(|chunk| {
+            format!(
+                "{}:{}",
+                String::from_utf8_lossy(&chunk.id),
+                chunk.data.len()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn body_chunk(file: &PbmFile) -> Option<&[u8]> {
+    file.chunks
+        .iter()
+        .find(|chunk| &chunk.id == b"BODY")
+        .map(|chunk| chunk.data.as_slice())
+}
+
+fn describe_byte(source: &[u8], at: usize) -> String {
+    source
+        .get(at)
+        .map_or_else(|| "end-of-body".to_owned(), |byte| format!("0x{byte:02x}"))
+}
+
+/// Write an edited indexed PNG back into a PBM.
+///
+/// The palette, masking, and every chunk the decoder does not model -- `CRNG`,
+/// `DPPS`, and the `TINY` thumbnail -- come from `template`, which is normally
+/// the file the PNG was exported from. Only the pixels come from the PNG, and
+/// the PNG's own palette is checked against the template's rather than adopted,
+/// because the indices are meaningless under a different palette.
+fn import_png_pbm(png_path: &Path, template_path: &Path, output: &Path) -> Result<(), String> {
+    for existing in [png_path, template_path] {
+        if paths_are_same_file(existing, output) {
+            return Err(format!(
+                "refusing to write to the input file {}; pass a different output path",
+                existing.display()
+            ));
+        }
+    }
+
+    let template_bytes = fs::read(template_path)
+        .map_err(|error| format!("could not read {}: {error}", template_path.display()))?;
+    let template = PbmFile::parse(&template_bytes).map_err(|error| error.to_string())?;
+
+    let png_file = fs::File::open(png_path)
+        .map_err(|error| format!("could not read {}: {error}", png_path.display()))?;
+    // The template's size is handed to the reader rather than checked after it,
+    // so a mismatched header is refused before it can size a decode buffer.
+    let png = read_indexed_png(
+        BufReader::new(png_file),
+        (template.image.width, template.image.height),
+    )
+    .map_err(|error| {
+        format!(
+            "{}: {error} (template {})",
+            png_path.display(),
+            template_path.display()
+        )
+    })?;
+
+    if png.palette.len() > template.image.palette.len() {
+        return Err(format!(
+            "{} has {} palette entries but {} has {}",
+            png_path.display(),
+            png.palette.len(),
+            template_path.display(),
+            template.image.palette.len(),
+        ));
+    }
+    // A PNG whose palette was merely trimmed to the entries it uses is fine; a
+    // PNG whose colours were *remapped* is not, because the written file keeps
+    // the template's CMAP and every index would then mean a different colour.
+    if let Some((index, _)) = png
+        .palette
+        .iter()
+        .zip(&template.image.palette)
+        .enumerate()
+        .find(|(_, (edited, original))| edited != original)
+    {
+        return Err(format!(
+            "{} changed palette entry {index}; the PBM keeps {}'s CMAP, so re-export and edit \
+             only the pixels",
+            png_path.display(),
+            template_path.display(),
+        ));
+    }
+
+    let encoded = template
+        .encode_with_indices(&png.indices)
+        .map_err(|error| error.to_string())?;
+    // Read the bytes that are about to be written, the way --set-imp-placement
+    // and the map editors do: an encoder bug must not reach a file.
+    let written = PbmFile::parse(&encoded).map_err(|error| error.to_string())?;
+    if written.image.indices != png.indices {
+        return Err("the re-encoded PBM does not read back the pixels it was given".to_owned());
+    }
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    file.write_all(&encoded)
+        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+    println!(
+        "wrote\t{}\t{}\t{}x{}\tpalette={}\tchunks={}",
+        output.display(),
+        encoded.len(),
+        written.image.width,
+        written.image.height,
+        written.image.palette_entries,
+        written.chunks.len(),
     );
     Ok(())
 }
@@ -4951,9 +5269,9 @@ fn gameplay_symbols_like(pattern: &str, reports: &Path) -> Result<(), String> {
 mod tests {
     use super::{
         GENERATED_HEADER_WORD, GameScriptValue, MapEdit, TRANSITION_RING_OFFSETS, create_map,
-        edit_map, parse_coordinate, parse_dimension, parse_elevation, parse_native_stub,
-        parse_offset, parse_sprite_type, parse_terrain_type, roundtrip_maps, set_imp_placement,
-        sprite_types, terrain_sprite_name, transition_rings,
+        edit_map, import_png_pbm, parse_coordinate, parse_dimension, parse_elevation,
+        parse_native_stub, parse_offset, parse_sprite_type, parse_terrain_type, roundtrip_maps,
+        set_imp_placement, sprite_types, terrain_sprite_name, transition_rings,
     };
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
@@ -4965,7 +5283,9 @@ mod tests {
         ImpSequence, ImpSprite, ImpStatistic, ImpValidationException,
     };
     use lom_asset_viewer::map::{MapAsset, MapCell};
+    use lom_asset_viewer::pbm::PbmFile;
     use lom_asset_viewer::pbm::PbmImage;
+    use lom_asset_viewer::png_export::write_pbm_png;
     use lom_asset_viewer::tile::{TileDefinition, TileSelector, TileSetDefinition};
 
     use super::{
@@ -5493,6 +5813,185 @@ mod tests {
             "{:?}",
             report.failures
         );
+    }
+
+    /// A four-by-two `FORM PBM ` carrying a `TINY` thumbnail, built here for the
+    /// same reason as `minimal_imp`: the library's fixtures are not visible to
+    /// this binary.
+    fn minimal_pbm() -> Vec<u8> {
+        let mut header = Vec::new();
+        header.extend_from_slice(&4_u16.to_be_bytes());
+        header.extend_from_slice(&2_u16.to_be_bytes());
+        header.extend_from_slice(&[0, 0, 0, 0, 8, 0, 1, 0]);
+        header.extend_from_slice(&0_u16.to_be_bytes());
+        header.extend_from_slice(&[1, 1]);
+        header.extend_from_slice(&4_u16.to_be_bytes());
+        header.extend_from_slice(&2_u16.to_be_bytes());
+        let palette: Vec<u8> = (0..256_u16)
+            .flat_map(|index| [index as u8, (index as u8) ^ 0x5a, (index as u8) ^ 0xa5])
+            .collect();
+        // Rows of 4: literal 0,1,2,3 then literal 3,2,1,0.
+        let body = vec![3, 0, 1, 2, 3, 3, 3, 2, 1, 0];
+
+        let mut chunks = Vec::new();
+        for (id, data) in [
+            (b"BMHD".as_slice(), header),
+            (b"CMAP", palette),
+            (b"TINY", vec![7; 5]),
+            (b"BODY", body),
+        ] {
+            chunks.extend_from_slice(id);
+            chunks.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            chunks.extend_from_slice(&data);
+            if data.len() % 2 == 1 {
+                chunks.push(0);
+            }
+        }
+        let mut source = Vec::new();
+        source.extend_from_slice(b"FORM");
+        source.extend_from_slice(&((chunks.len() + 4) as u32).to_be_bytes());
+        source.extend_from_slice(b"PBM ");
+        source.extend_from_slice(&chunks);
+        source
+    }
+
+    /// Writes `image` out as the indexed PNG the import path expects.
+    fn png_bytes(image: &PbmImage) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        write_pbm_png(&mut encoded, image).unwrap();
+        encoded
+    }
+
+    /// A genuinely edited image is the case that matters: `TINY` is a thumbnail
+    /// of `BODY`, so keeping it here would ship a file whose own preview is the
+    /// artwork the editor just replaced. Dropping it is format-valid -- 128 of
+    /// the 1,045 shipped PBMs carry no TINY at all.
+    ///
+    /// The round-trip test below cannot catch this: it imports an *unmodified*
+    /// export, so TINY survives there either way.
+    #[test]
+    fn import_png_pbm_drops_the_thumbnail_when_the_pixels_change() {
+        let dir = scratch_dir("pbm-import-tiny");
+        let template = dir.join("source.lbm");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.lbm");
+        fs::write(&template, minimal_pbm()).unwrap();
+        let mut image = PbmImage::decode(&minimal_pbm()).unwrap();
+        let original = image.indices.clone();
+        image.indices = vec![9, 9, 9, 9, 200, 201, 202, 203];
+        assert_ne!(image.indices, original, "the fixture must really be edited");
+        fs::write(&png, png_bytes(&image)).unwrap();
+
+        import_png_pbm(&png, &template, &output).unwrap();
+
+        let written = PbmFile::parse(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(written.image.indices, image.indices);
+        let ids: Vec<&[u8]> = written
+            .chunks
+            .iter()
+            .map(|chunk| chunk.id.as_slice())
+            .collect();
+        assert_eq!(
+            ids,
+            [b"BMHD".as_slice(), b"CMAP", b"BODY"],
+            "the stale TINY must be gone, and no other chunk with it"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The whole point of the import path: pixels edited in a PNG come back as a
+    /// PBM the decoder reads identically, with the chunks it never models intact.
+    ///
+    /// This one imports an *unmodified* export, which is exactly why it can
+    /// still assert TINY survives: the thumbnail still describes the pixels.
+    /// `import_png_pbm_drops_the_thumbnail_when_the_pixels_change` covers the
+    /// case where it does not.
+    #[test]
+    fn import_png_pbm_round_trips_an_exported_image() {
+        let dir = scratch_dir("pbm-import");
+        let template = dir.join("source.lbm");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.lbm");
+        fs::write(&template, minimal_pbm()).unwrap();
+        let image = PbmImage::decode(&minimal_pbm()).unwrap();
+        let mut encoded = Vec::new();
+        write_pbm_png(&mut encoded, &image).unwrap();
+        fs::write(&png, &encoded).unwrap();
+
+        import_png_pbm(&png, &template, &output).unwrap();
+
+        let written = PbmFile::parse(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(written.image.indices, image.indices);
+        let tiny = written
+            .chunks
+            .iter()
+            .find(|chunk| &chunk.id == b"TINY")
+            .expect("the TINY thumbnail must survive the import");
+        assert_eq!(tiny.data, vec![7; 5]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_png_pbm_refuses_to_overwrite_an_existing_output() {
+        let dir = scratch_dir("pbm-import-overwrite");
+        let template = dir.join("source.lbm");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.lbm");
+        fs::write(&template, minimal_pbm()).unwrap();
+        let image = PbmImage::decode(&minimal_pbm()).unwrap();
+        let mut encoded = Vec::new();
+        write_pbm_png(&mut encoded, &image).unwrap();
+        fs::write(&png, &encoded).unwrap();
+        fs::write(&output, b"precious").unwrap();
+
+        let error = import_png_pbm(&png, &template, &output).unwrap_err();
+
+        assert!(error.contains("could not create"), "{error}");
+        assert_eq!(fs::read(&output).unwrap(), b"precious");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The written file keeps the template's CMAP, so a PNG whose palette was
+    /// remapped would silently recolour every pixel. It is refused instead.
+    #[test]
+    fn import_png_pbm_refuses_a_remapped_palette() {
+        let dir = scratch_dir("pbm-import-palette");
+        let template = dir.join("source.lbm");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.lbm");
+        fs::write(&template, minimal_pbm()).unwrap();
+        let mut image = PbmImage::decode(&minimal_pbm()).unwrap();
+        image.palette[2] = [9, 9, 9];
+        let mut encoded = Vec::new();
+        write_pbm_png(&mut encoded, &image).unwrap();
+        fs::write(&png, &encoded).unwrap();
+
+        let error = import_png_pbm(&png, &template, &output).unwrap_err();
+
+        assert!(error.contains("changed palette entry 2"), "{error}");
+        assert!(!output.exists(), "a refused import must write nothing");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_png_pbm_refuses_a_png_of_the_wrong_size() {
+        let dir = scratch_dir("pbm-import-size");
+        let template = dir.join("source.lbm");
+        let png = dir.join("edited.png");
+        let output = dir.join("out.lbm");
+        fs::write(&template, minimal_pbm()).unwrap();
+        let mut image = PbmImage::decode(&minimal_pbm()).unwrap();
+        image.width = 2;
+        image.height = 4;
+        let mut encoded = Vec::new();
+        write_pbm_png(&mut encoded, &image).unwrap();
+        fs::write(&png, &encoded).unwrap();
+
+        let error = import_png_pbm(&png, &template, &output).unwrap_err();
+
+        assert!(error.contains("2x4"), "{error}");
+        assert!(!output.exists(), "a refused import must write nothing");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A minimal single-frame IMP with an origin pair, built here because the library's own
