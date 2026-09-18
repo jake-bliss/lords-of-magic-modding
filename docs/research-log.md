@@ -3418,6 +3418,943 @@ so the paint gate never refuses it. **Reporting is precise; refusing is permissi
 engine's own answer is the bug that shipped on this branch once already, and the permissive side of
 the gate is where that lesson lives.
 
+## 2026-09-17 — IMP animation control read out of the decoder; the timing field does not exist
+
+[Issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2) was parked on the
+assumption that it needed an attended run: sit in front of the game, watch a `MELEE_ATTACK` play,
+count frames. It did not. The metadata is parsed by code we possess, and reading the parser answers
+three of the issue's four bullets outright. The full field table with addresses is
+[docs/imp-format.md](imp-format.md); what follows is what changed and what the method cost.
+
+### The entry point was the operator table
+
+The 1,906-entry native table already recovered for GameScript is a directory of named function
+pointers, and it contains `setimpplayeraction`, `setimpplayerfacing`, `setimpplayerdirection` and
+`setimpplayerframe`. Each operator is a thin argument-popping shim ending in one `call` to the real
+method, so four names bought the whole animation-player class in about twenty minutes. That the
+table pays off on a question it was not built for is the argument for building it.
+
+### The control came for free, and it mattered
+
+Before trusting the disassembly on anything unknown, the same reading reproduces four structures the
+decoder already had: the sequence count at loaded-header `0x1A` and the table pointer at `0x1C` (our
+file offsets 26 and 28), the 16-byte sequence stride, the facing count at sequence byte 11, the
+8-byte facing stride and the frame count at facing `+2`. A triple loop at `0x0049C2CD`–`0x0049C349`
+walks all three levels with exactly those constants. A method that had the structure wrong would
+have failed there instead of one step later on the part nobody can check.
+
+### Cycle direction: a five-entry jump table, and mode 4 is a ping-pong
+
+`Imp::Advance` at `0x0049D9A0` masks sequence byte 0 with 7 and dispatches through a table at
+`0x0049DA68`. Two distinct endings: wrap to zero, or hold the last frame. Mode 4 shares the wrapping
+target but is special-cased at **two other addresses** — `Imp::CycleLength` returns `2N − 1` at
+`0x0049D90E`, and `Imp::GetFrame` reflects a position past the end to `2N − i − 2` at `0x0049ACA1`.
+That is a ping-pong, and — a point the review sharpened — it is **established rather than merely
+consistent**. The two sites are not independent guesses that happen to agree: they run on the same
+record in the same call, `Advance` takes the length from the first and hands the index to the second,
+and composing them is arithmetic. Length `2N − 1` with `0..N−1` taken as themselves and `N..2N−2`
+folded to `2N − i − 2` enumerates `0,…,N−1,N−2,…,0`. There is no reading under which mode 4 is
+something else. The corpus then supports it from a second direction: of the sequences whose
+generated `.h` names them, `DEFEND`, `GET_HIT`, `MELEE_ATTACK` and `MINOR_SPELL` are overwhelmingly
+mode 4, while `STAND`, `MOVE`, `DIE` and `CORPSE` are mode 0. A sword swings out and back; walking
+loops. Neither side was fitted to the other.
+
+The detail that made mode 0 on `DIE` stop looking wrong: **both** endings store 1 into the value
+`Advance` returns (`0x0049DA0C`, `0x0049DA4E`). One-shot behaviour is the caller reacting to that
+return, not a property of the file — which is why only 5 of 4,667 sequences use the one-shot mode at
+all.
+
+### Direction: five facings, eight directions, and the flip is the placement rule in reverse
+
+`Imp::DirectionCount` at `0x0049D920` is three instructions long: if sequence byte 1 has bit 7 set,
+return `2N − 2`; otherwise return `N`. Five stored facings therefore cover eight directions, with
+5, 6 and 7 drawn as 3, 2 and 1 flipped. 2,234 sequences are exactly that shape.
+
+The flip was worth one more step of checking rather than assuming. When it is set the sprite's
+anchor x is *negated* at `0x0049CCCC`, which is the mirror image of the centre-relative placement
+rule in [hotspots.md](hotspots.md) — a rule established months ago by a different method. That one
+observation carries the claim. The flag is also pushed to the blitter at `0x0049D416`, but nothing
+inside `0x004F46F0` was read, so that shows the flag *reaches* the drawing code and not what the
+drawing code does with it. Corroboration, not a second independent count.
+
+**Corrected on review, same day.** The first draft of this entry and of
+[imp-format.md](imp-format.md) called `0x0049CCD3` an "odd-width correction". It is the opposite:
+
+```asm
+0049ccce  test dl,1              ; dl = low byte of the width
+0049ccd1  jne  short 0049CCD4h   ; width ODD -> jump, skipping the dec
+0049ccd3  dec  ecx               ; runs when the width is EVEN
+```
+
+`jne` is taken when the bit is **set**, so the `dec` it jumps over runs when the bit is **clear**.
+The rule is `flipped_x = -((w >> 1) + placement_x) - (w even ? 1 : 0)`. Implementing the wrong
+wording puts every even-width sprite one pixel off, and even widths are the majority — the same
+one-pixel class of error that cost this repository weeks on the palette channel order. Both
+reviewers found it independently; I had read the mnemonics in order and assumed the `dec` ran on the
+tested condition. `recover_mirror_parity` now reads the branch polarity out of the binary and two
+tests pin both polarities.
+
+One more honest scope note while correcting it: the extra pixel is **Observed, not derived.**
+Reflecting the unflipped span about the anchor column reproduces the engine exactly on odd widths
+and lands two pixels away on even ones, so the `dec` is a convention of the engine rather than a
+consequence of mirroring. The test asserts the discrepancy as well as the identity, so nobody
+"fixes" the even case to match the algebra.
+
+The corpus then produced an anomaly worth recording rather than smoothing over: **991 sequences set
+the mirror bit on a single facing**, advertising `2 × 1 − 2 = 0` directions. It is inert — direction
+0 resolves below the facing count before the fold is reached — but any consumer that trusts
+`DirectionCount` on those files gets zero.
+
+### Timing: the honest answer is that the field is not there
+
+The issue asks to "measure frame cadence for MOVE, STAND, DIE and MELEE_ATTACK", which presupposes
+the cadence is in the file. It is not, and the interesting part is how that was established rather
+than merely believed.
+
+A negative claim is worth exactly as much as the bound on the search behind it. **The first version
+of this bound was overstated in three ways, and all three were caught on review.** Recording the
+corrected argument and what was wrong with the old one, because the bound *was* the result:
+
+**Refuted: "a sequence-record address can only be formed by scaling an index by 16."** It cannot,
+and the refutation is code I had already read and quoted. `Imp::SetAction` caches the record pointer
+into the player object at `0x0049DAA2 mov [esi+24h],eax`, and `Imp::CycleLength` reads it straight
+back at `0x0049D8F7` with no scaling anywhere — from a function 12 out-of-module callers reach.
+Scanning for the arithmetic was searching the wrong thing. The reviewer then ran the correct check
+and it came out my way, which does not make my argument the one that got there.
+
+**Corrected: "no reads at displacements 3–10."** My own survey output printed over a hundred
+register-relative reads at displacements 4–10 — only the *byte-sized* rows were empty. I had read a
+table I generated and reported a stronger sentence than it contained. Re-measured with the
+exclusions fixed it is **124**: word and dword reads of frame heights, frame-table pointers, pixel
+pointers and fields of unrelated objects. Nothing in that scan establishes what they are; the
+pointer-following scan is what does. (The review quoted 120 from the old output; the difference is
+the exclusions changing underneath, and six `lea`s that were being counted as reads and are not.)
+
+**Corrected: the scan's exclusions were wider than its documentation.** It dropped every indexed
+operand and every `ebp`-based one while disclosing only a stack exclusion. Both drops were wrong:
+`0x0049AC8F mov di,[ebx+esi*8+2]` is a genuine record read at displacement 2, and in this module
+`ebp` is an object pointer rather than a frame pointer (`0x0049ABFC`, `0x0049AC0F`, `0x0049AC43`).
+A timing field read as `mov cx,[edi+ebx*16+2]` would have produced zero hits and the survey would
+have printed exactly what it printed.
+
+The argument that actually reaches the conclusion is in two parts:
+
+1. **Who can obtain a sequence-record pointer.** `Imp::GetSequence` (`0x0049ADB0`) is the only
+   function that returns one. Its direct call sites over the whole `.text` number **five**, and all
+   five are in-module.
+2. **What the module reads through one.** Following the pointer from both places it is created —
+   the header table at `0x1C` with an index added, and the player's cached record at `0x24` — the
+   in-module reads land at displacements **0, 1, 11 and 12 only. Zero at 2 through 10.**
+
+*Both parts were amended again in the [second review round](#2026-09-17-second-review-round--the-instrument-was-blind-twice-more-and-a-stated-limit-hid-it):
+part 1 needed the absolute-reference check to close the indirect route, part 2 was silently walking
+only one of its two sources, and a third leg was added to type the out-of-module hits. The row
+counts quoted here are the pre-fix ones; [imp-format.md](imp-format.md) carries the current table.*
+
+The one rule that made part 2 work is worth stating: a `mov` that *dereferences* a tainted pointer
+must kill the taint, because `mov eax,[eax+edx+0Ch]` yields the facing table a sequence record
+points at — a different object. The first run propagated through it and duly reported facing-record
+reads as sequence-record reads, which is how a scan built to bound a negative can manufacture a
+positive.
+
+Displacements also cannot type a struct, and in this engine that is not hypothetical: offset `0x1C`
+is the sequence table on the IMP header and the *current frame record* on the player object
+(`0x0049CC80`). A scan keyed on displacement alone conflates them.
+
+And the structural part, unchanged: the playback object's constructor at `0x0049C830` has no timer
+field; its only numeric default is the direction denominator, 8.
+
+Cadence is the caller's. The terrain-sprite driver at `0x0050C31F` shows the shape it takes:
+`(per-object phase + [0x005AF134]) mod CycleLength`, one global counter for every sprite on screen.
+So the viewer's fixed interval is not a guess awaiting better metadata; it is the right *kind* of
+answer with an unverified number, and the number lives in the engine's tick loop rather than in any
+`.imp`.
+
+### Sequence byte 2: shaped like a frame rate, and that is not good enough
+
+Byte 2 has a non-garbage distribution — 12 values in 1–16, 15 in two thirds of sequences. (The
+first draft called it "the only" such byte, which was wrong and my own survey output said so: byte 3
+is `0x01` in 4,661 records and `0x04` in 6, byte 4 is `0xFF` in all 4,667, and 501 records carry a
+patterned value in the high bits of byte 0 that every reader masks away. Constant is not garbage.) It is tempting and it would be useful. Three findings, in increasing
+inconvenience: the engine never reads it; it is not the frame count (97 of 4,667 match); and it is a
+property of the *file* rather than the action — 1,624 of 1,800 members give every sequence the same
+value, and `MOVE` takes 10, 15, 6, 11 and 8 across different creatures. That is consistent with an
+export-time frames-per-second and equally consistent with a version number. Wiring it into the
+viewer as a frame rate would be a guess wearing metadata's clothes, so it stays labelled Inferred.
+
+Bytes 5–10, by contrast, are settled and unglamorous: they are uninitialised authoring-tool memory,
+containing readable fragments such as `frames` and `\imps\`.
+
+### What this leaves
+
+Issue #2's acceptance criterion is that **the viewer** derive direction labels and playback timing
+from verified metadata rather than a fixed guess.
+
+The first draft of this entry claimed "direction is now derivable" and treated that as satisfying
+the direction half. It does not, and the review was right to press on it: `imp_anim` has no
+consumers outside its own survey example, and `src/main.rs` still steps forward-only on a fixed
+100 ms. What this work did was convert #2 from "we do not know" into "we know and have not applied
+it" — real progress, and not the criterion. It also turns an unknown defect into a documented one:
+**955 sequences are ping-pong and the viewer plays them forward-then-jump.**
+
+So the premise of the timing half is **Refuted** — there is no cadence field in an `.imp`, and no
+amount of further decoding will produce one — and the issue splits into three:
+
+1. Wire the cycle mode and the direction fold and flip into the viewer. Fully specified now; no
+   further reverse engineering needed.
+2. Find `0x005AF134`'s writer for the tick period. One global constant, a static exe question. A
+   literal-dword search finds only readers, so it needs a data-xref pass.
+3. Anchor direction 0 to a compass bearing. Still needs an attended run or a GameScript call site
+   with an independently known bearing; two rotations sit in the way (`0x005AEC3C`, and a `+1` at
+   `0x0049DCDD`).
+
+### A contradiction to record rather than resolve: the palette channel order
+
+Found while scanning for byte-sized reads and initially filed as out of scope, which is the one
+outcome to avoid — an out-of-scope observation that goes nowhere is an unrecorded finding.
+
+`0x0049B220`–`0x0049B269` is a 1,024-byte loop over **the IMP's own palette**. It reaches it by
+loading the palette pointer from the loaded header at offset 8 — `0x0049B247 mov eax,[edi+8]`, where
+`edi` is the file image — which is the same field `imp.rs:535` reads as `read_u32(source, 8)`. It
+writes a three-byte destination triple in the order `(p2, p1, p0)`:
+
+```asm
+0049b258  mov  dl,[eax+1]
+0049b25b  mov  bl,[eax]
+0049b25d  mov  al,[eax+2]
+0049b260  mov  [ecx-4],al      ; p2
+0049b263  mov  [ecx-3],dl      ; p1
+0049b266  mov  [ecx-2],bl      ; p0
+```
+
+That is a pure reversal. `imp.rs:566` maps `(p0,p1,p2) → (p1,p2,p0)`, i.e. it reads file order as
+**B, R, G**. Those two cannot both be a plain channel identity: a pure reversal is benign only if
+the file is R,G,B and the destination B,G,R, and file-order R,G,B is the community reading that
+`imp.rs:563` explicitly refutes.
+
+**Both observations stand; the resolution does not.** Codex notes that `0x0049B2A0` repacks the
+result into a 16-bit format using shift globals, so the destination of this loop may not be a plain
+byte triple at all, in which case there is no contradiction to resolve — only a second consumer with
+its own convention. The two candidate resolutions are:
+
+- the destination is not a linear RGB triple, and the reversal is an artefact of whatever
+  `0x0049B2A0` expects; or
+- one of the two readings of file order is wrong.
+
+**`imp.rs` is deliberately untouched.** The attended measurement behind the current code is strong —
+14 of 14 sampled indices fit `(p1,p2,p0)`, the next best permutation fits 4, and writing raw
+`ff 00 00` renders blue — and this repository's rule is that a recorded contradicting symptom wins
+over a clean-looking disassembly. This entry exists so that if the palette is ever questioned again,
+the four addresses are already written down.
+
+## 2026-09-17 (second review round) — The instrument was blind twice more, and a stated limit hid it
+
+The IMP animation result survived every challenge to its content. The instrument that produced it
+did not, for the third round running. Field-level detail is in [imp-format.md](imp-format.md); this
+entry is about the pattern, because the pattern is now the finding.
+
+### The two blind spots, both introduced by the previous round's fix
+
+`record_pointer_reads` — the scan written specifically to replace an argument that had been refuted
+— cleared taint from any register that appeared as an instruction's first operand. `test`, `cmp` and
+`push` all have a register first operand and write nothing. **Every cached-pointer reload in this
+engine is immediately null-checked:**
+
+```asm
+0049d8f7  mov  ecx,[ecx+24h]     ; the cached sequence record
+0049d8fa  test ecx,ecx           ; <- erased the pointer it never touched
+0049d8fe  mov  cl,[ecx]          ; never seen
+```
+
+So the `PLAYER_CACHED_SEQUENCE` source — the source added that round, the whole point of the
+rewrite, the thing whose absence had *refuted* the previous argument — contributed **zero** reads.
+Part 2 was a walk of two `[reg+0x1C]` chains with a second source that did nothing. Fixed by asking
+`instr_info` which registers an instruction writes instead of guessing from operand position, which
+is the general form of the fix and was available the whole time: `instr_info` was already an enabled
+feature.
+
+Second: the `add` rule carried the pointer only when the destination was already tainted.
+`Imp::DirectionCount` forms its record the other way round — `0x0049D95D add eax,edx` with the table
+in `edx` — so `0x0049D95F` and `0x0049D967`, the mirror-bit test and the facing-count read this very
+document quotes, were invisible to the scan that was supposed to enumerate them.
+
+Corrected rows: displacement 0 goes 1 → **2**, displacement 1 goes 2 → **3**, displacement 11 goes
+5 → **6**. **Displacements 2–10 stay at zero**, which is the only reason the conclusion stands, and
+it is a checked fact rather than an assumed one.
+
+### The worse half: a stated limitation that explained the defect away
+
+The previous entry and the field document both said the missing rows were a consequence of the walk
+stopping at the first `call`, citing `0x0049D9E6` and `0x0049D900`. Both citations were wrong —
+`0x0049D900` is `and cl,7`, not a read at all, and the read that was actually missing,
+`0x0049D8FE`, sits four instructions after its load with no `call` between them. The rows were lost
+to the taint bug.
+
+That is the part worth keeping. A limitation section is supposed to be where a reader goes to
+calibrate a result. A limitation that *plausibly explains a bug* converts the bug into expected
+behaviour and stops anyone looking for it — including the person who wrote it. I had a symptom
+(a source contributing nothing) and an explanation ready to hand, and the explanation was close
+enough to true in general that I never tested whether it was true here.
+
+### The pattern across three rounds
+
+**Every defect in this work was an instrument that could not find what it was looking for, and twice
+a stated limitation made the blindness look intentional.**
+
+| Round | The instrument's blindness | What it hid |
+| --- | --- | --- |
+| 1 | scan dropped indexed and `ebp`-based operands | a field read as `mov cx,[edi+ebx*16+2]` would have shown nothing |
+| 1 | the argument searched for `shl`+header arithmetic | the cached-pointer route, which has no arithmetic |
+| 2 | taint propagated through a dereference | facing-record reads reported as sequence-record reads |
+| 2 | `lea` counted as a read | six phantom reads in a quoted total |
+| 3 | taint cleared on non-writing instructions | the entire second pointer source |
+| 3 | `add` carried only one way round | the two reads in `DirectionCount` |
+
+Not one of these was a wrong conclusion about the engine. All six were the measuring device
+answering a narrower question than the one being asked, while reporting in the vocabulary of the
+wider one. The standing lesson from this repository's own files — *verify the instrument before
+building on it*, and *an empty result is not a clean result* — applies to a disassembly scan exactly
+as it applies to a speed monitor: **when a scan built to find something finds nothing, the first
+hypothesis is that the scan is broken, not that the thing is absent.** Three regression tests now
+encode that for this scan: a null check between a load and a dereference, an `add` either way round,
+and a store or `lea` mistaken for a read.
+
+### Also this round
+
+- **Part 1 is now actually closed.** `call_sites` only sees `NearBranch32`, so enumerating direct
+  callers of `Imp::GetSequence` left the indirect route open. The address `0x0049ADB0` appears
+  **nowhere in the file as a literal dword**, so no vtable slot and no `mov reg,imm32` can reach it.
+  That is the fact that closes it, and it is now asserted rather than assumed.
+- **Part 1 does not cover the inline route, and the scan I offered for it was circular.**
+  `sequence_record_sites` was being run over the module and then used to conclude the sites were all
+  in-module. Run over the whole `.text` it finds 226 stride-by-16 sites, 22 near a `[x+0x1C]` load,
+  and **13 of those outside the module** — so it narrows a set to read by hand and evidences
+  nothing. The inline route is covered by a new leg that types the loads: a `[x+0x1C]` load is only
+  an IMP header load if `x` came from an `Imp` object's field 8 (`0x0049ADB7`), and **no read at
+  displacements 2–10 anywhere in `.text` has a source in that set.**
+- **Only one of the two constants had actually been parameterised.** The previous entry claimed
+  both; `mirrors_facings` still read `SEQUENCE_MIRROR_BIT` directly and `AnimRules::mirror_bit` was
+  consumed by nothing. The hole was open precisely for the next caller — the one who wires this into
+  the viewer without calling `recover`.
+- **`Imp::CycleLength` has 12 out-of-module callers, not 25.** 25 is `Advance`'s. Both `.md` files
+  had it right and the source comment introduced that round had it wrong: the third
+  one-file-not-the-other inconsistency on this branch, and the source comment is the copy that gets
+  read while editing.
+- **`iced-x86`'s `nasm` feature is back to a dev-dependency.** Making it a real dependency linked a
+  formatter's tables into the SDL viewer and the map editor so that one analysis example could print
+  a debug string, in a crate that pins `default-features = false` on four dependencies.
+  `FieldRead` and `TaintedRead` now carry the decoded `Instruction`; the example owns the formatter.
+- The code range comes from `PeImage::executable_ranges` rather than a hardcoded length, so "the
+  whole of `.text`" means it.
+
+## 2026-09-17 — Inside the operator bodies: five fetch helpers, 71 arity disagreements, and two controls that failed
+
+The operator tables have been known since #13/#15 — 1,906 names, entry points, and a static count of
+operand-stack traffic. This is the first time anything has read the function bodies. The analyser is
+`spikes/asset-viewer/src/operator_bodies.rs`, the driver is `examples/operator_bodies.rs`, and the
+output is committed as `reports/natives/operator-bodies.tsv`, `global-clusters.tsv` and
+`summary.md`. The prose is [inside the native operator bodies](native-operator-bodies.md).
+
+### The controls first, because two of them failed
+
+Run against operators whose behaviour is known from outside the binary:
+
+| Control | Result |
+| --- | --- |
+| `savescenariomap`/`savespecialmap` write byte-identical files | **Reproduced** — same object `0x005aa12c`, same callee `0x00485550` |
+| the map operators act on one object | **Reproduced** — exactly one address in common, `0x005ae958`, named by 139 operators |
+| `resetvisibility` is nullary | **Reproduced** |
+| `drawimpframe` takes 6 and `getimphotspot` 5 | **Reproduced** by a different method than the hand reading in #15 |
+| `resetvisibility` clears cell bit `0x00800000` | **Failed** |
+| `setterrain` mutates the map | **Failed** — classified `reads-state` |
+
+Both failures are one limitation. The engine is C++ with singletons in `.data`; an operator's body
+is fetch operands, `mov ecx,<singleton>`, call a method, and the store happens frames down through
+`this`. A static direct-call graph cannot follow it, and neither can import evidence: the reach
+curve is printed in the summary and shows that by depth 3, 93% of operators reach `user32`, a timer
+and the allocator, and by depth 5, 90% reach `CreateFileA`. `savescenariomap` reaches the file
+imports at depth 5 — so does `dup`. The classifier therefore reads depth 1 and `savescenariomap` is
+not labelled as file I/O. Saying so is better than a label that would have been produced by the call
+graph's density rather than by the operator.
+
+The one tempting fix was measured and rejected. Attributing a callee's store-through-`this` to the
+singleton the caller named does make `setterrain` a mutator — and it does the same for 55% of the
+table, because the engine's getters cache into their own object. It is carried as its own column and
+never promoted. **`reads-state` in the table means "performs no store of its own", not "has no side
+effects", and `setterrain` is the standing counter-example.**
+
+### The engine has five operand-fetch helpers, and finding one is not enough
+
+`main.rs` already warned that the recorded arity undercounts operators that fetch through the shared
+helper at `0x0040adb0`. Searching for that helper *by shape* — a small function many operators call
+whose own body pops exactly once and pushes nothing — finds five, not one: the `thiscall` fetch that
+hands back the raw `(tag, value)` pair, and four `cdecl` fetches that coerce on the way out. With
+only the first recognised, 144 operators came out nullary that are not. There is also exactly one
+result-push helper, `0x0041d1d0`.
+
+The second bug was worse because it was silent. Labelling each instruction with the operands
+consumed before it, and keeping **one** label per address, makes the answer depend on the order the
+queue happens to visit blocks in: every fetch checks for underflow, and the underflow path of a
+four-operand operator reaches the `ret` first, so the operator was reported as consuming nothing.
+Propagating every distinct count that can reach an instruction fixes it; a count that grows around a
+loop is capped and reported as **unbounded**, which is what a variadic operator is.
+
+### 71 disagreements with the recorded arity, 68 in the expected direction
+
+| | |
+| --- | ---: |
+| one count on every returning path | 544 |
+| paths disagree; nominal count is the successful path | 1,362 |
+| genuinely variadic (count grows around a loop) | 31 |
+| nominal count **higher** than the recorded site count | **68** |
+| nominal count **lower** | **3** |
+
+Largest gaps: `launchmissile` 21 against 2 — 18 distinct fetch sites chained down one path —
+`addbuildinginfo` 15 against 6, `toptriangle` 11 against 3. `getimphotspot` 5 and `drawimpframe` 6
+match the values read by hand in #15, so the disagreement with the table was already known and is
+now measured rather than annotated.
+
+The three the other way are `button`, `setunitdata` and `nsetunitdata`, which pop different numbers
+on different branches; a site count is the larger by construction. They are named in the test rather
+than excused.
+
+The 31 variadic operators include `astore`, `container`, `setformation`, `setregionfaiths` and
+`setregionraces`. `astore` popping a script-determined number of operands is what PostScript's
+`astore` does, and is the best independent check on the loop detection available here.
+
+### Boundaries, reported as a rate
+
+99.9% of bodies walked to completion; one ended at an unresolvable indirect jump. 2.9% ran past the
+next operator entry point, which is the honest **upper bound** on boundary failure rather than a
+count of failures — operators are not laid out contiguously and some tail call far away.
+
+### What the clusters are
+
+Absolute data references — including a displacement behind a register, and an address materialised
+as an immediate, which is how the engine names its singletons — clustered at a `0x100` gap. The gap
+is not fitted; the sweep is printed (247 clusters at `0x20`, 86 at `0x100`, 12 at a page).
+
+`0x005aa12c` is named by **299** operators (`addbuilding`, `addcapitol`, `buybuilding`, both map
+writers) and `0x005ae958` by **139** (`anythingat`, `armyat`, `buildingat`, `cityat`, `cantmovehere`,
+`setterrain`, `terrainspriteat`, `resetvisibility`). Reading those as the scenario object and the
+world object is **inferred** from the operator names; the addresses and the membership are observed.
+Sixteen bytes at `0x00584ae0` are named by 128 operators including `blackbackbuffer` and
+`blackrenderbuffer` — the render targets. `0x0054dbc0` is not state at all: it is the `.rdata` float
+pool `abs`, `add`, `atan`, `cos`, `div` and `eq` share.
+
+The useful part is not that the two biggest clusters are the obvious two. It is that the map API is
+now **enumerable**: 139 named operators, recovered without reading a single one of their names.
+
+### Tests
+
+Relations, not restated numbers, and most of them run without the binary: the two map writers share
+a callee; the map operators intersect on exactly one address; the stack primitives touch no engine
+state; the body walk never undercounts the recorded site count except for the three named branching
+operators; the boundary walk completes for ≥99%; every operand count has a mechanism behind it. With
+`LOM_EXE` set, the committed table is re-derived and required to still match the binary, and the
+helper search is required to find more than one helper — the specific regression that made a third
+of the table look nullary.
+
+## 2026-09-17 (review) — Seven corrections to the operator-body pass, and the corpus cross-check that should have been first
+
+Cross-review of the body analysis. The core survived — the five fetch helpers are real, the boundary
+claim was if anything understated, no game content leaked — and seven things were wrong. Six were
+wrong in the write-up or the classification; one was a real defect that made the whole arithmetic
+family unclassifiable. Two more things came out of doing the review properly.
+
+### The check that should have been first: the script corpus
+
+Nothing in the first pass consulted the `.gs` members, which are the engine's own callers, and
+`tools/gs_callsites.py` has existed for exactly this. Five predictions now checked:
+
+| Operator | Call site | Operands there | Body walk | Recorded |
+| --- | --- | ---: | ---: | ---: |
+| `xywh` | `PANELS5.gs:51:497` | 4 | 4 ✓ | 4 ✓ |
+| `addcitymod` | `gs/spells/fireworks.gs:1:1129` | 9 | 9 ✓ | 2 ✗ |
+| `bargraph` | `selarmy2.gs:228:79` | 8 | 8 ✓ | 2 ✗ |
+| `setbuildingrequirements` | `building.gs:549:31` | 8 | 8 ✓ | 1 ✗ |
+| `getplayergroupintoformation` | `getinfrm.gs:1:1079` | 8 | 8 ✓ | 1 ✗ |
+
+Four of the five disagreements are settled in the body walk's favour by an independent source. That
+is worth more than the other six fixes together, and it was available the whole time.
+
+`launchmissile` is **corroborated, not settled**: three of twelve call sites pass exactly 21 tokens
+that each resolve to one value; the other nine sit inside procedures the engine invokes with
+operands already on the stack. What all twelve settle is that none passes 2.
+
+### The one real defect: `.rdata` was counted as engine state
+
+`is_data_address` tested only `!executable`. `.rdata` is `0x40000040` and `.data` is `0xc0000040`,
+so the float pool at `0x0054dbc0` counted as state, `abs`, `atan`, `cos`, `sqrt` and fifteen others
+were published as `reads-state`, and the class that describes them had **zero members in a 1,906-row
+table**. A class with no members should have been read as a bug and was not. Now gated on
+`IMAGE_SCN_MEM_WRITE`, with the section carried through to the artifact as `constant_addresses`.
+
+**The fixture is why nothing failed.** The synthetic PE had one data section with `0x40000040` — no
+writable section at all — so no test could distinguish the two readings. It now has three sections
+with the engine's own flags. Same lesson as the square-map and uniform-facing fixtures: a fixture
+built to look adequate cannot fail on what the real image has.
+
+Two related imprecisions fell out of the same change: this linker puts **string literals in
+writable `.data`**, so a format string was engine state until printable literals were made constants
+regardless of section; and a write was being inserted as a read as well, duplicating the address in
+343 rows, which is why grepping the table for a cluster's membership gave 140 and 308 where the
+truth is 139 and 299.
+
+### `mutates-state` was false for 154 of its rows
+
+It was granted on a *direct callee's* store, so `armycanmove?`, `armystrength`, `armyexpense` and
+`ambientlight` were mutators. The false-negative direction (`setterrain`) was documented at length
+and this one was not documented at all — so a reader filtering for the state-editing API got
+predicates and still did not get `setterrain`. **Both errors at once.** The class now requires a
+store in the body itself; the callee's store is `state_write_depth` and `calls_mutating_method`, the
+treatment `calls_mutating_method` already had for the same reason.
+
+### `stack` contained no stack primitives
+
+Twelve of its seventeen members shared one entry point that is a single `ret` — `savegridflags`,
+`sunlight`, `makelighttables`, `setplane` and eight more are **registered names with no
+implementation**, which is a finding in its own right and is now the `stub` class. Meanwhile `dup`,
+`exch`, `pop` and `roll` were in `unknown`, because each calls the script error raiser and that
+counted as "calls something" — while a comment in the source claimed this measurement had moved
+`dup` out of `unknown`. A comment describing an outcome the shipped table does not have.
+
+Callees are now discounted when they cannot distinguish one operator from another: the shared
+operand helpers, any callee more than half the table calls, and any leaf that references no data and
+reaches no import. Same saturation argument the import depth is chosen by. The first attempt at the
+rule was written from a guess that the error raiser touches no globals; measuring it — which is what
+the new `--function` flag is for — showed it references the engine's error-message objects.
+
+The class was also renamed. `stack` claimed more than the evidence: `sleep` and `debug` qualify as
+surely as `dup` does. It is `operand-only`, and `arithmetic` is `floating-point`, because the
+evidence is an x87 instruction and `sleep` is in it for coercing a float delay.
+
+### The helper headline did not affect a published number
+
+"With only the first helper recognised, 144 operators came out nullary" is a fact about an iteration
+of this work that predates the generic callee-pop folding, and was presented as a property of the
+shipped analyser. Measured on what shipped, collapsing helper discovery entirely changes
+`helper_pops` for **318** rows, `behaviour` for **44**, and `nominal_arity` for **3**. The arity
+result rests on the generic folding, not on the helper search. Restated in the docs, and the test
+that asserted the wrong consequence in its failure message now guards the two columns the search
+does own.
+
+### Quoted figures contradicted the committed artifact
+
+`docs` said 93% of operators reach the allocator at depth 3; the artifact says the allocator is 1%
+at depth 3 and 94% at depth 6 — the 93% row is `other`. A rustdoc block argued "nothing below three
+is visible… past four the archive reach saturates" directly above `CLASSIFY_DEPTH = 1`, which would
+have led a maintainer to relabel 93% of the table. Three different numbers were quoted for the
+store-through-`this` share. All corrected against the artifact; the decision the 55% figure
+supported is unchanged and is stronger on the real number — folding it in classifies **1,336 of
+1,906 (70%)** as mutators.
+
+`summary.md` also contradicted itself: "`unknown` is what an incomplete walk produces" for 290
+operators, two sections below a table reporting **one** incomplete walk. A reader of that file alone
+concluded the coverage was 85%. The line now prints both counts from the data.
+
+### Both binary-backed guards were green by default
+
+`executable()` returned `None` when `LOM_EXE` was unset *and* when the read failed, so a typo'd path
+was indistinguishable from no path, and `cargo test` on a machine without the binary reported "8
+passed" while checking nothing. They are now `#[ignore]`d — run with `cargo test --release --
+--ignored` — and panic when the variable is missing or unreadable. The staleness check compared 3 of
+28 columns, and the two the offline anchors read were not among them; it now regenerates the whole
+table and names every field that moved.
+
+### Two things the review produced that were not fixes
+
+**The variadic evidence was stronger than the argument given for it.** The write-up leaned on the
+analogy with PostScript's `astore`. The real evidence is that `armyexpense` and `repoman` have
+candidate counts 1, 6, 11, 16 … 76 — an arithmetic progression of step five — and
+`combat_controltarget` steps by two. Converging early-exit paths cannot produce that; only a loop
+popping k operands per iteration can. Leading with the progression also exposed that loop detection
+was a proxy — "the successor sits at a lower address" — which is not a back edge at all, because the
+compiler puts the shared error epilogue below the code that jumps to it. It declared 26 operators
+variadic that fetch through a per-subsystem wrapper, and a variadic callee contributes nothing to
+its caller, so those callers came back nullary. Loops are now found by strongly-connected
+components, and "many candidate counts converge" is a separate flag: `launchmissile` has 21
+candidates and no loop and keeps its count; `slider` has 20 and a loop and has none.
+
+**A virtual call can be named even though it cannot be followed.** The taint chain survives
+`mov ecx,[global]` → `mov eax,[ecx]` → `jmp [eax+0x58]`, so the object and the vtable byte offset both
+come out. Twenty operators carry one, and the network family resolves into a partial vtable map of
+the session object at `0x005d1e84`: `+0x08` `createnetworkgame`, `+0x0c` `joinnetworkgame`, `+0x10`
+`modemcreate`, `+0x14` `modemdial`, `+0x18` `enumnetworkcomputers`, `+0x1c` `enumnetworkgames`,
+`+0x20` `selectprovider`, `+0x48` `enumproviders`, **`+0x58` `netlockgame`**, `+0x64`/`+0x68` and
+`+0x6c`/`+0x70` the provider art accessors.
+
+`netlockgame` — the single body the walk cannot finish, and the reason it cannot — is six
+instructions: load the session object, return immediately if it is null, otherwise nullary tail call
+into vtable slot 22. Slots `+0x24` through `+0x54` are reached by no operator at all, which is where
+a turn-synchronisation method with no script-visible name would sit. That was only visible because
+the taint bug behind it was fixed: the invalidation rule dropped a register's taint whenever the
+first operand was a register, and `test ecx,ecx` writes nothing.
+
+## 2026-09-17 — The map loader, read out of `lomse.exe`
+
+Everything this project knew about the map header, the cell word and the six trailing-record sizes
+was inferred from statistics over 365 shipped files. This run read the same questions out of the
+engine's instructions instead. Tool: `spikes/asset-viewer/examples/map_loader_survey.rs`. Full
+findings with every address: `docs/map-format.md`, "What the loader does, read out of `lomse.exe`".
+
+### Method, and why `resetvisibility` was the right place to start
+
+The only confirmed fact about any cell bit was that `resetvisibility` clears `0x00800000`. That made
+it the one anchor that could prove the survey was looking at cell memory rather than at one of the
+binary's several other eight-byte-strided arrays. Following it gave the map object at `0x005ae958`,
+its cell array at `+0x54`, count at `+0x58`, width at `+0x5c`, height at `+0x60` — all confirmed
+independently by the allocator at `0x004a4f20`, which stores exactly those fields and mallocs
+`width * height * 8`.
+
+The single most useful structural fact fell out of that: `0x005aa12c + 0x482c == 0x005ae958`. The
+scenario object's terrain member *is* the global map object. So `loadmap` and `loadscenariomap` reach
+one cell array, and `resetvisibility` and the file loader are provably talking about the same memory.
+
+### Confirmed
+
+- **The loader switches on the header word at `0x00`.** Six places: `0x0050dac2`, `0x0050db14`,
+  `0x0050db87`, `0x0050dba1`, `0x0050dbbb` in the record serialiser, and `0x00485617` in the
+  scenario reader. The previous entry in `map-format.md` called this Inferred and warned the
+  correlation might be nothing but successive editor builds. It is not; the loader reads it.
+- **The six record layouts are one struct with five version gates.** Evaluating the five thresholds
+  reproduces all six sizes and all nineteen corpus header words with nothing fitted. 63/73 → 48,
+  76–89 → 52, 96/97 → 53, 98/101 → 47, 102–111 → 49.
+- **Cell word 1 is an `f32`.** Fifteen x87 sites on it, `setelevation`'s worker at `0x004a59f3`
+  being the clearest. No longer an inference from value ranges.
+- **`savescenariomap` and `savespecialmap` are literally the same function**, `0x00485550`. The
+  corpus observation that they write byte-identical files now has its cause.
+
+### Contradicted
+
+Five prior readings in `map-format.md` were wrong, and each was wrong in the same way — the corpus
+could not distinguish the true rule from a nearby one, so the nearby one got written down:
+
+1. **`0x0c` is not `bits_per_pixel`.** It is bytes per cell. The reader multiplies it by 64
+   (`0x004a535c`) to size a block read; the writer emits the literal `8`. "Always 8 in the corpus"
+   is true of both readings, which is why the corpus could not tell.
+2. **Cell word 0 is not a 32-bit tag.** It is two `u16` fields. Every engine read of byte `+0` is
+   `movsx r32, word`, every write is 16-bit, and nothing reads the word as a dword. Bits 10–15 are
+   part of the *tile slot*, which is signed 16-bit and bounds-checked against the tileset at
+   `0x00508f10` — not a separate unused region as documented.
+3. **`tile_index` was `tag & !0x00800000`; it is `tag & 0xffff`.** The two agree on every corpus
+   cell, because `0x00800000` is the only bit above 15 any corpus cell sets. Corrected in `map.rs`
+   with a test that fails under the old rule.
+4. **The "four-byte footer" is not part of the record section.** `cmp dword [esi],64h` at
+   `0x00485617` gates a separate dword belonging to a different member of the scenario object. The
+   corpus split at 98-no-footer / 101-footer brackets the engine's threshold of 100 exactly, which
+   is how a section boundary got read as a record-layout field.
+5. **There are eight record *kinds*, not one record shape.** `0x004f7120` dispatches the first
+   dword of each record through a ten-entry jump table at `0x004f73b8` with two dead slots. The
+   whole corpus is kind 1.
+
+### Reconciled, not contradicted
+
+The two attended `resetvisibility` runs that looked like they disagreed — "all 4,096 cells set" and
+"0 of 4,096" — are both correct. The perimeter-writing block at `0x004a9151`–`0x004a91a1` is guarded
+by `test eax,eax; je` on map object `+8`. A fresh `clearmap` map has that field zero, so the block is
+skipped. The 146 `.smp` files carrying `0x0080` on exactly their perimeter ring were saved with it
+non-zero. `mov edx,80h` at `0x004a915f` is where the value comes from.
+
+### Not settled, stated rather than glossed
+
+- **What the `+2` field means.** `resetvisibility` writes it; *nothing in the 148 surveyed
+  map-object methods reads it*. "Visibility" stays Inferred from the operator's name. Whatever
+  consumes it is outside the survey — most likely the renderer, reached through a pointer this
+  analysis does not follow.
+- **No cell bit is ever masked.** Across all 35 cell-lane instructions the survey found zero `and`,
+  `test`, `or`, `xor`, `shr` or `sar` with an immediate against a cell lane. The bit-by-bit map this
+  run was asked for is empty, and that is the finding: the engine does not work on the cell in bits.
+- **The thresholds 74 and 75 cannot both be checked.** The corpus contains 73 and 76. The binary
+  says 74; the corpus can pin it only to an interval, and the test says so.
+- **The gate at 54 is unexercised by the corpus.** Every shipped header word is at least 63.
+
+### Two method notes worth keeping
+
+**A linear taint walk reported a third of the cell accesses.** The first version of the survey
+walked each function's instructions in address order. It found 17 sites. The taint was dying at
+early-return epilogues — `pop esi` on a path that is never reached from the code after it — and
+`getterrain`'s own cell read was among the casualties. Replacing it with a forward must-analysis over
+basic blocks, merging by intersection, took it to 35. A survey that reports "the engine barely
+touches the cell tag" when it means "the analysis stopped early" is the empty-review failure in
+another costume.
+
+**Linearly decoding a whole `.text` section silently loses call sites.** The scan that finds
+`mov ecx, 0x5ae958` followed by a `call` originally decoded the section from its start; it drifts out
+of phase on the first embedded jump table and never recovers. Searching the raw bytes for the
+five-byte `mov ecx, imm32` encoding and decoding forward from each hit is what made
+`forcetexture`'s and `getterrain`'s workers visible.
+
+### 2026-09-17, same day — cross-review of the above, and what it overturned
+
+Claude and Codex both reviewed the entry above independently. Every *positive* binary fact survived
+byte for byte: the `shl ecx,6` block sizing, the 8-byte stride, the signed bounds check at
+`0x00508f10`, `fld dword [ecx+eax*8+4]`, the `cmp eax,9`/`ja`/`jmp dword [eax*4+0x4f73b8]` dispatch,
+and the section-boundary reinterpretation at `0x00485617`. The *negatives* did not, and neither did
+the writer.
+
+**The negatives were negatives over an incomplete set — three separate ways.**
+
+1. **`cell_lane` required an eight-byte index scale.** The engine constantly uses the scale-1 form
+   `[array + byte_offset_register + disp]`, where the register already holds `cell * 8`. Every one
+   of those was dropped, *including a write inside the survey's own anchor*:
+   `resetvisibility`'s second perimeter write at `0x004a9178`. Also dropped: reads `0x004a9025`,
+   `0x004a9048`, `0x004a938e` and writes `0x004a9036`, `0x004a9055`, `0x004a93a6`.
+2. **Method discovery keyed only on `mov ecx, 0x005ae958`.** But the map object *is*
+   `scenario + 0x482c` — my own claim 7 — and 28 sites reach it as `lea ecx, [reg + 0x482c]`, which
+   mentions `0x005ae958` nowhere. Nine methods were invisible, one of which contains a plain
+   scale-8 `+2` write the existing filter would have caught. Worth recording: the coordinator
+   probed for `mov ecx, [reg+0x482c]`, found zero, and reported that as evidence the coverage was
+   fine. The probe was structurally incapable of finding the `lea` form. That is the third instance
+   on this branch of a measurement that could not fail.
+3. **Neither path follows indirect calls.** The surveyed methods contain 35 indirect call sites.
+   Virtual dispatch is uncovered, and the finding is now scoped to say so.
+
+After fixing 1 and 2 the survey walked 159 methods (was 148) and found 53 cell-lane instructions
+(was 35). **The no-masks result survived.** It then survived twice more — see the next section,
+where two further access routes took it to 70 sites.
+
+`cell_lane` now **counts every operand it reaches through the cell array but cannot decode** and
+prints the total. It reports zero. The point is that the next gap of this kind will be loud.
+
+**Two "never" sentences were false, and both were false in the same way: a true claim about
+*interpreting* accesses written as a universal.**
+
+- "The engine never reads a cell's first word as a dword" — refuted by `0x004a9660`/`0x004a9666`, a
+  two-dword whole-cell copy. It decodes nothing, and the same function re-reads the low word with
+  `movsx` at `0x004a9671` and bounds-checks it, so the two-`u16` conclusion stands. The sentence did
+  not.
+- "`+2` is never read by any of the 148 surveyed methods" — false *inside a method I had walked*.
+  `0x004a938e movsx ecx,word [eax+esi+2]` → `cmp ecx,ebx` → `jle` → `mov [eax],bx`, plus the same
+  shape at `0x004a9025` and `0x004a9048`.
+
+**And the reader's shape is worth more than the miss.** `movsx` plus a signed `cmp`, never a mask:
+the field is a **signed 16-bit scalar**, which *strengthens* the two-field split — a bitfield packed
+beside a tile index would be tested, and this is compared. I had reached "Inferred" for the `+2`
+field's meaning by the wrong route ("nothing reads it"); the label was right and the reasoning was
+not, and the reasoning is now the update shape instead.
+
+**One correction to the review itself.** It described the field as "monotonically raised". The
+direction is the opposite: `cmp ecx,ebx; jle skip` reaches the store only when the stored value is
+strictly *greater* than the candidate, so the stored value is replaced by a smaller one —
+monotonically non-**in**creasing at the two `jle` sites. (`0x004a9025` uses `je` and writes on any
+difference.) It does not change the reviewer's point, which was that the field is a scalar.
+
+**The writer had not moved with the reader.** `set_tile` and `fill_terrain` still wrote
+`(tag & 0x00800000) | tile`, preserving one bit of a field this branch had just redefined as 16 bits
+wide and zeroing the other fifteen. Fixed to `tag & 0xffff0000`, with a test that fails under the
+old mask. Severity, measured rather than asserted: across all 353 parseable shipped maps and
+1,040,384 cells the upper field takes exactly two values, `0x0000` (1,012,936) and `0x0080`
+(27,448). So it was **latent, not live** — no shipped map loses anything either way. Fixed anyway,
+per this file's own standing rule that preserving what it does not understand costs nothing.
+
+**Two smaller ones, both self-inflicted.** The 4,892/4,284 figures I quoted as the *scope
+denominator* of a negative result came from `disassemble_section`, a deliberately misaligned linear
+decode of the whole `.text`. They are withdrawn; the census is now computed from the same
+per-function decodes the survey uses (45/45/7), and `disassemble_section` is deleted. And
+`verify_anchors` hardcoded `RECORD_KIND_COUNT = 10` without reading the `cmp eax,9` operand — the
+one thing that function exists to prevent. It now recovers the bound, the table address and the
+handler set from the dispatch itself, and checks every slot lands in code.
+
+**Four stale passages in files this branch edited** restated the retired 32-bit-tag model: the
+`CELL_TAG_HIGH_FLAG` doc comment, the user-visible `--map-set-tile` error, and two prose passages in
+`map-format.md`. All four now carry the correction rather than the old claim. The `1024` cap stays —
+it is a good guard against a fat-fingered `3920` — but it is no longer claimed to be the field's
+width, because the field is a signed `u16` and the tileset decides the real limit.
+
+### 2026-09-17, later — two more access routes, and `0x00800000` is a saturated scalar
+
+The coordinator inventoried the references the fix above still did not account for and found two
+more ways into the map object. Both were invisible to every pattern the survey had. Verified against
+the bytes before changing anything.
+
+**Route 3: a dedicated accessor with 208 callers.**
+
+```
+004c6fc0  mov eax,5AE958h
+004c6fc5  ret
+```
+
+That is the entire function. Callers do `call 0x004c6fc0`, then use `eax` — or move it to `ecx` and
+call a method. No call site contains the literal `0x005ae958`, so neither the immediate scan nor the
+`lea` scan could see a single one of them. Adding it: **+10 methods and +7 cell sites**, including
+five `+2` readers.
+
+**Route 4: the cell array loaded straight from the global.** `mov ecx, [0x005ae9ac]` —
+`MAP_OBJECT + 0x54` — reaching the grid without touching the object at all. Eleven sites. This is
+where the three `+2` readers the review cited but I could not reproduce actually live:
+`0x004c5cc2`, `0x00517b67`, `0x00519ced`. They were real; my survey was blind to their route, not to
+them. Adding it: **+10 cell sites**.
+
+Final counts: **169 methods**, plus 219 mid-function entry points (208 accessor calls, 11 absolute
+loads), and **70 cell-lane instructions** — double the 35 the first pass reported.
+
+**The no-masks result survived all four widenings: 35 → 53 → 60 → 70 sites, still zero masks.**
+Every one of the 35 recovered instructions is a `movsx`, `mov` or `cmp` with no immediate. That was
+the predicted outcome each time and it was measured each time, which is the only reason it is worth
+anything. The finding's honest scope is now: *no interpreting bitwise-immediate access to a cell lane
+exists among map-object methods reachable without virtual dispatch.* The surveyed methods contain 36
+indirect call sites; vtables remain unexplored and are the next step.
+
+**The real prize was not the negative.** Route 4 led to the arithmetic that reframes `0x00800000`
+entirely:
+
+```
+00519ced  movsx edx,word [ecx+eax*8+2]
+00519cfb  mov eax,80h
+00519d00  sub eax,edx                       ; 128 - field
+00519d05  imul eax,esi
+00519d08  sar eax,7                         ; ... * k / 128
+```
+
+`(0x80 - field) * k >> 7` is a linear interpolation whose denominator **is** `0x80`. The same shape
+is at `0x00517b6f`. And `0x004c5cc2` compares the field against map object `+0x4c` rather than
+against a constant.
+
+**The next entry corrects the conclusion I drew from that.** I wrote "so the `+2` field is a level on
+a 0..128 scale and `0x00800000` is that scale saturated" as though the disassembly established it.
+The arithmetic establishes `0x80` as a *scale base*; the closed range and the saturation are a
+further inference. What the arithmetic does settle, and settles firmly, is that the value was never
+a flag.
+
+Eleven readers exist, spread across the binary, and **every single one is a `movsx`**. Not one is a
+mask. That is what makes the two-`u16` split solid rather than merely consistent: a bitfield packed
+beside a tile index would be tested, and this is compared and interpolated.
+
+The meaning is still **Inferred** — a 0..128 level that decreases monotonically, is compared against
+a global threshold and scales a rendering quantity is consistent with fog or light intensity, and
+`resetvisibility` writing it fits. The missing step is the consumer of the array `0x00519d0b` writes
+into. But the label now rests on arithmetic rather than on an operator's name, which is a different
+and much better position than yesterday's.
+
+**One anomaly recorded without explanation.** Three byte stores write computed values into the map
+object's offset `0` — `0x004a82b7`, `0x004a82c5`, `0x004a82f5`, with `and al,0Ch` and `sar eax,8`
+feeding them, inside an operator body that also raises script error `0x0e`. It rules out offset `0`
+being a vtable pointer, and that is all this survey can say about it.
+
+### The lesson this branch actually taught
+
+Four discovery patterns, four blind spots, and **every single failed probe failed by being unable to
+find what it was looking for**:
+
+- A linear `.text` decode drifts out of phase on the first embedded jump table and loses every call
+  site after it.
+- A linear taint walk dies at early-return epilogues it walks through but no path reaches.
+- A search for `mov ecx, [reg+0x482c]` returns nothing because the member is a subobject whose
+  address is taken with `lea` — and that nothing was read as reassurance.
+- A count of "499 of 503 references to `0x005ae958`" cannot see routes 2, 3 or 4, because none of
+  them contains that constant in the form being counted.
+
+In every case the instrument returned a clean-looking result and the conclusion drawn was broader
+than the instrument could support. The countermeasure now in the code is not a better pattern, it is
+a **counter**: `cell_lane` tallies every operand it reaches through the cell array and cannot decode,
+and the survey prints the total. It reads zero today. The point is that the next blind spot of this
+kind arrives as a number instead of as silence.
+
+**Process note.** The "Codex side" of the review of this branch was not Codex — that run produced
+nothing usable and the review was written by a second Claude pass without saying so. The
+cross-model gate is therefore unmet on this work, and the three `+2` read sites that pass cited
+were nonetheless real and correct. Its one substantive error was direction: it described the field
+as monotonically *raised*, where `cmp ecx,ebx; jle` reaches the store only when the stored value is
+strictly greater, so it is lowered. A real Codex pass on the fixed branch is still owed.
+
+### 2026-09-17, third pass — a real Codex review, and an overclaim of mine that it caught
+
+The first "Codex" review of this branch was not Codex. This one was, and it disputed four of six
+items. One of the four is the headline claim, and I got it wrong in the direction this project is
+most prone to: I took an Observed arithmetic fact and wrote an Inferred conclusion in the same
+sentence, at the same confidence.
+
+**What I claimed:** the `+2` field is "a level on a 0..128 scale" and the corpus's `0x0080` is "that
+scale saturated", labelled **Observed in a local binary**.
+
+**What the instructions actually show:** the field is read sign-extended at all 11 readers, none of
+them masks it, it is used as `(0x80 - field) * k >> 7`, and it is compared against map object
+`+0x4c`. That makes `0x80` an arithmetic **scale base**. It does not make the field's range *closed*
+at `0..128`, and **nothing disassembled so far clamps it**. A base of `0x80` is what you would use
+for a fraction in `0..128` and equally what you would use for a fixed-point quantity that can exceed
+it; the instructions do not choose. The corpus holding only `0x0000` and `0x0080` is a separate
+Observed fact, and "therefore `0x0080` is saturation" is the Inferred step joining the two.
+
+Now split into a table in `map-format.md` with each row carrying its own class. The part that
+survives unchanged is the part worth having: **the bitfield reading is dead.** Eleven sign-extending
+reads and no mask anywhere.
+
+This is the same error as `feedback_agreement_is_not_confirmation`, in a new costume: the arithmetic
+and the census agreed with each other, and I recorded their agreement as a measurement of the thing
+they agree about.
+
+**A second finding fell out of the sweep the review asked for, and it is a real refutation.** Four
+older passages still described `0x00800000` in single-bit language, including "`forcetexture` — which
+`clearmap` calls on every cell — *does* set the bit". Checking that against the 16-bit field model
+refutes it: `forcetexture`'s worker at `0x004a5ed0` touches exactly two cell operands in the whole
+function, a 16-bit read at `0x004a5efe` and a 16-bit write at `0x004a5f06`, both of lane `+0`. **A
+16-bit store to `+0` cannot alter `+2`.** The gameplay measurement (a `clearmap` save carries the
+value on all 4,096 cells) was right; the attribution was wrong, because `clearmap` does more than
+call `forcetexture` on every cell. The grid initialiser at `0x004a50e6`, which fills every cell's
+`+2` from map object `+0x48`, is the Inferred culprit.
+
+And it rehabilitates a step this file had itself disowned. An earlier section said the
+"`forcetexture` never sets it" observation "was an artefact of operation order and should not be
+relied on". It was correct all along, for a reason neither gameplay run could see: the two
+operations write different fields.
+
+**The `cell-unclassified` counter was the right idea in the wrong place.** Codex's objection: it
+"genuinely reaches zero only after taint reaches `cell_lane`" — it counts what arrives, not what
+never arrived. Fair, and adding counters for the reachable parts of that hole proved it immediately:
+
+| Counter | Value |
+| --- | ---: |
+| `cell-unclassified` | 0 |
+| `survey-entries` | 388 |
+| `survey-functions-truncated-at-2400-instructions` | 1 |
+| `survey-unreached-blocks-with-cell-shaped-operands` | 20 |
+
+The discovery loop also **reported that it had not converged** within its round cap the moment a
+counter existed for it. Raising the cap showed the method set was already complete at 169 — the cap
+was failing to *prove* convergence rather than losing methods — but I would not have known that
+without measuring, and "4 rounds looked like enough" is exactly the reasoning that produced the
+other four blind spots.
+
+One counter I tried and rejected: a raw count of unreached basic blocks. It is dominated by junk past
+the end of a function and **grows when the decode limit is raised**, which makes it an instrument
+that gets worse as the analysis gets better. Filtered to blocks containing an eight-byte-strided
+operand, 20 is a real number.
+
+**The fix that actually answers the objection is a taint-independent scan.** The survey now checks
+every instruction it decodes, *ignoring the taint entirely*, for a masking instruction whose operand
+is eight-byte strided at a cell-lane displacement. It over-counts freely — any eight-byte array in
+any surveyed function qualifies — and it finds **zero**. That is a statement no amount of missed
+taint can weaken, and it covers the 20 unreached blocks too, since it reads them regardless of
+reachability. It does not cover the scale-1 form, whose lanes cannot be identified without the taint,
+nor any function the four routes never found.
+
+**Four routes is the number found, not the number that exist.** Said that way now. Every one of the
+four was discovered only after a negative result looked wrong, and there is no argument that the
+list is closed: a pointer copied into another object's field, spilled and reloaded, passed as an
+argument, or formed by arithmetic the taint does not model would be a fifth.
+
+**One item I did not act on, because the coordinator adjudicated it against Codex and I reproduced
+the adjudication.** Codex claimed `the_corpus_exercises_every_gate_it_is_able_to` would pass with an
+empty `ENGINE_RECORD_GATES`. The constant is typed `[(u32, u32, u32); 5]`, so an empty array does
+not compile; and mutating the first threshold from 98 to 99 gives `FAILED. 216 passed; 1 failed`,
+which I ran. The claim was static reasoning from a reviewer whose sandbox could not take the cargo
+lock. The test stays, and the adjudication is recorded in a comment on it so the next reader does
+not re-litigate it.
+
+**Calibration note on this review.** It returned six verdict lines and no detailed body, so its
+silence on anything else is "not looked for", not "not present". Its four disputes were all
+specific, all checkable, and three of the four were right.
+
+### The pattern across all three reviews of this branch
+
+Every defect found in the survey itself was an instrument that could not find what it was looking
+for; every defect found in the *write-up* was an inference recorded at the confidence of the
+observation next to it. Those are the two failure modes, and they need different countermeasures. The
+first is answered by counters and by taint-independent cross-checks. The second is answered only by
+splitting the evidence classes in the sentence where the claim is made — which is why the `+2`
+finding now carries a six-row table instead of a paragraph.
+
 ## 2026-09-17 — Multiplayer is lockstep, the transport is DirectPlay, and the `.snp` files are Blizzard's
 
 Full findings in [`docs/multiplayer.md`](multiplayer.md); this entry records what changed and the

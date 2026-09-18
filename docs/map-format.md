@@ -29,20 +29,24 @@ The corpus is the working GS5R3 profile, including its supplied custom maps. No 
 
 Every one of the 365 inspected files begins with the same little-endian prefix:
 
-| Offset | Size | Current name | Evidence |
+| Offset | Size | Engine name | Evidence |
 | ---: | ---: | --- | --- |
-| `0x00` | 4 | `metadata` | Varies by file; meaning unknown. A 2026 community claim names this a compression header holding a version number plus reserved space — see below |
-| `0x04` | 4 | `width` | 32, 48, 64, 128, 160, or 256 in the observed corpus |
-| `0x08` | 4 | `height` | Matches the same bounded cell dimensions |
-| `0x0c` | 4 | `bits_per_pixel` | Always 8 in the observed corpus |
-| `0x10` | `width × height × 8` | Cell grid | Exactly one eight-byte record per cell |
+| `0x00` | 4 | format version | **Observed in a local binary, 2026-09-17.** Read into the scenario object's first dword at `0x005aa12c` by `fread` at `0x004855e5`; the loader branches on it in six places. See [What the loader does](#what-the-loader-does-read-out-of-lomseexe) |
+| `0x04` | 4 | `width` | **Observed in a local binary, 2026-09-17.** `fread` at `0x004a5300` into map object `+0x5c`; the allocator at `0x004a4f20` stores it as the grid width |
+| `0x08` | 4 | `height` | **Observed in a local binary, 2026-09-17.** `fread` at `0x004a5311` into map object `+0x60` |
+| `0x0c` | 4 | **bytes per cell** | **Corrected, 2026-09-17.** Not `bits_per_pixel`. `fread` at `0x004a5341`; the reader multiplies it by 64 at `0x004a535c` to size one 64-cell block read. The writer at `0x004a548a` writes the literal `8` set at `0x004a544b` |
+| `0x10` | `width × height × 8` | Cell grid | Read 64 cells at a time by `fread` at `0x004a5364`; written 512 bytes at a time at `0x004a54aa` |
 
-The cell record currently preserves both words without assigning engine behavior:
+The cell record is **two `u16` fields and one `f32`**, not two `u32`s:
 
-| Cell offset | Size | Current name | Evidence |
+| Cell offset | Size | Engine name | Evidence |
 | ---: | ---: | --- | --- |
-| `+0` | 4 | `tag` | Low bits **are** the tile-atlas slot (Observed in gameplay, 2026-09-17). Bit `0x00800000` is set in part of the corpus; its meaning is **Unknown**. Bits `10..22` are unused corpus-wide |
-| `+4` | 4 | `value_bits` / `value` | Every value is a finite little-endian `f32` in `0..20`; grayscale rendering produces coherent world relief |
+| `+0` | 2 | tile-atlas slot, signed | **Observed in a local binary, 2026-09-17.** Every *interpreting* read is `movsx r32, word [cell]` (`0x004a5261`, `0x004a4c3d`, `0x004a56d7`, `0x004a5cea`, `0x004a5dce`, `0x004a5e00`, `0x004a5efe`, `0x004a6388`, `0x004a9671`); every write is 16-bit (`0x004a5e08`, `0x004a5f06`, `0x004a50da`). The value goes into the bounds-checked tileset lookup at `0x00508f10`. The one wider access is the whole-cell dword copy at `0x004a9660`/`0x004a9666`, which decodes nothing |
+| `+2` | 2 | unidentified signed 16-bit scalar | **Observed in a local binary, 2026-09-17.** 11 reads, every one a `movsx`; 12 writes, every one 16-bit; **never masked anywhere**. `0x00519d00` uses it as `(0x80 - field) * k >> 7`, so `0x80` is an arithmetic **scale base**. `0x004c5cc2` compares it against map object `+0x4c`. — **Inferred, not Observed:** that its range is *closed* at `0..128` and that the corpus's `0x0080` is that range saturated. Nothing disassembled clamps it. See [the field is a signed scalar](#the-2-field-is-a-signed-scalar-not-a-bitfield) |
+| `+4` | 4 | elevation, `f32` | **Observed in a local binary, 2026-09-17.** Loaded with `fld dword [cell+4]` at `0x004a59f3`, `0x004a5235`, `0x00455e09`, `0x00457bac`, `0x0053291c`, `0x00532928`, `0x005329cd`, `0x00532abe`, `0x00532aca`, `0x00532b65`; stored with `fstp dword` at `0x00457c13`, `0x00457e25`, `0x00457e5d`. Fifteen FPU sites, no integer arithmetic |
+
+**No bit of a cell is masked, tested or set anywhere in the survey.** See
+[The cell is three fields](#the-cell-is-three-fields-and-no-bit-of-it-is-ever-masked).
 
 ### Cell storage order — packed y-major
 
@@ -229,15 +233,22 @@ so nobody re-derives it from the same corpus shape.
 
 It is wrong. A probe ran `392 clearmap` on a fresh 64x64 map, which calls `forcetexture` on every
 one of its 4,096 cells, then forced seven more cells individually, then saved. **Not one saved cell
-has the bit set** — zero of 4,096. Forcing a texture does not set this bit, so the bit does not mean
-"forced texture". Its meaning is **Unknown** again, and it stays on the open list for
+has the value** — zero of 4,096. Forcing a texture does not set it, so it does not mean
+"forced texture". **Confirmed in a local binary, 2026-09-17:** `forcetexture`'s worker cannot set it
+even in principle — its only cell write is a 16-bit store to lane `+0` at `0x004a5f06`, and `+2` is
+a different field. Its meaning is **Unknown** again, and it stays on the open list for
 [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4).
 
-What still holds is the masking, which is independent of the meaning: with `0x00800000` masked out,
-every corpus cell indexes a tile in `0..623`, and without it the flagged cells do not. The decoder
-keeps the raw tag and exposes `MapCell::tile_index()` plus a deliberately meaning-free
-`MapCell::high_flag_set()`; the constant is `CELL_TAG_HIGH_FLAG`, renamed from
-`CELL_TAG_FORCED_TEXTURE` so the code no longer asserts something that was measured false.
+**Superseded 2026-09-17 by the disassembly: this was never a bit of the tag.** The paragraph that
+stood here said "what still holds is the masking … with `0x00800000` masked out, every corpus cell
+indexes a tile in `0..623`, and without it the flagged cells do not". The conclusion was right on
+the corpus and the model behind it was wrong. Cell word 0 is **two 16-bit fields**: the tile slot is
+the whole low `u16` and `0x00800000` is the value `0x0080` of a separate signed scalar at `+2`. So
+the correct mask is the low 16 bits, not "everything except one bit" — the two agree on every
+shipped cell only because `0x0080` is the only thing the corpus ever puts in the upper field.
+`MapCell::tile_index()` masks `0xffff`; `MapCell::high_flag_set()` is retained as a
+deliberately meaning-free predicate on that value. See
+[the cell is three fields](#the-cell-is-three-fields-and-no-bit-of-it-is-ever-masked).
 
 ### `forcetexture` and `setterrain` are not the same operation
 
@@ -281,8 +292,11 @@ forced and whose terrain type was never set answered slot 0 → type 0, 1 → 6,
 with a type.
 
 Both directions together establish that **a cell's terrain type is derived from its tile index
-through the tileset, not stored in the cell** — which is consistent with tag bits `10..22` being
-unused across the whole corpus. The samples are recorded as `OBSERVED_TILE_TERRAIN_TYPES`.
+through the tileset, not stored in the cell** — and the engine agrees: the survey found no field in
+a cell other than the tile slot, the `+2` scalar and the elevation. (This used to be supported here
+by "tag bits `10..22` are unused across the whole corpus", which rested on the 32-bit-tag model this
+branch retired; bits 10–15 are part of the tile slot. The conclusion is unchanged and now rests on
+`0x00508f10` instead.) The samples are recorded as `OBSERVED_TILE_TERRAIN_TYPES`.
 
 All 26 recovered `.til` members parse as bounded text definitions. They declare an atlas name, grid dimensions, 32×32 tile size, terrain types, and tile-to-terrain relationships. The repository does not include those proprietary definitions or images.
 
@@ -419,12 +433,19 @@ tie-break that matters in practice, `chbldg01.smp`'s, rests on word 76, which oc
 one of which is `chbldg01.smp` itself. So the partition has no counterexample across 365 files, which
 is worth keeping, and it is one file deep in seven places.
 
-**Inferred:** that the word is a format version and that the loader uses it to choose the record
+**Confirmed, 2026-09-17, and the Inferred reading below is superseded.** The loader does read the
+word and does switch on it: the record serialiser at `0x0050da70` gates five field groups on it and
+the scenario reader at `0x00485617` gates a sixth. The five thresholds reproduce all six record
+sizes exactly — see
+[The record size is one struct with five version gates](#the-record-size-is-one-struct-with-five-version-gates).
+What is superseded is only the *causation*; the partition itself stands and is now explained.
+
+~~**Inferred:** that the word is a format version and that the loader uses it to choose the record
 layout. The correlation is the observation; the causation is not. An attended run has already shown
 the engine rewrites this word from its own state on every save rather than carrying the file's, which
 is consistent with a version stamp but does not establish that the loader reads it. It is also
 consistent with the layouts simply being the output of successive editor builds, which would produce
-the same correlation without the loader consulting the word at all.
+the same correlation without the loader consulting the word at all.~~
 
 Because it is Inferred, the parser uses it for exactly one thing: choosing a layout for a section
 whose record **count is zero**, where the section's length genuinely cannot distinguish the layouts.
@@ -484,7 +505,7 @@ residue in the file, which is what makes a save-diff a trustworthy instrument he
 
 [GitHub issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4) now tracks:
 
-- **what tag bit `0x00800000` means** — `forcetexture` sets it and **`resetvisibility`** clears it, both measured; reading it as *visibility state* is an inference from the operator's name and is **not** established. What computes the perimeter ring the corpus carries, and whether a `.smp` load-and-save preserves it, are open;
+- **what the value `0x00800000` means** — it is not a bit: it is `0x0080` in a signed 16-bit scalar at cell offset `+2` (**Observed in a local binary, 2026-09-17**). `resetvisibility` writes that field; **`forcetexture` provably cannot**, because its worker's only write is a 16-bit store to `+0` at `0x004a5f06`. Eleven readers use the field arithmetically and none masks it, so reading it as a *flag* of any kind is retired; reading it as *visibility intensity* remains an inference from the operator's name plus the `(0x80 - field)` arithmetic and is **not** established. What computes the perimeter ring the corpus carries, and whether a `.smp` load-and-save preserves it, are open;
 - ~~**the 52-/53-byte record families**~~ — **decoded 2026-09-17.** There are six record layouts,
   not three; all 365 maps decode, 21,117 records rebuild from typed fields, and object editing works
   on all 365. What the extra bytes *mean* is still Unknown: every one of them is constant within its
@@ -973,9 +994,12 @@ lom-asset-viewer --map-remove-sprite IN.scn INSTANCE_ID     OUT.scn
 `TERRAIN` is a number `0..10` or a `gs\maplib.gs` name with or without its `tt_` prefix, so
 `1`, `tt_water` and `water` are the same thing. `TILE_SLOT` is a raw atlas index. It is *not* range-checked against the **tileset**, because the
 atlas size comes from the active `.til` file and `tilesb01.til`'s 624 slots are one tileset's answer
-rather than the format's. It *is* range-checked against the **tag word**: corpus tag bits `10..22`
-are zero across all 1,258,496 cells, so an index of 1024 or more is refused — a fat-fingered `3920`
-for `392` is the realistic input, and it used to be written straight into the tag.
+rather than the format's. It *is* refused above `1024`, as a **conservative guard**: a fat-fingered
+`3920` for `392` is the realistic input, and it used to be written straight into the cell.
+(**Corrected, 2026-09-17:** this cap used to be justified as the tag word's field width — "corpus
+tag bits `10..22` are zero". The engine's tile field is the whole low `u16` and it is signed, so the
+format can express far more and only the tileset limits it. The cap stays; its justification was
+wrong.)
 
 A new sprite takes the next `instance_id` above every id in the file, starting at 200 on an empty
 map.
@@ -1111,21 +1135,37 @@ sub-map, save, and see whether the echo tracks the source.
 
 ### `resetvisibility` clears tag bit `0x00800000`
 
+> **Superseded in part, 2026-09-17.** Reading this as a *bit* is retired: it is the value `0x0080` of
+> a signed 16-bit field at cell offset `+2`, and `resetvisibility` writes that field as a whole word
+> at `0x004a90e0`–`0x004a91a1`. The gameplay measurements below are unaffected and the disassembly
+> explains why the two runs looked contradictory — the perimeter write is guarded on map object
+> `+8`. See [the field is a signed scalar](#the-2-field-is-a-signed-scalar-not-a-bitfield).
+
 **Observed in gameplay, 2026-09-17.** The two runs bracket the behaviour:
 
-| sequence | the bit, across all 4,096 cells of a 64x64 map |
+| sequence | cells whose `+2` field holds `0x0080`, out of 4,096 |
 | --- | --- |
 | `clearmap` then save, **no renderer calls** | **set** |
 | `clearmap`, paints, then `rebuild3dmap resetvisibility rendermap refreshdirty`, then save | **clear** |
 
-So `forcetexture` — which `clearmap` calls on every cell — *does* set the bit, and something on the
-render path clears it. **There was never a contradiction** with the earlier "0 of 4,096" reading:
-that run was measuring the state after a rebuild.
+So something `clearmap` does sets the value, and something on the render path clears it. **There was
+never a contradiction** with the earlier "0 of 4,096" reading: that run was measuring the state
+after a rebuild.
+
+> **Refuted in a local binary, 2026-09-17: it is not `forcetexture` that sets it.** This paragraph
+> used to read "`forcetexture` — which `clearmap` calls on every cell — *does* set the bit". The
+> measurement was right and the attribution was wrong. `forcetexture`'s worker at `0x004a5ed0`
+> touches exactly two cell operands in the whole function — a 16-bit read at `0x004a5efe` and a
+> 16-bit write at `0x004a5f06`, both of lane `+0` — and a 16-bit store to `+0` **cannot** alter
+> `+2`. `clearmap` does more than call `forcetexture` on every cell, and the write came from
+> something else it does. **Inferred:** the grid initialiser at `0x004a50e6`, which fills every
+> cell's `+2` with map object `+0x48`; `newmap` reaches the allocator at `0x004a4f20`, but no trace
+> from `clearmap` to the initialiser has been followed.
 
 **Isolated 2026-09-17 to a single call.** Five fresh maps, one renderer call each — fresh because
-once the bit is cleared it stays cleared:
+once the field is zeroed it stays zeroed:
 
-| map | sequence | bit set |
+| map | sequence | `+2` holds `0x0080` |
 | --- | --- | ---: |
 | `zf0.scn` | `clearmap`, save | 4096 / 4096 |
 | `zf1.scn` | `clearmap`, `rebuild3dmap`, save | 4096 / 4096 |
@@ -1136,32 +1176,44 @@ once the bit is cleared it stays cleared:
 **`resetvisibility` is the one.** Not `rebuild3dmap`, which an earlier draft of this section
 proposed — that hypothesis was wrong and the isolation says so.
 
-**What the operator's name suggests, and what it does not establish.** `resetvisibility` clearing a
-per-cell bit invites reading the bit as visibility state, and that would reframe the corpus pattern
-neatly — the bit sits on exactly the perimeter ring of 146 `.smp` files, which reads very differently
-as a visibility flag than as a texture flag.
+**What the operator's name suggests, and what it does not establish.** `resetvisibility` zeroing a
+per-cell value invites reading it as visibility state, and that would reframe the corpus pattern
+neatly — the value sits on exactly the perimeter ring of 146 `.smp` files, which reads very
+differently as visibility than as a texture flag.
 
 But that is an inference **from the operator's name**, and a name is not evidence about a field. The
-call could as easily clear a generic dirty or cache flag as a side effect. This project has been
-caught inferring semantics from plausible names before, so the recorded fact is the narrow one:
-`forcetexture` sets the bit, `resetvisibility` clears it, and the meaning stays **Unknown**.
-Separating "visibility" from "scratch state that the visibility pass happens to reset" needs an
-experiment on visibility itself.
+call could as easily clear a generic dirty or cache value as a side effect. This project has been
+caught inferring semantics from plausible names before, so the recorded facts are the narrow ones:
+something `clearmap` does sets the value, `resetvisibility` zeroes it, and the meaning stays
+**Unknown**. Separating "visibility" from "scratch state that the visibility pass happens to reset"
+needs an experiment on visibility itself.
 
-What is still **not** established is whether a load or a save touches the bit independently. Every
+The disassembly has since added real weight on the *shape* rather than the meaning — a signed
+scalar, read sign-extended 11 times, never masked, interpolated against a base of `0x80` — which
+kills the flag reading outright without settling what the scalar measures. See
+[the `+2` field is a signed scalar](#the-2-field-is-a-signed-scalar-not-a-bitfield).
+
+What is still **not** established is whether a load or a save touches the value independently. Every
 echo save in the `mapload` run happened after the renderer block, so rung 4's sixteen cleared
-interior cells are equally explained by `resetvisibility` running in that block.
+interior cells are equally explained by `resetvisibility` running in that block. The loader itself
+reads the cell grid as opaque bytes — one `fread` per 64 cells at `0x004a5364` — so nothing in the
+load path singles this field out.
 
 The [refutation of the forced-texture flag](#tag-bit-0x00800000--refuted-as-a-forced-texture-flag)
-above still stands, but on different evidence than it was written with: the bit does not mean "this
-cell's texture was forced", because the shipped corpus carries it on exactly the border ring and on
-no interior cell. The "`forcetexture` never sets it" step in that argument was an artefact of
-operation order and should not be relied on.
+above still stands, and the disassembly has since replaced its evidence with something stronger.
+The corpus argument was that the value sits on exactly the border ring and on no interior cell. The
+binary argument is that `forcetexture` writes only lane `+0`, 16 bits wide, at `0x004a5f06`, and so
+cannot touch `+2` at all — which settles it without reference to operation order. The
+"`forcetexture` never sets it" step that this section previously called "an artefact of operation
+order" turns out to have been **correct**, for a reason neither run could see: the two operations
+write different fields.
 
-**Writer guidance: preserve the bit, never clear it.** The corpus shows it living on disk in one
-place — 27,448 cells across 146 `.smp` files, exactly their perimeters — and the probe only ever
+**Writer guidance: preserve the whole `+2` field, never clear it.** The corpus shows it on disk in
+one place — 27,448 cells across 146 `.smp` files, exactly their perimeters — and the probe only ever
 used `loadscenariomap`/`savescenariomap`, never the `.smp` path. Whether a `.smp` load-and-save
 preserves the ring is **unmeasured**, so an editor that dropped it could be destroying real data.
+`set_tile` and `fill_terrain` preserve `tag & 0xffff0000`, which is the whole field rather than the
+one bit they used to keep.
 
 ### `setterrain` transition tiles: one offset table, one anchor per background
 
@@ -1556,6 +1608,459 @@ cargo run --release --example paint_refusal_survey -- MAP.scn tilesb01.til 3
 cargo run --release --example paint_refusal_survey -- MAP.scn tilesb01.til 3 8   # coarser stride
 ```
 
+## What the loader does, read out of `lomse.exe`
+
+**Observed in a local binary, 2026-09-17.** Everything above this section was inferred from
+statistics over 365 files. This section is read from the engine's instructions instead. Reproduce
+all of it with:
+
+```sh
+cargo run --release --example map_loader_survey -- "/path/to/English/lomse.exe"
+```
+
+The program refuses to report anything until it has re-derived its anchors from the executable it is
+given, so it cannot quietly survey the wrong bytes of a different build.
+
+### The call chain
+
+| Operator | Thunk | Object | Worker |
+| --- | --- | --- | --- |
+| `loadmap` | `0x004dfad0` | `0x005ae958` | `0x004a5270` → terrain reader `0x004a52e0` |
+| `loadscenariomap` | `0x00485b80` | `0x005aa12c` | `0x004855c0` |
+| `savescenariomap` | `0x00485a80` | `0x005aa12c` | `0x00485550` |
+| `savespecialmap` | `0x004eec00` | `0x005aa12c` | **`0x00485550`** — the same function |
+| `resetvisibility` | `0x004ab5f0` | `0x005ae958` | `0x004a90b0` |
+
+**`savescenariomap` and `savespecialmap` are the same code.** Both thunks load `ecx` with
+`0x005aa12c` and call `0x00485550`. The corpus observation that the two write byte-identical files
+was correct, and this is why.
+
+**There is one map object, not two.** The scenario object's terrain member is at
+`0x005aa12c + 0x482c`, which is `0x005ae958` — the same global `loadmap` and `resetvisibility` use.
+So `resetvisibility` and the file loader are demonstrably talking about the same cell array, which is
+what makes `resetvisibility` usable as the anchor for the whole survey.
+
+### The scenario file is a sequence of sections
+
+`0x004855c0` reads, in order:
+
+1. `fread` at `0x004855e5` — four bytes into the scenario object's first dword: **the header word**.
+2. `0x004a52e0` — the terrain block: width, height, bytes-per-cell, then the grid.
+3. `0x004f7120` — the trailing record section.
+4. `cmp dword [esi],64h` at `0x00485617` — **if the header word is at least 100**, `0x004c8fa0`
+   reads one more dword; otherwise `0x004c8f90` reads nothing and zeroes the field.
+
+Step 4 is what the corpus saw as "some layouts have a four-byte footer and some do not". **It is not
+a footer of the record section.** It belongs to a different member of the scenario object and is read
+after it. The corpus split at 98-no-footer / 101-footer brackets the engine's threshold of 100
+exactly.
+
+**The grid's cell size comes out of the file.** The reader at `0x004a5341` reads the dword at `0x0c`
+and multiplies it by 64 at `0x004a535c` to size each block read; the writer hardcodes `8` at
+`0x004a544b`. The field this project called `bits_per_pixel` is the engine's bytes-per-cell.
+
+### The record size is one struct with five version gates
+
+The section reader `0x004f7120` reads a `u32` count, then per record a `u32` **kind**, which it
+dispatches through a ten-entry jump table at `0x004f73b8` guarded by `cmp eax,9; ja`. Slots 5 and 6
+point at the error path, so eight kinds exist. Every record in the corpus is kind 1, whose class is
+constructed at `0x0050c0b0` with a vtable at `0x0054e910`; its read virtual is slot `+0x24`
+(`0x0050dd70`) and its write virtual slot `+0x28` (`0x0050dda0`), and **both call the same serialiser
+`0x0050da70`**.
+
+That serialiser reads a fixed head and then gates five field groups on the header word, which it
+reads from `[0x005aa12c]`:
+
+| Head | Bytes | Where |
+| --- | ---: | --- |
+| record kind | 4 | `0x004f7194`, consumed by the section reader before dispatch |
+| base-class prefix | 24 | `0x004f6b00`: six dwords into object `+4`, `+0x1c`, `+0x20`, `+0x24`, `+0x28`, `+0x30` |
+| one more dword | 4 | `0x0050dab5`, into object `+0x48` |
+
+| Gate | Threshold | At or above | Below |
+| --- | ---: | ---: | ---: |
+| `0x0050dac2` | 98 | 2 | 8 |
+| `0x0050db14` | 54 | 8 | 0 |
+| `0x0050db87` | 74 | 4 | 0 |
+| `0x0050dba1` | 96 | 1 | 0 |
+| `0x0050dbbb` | 102 | 2 | 0 |
+
+Evaluating that rule reproduces **every one of the six corpus record sizes and all nineteen header
+words**, with nothing fitted:
+
+| Header word | Rule | Corpus |
+| ---: | ---: | ---: |
+| 63, 73 | 48 | 48 |
+| 76, 79, 81, 87, 89 | 52 | 52 |
+| 96, 97 | 53 | 53 |
+| 98, 101 | 47 | 47 |
+| 102–111 | 49 | 49 |
+
+So the answer to "one struct with conditional fields, or a switch?" is **one struct with conditional
+fields**. `engine_tail_layout` in `map.rs` evaluates the rule, and
+`the_engines_version_gates_reproduce_every_observed_tail_layout` checks it against the corpus
+observations, which were measured independently of it.
+
+**What the corpus cannot pin.** Each threshold is pinned only to an interval: the corpus contains 73
+and 76, so it cannot tell 74 from 75. The exact values come from the binary alone. The gate at 54 is
+not exercised by the corpus at all — every shipped header word is at least 63 — and
+`the_corpus_exercises_every_gate_it_is_able_to` says so rather than leaving it a silent hole.
+
+**Also still assumed.** The serialiser can attach variable-length sub-objects on three paths
+(`0x0050db48`, `0x0050dbc8`, `0x0050dcd5`), and the rule above walks past all three. That is true of
+all 21,117 corpus records and is the first thing to doubt if a file ever disagrees.
+
+### The cell is three fields, and no bit of it is ever masked
+
+#### Four routes reach the cells, and each one had to be found separately
+
+This is the part that took four attempts, and the count of sites roughly doubled at the end of it.
+The engine reaches the map object and its cell grid in four distinct ways, and a discovery pattern
+for any one of them is structurally blind to the other three:
+
+| Route | Shape | Sites | Cost of missing it |
+| ---: | --- | ---: | --- |
+| 1 | `mov ecx, 0x005ae958` | 499 | — (the original scan) |
+| 2 | `lea ecx, [reg + 0x482c]` | 28 | 9 methods, one with a `+2` write the lane filter would have caught |
+| 3 | `call 0x004c6fc0` → object in `eax` | 208 | 10 methods and 7 cell sites, including 5 `+2` readers |
+| 4 | `mov reg, [0x005ae9ac]` — the cell array straight from the global | 11 | 10 cell sites, including 3 more `+2` readers |
+
+Route 2 exists because the map object *is* the scenario object's terrain member, so code holding the
+scenario pointer reaches it without ever naming `0x005ae958`. Route 3 is a two-instruction accessor,
+`mov eax, 0x005ae958; ret`, which is the most-used route by call count. Route 4 skips the object
+entirely: code that wants only the grid loads the pointer out of the global.
+
+**Four is the number of routes *found*, not the number that exist.** Each of the four was discovered
+only after a negative result looked wrong, and there is no argument here that the list is closed. A
+pointer copied into another object's field, spilled to a stack slot and reloaded, passed as a
+function argument, or formed by arithmetic the taint does not model would be a fifth route, and
+nothing in this survey would see it. That is why the taint-independent mask scan below matters more
+than the taint-dependent one.
+
+**Each failed probe failed the same way: it could not have found what it was looking for.** A search
+for `mov ecx, [reg + 0x482c]` returns nothing — the member is a subobject, so its address is taken
+with `lea`, never loaded — and that nothing was briefly read as evidence the coverage was fine. A
+count of "499 of 503 references to `0x005ae958`" likewise cannot see routes 2, 3 or 4, because none
+of them contains that constant in the form being counted. The survey now takes all four and reports
+the site count of each, so the next such gap shows up as a number rather than as silence.
+
+With all four, the survey walks **169** map-object methods plus **219** mid-function entry points
+(208 accessor calls, 11 absolute cell-array loads), running a forward must-analysis in each — a
+register counts as holding the cell array only where that is true on every path reaching it. Entries
+that begin mid-function start with *nothing* tainted, because `ecx` at an arbitrary point is not the
+object and seeding it would invent accesses.
+
+It found **70** instructions naming a cell lane:
+
+| Byte | Reads | Writes | Access widths | stride-8 operands in surveyed methods |
+| ---: | ---: | ---: | --- | ---: |
+| `+0` | 16 | 5 | 2 (20 sites), 4 (**1** site) | 55 |
+| `+1` | 0 | 0 | — | 0 |
+| `+2` | 11 | 12 | 2 only | 7 |
+| `+3` | 0 | 0 | — | 0 |
+| `+4` | 19 | 7 | 4 only | 49 |
+| `+5`–`+7` | 0 | 0 | — | 0 |
+
+How those sites were reached, since the forms do not carry equal weight:
+
+| Addressing | Base established as | Sites |
+| --- | --- | ---: |
+| `[array + index*8 + disp]` | proven object pointer | 46 |
+| `[array + index*8 + disp]` | a `+0x54` load in a known map-object method | 3 |
+| `[cell_pointer + disp]` | a `+0x54` load in a known map-object method | 10 |
+| `[array + byte_offset + disp]` (scale 1) | proven object pointer | 9 |
+| `[array + byte_offset + disp]` (scale 1) | a `+0x54` load in a known map-object method | 2 |
+
+46 of the 70 are reads and 24 are writes. **No site is a one-hop mask**, because there are no masks:
+the survey's one-hop rule — an immediate mask applied to a register loaded from a lane in the
+immediately preceding instruction — fired zero times.
+
+The scale-1 form carries an assumption the scale-8 form does not — that the register holds a
+multiple of the eight-byte stride — and the weaker basis carries another, that a `+0x54` load inside
+a map-object method is this class's cell array even where the must-analysis has lost the proof. Both
+are printed rather than collapsed, because a `[array + index*4]` would look identical to the first
+and would be misreported.
+
+Three findings follow, in descending order of confidence.
+
+**1. The first word is two 16-bit fields.** Not one `u32` "tag". Every *interpreting* access to
+byte `+0` is 16 bits wide and every access to byte `+2` is 16 bits wide. `getterrain`'s worker at
+`0x004a5240` is the clearest single site:
+
+```
+004a5254  mov esi,[esi+54h]                 ; the cell array
+004a5261  movsx eax,word [esi+eax*8]        ; the tile slot, sign-extended
+```
+
+and `forcetexture`'s worker at `0x004a5ed0` is its mirror:
+
+```
+004a5efe  movsx edx,word [edx+esi*8]        ; read the current slot
+004a5f06  mov [eax],cx                      ; write the new one, 16 bits
+```
+
+The slot then goes into `0x00508f10`, which bounds-checks it (`test edx,edx; jl` and
+`cmp edx,[ecx+2ch]`) against the tileset's tile count and answers `-1` outside. So it is a **signed
+16-bit** index, and **bits 10–15 belong to it** — they are not a separate unused region. This
+supersedes this project's `tag & !0x00800000`; `MapCell::tile_index` now masks the low 16 bits. On
+the shipped corpus the two rules agree, because `0x00800000` is the only bit above 15 any corpus cell
+sets, which is exactly why the corpus could not tell them apart.
+
+**One access is wider, and it decodes nothing.** `0x004a9660 mov ebx,[ecx+eax]` paired with
+`0x004a9666 mov ecx,[ecx+eax+4]` copies a whole cell, both words, into a second array. An earlier
+version of this section said the engine "never reads the first word as a dword"; that universal
+sentence is **false**. The conclusion is not affected — the same function immediately re-reads the
+copied cell's low word with `movsx eax, word [edx+eax]` at `0x004a9671` and bounds-checks it — but
+the correct statement is about *interpreting* reads, not about all reads.
+
+**2. `0x00800000` is a value of the second 16-bit field, not a bit of the first.**
+`resetvisibility`'s body writes that field as a whole word in five places, never as a bit
+operation:
+
+```
+004a90e0  mov [edx+eax*8+2],di              ; zero every cell's field
+004a9118  mov [ecx+eax*8+2],dx              ; or fill it from map object +0x48
+004a9170  mov [edi+eax*8-6],dx              ; and 0x80 along the perimeter, when
+004a9192  mov [edi+eax*8+2],dx              ; map object +8 is non-zero
+```
+
+The perimeter writes are guarded by `test eax,eax; je` on map object `+8` at `0x004a914a`, which
+reconciles the two attended runs that looked contradictory: a fresh `clearmap` map has that field
+zero, so the perimeter block is skipped and all 4,096 cells come back clear, while the 146 `.smp`
+files that carry `0x0080` on exactly their perimeter ring were saved with it set. The
+`mov edx,80h` that supplies the value is at `0x004a915f`.
+
+#### The `+2` field is a signed scalar, not a bitfield
+
+**Corrected, 2026-09-17. A first pass of this survey reported that nothing reads the field; that was
+false, and false about a method it had already walked.** Three readers sit inside surveyed
+functions and a fourth shape appears twice more. The clearest is at `0x004a938b`:
+
+```
+004a938b  mov eax,[edi+54h]                 ; the cell array
+004a938e  movsx ecx,word [eax+esi+2]        ; read the field, SIGNED
+004a9393  lea eax,[eax+esi+2]
+004a9397  cmp ecx,ebx
+004a9399  jle short 004A93AEh               ; skip the write when stored <= candidate
+004a93a6  mov [eax],bx                      ; reached only when stored > candidate
+```
+
+The same shape is at `0x004a9048`/`0x004a9055`, and `0x004a9025`/`0x004a9036` is its unconditional
+sibling (`je` rather than `jle`: write whenever the value differs).
+
+There are **11 readers in total**, spread right across the binary — `0x004204cb`, `0x0043bb55`,
+`0x00451395`, `0x004a9025`, `0x004a9048`, `0x004a938e`, `0x004c5cc2`, `0x004f68de`, `0x00517b67`,
+`0x00519ced`, `0x0050c208` — and **every single one is a `movsx`**. Not one is a mask.
+
+Three things follow, and they matter far more than the miss did:
+
+- **It is a scalar, not a bitfield.** `movsx` plus a signed `cmp` is arithmetic on a 16-bit
+  quantity. Nothing anywhere masks it. This *strengthens* the two-field split: a bitfield packed
+  alongside a tile index would be tested, and this is compared.
+- **At the two `jle` sites it only ever decreases.** `cmp ecx,ebx; jle` skips the store when the
+  stored value is less than or equal to the candidate, so the store is reached only when the stored
+  value is strictly greater — it is replaced by a *smaller* one. Monotonically non-increasing there.
+- **`0x80` is an arithmetic scale base, not a flag.** This is the find that reframes the whole
+  `0x00800000` story — and the reframing needs its evidence classes kept apart, because the first
+  write-up of it here did not. At `0x00519ce7`:
+
+```
+00519ce7  mov ecx,[5AE9ACh]                 ; the cell array, straight from the global
+00519ced  movsx edx,word [ecx+eax*8+2]      ; the field
+00519cfb  mov eax,80h
+00519d00  sub eax,edx                       ; 128 - field
+00519d05  imul eax,esi
+00519d08  sar eax,7                         ; ... * esi / 128
+00519d0b  mov [edx+ebp*8+4],eax
+```
+
+  `(0x80 - field) * k >> 7` is a linear interpolation whose denominator *is* `0x80`. The same shape
+  is at `0x00517b6f`. It is also compared against a *map-object field* rather than a constant: at
+  `0x004c5cc2`, `cmp edx,[5ae9a4h]`, which is map object `+0x4c`. The object's `+0x48` is what the
+  grid initialiser fills the field with. So there is a global value and a per-cell value, and the
+  per-cell one is tested against the global.
+
+  **Corrected, 2026-09-17 — what this does and does not establish.** A first version of this
+  section wrote "the field is a level on a 0..128 scale and `0x0080` is that scale saturated" as
+  **Observed**. It is not. Splitting it:
+
+  | Claim | Class |
+  | --- | --- |
+  | Read sign-extended at all 11 readers; never masked | **Observed in a local binary** |
+  | Used as `(0x80 - field) * k >> 7`, so `0x80` is a scale base | **Observed in a local binary** |
+  | Compared against map object `+0x4c` | **Observed in a local binary** |
+  | The corpus holds only `0x0000` and `0x0080` in this field | **Observed** (census of 353 maps, 1,040,384 cells) |
+  | Its range is *closed* at `0..128` | **Inferred** |
+  | The corpus's `0x0080` is that range **saturated** | **Inferred** |
+
+  The two Inferred rows are the step that joins the arithmetic to the census, and **nothing
+  disassembled so far clamps the field**. A scale base of `0x80` is what you would use for a
+  fraction in `0..128`, and it is also what you would use for a fixed-point quantity that can
+  exceed it; the instructions do not choose. What *is* settled either way is that **the bitfield
+  reading is dead** — 11 sign-extending reads and no mask anywhere — and that is the finding worth
+  keeping.
+
+**The meaning is still Unknown, and the label is now doing different work.** It is no longer
+"nothing reads it" — eleven things read it. A signed scalar that decreases monotonically at two
+sites, is compared against a global threshold, and scales a rendering quantity against a base of
+`0x80` is *consistent* with fog or light intensity, and `resetvisibility` writing it fits. What is
+missing is the step that ties the interpolated result to anything visible: `0x00519d0b` writes it
+into another array whose consumer this survey has not followed. **Inferred**, from the arithmetic
+and the operator's name — a stronger position than the name alone, and not Observed.
+
+Why the first pass missed it: `cell_lane` required an eight-byte index scale, and all three readers
+use the scale-1 form `[array + byte_offset_register + 2]`. The same gap dropped a write inside the
+survey's own anchor — `resetvisibility`'s second perimeter write at `0x004a9178`. The program now
+accepts both forms and **counts every operand it reaches through the cell array but cannot decode**,
+printing the total as `cell-unclassified`, so the next blind spot of this kind is loud rather than
+silent. It currently reports zero.
+
+**3. The second word is an `f32`.** Confirmed, and no longer an inference from value ranges. Fifteen
+of the eighteen sites touching byte `+4` are x87 instructions. `setelevation`'s worker is the whole
+story in five instructions:
+
+```
+004a59e8  mov ecx,[ebx+54h]
+004a59f3  fld dword [ecx+eax*8+4]           ; load the old elevation
+004a59f7  fcomp dword [esp+34h]             ; compare with the new one
+004a59fb  lea ecx,[ecx+eax*8+4]
+004a5a13  mov [ecx],edx                     ; store the new bits
+```
+
+**And no mask anywhere.** Across all **70** sites the survey found **zero** `and`, `test`, `or`,
+`xor`, `shr` or `sar` with an immediate against any cell lane, either on the cell operand directly or
+on a register loaded from one in the next instruction.
+
+**The reason that is worth stating is that it survived the survey doubling, four times over.** The
+site count went 35 → 53 → 60 → 70 as the scale-1 addressing form and then access routes 2, 3 and 4
+were added. Every one of the 35 instructions those passes recovered is a `movsx`, `mov` or `cmp`
+with no immediate. Widening the analysis added sites and did not add a single mask — and that was
+measured at each step rather than predicted once. Every bit-by-bit question this project has asked
+about the cell has the same answer: the engine does not work on the cell in bits. It reads a 16-bit
+tile slot, reads and writes a 16-bit level, and loads a 32-bit float.
+
+**A second form of the result that does not depend on the taint at all.** The objection to the
+above is that a negative produced by a taint analysis is only as good as the taint, and the counters
+show the taint does lose things. So the survey also scans **every instruction it decodes, ignoring
+the taint entirely**, for a masking instruction whose operand is eight-byte strided at a cell-lane
+displacement — `and`, `test`, `or`, `xor`, `shr`, `sar`, `bt`, `bts`, `btr` with an immediate. That
+over-counts freely: any eight-byte array in any surveyed function would qualify, and there are
+several. It finds **zero**.
+
+That is the stronger statement, because no amount of missed taint can weaken it: within the surveyed
+code there is no masking instruction against an eight-byte-strided operand at a cell-lane offset,
+whether or not the analysis could prove the base was the cell array. It also covers the 20 unreached
+blocks, which this scan reads regardless of reachability. What it does *not* cover is the scale-1
+addressing form — lanes there cannot be identified without the taint — or any function the four
+discovery routes never found.
+
+**The ceiling, stated plainly.** Every discovery route requires a direct `call rel32`, so **virtual
+dispatch is entirely uncovered** — the surveyed methods contain 36 indirect call sites, and a method
+reached only through a vtable slot is not in the set. The honest form of the finding is: *no
+interpreting bitwise-immediate access to a cell lane exists among map-object methods reachable
+without virtual dispatch, and no masked eight-byte-strided operand at a cell-lane offset exists
+anywhere in the code those routes reach.* Vtable recovery is the next step, not a caveat to wave
+at.
+
+**Scope, stated so a quiet result is not read as a clean one.** The eight-byte-strided operand
+counts in the table above come from the *same per-function decodes the survey uses*, not from a
+linear disassembly of the whole `.text`. An earlier version of this section quoted 4,892 and 4,284
+from such a whole-section decode — which drifts out of phase on embedded jump tables, so those
+figures described a deliberately misaligned reading and were quoted as the denominator of a negative
+result. They are withdrawn. The remaining gap between the census and the survey's own counts is
+other eight-byte arrays in the same functions, the map object's second array at `+0x64` among them —
+the one `anythingat?` and `terrainspriteat` use, which the survey deliberately excludes.
+
+**`cell-unclassified` is a real instrument but a narrow one, and the first write-up of it here
+overstated what its zero means.** It counts operands the taint *reached* and could not decode. It
+says nothing about operands the analysis never reached, which is a larger hole. Adding counters for
+the reachable parts of that hole made the point immediately — the run reports:
+
+| Counter | Value | What it means |
+| --- | ---: | --- |
+| `cell-unclassified` | 0 | operands reached through the cell array and not decoded |
+| `survey-entries` | 388 | 169 methods plus 219 mid-function entries |
+| `survey-entries-undecodable` | 0 | entry addresses that would not decode |
+| `survey-functions-truncated-at-2400-instructions` | 1 | decode hit its per-entry limit |
+| `survey-unreached-blocks-with-cell-shaped-operands` | 20 | blocks the dataflow never gave an entry state that nonetheless contain an eight-byte-strided operand |
+| `survey-masked-stride8-operands-ignoring-taint` | **0** | see below |
+
+The first version of the discovery loop also **did not converge** within its round cap, and said so
+once the counter existed; raising the cap showed the method set was already complete at 169, so the
+cap was failing to *prove* convergence rather than losing methods. It is now set where it converges.
+
+A raw count of unreached blocks turned out to be a bad instrument — it is dominated by junk past the
+end of a function and grows when the decode limit is *raised*. It is therefore filtered to blocks
+containing a cell-shaped operand, where 20 is a real number worth reporting rather than an artefact.
+
+**Five loss paths remain uncounted, and are printed by name rather than described in prose**: an
+object pointer spilled to a stack slot and reloaded, an object or cell pointer passed as an
+argument, a cell pointer stored into another object's field, pointer arithmetic the taint does not
+model, and access routes beyond the four found. An operand lost to any of those is absent from the
+results *and* from every counter above.
+
+### An observed anomaly: byte stores to the map object's first byte
+
+**Observed in a local binary, 2026-09-17. Unexplained, recorded rather than guessed at.** A
+gamescript operator body writes a single **byte** to the map object's offset `0`, twice on different
+paths, from computed values:
+
+```
+004a82a1  and al,0Ch
+...
+004a82b2  call 005394A0h                    ; float-to-integer
+004a82b7  mov [5AE958h],al
+...
+004a82c2  sar eax,8
+004a82c5  mov [5AE958h],al
+```
+
+A third such store sits at `0x004a82f5`. The same function raises gamescript error `0x0e` through
+`0x004d4550`, which is how the operator rejects bad arguments.
+
+What this rules out is small but real: **offset `0` of the map object is not a C++ vtable pointer**,
+because nothing writes a computed byte into one, and it is not part of the cell array, which starts
+at `+0x54`. It is a write path to the object that is neither a method call nor a cell access, and
+this survey has no reading of it beyond that. Two neighbouring fields are better understood:
+`+0x48` is what the grid clear fills the `+2` cell field with, and `+0x4c` is the threshold the
+`+2` field is compared against at `0x004c5cc7`.
+
+### What this contradicts
+
+| Previously held | Now | Evidence |
+| --- | --- | --- |
+| `0x0c` is `bits_per_pixel` | **Corrected**: bytes per cell, read from the file and used as the stride | `0x004a5341`, `0x004a535c`, `0x004a544b` |
+| Cell word 0 is a 32-bit tag; bits `10..22` unused | **Corrected**: two 16-bit fields; bits 10–15 belong to the tile slot, which is signed | `0x004a5261`, `0x004a5f06`, `0x00508f10` |
+| `tile_index = tag & !0x00800000` | **Corrected**: `tag & 0xffff` | same |
+| A writer preserves bit `0x00800000` when setting a tile | **Corrected**: it must preserve the whole upper 16-bit field, `tag & 0xffff0000`. Latent, not live — across all 353 parseable maps and 1,040,384 cells the field holds only `0x0000` (1,012,936) and `0x0080` (27,448) | `0x004a5f06` |
+| The `1024` tile-index cap reflects the tag layout ("bits 10..22 unused") | **Corrected**: the cap is a conservative corpus guard; the field is a signed `u16` and the tileset decides the real limit | `0x00508f10` |
+| Some layouts have a 4-byte record-section footer | **Corrected**: those four bytes are a separate section, gated at header word 100 | `0x00485617`, `0x004c8fa0`, `0x004c8f90` |
+| Six record layouts | **Corrected**: one record struct, five version gates, one record *kind* out of eight | `0x0050da70`, `0x004f73b8` |
+| The loader consulting the header word is Inferred | **Confirmed**: it switches on it in six places | `0x0050dac2`, `0x0050db14`, `0x0050db87`, `0x0050dba1`, `0x0050dbbb`, `0x00485617` |
+| Cell word 1 is a float, inferred from value ranges | **Confirmed** from the instruction | `0x004a59f3` and fourteen more |
+| `0x00800000` is a bit whose meaning is Unknown | **Refined**: it is the value `0x0080` of a *signed 16-bit scalar* at cell `+2`, read sign-extended at all 11 readers and never masked, used arithmetically against a scale base of `0x80`. Whether its range is closed at `0..128`, and so whether the corpus value is saturation, is **Inferred** | `0x00519d00`, `0x004c5cc2`, `0x004a938e` |
+
+### What this did not settle
+
+- **What the `+2` level measures.** Eleven readers were found — an earlier draft of this section
+  wrongly said none were. They establish the field's *shape* decisively (a signed `0..128` level,
+  interpolated and compared, never masked) and its *meaning* only by suggestion. The missing link is
+  the consumer of the array `0x00519d0b` writes the interpolated result into.
+- **Virtual dispatch.** Every method-discovery route follows only direct `call rel32`; the surveyed
+  methods contain 36 indirect calls. Vtable recovery is the highest-value next step and would raise
+  the ceiling on every negative above.
+- **What map object offset `0` holds**, given that three byte stores write computed values into it.
+- **What the other seven record kinds are.** The jump table at `0x004f73b8` has eight live slots;
+  the corpus only ever uses kind 1. The constructors are at `0x004f71b0`, `0x004f71e1`, `0x004f7213`,
+  `0x004f7248`, `0x004f727d`, `0x004f72a8`, `0x004f72af`, `0x004f72da`.
+- **The exact thresholds 74 and 75.** The binary says 74; the corpus cannot tell.
+- **What map object `+8` and `+0x48` are** — the two fields that decide whether `resetvisibility`
+  writes the perimeter and what value it fills with.
+- **What the dword read at `0x004c8fa0` is for.**
+- **Whether a `.map` loaded by `loadmap` has a header word at all.** `0x004a5270` calls the terrain
+  reader without reading one first, so a bare terrain file would begin with `width`. Every file in
+  `English/map/` parses as a scenario file, so nothing in the corpus exercises that path.
+
 ## Commands
 
 ```sh
@@ -1584,7 +2089,19 @@ target/release/lom-asset-viewer --view-map MAP.scn tilesb01.til tilesb01.lbm
 target/release/lom-asset-viewer --export-map-preview MAP.scn tilesb01.til tilesb01.lbm /tmp/map-preview.png
 target/release/lom-asset-viewer --serve --pic '/path/to/Lords of Magic Special Edition/English/pic.mpq'
 target/release/lom-asset-viewer --serve tilesb01.til tilesb01.lbm --port 9000
+
+# Read the format out of the engine rather than out of the corpus.
+cargo run --release --example map_loader_survey -- '/path/to/Lords of Magic Special Edition/English/lomse.exe'
 ```
+
+`map_loader_survey` prints the loader's field-by-field stream trace, the record size the engine's own
+version gates imply for every header word, and every instruction that names a cell lane — reached
+through all four routes to the map object. It verifies its anchors against the executable before
+reporting, recovers the record-kind dispatch bound from the binary rather than trusting a constant,
+and exits non-zero if either fails. It also counts every operand it reaches through the cell array
+but cannot decode, as `cell-unclassified`; that number should be zero and is the alarm if a new
+addressing form appears. Set `MAP_SURVEY_DUMP_METHODS=1` to list the methods surveyed. See
+[What the loader does](#what-the-loader-does-read-out-of-lomseexe).
 
 `--dump-map-cells` prints one line per cell — `x`, `y`, packed index, raw tag, masked tile index,
 whether the `0x00800000` flag is set, and the elevation word — for the whole grid or for an

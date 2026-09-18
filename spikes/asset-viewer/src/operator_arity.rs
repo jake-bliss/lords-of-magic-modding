@@ -36,7 +36,7 @@ use iced_x86::{
 use crate::native_table::{NativeTableError, PeImage};
 
 /// Context field holding the operand-stack index.
-const STACK_INDEX_FIELD: u64 = 0x54;
+pub(crate) const STACK_INDEX_FIELD: u64 = 0x54;
 
 /// Upper bound on the instructions decoded for one operator. Several operators are thunks that tail
 /// call their implementation far away in the section, so the budget is on work done rather than on
@@ -243,7 +243,7 @@ fn stack_effect_to_depth(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Adjustment {
+pub(crate) enum Adjustment {
     /// Freshly loaded from the stack-index field, not yet adjusted.
     Loaded,
     Increment,
@@ -252,7 +252,7 @@ enum Adjustment {
 
 /// Whether an instruction is `inc`/`dec` of a 32-bit register, which is how the index is adjusted
 /// before being committed.
-fn adjustment(instruction: &Instruction) -> Option<Adjustment> {
+pub(crate) fn adjustment(instruction: &Instruction) -> Option<Adjustment> {
     if instruction.op0_kind() != OpKind::Register {
         return None;
     }
@@ -268,7 +268,7 @@ fn adjustment(instruction: &Instruction) -> Option<Adjustment> {
 
 /// Recognise `lea dst,[tracked+1]` and `lea dst,[tracked-1]`, the compiler's other spelling of the
 /// index adjustment. Returns the destination register and which way the index moved.
-fn lea_adjustment(
+pub(crate) fn lea_adjustment(
     instruction: &Instruction,
     tracked: &BTreeMap<Register, Adjustment>,
 ) -> Option<(Register, Adjustment)> {
@@ -289,7 +289,7 @@ fn lea_adjustment(
 }
 
 /// Whether an instruction loads the context's stack-index field into a register.
-fn is_stack_index_load(instruction: &Instruction) -> bool {
+pub(crate) fn is_stack_index_load(instruction: &Instruction) -> bool {
     instruction.code() == Code::Mov_r32_rm32
         && instruction.op1_kind() == OpKind::Memory
         && instruction.memory_base() != Register::None
@@ -298,7 +298,7 @@ fn is_stack_index_load(instruction: &Instruction) -> bool {
 }
 
 /// Whether an instruction stores a register into the context's stack-index field.
-fn is_stack_index_store(instruction: &Instruction) -> bool {
+pub(crate) fn is_stack_index_store(instruction: &Instruction) -> bool {
     instruction.code() == Code::Mov_rm32_r32
         && instruction.op0_kind() == OpKind::Memory
         && instruction.memory_base() != Register::None
@@ -306,7 +306,7 @@ fn is_stack_index_store(instruction: &Instruction) -> bool {
         && instruction.memory_displacement64() == STACK_INDEX_FIELD
 }
 
-fn branch_target(instruction: &Instruction) -> Option<u32> {
+pub(crate) fn branch_target(instruction: &Instruction) -> Option<u32> {
     matches!(
         instruction.op0_kind(),
         OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64
