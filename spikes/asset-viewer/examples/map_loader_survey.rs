@@ -937,7 +937,7 @@ fn absolute_reference_sites(image: &PeImage<'_>, target: u32) -> BTreeSet<u32> {
 
     let mut sites: BTreeSet<u32> = BTreeSet::new();
     let needle = target.to_le_bytes();
-    for (start, length) in image.executable_ranges() {
+    for (start, _file_offset, length) in image.executable_ranges() {
         let Some(offset) = image.file_offset(start) else {
             continue;
         };
@@ -987,7 +987,7 @@ fn absolute_reference_sites(image: &PeImage<'_>, target: u32) -> BTreeSet<u32> {
 /// silently loses everything after it.
 fn accessor_call_sites(image: &PeImage<'_>) -> BTreeSet<u32> {
     let mut sites: BTreeSet<u32> = BTreeSet::new();
-    for (start, length) in image.executable_ranges() {
+    for (start, _file_offset, length) in image.executable_ranges() {
         let Some(offset) = image.file_offset(start) else {
             continue;
         };
@@ -1065,7 +1065,7 @@ fn map_object_methods(image: &PeImage<'_>) -> BTreeSet<u32> {
         patterns.push(lea);
     }
 
-    for (start, length) in image.executable_ranges() {
+    for (start, _file_offset, length) in image.executable_ranges() {
         let Some(offset) = image.file_offset(start) else {
             continue;
         };

@@ -47,7 +47,7 @@ fn main() {
     let rules = recover(&image, &addresses).expect("recover the animation rules");
     // Taken from the image rather than hardcoded, so "the whole of .text" means it. The size is
     // the section's file-backed extent; its 309-byte virtual tail is loader zero-fill.
-    let (text_start, text_length) = *image
+    let (text_start, _text_offset, text_length) = *image
         .executable_ranges()
         .first()
         .expect("the image has a code section");

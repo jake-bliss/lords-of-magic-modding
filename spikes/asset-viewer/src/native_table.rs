@@ -193,21 +193,27 @@ impl<'a> PeImage<'a> {
         })
     }
 
-    /// Every executable section, as `(virtual address, size of its file-backed bytes)`.
+    /// Every executable section, as `(virtual address, file offset, size of its file-backed bytes)`.
     ///
     /// The size is the section's **raw** size, not its virtual size. Scans want the bytes that
     /// exist: a section's virtual tail beyond its raw data is zero-fill the loader supplies and is
     /// not in this buffer at all. `.text` in `lomse.exe` 3.02 is 0x14B200 raw against 0x14B535
     /// virtual, and those 309 bytes hold nothing to decode.
     ///
+    /// The file offset is carried alongside because a caller that decodes the bytes needs both:
+    /// the virtual address to report, and the offset to read from.
+    ///
     /// Added so callers stop hardcoding the length of the code section.
-    pub fn executable_ranges(&self) -> Vec<(u32, usize)> {
+    pub fn executable_ranges(&self) -> Vec<(u32, usize, usize)> {
         self.sections
             .iter()
             .filter(|section| section.executable)
             .filter_map(|section| {
-                let start = self.image_base.checked_add(section.virtual_address)?;
-                Some((start, section.raw_size as usize))
+                Some((
+                    self.image_base.checked_add(section.virtual_address)?,
+                    section.raw_offset as usize,
+                    section.raw_size as usize,
+                ))
             })
             .collect()
     }

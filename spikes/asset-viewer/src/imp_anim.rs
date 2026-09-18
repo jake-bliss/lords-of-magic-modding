@@ -1585,7 +1585,7 @@ mod tests {
         assert_eq!(rules.mirror_decrements_when, Parity::Even);
         assert_eq!(rules.cycle_modes.modes.len(), 5);
 
-        let (text_start, text_length) = *image
+        let (text_start, _text_offset, text_length) = *image
             .executable_ranges()
             .first()
             .expect("the image has a code section");

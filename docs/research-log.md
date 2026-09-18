@@ -4354,3 +4354,394 @@ observation next to it. Those are the two failure modes, and they need different
 first is answered by counters and by taint-independent cross-checks. The second is answered only by
 splitting the evidence classes in the sentence where the claim is made — which is why the `+2`
 finding now carries a six-row table instead of a paragraph.
+
+## 2026-09-17 — Multiplayer is lockstep, the transport is DirectPlay, and the `.snp` files are Blizzard's
+
+Full findings in [`docs/multiplayer.md`](multiplayer.md); this entry records what changed and the
+two things I got wrong on the way.
+
+### The answer
+
+**Observed.** The game is a lockstep, deterministic, peer-to-peer simulation. Four independent lines
+of evidence, none of which depends on the others:
+
+1. The engine compares six checksums between computers and reports `Divergence` — `'EXE' version`,
+   `'PlayAnimation Count'`, `'Random-Seed'`, `'IMP' files`, `'GS' files`, `'Player-Stats'` —
+   per message ID and per tick. Reporting code at `0x004b4fc0`–`0x004b5260`.
+2. Vanilla `gs/network.gs` hands `setchecksumproc` a procedure that checksums every army's location
+   and facing and every unit's type, health, hit points, movement points, champion type, experience,
+   unique ID and seven modifier words, plus each player's gold, food and crystals. The engine reads
+   that procedure back at `0x004b4c81`, inside the checksum module.
+3. The ~100 wire message types at file offsets `0x159c1c`–`0x15a1f0` are overwhelmingly *orders* —
+   `MOVE_ARMY`, `ORDERS`, `BATCH_ORDERS`, `BUY_UNIT`, `END_TURN`, `SCRIPTCALLBACK` — with a smaller
+   state-poke vocabulary and a `RESYNC_*`/`XFER` recovery path.
+4. The state dump at `0x15a248`–`0x15a4f5` carries `gameseed`, `random count`, `halt_ticks`,
+   `skip_ticks`, `half_speed_ticks`, `go_countdown`, `late_messages`.
+
+**So the homelab verdict is negative on the thing that matters.** Desync is a determinism problem;
+a better network cannot fix it. The actionable finding is that `'GS' files` and `'EXE' version` are
+divergence classes, which means every peer needs byte-identical archives — mixed 3.02/GS5R3/vanilla
+installs cannot stay in step. That needs no infrastructure at all.
+
+### `netlockgame`, the operator that defeated the arity walker
+
+**Observed.** Six instructions at `0x004b6020`: load the provider pointer, null-check it, load the
+vtable, `jmp dword [eax+58h]`. It is nullary, pushes nothing, and the walker was right to refuse an
+indirect branch. Slot 22 on the DirectPlay class is `0x0044b440`, which is `jmp 0x004b7dd0` — the
+base member that returns the local computer id, the same one `thiscomputer` and `ishost` call. The
+operator discards the result.
+
+**On the transport the game uses, `netlockgame` locks nothing.** The shipped corpus calls it exactly
+once, in `gs/Dlg/multidlg.gs`, immediately before `startnetgame`, where it was evidently meant to
+close the lobby.
+
+### Refuted: the `.snp` files are not DirectPlay service providers
+
+**Refuted.** `Battle.snp` and `Standard.snp` export `SnpBind`/`SnpQuery` — the **Storm** Network
+Provider interface, Blizzard's. `Standard.snp` declares `Direct Cable Connection` (`SERIAL.CPP`),
+`Modem` (`MODEM.CPP`) and `Local Area Network (IPX)` (`IPX.CPP`) and imports no sockets library at
+all. `Battle.snp` is Blizzard's Battle.net client verbatim, help text and all, describing a *Diablo*
+chat screen and hardcoding `209.67.136.170;exodus.battle.net`.
+
+**Observed.** `lomse.exe` imports 26 `STORM.dll` ordinals, every call site of which is in the archive
+and Storm-wrapper modules plus the two allocator ordinals, and three `DPLAYX.dll` functions —
+`DirectPlayCreate`, `DirectPlayEnumerateA`, `DirectPlayLobbyCreateA`. It carries a complete set of
+source-level assertion strings for a class named `CDPlay`. The transport is DirectPlay; the `.snp`
+files came in the box with Storm and are not loaded.
+
+There are **four** classes in the provider hierarchy, recovered automatically from the constructor
+stores that install their vtables: an abstract base (`0x0054dbf0`), `CDPlay` (`0x0054d548`),
+`CSigs` (`0x0054d838`) and a Storm/SNet class (`0x0054d8b0`). `CSigs` is largely stubbed — five of
+its slots, including `selectprovider` and `joinnetworkgame`, are `xor eax,eax / ret 4`.
+
+### The correction that cost the most
+
+**Corrected.** I first reported `0x005d1e84` as a global pointer with 110 reads and **zero** writes,
+and concluded the provider abstraction was dead code in this build. Two independent scans agreed —
+a byte-pattern search over the whole file and an `iced` sweep with real operand-access analysis —
+and both were right about what they measured and wrong about what it meant.
+
+`0x005d1e84` is field `+0x4b2c` of the singleton at `0x005cd358`. It is written at `0x004b6290` as
+`mov [edi+4B2Ch],eax`. No absolute store exists to find because the compiler addresses a static
+object's fields absolutely on *reads* while the writer holds the base in a register. **A global with
+many reads and no writes is the signature of either an unassigned pointer or a static object's
+field, and only the arithmetic tells them apart.** Two agreeing scans are one shared assumption, not
+a confirmation. `native_dispatch::static_object_field` now makes that check one call, with a test.
+
+The second, smaller error: my first draft of the survey tool annotated *every* singleton whose
+address was below the pointer as "contains it", which named a dozen owners for one field. It now
+reports only the nearest base below the pointer.
+
+### What is now committed
+
+`spikes/asset-viewer/src/native_dispatch.rs` recognises three dispatch shapes — virtual on a global
+pointer, non-virtual member on a global pointer, and `thiscall` on a static singleton — reads
+vtables, recovers the vtable a constructor installs, and finds every vtable in the image from the
+stores that install it. Ten unit tests over synthetic PE images; two mutations confirmed to fail the
+suite (dropping the `ecx`-provenance tracking, and dropping the requirement that a vtable be loaded
+out of the object before an indirect call is read as virtual).
+
+`spikes/asset-viewer/examples/multiplayer_survey.rs` drives it. Nothing is hardcoded to the
+addresses this branch found: the provider pointer comes out of `netlockgame`'s own body, the vtable
+candidates come from the constructor stores, and the slot span comes from the operators. It reports
+which slots **no** operator reaches — slots 0, 1, 9–17, 19–21, 23, 24, 26 — which is where the send
+and receive paths live (`CDPlay` slots 20 and 21, `0x0044b210` and `0x0044b130`).
+
+### Concrete "touchy" mechanisms, for the record
+
+**Observed**, all with addresses in `docs/multiplayer.md`: a 257-byte message payload cap on a fixed
+receive buffer; `EnumSessions` with a **50 ms** timeout; a send path that `Sleep`s on the game thread
+to rate-limit itself, with a 100 ms default post-send wait set in the base constructor; a
+per-destination sequence number kept as a dword but sent as **one byte**; a silent drop path for a
+flagged peer; and no IP-address field anywhere in the shipped UI, so discovery is broadcast-only and
+`Join` refuses any name not already in the enumerated list.
+
+## 2026-09-18 — The six checksums, an offline pre-flight checker, and a post-mortem that is switched off
+
+Second pass on multiplayer. Full detail in [`docs/multiplayer.md`](multiplayer.md) from the heading
+"Second pass". Three results, in order of how much they change what a person would do.
+
+### 1. The desync post-mortem exists, fires in exactly the right place, and is disabled
+
+**Observed.** `0x004b4940` runs the procedure registered by `setstatlogproc` — in vanilla
+`gs/network.gs`, a full per-player, per-army, per-unit state dump — and has exactly **one** caller,
+`0x004b52d7`, immediately after the `Divergence` report is formatted. The engine was built to dump
+its state the moment a desync is detected.
+
+**Observed.** It is gated on `[0x005843e4]`. That global is written at exactly one instruction in
+the whole image, `0x004b585e` inside the `netlog` operator, with `edi` zeroed at `0x004b57d9`. It
+lies past `.data`'s raw data, so it is zero at load. **The gate is zero at load and the only write
+to it writes zero.** `netlog` itself contains no output call of any kind.
+
+So the instrument is switched off with no switch to turn it on, which is a complete explanation for
+why nobody in this community has ever diffed a desync. This **replaces** the first pass's closing
+suggestion that the network log be captured; it cannot be, and no second machine was needed to find
+that out.
+
+**Why this global reading is sound when last week's identical-looking one was not.** On the previous
+entry I read `0x005d1e84` as never written and was wrong: it is a field of a static object whose
+writer holds the base in a register, so no absolute store existed to find. `0x005843e4` *is* written
+absolutely, and each of its neighbours `0x005843e0`/`e8`/`ec`/`f0` is written absolutely by a
+different operator — the signature of separate globals, not one object. The presence of an absolute
+write is the check that distinguishes the two cases, and it is the check I skipped last time.
+
+### 2. Two of the three install-derived checksums are reproducible; the third is not computed
+
+**Observed.** The comparator dispatches on a value index through a six-entry jump table at
+`0x004b54a8` (`cmp eax,5 / ja` at `0x004b4f9b`), giving index 0 `'EXE' version`, 1 `'GS' files`,
+2 `'Random-Seed'`, 3 `'Player-Stats'`, 4 `'IMP' files`, 5 `'PlayAnimation Count'`.
+
+**Observed.** `'EXE' version` (`0x004b4a95`–`0x004b4b2a`) is a 32-bit wrapping sum of the
+**zero-extended** bytes of the running executable, cached in `0x00584424`.
+
+**Observed.** `'GS' files` (`0x004d496c`–`0x004d4990`) is a 32-bit wrapping sum of the
+**sign-extended** bytes of every script source the loader is handed, gated by
+`gschecksumon`/`gschecksumoff` on `0x00584600` and accumulated in `0x00584604` — the same global
+the state dump prints as `GS Checksum=%d`. It is **not** a digest of `gs.mpq`. That sharpens the
+first pass rather than contradicting it: peers with different scripts still diverge, and the engine
+notices by executing them.
+
+The two byte sums are **not the same byte sum**: `movsx` against `xor edx,edx`. Any test vector made
+of ASCII cannot tell them apart, which is how a guessed hash would have survived a weak test.
+
+**Observed.** There is exactly one `CHECKSUM` builder (`0x004b4c20`, one caller) and its complete
+set of payload stores puts four meaningful quantities in a ten-dword payload: the executable sum,
+the script content sum, the game seed, and the script `setchecksumproc` result. Two slots are
+hardcoded zero; two are never written. **Inferred: two of the six named classes can never fire and a
+third may compare uninitialised stack.** Which class lands on which slot is **Unknown** — the
+payload offsets and the value indices do not line up in any ordering I could justify, and I did not
+pick one to make the table tidy.
+
+**Observed.** `lomse.exe` contains no `.mpq` filename string, and the only two whole-file byte-sum
+routines are the executable sum and a generic one at `0x004b1e60` serving the scenario transfer.
+**Inferred: `'IMP' files` is not computed in this build.** So the pre-flight checker is built around
+what was read, not around a plausible hash.
+
+Also Observed, on the bounds: the checksum queue is **100 entries of 192 bytes** (`mov esi,64h` at
+`0x004b4a71`, stride `0xc0`), and the comparison covers **at most four computers**
+(`cmp ebx,4 / jge` at `0x004b4f43`) while computer records are indexed 1..16.
+
+### 3. The pre-flight checker works, validated three ways
+
+`examples/preflight.rs` over the new `install_checksum` module. Three installs on this machine have
+byte-identical `lomse.exe` and `imp.mpq` and three different `gs.mpq` (confirmed independently with
+`shasum` before trusting it), so the output is falsifiable.
+
+| Pair | `'EXE' version` | `imp.mpq` | script content |
+| --- | --- | --- | --- |
+| baseline vs 3.02 | both `149429203` | identical | differs, 379 named members |
+| baseline vs GS5R3 | both `149429203` | identical | differs, 2406 named members |
+| 3.02 vs GS5R3 | both `149429203` | identical | differs, 2770 named members |
+
+All nine predictions hold. **The corollary is the useful part: since the executable is byte-identical
+across all three, `'EXE' version` cannot be what makes a modded install incompatible. Script content
+is the whole story.**
+
+Honest limits, both in the tool's own output: the archive comparison covers every member rather than
+only those the engine loads, so it can raise a false alarm but cannot miss a real difference; and
+the three-install test skips when the installs are absent, so on a bare machine it cannot fail. The
+algorithms are separately covered by synthetic tests that always run. Mutation-checked: swapping the
+sign-extension for a zero-extension fails two synthetic tests **and passes the three-install test**,
+which is exactly the limit of what a separation test can prove.
+
+### 4. The message-name table is off by one, and its last slot is a wild pointer
+
+**Observed.** The lookup at `0x0048a4e0` bounds `gm_type` to 0..97 (`cmp eax,62h`), and only 97
+slots of the table at `0x0055b898` resolve to a string; slot 97 holds `0x52454658`, the ASCII bytes
+`XFER` — the pointer table has run into the string data it points at, and the caller formats it
+with `%s`. Slot 20 is `THIEF_STOLEN_RESOURCEPRISONER_ESCAPE`, 36 characters, eight longer than the
+next-longest entry. **Inferred, strongly:** a missing comma in a C literal array, so `table[t]`
+names message `t + 1` for every `t ≥ 21`.
+
+**Observed — a cross-check sharing no mechanism with the string evidence.** The CHECKSUM builder
+sends `push 5Fh` (type 95) at `0x004b4c4f`; slot 94 is `CHECKSUM` and slot 95 is `AUTOPLAY`. A live
+send site puts the name one slot low. A third confirmation: the 16 message types that route to the
+checksum-emitting branch are, shift-corrected, all simulation mutations (`MOVE_ARMY`, `END_TURN`,
+`BUY_UNIT`, `ORDERS`, `SCRIPTCALLBACK`, …) and uncorrected a nonsense mix.
+
+**A detector I withdrew.** The survey tool first flagged the merge automatically with "entry X ends
+with entry Y's whole name". It fired on `BATCH_ORDERS`/`ORDERS`, `SCRIPTCALLBACK`/`ACK` and
+`REQUEST_START_GAME`/`START_GAME` — all legitimate — and **missed slot 20**, because the swallowed
+name is only a suffix of the merged literal and no slot points at it. Three false positives and a
+false negative. The tool now reports the length distribution and the argument lives in prose. A
+detector that cannot be stated crisply is worse than none.
+
+### 5. `/testseed=` is a determinism switch, not just a seed
+
+**Observed.** The command line is parsed at `0x004fee60`–`0x004fefb0` by `strstr` plus `atoi`:
+`/s=`, `/x=`, `/testseed=`, `/debug`, `/nodebug`, `/nompq`, `/notrimlogs=`, `/cd=`, `/%`.
+`/testseed=` stores to `0x005d2ca4`, read at three sites: `0x0048417b` makes the host's game seed
+`[0x005d2ca4]` when non-zero and `rand()` otherwise, and `0x0045c722`/`0x0045cdf4` substitute
+`[0x005d2ca4]` for `GetTickCount()` in two message-construction paths. **Inferred:** it fixes the
+shared seed *and* removes wall-clock variation from two wire paths, which is the right tool for a
+reproducible two-machine test.
+
+**Unknown:** what reads config `+0x130`, so what `/notrimlogs=` changes is not established. The name
+is suggestive and the name is all I have. Also Unknown: what writes `GS.LOG` and `GSDEBUG.DAT` —
+Observed only that they are filename fields of the GameScript VM object (`+0x660` and `+0x55c`, set
+at `0x004d2225`/`0x004d221d`), which is a different thing from the network stat log.
+
+## 2026-09-18 — Resync is dead, the transfer path cannot ship scripts, and the engine already marks bad builds
+
+Third pass. Detail in [`docs/multiplayer.md`](multiplayer.md) from "Third pass". The question was
+whether resync could move the homelab verdict. It cannot, and the reason is structural rather than
+evidential.
+
+### Resync is unreachable
+
+Shift-corrected first, because the slot-versus-type trap has now bitten twice on this branch: slots
+62/63 hold `RESYNC_REQUEST`/`RESYNC_START`, so the real types are **63** and **64**.
+
+**Observed.** There are exactly two message-header builders: `0x0048cc70`, which takes the type as
+an argument, and `0x0048cc40`, the same function with the type hardcoded to zero. `0x0048cc70` has
+**54 call sites and every one passes a literal `push imm8`** — no site passes a computed type. Those
+54 sites construct **45 distinct types**, and neither 63 nor 64 is among them.
+
+The routing exists, which is what made them look live: the send fan-out at `0x00489c6c` gives both
+policy `0x00489d0d` (send to every computer including the sender, shared with `READY`, `GO`,
+`TICK_TIME`), and the 31..65 gate at `0x00489ad5` routes both to the same branch as 28 other types.
+**Wired and never built** — the same shape as the disabled post-mortem from the previous entry.
+**Inferred:** designed, plumbing survived, trigger never written or removed. **Unknown:** what it
+would have carried, since there is no builder whose payload could be read.
+
+Method note: I first tried to settle this from the dispatchers and got two false leads. The
+dispatcher at `0x0048bdc0` turned out to be the "emit a CHECKSUM after this message" filter, and
+`0x00489c6c` the *send* fan-out, not a receive handler. Enumerating what the binary can *construct*
+was the question that actually had an answer, and it is a better question than "where is the
+handler" whenever the handler might not exist.
+
+### The transfer path cannot ship an archive
+
+**Observed.** `XFER` (type 31) is built once, at `0x004b7439`. The sender `0x004b7410` resolves a
+file-kind tag through `0x004b9570`, then `CreateFileA` / `CreateFileMappingA` / `GetFileSize` /
+`MapViewOfFile`, and ships the mapping in **120-byte chunks** (`mov edi,78h` at `0x004b74da`) with a
+`chunk * 100 / total` percentage for `XFER_PROGRESS` (`0x004b75a8`–`0x004b75b7`). 120 fits inside
+the 257-byte payload cap, so the design is coherent.
+
+**Observed.** Four callers, each passing a literal tag (83, 71, 77, 68). The resolver maps tags
+68..83 onto the path builder `0x00505110`, whose eight kinds are exactly
+`savegame|multisav/lastsave.lom`, `LOMGSOUT.TMP`, `LOMXFERG.TMP`, `LOMXFERS.TMP`, `LOMXFERU.TMP`,
+`APPLOG.TXT`, `LOM_TSPR.TMP`, `LOMD%.4d.TMP` — plus tag 77, which runs the script's
+`setscenarionameproc` procedure for `map/<name>` or `multisav/<name>`.
+
+**No MPQ path template exists and no caller can supply an arbitrary filename.** So a resync could
+only ever have repaired a *state* divergence, never a `'GS' files` mismatch, and **the homelab
+verdict stands unchanged**.
+
+### The engine already marks incompatible games — and this is the useful part
+
+**Observed.** `0x00505f10` formats `[0x00584604]` (script content checksum) and `[0x00584424]`
+(executable byte sum) through `cksum=%d,%d` (`0x005736ec`) at `0x00505f30`, script checksum first.
+Both transports build that tag while setting the session name — Storm at `0x0046fbf8` inside vtable
+slot 2 (`0x0046fbd0`), `CDPlay` at `0x0044a84e`.
+
+**Observed.** `CDPlay` vtable slot 11 (`0x0044a840`, virtual-only, reached by no operator) builds the
+local tag and compares it byte by byte against another; on mismatch it formats the session's display
+name through `"*%s"` (`0x00556b24`), on match it copies it plainly.
+
+**Inferred: a game in the multiplayer list whose host build does not match yours is shown with a
+leading asterisk.** It marks, it does not refuse. That is a shipped, user-facing pre-flight check
+over exactly the two values the `preflight` tool reproduces, and it partly answers the previous
+entry's Unknown — the *tag* is checked before joining, while the six-value comparison still waits
+for play to start. **Unknown:** whether any UI renders the asterisk; I have not seen the list.
+
+`install_checksum::session_tag` now produces the same string and `preflight` prints it. **Only half
+is comparable to the game's display:** the executable sum is exact, the script half sums a member set
+the engine may not load, so the first number will likely differ. The comparison carries across; the
+absolute value does not. I wrote the stronger claim first and corrected it before committing.
+
+### Two unexplored leads
+
+**Observed.** `APPLOG.TXT` is path kind 5, requested from exactly one site, `0x0048447f`. There *is*
+an application log path in the shipped build. **Unknown** what is written to it or whether that site
+is reachable — a better lead than `GS.LOG` for anyone wanting engine output. `LOMGSOUT.TMP` (kind 1)
+is requested from `0x004c9929` and `0x004d7119`, both GameScript modules, likewise **Unknown**.
+
+### The two-machine experiment is now specified
+
+Written out in the doc as steps: byte-identical archives first (checked with `preflight` or by
+comparing session tags), an eight-faith `.scn`, a layer-2 domain, `/testseed=12345` on both, two runs
+differing only in `COMBAT_MODE`, and a result table mapping each observation to what it would mean.
+The engine's own dump is unavailable, so capture is script-side: `getgameseed` and the
+`setchecksumproc` procedure's result each turn, plus a screen recording because
+`'PlayAnimation Count'` is a divergence class.
+
+### On the test gap flagged last entry
+
+It is covered rather than open, and the doc now says so. The property a guessed hash would have
+violated — the two byte sums differ because one sign-extends and the other zero-extends — is
+asserted by `the_two_checksums_disagree_on_a_high_byte`, which always runs and was confirmed to fail
+when the sign extension is swapped. The install test demonstrates separation only, and that same
+swap passes it.
+
+## 2026-09-18 — Corrections from cross-model review
+
+A correctness pass over the three multiplayer entries above, after an independent Codex review of
+`3dec492`. Four of its findings were verified and left alone: the two checksum algorithms, the
+unreachability of resync, and the off-by-one with its `push 5Fh` cross-check. Three were disputes
+and one was a bad test. All four are fixed here; nothing new was investigated.
+
+### Corrected: `lomse.exe` does contain `.mpq` filename strings
+
+I wrote that it contains none, and used that as the stated basis for "`'IMP' files` appears not to
+be computed at all". **The premise is false.** There are five, in a packed table:
+
+| Address | String | Pushed at |
+| ---: | --- | --- |
+| `0x005734d0` | `special.mpq` | `0x004ff4ad` |
+| `0x005734dc` | `gs.mpq` | `0x004ff49d`, `0x004ff4e6` |
+| `0x005734e4` | `pic.mpq` | `0x004ff48a`, `0x004ff4d3` |
+| `0x005734ec` | `imp.mpq` | `0x004ff479`, `0x004ff4be` |
+| `0x005734f4` | `sndfx.mpq` | `0x004ff466`, `0x004ff4f7` |
+
+**Observed.** Every push feeds one two-argument helper, `0x004feb10`, called at `0x004ff491`,
+`0x004ff4b2`, `0x004ff4c5`, `0x004ff4d8`, `0x004ff4eb` and `0x004ff4fc`, which stores archive
+handles at object offsets `+0x114`, `+0x118`, `+0x11c` and `+0x124`. The archives are opened there,
+not digested — so the conclusion is unchanged, but its stated reason was wrong.
+
+**How I got it wrong, because that is the reusable part.** I searched with
+`strings -n 4 | grep -iE '\.mpq'` and got nothing. `strings` on this PE does not emit that region;
+a raw byte search over the file finds all five immediately. **This repository already records the
+lesson — a negative result from one spelling of a search is not absence — and I repeated it inside
+the same branch that records it.** The check that would have caught it costs one line.
+
+**What the conclusion now rests on**, which never depended on filename strings: the sole `CHECKSUM`
+builder (`0x004b4c20`, one caller) has a complete enumerated set of payload stores, and they are
+four identified quantities plus two hardcoded zeros plus two slots never written. No archive digest
+reaches the message. **Inferred** (unchanged): `'IMP' files` is one of the dead slots.
+**Unknown**, and newly so: whether an `imp.mpq` digest is computed anywhere for another purpose.
+
+### Softened: "XFER cannot ship an MPQ" was one step short
+
+**Observed** and unchanged: the tag is a literal at all four `XFER` call sites, and seven of the
+eight resolver outcomes are fixed templates, none naming an archive.
+
+**Not proved:** tag 77 resolves through the **script-supplied** `setscenarionameproc` procedure at
+`0x004b54c0`, and I established no constraint on its output. Vanilla `gs/network.gs` is
+**Observed** to build `"map/"` or `"multisav/"` plus `getmultiscenarioname`, but a mod replaces
+`gs.mpq` and therefore that procedure. The doc now says "no path found, tag 77 unchecked" rather
+than "cannot". The homelab verdict never depended on it — it rests on resync being unbuildable.
+
+### Reconciled: the first pass contradicted the third
+
+The document was written in three passes and the early ones still described resync as a live
+recovery path — in the wire-message table, in the prose after it, and as a homelab benefit. A reader
+could find two answers. All three now carry forward-pointing **Corrected** notes and the wire table
+lists `RESYNC_*` as names-only. The evidence-label preamble now also states what an `Observed` claim
+cites, defines **Corrected**, and says outright that where passes disagree the later one is current.
+
+Also relabelled: "the routing is wired and the messages are never built" was stated as `Observed`
+when only its two halves are; the conjunction is `Inferred`.
+
+### Fixed: a test that could not fail
+
+`the_exe_checksum_wraps_at_32_bits_rather_than_saturating_or_panicking` folded `wrapping_add` in the
+test body and then called the public function on four bytes, which cannot overflow — so it passed
+under a saturating implementation. Replaced with
+`both_checksums_wrap_through_the_public_function_rather_than_saturating`, which pushes ~16 MB
+through each public function to cross the bound for real: 255 × 16,843,010 = 2³² + 254, and
+127 × 16,909,321 = `i32::MAX` + 120.
+
+Mutation-verified both ways. Swapping `wrapping_add` for `saturating_add` in `exe_checksum` fails
+with `left: 4294967295, right: 254`; the same swap in `script_checksum` fails at the second
+assertion. The old test survived both.
