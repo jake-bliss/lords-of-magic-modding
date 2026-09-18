@@ -116,10 +116,11 @@ old heuristic excluded any name appearing as a literal anywhere, hiding genuine 
   `gs\scenario\default.gs` declare entries.
 
 Measured on GS5R3: 17,641 distinct literal names and **14,978 definitions**, so 2,663 literals were
-never definitions. The native-candidate count is **2,148**, down from 2,151, because the widened
-rule recognises definitions the three-token window missed. (Those three figures were 13,609 and
-2,151 while the rule was three tokens flat; the widening is described under *Procedure locals*
-below and is labelled Corrected.) The scan reports `distinct-definition-names` alongside the
+never definitions. The native-candidate count is **2,195**. Two corrections moved it from the
+13,609 definitions and 2,151 candidates that the flat three-token rule produced: the widened rule
+recognised definitions the window had missed, which removes candidates, and the case-fold
+correction added back 47 engine constants that a lowercase definition of the same word had been
+suppressing. The net is +44. Both are described below and both are labelled Corrected. The scan reports `distinct-definition-names` alongside the
 literal count, and `LOM_CANDIDATE_LIMIT` raises the 50-line display cap for cataloguing the full
 vocabulary.
 
@@ -161,25 +162,31 @@ above with no length threshold applied.
 
 ### What this settles about the candidate vocabulary
 
-Reconciling the 2,151-name candidate vocabulary against the table:
+Reconciling the GS5R3 candidate vocabulary against the table (re-measured after the definition-shape
+widening and the case-fold correction; the figures were 2,151 / 1,445 / 671 / 35 before both):
 
 | Class | Count | Reading |
 | --- | ---: | --- |
-| Confirmed operators | 1,445 | present in the table with an entry point |
-| SCREAMING_CASE | 671 | engine **constants** pushed by name, not operators |
-| Remainder | 35 | see below |
-| **Candidates** | **2,151** | |
+| Confirmed operators | 1,444 | present in the table with an entry point |
+| SCREAMING_CASE | 717 | engine **constants** pushed by name, not operators |
+| Remainder | 34 | see below |
+| **Candidates** | **2,195** | |
 
 The heuristic's stated weakness — *"can contain false positives from unrelated binary strings"* — is
 now measured rather than assumed. Two thirds of the vocabulary are confirmed procedures, and almost
 all of the rest are a category the heuristic could not distinguish: **constants are not operators**,
-so they are absent from the table by construction rather than by error.
+so they are absent from the table by construction rather than by error. The constant count rose by
+46 as the net of both corrections; the case-fold fix alone recovered 47 names for GS5R3 — `GOLD`,
+`FOOD`, `CRYSTALS` and the rest — of which 46 are SCREAMING_CASE. Those were always constants and
+were always absent from the operator table, but they had been absent from the *candidate list* too,
+which is the part that was wrong.
 
-The 35-name remainder is the heuristic's actual error bar. Nineteen are `Type_*` engine type tags
-(`Type_Imp`, `Type_Font`, `Type_EditBox`). The other sixteen are short, low-use names (`e1`, `uf`,
-`hh`, `jx`, `rx`, `xp`, `ice`, `log`, `no`) that look like dictionary keys our definition-shape
-classifier does not recognise as definitions. That is a **precision limit of the classifier**, not
-evidence of engine surface, and it is the tightest bound we have on it: roughly 0.7% of candidates.
+The 34-name remainder is the heuristic's actual error bar. Twenty are `Type_*` engine type tags
+(`Type_Imp`, `Type_Font`, `Type_EditBox`) that `is_screaming_case` does not match because they are
+mixed case. The other fourteen are short, low-use names (`e1`, `uf`, `hh`, `jx`, `rx`, `xp`, `ice`,
+`log`, `no`, `building_type`) that look like dictionary keys our definition-shape classifier does not
+recognise as definitions. That is a **precision limit of the classifier**, not evidence of engine
+surface, and it is the tightest bound we have on it: roughly 1.5% of candidates.
 
 ### Operator arity, recovered from the code
 
@@ -655,16 +662,28 @@ Restricted to the broad "likely hardcoded engine name" candidate list, which is 
 | --- | ---: | ---: | ---: |
 | language-primitive | 55 | 55 | 54 |
 | native-host-call | 1,383 | 1,414 | 1,390 |
-| constant-or-data | 643 | 709 | 670 |
+| constant-or-data | 689 | 760 | 717 |
 | engine-dictionary-key | 0 | 0 | 1 |
 | unclassified-residue | 32 | 33 | 33 |
-| **broad candidates** | **2,113** | **2,211** | **2,148** |
+| **broad candidates** | **2,159** | **2,262** | **2,195** |
 
-So **roughly 98.5% of the broad candidate list is real** — a primitive, an operator the engine registers, or a constant — and about 33 names per profile are coincidences of the string filter. `script-definition` is zero there by construction: the heuristic already excludes anything the corpus defines.
+So **roughly 98.5% of the broad candidate list is real** — a primitive, an operator the engine registers, or a constant — and about 33 names per profile are coincidences of the string filter. `script-definition` is zero there, now for a principled reason rather than by construction: a candidate is by definition a name the corpus does not define, and both sides of that comparison are case-sensitive.
 
-The `broad-candidate` column reproduces that older heuristic **including its case fold**, on purpose: comparing a repaired classifier against a faithfully reproduced baseline is the only comparison worth making. It is also why `GOLD` is not a candidate — `gs\barter.gs` defines `/gold`, and the fold takes that as a definition of `GOLD`.
+**The published candidate totals moved when the fold was fixed.** `likely_engine_names` in `src/main.rs`, which is what `--scan-gamescript` prints, carried the same case-folded definition check, so a lowercase `/gold` suppressed `GOLD` — 290 uses in 3.02 — from the list a person actually reads:
+
+| | vanilla | patch302 | gs5r3 |
+| --- | ---: | ---: | ---: |
+| candidates, case-sensitive | 2,159 | 2,262 | 2,195 |
+| under the old fold | 2,113 | 2,211 | 2,148 |
+| recovered | 46 | 51 | 47 |
+
+Every recovered name is an engine constant (`GOLD`, `FOOD`, `CRYSTALS`, `WARRIOR`, `WIZARD`, `TARGET_ARMY`, `CITY_OWNER`), which is the class the filter exists to surface. Both the scanner and the classifier report the same deltas from independently written code, and both print them (`engine-names-recovered-from-the-old-case-fold`, `broad-candidates-recovered-from-the-old-case-fold`) so the movement is stated rather than silent. Evidence class: Corrected.
+
+The *binary-string* half of the rule stays folded in both places: it asks whether a name occurs in the image at all, a question case does not bear on. Only the "does the corpus define this name" half has to agree with the interpreter.
 
 `engine-dictionary-key` recognises keys of a dictionary the engine owns, against this crate's own recovered terrain-sprite registry (`map::TERRAIN_SPRITE_TYPES`). That accounts for 113 of 3.02's residue rows — `cave` at 157 uses, plus `eemush2`, `minec`, `crystb`, `fish`, `brew` and the rest. The table's *ids* are profile-specific and unused here; only its names are.
+
+That table was dumped from a **GS5R3** script set, so applying it to the vanilla and 3.02 columns is an **assumption, not a measurement**: it assumes the registry carries the same names across profiles, which this run does not establish. The 126 GS5R3 rows are measured against their own profile; the 112 vanilla and 113 patch302 rows are not. A name wrongly placed here has moved out of `unclassified-residue` and nowhere else, so the error is confined to those two classes. Re-running the sprite-type probe per profile would settle it.
 
 `unclassified-residue` is named for what is not known about it. It is **not** a false-positive list: its highest-use members are genuine script definitions whose definition sites the scanner still cannot see — `set_level_modifications` (279 uses, `gs\levlmods.gs`), `getdungeonstrength` (204 uses, `gs\placedng.gs`), `build_statement` (340 uses, `gs\text.gs`, its value spanning more than the attachment window). The rest is mixed-case engine type names such as `Type_GraphicPage` that `is_screaming_case` does not match. Shrinking this class is a job for the definition scanner, not for the operator table.
 

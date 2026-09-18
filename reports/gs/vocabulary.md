@@ -13,7 +13,8 @@ the interpreter resolves:
 4. `constant-or-data` — SCREAMING_CASE and absent from the operator table.
 5. `engine-dictionary-key` — a key in a dictionary the engine owns, recognised against this crate's
    recovered terrain-sprite registry (`map::TERRAIN_SPRITE_TYPES`). Only the table's names are used;
-   its ids are profile-specific.
+   its ids are profile-specific. **See the caveat below: this class is an assumption, not a
+   measurement, for two of the three profiles.**
 6. `unclassified-residue` — none of the above.
 
 Matching a name against the corpus's definitions is **case-sensitive**, because the VM resolves
@@ -21,10 +22,25 @@ names case-sensitively. An earlier version folded case, which made `GOLD` a `scr
 the strength of `gs\barter.gs`'s `/gold` in the same run that reported `GOLD` unresolved in 75
 members.
 
-The `broad-candidate` column records whether the older heuristic (called but never defined, and
-present as an ASCII string in the executable) admitted the name, so the two can be compared row by
-row. It reproduces that heuristic **including its case fold**, deliberately: a repaired classifier
-is only worth comparing against a faithful baseline. That is why `GOLD` is not a candidate.
+The `broad-candidate` column records whether the scanner's candidate rule admits the name: called,
+never defined, and present as an ASCII string in the executable. `likely_engine_names` in
+`src/main.rs` — the scanner this column reproduces — carried the same case fold and has been
+corrected too, so the tool and this table now agree. The correction **raised the published
+candidate totals**, because names like `GOLD` had been suppressed by a lowercase `/gold`:
+
+| | vanilla | patch302 | gs5r3 |
+| --- | ---: | ---: | ---: |
+| broad candidates, case-sensitive | 2,159 | 2,262 | 2,195 |
+| under the old case fold | 2,113 | 2,211 | 2,148 |
+| recovered by the correction | 46 | 51 | 47 |
+
+Every recovered name is an engine constant — `GOLD` (290 uses), `FOOD`, `CRYSTALS`, `WARRIOR`,
+`WIZARD`, `TARGET_ARMY`, `CITY_OWNER` — which is exactly the class the filter was meant to surface.
+`--scan-gamescript` reports the same deltas from an independently written code path.
+
+The binary-string half of the rule stays case-folded in both places. It asks whether a name occurs
+in the image at all, which case does not bear on; only the "does the corpus define this" half has
+to agree with the interpreter.
 
 ## Counts per class per profile
 
@@ -46,10 +62,10 @@ is only worth comparing against a faithful baseline. That is why `GOLD` is not a
 | --- | ---: | ---: | ---: |
 | language-primitive | 55 | 55 | 54 |
 | native-host-call | 1,383 | 1,414 | 1,390 |
-| constant-or-data | 643 | 709 | 670 |
+| constant-or-data | 689 | 760 | 717 |
 | engine-dictionary-key | 0 | 0 | 1 |
 | unclassified-residue | 32 | 33 | 33 |
-| **broad candidates** | **2,113** | **2,211** | **2,148** |
+| **broad candidates** | **2,159** | **2,262** | **2,195** |
 
 `script-definition` is zero in this table by construction: the heuristic already excludes every
 name the corpus defines. About 98.5% of the candidate list is real; roughly 33 names per profile
@@ -71,6 +87,22 @@ A further 113 rows in 3.02 are engine terrain-sprite dictionary keys, now split 
 `engine-dictionary-key`. Shrinking this class is work for the definition scanner, not the operator
 table. Every row discussed here is `broad-candidate = no`, so none of it bears on the 98.5% figure
 above.
+
+## Caveat: `engine-dictionary-key` is GS5R3-derived
+
+`map::TERRAIN_SPRITE_TYPES` was dumped from a **GS5R3** script set by this repository's engine
+probe. Applying it to the vanilla and 3.02 columns is therefore an **assumption, not a
+measurement**: it assumes the engine's terrain-sprite registry uses the same *names* across the
+three profiles. That assumption is weaker than it looks safe — the table's own documentation warns
+that a different mod registers different types in a different order, and while only the names are
+used here and not the profile-specific ids, nothing in this run establishes that vanilla's registry
+holds the same set of names.
+
+Concretely: the 112 vanilla and 113 patch302 rows in this class are *unverified* at the name level,
+and the 126 GS5R3 rows are the only ones measured against their own profile. A name wrongly placed
+here has moved out of `unclassified-residue` and nowhere else, so the error is confined to those two
+classes and does not touch `native-host-call` or the candidate totals. Re-running the sprite-type
+probe per profile would settle it.
 
 ## Files
 

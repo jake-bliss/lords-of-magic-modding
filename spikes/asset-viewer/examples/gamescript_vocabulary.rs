@@ -17,9 +17,10 @@
 //!    its highest-use members are genuine script definitions whose definition sites the scanner
 //!    still cannot see, such as `set_level_modifications` in `gs\levlmods.gs`.
 //!
-//! Name matching against the corpus is case-sensitive, because the VM's name resolution is. The
-//! `broad-candidate` column deliberately reproduces the older heuristic's case *fold*, so the two
-//! can be compared row by row.
+//! Name matching against the corpus is case-sensitive everywhere here, because the VM's name
+//! resolution is, and `likely_engine_names` in `src/main.rs` -- the scanner this column reproduces
+//! -- was corrected to match. The run reports how many candidates the old fold used to hide, so
+//! the movement in the published totals is stated rather than silent.
 //!
 //! Usage:
 //!
@@ -156,9 +157,9 @@ fn classify(profile: &Profile, output: Option<&Path>) -> Result<(), String> {
 
     let mut executable_names: BTreeMap<String, usize> = BTreeMap::new();
     let mut definition_names: BTreeSet<String> = BTreeSet::new();
-    // The older heuristic's case-folded view of the same set, kept separately so the
-    // `broad-candidate` column reproduces that heuristic exactly rather than a repaired version
-    // of it. Comparing a fixed classifier against a faithful baseline is the whole point.
+    // The same set as the scanner's old case-folded definition check saw it. The scanner no longer
+    // folds -- `likely_engine_names` in `src/main.rs` was corrected too -- so this is kept only to
+    // report how many candidates the fold used to hide, not to classify anything.
     let mut folded_definition_names: BTreeSet<String> = BTreeSet::new();
     let mut members = 0_usize;
     let mut failures = 0_usize;
@@ -190,6 +191,7 @@ fn classify(profile: &Profile, output: Option<&Path>) -> Result<(), String> {
     }
 
     let mut rows: Vec<(String, usize, Class, bool, Option<u32>)> = Vec::new();
+    let mut recovered_from_the_case_fold = 0_usize;
     for (name, uses) in &executable_names {
         let lower = name.to_ascii_lowercase();
         let operator_class = operators.classify(name);
@@ -213,9 +215,16 @@ fn classify(profile: &Profile, output: Option<&Path>) -> Result<(), String> {
         // The scanner's existing broad heuristic, reproduced *including* its case fold, so the two
         // can be compared row by row. The fold is a defect of that heuristic -- it is why `GOLD`
         // is not a candidate -- and reproducing it faithfully is the point of the column.
-        let candidate =
-            !folded_definition_names.contains(&lower) && binary_strings.contains(&lower);
+        // The scanner's candidate rule, matching the corrected scanner: called, never defined
+        // (case-sensitively, as the VM resolves), and present as a string in the executable. The
+        // binary-string comparison stays folded in both places -- it asks whether the name occurs
+        // in the image at all, a question case does not bear on.
+        let candidate = !definition_names.contains(name) && binary_strings.contains(&lower);
+        let hidden_by_the_old_case_fold = candidate && folded_definition_names.contains(&lower);
         rows.push((name.clone(), *uses, class, candidate, entry_point));
+        if hidden_by_the_old_case_fold {
+            recovered_from_the_case_fold += 1;
+        }
     }
 
     let mut totals: BTreeMap<Class, usize> = BTreeMap::new();
@@ -247,9 +256,14 @@ fn classify(profile: &Profile, output: Option<&Path>) -> Result<(), String> {
     println!("parse-failures\t{failures}");
     println!("operator-table-entries\t{}", operators.len());
     println!("distinct-executable-names\t{}", rows.len());
+    let broad_candidates = rows.iter().filter(|row| row.3).count();
+    println!("broad-candidates\t{broad_candidates}");
+    // The scanner's published count moved when both sides stopped folding case. State the size of
+    // the move next to the new total rather than letting a reader wonder why it changed.
+    println!("broad-candidates-recovered-from-the-old-case-fold\t{recovered_from_the_case_fold}");
     println!(
-        "broad-candidates\t{}",
-        rows.iter().filter(|row| row.3).count()
+        "broad-candidates-under-the-old-case-fold\t{}",
+        broad_candidates - recovered_from_the_case_fold
     );
     for class in Class::ALL {
         println!(

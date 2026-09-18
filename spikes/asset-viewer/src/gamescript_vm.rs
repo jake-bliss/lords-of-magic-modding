@@ -1666,9 +1666,31 @@ mod tests {
 
     /// A step ceiling alone bounds none of these. Each of the three used to run the process out of
     /// time, host stack, or memory with no error to show for it.
+    ///
+    /// **Read this before trusting a green suite here.** Only part of what this test covers is an
+    /// assertion. Each case below asserts that the *guard fires* -- that the error arrives and says
+    /// what it should -- which catches the guard being weakened or its threshold moved. What it
+    /// cannot do is fail cleanly when a guard is deleted outright, because then the code under test
+    /// never returns:
+    ///
+    /// - deleting `repeat`'s `charge_step` makes this test **hang forever** (measured: still
+    ///   running at 20 s, `timeout` exit 124), not fail;
+    /// - deleting the call-depth check makes it **abort the whole process** with
+    ///   `fatal runtime error: stack overflow`, SIGABRT, taking every other test in the binary
+    ///   with it;
+    /// - deleting the allocation check makes it ask the allocator for 1.6 TB.
+    ///
+    /// Those are detections by the process dying, which is not the same thing as a failing
+    /// assertion, and a reader who sees "229 passed" should not conclude these three bounds are
+    /// asserted in the ordinary way. The allocation case shows the shape that *is* assertable and
+    /// is worth copying: pin the threshold from both sides, so the constant and the comparison are
+    /// covered by something that fails cleanly. The step and depth limits have no equivalent --
+    /// there is no value of the step budget at which an uncharged `repeat` terminates.
     #[test]
     fn execution_is_bounded_in_steps_call_depth_and_allocation() {
-        // `repeat` with an empty body executes no values, so it charged no steps.
+        // `repeat` with an empty body executes no values, so it charged no steps. This asserts
+        // the ceiling is reached and reported; with the charge deleted there is no error to
+        // assert on, only a process that never returns.
         let document = GameScriptDocument::parse(b"100000000000 {} repeat").unwrap();
         let mut vm = GameScriptVm::new(500);
         let error = vm.execute_document(&document).unwrap_err();
@@ -1678,7 +1700,8 @@ mod tests {
             error.message
         );
 
-        // Recursion consumes the host stack, which no step budget protects.
+        // Recursion consumes the host stack, which no step budget protects. Same caveat: this
+        // asserts the refusal, and cannot observe the alternative, which is a SIGABRT.
         let document = GameScriptDocument::parse(b"/f {f} def f").unwrap();
         let mut vm = GameScriptVm::new(100_000_000);
         let error = vm.execute_document(&document).unwrap_err();
@@ -1697,8 +1720,10 @@ mod tests {
                 String::from_utf8_lossy(source)
             );
         }
-        // Pin the boundary too. Removing the guard entirely is "caught" only by the process
-        // exhausting memory, which is detection but not an assertion; this is the assertion.
+        // Pin the threshold from both sides. This is the only one of the three bounds whose
+        // constant and comparison are covered by an assertion that fails cleanly: moving
+        // MAXIMUM_ALLOCATION_LENGTH to 2_000_000 fails here (verified), whereas deleting the check
+        // outright is "caught" only by the allocator.
         assert!(run(b"1000001 array").is_err());
         assert!(run(b"1000000 array").is_ok());
         assert!(run(b"1000001 string").is_err());

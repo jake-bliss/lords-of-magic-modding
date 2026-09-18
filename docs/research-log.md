@@ -3617,3 +3617,74 @@ retro-fitted, because the branch was one squashed commit with no run output, and
 independent re-derivation instead. The three run transcripts are now committed as
 `reports/gs/standard-run-*.tsv`, which is what should have gone in beside the expectations the
 first time.
+
+## 2026-09-17 — The same case fold was in the shipped tool, not just the derived table
+
+The previous entry fixed a case-folded definition check in the classifier example and *reported*
+that `likely_engine_names` in `src/main.rs` carried the same defect. Reporting it was not enough:
+that function is what `--scan-gamescript` prints, so the state I left behind had the derived
+artifact correct and the tool a person actually runs still wrong, and the two disagreeing with the
+wrong one being the visible one is worse than either alone. **Corrected.**
+
+### What moved
+
+`GameScriptVm::lookup` resolves names case-sensitively. The scanner's definition check folded, so a
+lowercase definition suppressed an uppercase call of the same word:
+
+| | vanilla | patch302 | gs5r3 |
+| --- | ---: | ---: | ---: |
+| published candidates, case-sensitive | 2,159 | 2,262 | 2,195 |
+| under the old fold | 2,113 | 2,211 | 2,148 |
+| recovered | 46 | 51 | 47 |
+
+Every recovered name is an engine constant. The largest are `GOLD` (290 uses in 3.02, hidden by
+`gs\barter.gs`'s `/gold`), `FOOD` (268), `CRYSTALS` (267), `WARRIOR` (193), `WIZARD` (180),
+`THIEF` (167), `MOVE` (163), `TARGET_ARMY` (146). Surfacing exactly that class is what the filter
+exists for, so the fold was suppressing its best output.
+
+The GS5R3 operator-table reconciliation had to be re-measured with it, and I nearly repeated the
+error the reviewer caught last time — changing a rule and leaving the section that states its
+numbers. It is now 2,195 candidates / 1,444 confirmed operators / 717 SCREAMING_CASE / 34
+remainder, against 2,151 / 1,445 / 671 / 35 before the definition-window widening and this fix.
+The heuristic's error bar therefore widened from ~0.7% to ~1.5% of candidates — a worse-looking
+number that is a more honest one, since the denominator no longer excludes 47 real engine names.
+
+Two code paths now agree on those figures from independent implementations: `--scan-gamescript`'s
+`engine-names-recovered-from-the-old-case-fold` and the classifier's
+`broad-candidates-recovered-from-the-old-case-fold`. A third cross-check falls out for free —
+GS5R3's candidate-restricted `constant-or-data` is 717, the same as `--scan-natives`'s
+`unconfirmed-screaming-case`, and the residue differs by exactly the one name the new
+`engine-dictionary-key` class pulls out.
+
+### Which fold stayed, and why
+
+Only the *definition* comparison has to agree with the interpreter. The other half of the rule asks
+whether a name occurs as an ASCII run anywhere in `lomse.exe`, which is a coincidence filter that
+case does not bear on, and it stays folded in both the scanner and the classifier. Keeping the two
+halves distinct in the comment matters, because "fix the case fold" applied indiscriminately would
+have broken the filter rather than the defect.
+
+The classifier's `broad-candidate` column no longer reproduces the old fold. It did last time on
+the grounds that a repaired classifier is only worth comparing against a faithful baseline — which
+was right while the scanner was still folding, and is wrong now that it is not. Both sides are
+case-sensitive and both print the historical delta, so the baseline is still recoverable without
+either of them reproducing a known defect.
+
+### Two things preserved in the artifacts rather than only in a report
+
+**The bounds tests are not all assertions, and the source now says so where they live.** Of the
+three new bounds, only allocation has a threshold pinned from both sides by something that fails
+cleanly. Deleting `repeat`'s step charge makes its test hang forever — measured, still running at
+20 s — and deleting the call-depth check aborts the whole test binary with a stack overflow. Those
+are detections by the process dying, not failing assertions, and a reader seeing "229 passed"
+should not take the three as equally covered. The doc comment on
+`execution_is_bounded_in_steps_call_depth_and_allocation` states that, names which case is which,
+and points at the allocation case as the shape to copy where a threshold exists to pin.
+
+**`engine-dictionary-key` is GS5R3-derived**, and `reports/gs/vocabulary.md` now carries that
+caveat next to the class instead of only in a handback. `map::TERRAIN_SPRITE_TYPES` was dumped from
+a GS5R3 script set, so the 126 GS5R3 rows are measured against their own profile while the 112
+vanilla and 113 patch302 rows assume the registry carries the same names across profiles — an
+assumption this run does not test. The error is confined to `engine-dictionary-key` and
+`unclassified-residue` and cannot reach `native-host-call` or the candidate totals. Re-running the
+sprite-type probe per profile would settle it.
