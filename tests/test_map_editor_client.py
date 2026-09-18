@@ -29,7 +29,7 @@ APP_JS = ROOT / "spikes" / "asset-viewer" / "src" / "ui" / "app.js"
 STYLE_CSS = ROOT / "spikes" / "asset-viewer" / "src" / "ui" / "style.css"
 
 
-def run_harness(platform=None):
+def run_harness(platform=None, ua_platform=None):
     node = shutil.which("node")
     if node is None:
         raise AssertionError(
@@ -40,6 +40,8 @@ def run_harness(platform=None):
     environment = dict(os.environ)
     if platform is not None:
         environment["LOM_TEST_PLATFORM"] = platform
+    if ua_platform is not None:
+        environment["LOM_TEST_UA_PLATFORM"] = ua_platform
     finished = subprocess.run(
         [node, str(HARNESS), str(APP_JS)],
         capture_output=True,
@@ -390,3 +392,47 @@ class PlatformHints(unittest.TestCase):
             with self.subTest(platform=platform):
                 hints = run_harness(platform)["platformHints"]
                 self.assertNotIn(wrong, hints["open"] + hints["save"])
+
+    def test_the_modern_platform_source_is_the_one_that_decides(self):
+        """`navigator.userAgentData` is present on 127.0.0.1 in every Chromium browser.
+
+        It is therefore the branch most users take, and its values are different strings from
+        the legacy `navigator.platform` ones -- "macOS" not "MacIntel", "Windows" not "Win32".
+        Testing only the legacy values left the majority path uncovered: deleting the modern term
+        from the chain, or reversing it, passed the whole suite.
+        """
+        for ua_platform, key in [
+            ("macOS", "Cmd+Shift+G"),
+            ("Windows", "File name box"),
+            ("Linux", "Ctrl+L"),
+            ("Chrome OS", "Ctrl+L"),
+        ]:
+            with self.subTest(ua_platform=ua_platform):
+                # The legacy value is set to disagree, so a pass means the modern one decided.
+                hints = run_harness(platform="Win32", ua_platform=ua_platform)["platformHints"]
+                self.assertEqual(hints["uaPlatform"], ua_platform)
+                self.assertIn(key, hints["open"])
+
+    def test_the_legacy_platform_source_is_used_when_the_modern_one_is_absent(self):
+        """Firefox and Safari do not implement `userAgentData`, so the fallback is not dead code."""
+        hints = run_harness(platform="MacIntel")["platformHints"]
+        self.assertIsNone(hints["uaPlatform"])
+        self.assertIn("Cmd+Shift+G", hints["open"])
+
+    def test_every_element_app_js_addresses_exists_in_the_page(self):
+        """A docs-only reword of `index.html` must not be able to drop an id `app.js` writes to.
+
+        `app.js` applies the platform hints in its last statement, so a missing element throws
+        after the editor is already working -- leaving every Linux and Windows user reading the
+        macOS instruction, with nothing failing anywhere.
+        """
+        app_js = APP_JS.read_text()
+        index_html = (ROOT / "spikes" / "asset-viewer" / "src" / "ui" / "index.html").read_text()
+        addressed = set(re.findall(r'getElementById\("([^"]+)"\)', app_js))
+        self.assertTrue(addressed, "no getElementById calls found; the check would be vacuous")
+        declared = set(re.findall(r'\bid="([^"]+)"', index_html))
+        self.assertEqual(
+            addressed - declared,
+            set(),
+            "app.js writes to elements index.html does not declare",
+        )

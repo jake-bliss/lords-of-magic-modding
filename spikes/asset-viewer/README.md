@@ -198,7 +198,10 @@ Linux uses `zenity` or `kdialog`, whichever is on `PATH`. Where none is availabl
 neither installed — the endpoint reports itself unavailable and names what to install, and the typed
 field keeps working.
 
-**A dialog program on `PATH` is not a dialog that can be shown.** Running the editor over SSH on a
+**A dialog program on `PATH` is not a dialog that can be shown.** (One known false refusal: a
+Qt or GTK kiosk target — `QT_QPA_PLATFORM=eglfs`, `GDK_BACKEND=broadway` — can draw without either
+variable set, and this refuses it. The typed field still works, so the cost is a refusal rather than
+a failure, and the trade is worth it.) Running the editor over SSH on a
 headless box is supported, and there `zenity` is very often installed with no display at all — it
 then fails `gtk_init` and exits 1 with empty stdout, which is indistinguishable from a cancel. So
 `DISPLAY` or `WAYLAND_DISPLAY` is required before a Unix flavour is claimed at all. Without that

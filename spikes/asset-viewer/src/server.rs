@@ -864,7 +864,17 @@ fn is_single_component(name: &str) -> bool {
 /// Matched on the number rather than on "User canceled", because the text is localised and the
 /// number is not. A cancel misread as a failure puts a refusal in front of someone who did nothing
 /// wrong.
-const APPLESCRIPT_USER_CANCELLED: &str = "-128";
+const APPLESCRIPT_USER_CANCELLED: &str = "(-128)";
+
+/// Why the parentheses are part of the pattern.
+///
+/// `osascript` echoes the offending path into its error text, so a bare `-128` matches any user
+/// whose directory happens to contain those characters. **Demonstrated on a real Mac** against this
+/// file's own `CHOOSE_FOLDER_IN`: with `/Users/<name>/LOM-1280/map` as the default location the
+/// error is `execution error: Can't make file "...LOM-1280:map" into type alias. (-1700)` and the
+/// process exits 1 -- so a genuine failure was read as a cancel and silently did nothing.
+/// AppleScript always parenthesises the number, so requiring them costs nothing.
+const _: () = ();
 
 /// The folder chooser, as a script that takes its prompt from `argv`.
 ///
@@ -942,6 +952,16 @@ const PS_NAME_VAR: &str = "LOM_PICK_NAME";
 
 /// The exit code the PowerShell scripts use to mean "the user dismissed the dialog".
 ///
+/// **`$ErrorActionPreference = 'Stop'` is what makes this a contract rather than a hope.** Without
+/// it, `Add-Type` and `New-Object` fail *non-terminating* on a box with no .NET Desktop runtime,
+/// `$dialog` is `$null`, and whether `$null.ShowDialog()` stops the script before it can reach
+/// `exit 7` depends on the host's PowerShell. Nobody has run these scripts, so relying on that
+/// would be relying on unmeasured semantics. With `Stop`, any error terminates with its own
+/// non-zero code and cannot be mistaken for a cancel.
+///
+/// The encoding is `UTF8Encoding::new($false)` rather than `[Text.Encoding]::UTF8`, which is the
+/// **BOM-emitting** singleton -- a `U+FEFF` on stdout would become the first character of the path.
+///
 /// **Not 1.** These scripts are ours, so they can signal a cancel unambiguously -- and they must,
 /// because the interesting Windows failures exit 1 with nothing on stdout, which is exactly the
 /// shape of a cancel. `Add-Type -AssemblyName System.Windows.Forms` throws a terminating error on
@@ -952,7 +972,8 @@ const PS_NAME_VAR: &str = "LOM_PICK_NAME";
 const PS_CANCELLED_EXIT_CODE: i32 = 7;
 
 /// Pick a folder with the WinForms folder browser.
-const PS_CHOOSE_FOLDER: &str = r#"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+const PS_CHOOSE_FOLDER: &str = r#"$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
 $dialog.Description = $env:LOM_PICK_PROMPT
@@ -961,7 +982,8 @@ if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 7 }
 [Console]::Out.Write($dialog.SelectedPath)"#;
 
 /// Pick a save name with the WinForms save dialog.
-const PS_CHOOSE_SAVE_NAME: &str = r#"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+const PS_CHOOSE_SAVE_NAME: &str = r#"$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.SaveFileDialog
 $dialog.Title = $env:LOM_PICK_PROMPT
@@ -1009,6 +1031,13 @@ pub enum Platform {
 
 impl Platform {
     /// The platform this build is for.
+    ///
+    /// **This mapping is the one thing here that no test can cover**, and the claim above that
+    /// taking the platform as a value makes every platform assertable does not extend to it.
+    /// Swapping the `Windows` and `Unix` arms leaves the whole suite green; a Windows build would
+    /// then take the Unix branch, find no `DISPLAY`, and refuse Browse on every Windows machine.
+    /// There is no CI in this repo, so a `#[cfg(target_os = "windows")]` assertion would never run
+    /// either. Three lines of `cfg!` is as small as this surface gets; it is not zero.
     fn current() -> Self {
         if cfg!(target_os = "macos") {
             Self::MacOs
@@ -1053,8 +1082,36 @@ fn flavour_for(
 }
 
 /// Which dialog program this build should use, or `None` when none is available.
-fn available_flavour() -> Option<PickerFlavour> {
-    flavour_for(Platform::current(), has_display(), tool_on_path)
+fn available_flavour() -> Result<PickerFlavour, String> {
+    let platform = Platform::current();
+    let display = has_display();
+    if let Some(flavour) = flavour_for(platform, display, tool_on_path) {
+        return Ok(flavour);
+    }
+    // **The two `None`s are different problems and the user can only fix one of them.** Telling
+    // somebody who already has zenity to install zenity is worse than saying nothing: they install
+    // it again, retry, get the identical sentence, and never learn that what is missing is a
+    // display. Running the editor over SSH is a supported way to use it, so this is the likely
+    // case, not the exotic one.
+    Err(no_dialog_reason(platform, display))
+}
+
+/// Why no dialog can be shown, given a platform and whether there is a display.
+///
+/// Pure, so the message a headless Linux box produces is assertable from a Mac. Extracted after a
+/// review found the fix for this had no test that could fail: the assertion only ran in the branch
+/// this host does not take.
+fn no_dialog_reason(platform: Platform, display: bool) -> String {
+    if platform == Platform::Unix && !display {
+        "this session has no graphical display (neither DISPLAY nor WAYLAND_DISPLAY is set), so \
+         no file dialog can be shown. Type the directory into the field instead -- that works \
+         over SSH and on a headless box."
+            .to_owned()
+    } else {
+        "no file dialog is available on this machine: install `zenity` or `kdialog` to get one. \
+         Typing the directory into the field works without either."
+            .to_owned()
+    }
 }
 
 /// Whether this session has a graphical display to draw a dialog on.
@@ -1064,7 +1121,19 @@ fn available_flavour() -> Option<PickerFlavour> {
 fn has_display() -> bool {
     ["DISPLAY", "WAYLAND_DISPLAY"]
         .iter()
-        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+        .any(|name| is_display_value(std::env::var_os(name).as_deref()))
+}
+
+/// Whether one display variable's value names a display.
+///
+/// **An empty value is as good as absent**: `DISPLAY=` is exported by systemd user units, by
+/// `env -i DISPLAY= ...` and by some container entrypoints, and it does not mean there is an X
+/// server. Split out from [`has_display`] because a rule read straight out of the process
+/// environment cannot be asserted -- the test for it compared the function against a
+/// re-implementation of its own body, and on a host with neither variable set both sides were
+/// `false` whether the emptiness check was there or not.
+fn is_display_value(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|value| !value.is_empty())
 }
 
 /// Whether an executable of this name is on `PATH`.
@@ -1127,12 +1196,9 @@ fn is_executable_file(candidate: &std::path::Path) -> bool {
 /// none is available the typed field, which every test drives and which is not going away,
 /// keeps working.
 fn native_pick(request: &PickRequest) -> PickOutcome {
-    let Some(flavour) = available_flavour() else {
-        return PickOutcome::Unavailable(
-            "no file dialog is available on this machine: install `zenity` or `kdialog` to get \
-             one. Typing the directory into the field works without either."
-                .to_owned(),
-        );
+    let flavour = match available_flavour() {
+        Ok(flavour) => flavour,
+        Err(reason) => return PickOutcome::Unavailable(reason),
     };
     run_picker(pick_command(flavour, request), PICK_TIMEOUT, flavour)
 }
@@ -3652,12 +3718,15 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
             Some("/home/someone/English/map/URAK-edited.scn")
         );
 
-        // PowerShell: `-STA` is load-bearing. WinForms dialogs throw in the MTA that `-Command`
-        // defaults to under PowerShell 5, so without it the dialog never draws at all.
+        // PowerShell: `-NoProfile` is the load-bearing flag -- a profile that writes to stdout
+        // corrupts the path read back. `-STA` is explicit insurance only: an earlier version of
+        // this comment said PowerShell 5 runs `-Command` as MTA, and that is **wrong**. STA has
+        // been the default since PowerShell 3.0 and `-MTA` is the opt-out. Both are asserted
+        // because both should be present, not because either default is broken.
         let windows = arguments_of(PickerFlavour::PowerShell, &directory);
         assert!(
             windows.contains(&"-STA".to_owned()),
-            "WinForms dialogs throw outside a single-threaded apartment: {windows:?}"
+            "WinForms needs an STA; this is insurance, not a fix for a default: {windows:?}"
         );
         assert!(
             windows.contains(&"-NoProfile".to_owned()),
@@ -3804,6 +3873,43 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         ));
     }
 
+    /// A path that happens to contain `-128` is not a cancel.
+    ///
+    /// **Demonstrated on a real Mac** during review: `osascript` echoes the offending path into
+    /// its error text, so with `/Users/<name>/LOM-1280/map` as the default location the error is
+    /// `execution error: Can't make file "...LOM-1280:map" into type alias. (-1700)` with exit 1 --
+    /// and a bare `-128` substring match read that genuine failure as a cancel and silently did
+    /// nothing. AppleScript always parenthesises the number, so requiring the parentheses costs
+    /// nothing and removes the whole class.
+    #[test]
+    fn a_path_containing_the_cancel_number_is_not_read_as_a_cancel() {
+        assert!(APPLESCRIPT_USER_CANCELLED.starts_with('('), "the parentheses are the fix");
+        // The exact stderr a real Mac produced, with the path echoed into it.
+        let stderr = concat!(
+            "30:149: execution error: Can't make file ",
+            r#""HD:Users:someone:LOM-1280:map""#,
+            " into type alias. (-1700)\n",
+        );
+        match classify_pick(PickerFlavour::AppleScript, Some(1), b"", stderr) {
+            PickOutcome::Unavailable(reason) => assert!(reason.contains("-1700"), "{reason}"),
+            other => panic!("a -1700 failure on a path containing -128 was read as {other:?}"),
+        }
+        // The bare-number match this replaced would have said "cancelled" for that stderr.
+        assert!(stderr.contains("-128"), "the test path must contain the trap");
+
+        // A real cancel still is one.
+        assert_eq!(
+            classify_pick(
+                PickerFlavour::AppleScript,
+                Some(1),
+                b"",
+                "1:1: execution error: User canceled. (-128)
+"
+            ),
+            PickOutcome::Cancelled
+        );
+    }
+
     /// Only the line ending is stripped from a chosen path.
     ///
     /// A trailing space is a legal character in a POSIX filename, and `trim()` would hand back a
@@ -3867,28 +3973,67 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
 
         // And this host's real answer is the one its platform implies.
         assert_eq!(
-            available_flavour(),
+            available_flavour().ok(),
             flavour_for(Platform::current(), has_display(), tool_on_path)
         );
     }
 
+    /// The refusal must name the problem the user can actually fix.
+    ///
+    /// Telling somebody who already has zenity to install zenity is worse than saying nothing:
+    /// they install it again, retry, get the identical sentence, and never learn that what is
+    /// missing is a display. Running the editor over SSH is a supported way to use it, so this is
+    /// the likely case rather than the exotic one.
+    ///
+    /// Asserted on `no_dialog_reason` rather than on `available_flavour`, because the first version
+    /// of this test only checked the branch *this* host takes -- and on a Mac that is neither of
+    /// them, so making the message wrong again left the suite green.
+    #[test]
+    fn a_headless_session_is_told_about_the_display_and_not_about_installing_anything() {
+        let headless = no_dialog_reason(Platform::Unix, false);
+        assert!(headless.contains("no graphical display"), "{headless}");
+        assert!(headless.contains("DISPLAY"), "{headless}");
+        assert!(
+            !headless.contains("install"),
+            "a headless session cannot fix this by installing anything: {headless}"
+        );
+
+        // With a display, the programs really are what is missing.
+        let no_tool = no_dialog_reason(Platform::Unix, true);
+        assert!(no_tool.contains("install"), "{no_tool}");
+        assert!(!no_tool.contains("no graphical display"), "{no_tool}");
+        assert_ne!(headless, no_tool);
+
+        // And this host's own refusal, whichever it is, is one of the two.
+        if let Err(reason) = available_flavour() {
+            assert!(reason == headless || reason == no_tool, "{reason}");
+        }
+    }
+
     /// A display variable that is present but empty is not a display.
+    ///
+    /// **The previous version of this test could not fail.** It compared a closure against its own
+    /// expected value and then compared `has_display()` against an inlined re-implementation of
+    /// `has_display`'s body -- so on a host with neither variable set, both sides were `false`
+    /// whether the emptiness check existed or not. Replacing `is_some_and(|v| !v.is_empty())` with
+    /// `is_some()` left all 225 tests green. The rule is now a function that takes its input.
     #[test]
     fn an_empty_display_variable_is_not_a_display() {
-        // `has_display` reads the process environment, so rather than mutate it -- which races
-        // every other test in this binary -- the rule it encodes is asserted directly.
-        for (value, expected) in [(None, false), (Some(""), false), (Some(":0"), true)] {
-            assert_eq!(
-                value.is_some_and(|value: &str| !value.is_empty()),
-                expected,
-                "DISPLAY={value:?}"
-            );
-        }
-        // On a host that has one, the real function agrees with the real environment.
+        use std::ffi::OsStr;
+        assert!(!is_display_value(None));
+        // `DISPLAY=` is exported by systemd user units and some container entrypoints, and does
+        // not mean there is an X server. Reading it as one makes Browse a silent no-op.
+        assert!(!is_display_value(Some(OsStr::new(""))));
+        assert!(is_display_value(Some(OsStr::new(":0"))));
+        assert!(is_display_value(Some(OsStr::new("wayland-0"))));
+
+        // And the function that reads the environment is built out of that rule, so this host's
+        // answer follows from it rather than from a second copy of the logic.
         assert_eq!(
             has_display(),
-            std::env::var_os("DISPLAY").is_some_and(|value| !value.is_empty())
-                || std::env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty())
+            ["DISPLAY", "WAYLAND_DISPLAY"]
+                .iter()
+                .any(|name| is_display_value(std::env::var_os(name).as_deref()))
         );
     }
 
@@ -3956,16 +4101,23 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
     /// the bug that was worth fixing on macOS.
     #[test]
     fn the_powershell_scripts_read_the_variables_the_rust_side_sets() {
-        for variable in [PS_PROMPT_VAR, PS_DIR_VAR] {
-            for script in [PS_CHOOSE_FOLDER, PS_CHOOSE_SAVE_NAME] {
-                assert!(
-                    script.contains(&format!("$env:{variable}")),
-                    "the script never reads {variable}:\n{script}"
-                );
-            }
-        }
-        // The name is only meaningful to the save dialog.
-        assert!(PS_CHOOSE_SAVE_NAME.contains(&format!("$env:{PS_NAME_VAR}")));
+        // **Compared as sets, not with `contains`.** A substring match is one character from
+        // useless: renaming `PS_DIR_VAR` to `"LOM_PICK_D"` satisfies `contains("$env:LOM_PICK_D")`
+        // against the script's own `$env:LOM_PICK_DIR`, so Rust would set a variable the script
+        // never reads and the assertion would still pass. Extracting the names the script actually
+        // reads and comparing the whole set cannot be fooled that way.
+        assert_eq!(
+            env_names_read_by(PS_CHOOSE_FOLDER),
+            BTreeSet::from([PS_PROMPT_VAR.to_owned(), PS_DIR_VAR.to_owned()]),
+        );
+        assert_eq!(
+            env_names_read_by(PS_CHOOSE_SAVE_NAME),
+            BTreeSet::from([
+                PS_PROMPT_VAR.to_owned(),
+                PS_DIR_VAR.to_owned(),
+                PS_NAME_VAR.to_owned(),
+            ]),
+        );
 
         // And the cancel code the scripts use is the one the classifier looks for.
         for script in [PS_CHOOSE_FOLDER, PS_CHOOSE_SAVE_NAME] {
@@ -3975,14 +4127,39 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
             );
         }
 
-        // A path out of a dialog is UTF-8, not the console code page. Without this a Windows user
-        // whose name is not ASCII gets a path full of replacement characters.
+        // A path out of a dialog is UTF-8, not the console code page. Without this a Windows
+        // user whose name is not ASCII gets a path full of replacement characters.
         for script in [PS_CHOOSE_FOLDER, PS_CHOOSE_SAVE_NAME] {
             assert!(
-                script.contains("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8"),
+                script.contains("[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)"),
                 "stdout is decoded as UTF-8 in Rust, so the script must write UTF-8:\n{script}"
             );
+            // **Not `[Text.Encoding]::UTF8`**, which is the BOM-emitting singleton -- a U+FEFF on
+            // stdout would become the first character of the path.
+            assert!(
+                !script.contains("[System.Text.Encoding]::UTF8"),
+                "that overload emits a BOM, which would prefix the path:\n{script}"
+            );
+            // Errors must terminate, or `Add-Type` failing non-terminating leaves $dialog null
+            // and the reserved cancel code becomes reachable from a crash.
+            assert!(
+                script.starts_with("$ErrorActionPreference = 'Stop'"),
+                "the reserved-exit-code contract depends on errors terminating:\n{script}"
+            );
         }
+    }
+
+    /// The `$env:NAME` variables a PowerShell script reads, as whole names.
+    fn env_names_read_by(script: &str) -> BTreeSet<String> {
+        script
+            .split("$env:")
+            .skip(1)
+            .map(|rest| {
+                rest.chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect::<String>()
+            })
+            .collect()
     }
 
     /// Each flavour runs the program it names.
