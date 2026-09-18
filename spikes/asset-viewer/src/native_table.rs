@@ -158,6 +158,24 @@ impl<'a> PeImage<'a> {
         self.bytes
     }
 
+    /// Every executable section, as `(virtual address, raw size)`.
+    ///
+    /// A linear disassembly of a whole image needs to know where the code is; hardcoding
+    /// `.text`'s bounds would make an analysis silently survey the wrong bytes on any other
+    /// build, so the section table answers it instead.
+    pub fn executable_ranges(&self) -> Vec<(u32, u32)> {
+        self.sections
+            .iter()
+            .filter(|section| section.executable)
+            .filter_map(|section| {
+                Some((
+                    self.image_base.checked_add(section.virtual_address)?,
+                    section.raw_size,
+                ))
+            })
+            .collect()
+    }
+
     /// Read a NUL-terminated operator name at a virtual address.
     ///
     /// The name must be lexable as a GameScript executable name. That is the filter which rejects

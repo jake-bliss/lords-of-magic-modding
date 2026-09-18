@@ -3417,3 +3417,97 @@ reporting; `COMBAT_TILESET_ARRAY_CANDIDATES` is what an encounter may *reach* an
 so the paint gate never refuses it. **Reporting is precise; refusing is permissive.** Refusing the
 engine's own answer is the bug that shipped on this branch once already, and the permissive side of
 the gate is where that lesson lives.
+
+## 2026-09-17 — The map loader, read out of `lomse.exe`
+
+Everything this project knew about the map header, the cell word and the six trailing-record sizes
+was inferred from statistics over 365 shipped files. This run read the same questions out of the
+engine's instructions instead. Tool: `spikes/asset-viewer/examples/map_loader_survey.rs`. Full
+findings with every address: `docs/map-format.md`, "What the loader does, read out of `lomse.exe`".
+
+### Method, and why `resetvisibility` was the right place to start
+
+The only confirmed fact about any cell bit was that `resetvisibility` clears `0x00800000`. That made
+it the one anchor that could prove the survey was looking at cell memory rather than at one of the
+binary's several other eight-byte-strided arrays. Following it gave the map object at `0x005ae958`,
+its cell array at `+0x54`, count at `+0x58`, width at `+0x5c`, height at `+0x60` — all confirmed
+independently by the allocator at `0x004a4f20`, which stores exactly those fields and mallocs
+`width * height * 8`.
+
+The single most useful structural fact fell out of that: `0x005aa12c + 0x482c == 0x005ae958`. The
+scenario object's terrain member *is* the global map object. So `loadmap` and `loadscenariomap` reach
+one cell array, and `resetvisibility` and the file loader are provably talking about the same memory.
+
+### Confirmed
+
+- **The loader switches on the header word at `0x00`.** Six places: `0x0050dac2`, `0x0050db14`,
+  `0x0050db87`, `0x0050dba1`, `0x0050dbbb` in the record serialiser, and `0x00485617` in the
+  scenario reader. The previous entry in `map-format.md` called this Inferred and warned the
+  correlation might be nothing but successive editor builds. It is not; the loader reads it.
+- **The six record layouts are one struct with five version gates.** Evaluating the five thresholds
+  reproduces all six sizes and all nineteen corpus header words with nothing fitted. 63/73 → 48,
+  76–89 → 52, 96/97 → 53, 98/101 → 47, 102–111 → 49.
+- **Cell word 1 is an `f32`.** Fifteen x87 sites on it, `setelevation`'s worker at `0x004a59f3`
+  being the clearest. No longer an inference from value ranges.
+- **`savescenariomap` and `savespecialmap` are literally the same function**, `0x00485550`. The
+  corpus observation that they write byte-identical files now has its cause.
+
+### Contradicted
+
+Five prior readings in `map-format.md` were wrong, and each was wrong in the same way — the corpus
+could not distinguish the true rule from a nearby one, so the nearby one got written down:
+
+1. **`0x0c` is not `bits_per_pixel`.** It is bytes per cell. The reader multiplies it by 64
+   (`0x004a535c`) to size a block read; the writer emits the literal `8`. "Always 8 in the corpus"
+   is true of both readings, which is why the corpus could not tell.
+2. **Cell word 0 is not a 32-bit tag.** It is two `u16` fields. Every engine read of byte `+0` is
+   `movsx r32, word`, every write is 16-bit, and nothing reads the word as a dword. Bits 10–15 are
+   part of the *tile slot*, which is signed 16-bit and bounds-checked against the tileset at
+   `0x00508f10` — not a separate unused region as documented.
+3. **`tile_index` was `tag & !0x00800000`; it is `tag & 0xffff`.** The two agree on every corpus
+   cell, because `0x00800000` is the only bit above 15 any corpus cell sets. Corrected in `map.rs`
+   with a test that fails under the old rule.
+4. **The "four-byte footer" is not part of the record section.** `cmp dword [esi],64h` at
+   `0x00485617` gates a separate dword belonging to a different member of the scenario object. The
+   corpus split at 98-no-footer / 101-footer brackets the engine's threshold of 100 exactly, which
+   is how a section boundary got read as a record-layout field.
+5. **There are eight record *kinds*, not one record shape.** `0x004f7120` dispatches the first
+   dword of each record through a ten-entry jump table at `0x004f73b8` with two dead slots. The
+   whole corpus is kind 1.
+
+### Reconciled, not contradicted
+
+The two attended `resetvisibility` runs that looked like they disagreed — "all 4,096 cells set" and
+"0 of 4,096" — are both correct. The perimeter-writing block at `0x004a9151`–`0x004a91a1` is guarded
+by `test eax,eax; je` on map object `+8`. A fresh `clearmap` map has that field zero, so the block is
+skipped. The 146 `.smp` files carrying `0x0080` on exactly their perimeter ring were saved with it
+non-zero. `mov edx,80h` at `0x004a915f` is where the value comes from.
+
+### Not settled, stated rather than glossed
+
+- **What the `+2` field means.** `resetvisibility` writes it; *nothing in the 148 surveyed
+  map-object methods reads it*. "Visibility" stays Inferred from the operator's name. Whatever
+  consumes it is outside the survey — most likely the renderer, reached through a pointer this
+  analysis does not follow.
+- **No cell bit is ever masked.** Across all 35 cell-lane instructions the survey found zero `and`,
+  `test`, `or`, `xor`, `shr` or `sar` with an immediate against a cell lane. The bit-by-bit map this
+  run was asked for is empty, and that is the finding: the engine does not work on the cell in bits.
+- **The thresholds 74 and 75 cannot both be checked.** The corpus contains 73 and 76. The binary
+  says 74; the corpus can pin it only to an interval, and the test says so.
+- **The gate at 54 is unexercised by the corpus.** Every shipped header word is at least 63.
+
+### Two method notes worth keeping
+
+**A linear taint walk reported a third of the cell accesses.** The first version of the survey
+walked each function's instructions in address order. It found 17 sites. The taint was dying at
+early-return epilogues — `pop esi` on a path that is never reached from the code after it — and
+`getterrain`'s own cell read was among the casualties. Replacing it with a forward must-analysis over
+basic blocks, merging by intersection, took it to 35. A survey that reports "the engine barely
+touches the cell tag" when it means "the analysis stopped early" is the empty-review failure in
+another costume.
+
+**Linearly decoding a whole `.text` section silently loses call sites.** The scan that finds
+`mov ecx, 0x5ae958` followed by a `call` originally decoded the section from its start; it drifts out
+of phase on the first embedded jump table and never recovers. Searching the raw bytes for the
+five-byte `mov ecx, imm32` encoding and decoding forward from each hit is what made
+`forcetexture`'s and `getterrain`'s workers visible.

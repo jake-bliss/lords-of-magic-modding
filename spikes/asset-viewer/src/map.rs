@@ -199,8 +199,24 @@ impl MapCell {
         self.tag == other.tag && self.value_bits == other.value_bits
     }
 
+    /// The tile-atlas slot this cell paints: the **low sixteen bits** of the tag.
+    ///
+    /// **Observed in a local binary, 2026-09-17.** The engine never reads a cell's first word as a
+    /// dword. Every read of it in `lomse.exe` is a sixteen-bit one -- `movsx eax, word [cell]` at
+    /// `0x004a5261` (the worker behind `getterrain`), `0x004a4c3d`, `0x004a56d7`, `0x004a5cea`,
+    /// `0x004a5dce`, `0x004a5e00`, `0x004a5efe` and `0x004a6388` -- and every write of it is
+    /// `mov [cell], cx` (`0x004a5e08`, `0x004a5f06`, and `0x004a50da` when the grid is cleared).
+    /// The value goes straight into a bounds-checked tileset lookup at `0x00508f10`, which
+    /// compares it against the tileset's tile count and answers `-1` when it is negative or past
+    /// the end. So the field is a signed sixteen-bit tile index and the upper half of the word is
+    /// a separate sixteen-bit field, not spare bits of this one.
+    ///
+    /// **Corrected, 2026-09-17.** This used to mask out [`CELL_TAG_HIGH_FLAG`] and keep every
+    /// other high bit. On the shipped corpus the two rules agree, because `0x00800000` is the only
+    /// bit above 15 any corpus cell sets -- which is exactly why the corpus could not distinguish
+    /// them and why a survey of the engine could.
     pub fn tile_index(&self) -> u32 {
-        self.tag & !CELL_TAG_HIGH_FLAG
+        self.tag & 0xffff
     }
 
     /// Whether bit `0x00800000` is set. What that means is Unknown; see [`CELL_TAG_HIGH_FLAG`].
@@ -536,6 +552,82 @@ const OBSERVED_HEADER_WORD_LAYOUTS: [(u32, MapTailLayout); 19] = [
     (110, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
     (111, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
 ];
+
+/// The engine's own version gates on the trailing record, read out of `lomse.exe`.
+///
+/// **Observed in a local binary, 2026-09-17.** The placed-object record has one serialiser,
+/// `0x0050da70`, shared by its read and its write virtual. It reads a fixed head and then gates
+/// five field groups on the map file's header word, which the engine holds in the scenario object's
+/// first dword at `0x005aa12c`. Each entry below is `(threshold, bytes when the header word is at
+/// least the threshold, bytes when it is below)`:
+///
+/// | address | threshold | at or above | below | what is read |
+/// | --- | ---: | ---: | ---: | --- |
+/// | `0x0050dac2` | 98 | 2 | 8 | two bytes into the record, or eight bytes discarded and two defaults substituted |
+/// | `0x0050db14` | 54 | 8 | 0 | a dword field and a dword sub-object flag |
+/// | `0x0050db87` | 74 | 4 | 0 | a dword field |
+/// | `0x0050dba1` | 96 | 1 | 0 | a byte field |
+/// | `0x0050dbbb` | 102 | 2 | 0 | a word count of a variable-length list |
+///
+/// The gates are listed here in the serialiser's own order, which is not sorted, because the order
+/// is what the addresses attest.
+const ENGINE_RECORD_GATES: [(u32, u32, u32); 5] = [
+    (98, 2, 8),
+    (54, 8, 0),
+    (74, 4, 0),
+    (96, 1, 0),
+    (102, 2, 0),
+];
+
+/// Bytes every trailing record carries regardless of the header word.
+///
+/// **Observed in a local binary, 2026-09-17.** Four for the record kind, which the section reader
+/// at `0x004f7120` consumes before dispatching through its ten-entry jump table at `0x004f73b8`;
+/// twenty-four for the base-class prefix at `0x004f6b00`, which reads six dwords; and four for the
+/// dword the derived serialiser reads at `0x0050dab5`.
+const ENGINE_RECORD_HEAD_BYTES: u32 = 4 + 24 + 4;
+
+/// The threshold at which the scenario reader reads an extra four-byte section.
+///
+/// **Observed in a local binary, 2026-09-17.** `cmp dword [esi],64h; jl` at `0x00485617`: at or
+/// above 100 the loader calls `0x004c8fa0`, which reads one dword from the file; below it calls
+/// `0x004c8f90`, which reads nothing and zeroes the field. Those four bytes are *not* a footer of
+/// the record section -- they belong to a different member of the scenario object, read after it.
+const ENGINE_FOOTER_THRESHOLD: u32 = 100;
+
+/// The trailing-record layout the engine's own gates imply for a header word.
+///
+/// **Observed in a local binary, 2026-09-17.** This is a rule rather than a table: it is evaluated
+/// from [`ENGINE_RECORD_GATES`] and [`ENGINE_FOOTER_THRESHOLD`] and so it answers for header words
+/// the corpus does not contain. [`OBSERVED_HEADER_WORD_LAYOUTS`] is the measurement it is checked
+/// against, not the source it is built from -- a table that restated the corpus could not fail on
+/// the rule being wrong, which is the failure this repository has a standing lesson about.
+///
+/// The rule assumes no record carries one of the variable-length sub-objects the serialiser can
+/// attach, which is true of all 21,117 corpus records and is the first thing to doubt if a file
+/// ever disagrees.
+///
+/// Reproduce with `cargo run --release --example map_loader_survey -- lomse.exe`.
+pub fn engine_tail_layout(header_word: u32) -> MapTailLayout {
+    let mut record_size = ENGINE_RECORD_HEAD_BYTES;
+    for (threshold, at_or_above, below) in ENGINE_RECORD_GATES {
+        record_size += if header_word >= threshold {
+            at_or_above
+        } else {
+            below
+        };
+    }
+    let total_fixed_bytes = PLACED_SPRITE_COUNT_BYTES as u32
+        + if header_word >= ENGINE_FOOTER_THRESHOLD {
+            4
+        } else {
+            0
+        };
+    MapTailLayout {
+        record_size: record_size as usize,
+        total_fixed_bytes: total_fixed_bytes as usize,
+    }
+}
 
 /// Where a freshly minted record's bytes come from, per layout. See
 /// [`MapTailLayout::mint_provenance`].
@@ -2686,6 +2778,94 @@ mod tests {
         assert_eq!(layouts.len(), 1);
         assert_eq!(layouts[0].record_size, 49);
         assert_eq!(layouts[0].total_fixed_bytes, 8);
+    }
+
+    #[test]
+    fn the_engines_version_gates_reproduce_every_observed_tail_layout() {
+        // The corpus is the measurement and `engine_tail_layout` is the rule read out of the
+        // binary. Neither is derived from the other, so this can fail on the rule being wrong --
+        // which a table restating the corpus could not.
+        for (header_word, observed) in super::OBSERVED_HEADER_WORD_LAYOUTS {
+            let derived = super::engine_tail_layout(header_word);
+            assert_eq!(
+                derived, observed,
+                "header word {header_word}: the engine's gates give {derived}, the corpus shows \
+                 {observed}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_corpus_exercises_every_gate_it_is_able_to() {
+        // The corpus pins each threshold only to an interval: it contains 73 and 76, so it cannot
+        // tell 74 from 75, and the exact value comes from the binary. What the corpus *can*
+        // falsify is a gate the agreement test never exercises. One gate is genuinely beyond it --
+        // every shipped header word is at least 63, so nothing in the corpus is below the gate at
+        // 54 and every corpus record carries the eight bytes it guards. That is stated here rather
+        // than left as a silent hole in the coverage.
+        let smallest = super::OBSERVED_HEADER_WORD_LAYOUTS
+            .iter()
+            .map(|(word, _)| *word)
+            .min()
+            .expect("the corpus table is not empty");
+        let mut thresholds: Vec<u32> = super::ENGINE_RECORD_GATES
+            .iter()
+            .map(|(threshold, _, _)| *threshold)
+            .collect();
+        thresholds.push(super::ENGINE_FOOTER_THRESHOLD);
+        for threshold in thresholds {
+            let below = super::OBSERVED_HEADER_WORD_LAYOUTS
+                .iter()
+                .filter(|(word, _)| *word < threshold)
+                .map(|(word, _)| *word)
+                .max();
+            let at_or_above = super::OBSERVED_HEADER_WORD_LAYOUTS
+                .iter()
+                .filter(|(word, _)| *word >= threshold)
+                .map(|(word, _)| *word)
+                .min();
+            match (below, at_or_above) {
+                (Some(below), Some(at_or_above)) => {
+                    // The corpus straddles this gate, so the agreement test above really does
+                    // exercise it, and the two neighbouring header words must differ.
+                    assert_ne!(
+                        super::engine_tail_layout(below),
+                        super::engine_tail_layout(at_or_above),
+                        "the gate at {threshold} changes nothing between header words {below} \
+                         and {at_or_above}"
+                    );
+                }
+                _ => assert!(
+                    threshold <= smallest,
+                    "the gate at {threshold} is inside the corpus range but no shipped map lies \
+                     on both sides of it, so the agreement test never exercises it"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn reads_the_tile_index_as_the_low_sixteen_bits_the_engine_reads() {
+        // Observed in a local binary, 2026-09-17: `movsx eax, word [cell]` at 0x004a5261. The old
+        // rule was `tag & !CELL_TAG_HIGH_FLAG`, which keeps every high bit except one; this case
+        // is the one that separates the two rules, and the corpus does not contain it because
+        // 0x00800000 is the only high bit any corpus cell sets.
+        let unexpected_high_bits = super::MapCell {
+            tag: 0x1234_0000 | 619,
+            value_bits: 0,
+            value: 0.0,
+        };
+        assert_eq!(unexpected_high_bits.tile_index(), 619);
+        // Signed sixteen-bit: the engine's tileset lookup at 0x00508f10 rejects a negative index,
+        // so a tag whose low half has bit 15 set names no tile. This asserts the width, which is
+        // what the disassembly establishes; it does not claim the corpus contains such a cell.
+        let negative = super::MapCell {
+            tag: 0xffff,
+            value_bits: 0,
+            value: 0.0,
+        };
+        assert_eq!(negative.tile_index(), 0xffff);
+        assert!(i32::from(negative.tile_index() as u16 as i16) < 0);
     }
 
     #[test]
