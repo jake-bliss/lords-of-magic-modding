@@ -3417,3 +3417,107 @@ reporting; `COMBAT_TILESET_ARRAY_CANDIDATES` is what an encounter may *reach* an
 so the paint gate never refuses it. **Reporting is precise; refusing is permissive.** Refusing the
 engine's own answer is the bug that shipped on this branch once already, and the permissive side of
 the gate is where that lesson lives.
+
+## 2026-09-17 — IMP animation control read out of the decoder; the timing field does not exist
+
+[Issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2) was parked on the
+assumption that it needed an attended run: sit in front of the game, watch a `MELEE_ATTACK` play,
+count frames. It did not. The metadata is parsed by code we possess, and reading the parser answers
+three of the issue's four bullets outright. The full field table with addresses is
+[docs/imp-format.md](imp-format.md); what follows is what changed and what the method cost.
+
+### The entry point was the operator table
+
+The 1,906-entry native table already recovered for GameScript is a directory of named function
+pointers, and it contains `setimpplayeraction`, `setimpplayerfacing`, `setimpplayerdirection` and
+`setimpplayerframe`. Each operator is a thin argument-popping shim ending in one `call` to the real
+method, so four names bought the whole animation-player class in about twenty minutes. That the
+table pays off on a question it was not built for is the argument for building it.
+
+### The control came for free, and it mattered
+
+Before trusting the disassembly on anything unknown, the same reading reproduces four structures the
+decoder already had: the sequence count at loaded-header `0x1A` and the table pointer at `0x1C` (our
+file offsets 26 and 28), the 16-byte sequence stride, the facing count at sequence byte 11, the
+8-byte facing stride and the frame count at facing `+2`. A triple loop at `0x0049C2CD`–`0x0049C349`
+walks all three levels with exactly those constants. A method that had the structure wrong would
+have failed there instead of one step later on the part nobody can check.
+
+### Cycle direction: a five-entry jump table, and mode 4 is a ping-pong
+
+`Imp::Advance` at `0x0049D9A0` masks sequence byte 0 with 7 and dispatches through a table at
+`0x0049DA68`. Two distinct endings: wrap to zero, or hold the last frame. Mode 4 shares the wrapping
+target but is special-cased at **two other addresses** — `Imp::CycleLength` returns `2N − 1` at
+`0x0049D90E`, and `Imp::GetFrame` reflects a position past the end to `2N − i − 2` at `0x0049ACA1`.
+That is a ping-pong, and it is the reading the corpus independently supports: of the sequences whose
+generated `.h` names them, `DEFEND`, `GET_HIT`, `MELEE_ATTACK` and `MINOR_SPELL` are overwhelmingly
+mode 4, while `STAND`, `MOVE`, `DIE` and `CORPSE` are mode 0. A sword swings out and back; walking
+loops. Neither side was fitted to the other.
+
+The detail that made mode 0 on `DIE` stop looking wrong: **both** endings store 1 into the value
+`Advance` returns (`0x0049DA0C`, `0x0049DA4E`). One-shot behaviour is the caller reacting to that
+return, not a property of the file — which is why only 5 of 4,667 sequences use the one-shot mode at
+all.
+
+### Direction: five facings, eight directions, and the flip is the placement rule in reverse
+
+`Imp::DirectionCount` at `0x0049D920` is three instructions long: if sequence byte 1 has bit 7 set,
+return `2N − 2`; otherwise return `N`. Five stored facings therefore cover eight directions, with
+5, 6 and 7 drawn as 3, 2 and 1 flipped. 2,234 sequences are exactly that shape.
+
+The flip was worth one more step of checking rather than assuming. It is passed to the blitter as an
+argument at `0x0049D416`, and when it is set the sprite's anchor x is *negated* at `0x0049CCCC` with
+an odd-width correction at `0x0049CCD3` — which is the mirror image of the centre-relative placement
+rule in [hotspots.md](hotspots.md). Two independent sites, one of them a rule established months ago
+by a different method.
+
+The corpus then produced an anomaly worth recording rather than smoothing over: **991 sequences set
+the mirror bit on a single facing**, advertising `2 × 1 − 2 = 0` directions. It is inert — direction
+0 resolves below the facing count before the fold is reached — but any consumer that trusts
+`DirectionCount` on those files gets zero.
+
+### Timing: the honest answer is that the field is not there
+
+The issue asks to "measure frame cadence for MOVE, STAND, DIE and MELEE_ATTACK", which presupposes
+the cadence is in the file. It is not, and the interesting part is how that was established rather
+than merely believed.
+
+A negative claim is worth exactly as much as the bound on the search behind it. Three bounds:
+
+1. A sequence-record address can only be formed by scaling an index by 16 and adding the header
+   pointer at `0x1C`. The survey enumerates every `shl reg,4` in the IMP module and flags the nine
+   near such a load; all nine were read.
+2. Across the whole module, **exactly one** byte-sized register-relative read exists at displacement
+   2 — `0x0049B25D`, inside the 1,024-byte palette copy loop — and **none at all** at displacements
+   3 through 10.
+3. The playback object's constructor at `0x0049C830` has no timer field; its only numeric default is
+   the direction denominator, 8.
+
+Cadence is the caller's. The terrain-sprite driver at `0x0050C31F` shows the shape it takes:
+`(per-object phase + [0x005AF134]) mod CycleLength`, one global counter for every sprite on screen.
+So the viewer's fixed interval is not a guess awaiting better metadata; it is the right *kind* of
+answer with an unverified number, and the number lives in the engine's tick loop rather than in any
+`.imp`.
+
+### Sequence byte 2: shaped like a frame rate, and that is not good enough
+
+Byte 2 is the one unexplained byte with a non-garbage distribution — 12 values in 1–16, 15 in two
+thirds of sequences. It is tempting and it would be useful. Three findings, in increasing
+inconvenience: the engine never reads it; it is not the frame count (97 of 4,667 match); and it is a
+property of the *file* rather than the action — 1,624 of 1,800 members give every sequence the same
+value, and `MOVE` takes 10, 15, 6, 11 and 8 across different creatures. That is consistent with an
+export-time frames-per-second and equally consistent with a version number. Wiring it into the
+viewer as a frame rate would be a guess wearing metadata's clothes, so it stays labelled Inferred.
+
+Bytes 5–10, by contrast, are settled and unglamorous: they are uninitialised authoring-tool memory,
+containing readable fragments such as `frames` and `\imps\`.
+
+### What this leaves
+
+Issue #2's acceptance criterion is that the viewer derive direction labels and playback timing from
+verified metadata rather than a fixed guess. **Direction is now derivable** — count, fold and flip,
+all from the file. **Timing is not, and cannot be**, because the file does not carry it. The
+remaining question is the engine's tick period, which is one global constant, not a per-sequence
+field; the cheapest route to it is `0x005AF134`'s writer. Direction *labels* — which bearing is
+index 0 — are still unanchored, with two rotations (`0x005AEC3C`, and a `+1` at `0x0049DCDD`)
+between a script-level facing and a stored index.
