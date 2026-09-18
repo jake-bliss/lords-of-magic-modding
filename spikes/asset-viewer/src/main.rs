@@ -2042,8 +2042,21 @@ fn scan_gamescript_archive(source: &Source, executable: Option<&Path>) -> Result
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(50);
-        println!("likely-hardcoded-engine-names\t{}", names.len());
-        for (name, count) in names.iter().take(candidate_display_limit) {
+        println!("likely-hardcoded-engine-names\t{}", names.candidates.len());
+        // The published total moved when the definition check stopped folding case. Say by how
+        // much, and name the entries, rather than leaving a reader to wonder why it changed.
+        println!(
+            "engine-names-recovered-from-the-old-case-fold\t{}",
+            names.hidden_by_the_old_case_fold.len()
+        );
+        for (name, count) in names
+            .hidden_by_the_old_case_fold
+            .iter()
+            .take(candidate_display_limit)
+        {
+            println!("engine-name-recovered-from-case-fold\t{name}\t{count}");
+        }
+        for (name, count) in names.candidates.iter().take(candidate_display_limit) {
             println!("engine-name-candidate\t{name}\t{count}");
         }
     }
@@ -2088,35 +2101,70 @@ fn normalize_member_name(name: &str) -> String {
     name.replace('\\', "/").to_ascii_lowercase()
 }
 
+/// The scanner's engine-name candidate list, with the size of the defect it used to carry.
+struct EngineNameCandidates {
+    /// Names the corpus calls, never defines, and which also appear verbatim in the executable,
+    /// ordered by use count.
+    candidates: Vec<(String, usize)>,
+    /// Those a case-folded definition check used to suppress. Reported rather than quietly
+    /// absorbed, because this list is published and its total moved when the fold was fixed.
+    hidden_by_the_old_case_fold: Vec<(String, usize)>,
+}
+
 fn likely_engine_names(
     path: &Path,
     executable_names: &BTreeMap<String, usize>,
     definition_names: &BTreeMap<String, usize>,
-) -> Result<Vec<(String, usize)>, String> {
+) -> Result<EngineNameCandidates, String> {
     let bytes = fs::read(path)
         .map_err(|error| format!("could not read executable {}: {error}", path.display()))?;
     let binary_strings = ascii_strings(&bytes);
     // Exclude names the corpus actually DEFINES, not every name that appears as a literal.
     // The scripts push a native name and convert it to defer the call (`/invoke_spell cvx`),
     // so excluding on literal presence hid genuine host calls.
-    let definition_names: BTreeSet<String> = definition_names
+    //
+    // **Case-sensitively.** `GameScriptVm::lookup` builds a `DictKey::Name` from the name exactly
+    // as written, so `GOLD` and `gold` are two different names to the interpreter. This check used
+    // to fold case, which let `gs\barter.gs`'s `/gold` suppress `GOLD` -- an engine constant with
+    // 290 uses in 3.02 that the corpus never defines -- from the list this tool prints. Folding
+    // here contradicted the VM's own resolution and hid real engine names, which is the exact
+    // failure this filter exists to prevent.
+    let defined: BTreeSet<&String> = definition_names.keys().collect();
+    let defined_folded: BTreeSet<String> = definition_names
         .keys()
         .map(|name| name.to_ascii_lowercase())
         .collect();
-    let mut candidates: Vec<_> = executable_names
-        .iter()
-        .filter(|(name, _)| {
-            let lower = name.to_ascii_lowercase();
-            !definition_names.contains(&lower) && binary_strings.contains(&lower)
-        })
-        .map(|(name, count)| (name.clone(), *count))
-        .collect();
-    candidates.sort_by(|(left_name, left_count), (right_name, right_count)| {
-        right_count
-            .cmp(left_count)
-            .then_with(|| left_name.cmp(right_name))
-    });
-    Ok(candidates)
+    let mut candidates = Vec::new();
+    let mut hidden_by_the_old_case_fold = Vec::new();
+    for (name, count) in executable_names {
+        if defined.contains(name) {
+            continue;
+        }
+        // The *binary-string* comparison stays folded. That is a coincidence filter asking whether
+        // the name occurs in the image at all, where a difference of case carries no meaning. It
+        // is a different question from "does the corpus define this name", and only the second one
+        // has to agree with the interpreter.
+        let lower = name.to_ascii_lowercase();
+        if !binary_strings.contains(&lower) {
+            continue;
+        }
+        if defined_folded.contains(&lower) {
+            hidden_by_the_old_case_fold.push((name.clone(), *count));
+        }
+        candidates.push((name.clone(), *count));
+    }
+    let by_use_then_name =
+        |(left_name, left_count): &(String, usize), (right_name, right_count): &(String, usize)| {
+            right_count
+                .cmp(left_count)
+                .then_with(|| left_name.cmp(right_name))
+        };
+    candidates.sort_by(by_use_then_name);
+    hidden_by_the_old_case_fold.sort_by(by_use_then_name);
+    Ok(EngineNameCandidates {
+        candidates,
+        hidden_by_the_old_case_fold,
+    })
 }
 
 fn ascii_strings(source: &[u8]) -> BTreeSet<String> {
@@ -3429,7 +3477,8 @@ fn scan_native_table(executable: &Path, source: Option<&Source>) -> Result<(), S
     // appears verbatim in the executable. Comparing the operator table against the raw
     // called-but-not-defined set instead is misleading, because that set is dominated by names
     // whose definition site our definition-shape classifier does not recognise.
-    let candidates = likely_engine_names(executable, &executable_names, &definition_names)?;
+    let candidates =
+        likely_engine_names(executable, &executable_names, &definition_names)?.candidates;
 
     let mut confirmed = 0_usize;
     let mut unconfirmed = Vec::new();
@@ -5167,6 +5216,45 @@ mod tests {
         let error = set_imp_placement(&input, 0, 1, 2, None, &output).unwrap_err();
         assert!(error.contains("could not create"), "{error}");
         assert_eq!(fs::read(&output).unwrap(), b"precious");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The published candidate list must not hide an engine name because the corpus happens to
+    /// define a differently-cased one.
+    ///
+    /// `GameScriptVm::lookup` resolves case-sensitively, so `GOLD` and `gold` are two names. This
+    /// check used to fold, and `gs\barter.gs`'s `/gold` suppressed `GOLD` -- 290 uses in 3.02 --
+    /// from the list this tool prints. Restoring the fold fails both assertions below: `GOLD`
+    /// leaves the candidate list and the recovery count drops to zero. Verified by mutation.
+    #[test]
+    fn the_candidate_list_does_not_let_a_lowercase_definition_hide_an_uppercase_call() {
+        let dir = scratch_dir("candidate-case");
+        let image = dir.join("fake.exe");
+        // The filter only asks whether the name occurs as an ASCII run in the image.
+        fs::write(&image, b"\0gold\0getarmydata\0GOLD\0").unwrap();
+
+        let executable_names = BTreeMap::from([
+            ("GOLD".to_owned(), 290_usize),
+            ("gold".to_owned(), 5),
+            ("getarmydata".to_owned(), 3),
+        ]);
+        let definition_names = BTreeMap::from([("gold".to_owned(), 1_usize)]);
+
+        let found =
+            super::likely_engine_names(&image, &executable_names, &definition_names).unwrap();
+        let names: Vec<&str> = found
+            .candidates
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+
+        // `GOLD` is called and never defined, so it belongs in the list; `gold` is defined, so it
+        // does not. The two decisions are independent.
+        assert_eq!(names, ["GOLD", "getarmydata"]);
+        assert_eq!(
+            found.hidden_by_the_old_case_fold,
+            [("GOLD".to_owned(), 290_usize)]
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -19,7 +19,36 @@ const PLACED_SPRITE_HEAD_SIZE: usize = 32;
 /// The `u32` record count that leads every trailing section.
 const PLACED_SPRITE_COUNT_BYTES: usize = 4;
 
-/// Bit `0x00800000` of a cell tag. Its meaning is **Unknown**.
+/// Mask of the cell's second 16-bit field: bits `16..32` of the first word.
+///
+/// **Observed in a local binary, 2026-09-17.** The engine treats the cell's first word as two
+/// `u16`s, and this is the upper one. A writer that sets the tile slot must preserve **all** of it,
+/// not one bit of it. See [`CELL_TAG_HIGH_FLAG`] for what the corpus puts in it and
+/// [`MapCell::tile_index`] for the reading that establishes the split.
+pub const CELL_TAG_UPPER_FIELD: u32 = 0xffff_0000;
+
+/// The value `0x0080` of the cell's second 16-bit field, i.e. `0x00800000` of the whole word.
+///
+/// **Observed in a local binary, 2026-09-17: this is a value of a signed scalar, not a bit.** Cell
+/// offset `+2` holds a signed 16-bit quantity. All eleven of its readers in `lomse.exe` load it with
+/// `movsx` and **none of them masks it**; `0x00519d00` uses it as `(0x80 - field) * k >> 7`, so
+/// `0x80` is an arithmetic scale base, and `0x004c5cc2` compares it against map object `+0x4c`
+/// rather than against a constant. Reading this value as a flag of any kind is retired.
+///
+/// **Inferred, and deliberately not asserted here:** that the field's range is *closed* at `0..128`
+/// and therefore that `0x0080` is that range saturated. Nothing disassembled clamps the field. A
+/// scale base of `0x80` is what you would use for a fraction in `0..128` and equally what you would
+/// use for a fixed-point value that can exceed it; the instructions do not choose between them. The
+/// separate Observed fact is that the corpus puts only `0x0000` and `0x0080` in this field across
+/// 353 maps and 1,040,384 cells.
+///
+/// **Refuted in a local binary, 2026-09-17: `forcetexture` does not set it.** An earlier gameplay
+/// run concluded it did, because `clearmap` calls `forcetexture` on every cell and a `clearmap`
+/// save carried the value on all 4,096. But `forcetexture`'s worker at `0x004a5ed0` touches exactly
+/// two cell operands in the whole function -- a 16-bit read at `0x004a5efe` and a 16-bit write at
+/// `0x004a5f06`, both of lane `+0` -- and a 16-bit store to `+0` cannot alter `+2`. Something else
+/// `clearmap` does writes the field; the grid initialiser at `0x004a50e6`, which fills every cell's
+/// `+2` from map object `+0x48`, is the **Inferred** candidate.
 ///
 /// **Refuted in gameplay, 2026-09-17.** This constant used to be called
 /// `CELL_TAG_FORCED_TEXTURE`, on the corpus reasoning that the bit appears only in `.smp` files
@@ -29,9 +58,10 @@ const PLACED_SPRITE_COUNT_BYTES: usize = 4;
 /// bit set.** Forcing a texture does not set it, so it does not mean "forced texture". The
 /// reasoning is kept here so nobody re-derives it from the same corpus shape.
 ///
-/// **Observed in gameplay, 2026-09-17: `forcetexture` sets this bit and `resetvisibility` clears
-/// it.** Isolated with five fresh maps, one renderer call each -- fresh because once the bit is
-/// cleared it stays cleared:
+/// **Observed in gameplay, 2026-09-17: something `clearmap` does sets this value and
+/// `resetvisibility` clears it.** (The attribution to `forcetexture` is refuted above; the
+/// measurement is unaffected.) Isolated with five fresh maps, one renderer call each -- fresh
+/// because once the value is cleared it stays cleared:
 ///
 /// | sequence | bit, across all 4,096 cells of a 64x64 map |
 /// | --- | --- |
@@ -58,8 +88,14 @@ const PLACED_SPRITE_COUNT_BYTES: usize = 4;
 /// A writer must therefore treat this bit as **cosmetic**: preserving it costs nothing and loses
 /// nothing, and setting it achieves nothing the engine will keep.
 ///
-/// It is still masked out of [`MapCell::tile_index`], which is independent of what it means: with
-/// the mask every corpus cell indexes a tile in `0..623`, and without it the flagged cells do not.
+/// **Corrected, 2026-09-17: this is not a bit of the tile field, and masking it alone was wrong.**
+/// An earlier version of this comment said the constant "is still masked out of
+/// `MapCell::tile_index`", on the reasoning that with the mask every corpus cell indexes a tile in
+/// `0..623` and without it the flagged cells do not. That reasoning reached the right answer on the
+/// corpus for the wrong reason. The engine reads the tile slot as the low `u16`
+/// ([`MapCell::tile_index`]) and this value lives in the upper one, so the correct mask is
+/// [`CELL_TAG_UPPER_FIELD`]. The two agree on every shipped cell only because `0x00800000` is the
+/// only bit above 15 any of them sets.
 pub const CELL_TAG_HIGH_FLAG: u32 = 0x0080_0000;
 
 /// One engine terrain type: the tile slot `setterrain` paints with, and its `gs\maplib.gs` names.
@@ -199,8 +235,30 @@ impl MapCell {
         self.tag == other.tag && self.value_bits == other.value_bits
     }
 
+    /// The tile-atlas slot this cell paints: the **low sixteen bits** of the tag.
+    ///
+    /// **Observed in a local binary, 2026-09-17.** Every *interpreting* read of the cell's first
+    /// word in `lomse.exe` is a sixteen-bit one -- `movsx eax, word [cell]` at `0x004a5261` (the
+    /// worker behind `getterrain`), `0x004a4c3d`, `0x004a56d7`, `0x004a5cea`, `0x004a5dce`,
+    /// `0x004a5e00`, `0x004a5efe`, `0x004a6388` and `0x004a9671` -- and every write of it is
+    /// `mov [cell], cx` (`0x004a5e08`, `0x004a5f06`, and `0x004a50da` when the grid is cleared).
+    ///
+    /// **Corrected, 2026-09-17: "never as a dword" was too strong.** The cell is copied whole at
+    /// `0x004a9660`/`0x004a9666`, a pair of dword moves into a second array, and that access does
+    /// exist. It decodes nothing -- the very next thing that function does is re-read the same
+    /// cell's low word with `movsx eax, word [edx+eax]` at `0x004a9671` and bounds-check it -- so
+    /// the two-field conclusion is unaffected. The universal sentence was not.
+    /// The value goes straight into a bounds-checked tileset lookup at `0x00508f10`, which
+    /// compares it against the tileset's tile count and answers `-1` when it is negative or past
+    /// the end. So the field is a signed sixteen-bit tile index and the upper half of the word is
+    /// a separate sixteen-bit field, not spare bits of this one.
+    ///
+    /// **Corrected, 2026-09-17.** This used to mask out [`CELL_TAG_HIGH_FLAG`] and keep every
+    /// other high bit. On the shipped corpus the two rules agree, because `0x00800000` is the only
+    /// bit above 15 any corpus cell sets -- which is exactly why the corpus could not distinguish
+    /// them and why a survey of the engine could.
     pub fn tile_index(&self) -> u32 {
-        self.tag & !CELL_TAG_HIGH_FLAG
+        self.tag & 0xffff
     }
 
     /// Whether bit `0x00800000` is set. What that means is Unknown; see [`CELL_TAG_HIGH_FLAG`].
@@ -536,6 +594,82 @@ const OBSERVED_HEADER_WORD_LAYOUTS: [(u32, MapTailLayout); 19] = [
     (110, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
     (111, MapTailLayout { record_size: 49, total_fixed_bytes: 8 }),
 ];
+
+/// The engine's own version gates on the trailing record, read out of `lomse.exe`.
+///
+/// **Observed in a local binary, 2026-09-17.** The placed-object record has one serialiser,
+/// `0x0050da70`, shared by its read and its write virtual. It reads a fixed head and then gates
+/// five field groups on the map file's header word, which the engine holds in the scenario object's
+/// first dword at `0x005aa12c`. Each entry below is `(threshold, bytes when the header word is at
+/// least the threshold, bytes when it is below)`:
+///
+/// | address | threshold | at or above | below | what is read |
+/// | --- | ---: | ---: | ---: | --- |
+/// | `0x0050dac2` | 98 | 2 | 8 | two bytes into the record, or eight bytes discarded and two defaults substituted |
+/// | `0x0050db14` | 54 | 8 | 0 | a dword field and a dword sub-object flag |
+/// | `0x0050db87` | 74 | 4 | 0 | a dword field |
+/// | `0x0050dba1` | 96 | 1 | 0 | a byte field |
+/// | `0x0050dbbb` | 102 | 2 | 0 | a word count of a variable-length list |
+///
+/// The gates are listed here in the serialiser's own order, which is not sorted, because the order
+/// is what the addresses attest.
+const ENGINE_RECORD_GATES: [(u32, u32, u32); 5] = [
+    (98, 2, 8),
+    (54, 8, 0),
+    (74, 4, 0),
+    (96, 1, 0),
+    (102, 2, 0),
+];
+
+/// Bytes every trailing record carries regardless of the header word.
+///
+/// **Observed in a local binary, 2026-09-17.** Four for the record kind, which the section reader
+/// at `0x004f7120` consumes before dispatching through its ten-entry jump table at `0x004f73b8`;
+/// twenty-four for the base-class prefix at `0x004f6b00`, which reads six dwords; and four for the
+/// dword the derived serialiser reads at `0x0050dab5`.
+const ENGINE_RECORD_HEAD_BYTES: u32 = 4 + 24 + 4;
+
+/// The threshold at which the scenario reader reads an extra four-byte section.
+///
+/// **Observed in a local binary, 2026-09-17.** `cmp dword [esi],64h; jl` at `0x00485617`: at or
+/// above 100 the loader calls `0x004c8fa0`, which reads one dword from the file; below it calls
+/// `0x004c8f90`, which reads nothing and zeroes the field. Those four bytes are *not* a footer of
+/// the record section -- they belong to a different member of the scenario object, read after it.
+const ENGINE_FOOTER_THRESHOLD: u32 = 100;
+
+/// The trailing-record layout the engine's own gates imply for a header word.
+///
+/// **Observed in a local binary, 2026-09-17.** This is a rule rather than a table: it is evaluated
+/// from [`ENGINE_RECORD_GATES`] and [`ENGINE_FOOTER_THRESHOLD`] and so it answers for header words
+/// the corpus does not contain. [`OBSERVED_HEADER_WORD_LAYOUTS`] is the measurement it is checked
+/// against, not the source it is built from -- a table that restated the corpus could not fail on
+/// the rule being wrong, which is the failure this repository has a standing lesson about.
+///
+/// The rule assumes no record carries one of the variable-length sub-objects the serialiser can
+/// attach, which is true of all 21,117 corpus records and is the first thing to doubt if a file
+/// ever disagrees.
+///
+/// Reproduce with `cargo run --release --example map_loader_survey -- lomse.exe`.
+pub fn engine_tail_layout(header_word: u32) -> MapTailLayout {
+    let mut record_size = ENGINE_RECORD_HEAD_BYTES;
+    for (threshold, at_or_above, below) in ENGINE_RECORD_GATES {
+        record_size += if header_word >= threshold {
+            at_or_above
+        } else {
+            below
+        };
+    }
+    let total_fixed_bytes = PLACED_SPRITE_COUNT_BYTES as u32
+        + if header_word >= ENGINE_FOOTER_THRESHOLD {
+            4
+        } else {
+            0
+        };
+    MapTailLayout {
+        record_size: record_size as usize,
+        total_fixed_bytes: total_fixed_bytes as usize,
+    }
+}
 
 /// Where a freshly minted record's bytes come from, per layout. See
 /// [`MapTailLayout::mint_provenance`].
@@ -2114,27 +2248,32 @@ impl MapAsset {
     }
 }
 
-/// Reject a tile index that no corpus cell could hold.
+/// Reject a tile index larger than any corpus cell holds.
 ///
 /// The tileset's own capacity is deliberately *not* checked -- `tilesb01.til` declares 624 slots,
-/// but that is one tileset's answer rather than the format's, and the active `.til` decides. What
-/// is checked is the **tag word's** layout: bits `10..22` are zero across all 1,258,496 corpus
-/// cells, so an index of 1024 or more is outside every observed shape, and `0x00800000` is a
-/// separate flag whose meaning is Unknown. A fat-fingered `3920` for `392` is the realistic input.
+/// but that is one tileset's answer rather than the format's, and the active `.til` decides.
+///
+/// **Corrected, 2026-09-17: the limit is a corpus guard, not a field width.** This used to justify
+/// itself by the tag word's layout -- "bits `10..22` are unused, so an index of 1024 or more is
+/// outside every observed shape". That model is retired: the engine's tile field is the whole low
+/// `u16` and it is signed, so the format can express `0..=32767` and the only thing stopping it is
+/// the tileset. The `1024` cap stays because it is a good conservative guard against a
+/// fat-fingered `3920` for `392`, which is the realistic input; what changed is that it is no
+/// longer claimed to be the field's width.
 fn check_tile_index(tile_index: u32) -> Result<(), MapError> {
     if tile_index >= TILE_INDEX_LIMIT {
         return Err(MapError::new(format!(
-            "tile index {tile_index} is outside 0..{TILE_INDEX_LIMIT}; corpus tag bits 10..22 are \
-             unused, so no observed cell holds an index this large"
+            "tile index {tile_index} is outside 0..{TILE_INDEX_LIMIT}; no shipped map holds an \
+             index this large, and the largest tileset declares 624 slots"
         )));
     }
     Ok(())
 }
 
-/// One past the largest tile index the corpus tag layout can express.
+/// One past the largest tile index this project will write.
 ///
-/// Corpus tag bits `10..22` are zero in every one of the 1,258,496 cells, so the tile field is the
-/// low ten bits.
+/// A conservative guard, not a field width: see [`check_tile_index`]. Every one of the 1,258,496
+/// corpus cells is below it, and the engine's field could hold far more.
 pub const TILE_INDEX_LIMIT: u32 = 1 << 10;
 
 impl MapAsset {
@@ -2175,18 +2314,22 @@ impl MapAsset {
     /// project has **not** measured which tiles it blends in, so that operation is deliberately
     /// not offered rather than approximated. See `docs/map-format.md`.
     ///
-    /// Bit `0x00800000` of the existing tag is **preserved**, and that is now the
-    /// measured-correct choice rather than only the conservative one. `forcetexture` *does* set the
-    /// bit -- a `clearmap` save carried it on all 4,096 cells -- and the renderer path clears it.
-    /// Sixteen cells handed to the engine with the bit already set came back cleared, but through a
-    /// save that also rebuilt the mesh, so which step cleared them is not separated. See
-    /// [`CELL_TAG_HIGH_FLAG`]. Preserving a bit whose lifetime this project does not control is the
-    /// only option that cannot destroy data.
+    /// **The cell's second 16-bit field is preserved in full**, which is what the engine does.
+    /// `forcetexture`'s worker at `0x004a5ed0` writes the slot with `mov [eax],cx` at `0x004a5f06`
+    /// -- a sixteen-bit store that cannot touch the upper field at all. So preserving
+    /// [`CELL_TAG_UPPER_FIELD`] is not a conservative choice here; it is the measured one.
+    ///
+    /// **Corrected, 2026-09-17.** This used to preserve [`CELL_TAG_HIGH_FLAG`] alone and argue the
+    /// case one bit at a time, which silently zeroed the rest of a field the engine reads as a
+    /// scalar. It was latent rather than live: across all 353 parseable shipped maps and 1,040,384
+    /// cells the upper field takes exactly two values, `0x0000` and `0x0080`, so no shipped map
+    /// loses anything either way. Fixed regardless, per this file's own rule that preserving what
+    /// it does not understand costs nothing.
     pub fn set_tile(&mut self, x: u32, y: u32, tile_index: u32) -> Result<(), MapError> {
         check_tile_index(tile_index)?;
         let index = self.cell_index_checked(x, y)?;
         let cell = &mut self.cells[index];
-        cell.tag = (cell.tag & CELL_TAG_HIGH_FLAG) | tile_index;
+        cell.tag = (cell.tag & CELL_TAG_UPPER_FIELD) | tile_index;
         Ok(())
     }
 
@@ -2209,7 +2352,7 @@ impl MapAsset {
         })?;
         check_tile_index(tile_index)?;
         for cell in &mut self.cells {
-            cell.tag = (cell.tag & CELL_TAG_HIGH_FLAG) | tile_index;
+            cell.tag = (cell.tag & CELL_TAG_UPPER_FIELD) | tile_index;
         }
         Ok(())
     }
@@ -2686,6 +2829,140 @@ mod tests {
         assert_eq!(layouts.len(), 1);
         assert_eq!(layouts[0].record_size, 49);
         assert_eq!(layouts[0].total_fixed_bytes, 8);
+    }
+
+    #[test]
+    fn the_engines_version_gates_reproduce_every_observed_tail_layout() {
+        // The corpus is the measurement and `engine_tail_layout` is the rule read out of the
+        // binary. Neither is derived from the other, so this can fail on the rule being wrong --
+        // which a table restating the corpus could not.
+        for (header_word, observed) in super::OBSERVED_HEADER_WORD_LAYOUTS {
+            let derived = super::engine_tail_layout(header_word);
+            assert_eq!(
+                derived, observed,
+                "header word {header_word}: the engine's gates give {derived}, the corpus shows \
+                 {observed}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_corpus_exercises_every_gate_it_is_able_to() {
+        // A review claimed this test would still pass with an empty `ENGINE_RECORD_GATES`, since it
+        // derives its gate list from the constant it validates. **Adjudicated against, 2026-09-17,
+        // by running it:** the constant is typed `[(u32, u32, u32); 5]`, so an empty array does not
+        // compile and is not a reachable mutation; and mutating the first gate's threshold from 98
+        // to 99 gives `FAILED. 216 passed; 1 failed`. The claim was static reasoning from a
+        // reviewer whose sandbox could not take the cargo lock.
+        //
+        // The corpus pins each threshold only to an interval: it contains 73 and 76, so it cannot
+        // tell 74 from 75, and the exact value comes from the binary. What the corpus *can*
+        // falsify is a gate the agreement test never exercises. One gate is genuinely beyond it --
+        // every shipped header word is at least 63, so nothing in the corpus is below the gate at
+        // 54 and every corpus record carries the eight bytes it guards. That is stated here rather
+        // than left as a silent hole in the coverage.
+        let smallest = super::OBSERVED_HEADER_WORD_LAYOUTS
+            .iter()
+            .map(|(word, _)| *word)
+            .min()
+            .expect("the corpus table is not empty");
+        let mut thresholds: Vec<u32> = super::ENGINE_RECORD_GATES
+            .iter()
+            .map(|(threshold, _, _)| *threshold)
+            .collect();
+        thresholds.push(super::ENGINE_FOOTER_THRESHOLD);
+        for threshold in thresholds {
+            let below = super::OBSERVED_HEADER_WORD_LAYOUTS
+                .iter()
+                .filter(|(word, _)| *word < threshold)
+                .map(|(word, _)| *word)
+                .max();
+            let at_or_above = super::OBSERVED_HEADER_WORD_LAYOUTS
+                .iter()
+                .filter(|(word, _)| *word >= threshold)
+                .map(|(word, _)| *word)
+                .min();
+            match (below, at_or_above) {
+                (Some(below), Some(at_or_above)) => {
+                    // The corpus straddles this gate, so the agreement test above really does
+                    // exercise it, and the two neighbouring header words must differ.
+                    assert_ne!(
+                        super::engine_tail_layout(below),
+                        super::engine_tail_layout(at_or_above),
+                        "the gate at {threshold} changes nothing between header words {below} \
+                         and {at_or_above}"
+                    );
+                }
+                _ => assert!(
+                    threshold <= smallest,
+                    "the gate at {threshold} is inside the corpus range but no shipped map lies \
+                     on both sides of it, so the agreement test never exercises it"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn setting_a_tile_preserves_the_whole_upper_sixteen_bit_field() {
+        // Observed in a local binary, 2026-09-17: `forcetexture`'s worker writes the slot with
+        // `mov [eax],cx` at 0x004a5f06, a sixteen-bit store that cannot reach the upper field.
+        //
+        // The old writer masked with CELL_TAG_HIGH_FLAG, keeping one bit of that field and zeroing
+        // the other fifteen. `0x0080` is the only value the corpus puts there, so no shipped map
+        // distinguishes the rules; this asserts the rule instead, with a value the corpus does not
+        // contain.
+        let upper = 0x1234_u32 << 16;
+        let mut map = map_with_one_cell_tag(upper | 111);
+        map.set_tile(0, 0, 392).expect("in bounds");
+        assert_eq!(map.cells[0].tag, upper | 392);
+        assert_eq!(map.cells[0].tile_index(), 392);
+
+        // `fill_terrain` is the same write over every cell and had the same bug.
+        let mut filled = map_with_one_cell_tag(upper | 111);
+        filled.fill_terrain(1).expect("water is a terrain type");
+        assert_eq!(
+            filled.cells[0].tag & super::CELL_TAG_UPPER_FIELD,
+            upper,
+            "fill_terrain dropped the upper field"
+        );
+    }
+
+    /// A one-cell map whose single cell carries a chosen tag, built through the parser so the
+    /// fixture cannot disagree with the reader about the layout.
+    fn map_with_one_cell_tag(tag: u32) -> MapAsset {
+        let mut source = Vec::new();
+        source.extend_from_slice(&super::GENERATED_HEADER_WORD.to_le_bytes());
+        source.extend_from_slice(&1_u32.to_le_bytes());
+        source.extend_from_slice(&1_u32.to_le_bytes());
+        source.extend_from_slice(&8_u32.to_le_bytes());
+        source.extend_from_slice(&tag.to_le_bytes());
+        source.extend_from_slice(&0_u32.to_le_bytes());
+        source.extend_from_slice(&0_u32.to_le_bytes());
+        MapAsset::parse(&source).expect("a one-cell map parses")
+    }
+
+    #[test]
+    fn reads_the_tile_index_as_the_low_sixteen_bits_the_engine_reads() {
+        // Observed in a local binary, 2026-09-17: `movsx eax, word [cell]` at 0x004a5261. The old
+        // rule was `tag & !CELL_TAG_HIGH_FLAG`, which keeps every high bit except one; this case
+        // is the one that separates the two rules, and the corpus does not contain it because
+        // 0x00800000 is the only high bit any corpus cell sets.
+        let unexpected_high_bits = super::MapCell {
+            tag: 0x1234_0000 | 619,
+            value_bits: 0,
+            value: 0.0,
+        };
+        assert_eq!(unexpected_high_bits.tile_index(), 619);
+        // Signed sixteen-bit: the engine's tileset lookup at 0x00508f10 rejects a negative index,
+        // so a tag whose low half has bit 15 set names no tile. This asserts the width, which is
+        // what the disassembly establishes; it does not claim the corpus contains such a cell.
+        let negative = super::MapCell {
+            tag: 0xffff,
+            value_bits: 0,
+            value: 0.0,
+        };
+        assert_eq!(negative.tile_index(), 0xffff);
+        assert!(i32::from(negative.tile_index() as u16 as i16) < 0);
     }
 
     #[test]

@@ -1,0 +1,189 @@
+member	gs\standard.gs
+source-bytes	8933
+tokens	1335
+comments	26
+procedure-anomalies	0
+module-load	complete
+module-steps	339
+module-defined-names	36
+module-defined-name	addrect
+module-defined-name	between
+module-defined-name	carriage_return
+module-defined-name	char_cvs
+module-defined-name	clearstack
+module-defined-name	closeifopen
+module-defined-name	dump_flags
+module-defined-name	dumpstack
+module-defined-name	eval
+module-defined-name	exec_if_known
+module-defined-name	exitapplication
+module-defined-name	free_stack_elements
+module-defined-name	get_if_known
+module-defined-name	geteasyunitdata
+module-defined-name	getflagvalue
+module-defined-name	index
+module-defined-name	interpolate
+module-defined-name	makeregion
+module-defined-name	max
+module-defined-name	min
+module-defined-name	onstack?
+module-defined-name	polar
+module-defined-name	popoffstack
+module-defined-name	pushonstack
+module-defined-name	quote
+module-defined-name	radians
+module-defined-name	retrievefromstack
+module-defined-name	setflagvalue
+module-defined-name	space
+module-defined-name	stack
+module-defined-name	stackdump
+module-defined-name	string_cvi
+module-defined-name	tab
+module-defined-name	temp_for_cvs
+module-defined-name	utilitystring
+module-defined-name	writestring
+exercise	min	ok
+exercise-note	min	clamp helper, both operand orders
+exercise	max	ok
+exercise-note	max	clamp helper, both operand orders
+exercise	between	ok
+exercise-note	between	value low high; inclusive at the ends
+exercise	script-defined index shadows the primitive	ok
+exercise-note	script-defined index shadows the primitive	standard.gs redefines /index using roll; it must agree with the primitive
+exercise	getflagvalue	ok
+exercise-note	getflagvalue	bit test; its `and` yields an integer that `ifelse` consumes as a condition
+exercise	setflagvalue	ok
+exercise-note	setflagvalue	set and clear bit zero
+exercise	dump_flags is a no-op on its operand	ok
+exercise-note	dump_flags is a no-op on its operand	after the first iteration it tests the loop counter, not the flags, then drops it
+exercise	radians	ok
+exercise-note	radians	the module's own degree-to-radian conversion, applied before every sin/cos
+exercise	polar	ok
+exercise-note	polar	x y distance angle; zero degrees is +x
+exercise	stack: push, pop, LIFO order	ok
+exercise-note	stack: push, pop, LIFO order	the module's array-backed stack; every entry point consumes the array reference
+exercise	stack: layout after two pushes	ok
+exercise-note	stack: layout after two pushes	count in slot zero, values from slot one
+exercise	onstack?	ok
+exercise-note	onstack?	linear search with an early exit
+exercise	popoffstack underflows to /null	ok
+exercise-note	popoffstack underflows to /null	an empty stack answers with a name, not an error
+exercise	retrievefromstack	ok
+exercise-note	retrievefromstack	extract by index and close the gap
+exercise	dumpstack drains onto the operand stack	ok
+exercise-note	dumpstack drains onto the operand stack	it pops until /null and leaves every popped value behind
+exercise	get_if_known	ok
+exercise-note	get_if_known	operands are dictionary, key, default -- the reverse of the header comment
+exercise	exec_if_known	ok
+exercise-note	exec_if_known	runs the value when the key is present and leaves nothing when it is not
+exercise	interpolate, between two keys	ok
+exercise-note	interpolate, between two keys	numeric dictionary keys walked with forall, then linear interpolation
+exercise	interpolate, exact key	ok
+exercise-note	interpolate, exact key	an exact hit returns the stored value without interpolating
+exercise	string_cvi	ok
+exercise-note	string_cvi	digit-by-digit conversion over the string's character codes
+exercise	char_cvs reads the procedure's attached array	ok
+exercise-note	char_cvs reads the procedure's attached array	/char_array is attached with `replace` and read as a literal name
+exercise	stackdump is empty	ok
+exercise-note	stackdump is empty	the shipped body is `{}`
+exercise	makeregion needs the terrain host	ok
+exercise-note	makeregion needs the terrain host	map painting; the first engine call is the random source
+exercise	writestring needs file output	ok
+exercise-note	writestring needs file output	byte output to an engine file handle
+exercise	eval needs the temporary-file host	ok
+exercise-note	eval needs the temporary-file host	the module writes a scratch file and `run`s it
+exercise	free_stack_elements needs the allocator	ok
+exercise-note	free_stack_elements needs the allocator	releases engine-owned handles held in a stack
+exercise	closeifopen needs the dialog host	ok
+exercise-note	closeifopen needs the dialog host	user interface state
+exercise	exitapplication needs the dialog host	ok
+exercise-note	exitapplication needs the dialog host	user interface state
+exercise	geteasyunitdata needs the unit tables	ok
+exercise-note	geteasyunitdata needs the unit tables	game data the engine owns
+exercise	addrect needs the dialog host	ok
+exercise-note	addrect needs the dialog host	dialog layout
+exercise	retrievefromstack's error path needs the reporter	ok
+exercise-note	retrievefromstack's error path needs the reporter	the out-of-range branch formats a message with an engine helper
+exercises	31
+exercise-failures	0
+distinct-unknown-native-names	9
+unknown-native	additem	1	operator	0x00490be0	addrect
+unknown-native	build_statement	1	unresolved		retrievefromstack
+unknown-native	dialogisopen?	1	operator	0x00505830	closeifopen
+unknown-native	free	1	operator	0x004dc600	free_stack_elements
+unknown-native	gettemppath	1	operator	0x005053f0	eval
+unknown-native	rand	1	operator	0x004c9f20	makeregion
+unknown-native	sysdlg	1	unresolved		exitapplication
+unknown-native	unitdictxref	1	unresolved		geteasyunitdata
+unknown-native	write	1	operator	0x004cc120	writestring
+static-engine-debt	21
+static-engine-debt-name	additem	operator
+static-engine-debt-name	build_statement	unresolved
+static-engine-debt-name	closedialog	operator
+static-engine-debt-name	closefile	operator
+static-engine-debt-name	dialogisopen?	operator
+static-engine-debt-name	erroroutput	operator
+static-engine-debt-name	file	operator
+static-engine-debt-name	free	operator
+static-engine-debt-name	gettemppath	operator
+static-engine-debt-name	getunittypedata	operator
+static-engine-debt-name	kill	operator
+static-engine-debt-name	opendialog	operator
+static-engine-debt-name	outfilename	unresolved
+static-engine-debt-name	paintelevation	operator
+static-engine-debt-name	rand	operator
+static-engine-debt-name	run	operator
+static-engine-debt-name	strcat	operator
+static-engine-debt-name	strcpy	operator
+static-engine-debt-name	sysdlg	unresolved
+static-engine-debt-name	unitdictxref	unresolved
+static-engine-debt-name	write	operator
+line-endings-members	1681
+line-endings-containing-crlf	302
+line-endings-containing-bare-cr	0
+line-endings-containing-bare-lf	0
+line-endings-bare-cr-only	0
+line-endings-without-any	1379
+survey-members-loaded	406
+survey-members-stopped-on-a-name	1267
+survey-members-failed-otherwise	8
+survey-members-unreadable	0
+survey-distinct-blocking-names	201
+survey-first-blocker-class	defined-in-another-member	564
+survey-first-blocker-class	engine-constant	556
+survey-first-blocker-class	engine-operator	124
+survey-first-blocker-class	unresolved	23
+survey-blocker	begin_unit_definition	145	defined-in-another-member
+survey-blocker	textdict	143	defined-in-another-member
+survey-blocker	GOLD	75	engine-constant
+survey-blocker	ORDER	71	engine-constant
+survey-blocker	DEATH	56	engine-constant
+survey-blocker	EARTH	53	engine-constant
+survey-blocker	FIRE	51	engine-constant
+survey-blocker	LIFE	49	engine-constant
+survey-blocker	AIR	48	engine-constant
+survey-blocker	dialog	48	engine-operator
+survey-blocker	WATER	42	engine-constant
+survey-blocker	WANDERING_MONSTER_PLAYER	41	engine-constant
+survey-blocker	userdict	41	defined-in-another-member
+survey-blocker	CHAOS	39	engine-constant
+survey-blocker	addmounttype	28	engine-operator
+survey-blocker	run	23	defined-in-another-member
+survey-blocker	spell_page	15	unresolved
+survey-blocker	stack	14	defined-in-another-member
+survey-blocker	T_Crystal_Mine	10	defined-in-another-member
+survey-blocker	panel_dict	9	defined-in-another-member
+survey-blocker	T_Gold_Mine	8	defined-in-another-member
+survey-blocker	T_Statue	8	defined-in-another-member
+survey-blocker	SPELLCAT1	7	engine-constant
+survey-blocker	T_Brewery	7	defined-in-another-member
+survey-blocker	T_Mysterious_Keep	7	defined-in-another-member
+survey-blocker	T_Tower	7	defined-in-another-member
+survey-blocker	lbm	6	engine-operator
+survey-blocker	EDITBOX_SCROLL	4	engine-constant
+survey-blocker	T_Cave2	4	defined-in-another-member
+survey-blocker	spelldict	4	defined-in-another-member
+survey-other-failure	unclosed procedure delimiter {	4
+survey-other-failure	forall expected array, string or dictionary, found procedure	2
+survey-other-failure	procedure has no metadata slot 0	1
+survey-other-failure	put does not support procedure with procedure index	1

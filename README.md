@@ -34,6 +34,7 @@ Concretely, today you can **inspect, decode, render, export, and measure**, and 
 - [macOS runbook](docs/macos-runbook.md) — launch, configuration, recovery, and troubleshooting
 - [Native Rust asset tool](spikes/asset-viewer/README.md) — build, commands, what it proves and what it does not
 - [Sprite placement and hotspots](docs/hotspots.md) — the solved placement rule and how to write it back
+- [Inside the native operator bodies](docs/native-operator-bodies.md) — what the 1,906 engine operators touch, call and consume, with the two controls it fails
 - [Game and data architecture](docs/game-architecture.md) — known modding surfaces and hard engine boundaries
 - [Difficulty and computer-player AI](docs/difficulty-ai.md) — verified script gates, mod-specific changes, and remaining gameplay test
 - [Agent handoff](docs/agent-handoff.md) — current state, local setup, reproducibility, and next bounded work
