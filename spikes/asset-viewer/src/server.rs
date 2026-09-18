@@ -16,11 +16,11 @@
 //!    accepts the neighbourhood at (4, 2)" -- is the most informative thing the tool can say. An
 //!    HTTP error code would invite the client to swallow it as a transport failure.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Write as _;
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -82,23 +82,41 @@ pub struct EditorSession {
     /// worth keeping "for a caller that makes several edits against one parsed map". This is that
     /// caller.
     pub map: MapAsset,
-    /// The map as it was before the last paint. One level, by design for v1.
-    undo: Option<MapAsset>,
+    /// The states this session can go back to, oldest first, newest last.
+    ///
+    /// Bounded at [`UNDO_DEPTH`]. A whole-map snapshot of a 128x128 map is about 160 KB, so the
+    /// whole stack is a few megabytes -- cheap enough not to need a diff, and bounded so a long
+    /// session cannot grow without limit.
+    undo: VecDeque<UndoStep>,
     pub tile_set: LoadedTileSet,
-    /// Cells this tool drew among equally valid tiles, across the whole session.
+    /// The handle `/api/open` gave this session. See [`Editor::session_for`].
+    token: String,
+    /// **Which cells of the map as it stands now** hold a tile this tool drew among equally valid
+    /// ones, keyed by packed cell index.
     ///
-    /// Accumulated rather than per-paint, because the number that matters when a file is written
-    /// is how much of *the file* is a legal choice rather than the engine's.
-    drawn_cells: usize,
+    /// A set of live cells rather than a running total, because a total is cumulative history and
+    /// the question a save has to answer is about the *file*. Painting a region and then painting
+    /// it back to something the tileset determines leaves a fully reproducible map, and the
+    /// counter kept reporting the earlier draw. An honesty mechanism that over-reports gets
+    /// ignored, which defeats it.
+    drawn_cells: BTreeSet<usize>,
+    /// Paints currently standing in the map. Decremented by undo, so it describes the map and not
+    /// the session's history.
     paints: usize,
-    /// The drawn-cell count of the paint `undo` would roll back.
-    ///
-    /// Held so that undoing one paint subtracts one paint's worth of unreproducibility rather than
-    /// resetting the account. An earlier version zeroed it, which made a session of 197 paints
-    /// report a clean file after undoing the last one -- understating exactly the thing the tool
-    /// exists to be honest about.
-    undo_drawn_cells: usize,
 }
+
+/// One step the session can be taken back to.
+#[derive(Clone)]
+struct UndoStep {
+    map: MapAsset,
+    drawn_cells: BTreeSet<usize>,
+    paints: usize,
+}
+
+/// How many paints a session can walk back.
+///
+/// Bounded deliberately. Redo is not offered.
+pub const UNDO_DEPTH: usize = 32;
 
 /// A response, independent of any HTTP library.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,17 +155,40 @@ impl HttpResponse {
     }
 }
 
+/// One request, reduced to what the router needs.
+///
+/// `host` and `origin` are carried into the pure layer deliberately. They are not transport
+/// details: they are the only thing separating this editor from any web page the user happens to
+/// have open, and a guard that lives in the socket loop is a guard the handler tests cannot see.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HttpRequest<'a> {
+    pub method: &'a str,
+    /// The raw request target: path and query together.
+    pub target: &'a str,
+    pub body: &'a str,
+    pub host: Option<&'a str>,
+    pub origin: Option<&'a str>,
+}
+
 /// The whole editor: a tileset source, and at most one open map.
 pub struct Editor {
     source: TileSetSource,
     session: Option<EditorSession>,
+    /// The port the listener is bound to.
+    ///
+    /// Held because the `Host` and `Origin` checks are against *this* editor's address. A check
+    /// against "any loopback port" would let one local server's page drive another's.
+    port: u16,
+    counter: u64,
 }
 
 impl Editor {
-    pub fn new(source: TileSetSource) -> Self {
+    pub fn new(source: TileSetSource, port: u16) -> Self {
         Self {
             source,
             session: None,
+            port,
+            counter: 0,
         }
     }
 
@@ -156,13 +197,32 @@ impl Editor {
         self.session.as_ref()
     }
 
-    /// Route one request. `target` is the raw request target, path and query together.
-    pub fn handle(&mut self, method: &str, target: &str, body: &str) -> HttpResponse {
-        let (path, query) = match target.split_once('?') {
+    /// Route one request.
+    ///
+    /// **Every request passes the browser guard first**, including the static assets. Loopback is
+    /// not an origin boundary: a page on any site can reach `127.0.0.1`, and before this check
+    /// `<img src="http://127.0.0.1:8731/api/open?path=...">` was enough to swap the held map, a
+    /// form POST was enough to paint into it, and `/api/save` was enough to write a 159 KB file
+    /// anywhere the user can write. None of that needed to read a response, so CORS never applied.
+    pub fn handle(&mut self, request: &HttpRequest<'_>) -> HttpResponse {
+        if let Some(reason) = cross_origin_refusal(request, self.port) {
+            // 403, not 200: this one is not an answer the user asked for, and no page of ours can
+            // provoke it. A client that sees it has been driven by something else.
+            return HttpResponse {
+                status: 403,
+                content_type: "application/json; charset=utf-8",
+                body: format!(
+                    "{{\"ok\":false,\"refusal\":{},\"notes\":[]}}",
+                    json_string(&reason)
+                )
+                .into_bytes(),
+            };
+        }
+        let (path, query) = match request.target.split_once('?') {
             Some((path, query)) => (path, query),
-            None => (target, ""),
+            None => (request.target, ""),
         };
-        match (method, path) {
+        match (request.method, path) {
             ("GET", "/") | ("GET", "/index.html") => {
                 HttpResponse::text(200, "text/html; charset=utf-8", INDEX_HTML)
             }
@@ -170,79 +230,143 @@ impl Editor {
                 HttpResponse::text(200, "text/javascript; charset=utf-8", APP_JS)
             }
             ("GET", "/style.css") => HttpResponse::text(200, "text/css; charset=utf-8", STYLE_CSS),
-            ("GET", "/api/open") => self.open(&form_fields(query)),
-            ("GET", "/api/atlas.png") => self.atlas_png(),
-            ("POST", "/api/paint") => self.paint(&form_fields(body)),
-            ("POST", "/api/undo") => self.undo(),
-            ("POST", "/api/save") => self.save(&form_fields(body)),
+            // **POST, not GET.** Opening a map replaces the server's whole session, and a
+            // state-mutating GET is reachable from a bare `<img>` tag on any page in the world.
+            ("GET", "/api/config") => self.config(),
+            ("GET", "/api/list") => list_directory(&form_fields(query)),
+            ("POST", "/api/open") => self.open(&form_fields(request.body)),
+            ("GET", "/api/atlas.png") => self.atlas_png(&form_fields(query)),
+            ("POST", "/api/paint") => self.paint(&form_fields(request.body)),
+            ("POST", "/api/undo") => self.undo(&form_fields(request.body)),
+            ("POST", "/api/save") => self.save(&form_fields(request.body)),
             _ => HttpResponse {
                 status: 404,
                 content_type: "application/json; charset=utf-8",
                 body: format!(
                     "{{\"ok\":false,\"refusal\":{},\"notes\":[]}}",
-                    json_string(&format!("no endpoint {method} {path}"))
+                    json_string(&format!("no endpoint {} {path}", request.method))
                 )
                 .into_bytes(),
             },
         }
     }
 
+    /// The open session, if the caller's handle names it.
+    ///
+    /// **One `Editor` holds one map, so a second browser tab is a real hazard rather than a
+    /// theoretical one**: tab A opens X, tab B opens Y, and tab A's next paint lands in Y at A's
+    /// coordinates while A's canvas goes on showing X. The handle does not make two maps possible;
+    /// it makes the stale tab fail loudly instead of silently editing the wrong file. It is a
+    /// handle, not a secret -- the `Host` and `Origin` checks are what keep other sites out.
+    fn session_for(&mut self, fields: &BTreeMap<String, String>) -> Result<&mut EditorSession, HttpResponse> {
+        let supplied = fields.get("token").map(String::as_str).unwrap_or_default();
+        match self.session.as_ref() {
+            None => Err(HttpResponse::refusal("no map is open", &[])),
+            Some(session) if session.token != supplied => Err(HttpResponse::refusal(
+                &format!(
+                    "this tab is holding a handle to a map that is no longer the open one. The \
+                     editor holds a single map per process, and {} is what it has now. Reload this \
+                     page to take it over",
+                    session.path.display()
+                ),
+                &[],
+            )),
+            Some(_) => Ok(self.session.as_mut().expect("just matched Some")),
+        }
+    }
+
+    /// Open a map, or refuse **without disturbing the map already held**.
+    ///
+    /// A failed open used to leave the client saying "No map open." while the server went on
+    /// holding the previous session, and Save As was not gated on the client's belief -- so a typo
+    /// in the path, followed by a save, wrote a file the user had been told did not exist. Dropping
+    /// the session instead would be worse: a typo would destroy an unsaved session outright. So the
+    /// session survives and the refusal **names what is still held**, and the client says so.
+    /// What the page can fill in for the user without being told.
+    ///
+    /// In a standard install the maps sit in `map/` beside `pic.mpq`, so `--pic` already names the
+    /// directory. Suggested only when it exists, and only as a default in a field the user can
+    /// change -- nothing here decides what is opened.
+    fn config(&self) -> HttpResponse {
+        let suggestion = match &self.source {
+            TileSetSource::Archive(archive) => archive
+                .parent()
+                .map(|parent| parent.join("map"))
+                .filter(|directory| directory.is_dir()),
+            TileSetSource::Loose { .. } => None,
+        };
+        HttpResponse::json(format!(
+            "{{\"ok\":true,\"mapsDirectory\":{},\"undoDepth\":{UNDO_DEPTH},\"notes\":[]}}",
+            suggestion.map_or_else(
+                || "null".to_owned(),
+                |directory| json_string(&directory.display().to_string())
+            ),
+        ))
+    }
+
     fn open(&mut self, fields: &BTreeMap<String, String>) -> HttpResponse {
         let mut notes = Vec::new();
+        match self.open_map(fields, &mut notes) {
+            Ok(body) => HttpResponse::json(body),
+            Err(reason) => self.open_refusal(&reason, &notes),
+        }
+    }
+
+    /// A refusal from `/api/open`, carrying the path this editor is still holding.
+    fn open_refusal(&self, reason: &str, notes: &[String]) -> HttpResponse {
+        let holding = self.session.as_ref().map_or_else(
+            || "null".to_owned(),
+            |session| json_string(&session.path.display().to_string()),
+        );
+        HttpResponse::json(format!(
+            "{{\"ok\":false,\"refusal\":{},\"holding\":{holding},\"notes\":{}}}",
+            json_string(reason),
+            json_strings(notes)
+        ))
+    }
+
+    fn open_map(
+        &mut self,
+        fields: &BTreeMap<String, String>,
+        notes: &mut Vec<String>,
+    ) -> Result<String, String> {
         let Some(path) = fields.get("path").filter(|value| !value.is_empty()) else {
-            return HttpResponse::refusal("no map path was given", &notes);
+            return Err("no map path was given".to_owned());
         };
         let path = PathBuf::from(path);
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                return HttpResponse::refusal(
-                    &format!("could not read {}: {error}", path.display()),
-                    &notes,
-                );
-            }
-        };
-        let map = match MapAsset::parse(&bytes) {
-            Ok(map) => map,
-            Err(error) => {
-                return HttpResponse::refusal(
-                    &format!("{} does not parse as a map: {error}", path.display()),
-                    &notes,
-                );
-            }
-        };
-        let Some(class) = MapClass::from_path(&path) else {
-            return HttpResponse::refusal(
-                &format!(
-                    "{} parses as a map but its extension is not one the corpus classifies, so \
-                     which tileset the engine reads it through is unknown; the known classes are \
-                     .smp (combat) and .scn/.lgd/.map (world)",
-                    path.display()
-                ),
-                &notes,
-            );
-        };
-        let tile_set = match load_tile_set(&path, &self.source, &mut notes) {
-            Ok(tile_set) => tile_set,
-            Err(reason) => return HttpResponse::refusal(&reason, &notes),
-        };
+        let bytes = fs::read(&path)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        let map = MapAsset::parse(&bytes)
+            .map_err(|error| format!("{} does not parse as a map: {error}", path.display()))?;
+        let class = MapClass::from_path(&path).ok_or_else(|| {
+            format!(
+                "{} parses as a map but its extension is not one the corpus classifies, so which \
+                 tileset the engine reads it through is unknown; the known classes are .smp \
+                 (combat) and .scn/.lgd/.map (world)",
+                path.display()
+            )
+        })?;
+        let tile_set = load_tile_set(&path, &self.source, notes)?;
 
-        let body = open_json(&path, class, &map, &tile_set, &notes);
+        self.counter += 1;
+        let token = mint_token(self.counter);
+        let body = open_json(&path, class, &map, &tile_set, &token, notes);
         self.session = Some(EditorSession {
             path,
             map,
-            undo: None,
+            undo: VecDeque::new(),
             tile_set,
-            drawn_cells: 0,
+            token,
+            drawn_cells: BTreeSet::new(),
             paints: 0,
-            undo_drawn_cells: 0,
         });
-        HttpResponse::json(body)
+        Ok(body)
     }
 
-    fn atlas_png(&self) -> HttpResponse {
-        let Some(session) = self.session.as_ref() else {
-            return HttpResponse::refusal("no map is open", &[]);
+    fn atlas_png(&mut self, fields: &BTreeMap<String, String>) -> HttpResponse {
+        let session = match self.session_for(fields) {
+            Ok(session) => session,
+            Err(response) => return response,
         };
         let atlas = &session.tile_set.atlas;
         let mut png = Vec::new();
@@ -260,8 +384,9 @@ impl Editor {
     }
 
     fn paint(&mut self, fields: &BTreeMap<String, String>) -> HttpResponse {
-        let Some(session) = self.session.as_mut() else {
-            return HttpResponse::refusal("no map is open", &[]);
+        let session = match self.session_for(fields) {
+            Ok(session) => session,
+            Err(response) => return response,
         };
         let numbers = ["x0", "y0", "x1", "y1", "terrain"]
             .iter()
@@ -295,16 +420,12 @@ impl Editor {
         let rect = (numbers[0], numbers[1], numbers[2], numbers[3]);
         let terrain_type = numbers[4];
 
-        // Planned before anything is touched, so a refusal cannot leave the session holding a
-        // half-painted map. `paint_terrain` plans first too; doing it here as well is what lets the
-        // snapshot be taken only once the paint is known to be legal.
-        let plan = match session
-            .map
-            .plan_terrain_paint(rect, terrain_type, &session.tile_set.definition, selector)
-        {
-            Ok(plan) => plan,
-            Err(refusal) => return HttpResponse::refusal(&refusal.to_string(), &[]),
-        };
+        // The snapshot is taken first and put back on any error. Every refusal reachable today
+        // comes out of `plan_terrain_paint`, which `paint_terrain` runs before it writes a single
+        // cell, so nothing known gets as far as needing the restore -- it is there for an error
+        // raised mid-apply, which no input is known to produce. An earlier version also planned
+        // the paint separately here; that plan's only consumer was a `debug_assert_eq!`, so
+        // release builds ran a full second constraint solve of a whole-map rectangle for nothing.
         let before = session.map.clone();
         let paint = match session.map.paint_terrain(
             rect,
@@ -318,8 +439,7 @@ impl Editor {
                 return HttpResponse::refusal(&error.to_string(), &[]);
             }
         };
-        debug_assert_eq!(plan, paint.plan);
-
+        let width = session.map.width;
         let mut notes = Vec::new();
         let drawn = paint.plan.drawn_cells();
         let written = paint.plan.region.len() + paint.plan.ring.len();
@@ -338,10 +458,26 @@ impl Editor {
                  neighbour as satisfying any constraint, which no saved artifact tests."
             ));
         }
-        session.drawn_cells += drawn;
+        // Per cell, and both ways: a cell the tileset now determines stops being a draw. Painting
+        // over an earlier draw is the ordinary case and it used to leave the account overstated
+        // for the rest of the session.
+        session.undo.push_back(UndoStep {
+            map: before,
+            drawn_cells: session.drawn_cells.clone(),
+            paints: session.paints,
+        });
+        while session.undo.len() > UNDO_DEPTH {
+            session.undo.pop_front();
+        }
+        for cell in paint.plan.cells() {
+            let index = (cell.y * width + cell.x) as usize;
+            if cell.choice.is_reproducible() {
+                session.drawn_cells.remove(&index);
+            } else {
+                session.drawn_cells.insert(index);
+            }
+        }
         session.paints += 1;
-        session.undo_drawn_cells = drawn;
-        session.undo = Some(before);
 
         let mut cells = String::from("[");
         for (position, cell) in paint.plan.cells().enumerate() {
@@ -361,52 +497,65 @@ impl Editor {
             paint.cells_changed,
         );
         HttpResponse::json(format!(
-            "{{\"ok\":true,\"cells\":{cells},\"summary\":{},\"notes\":{}}}",
+            "{{\"ok\":true,\"cells\":{cells},\"summary\":{},\"undoDepth\":{},\"notes\":{}}}",
             json_string(&summary),
+            session.undo.len(),
             json_strings(&notes)
         ))
     }
 
-    fn undo(&mut self) -> HttpResponse {
-        let Some(session) = self.session.as_mut() else {
-            return HttpResponse::refusal("no map is open", &[]);
+    fn undo(&mut self, fields: &BTreeMap<String, String>) -> HttpResponse {
+        let session = match self.session_for(fields) {
+            Ok(session) => session,
+            Err(response) => return response,
         };
-        let Some(previous) = session.undo.take() else {
+        let Some(previous) = session.undo.pop_back() else {
             return HttpResponse::refusal(
-                "there is nothing to undo: this session keeps one level of undo, the state before \
-                 the last paint",
+                &format!(
+                    "there is nothing left to undo: this session keeps the last {UNDO_DEPTH} \
+                     paints, and every one of them has been taken back"
+                ),
                 &[],
             );
         };
-        session.map = previous;
-        // The drawn-cell account rolls back with the map. One paint's worth, not the whole
-        // session's: everything painted before the undone paint is still in the map.
-        session.drawn_cells -= session.undo_drawn_cells;
-        session.paints -= 1;
-        session.undo_drawn_cells = 0;
+        // The map and its draw account move together. They used to be tracked apart, and the
+        // account was reset to zero on undo -- which made a 197-paint session report a clean file
+        // after taking back the last one.
+        session.map = previous.map;
+        session.drawn_cells = previous.drawn_cells;
+        session.paints = previous.paints;
         HttpResponse::json(format!(
-            "{{\"ok\":true,\"tiles\":{},\"notes\":[]}}",
-            tiles_json(&session.map)
+            "{{\"ok\":true,\"tiles\":{},\"undoDepth\":{},\"notes\":[]}}",
+            tiles_json(&session.map),
+            session.undo.len(),
         ))
     }
 
     fn save(&mut self, fields: &BTreeMap<String, String>) -> HttpResponse {
-        let Some(session) = self.session.as_ref() else {
-            return HttpResponse::refusal("no map is open", &[]);
+        let session = match self.session_for(fields) {
+            Ok(session) => session,
+            Err(response) => return response,
         };
-        let Some(target) = fields.get("path").filter(|value| !value.is_empty()) else {
-            return HttpResponse::refusal("no output path was given", &[]);
+        let target = match target_path(fields) {
+            Ok(target) => target,
+            Err(reason) => return HttpResponse::refusal(&reason, &[]),
         };
-        let target = PathBuf::from(target);
         match save_session(session, &target) {
             Ok(bytes) => {
                 let mut notes = Vec::new();
-                if session.drawn_cells > 0 {
+                if !session.drawn_cells.is_empty() {
                     notes.push(format!(
-                        "{} cells in this file were drawn among equally valid tiles across {} \
-                         paints. They are a legal choice, not the engine's: the engine draws at \
-                         random there and that draw cannot be reproduced.",
-                        session.drawn_cells, session.paints
+                        "{} {} a tile drawn among equally valid ones, across {} {}. They are a \
+                         legal choice, not the engine's: the engine draws at random there and \
+                         that draw cannot be reproduced.",
+                        session.drawn_cells.len(),
+                        if session.drawn_cells.len() == 1 {
+                            "cell in this file still holds"
+                        } else {
+                            "cells in this file still hold"
+                        },
+                        session.paints,
+                        if session.paints == 1 { "paint" } else { "paints" },
                     ));
                 }
                 HttpResponse::json(format!(
@@ -475,6 +624,203 @@ fn save_session(session: &EditorSession, target: &Path) -> Result<usize, String>
         return Err(format!("could not write {}: {error}", target.display()));
     }
     Ok(encoded.len())
+}
+
+/// The map files in one directory.
+///
+/// **Not a filesystem browser.** It lists the files of the directory it is given and nothing else:
+/// no subdirectories are descended, no parent is reported, and nothing recurses. The directory
+/// itself is whatever the user typed, which is the same trust `/api/open` already extends to a
+/// path -- what this must not become is a way to walk the disk from a place the user chose.
+///
+/// The directory is **not canonicalised**, because the obvious workaround for the long-path
+/// problem is a symlink -- `/tmp/lommaps` pointing into the install -- and resolving it would make
+/// the listed names disagree with the path the user is working in.
+fn list_directory(fields: &BTreeMap<String, String>) -> HttpResponse {
+    let Some(directory) = fields.get("dir").filter(|value| !value.is_empty()) else {
+        return HttpResponse::refusal("no directory was given", &[]);
+    };
+    let directory = PathBuf::from(directory);
+    let entries = match fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return HttpResponse::refusal(
+                &format!("could not list {}: {error}", directory.display()),
+                &[],
+            );
+        }
+    };
+    let mut names: Vec<(String, u64)> = Vec::new();
+    let mut skipped = 0_usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // Files only, and only the extensions the corpus classifies. A directory in the listing
+        // would invite descending into it, which is the line this endpoint does not cross.
+        if !path.is_file() {
+            continue;
+        }
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(MapClass::from_extension)
+            .is_none()
+        {
+            skipped += 1;
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let size = entry.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+        names.push((name, size));
+    }
+    names.sort_by_key(|(name, _)| name.to_lowercase());
+
+    let mut listing = String::from("[");
+    for (position, (name, size)) in names.iter().enumerate() {
+        if position > 0 {
+            listing.push(',');
+        }
+        let _ = write!(listing, "{{\"name\":{},\"size\":{size}}}", json_string(name));
+    }
+    listing.push(']');
+    let mut notes = Vec::new();
+    if skipped > 0 {
+        notes.push(format!(
+            "{skipped} other {} in this directory {} not a map by extension and {} not listed",
+            if skipped == 1 { "file" } else { "files" },
+            if skipped == 1 { "is" } else { "are" },
+            if skipped == 1 { "is" } else { "are" },
+        ));
+    }
+    HttpResponse::json(format!(
+        "{{\"ok\":true,\"dir\":{},\"entries\":{listing},\"notes\":{}}}",
+        json_string(&directory.display().to_string()),
+        json_strings(&notes)
+    ))
+}
+
+/// Where a save should write: either a whole path, or a directory plus one filename.
+///
+/// The two-field form is what the page uses, so the user types a filename and not 180 characters
+/// of absolute path. **`name` must be a single ordinary component.** Joining a typed
+/// `../../../etc/passwd` onto a chosen directory is a surprise even though `create_new` would
+/// still refuse an existing file -- the user asked to write in *this* directory, and the tool
+/// should write there or refuse.
+fn target_path(fields: &BTreeMap<String, String>) -> Result<PathBuf, String> {
+    if let Some(path) = fields.get("path").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+    let directory = fields
+        .get("dir")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "no output path was given".to_owned())?;
+    let name = fields
+        .get("name")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "no output filename was given".to_owned())?;
+    if !is_single_component(name) {
+        return Err(format!(
+            "{name} is not a plain filename. Saving writes into the directory you chose, so the \
+             name may not contain a path separator or a parent reference"
+        ));
+    }
+    Ok(PathBuf::from(directory).join(name))
+}
+
+/// Whether `name` is exactly one ordinary path component.
+fn is_single_component(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(std::path::Component::Normal(_))) && components.next().is_none()
+}
+
+/// Why a request must not be served, or `None` when it may proceed.
+///
+/// **Loopback is not an origin boundary.** Any page on any site can issue requests to
+/// `127.0.0.1`, and a request that only *writes* never needs to read the response, so the
+/// same-origin policy and CORS do not stop it. Two headers do:
+///
+/// - **`Origin`** identifies the page that caused the request. Browsers send it on every
+///   cross-origin fetch and on every form POST. It is absent on a same-origin navigation and on
+///   the plain `<img>`/`<script>`/`<link>` loads that made a state-mutating GET reachable, so it
+///   is checked when present and cannot be relied on alone.
+/// - **`Host`** is the authority the browser *thinks* it is talking to, and it is what closes DNS
+///   rebinding. An attacker who points `evil.example` at `127.0.0.1` gets a browser that treats
+///   the responses as same-origin and can read them -- but it sends `Host: evil.example:PORT`,
+///   which is not a loopback literal. Requiring one is the whole defence; `Origin` alone would not
+///   see this attack at all, because after rebinding the request *is* same-origin.
+///
+/// Both are checked against **this** editor's port, not "any loopback port", so one local server's
+/// page cannot drive another's. A missing `Host` is refused: HTTP/1.1 requires it, and a request
+/// without one is not a browser's.
+fn cross_origin_refusal(request: &HttpRequest<'_>, port: u16) -> Option<String> {
+    let Some(host) = request.host else {
+        return Some(
+            "refusing a request with no Host header. This editor reads and writes local files and \
+             only answers its own page"
+                .to_owned(),
+        );
+    };
+    if !is_loopback_authority(host, port) {
+        return Some(format!(
+            "refusing a request for host {host}: this editor only answers to a loopback address on \
+             port {port}. A name that resolves to 127.0.0.1 is not the same thing -- that is how a \
+             web page reaches a local server it was never meant to see"
+        ));
+    }
+    if let Some(origin) = request.origin
+        && !is_own_origin(origin, port)
+    {
+        return Some(format!(
+            "refusing a request from origin {origin}: this editor reads and writes local files on \
+             request and only answers its own page"
+        ));
+    }
+    None
+}
+
+/// Whether an `Origin` is this editor's own page.
+fn is_own_origin(origin: &str, port: u16) -> bool {
+    origin
+        .strip_prefix("http://")
+        .is_some_and(|authority| is_loopback_authority(authority, port))
+}
+
+/// Whether `authority` is a loopback literal carrying this editor's port.
+///
+/// `localhost` is included because a browser cannot be made to resolve it elsewhere, so a request
+/// carrying it really did come from a page the user typed. Any other name is refused however it
+/// resolves -- the resolution is exactly what an attacker controls.
+fn is_loopback_authority(authority: &str, port: u16) -> bool {
+    // `[::1]:8731` has colons inside the brackets, so the port is whatever follows the last one,
+    // and only when it is not inside them.
+    let (name, supplied_port) = match authority.rsplit_once(':') {
+        Some((name, tail)) if !tail.contains(']') => (name, Some(tail)),
+        _ => (authority, None),
+    };
+    let loopback = matches!(name, "127.0.0.1" | "localhost" | "[::1]" | "::1");
+    match supplied_port {
+        Some(supplied) => loopback && supplied.parse::<u16>() == Ok(port),
+        // No port means 80. Refusing that outright would be wrong when the editor really is on 80.
+        None => loopback && port == 80,
+    }
+}
+
+/// A per-session handle.
+///
+/// Not a secret and not presented as one -- `Host` and `Origin` are what keep other sites out.
+/// This exists so a browser tab holding a stale handle fails loudly instead of painting into a map
+/// it is not showing. The clock is mixed in so two runs of the editor do not hand out the same
+/// first handle, which would let a reloaded page silently adopt a new session.
+fn mint_token(counter: u64) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
+    let mut state = nanos ^ counter.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    state ^= state >> 33;
+    state = state.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+    state ^= state >> 29;
+    format!("{state:016x}")
 }
 
 fn describe_class(class: Option<MapClass>) -> String {
@@ -637,6 +983,7 @@ fn open_json(
     class: MapClass,
     map: &MapAsset,
     tile_set: &LoadedTileSet,
+    token: &str,
     notes: &[String],
 ) -> String {
     let mut tiles_by_terrain: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
@@ -678,10 +1025,11 @@ fn open_json(
     terrains.push(']');
 
     format!(
-        "{{\"ok\":true,\"path\":{},\"width\":{},\"height\":{},\"class\":{},\
+        "{{\"ok\":true,\"path\":{},\"token\":{},\"width\":{},\"height\":{},\"class\":{},\
          \"tileset\":{{\"member\":{},\"provenance\":{},\"atlas\":{},\"columns\":{},\"rows\":{},\
          \"tileWidth\":{},\"tileHeight\":{}}},\"terrains\":{terrains},\"tiles\":{},\"notes\":{}}}",
         json_string(&path.display().to_string()),
+        json_string(token),
         map.width,
         map.height,
         json_string(class.description()),
@@ -762,6 +1110,13 @@ pub fn form_fields(source: &str) -> BTreeMap<String, String> {
     fields
 }
 
+/// Percent-decode over **bytes**.
+///
+/// **Never slice the `&str`.** `&value[index + 1..index + 3]` panics when those offsets fall inside
+/// a multi-byte character, and `%` followed by any non-ASCII byte does exactly that: a POST body of
+/// `x0=%` plus a euro sign took the whole process down, and with it every unsaved paint in the held
+/// session. A malformed escape is not an error here -- there is no way to tell a stray `%` in a
+/// filename from a broken one -- so it is emitted literally and the cursor advances one byte.
 fn percent_decode(value: &str) -> String {
     let bytes = value.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -772,13 +1127,18 @@ fn percent_decode(value: &str) -> String {
                 out.push(b' ');
                 index += 1;
             }
-            b'%' if index + 2 < bytes.len() => {
-                match u8::from_str_radix(&value[index + 1..index + 3], 16) {
-                    Ok(byte) => {
-                        out.push(byte);
+            b'%' => {
+                match bytes
+                    .get(index + 1)
+                    .copied()
+                    .and_then(hex_digit)
+                    .zip(bytes.get(index + 2).copied().and_then(hex_digit))
+                {
+                    Some((high, low)) => {
+                        out.push(high * 16 + low);
                         index += 3;
                     }
-                    Err(_) => {
+                    None => {
                         out.push(b'%');
                         index += 1;
                     }
@@ -791,6 +1151,16 @@ fn percent_decode(value: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// One hexadecimal digit's value, or `None` for any other byte.
+const fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Bind the editor's listener, on loopback and nowhere else.
@@ -810,18 +1180,81 @@ pub fn listen(port: u16) -> Result<(tiny_http::Server, SocketAddr), String> {
     Ok((server, bound))
 }
 
+/// One request header's value, matched case-insensitively as HTTP requires.
+fn header_value(request: &tiny_http::Request, name: &'static str) -> Option<String> {
+    request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv(name))
+        .map(|header| header.value.as_str().to_owned())
+}
+
+/// The most a request body may be, in bytes.
+///
+/// A save path and a paint rectangle are tens of bytes. An unbounded `read_to_string` on a socket
+/// anyone's web page can open is a free way to make this process allocate until it dies.
+const MAX_BODY_BYTES: u64 = 64 * 1024;
+
 /// Answer requests on `server` until it stops yielding them.
-pub fn run(server: &tiny_http::Server, source: TileSetSource) {
-    let mut editor = Editor::new(source);
+///
+/// **A handler panic must not take the session with it.** This server is single-threaded by design
+/// and holds the user's unsaved paints in memory, so before `catch_unwind` any panic anywhere in a
+/// handler ended the process and threw away everything not yet written -- a malformed percent
+/// escape in a request body did exactly that. The panic is still a bug and still prints; what
+/// changes is that it costs one request instead of the session. The caught state is not fully
+/// unwind-safe in the type-system sense, and that is an accepted trade: the editor's mutations are
+/// whole-value assignments, so the worst outcome is a map left as it was before the failed request.
+pub fn run(server: &tiny_http::Server, source: TileSetSource, port: u16) {
+    let mut editor = Editor::new(source, port);
+    run_with(server, |request| editor.handle(request));
+}
+
+/// The socket loop, over any handler.
+///
+/// Split from [`run`] so a test can supply a handler that panics. With the one known panic fixed
+/// there is nothing left in the editor that panics on demand, and a test that only sends the
+/// malformed bytes proves the decoder and says nothing at all about whether the loop survives the
+/// *next* bug -- which is the property `catch_unwind` is here for.
+pub fn run_with(
+    server: &tiny_http::Server,
+    mut handler: impl FnMut(&HttpRequest<'_>) -> HttpResponse,
+) {
     for mut request in server.incoming_requests() {
         let method = request.method().as_str().to_owned();
         let target = request.url().to_owned();
+        let host = header_value(&request, "Host");
+        let origin = header_value(&request, "Origin");
         let mut body = String::new();
-        if let Err(error) = request.as_reader().read_to_string(&mut body) {
+        if let Err(error) = request
+            .as_reader()
+            .take(MAX_BODY_BYTES)
+            .read_to_string(&mut body)
+        {
             eprintln!("could not read the request body: {error}");
             continue;
         }
-        let response = editor.handle(&method, &target, &body);
+        let parsed = HttpRequest {
+            method: &method,
+            target: &target,
+            body: &body,
+            host: host.as_deref(),
+            origin: origin.as_deref(),
+        };
+        let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            handler(&parsed)
+        }))
+        .unwrap_or_else(|_| {
+            eprintln!(
+                "a handler panicked on {method} {target}; the open map is untouched and the \
+                 editor is still running"
+            );
+            HttpResponse {
+                status: 500,
+                content_type: "application/json; charset=utf-8",
+                body: br#"{"ok":false,"refusal":"the editor hit a bug handling that request. It is still running and the open map is untouched; please report what you did.","notes":[]}"#
+                    .to_vec(),
+            }
+        });
         let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], response.content_type)
             .expect("the content types are static and valid header values");
         let reply = tiny_http::Response::from_data(response.body)
@@ -838,7 +1271,7 @@ pub fn serve(source: TileSetSource, port: u16) -> Result<(), String> {
     let (server, bound) = listen(port)?;
     println!("map editor listening on http://{bound}/");
     println!("loopback only; it reads and writes local files, so do not expose it");
-    run(&server, source);
+    run(&server, source, bound.port());
     Ok(())
 }
 
@@ -1008,11 +1441,35 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         dir: PathBuf,
         map: PathBuf,
         editor: Editor,
+        /// The handle the last successful open handed out.
+        token: String,
+    }
+
+    /// The port every direct-handler fixture pretends to be bound to.
+    const FIXTURE_PORT: u16 = 8731;
+
+    /// A request from the editor's own page: the shape the browser guard must let through.
+    fn own_page<'a>(method: &'a str, target: &'a str, body: &'a str) -> HttpRequest<'a> {
+        HttpRequest {
+            method,
+            target,
+            body,
+            host: Some("127.0.0.1:8731"),
+            origin: Some("http://127.0.0.1:8731"),
+        }
     }
 
     impl Fixture {
         fn new(name: &str) -> Self {
             Self::with_atlas(name, FIXTURE_COLUMNS, FIXTURE_ROWS)
+        }
+
+        /// A fixture on a map of a chosen size, for tests that need room to paint without the
+        /// rings of two paints meeting.
+        fn with_map(name: &str, width: u32, height: u32) -> Self {
+            let fixture = Self::new(name);
+            fs::write(&fixture.map, grass_map(width, height)).unwrap();
+            fixture
         }
 
         fn with_atlas(name: &str, columns: u32, rows: u32) -> Self {
@@ -1021,21 +1478,44 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
             fs::write(&map, grass_map(FIXTURE_WIDTH, FIXTURE_HEIGHT)).unwrap();
             fs::write(dir.join("fixture.til"), FIXTURE_TILESET).unwrap();
             fs::write(dir.join("fixture.lbm"), fixture_atlas(columns, rows)).unwrap();
-            let editor = Editor::new(TileSetSource::Loose {
-                definition: dir.join("fixture.til"),
-                atlas: dir.join("fixture.lbm"),
-            });
-            Self { dir, map, editor }
+            let editor = Editor::new(
+                TileSetSource::Loose {
+                    definition: dir.join("fixture.til"),
+                    atlas: dir.join("fixture.lbm"),
+                },
+                FIXTURE_PORT,
+            );
+            Self {
+                dir,
+                map,
+                editor,
+                token: String::new(),
+            }
         }
 
         fn open(&mut self) -> String {
-            let target = format!("/api/open?path={}", encode(&self.map.display().to_string()));
-            let response = self.editor.handle("GET", &target, "");
-            String::from_utf8(response.body).unwrap()
+            self.open_path(&self.map.display().to_string().clone())
         }
 
+        fn open_path(&mut self, path: &str) -> String {
+            let body = format!("path={}", encode(path));
+            let response = self.editor.handle(&own_page("POST", "/api/open", &body));
+            let json = String::from_utf8(response.body).unwrap();
+            if let Some(start) = json.find("\"token\":\"") {
+                let start = start + "\"token\":\"".len();
+                self.token = json[start..start + json[start..].find('"').unwrap()].to_owned();
+            }
+            json
+        }
+
+        /// A POST carrying this tab's handle, the way the page does.
         fn post(&mut self, path: &str, body: &str) -> String {
-            let response = self.editor.handle("POST", path, body);
+            let body = if body.is_empty() {
+                format!("token={}", self.token)
+            } else {
+                format!("{body}&token={}", self.token)
+            };
+            let response = self.editor.handle(&own_page("POST", path, &body));
             String::from_utf8(response.body).unwrap()
         }
 
@@ -1111,11 +1591,20 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         cells
     }
 
+    /// The `"refusal"` string, whatever else the object carries.
+    ///
+    /// Reads to the closing quote rather than to a following key, because an open's refusal also
+    /// reports what the editor is still holding and a field-order assumption would break silently.
     fn refusal(json: &str) -> String {
         assert!(json.contains("\"ok\":false"), "expected a refusal: {json}");
         let start = json.find("\"refusal\":\"").expect("refusal") + "\"refusal\":\"".len();
-        let end = start + json[start..].find("\",\"notes\"").unwrap();
-        json[start..end].to_owned()
+        let rest = &json[start..];
+        let mut end = 0;
+        let bytes = rest.as_bytes();
+        while end < bytes.len() && bytes[end] != b'"' {
+            end += if bytes[end] == b'\\' { 2 } else { 1 };
+        }
+        rest[..end].to_owned()
     }
 
     #[test]
@@ -1134,17 +1623,26 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
 
     #[test]
     fn the_page_and_its_assets_come_out_of_the_binary_and_nothing_else_does() {
-        let mut editor = Editor::new(TileSetSource::Archive(PathBuf::from("/nonexistent.mpq")));
-        let page = editor.handle("GET", "/", "");
+        let mut editor = Editor::new(
+            TileSetSource::Archive(PathBuf::from("/nonexistent.mpq")),
+            FIXTURE_PORT,
+        );
+        let page = editor.handle(&own_page("GET", "/", ""));
         assert_eq!(page.status, 200);
         assert!(String::from_utf8(page.body).unwrap().contains("<canvas id=\"map\">"));
-        assert_eq!(editor.handle("GET", "/app.js", "").status, 200);
-        assert_eq!(editor.handle("GET", "/style.css", "").status, 200);
+        assert_eq!(editor.handle(&own_page("GET", "/app.js", "")).status, 200);
+        assert_eq!(editor.handle(&own_page("GET", "/style.css", "")).status, 200);
         // Nothing else is reachable: this process reads and writes local files, so an
         // unrecognised path must not become a file read.
-        let missing = editor.handle("GET", "/../../etc/passwd", "");
+        let missing = editor.handle(&own_page("GET", "/../../etc/passwd", ""));
         assert_eq!(missing.status, 404);
-        assert_eq!(editor.handle("POST", "/", "").status, 404);
+        assert_eq!(editor.handle(&own_page("POST", "/", "")).status, 404);
+        // The old state-mutating GET is gone, not merely unused by our page.
+        assert_eq!(
+            editor.handle(&own_page("GET", "/api/open?path=/etc/hosts", "")).status,
+            404,
+            "opening a map by GET is reachable from a bare <img> tag"
+        );
     }
 
     #[test]
@@ -1207,7 +1705,8 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
     fn the_atlas_is_served_as_a_png_at_the_geometry_the_tileset_declares() {
         let mut fixture = Fixture::new("atlas");
         fixture.open();
-        let response = fixture.editor.handle("GET", "/api/atlas.png", "");
+        let target = format!("/api/atlas.png?token={}", fixture.token);
+        let response = fixture.editor.handle(&own_page("GET", &target, ""));
         assert_eq!(response.content_type, "image/png");
         let decoder = png::Decoder::new(std::io::Cursor::new(&response.body));
         let mut reader = decoder.read_info().unwrap();
@@ -1329,7 +1828,7 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         );
         // And nothing to undo, because nothing happened.
         assert!(
-            refusal(&fixture.post("/api/undo", "")).contains("nothing to undo"),
+            refusal(&fixture.post("/api/undo", "")).contains("nothing left to undo"),
             "a refused paint left an undo step behind"
         );
     }
@@ -1396,37 +1895,108 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
     }
 
     #[test]
-    fn undo_restores_the_grid_and_rolls_back_one_paint_s_worth_of_the_draw_account() {
-        let mut fixture = Fixture::new("undo");
+    fn undo_walks_back_more_than_one_paint_and_stops_at_the_bound() {
+        // A 31x5 map, so five single-cell paints four cells apart have rings that never meet --
+        // two rings sharing a cell would need a tile with stone on both sides, which this fixture
+        // deliberately does not declare.
+        let mut fixture = Fixture::with_map("undo", 31, 5);
         let opened = tiles_field(&fixture.open());
-        // Two paints, each with one cell the engine would have drawn at random.
-        fixture.paint((4, 1, 6, 3), 2, None);
-        let after_first: Vec<u32> = fixture
-            .editor
-            .session()
-            .unwrap()
-            .map
-            .cells
-            .iter()
-            .map(MapCellTile::tile)
-            .collect();
-        fixture.paint((1, 1, 3, 3), 2, None);
+        let mut history = vec![opened.clone()];
+        // Five separate paints in five separate places, so each one has its own grid to come back
+        // to. A one-level undo passes the first step of this and fails the second.
+        for rect in [(1, 1, 1, 1), (5, 1, 5, 1), (9, 1, 9, 1), (13, 1, 13, 1), (17, 1, 17, 1)] {
+            let json = fixture.paint(rect, 2, None);
+            assert!(json.contains("\"ok\":true"), "{json}");
+            history.push(
+                fixture
+                    .editor
+                    .session()
+                    .unwrap()
+                    .map
+                    .cells
+                    .iter()
+                    .map(MapCellTile::tile)
+                    .collect(),
+            );
+        }
+        assert_ne!(history[1], history[0], "the fixture painted nothing");
+        for expected in history.iter().rev().skip(1) {
+            let undone = fixture.post("/api/undo", "");
+            assert!(undone.contains("\"ok\":true"), "{undone}");
+            assert_eq!(&tiles_field(&undone), expected);
+        }
+        // Back at the opened state, with nothing left.
+        assert!(refusal(&fixture.post("/api/undo", "")).contains("nothing left to undo"));
+    }
 
-        let undone = fixture.post("/api/undo", "");
-        assert!(undone.contains("\"ok\":true"), "{undone}");
-        assert_eq!(tiles_field(&undone), after_first, "undo did not restore the grid");
-        assert_ne!(after_first, opened, "the fixture painted nothing");
-
-        // One level only, by design for v1 -- and it says so rather than silently doing nothing.
-        assert!(refusal(&fixture.post("/api/undo", "")).contains("one level of undo"));
-
-        // The draw account rolls back by one paint, not to zero: the first paint's drawn cell is
-        // still in the map, and a save that called this file reproducible would be lying about it.
-        let json = fixture.save(&fixture.dir.join("out.scn").clone());
-        assert!(
-            json.contains("1 cells in this file were drawn"),
-            "the undo reset the whole session's draw account: {json}"
+    #[test]
+    fn the_undo_stack_is_bounded_and_says_how_deep_it_is() {
+        assert_eq!(UNDO_DEPTH, 32);
+        let mut fixture = Fixture::new("undo-bound");
+        fixture.open();
+        // One more paint than the stack holds. Alternating stone and grass on one cell keeps every
+        // step legal on a small fixture and keeps every step a real change.
+        for step in 0..=UNDO_DEPTH {
+            let terrain = if step % 2 == 0 { 2 } else { 1 };
+            let json = fixture.paint((5, 2, 5, 2), terrain, None);
+            assert!(json.contains("\"ok\":true"), "step {step}: {json}");
+        }
+        let depth = fixture.editor.session().unwrap().undo.len();
+        assert_eq!(depth, UNDO_DEPTH, "the stack grew past its bound");
+        for _ in 0..UNDO_DEPTH {
+            let undone = fixture.post("/api/undo", "");
+            assert!(undone.contains("\"ok\":true"), "{undone}");
+        }
+        // The oldest paint is gone from the stack, so the map does not come all the way back --
+        // and that is reported rather than silently pretended away.
+        assert!(refusal(&fixture.post("/api/undo", "")).contains("nothing left to undo"));
+        // 33 paints were made and 32 taken back, so the very first one is still in the map: it
+        // fell off the bottom of the bounded stack rather than being silently replayed.
+        assert_eq!(
+            fixture.editor.session().unwrap().map.cell(5, 2).unwrap().tile_index(),
+            12,
+            "the paint that fell off the stack should still stand in the map"
         );
+    }
+
+    #[test]
+    fn the_draw_account_describes_the_map_and_not_the_session_s_history() {
+        let mut fixture = Fixture::new("draw-account");
+        fixture.open();
+        // A 3x3 stone region: the centre has three interchangeable interiors and held none of
+        // them, so it is a draw the engine would have made differently.
+        let drawn = fixture.paint((4, 1, 6, 3), 2, None);
+        assert!(drawn.contains("drawn:1\""), "{drawn}");
+        assert_eq!(fixture.editor.session().unwrap().drawn_cells.len(), 1);
+
+        // Paint the same region back to grass. The tileset determines every cell of it, so the map
+        // is fully reproducible again -- and the account has to say so. A running total keeps
+        // reporting the earlier draw forever, and an honesty mechanism that cries wolf is one
+        // people learn to ignore.
+        let back = fixture.paint((4, 1, 6, 3), 1, None);
+        assert!(back.contains("\"ok\":true"), "{back}");
+        assert!(
+            fixture.editor.session().unwrap().drawn_cells.is_empty(),
+            "a cell repainted to a determined tile is still counted as drawn"
+        );
+        let json = fixture.save(&fixture.dir.join("clean.scn").clone());
+        assert!(json.contains("\"ok\":true"), "{json}");
+        assert!(
+            !json.contains("drawn among equally valid"),
+            "a reproducible file was reported as containing a draw: {json}"
+        );
+
+        // Undo the repaint and the draw comes back with the map it belongs to.
+        fixture.post("/api/undo", "");
+        assert_eq!(fixture.editor.session().unwrap().drawn_cells.len(), 1);
+        let json = fixture.save(&fixture.dir.join("dirty.scn").clone());
+        assert!(
+            json.contains("1 cell in this file still holds a tile drawn"),
+            "{json}"
+        );
+        // And undoing the first paint leaves nothing drawn, because nothing was painted.
+        fixture.post("/api/undo", "");
+        assert!(fixture.editor.session().unwrap().drawn_cells.is_empty());
     }
 
     /// A trait so the test can read a cell's tile without depending on field order.
@@ -1478,6 +2048,486 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
         assert!(resolved.contains("nonexistent.mpq"), "{resolved}");
     }
 
+    #[test]
+    fn a_malformed_percent_escape_is_literal_text_and_not_a_panic() {
+        // **Bytes, not a string literal.** A `&str` in the test source has already been validated
+        // as UTF-8, so a decoder that panics on a boundary would still pass. These are the exact
+        // bytes a socket delivers: `%` followed by the three bytes of a euro sign, where the old
+        // decoder sliced `value[1..3]` straight into the middle of the character.
+        let raw = b"x0=%\xe2\x82\xac&y0=1&x1=2&y1=2&terrain=1";
+        let source = String::from_utf8(raw.to_vec()).expect("the fixture is valid UTF-8 overall");
+        let fields = form_fields(&source);
+        assert_eq!(fields.get("x0").map(String::as_str), Some("%\u{20ac}"));
+        assert_eq!(fields.get("terrain").map(String::as_str), Some("1"));
+
+        // A truncated escape at the very end, and one whose digits are not hex.
+        assert_eq!(form_fields("path=%").get("path").map(String::as_str), Some("%"));
+        assert_eq!(form_fields("path=%4").get("path").map(String::as_str), Some("%4"));
+        assert_eq!(form_fields("path=%zz").get("path").map(String::as_str), Some("%zz"));
+        // And the well-formed case still decodes, including lower-case digits.
+        assert_eq!(form_fields("path=%2f%2F").get("path").map(String::as_str), Some("//"));
+    }
+
+    #[test]
+    fn a_panicking_handler_costs_one_request_and_not_the_session() {
+        // The session model exists so unsaved paints accumulate. A single-threaded server that
+        // dies on any handler panic throws all of them away with nothing on disk, so the loop --
+        // not just the one decoder that panicked -- has to survive.
+        let dir = scratch_dir("panic");
+        let map = dir.join("in.scn");
+        fs::write(&map, grass_map(FIXTURE_WIDTH, FIXTURE_HEIGHT)).unwrap();
+        fs::write(dir.join("fixture.til"), FIXTURE_TILESET).unwrap();
+        fs::write(
+            dir.join("fixture.lbm"),
+            fixture_atlas(FIXTURE_COLUMNS, FIXTURE_ROWS),
+        )
+        .unwrap();
+        let source = TileSetSource::Loose {
+            definition: dir.join("fixture.til"),
+            atlas: dir.join("fixture.lbm"),
+        };
+        let (server, address) = listen(0).unwrap();
+        let port = address.port();
+        thread::spawn(move || run(&server, source, port));
+
+        let post = |path: &str, form: &[u8]| {
+            let mut request = format!(
+                "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\
+                 Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n",
+                form.len()
+            )
+            .into_bytes();
+            request.extend_from_slice(form);
+            raw_bytes(address, &request)
+        };
+
+        let opened = post(
+            "/api/open",
+            format!("path={}", encode(&map.display().to_string())).as_bytes(),
+        )
+        .1;
+        assert!(opened.contains("\"ok\":true"), "{opened}");
+        let token = {
+            let start = opened.find("\"token\":\"").expect("token") + "\"token\":\"".len();
+            opened[start..start + opened[start..].find('"').unwrap()].to_owned()
+        };
+        let painted = post(
+            "/api/paint",
+            format!("x0=5&y0=2&x1=5&y1=2&terrain=2&token={token}").as_bytes(),
+        )
+        .1;
+        assert!(painted.contains("\"ok\":true"), "{painted}");
+
+        // The bytes that used to end the process. They are now ordinary text, which is the
+        // decoder's fix -- see the test above. What this one is for is the *loop*.
+        let mut hostile = Vec::from(&b"x0=%"[..]);
+        hostile.extend_from_slice("\u{20ac}".as_bytes());
+        hostile.extend_from_slice(format!("&y0=1&x1=2&y1=2&terrain=1&token={token}").as_bytes());
+        let (status, _) = post("/api/paint", &hostile);
+        assert!(!status.is_empty(), "the server did not answer at all: {status}");
+
+        // Still alive, still holding the paint, and it saves.
+        let output = dir.join("out.scn");
+        let saved = post(
+            "/api/save",
+            format!("path={}&token={token}", encode(&output.display().to_string())).as_bytes(),
+        )
+        .1;
+        assert!(saved.contains("\"ok\":true"), "the session was lost: {saved}");
+        assert_eq!(
+            MapAsset::parse(&fs::read(&output).unwrap())
+                .unwrap()
+                .cell(5, 2)
+                .unwrap()
+                .tile_index(),
+            12,
+            "the paint made before the malformed request did not survive it"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_handler_that_panics_costs_one_request_and_not_the_loop() {
+        // **The decoder's fix cannot stand in for this.** With the one known panic gone there is
+        // nothing in the editor left to panic on demand, so a test that only sends the malformed
+        // bytes proves the decoder and says nothing about whether the loop survives the *next*
+        // bug. This drives the real `run_with` over a real socket with a handler that panics, and
+        // checks the connection after it is still answered.
+        let (server, address) = listen(0).unwrap();
+        let port = address.port();
+        thread::spawn(move || {
+            let mut answered = 0_usize;
+            run_with(&server, move |request| {
+                if request.target == "/boom" {
+                    panic!("a handler bug");
+                }
+                answered += 1;
+                HttpResponse::json(format!("{{\"ok\":true,\"answered\":{answered}}}"))
+            });
+        });
+
+        let get = |path: &str| {
+            raw_request(
+                address,
+                &format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"),
+            )
+        };
+        assert!(get("/first").1.contains("\"answered\":1"));
+
+        let (status, body) = get("/boom");
+        assert!(status.contains("500"), "{status}");
+        assert!(
+            body.contains("still running and the open map is untouched"),
+            "a panic must be reported to the page, not dropped: {body}"
+        );
+
+        // The loop is still running and its state -- the counter here, a held map in the real
+        // thing -- survived.
+        assert!(
+            get("/after").1.contains("\"answered\":2"),
+            "the loop did not survive a handler panic"
+        );
+    }
+
+    #[test]
+    fn a_request_from_another_site_is_refused_whatever_it_asks_for() {
+        let mut fixture = Fixture::new("cross-origin");
+        fixture.open();
+        let token = fixture.token.clone();
+
+        let hostile = |host: Option<&'static str>, origin: Option<&'static str>| {
+            HttpRequest {
+                method: "POST",
+                target: "/api/open",
+                body: "path=/etc/hosts",
+                host,
+                origin,
+            }
+        };
+        // A page on another site: correct Host, foreign Origin.
+        let foreign = fixture
+            .editor
+            .handle(&hostile(Some("127.0.0.1:8731"), Some("https://evil.example")));
+        assert_eq!(foreign.status, 403);
+        assert!(
+            String::from_utf8(foreign.body).unwrap().contains("evil.example"),
+            "the refusal must name what it refused"
+        );
+
+        // DNS rebinding: the page's own origin, because after rebinding it *is* same-origin. Only
+        // the Host header sees this, which is why an Origin-only check would not be enough.
+        let rebound = fixture.editor.handle(&hostile(
+            Some("evil.example:8731"),
+            Some("http://evil.example:8731"),
+        ));
+        assert_eq!(rebound.status, 403);
+
+        // A loopback name on somebody else's port is still somebody else.
+        assert_eq!(
+            fixture
+                .editor
+                .handle(&hostile(Some("127.0.0.1:9999"), None))
+                .status,
+            403
+        );
+        // No Host at all.
+        assert_eq!(fixture.editor.handle(&hostile(None, None)).status, 403);
+
+        // Nothing got through: the fixture's own map is still the open one.
+        let held = fixture.editor.session().unwrap().path.clone();
+        assert_eq!(held, fixture.map);
+
+        // And the editor's own page is not caught by any of it.
+        for origin in ["http://127.0.0.1:8731", "http://localhost:8731", "http://[::1]:8731"] {
+            for host in ["127.0.0.1:8731", "localhost:8731", "[::1]:8731"] {
+                let response = fixture.editor.handle(&HttpRequest {
+                    method: "POST",
+                    target: "/api/undo",
+                    body: &format!("token={token}"),
+                    host: Some(host),
+                    origin: Some(origin),
+                });
+                assert_ne!(response.status, 403, "{host} / {origin} was refused");
+            }
+        }
+    }
+
+    #[test]
+    fn a_stale_tab_s_handle_is_refused_rather_than_painting_into_the_wrong_map() {
+        let mut fixture = Fixture::new("handle");
+        fixture.open();
+        let first = fixture.token.clone();
+        // A second tab opens something else. The editor holds one map per process, so the first
+        // tab's canvas now shows a map the server is not holding.
+        let second_map = fixture.dir.join("other.scn");
+        fs::write(&second_map, grass_map(FIXTURE_WIDTH, FIXTURE_HEIGHT)).unwrap();
+        fixture.open_path(&second_map.display().to_string());
+        assert_ne!(fixture.token, first, "a new open must hand out a new handle");
+
+        let stale = fixture.editor.handle(&own_page(
+            "POST",
+            "/api/paint",
+            &format!("x0=5&y0=2&x1=5&y1=2&terrain=2&token={first}"),
+        ));
+        let stale = refusal(&String::from_utf8(stale.body).unwrap());
+        assert!(stale.contains("no longer the open one"), "{stale}");
+        assert!(stale.contains("other.scn"), "{stale}");
+        // Nothing was painted into the second map at the first tab's coordinates.
+        assert_eq!(
+            fixture.editor.session().unwrap().map.cell(5, 2).unwrap().tile_index(),
+            0
+        );
+    }
+
+    #[test]
+    fn a_refused_open_keeps_the_map_it_was_already_holding_and_says_which() {
+        let mut fixture = Fixture::new("open-refused");
+        fixture.open();
+        fixture.paint((5, 2, 5, 2), 2, None);
+        let token = fixture.token.clone();
+
+        let refused = fixture.open_path("/definitely/not/here.scn");
+        assert!(refused.contains("\"ok\":false"), "{refused}");
+        // The client is told what is still held, so it cannot report "No map open." over a live
+        // session and then write a file the user believes does not exist.
+        assert!(
+            refused.contains(&format!("\"holding\":{}", json_string(&fixture.map.display().to_string()))),
+            "{refused}"
+        );
+        // A refused open must not hand out a handle, or the stale-tab check would pass on it.
+        assert!(!refused.contains("\"token\""), "{refused}");
+        assert_eq!(fixture.token, token, "the handle changed on a refused open");
+
+        // The held map is still the painted one, unchanged.
+        assert_eq!(
+            fixture.editor.session().unwrap().map.cell(5, 2).unwrap().tile_index(),
+            12
+        );
+        // And when nothing is open, `holding` is null rather than absent.
+        let mut empty = Fixture::new("open-refused-empty");
+        let first = empty.open_path("/definitely/not/here.scn");
+        assert!(first.contains("\"holding\":null"), "{first}");
+    }
+
+    #[test]
+    fn a_body_larger_than_the_cap_cannot_make_the_editor_allocate_without_limit() {
+        // The cap is what makes this bounded; the assertion is that the limit is the one the
+        // constant names, because an off-by-a-factor here is invisible otherwise.
+        assert_eq!(MAX_BODY_BYTES, 65_536);
+        let dir = scratch_dir("body-cap");
+        fs::write(dir.join("fixture.til"), FIXTURE_TILESET).unwrap();
+        fs::write(
+            dir.join("fixture.lbm"),
+            fixture_atlas(FIXTURE_COLUMNS, FIXTURE_ROWS),
+        )
+        .unwrap();
+        let source = TileSetSource::Loose {
+            definition: dir.join("fixture.til"),
+            atlas: dir.join("fixture.lbm"),
+        };
+        let (server, address) = listen(0).unwrap();
+        let port = address.port();
+        thread::spawn(move || run(&server, source, port));
+
+        let oversize = "x".repeat(200_000);
+        let body = format!("path={oversize}");
+        let (status, answer) = raw_request(
+            address,
+            &format!(
+                "POST /api/open HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\
+                 Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            ),
+        );
+        // Truncated at the cap, so it is answered as an ordinary refusal rather than read whole.
+        assert!(status.contains("200"), "{status}");
+        assert!(answer.contains("\"ok\":false"), "{answer}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn listing_a_directory_reports_its_map_files_and_never_leaves_it() {
+        let mut fixture = Fixture::new("listing");
+        let dir = fixture.dir.clone();
+        fs::write(dir.join("Beta.SCN"), b"x").unwrap();
+        fs::write(dir.join("alpha.scn"), b"xx").unwrap();
+        fs::write(dir.join("battle.smp"), b"xxx").unwrap();
+        fs::write(dir.join("notes.txt"), b"xxxx").unwrap();
+        fs::create_dir(dir.join("subdir")).unwrap();
+        fs::write(dir.join("subdir").join("hidden.scn"), b"xxxxx").unwrap();
+
+        let listed = String::from_utf8(
+            fixture
+                .editor
+                .handle(&own_page(
+                    "GET",
+                    &format!("/api/list?dir={}", encode(&dir.display().to_string())),
+                    "",
+                ))
+                .body,
+        )
+        .unwrap();
+        assert!(listed.contains("\"ok\":true"), "{listed}");
+        // Sorted case-insensitively, so `Beta.SCN` sits between `alpha` and `battle` rather than
+        // ahead of both. The installed corpus is split across cases -- 172 `.smp` and 165 `.SMP`.
+        let names: Vec<&str> = listed
+            .match_indices("\"name\":\"")
+            .map(|(at, needle)| {
+                let rest = &listed[at + needle.len()..];
+                &rest[..rest.find('"').unwrap()]
+            })
+            .collect();
+        assert_eq!(names, vec!["alpha.scn", "battle.smp", "Beta.SCN", "in.scn"]);
+        // A directory is not listed, so there is nothing to descend into, and the file inside it
+        // is not reachable through this endpoint at all.
+        assert!(!listed.contains("subdir"), "{listed}");
+        assert!(!listed.contains("hidden.scn"), "{listed}");
+        // A file that is not a map by extension is counted, not listed.
+        assert!(!listed.contains("notes.txt"), "{listed}");
+        // `notes.txt` plus the fixture's own `.til` and `.lbm`.
+        assert!(listed.contains("3 other files in this directory are not a map by extension"), "{listed}");
+
+        let missing = refusal(
+            &String::from_utf8(
+                fixture
+                    .editor
+                    .handle(&own_page("GET", "/api/list?dir=/definitely/not/here", ""))
+                    .body,
+            )
+            .unwrap(),
+        );
+        assert!(missing.contains("could not list"), "{missing}");
+    }
+
+    #[test]
+    fn a_listing_follows_a_symlinked_directory_rather_than_resolving_it_away() {
+        // The obvious workaround for a 180-character path is a symlink -- the user is already
+        // working through one. Canonicalising would make the listed names belong to a path they
+        // did not type, and the save they then make would land somewhere they did not choose.
+        let mut fixture = Fixture::new("listing-symlink");
+        let real = fixture.dir.join("real");
+        fs::create_dir(&real).unwrap();
+        fs::write(real.join("through.scn"), b"x").unwrap();
+        let link = fixture.dir.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let listed = String::from_utf8(
+            fixture
+                .editor
+                .handle(&own_page(
+                    "GET",
+                    &format!("/api/list?dir={}", encode(&link.display().to_string())),
+                    "",
+                ))
+                .body,
+        )
+        .unwrap();
+        assert!(listed.contains("through.scn"), "{listed}");
+        assert!(
+            listed.contains(&json_string(&link.display().to_string())),
+            "the listing reported a path the user did not ask for: {listed}"
+        );
+    }
+
+    #[test]
+    fn saving_by_directory_and_filename_cannot_leave_the_directory() {
+        let mut fixture = Fixture::new("save-by-name");
+        fixture.open();
+        fixture.paint((5, 2, 5, 2), 2, None);
+        // A directory *inside* the fixture's own scratch tree, so the place an escape would land
+        // is ours and is cleaned up. Pointing this at the shared temp directory made the test pass
+        // or fail on whatever a previous run had left there.
+        let dir = fixture.dir.join("maps");
+        fs::create_dir(&dir).unwrap();
+        let token = fixture.token.clone();
+
+        let save = |fixture: &mut Fixture, form: String| {
+            String::from_utf8(
+                fixture
+                    .editor
+                    .handle(&own_page("POST", "/api/save", &format!("{form}&token={token}")))
+                    .body,
+            )
+            .unwrap()
+        };
+
+        let written = save(
+            &mut fixture,
+            format!("dir={}&name=out.scn", encode(&dir.display().to_string())),
+        );
+        assert!(written.contains("\"ok\":true"), "{written}");
+        assert!(dir.join("out.scn").is_file());
+
+        // A typed name that climbs. `create_new` would still refuse an existing file, but the user
+        // asked to write in the directory they chose and the tool writes there or refuses.
+        for escape in ["../escaped.scn", "sub/escaped.scn", "/tmp/escaped.scn", ".."] {
+            let refused = refusal(&save(
+                &mut fixture,
+                format!(
+                    "dir={}&name={}",
+                    encode(&dir.display().to_string()),
+                    encode(escape)
+                ),
+            ));
+            assert!(refused.contains("not a plain filename"), "{escape}: {refused}");
+        }
+        assert!(
+            !fixture.dir.join("escaped.scn").exists(),
+            "a typed name climbed out of the chosen directory"
+        );
+        assert!(!fixture.dir.join("maps").join("sub").exists());
+
+        // The picker is not a way round the create-new rule.
+        let again = refusal(&save(
+            &mut fixture,
+            format!("dir={}&name=out.scn", encode(&dir.display().to_string())),
+        ));
+        assert!(again.contains("could not create"), "{again}");
+    }
+
+    #[test]
+    fn the_editor_suggests_the_maps_directory_beside_the_archive_only_when_it_exists() {
+        let dir = scratch_dir("config");
+        let archive = dir.join("pic.mpq");
+        fs::write(&archive, b"not really an archive").unwrap();
+        let mut editor = Editor::new(TileSetSource::Archive(archive.clone()), FIXTURE_PORT);
+        let without = String::from_utf8(editor.handle(&own_page("GET", "/api/config", "")).body)
+            .unwrap();
+        assert!(without.contains("\"mapsDirectory\":null"), "{without}");
+
+        fs::create_dir(dir.join("map")).unwrap();
+        let with = String::from_utf8(editor.handle(&own_page("GET", "/api/config", "")).body)
+            .unwrap();
+        assert!(
+            with.contains(&json_string(&dir.join("map").display().to_string())),
+            "{with}"
+        );
+        assert!(with.contains(&format!("\"undoDepth\":{UNDO_DEPTH}")), "{with}");
+
+        // The loose form names no archive, so there is nothing to derive and nothing is invented.
+        let mut loose = Editor::new(
+            TileSetSource::Loose {
+                definition: dir.join("a.til"),
+                atlas: dir.join("a.lbm"),
+            },
+            FIXTURE_PORT,
+        );
+        let none = String::from_utf8(loose.handle(&own_page("GET", "/api/config", "")).body).unwrap();
+        assert!(none.contains("\"mapsDirectory\":null"), "{none}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Send raw bytes and return the status line and body.
+    fn raw_bytes(address: SocketAddr, request: &[u8]) -> (String, String) {
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream.write_all(request).unwrap();
+        let mut raw = Vec::new();
+        stream.read_to_end(&mut raw).unwrap();
+        let text = String::from_utf8_lossy(&raw).into_owned();
+        let (head, body) = text.split_once("\r\n\r\n").unwrap_or((text.as_str(), ""));
+        (head.lines().next().unwrap_or_default().to_owned(), body.to_owned())
+    }
+
     /// Send one raw HTTP/1.1 request and return the status line and body.
     fn raw_request(address: SocketAddr, request: &str) -> (String, String) {
         let mut stream = TcpStream::connect(address).unwrap();
@@ -1516,39 +2566,47 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
             "the editor reads and writes local files and must not be reachable off-host, but it \
              bound {address}"
         );
-        thread::spawn(move || run(&server, source));
+        let port = address.port();
+        thread::spawn(move || run(&server, source, port));
 
         let (status, body) = raw_request(
             address,
-            &format!(
-                "GET /api/open?path={} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-                encode(&map.display().to_string())
-            ),
+            &{
+                let body = format!("path={}", encode(&map.display().to_string()));
+                format!(
+                    "POST /api/open HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\
+                     Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{body}",
+                    address.port(),
+                    body.len()
+                )
+            },
         );
         assert!(status.contains("200"), "{status}");
         assert!(body.contains("\"ok\":true"), "{body}");
 
-        let paint = "x0=5&y0=2&x1=5&y1=2&terrain=2";
-        let (status, body) = raw_request(
-            address,
-            &format!(
-                "POST /api/paint HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\
-                 Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{paint}",
-                paint.len()
-            ),
-        );
+        let token = {
+            let start = body.find("\"token\":\"").expect("token") + "\"token\":\"".len();
+            body[start..start + body[start..].find('"').unwrap()].to_owned()
+        };
+        let form_post = |path: &str, form: &str| {
+            raw_request(
+                address,
+                &format!(
+                    "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\
+                     Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{form}",
+                    form.len()
+                ),
+            )
+        };
+
+        let (status, body) = form_post("/api/paint", &format!("x0=5&y0=2&x1=5&y1=2&terrain=2&token={token}"));
         assert!(status.contains("200"), "{status}");
         assert!(body.contains("\"tile\":12"), "the POST body never reached the handler: {body}");
 
         let output = dir.join("out.scn");
-        let save = format!("path={}", encode(&output.display().to_string()));
-        let (_, body) = raw_request(
-            address,
-            &format!(
-                "POST /api/save HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\
-                 Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{save}",
-                save.len()
-            ),
+        let (_, body) = form_post(
+            "/api/save",
+            &format!("path={}&token={token}", encode(&output.display().to_string())),
         );
         assert!(body.contains("\"ok\":true"), "{body}");
         assert_eq!(
@@ -1562,7 +2620,7 @@ TILE= 35,   42, *,    *,   *,    *,   *,    *,   *,    *,    35
 
         let (status, _) = raw_request(
             address,
-            "GET /nope HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            &format!("GET /nope HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"),
         );
         assert!(status.contains("404"), "{status}");
         let _ = fs::remove_dir_all(&dir);

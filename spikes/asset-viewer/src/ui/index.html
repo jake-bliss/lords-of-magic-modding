@@ -8,8 +8,14 @@
 <body>
 <header>
   <h1>Lords of Magic map editor</h1>
+  <form id="dir-form">
+    <label>Maps directory<input id="maps-dir" type="text" spellcheck="false" placeholder="/path/to/English/map" size="60"></label>
+    <button type="submit">List</button>
+  </form>
   <form id="open-form">
-    <label>Map file<input id="open-path" type="text" spellcheck="false" placeholder="/path/to/URAK.scn" size="60"></label>
+    <label>Map file
+      <select id="map-file"><option value="">list a directory first</option></select>
+    </label>
     <button type="submit">Open</button>
   </form>
   <div id="map-summary">No map open.</div>
@@ -23,22 +29,26 @@
     <label>Seed
       <input id="seed" type="text" spellcheck="false" placeholder="deterministic (lowest slot)" size="18">
     </label>
+    <p class="hint">Ctrl-scroll or pinch over the map to zoom to the cursor; plain scroll pans.</p>
     <p class="hint">
       Where several tiles match a cell equally and the cell held none of them, the engine draws at
       random and that draw cannot be reproduced. Blank means the lowest matching slot; a seed gives
       a different legal draw. Neither is the engine's.
     </p>
     <div class="row">
-      <button id="undo" type="button" disabled>Undo last paint</button>
+      <button id="undo" type="button" disabled>Undo</button>
       <label>Zoom <input id="zoom" type="range" min="2" max="32" value="8"></label>
       <span id="cursor-cell" class="hint">cell: —</span>
     </div>
     <h2>Save As</h2>
     <form id="save-form">
-      <label>New file<input id="save-path" type="text" spellcheck="false" placeholder="/path/to/new.scn" size="40"></label>
+      <label>New filename<input id="save-name" type="text" spellcheck="false" placeholder="URAK-edited.scn" size="30"></label>
       <button type="submit">Save As</button>
     </form>
-    <p class="hint">Always a new file. An existing path is refused, never overwritten.</p>
+    <p class="hint">
+      Written into the maps directory above, always as a new file. An existing name is refused,
+      never overwritten, and the name may not contain a path separator.
+    </p>
   </section>
 
   <section id="centre">

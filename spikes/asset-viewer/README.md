@@ -11,10 +11,12 @@ The repository contains no game assets. Commands below require a local, legally 
 The current build targets Apple Silicon Homebrew:
 
 ```sh
-brew install rust stormlib sdl3
+brew install rust stormlib sdl3 node
 ```
 
-Rust can instead be installed with `rustup`. The current `build.rs` expects StormLib and SDL3 under `/opt/homebrew/opt`; portable dependency discovery is tracked as remaining Stage 1 work.
+`node` is needed only by `tests/test_map_editor_client.py`, which drives the map editor's browser
+client; that file fails rather than skipping when it is absent, because a check that quietly does
+not run is not a check. Rust can instead be installed with `rustup`. The current `build.rs` expects StormLib and SDL3 under `/opt/homebrew/opt`; portable dependency discovery is tracked as remaining Stage 1 work.
 
 ## Build and test
 
@@ -138,10 +140,24 @@ target/release/lom-asset-viewer --serve --pic "$PIC_MPQ"
 target/release/lom-asset-viewer --serve tilesb01.til tilesb01.lbm --port 9000
 ```
 
-A local web UI for the paint verb: open a map by path, see it drawn through its own tileset, pick a
-terrain, drag a rectangle, paint, undo one step, Save As. It prints its URL on startup and **binds
-`127.0.0.1` only** — it reads and writes arbitrary local files on request, so it must not be
-reachable off-host. There is no authentication and none is planned; the address is the boundary.
+A local web UI for the paint verb: point it at a maps directory, choose a file from the listing,
+see it drawn through its own tileset, pick a terrain, drag a rectangle, paint, undo, Save As. With
+`--pic` the maps directory is filled in for you — in a standard install the maps sit beside
+`pic.mpq` — so the common case is zero typing.
+
+**Loopback is not a security boundary, and this does not pretend it is.** The server binds
+`127.0.0.1` and never `0.0.0.0`, but any web page in the world can issue requests to `127.0.0.1`,
+and a request that only *writes* never needs to read the response, so neither the same-origin policy
+nor CORS stops it. Two checks do, and every request passes both:
+
+- **`Origin`** must be this editor's own page when it is present at all, and
+- **`Host`** must be a loopback literal carrying this editor's port. That is the one that closes DNS
+  rebinding: an attacker who points a name at `127.0.0.1` gets a browser that treats the responses
+  as same-origin, but it sends that name in `Host`.
+
+Opening a map is a `POST` for the same reason — it replaces the server's whole session, and a
+state-mutating `GET` is reachable from a bare `<img src>`. There is still no user authentication and
+none is planned; what there is, is an origin check, and the difference matters.
 
 The page, its script and its stylesheet are compiled into the binary, so the tool is still one file.
 No build step, no npm, no framework: the client is vanilla JS drawing 32x32 atlas tiles onto a
@@ -161,31 +177,55 @@ Combat maps work: the terrain palette is built from the resolved tileset's own t
 Terrain ids are tileset-local and reach 42, so there is no built-in list of terrain names anywhere in
 the UI.
 
-**Nothing is ever written in place.** Save As is a new file: the target is checked against the open
-map by device and inode, refused if the extension changes the map's class, encoded and re-parsed
-before anything reaches disk, and opened `create_new`. An existing file is never clobbered.
+**Nothing is ever written in place.** Save As is a filename inside the chosen directory, always a
+new file: the target is checked against the open map by device and inode, refused if the extension
+changes the map's class, refused if the name is anything but one plain path component, encoded and
+re-parsed before anything reaches disk, and opened `create_new`. An existing file is never
+clobbered, and the picker is not a way round that.
+
+The directory listing is **not a filesystem browser**. It lists the map files of the directory it is
+given — no subdirectories, no parent, no recursion — and it does not canonicalise the path, because
+the obvious workaround for a 180-character install path is a symlink and resolving it would make the
+listed names belong to somewhere the user did not type.
 
 **The log panel is the point.** The refusals and notes the CLI prints go there as readable text that
 stays on screen — "no tile of terrain 9 accepts the neighbourhood at (4, 2)", "1 of the 25 written
 cells were newly painted with several equally valid tiles … a legal choice, not the engine's", "10
 written cells have a neighbour off the map". A refusal is information, not an error to hide, so it
 comes back as a normal `200` answer with `"ok": false` and the library's own message. Expect refusals
-on a shipped world map — about a third of all 3x3 paints on `URAK.scn` are refused, and
-[map format](../../docs/map-format.md#painting-a-shipped-world-map-is-refused-about-a-third-of-the-time)
-measures the rate.
+on a shipped world map — **30.6% of every position a 3x3 rectangle fits on `URAK.scn`** is refused,
+measured at every one of the 142,884 of them and not sampled, and
+[map format](../../docs/map-format.md#painting-a-shipped-world-map-is-refused-about-30-of-the-time)
+records the spread across four maps.
 
 Painting is deterministic by default — the lowest matching atlas slot — and the seed box reaches the
 same `--seed` the CLI has. Neither is the engine's draw, and the UI says so every time it happens.
+The count a save reports is **how many cells of the file still hold a drawn tile**, not how many
+draws the session ever made: painting over one puts it back under the tileset's control, and an
+honesty mechanism that over-reports is one people learn to ignore.
 
-Not in this version: creating a map, sprite placement or removal, elevation, flag editing, `.smp`
-browsing, more than one level of undo, and opening more than one map at a time.
+Undo walks back the last 32 paints, with the draw account moving with the map at every step. Redo is
+not offered. Ctrl-scroll or a trackpad pinch over the map zooms **to the cursor**; a plain scroll
+pans the pane.
+
+Not in this version: creating a map, sprite placement or removal, elevation, flag editing, redo,
+navigating between directories, and opening more than one map at a time. **One process holds one
+map**, so a second browser tab does not get a second session — it gets a handle the server then
+refuses, which is the loud version of a tab silently painting into a map it is not showing.
 
 The server is tested without a browser. Most tests call the request handler directly —
-`Editor::handle` is a pure function of the request and the session, with the socket confined to
-`serve` — and one drives the whole loop over a real loopback socket, which is what catches a listener
-bound to the wrong interface or a POST body never read. The fixtures are synthetic and the map is
-**11x5**, because every shipped world map is square and a square fixture cannot fail on a transposed
-cell index.
+`Editor::handle` is a pure function of the request *including its `Host` and `Origin`*, with the
+socket confined to `run` — and several drive the whole loop over a real loopback socket, which is
+what catches a listener bound to the wrong interface, a POST body never read, or a handler panic
+taking the session with it. The fixtures are synthetic and the map is **11x5**, because every
+shipped world map is square and a square fixture cannot fail on a transposed cell index.
+
+The **client** is tested too, which needs `node`: `tools/map_editor_client_harness.js` loads
+`src/ui/app.js` verbatim against a stub DOM, fires the real handlers, and reports what it computed
+for `tests/test_map_editor_client.py` to assert — where a click lands at two zooms and on a scrolled
+page, that ctrl-scroll zooms about the cursor, that a drag released outside the window does not stay
+live, and that a refused open cannot leave the page saying "No map open." over a live session. A
+missing `node` fails that file rather than skipping it.
 
 ## Writing sprite placement
 
@@ -298,13 +338,14 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/imp.rs` — bounds-checked IMP tables, palette, RLE and packed-pixel decoding, hotspot and duplicate/repeated-frame structures, and generated-header validation.
 - `src/map.rs` — bounded common header/cell-grid parsing, packed `y * width + x` coordinates, terrain tags, the measured terrain-type-to-tile table, and the six placed-object record layouts for SCN/SMP/LGD files.
 - `src/tile.rs` — parser for `.til` atlas geometry, terrain types, and the full eight-column neighbour constraints, plus the constraint matcher `--map-paint-terrain` re-tiles from.
-- `examples/paint_refusal_survey.rs` — plan a 3x3 paint of every terrain the tileset draws at every non-overlapping position on one map, and report how often the declared constraints refuse and how many cells were drawn at random. Plans only: nothing is applied and nothing is written. Takes a map and a `.til`, because neither is committed.
+- `examples/paint_refusal_survey.rs` — plan a 3x3 paint of every terrain the tileset draws at **every position it legally fits** on one map, and report how often the declared constraints refuse and how many cells per accepted paint were drawn at random. A coarser stride is an optional argument; it used to be the only behaviour, and the disjoint sample it produced was published as a rate over all paints. Plans only: nothing is applied and nothing is written. Takes a map and a `.til`, because neither is committed.
 - `examples/parse_all_tilesets.rs` — parse every `.til` in a directory and report atlas size, terrain-id range and any row that fails to declare all eight constraints. Reading columns the parser used to discard can only *add* failure modes for `--view-map`, so this is the check that it has not: 26 parsed, 0 failed, 0 incomplete on the GS5R3 set. Takes a path, because no tileset is committed.
 - `src/gamescript.rs` — bounded GameScript lexer, procedure diagnostics, name inventory, and static `run` references.
 - `src/gamescript_vm.rs` — experimental bounded value stack, dictionaries, procedures, core operators, and structured execution failures.
 - `src/png_export.rs` — lossless indexed IMP-frame PNG and RGBA map-preview output.
 - `src/server.rs` — the `--serve` map editor: routing, one open map with one level of undo, the terrain palette built from the resolved tileset, and the Save As guards. The page, script and stylesheet it embeds are in `src/ui/`.
 - `src/paths.rs` — the device-and-inode same-file check both writers use.
+- `tools/map_editor_client_harness.js` — load `src/ui/app.js` verbatim against a stub DOM, fire its real handlers, and print what it computed. Asserts nothing itself; `tests/test_map_editor_client.py` holds the expected values.
 - `src/asset.rs` — content-first classification and typed format metadata.
 - `src/main.rs` — CLI inventory, extraction, validation, and SDL3 viewer.
 - `build.rs` — local native-library search and runtime paths for the Apple Silicon spike.

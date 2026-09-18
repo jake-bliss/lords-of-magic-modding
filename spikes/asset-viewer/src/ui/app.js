@@ -18,6 +18,15 @@ const state = {
   atlas: null,        // HTMLImageElement
   drag: null,
   undoAvailable: false,
+  // The handle `/api/open` hands out. The editor holds one map per process, so a second tab
+  // opening a different map makes this one stale -- and a stale handle is refused rather than
+  // silently painting into a map this canvas is not showing.
+  token: "",
+  path: "",
+  // The directory the user chose. Open and Save both work inside it, so nobody types an absolute
+  // path twice -- the first attempt at this tool failed on whitespace pasted into one.
+  directory: "",
+  undoDepth: 0,
 };
 
 const mapCanvas = document.getElementById("map");
@@ -41,12 +50,36 @@ function logNotes(notes) {
   (notes || []).forEach((note) => log(note, "note"));
 }
 
+// The button says how far back the session can go, because the depth is bounded and a user who
+// believes it is unlimited will discover otherwise at the worst moment.
+function setUndoDepth(depth) {
+  state.undoDepth = depth ?? 0;
+  const button = document.getElementById("undo");
+  button.disabled = state.undoDepth === 0;
+  button.textContent = state.undoDepth === 0 ? "Undo" : `Undo (${state.undoDepth})`;
+}
+
 function zoom() {
   return Number(document.getElementById("zoom").value);
 }
 
 async function api(path, options) {
-  const response = await fetch(path, options);
+  // A dead server must not look like a dead editor. `fetch` *rejects* when nothing is
+  // listening, and an unhandled rejection in an async click handler logs nothing and shows
+  // nothing -- so every button silently stops working and the tool looks broken. That is
+  // exactly how the first human to use this lost a session: the server had been reaped, and
+  // "I can't paint after undo" was the only symptom available to them.
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch (error) {
+    return {
+      ok: false,
+      refusal:
+        `cannot reach the editor server: ${error}. It is probably no longer running -- ` +
+        `restart it and reload this page. Nothing was written.`,
+    };
+  }
   const text = await response.text();
   try {
     return JSON.parse(text);
@@ -56,7 +89,7 @@ async function api(path, options) {
 }
 
 function form(fields) {
-  const body = new URLSearchParams(fields).toString();
+  const body = new URLSearchParams({ ...fields, token: state.token }).toString();
   return {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -164,27 +197,61 @@ function loadAtlas() {
     const image = new Image();
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error("the atlas image did not load"));
-    image.src = `/api/atlas.png?t=${Date.now()}`;
+    image.src = `/api/atlas.png?token=${encodeURIComponent(state.token)}&t=${Date.now()}`;
   });
 }
 
+async function listDirectory(directory) {
+  const result = await api(`/api/list?dir=${encodeURIComponent(directory)}`);
+  logNotes(result.notes);
+  const picker = document.getElementById("map-file");
+  if (!result.ok) {
+    log(result.refusal, "refusal");
+    picker.textContent = "";
+    return;
+  }
+  state.directory = result.dir;
+  picker.textContent = "";
+  result.entries.forEach((entry) => {
+    const option = document.createElement("option");
+    option.value = entry.name;
+    option.textContent = `${entry.name} (${entry.size} bytes)`;
+    picker.appendChild(option);
+  });
+  log(`${result.entries.length} maps in ${result.dir}`, "ok");
+}
+
 async function openMap(path) {
-  const result = await api(`/api/open?path=${encodeURIComponent(path)}`);
+  // POST, not GET. Opening replaces the server's whole session, and a state-mutating GET is
+  // reachable from a bare `<img src>` on any page in the world.
+  const result = await api("/api/open", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ path }).toString(),
+  });
   logNotes(result.notes);
   if (!result.ok) {
     log(result.refusal, "refusal");
-    document.getElementById("map-summary").textContent = "No map open.";
-    state.open = false;
+    // **A refused open does not close the map already open.** The server goes on holding it, and
+    // saying "No map open." here while Save As still writes is how a typo produced a file the user
+    // had been told did not exist.
+    if (result.holding) {
+      log(`still holding ${result.holding}; the new path was refused`, "note");
+    } else {
+      document.getElementById("map-summary").textContent = "No map open.";
+      state.open = false;
+    }
     return;
   }
+  state.token = result.token;
+  state.path = result.path;
   state.width = result.width;
   state.height = result.height;
   state.tiles = result.tiles;
   state.columns = result.tileset.columns;
   state.tileWidth = result.tileset.tileWidth;
   state.tileHeight = result.tileset.tileHeight;
-  state.undoAvailable = false;
-  document.getElementById("undo").disabled = true;
+  setUndoDepth(0);
   state.atlas = await loadAtlas();
   state.open = true;
   buildPalette(result.terrains);
@@ -219,8 +286,7 @@ async function paint(rect) {
     state.tiles[cell.i] = cell.tile;
     drawCell(context, cell.i);
   });
-  state.undoAvailable = true;
-  document.getElementById("undo").disabled = false;
+  setUndoDepth(result.undoDepth);
   log(result.summary, "ok");
 }
 
@@ -233,20 +299,41 @@ async function undo() {
   }
   state.tiles = result.tiles;
   redraw();
-  state.undoAvailable = false;
-  document.getElementById("undo").disabled = true;
+  setUndoDepth(result.undoDepth);
   log("undid the last paint", "ok");
 }
 
+document.getElementById("dir-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  listDirectory(document.getElementById("maps-dir").value.trim());
+});
+
 document.getElementById("open-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  openMap(document.getElementById("open-path").value.trim());
+  const name = document.getElementById("map-file").value;
+  if (!state.directory || !name) {
+    log("choose a maps directory and a file in it first", "refusal");
+    return;
+  }
+  // The name came out of the server's own listing, so the client is not inventing a path -- it is
+  // rejoining one the server already produced.
+  openMap(`${state.directory.replace(/\/$/, "")}/${name}`);
 });
 
 document.getElementById("save-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const path = document.getElementById("save-path").value.trim();
-  const result = await api("/api/save", form({ path }));
+  // Gated on the client's own belief as well as the server's handle: if this page is not showing a
+  // map, it must not write one. The two used to be able to disagree silently.
+  if (!state.open) {
+    log("no map is open in this tab, so there is nothing to save", "refusal");
+    return;
+  }
+  const name = document.getElementById("save-name").value.trim();
+  if (!name) {
+    log("type a filename to save as", "refusal");
+    return;
+  }
+  const result = await api("/api/save", form({ dir: state.directory, name }));
   logNotes(result.notes);
   log(result.ok ? `wrote ${result.path} (${result.bytes} bytes)` : result.refusal,
     result.ok ? "ok" : "refusal");
@@ -260,6 +347,71 @@ document.getElementById("zoom").addEventListener("input", () => {
   }
 });
 
+// Zoom **to the cursor**, not to the origin.
+//
+// At zoom 32 a 128x128 map is 4096 pixels square, so zooming about the top-left corner throws
+// whatever the user was looking at off the screen and makes the slider useless. Keeping the cell
+// under the cursor under the cursor is what makes a wheel usable on a map this size.
+//
+// The arithmetic is deliberately expressed in the same terms `cellAt` uses -- the overlay's
+// bounding rect and the zoom -- so the two cannot drift apart. `cell` is fractional here: rounding
+// it would drift by up to half a cell per notch.
+function zoomToCursor(nextZoom, clientX, clientY) {
+  const slider = document.getElementById("zoom");
+  const previous = zoom();
+  const clamped = Math.max(Number(slider.min), Math.min(Number(slider.max), nextZoom));
+  if (clamped === previous) {
+    return;
+  }
+  const before = overlay.getBoundingClientRect();
+  const cellX = (clientX - before.left) / previous;
+  const cellY = (clientY - before.top) / previous;
+
+  slider.value = String(clamped);
+  redraw();
+  drawSelection(null);
+
+  // After the resize the canvas still starts wherever the scroll left it. Scrolling by the
+  // difference between where the cell now is and where the cursor is puts it back.
+  const pane = document.getElementById("centre");
+  const after = overlay.getBoundingClientRect();
+  pane.scrollLeft += after.left + cellX * clamped - clientX;
+  pane.scrollTop += after.top + cellY * clamped - clientY;
+}
+
+overlay.addEventListener("wheel", (event) => {
+  if (!state.open) {
+    return;
+  }
+  // A trackpad pinch arrives as a wheel event with `ctrlKey` set; so does ctrl-scroll. A plain
+  // wheel is left alone so the pane scrolls, which is what a user expects on a map larger than
+  // the window.
+  if (!event.ctrlKey) {
+    return;
+  }
+  event.preventDefault();
+  const step = event.deltaY < 0 ? 1 : -1;
+  zoomToCursor(zoom() + step, event.clientX, event.clientY);
+}, { passive: false });
+
+/// Abandon a drag without painting.
+function cancelDrag() {
+  if (state.drag) {
+    state.drag = null;
+    drawSelection(null);
+  }
+}
+
+// A standard install keeps the maps beside `pic.mpq`, so `--pic` already names the directory. Only
+// a default in a field the user can change.
+(async () => {
+  const config = await api("/api/config");
+  if (config.ok && config.mapsDirectory) {
+    document.getElementById("maps-dir").value = config.mapsDirectory;
+    await listDirectory(config.mapsDirectory);
+  }
+})();
+
 overlay.addEventListener("mousedown", (event) => {
   if (!state.open) {
     return;
@@ -267,6 +419,11 @@ overlay.addEventListener("mousedown", (event) => {
   state.drag = cellAt(event);
   drawSelection(normalise(state.drag, state.drag));
 });
+
+// A button released outside the window never reaches `mouseup`, so without these the drag stays
+// live and the selection goes on tracking the cursor with no button held -- and the next click
+// paints a rectangle the user never drew.
+window.addEventListener("blur", cancelDrag);
 
 overlay.addEventListener("mousemove", (event) => {
   // The readout is not decoration. Every handler test drives `Editor::handle` directly, so the
@@ -279,6 +436,12 @@ overlay.addEventListener("mousemove", (event) => {
     readout.textContent = `cell: ${cx}, ${cy}`;
   }
   if (state.drag) {
+    // `buttons` is 0 once every button is up, which is how a release that happened outside the
+    // window is noticed on the way back in.
+    if (event.buttons === 0) {
+      cancelDrag();
+      return;
+    }
     drawSelection(normalise(state.drag, cellAt(event)));
   }
 });
