@@ -70,9 +70,16 @@ const THIS_POINTER: u32 = u32::MAX;
 /// saturates. The classifier reads the curve at `CLASSIFY_DEPTH`.
 pub const MAXIMUM_SEARCH_DEPTH: usize = 6;
 
-/// The depth the behaviour classifier reads. Chosen from the reported curve: the engine reaches its
-/// singleton subsystem objects through one method call and its file and archive work through that
-/// object, so nothing below three is visible, and past four the archive reach saturates.
+/// The depth the behaviour classifier reads.
+///
+/// **One**, and the reported curve is why. By depth 3, 93% of operators reach `user32`, a timer and
+/// the `other` bucket; by depth 5, 90% reach `CreateFileA` and 94% reach Storm. Those columns
+/// describe how densely the engine's call graph is connected and say nothing about any operator, so
+/// reading them would relabel almost the whole table. At depth 1 the same rows are 1%, 3% and 5%.
+///
+/// The cost is stated rather than hidden: `savescenariomap` genuinely writes a file and is **not**
+/// labelled `file-or-resource-io`, because the imports it needs only become reachable at a depth
+/// where `dup` reaches them too.
 pub const CLASSIFY_DEPTH: usize = 1;
 
 // ---------------------------------------------------------------------------------------------
@@ -496,6 +503,14 @@ pub struct GlobalRef {
     /// Whether a register took part in the effective address, which is what distinguishes an
     /// element read `[eax+table]` from a scalar read `[variable]`.
     pub indexed: bool,
+    /// Whether the address is in a **read-only** data section, which makes it a compiler-emitted
+    /// constant and not engine state.
+    ///
+    /// The engine's `.rdata` is `0x40000040` and its `.data` is `0xc0000040`. Testing only
+    /// "not executable" put the arithmetic operators' shared float pool at `0x0054dbc0` in the
+    /// same bucket as the world object, so `abs`, `atan`, `cos` and sixteen others were published
+    /// as touching engine data and `Behaviour::Arithmetic` had zero members in a 1,906-row table.
+    pub read_only: bool,
 }
 
 /// Everything the walk could and could not establish about one function body.
@@ -503,8 +518,13 @@ pub struct GlobalRef {
 pub struct BodyAnalysis {
     pub entry_point: u32,
     pub instructions: usize,
-    /// Highest address the walk decoded, exclusive. With the entry point this is the body's span.
-    pub span_end: u32,
+    /// Highest address the walk decoded, exclusive.
+    ///
+    /// Deliberately **not** called a body size. Many operators are two-instruction thunks whose
+    /// implementation sits tens of kilobytes away and is reached by an internal `jmp`, so this
+    /// measures entry-point-to-farthest-decoded-byte: `abs` decodes 77 instructions across
+    /// 15,207 bytes. The instruction count is the size measure.
+    pub decoded_extent_end: u32,
     pub globals: Vec<GlobalRef>,
     pub calls: BTreeSet<u32>,
     /// A `jmp` that left the function into a function the program calls elsewhere.
@@ -539,13 +559,26 @@ pub struct BodyAnalysis {
     /// Distinct operand counts observed at `ret`, in ascending order. Always populated, so a
     /// disagreement can be inspected rather than merely noted.
     pub arity_candidates: BTreeSet<usize>,
-    /// Whether the operand count grows around a loop, so no finite count describes the body. This
-    /// is what a genuinely variadic operator looks like from here.
-    pub operand_count_unbounded: bool,
+    /// Whether a loop consumes operands per iteration, so no finite count describes the body. This
+    /// is what a genuinely variadic operator looks like from here, and it is the strong signal:
+    /// only a loop can make the candidate counts an arithmetic progression.
+    pub operand_loop_carried: bool,
+    /// Whether the per-instruction state cap was hit without a loop being seen. That is a long
+    /// chain of early exits converging on one instruction, not a variadic operator — `slider` has
+    /// twenty candidate counts and no loop, `launchmissile` twenty-one and no loop. The two were
+    /// reported under one flag and are now separate.
+    pub operand_state_cap_hit: bool,
     /// Bytes of arguments the function releases on return — `ret 4` reports 4. Part of how the
     /// operand helper is recognised.
     pub returns_arguments: u32,
     pub indirect_calls: usize,
+    /// Virtual-dispatch edges, as (the global the object pointer came from, the vtable byte
+    /// offset).
+    ///
+    /// The analysis cannot follow these — that limitation stands — but it can *name* the slot, and
+    /// the slot is what a reader chasing one subsystem needs. `netlockgame` is the whole shape in
+    /// six instructions: load `[0x005d1e84]`, load its vtable, `jmp [vtable+0x58]`.
+    pub virtual_calls: BTreeSet<(u32, u32)>,
     pub unresolved_indirect_jumps: usize,
     pub resolved_jump_tables: usize,
     pub invalid_instructions: usize,
@@ -568,7 +601,9 @@ impl BodyAnalysis {
     /// largest as "the successful path" is an interpretation of the fetch idiom. It is the reading
     /// the idiom supports, and `arity_candidates` is kept so a reader can take the other one.
     pub fn nominal_arity(&self) -> Option<usize> {
-        if self.operand_count_unbounded {
+        // A loop that pops per iteration has no nominal count at all. A long chain of early exits
+        // does: the largest candidate is still the path that fetched everything.
+        if self.operand_loop_carried {
             return None;
         }
         self.arity_candidates.iter().copied().max()
@@ -600,19 +635,25 @@ impl BodyAnalysis {
     }
 
     /// Whether the body stores to engine state, directly or through a pointer it read out of a
-    /// global.
+    /// global. Read-only data is excluded: a constant is not state.
     pub fn writes_globals(&self) -> bool {
         !self.writes_through_pointer.is_empty()
             || self
                 .globals
                 .iter()
-                .any(|global| global.access == GlobalAccess::Write)
+                .any(|global| global.access == GlobalAccess::Write && !global.read_only)
     }
 
+    /// Whether the body reads engine state. Read-only data is excluded for the same reason.
     pub fn reads_globals(&self) -> bool {
         self.globals
             .iter()
-            .any(|global| global.access != GlobalAccess::Write)
+            .any(|global| global.access != GlobalAccess::Write && !global.read_only)
+    }
+
+    /// References to read-only data: float pools, jump tables, string literals.
+    pub fn constant_refs(&self) -> usize {
+        self.globals.iter().filter(|global| global.read_only).count()
     }
 }
 
@@ -643,7 +684,7 @@ fn walk(
     let mut analysis = BodyAnalysis {
         entry_point,
         instructions: 0,
-        span_end: entry_point,
+        decoded_extent_end: entry_point,
         globals: Vec::new(),
         calls: BTreeSet::new(),
         tail_calls: BTreeSet::new(),
@@ -657,9 +698,11 @@ fn walk(
         helper_pushes: 0,
         arity: None,
         arity_candidates: BTreeSet::new(),
-        operand_count_unbounded: false,
+        operand_loop_carried: false,
+        operand_state_cap_hit: false,
         returns_arguments: 0,
         indirect_calls: 0,
+        virtual_calls: BTreeSet::new(),
         unresolved_indirect_jumps: 0,
         resolved_jump_tables: 0,
         invalid_instructions: 0,
@@ -669,7 +712,7 @@ fn walk(
     };
 
     let mut steps: BTreeMap<u32, Step> = BTreeMap::new();
-    let mut globals: BTreeSet<(u32, GlobalAccess, bool)> = BTreeSet::new();
+    let mut globals: BTreeSet<(u32, GlobalAccess, bool, bool)> = BTreeSet::new();
     let mut starts: VecDeque<u32> = VecDeque::from([entry_point]);
     let mut started: BTreeSet<u32> = BTreeSet::new();
     // The pointer taint each run begins with. Carried along control-flow edges, first writer
@@ -720,7 +763,9 @@ fn walk(
                 break;
             }
             analysis.instructions += 1;
-            analysis.span_end = analysis.span_end.max(address + instruction.len() as u32);
+            analysis.decoded_extent_end = analysis
+                .decoded_extent_end
+                .max(address + instruction.len() as u32);
 
             let mut operands_consumed = 0_usize;
 
@@ -761,8 +806,25 @@ fn walk(
             }
 
             // -- data references ------------------------------------------------------------
-            let memory: Vec<iced_x86::UsedMemory> =
-                info_factory.info(&instruction).used_memory().to_vec();
+            let (memory, written_registers) = {
+                let info = info_factory.info(&instruction);
+                let memory: Vec<iced_x86::UsedMemory> = info.used_memory().to_vec();
+                let written: Vec<Register> = info
+                    .used_registers()
+                    .iter()
+                    .filter(|used| {
+                        matches!(
+                            used.access(),
+                            OpAccess::Write
+                                | OpAccess::CondWrite
+                                | OpAccess::ReadWrite
+                                | OpAccess::ReadCondWrite
+                        )
+                    })
+                    .map(|used| used.register())
+                    .collect();
+                (memory, written)
+            };
             for used in &memory {
                 let displacement = used.displacement() as u32;
                 if !image.is_data_address(displacement) {
@@ -779,15 +841,21 @@ fn walk(
                     _ => GlobalAccess::Read,
                 };
                 let indexed = used.base() != Register::None || used.index() != Register::None;
-                globals.insert((displacement, access, indexed));
-                if access == GlobalAccess::Write {
-                    globals.insert((displacement, GlobalAccess::Read, indexed));
-                }
+                // A write is recorded once. Inserting a matching read alongside it duplicated the
+                // address in 343 rows, so counting the operators on a cluster by grepping the
+                // table gave 140 and 308 where the truth is 139 and 299.
+                globals.insert((
+                    displacement,
+                    access,
+                    indexed,
+                    !image.is_writable_data_address(displacement),
+                ));
             }
             update_pointer_taint(
                 image,
                 &instruction,
                 &memory,
+                &written_registers,
                 &mut pointers,
                 &mut analysis.writes_through_pointer,
             );
@@ -798,12 +866,21 @@ fn walk(
                 }
                 let value = instruction.immediate32();
                 if image.is_data_address(value) && !index.imports.contains_key(&value) {
-                    globals.insert((value, GlobalAccess::Taken, false));
-                    if let Some(text) = read_c_string(image, value)
-                        && is_printable_string(&text)
-                    {
+                    // This linker put string literals in writable `.data`, not `.rdata`, so the
+                    // section flags alone call a format string engine state. A NUL-terminated
+                    // printable literal is a constant wherever it was placed; the script error
+                    // raiser is 90% such references and was unclassifiable without this.
+                    let literal = read_c_string(image, value)
+                        .is_some_and(|text| is_printable_string(&text));
+                    if literal {
                         analysis.string_refs.insert(value);
                     }
+                    globals.insert((
+                        value,
+                        GlobalAccess::Taken,
+                        false,
+                        literal || !image.is_writable_data_address(value),
+                    ));
                 }
             }
             // x87 mnemonics all begin with `F`; the debug spelling is the only name iced-x86
@@ -839,6 +916,9 @@ fn walk(
                         {
                             analysis.direct_imports.insert(import.to_string());
                         } else {
+                            if let Some(slot) = virtual_slot(&instruction, &pointers) {
+                                analysis.virtual_calls.insert(slot);
+                            }
                             analysis.indirect_calls += 1;
                         }
                     }
@@ -912,6 +992,9 @@ fn walk(
                                 }
                             }
                             None => {
+                                if let Some(slot) = virtual_slot(&instruction, &pointers) {
+                                    analysis.virtual_calls.insert(slot);
+                                }
                                 analysis.unresolved_indirect_jumps += 1;
                                 Step {
                                     successors: Vec::new(),
@@ -954,18 +1037,40 @@ fn walk(
     analysis.writes_through_this = analysis.writes_through_pointer.remove(&THIS_POINTER);
     analysis.globals = globals
         .into_iter()
-        .map(|(address, access, indexed)| GlobalRef {
+        .map(|(address, access, indexed, read_only)| GlobalRef {
             address,
             access,
             indexed,
+            read_only,
         })
         .collect();
 
-    let (arity, candidates, unbounded) = operand_dataflow(&steps, entry_point);
+    let (arity, candidates, state_cap_hit, loop_carried) = operand_dataflow(&steps, entry_point);
     analysis.arity = arity;
     analysis.arity_candidates = candidates;
-    analysis.operand_count_unbounded = unbounded;
+    analysis.operand_state_cap_hit = state_cap_hit;
+    analysis.operand_loop_carried = loop_carried;
     Ok(analysis)
+}
+
+/// Name the vtable slot behind an indirect branch, when the object pointer came from a global.
+///
+/// `mov ecx,[global]` then `mov eax,[ecx]` then `call/jmp [eax+n]` is one C++ virtual call. The
+/// taint chain survives both loads, so `n` and the originating global are both recoverable even
+/// though the destination is not.
+fn virtual_slot(
+    instruction: &Instruction,
+    pointers: &BTreeMap<Register, u32>,
+) -> Option<(u32, u32)> {
+    if instruction.op0_kind() != OpKind::Memory {
+        return None;
+    }
+    let source = *pointers.get(&instruction.memory_base())?;
+    // The caller's own `this` is not a named global, so there is nothing to attribute the slot to.
+    if source == THIS_POINTER {
+        return None;
+    }
+    Some((source, instruction.memory_displacement64() as u32))
 }
 
 /// Track which registers hold a value read out of a data global, and record stores made through
@@ -979,6 +1084,7 @@ fn update_pointer_taint(
     image: &PeImage<'_>,
     instruction: &Instruction,
     memory: &[iced_x86::UsedMemory],
+    written_registers: &[Register],
     pointers: &mut BTreeMap<Register, u32>,
     writes: &mut BTreeSet<u32>,
 ) {
@@ -1006,7 +1112,7 @@ fn update_pointer_taint(
                 let displacement = instruction.memory_displacement64() as u32;
                 if instruction.memory_base() == Register::None
                     && instruction.memory_index() == Register::None
-                    && image.is_data_address(displacement)
+                    && image.is_writable_data_address(displacement)
                 {
                     Some(displacement)
                 } else {
@@ -1026,9 +1132,13 @@ fn update_pointer_taint(
         return;
     }
 
-    // Anything else that writes a register invalidates whatever it held.
-    if instruction.op0_kind() == OpKind::Register {
-        pointers.remove(&instruction.op0_register());
+    // Anything else that writes a register invalidates whatever it held. Keyed on the decoder's
+    // *write* set, not on "the first operand is a register": `test ecx,ecx` has a register first
+    // operand and writes nothing, and dropping the taint there is what stopped `netlockgame` —
+    // `mov ecx,[global]` / `test ecx,ecx` / `mov eax,[ecx]` / `jmp [eax+0x58]` — from naming its
+    // own dispatch slot.
+    for register in written_registers {
+        pointers.remove(register);
     }
 }
 
@@ -1047,12 +1157,20 @@ fn update_pointer_taint(
 fn operand_dataflow(
     steps: &BTreeMap<u32, Step>,
     entry_point: u32,
-) -> (Option<usize>, BTreeSet<usize>, bool) {
+) -> (Option<usize>, BTreeSet<usize>, bool, bool) {
     /// Distinct operand counts tracked per instruction before the body is called unbounded.
     const MAXIMUM_STATES: usize = 16;
 
     let mut states: HashMap<u32, BTreeSet<usize>> = HashMap::new();
-    let mut unbounded = false;
+    let mut state_cap_hit = false;
+    // Whether any operand fetch sits inside a cycle in the control-flow graph.
+    //
+    // Found by strongly-connected components, not by a lower address. "The successor sits at a
+    // lower address" looked like a back edge and is not one: the compiler puts the error path's
+    // shared epilogue below the code that jumps to it, so 26 operators that fetch through a
+    // per-subsystem wrapper were declared variadic and came back nullary, because a variadic
+    // callee contributes nothing to its caller's count.
+    let loop_carried = pops_inside_a_cycle(steps);
     let mut queue = VecDeque::from([(entry_point, 0_usize)]);
     let mut at_returns: BTreeSet<usize> = BTreeSet::new();
 
@@ -1062,7 +1180,7 @@ fn operand_dataflow(
             continue;
         }
         if seen.len() > MAXIMUM_STATES {
-            unbounded = true;
+            state_cap_hit = true;
             continue;
         }
         let Some(step) = steps.get(&address) else {
@@ -1077,10 +1195,98 @@ fn operand_dataflow(
         }
     }
 
-    let arity = (at_returns.len() == 1 && !unbounded)
+    let arity = (at_returns.len() == 1 && !state_cap_hit && !loop_carried)
         .then(|| at_returns.iter().next().copied())
         .flatten();
-    (arity, at_returns, unbounded)
+    (arity, at_returns, state_cap_hit, loop_carried)
+}
+
+/// Whether any instruction that consumes an operand lies on a cycle.
+///
+/// Tarjan's algorithm over the walked instructions. A non-trivial strongly-connected component, or
+/// a self-edge, is a loop; a fetch inside one means the operand count grows per iteration, which is
+/// the only thing that can make the candidate counts an arithmetic progression — `armyexpense`
+/// steps by five, `combat_controltarget` by two.
+fn pops_inside_a_cycle(steps: &BTreeMap<u32, Step>) -> bool {
+    struct State<'a> {
+        steps: &'a BTreeMap<u32, Step>,
+        index: HashMap<u32, usize>,
+        low: HashMap<u32, usize>,
+        on_stack: BTreeSet<u32>,
+        stack: Vec<u32>,
+        next: usize,
+        found: bool,
+    }
+
+    fn visit(state: &mut State<'_>, node: u32) {
+        state.index.insert(node, state.next);
+        state.low.insert(node, state.next);
+        state.next += 1;
+        state.stack.push(node);
+        state.on_stack.insert(node);
+
+        let successors = state
+            .steps
+            .get(&node)
+            .map(|step| step.successors.clone())
+            .unwrap_or_default();
+        for successor in successors {
+            if successor == node {
+                // A self-edge is a one-instruction loop.
+                if state.steps.get(&node).is_some_and(|step| step.operands_consumed > 0) {
+                    state.found = true;
+                }
+                continue;
+            }
+            if !state.index.contains_key(&successor) {
+                visit(state, successor);
+                let child = state.low[&successor];
+                let own = state.low[&node];
+                state.low.insert(node, own.min(child));
+            } else if state.on_stack.contains(&successor) {
+                let child = state.index[&successor];
+                let own = state.low[&node];
+                state.low.insert(node, own.min(child));
+            }
+        }
+
+        if state.low[&node] == state.index[&node] {
+            let mut component = Vec::new();
+            while let Some(member) = state.stack.pop() {
+                state.on_stack.remove(&member);
+                component.push(member);
+                if member == node {
+                    break;
+                }
+            }
+            if component.len() > 1
+                && component.iter().any(|member| {
+                    state
+                        .steps
+                        .get(member)
+                        .is_some_and(|step| step.operands_consumed > 0)
+                })
+            {
+                state.found = true;
+            }
+        }
+    }
+
+    let mut state = State {
+        steps,
+        index: HashMap::new(),
+        low: HashMap::new(),
+        on_stack: BTreeSet::new(),
+        stack: Vec::new(),
+        next: 0,
+        found: false,
+    };
+    for node in steps.keys() {
+        if !state.index.contains_key(node) {
+            visit(&mut state, *node);
+        }
+    }
+    state.found
 }
 
 /// Follow `jmp [index*4 + table]`, the shape the compiler emits for a dense `switch`.
@@ -1117,16 +1323,21 @@ fn resolve_jump_table(
 // Whole-table analysis
 // ---------------------------------------------------------------------------------------------
 
-/// What the body evidence says an operator does.
-///
-/// The ladder is ordered by how much the evidence commits to: an import naming the filesystem says
-/// more than a store to an unnamed global, which says more than a load. `Unknown` is the answer
-/// whenever the walk did not finish, and is deliberately common.
+/// What the body evidence says an operator does. The ladder is built in `classify`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Behaviour {
     Unknown,
-    StackManipulation,
-    Arithmetic,
+    /// A body that is a single `ret`: a name the engine registers and does not implement.
+    Stub,
+    /// Acts on its operands and the operand stack only: no engine state, and no call to anything
+    /// that touches engine state. Honestly named — `sleep` and `debug` qualify as surely as `dup`
+    /// does, and calling the class `stack` claimed more than the evidence.
+    OperandOnly,
+    /// `OperandOnly`, and at least one x87 instruction decoded. Usually a numeric operator —
+    /// `abs`, `atan`, `sqrt`, `add` — but the evidence is the x87 unit and not arithmetic intent:
+    /// `sleep` is in this class because it coerces a float delay with `fld`. Named for what was
+    /// observed rather than for what was meant.
+    FloatingPoint,
     ReadsEngineState,
     MutatesEngineState,
     FileOrResourceIo,
@@ -1139,8 +1350,9 @@ impl Behaviour {
     pub fn label(self) -> &'static str {
         match self {
             Self::Unknown => "unknown",
-            Self::StackManipulation => "stack",
-            Self::Arithmetic => "arithmetic",
+            Self::Stub => "stub",
+            Self::OperandOnly => "operand-only",
+            Self::FloatingPoint => "floating-point",
             Self::ReadsEngineState => "reads-state",
             Self::MutatesEngineState => "mutates-state",
             Self::FileOrResourceIo => "file-or-resource-io",
@@ -1174,7 +1386,7 @@ impl OperatorReport {
     /// legitimately sometimes; it is a rate to report, not a per-row verdict.
     pub fn overruns_next_entry_point(&self) -> bool {
         self.next_entry_point
-            .is_some_and(|next| next > self.entry_point && self.body.span_end > next)
+            .is_some_and(|next| next > self.entry_point && self.body.decoded_extent_end > next)
     }
 
     /// Whether the body's own operand count contradicts the count already in the repository.
@@ -1193,6 +1405,19 @@ impl OperatorReport {
 pub struct Analysis {
     pub reports: Vec<OperatorReport>,
     pub index: ProgramIndex,
+}
+
+/// Walk one function body on its own, for inspecting a callee the table only names.
+///
+/// Exists because the first version of `discounted_callees` was written from a guess about what the
+/// script error raiser at `0x004d4550` touches, and a guess is not a measurement.
+pub fn inspect(
+    image: &PeImage<'_>,
+    entry_point: u32,
+    operator_entry_points: &[u32],
+) -> Result<BodyAnalysis, NativeTableError> {
+    let index = ProgramIndex::build(image, operator_entry_points)?;
+    walk(image, &index, entry_point, None)
 }
 
 /// Run the whole analysis over a set of named entry points.
@@ -1234,11 +1459,46 @@ pub fn analyse(
     sorted_entries.sort_unstable();
     sorted_entries.dedup();
 
-    let helpers: BTreeSet<u32> = index
+    // Callees that cannot distinguish one operator from another, and so are not evidence that the
+    // operator does anything: the shared operand helpers, plus any callee that most of the table
+    // calls. This is the same argument the import depth is chosen by — a thing reached by almost
+    // everything describes the call graph, not the caller — applied to callees instead of imports.
+    //
+    // It replaces a rule written from a guess about what the script error raiser at `0x004d4550`
+    // touches. Measuring it showed the guess was wrong: it references the engine's error-message
+    // objects, so "no globals" never held, and `dup`, `exch`, `pop` and `roll` stayed in `unknown`.
+    let mut discounted_callees: BTreeSet<u32> = index
         .pop_helpers
         .union(&index.push_helpers)
         .copied()
         .collect();
+    let mut callers: HashMap<u32, usize> = HashMap::new();
+    for entry in &entry_points {
+        if let Some(body) = bodies.get(entry) {
+            for callee in body.calls.iter().chain(body.tail_calls.iter()) {
+                *callers.entry(*callee).or_default() += 1;
+            }
+        }
+    }
+    let shared_callee_threshold = entry_points.len() / 2;
+    for (callee, count) in &callers {
+        if *count >= shared_callee_threshold {
+            discounted_callees.insert(*callee);
+        }
+    }
+    // A leaf that references no data of any kind and reaches no import is pure computation — the
+    // compiler's float conversion routines are the case that matters, and without this `add` and
+    // `eq` land in `unknown` for calling one.
+    for (entry, callee) in &bodies {
+        if callee.globals.is_empty()
+            && callee.direct_imports.is_empty()
+            && callee.calls.is_empty()
+            && callee.tail_calls.is_empty()
+            && callee.boundary_complete()
+        {
+            discounted_callees.insert(*entry);
+        }
+    }
     let mut reports = Vec::with_capacity(operators.len());
     for (name, entry_point) in operators {
         let body = walk(image, &index, *entry_point, Some(&pop_counts))?;
@@ -1250,7 +1510,7 @@ pub fn analyse(
             .iter()
             .copied()
             .find(|candidate| *candidate > *entry_point);
-        let behaviour = classify(&body, &reach, CLASSIFY_DEPTH, &helpers);
+        let behaviour = classify(&body, &reach, CLASSIFY_DEPTH, &discounted_callees);
         reports.push(OperatorReport {
             name: name.clone(),
             entry_point: *entry_point,
@@ -1375,17 +1635,34 @@ fn parse_import(text: &str) -> Option<Import> {
     })
 }
 
+/// What the body evidence says an operator does.
+///
+/// Two rules here were wrong first and are worth stating as rules.
+///
+/// **`MutatesEngineState` requires a store in *this* body.** It used to be granted on a direct
+/// callee's store as well, which made the class false for 154 of its 487 rows — including the
+/// predicates `armycanmove?`, `armystrength` and `ambientlight`. Somebody filtering the table for
+/// the state-editing API got predicates and still did not get `setterrain`: two errors at once.
+/// The callee's store is now carried as `Reach::write_depth` and as `calls_mutating_method`, which
+/// is the treatment that flag already got for the same reason.
+///
+/// **A call to a shared operand helper, or to a body that touches no state and no import, is not
+/// evidence that the operator does anything.** Every operator reaches the script error raiser, and
+/// counting that as a call left `dup`, `exch`, `pop` and `roll` in `unknown`.
 fn classify(
     body: &BodyAnalysis,
     reach: &Reach,
     depth: usize,
-    helpers: &BTreeSet<u32>,
+    discounted_callees: &BTreeSet<u32>,
 ) -> Behaviour {
     if !body.boundary_complete() {
         return Behaviour::Unknown;
     }
-    // A mutation the body performs itself outranks an import several calls away: the operator's own
-    // stores are what it does, and the archive under them is how the engine happens to be built.
+    // A one-instruction body that returns is a registered name with no implementation behind it.
+    if body.instructions == 1 && body.returns == 1 {
+        return Behaviour::Stub;
+    }
+    // A mutation the body performs itself is the only mutation this analysis can attribute.
     if body.writes_globals() {
         return Behaviour::MutatesEngineState;
     }
@@ -1401,26 +1678,23 @@ fn classify(
     if reach.reaches(ImportKind::Network, depth) {
         return Behaviour::Network;
     }
-    if reach.mutates(depth) {
-        return Behaviour::MutatesEngineState;
-    }
     if body.reads_globals() {
         return Behaviour::ReadsEngineState;
     }
-    // Calls to the shared operand helpers are how an operator reaches its own arguments; counting
-    // them as "this body calls something" would put every stack primitive in `unknown`, which is
-    // where `dup` sat until this was measured.
     let engine_calls = body
         .calls
         .iter()
         .chain(body.tail_calls.iter())
-        .filter(|target| !helpers.contains(target))
+        .filter(|target| !discounted_callees.contains(target))
         .count();
-    if body.globals.is_empty() && engine_calls == 0 {
-        return if body.floating_point || body.instructions > 12 {
-            Behaviour::Arithmetic
+    if !body.reads_globals() && !body.writes_globals() && engine_calls == 0 {
+        // The x87 unit is the only positive evidence available here that the computation is
+        // numeric. A reference to a constant is not: `sleep` and `debug` reference a string and
+        // were published as arithmetic on that basis.
+        return if body.floating_point {
+            Behaviour::FloatingPoint
         } else {
-            Behaviour::StackManipulation
+            Behaviour::OperandOnly
         };
     }
     Behaviour::Unknown
@@ -1433,19 +1707,23 @@ fn classify(
 /// pools with `.data` singletons, and the cluster count is reported so a reader can see what a
 /// different gap would do.
 pub fn cluster_globals(reports: &[OperatorReport], gap: u32) -> Vec<GlobalCluster> {
-    let mut by_address: BTreeMap<u32, BTreeSet<String>> = BTreeMap::new();
+    let mut by_address: BTreeMap<u32, (BTreeSet<String>, bool)> = BTreeMap::new();
     for report in reports {
         for global in &report.body.globals {
-            by_address
+            let entry = by_address
                 .entry(global.address)
-                .or_default()
-                .insert(report.name.clone());
+                .or_insert_with(|| (BTreeSet::new(), true));
+            entry.0.insert(report.name.clone());
+            entry.1 &= global.read_only;
         }
     }
     let mut clusters: Vec<GlobalCluster> = Vec::new();
-    for (address, operators) in by_address {
+    for (address, (operators, read_only)) in by_address {
         match clusters.last_mut() {
-            Some(last) if address.saturating_sub(last.end) <= gap => {
+            // A read-only run and a writable run are never merged: one is the engine's state and
+            // the other is the compiler's constants, and merging them is what hid the arithmetic
+            // operators' float pool inside "touches engine data".
+            Some(last) if address.saturating_sub(last.end) <= gap && last.read_only == read_only => {
                 last.end = address;
                 last.addresses += 1;
                 last.operators.extend(operators);
@@ -1455,6 +1733,7 @@ pub fn cluster_globals(reports: &[OperatorReport], gap: u32) -> Vec<GlobalCluste
                 end: address,
                 addresses: 1,
                 operators,
+                read_only,
             }),
         }
     }
@@ -1468,7 +1747,192 @@ pub struct GlobalCluster {
     pub end: u32,
     pub addresses: usize,
     pub operators: BTreeSet<String>,
+    /// Whether every address in the run is in read-only data: a constant pool, not engine state.
+    pub read_only: bool,
 }
+
+// --------------------------------------------------------------------------------------------
+// Reporting
+// ---------------------------------------------------------------------------------------------
+
+/// The per-operator table. One row per operator, tab separated, sorted by name so a diff between
+/// two runs is a diff of findings rather than of table order.
+///
+/// Lives in the library rather than in the driver so the staleness test can regenerate the exact
+/// bytes and hash them. The first version checked three of twenty-eight columns, which left the
+/// two columns the offline anchors actually read — `call_targets` and `global_addresses` — with no
+/// staleness check at all.
+pub fn operator_table(reports: &[OperatorReport]) -> String {
+    const COLUMNS: [&str; 33] = [
+        "name",
+        "entry_point",
+        "behaviour",
+        "boundary",
+        "instructions",
+        "decoded_extent_bytes",
+        "arity",
+        "arity_candidates",
+        "nominal_arity",
+        "declared_arity",
+        "arity_agrees",
+        "loop_carried_operands",
+        "operand_state_cap_hit",
+        "helper_pops",
+        "helper_pushes",
+        "inline_pops",
+        "inline_pushes",
+        "calls",
+        "call_targets",
+        "tail_calls",
+        "indirect_calls",
+        "virtual_call_slots",
+        "globals_read",
+        "constant_refs",
+        "globals_written",
+        "pointer_write_addresses",
+        "global_addresses",
+        "constant_addresses",
+        "string_refs",
+        "import_kinds_at_depth",
+        "state_write_depth",
+        "calls_mutating_method",
+        "direct_imports",
+    ];
+
+    let mut rows: Vec<&OperatorReport> = reports.iter().collect();
+    rows.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let mut text = COLUMNS.join("\t");
+    text.push('\n');
+    for report in rows {
+        let body = &report.body;
+        // Engine state only. A read-only address is a compiler constant and is counted separately.
+        let reads = body
+            .globals
+            .iter()
+            .filter(|global| global.access != GlobalAccess::Write && !global.read_only)
+            .count();
+        let writes = body
+            .globals
+            .iter()
+            .filter(|global| global.access == GlobalAccess::Write && !global.read_only)
+            .count();
+        let list = |values: Vec<String>| {
+            if values.is_empty() {
+                "-".to_owned()
+            } else {
+                values.join(",")
+            }
+        };
+        let number = |value: Option<usize>| {
+            value.map_or_else(|| "-".to_owned(), |value| value.to_string())
+        };
+        let fields: Vec<String> = vec![
+            report.name.clone(),
+            format!("{:#010x}", report.entry_point),
+            report.behaviour.label().to_owned(),
+            body.boundary_failure().unwrap_or("complete").to_owned(),
+            body.instructions.to_string(),
+            body
+                .decoded_extent_end
+                .saturating_sub(report.entry_point)
+                .to_string(),
+            number(body.arity),
+            list(body.arity_candidates.iter().map(usize::to_string).collect()),
+            number(body.nominal_arity()),
+            number(report.declared_arity),
+            match report.arity_disagreement() {
+                None => "yes".to_owned(),
+                Some(_) => "NO".to_owned(),
+            },
+            if body.operand_loop_carried { "yes" } else { "no" }.to_owned(),
+            if body.operand_state_cap_hit { "yes" } else { "no" }.to_owned(),
+            body.helper_pops.to_string(),
+            body.helper_pushes.to_string(),
+            body.inline_pops.to_string(),
+            body.inline_pushes.to_string(),
+            body.calls.len().to_string(),
+            list(
+                body.calls
+                    .iter()
+                    .chain(body.tail_calls.iter())
+                    .map(|target| format!("{target:#x}"))
+                    .collect(),
+            ),
+            body.tail_calls.len().to_string(),
+            body.indirect_calls.to_string(),
+            list(
+                body.virtual_calls
+                    .iter()
+                    .map(|(source, offset)| format!("{source:#x}+{offset:#x}"))
+                    .collect(),
+            ),
+            reads.to_string(),
+            body.constant_refs().to_string(),
+            writes.to_string(),
+            list(
+                body.writes_through_pointer
+                    .iter()
+                    .map(|address| format!("{address:#x}"))
+                    .collect(),
+            ),
+            list(
+                body.globals
+                    .iter()
+                    .filter(|global| !global.read_only)
+                    .map(|global| format!("{:#x}", global.address))
+                    .collect(),
+            ),
+            list(
+                body.globals
+                    .iter()
+                    .filter(|global| global.read_only)
+                    .map(|global| format!("{:#x}", global.address))
+                    .collect(),
+            ),
+            body.string_refs.len().to_string(),
+            list(
+                report
+                    .reach
+                    .import_depth
+                    .iter()
+                    .map(|(kind, depth)| format!("{}@{depth}", kind.label()))
+                    .collect(),
+            ),
+            report
+                .reach
+                .write_depth
+                .map_or_else(|| "-".to_owned(), |depth| depth.to_string()),
+            if report.reach.calls_mutating_method { "yes" } else { "no" }.to_owned(),
+            list(body.direct_imports.iter().cloned().collect()),
+        ];
+        debug_assert_eq!(fields.len(), COLUMNS.len());
+        text.push_str(&fields.join("\t"));
+        text.push('\n');
+    }
+    text
+}
+
+pub fn cluster_table(clusters: &[GlobalCluster]) -> String {
+    let mut text =
+        String::from("start\tend\tbytes\tdistinct_addresses\tread_only\toperators\toperator_names\n");
+    for cluster in clusters {
+        let mut names: Vec<&str> = cluster.operators.iter().map(String::as_str).collect();
+        names.sort_unstable();
+        text.push_str(&format!(
+            "{:#010x}\t{:#010x}\t{}\t{}\t{}\t{}\t{}\n",
+            cluster.start,
+            cluster.end,
+            cluster.end - cluster.start,
+            cluster.addresses,
+            if cluster.read_only { "yes" } else { "no" },
+            cluster.operators.len(),
+            names.join(","),
+        ));
+    }
+    text
+}
+
 
 // ---------------------------------------------------------------------------------------------
 
@@ -1495,14 +1959,16 @@ fn is_printable_string(text: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// Build a minimal 32-bit PE with a code section and a data section, so the walker is exercised
-    /// without the proprietary binary.
+    /// Build a minimal 32-bit PE with a code section, a **writable** `.data` and a read-only
+    /// `.rdata`, so the walker is exercised without the proprietary binary.
     ///
     /// Mirrors the fixtures in `native_table` and `operator_arity` rather than inventing a third
-    /// shape, and deliberately gives `.data` a virtual size larger than its raw size: the engine's
-    /// own `.data` does, and a fixture without that property cannot fail on the bug where a global
-    /// past the raw data is dropped.
-    fn image_with(code: &[u8], data: &[u8]) -> Vec<u8> {
+    /// shape, and deliberately reproduces two properties of the engine's own image that a
+    /// convenient fixture would not have: `.data` declares more virtual space than raw data, so a
+    /// global past the file bytes must still be seen; and `.rdata` exists and is not writable, so a
+    /// constant must not be mistaken for state. The first fixture had a single non-writable data
+    /// section, which is exactly why nothing failed when `is_data_address` ignored the write flag.
+    fn image_with(code: &[u8], data: &[u8], constants: &[u8]) -> Vec<u8> {
         const PE_OFFSET: usize = 0x80;
         const IMAGE_BASE: u32 = 0x0040_0000;
         const CODE_VA: u32 = 0x1000;
@@ -1512,11 +1978,14 @@ mod tests {
         const DATA_RAW: u32 = 0x600;
         const DATA_RAW_SIZE: u32 = 0x200;
         const DATA_VIRTUAL_SIZE: u32 = 0x4000;
+        const RDATA_VA: u32 = 0x8000;
+        const RDATA_RAW: u32 = 0x800;
+        const RDATA_SIZE: u32 = 0x200;
 
-        let mut image = vec![0_u8; (DATA_RAW + DATA_RAW_SIZE) as usize];
+        let mut image = vec![0_u8; (RDATA_RAW + RDATA_SIZE) as usize];
         image[0x3c..0x40].copy_from_slice(&(PE_OFFSET as u32).to_le_bytes());
         image[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PE\0\0");
-        image[PE_OFFSET + 6..PE_OFFSET + 8].copy_from_slice(&2_u16.to_le_bytes());
+        image[PE_OFFSET + 6..PE_OFFSET + 8].copy_from_slice(&3_u16.to_le_bytes());
         let optional_size: u16 = 0xe0;
         image[PE_OFFSET + 20..PE_OFFSET + 22].copy_from_slice(&optional_size.to_le_bytes());
         image[PE_OFFSET + 24..PE_OFFSET + 26].copy_from_slice(&0x10b_u16.to_le_bytes());
@@ -1533,6 +2002,7 @@ mod tests {
                 image[base + 20..base + 24].copy_from_slice(&raw.to_le_bytes());
                 image[base + 36..base + 40].copy_from_slice(&flags.to_le_bytes());
             };
+        // IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE
         section(
             0,
             b".text",
@@ -1540,8 +2010,9 @@ mod tests {
             CODE_SIZE,
             CODE_RAW,
             CODE_SIZE,
-            0x2000_0000,
+            0x2000_0020,
         );
+        // IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_INITIALIZED_DATA
         section(
             1,
             b".data",
@@ -1549,11 +2020,23 @@ mod tests {
             DATA_VIRTUAL_SIZE,
             DATA_RAW,
             DATA_RAW_SIZE,
-            0x4000_0000,
+            0xc000_0040,
+        );
+        // IMAGE_SCN_MEM_READ only: the flag that makes this a constant and not state.
+        section(
+            2,
+            b".rdata",
+            RDATA_VA,
+            RDATA_SIZE,
+            RDATA_RAW,
+            RDATA_SIZE,
+            0x4000_0040,
         );
 
         image[CODE_RAW as usize..CODE_RAW as usize + code.len()].copy_from_slice(code);
         image[DATA_RAW as usize..DATA_RAW as usize + data.len()].copy_from_slice(data);
+        image[RDATA_RAW as usize..RDATA_RAW as usize + constants.len()]
+            .copy_from_slice(constants);
         image
     }
 
@@ -1573,7 +2056,7 @@ mod tests {
     fn records_an_absolute_read_as_a_global() {
         // mov eax,[402010h] ; ret
         let code = [0xa1, 0x10, 0x20, 0x40, 0x00, 0xc3];
-        let bytes = image_with(&code, &[]);
+        let bytes = image_with(&code, &[], &[]);
         let image = PeImage::parse(&bytes).expect("fixture parses");
         let body = walk(&image, &empty_index(), ENTRY, None).expect("entry is code");
         assert_eq!(
@@ -1582,6 +2065,7 @@ mod tests {
                 address: 0x0040_2010,
                 access: GlobalAccess::Read,
                 indexed: false,
+                read_only: false,
             }]
         );
         assert!(body.boundary_complete());
@@ -1593,7 +2077,7 @@ mod tests {
         // displacement is the table, not an offset into a struct, because it lands in `.data`.
         // mov eax,[eax+402100h] ; ret
         let code = [0x8b, 0x80, 0x00, 0x21, 0x40, 0x00, 0xc3];
-        let bytes = image_with(&code, &[]);
+        let bytes = image_with(&code, &[], &[]);
         let image = PeImage::parse(&bytes).expect("fixture parses");
         let body = walk(&image, &empty_index(), ENTRY, None).expect("entry is code");
         assert_eq!(body.globals.len(), 1);
@@ -1605,7 +2089,7 @@ mod tests {
     fn records_an_address_materialised_as_an_immediate() {
         // mov ecx,402200h ; ret -- how the engine reaches a singleton object.
         let code = [0xb9, 0x00, 0x22, 0x40, 0x00, 0xc3];
-        let bytes = image_with(&code, &[]);
+        let bytes = image_with(&code, &[], &[]);
         let image = PeImage::parse(&bytes).expect("fixture parses");
         let body = walk(&image, &empty_index(), ENTRY, None).expect("entry is code");
         assert_eq!(body.globals[0].access, GlobalAccess::Taken);
@@ -1617,7 +2101,7 @@ mod tests {
         // them. `.data` raw ends at 0x402200 in the fixture; this address is past it.
         // mov eax,[403f00h] ; ret
         let code = [0xa1, 0x00, 0x3f, 0x40, 0x00, 0xc3];
-        let bytes = image_with(&code, &[]);
+        let bytes = image_with(&code, &[], &[]);
         let image = PeImage::parse(&bytes).expect("fixture parses");
         assert!(image.file_offset(0x0040_3f00).is_none());
         let body = walk(&image, &empty_index(), ENTRY, None).expect("entry is code");
@@ -1625,10 +2109,34 @@ mod tests {
     }
 
     #[test]
+    fn a_read_only_data_reference_is_a_constant_and_not_engine_state() {
+        // mov eax,[408000h] ; ret -- an address in the non-writable `.rdata` section.
+        let code = [0xa1, 0x00, 0x80, 0x40, 0x00, 0xc3];
+        let bytes = image_with(&code, &[], &[]);
+        let image = PeImage::parse(&bytes).expect("fixture parses");
+        let body = walk(&image, &empty_index(), ENTRY, None).expect("entry is code");
+        assert_eq!(body.globals.len(), 1);
+        assert!(body.globals[0].read_only);
+        assert!(!body.reads_globals(), "a constant is not engine state");
+        assert_eq!(body.constant_refs(), 1);
+    }
+
+    #[test]
+    fn a_string_literal_in_writable_data_is_still_a_constant() {
+        // push 402000h ; ret -- the literal sits in `.data`, which this linker does.
+        let bytes = image_with(&[0x68, 0x00, 0x20, 0x40, 0x00, 0xc3], b"terrain\0", &[]);
+        let image = PeImage::parse(&bytes).expect("fixture parses");
+        let body = walk(&image, &empty_index(), ENTRY, None).expect("entry is code");
+        assert!(image.is_writable_data_address(0x0040_2000));
+        assert!(body.globals[0].read_only, "a printable literal is a constant");
+        assert!(!body.reads_globals());
+    }
+
+    #[test]
     fn a_write_is_reported_as_a_write() {
         // mov [402010h],eax ; ret
         let code = [0xa3, 0x10, 0x20, 0x40, 0x00, 0xc3];
-        let bytes = image_with(&code, &[]);
+        let bytes = image_with(&code, &[], &[]);
         let image = PeImage::parse(&bytes).expect("fixture parses");
         let body = walk(&image, &empty_index(), ENTRY, None).expect("entry is code");
         assert!(body.writes_globals());
@@ -1641,7 +2149,7 @@ mod tests {
         let mut code = vec![0x74, pop.len() as u8];
         code.extend_from_slice(&pop);
         code.push(0xc3);
-        let bytes = image_with(&code, &[]);
+        let bytes = image_with(&code, &[], &[]);
         let image = PeImage::parse(&bytes).expect("fixture parses");
         let body = walk(&image, &empty_index(), ENTRY, None).expect("entry is code");
         assert_eq!(body.inline_pops, 1);
@@ -1657,7 +2165,7 @@ mod tests {
         code.extend_from_slice(&pop);
         code.extend_from_slice(&pop);
         code.push(0xc3);
-        let bytes = image_with(&code, &[]);
+        let bytes = image_with(&code, &[], &[]);
         let image = PeImage::parse(&bytes).expect("fixture parses");
         let body = walk(&image, &empty_index(), ENTRY, None).expect("entry is code");
         assert_eq!(body.arity, Some(2));
@@ -1667,11 +2175,11 @@ mod tests {
     fn padding_ends_the_body_rather_than_extending_it() {
         // ret ; int3 ; int3 -- the walk must not run into the next function.
         let code = [0xc3, 0xcc, 0xcc, 0xcc];
-        let bytes = image_with(&code, &[]);
+        let bytes = image_with(&code, &[], &[]);
         let image = PeImage::parse(&bytes).expect("fixture parses");
         let body = walk(&image, &empty_index(), ENTRY, None).expect("entry is code");
         assert_eq!(body.instructions, 1);
-        assert_eq!(body.span_end, ENTRY + 1);
+        assert_eq!(body.decoded_extent_end, ENTRY + 1);
     }
 
     #[test]
@@ -1679,7 +2187,7 @@ mod tests {
         // jmp to the next instruction ; ret -- with the target registered as something the
         // program calls, which is what makes it a tail call rather than a fallthrough.
         let code = [0xeb, 0x00, 0xc3, 0xc3];
-        let bytes = image_with(&code, &[]);
+        let bytes = image_with(&code, &[], &[]);
         let image = PeImage::parse(&bytes).expect("fixture parses");
         let mut index = empty_index();
         index.call_targets.insert(ENTRY + 2);
@@ -1690,7 +2198,7 @@ mod tests {
 
     #[test]
     fn a_string_reference_is_recorded_by_address() {
-        let bytes = image_with(&[0x68, 0x00, 0x20, 0x40, 0x00, 0xc3], b"terrain\0");
+        let bytes = image_with(&[0x68, 0x00, 0x20, 0x40, 0x00, 0xc3], b"terrain\0", &[]);
         let image = PeImage::parse(&bytes).expect("fixture parses");
         let body = walk(&image, &empty_index(), ENTRY, None).expect("entry is code");
         assert_eq!(body.string_refs, BTreeSet::from([0x0040_2000]));
@@ -1704,13 +2212,14 @@ mod tests {
             body: BodyAnalysis {
                 entry_point: 0,
                 instructions: 0,
-                span_end: 0,
+                decoded_extent_end: 0,
                 globals: addresses
                     .iter()
                     .map(|address| GlobalRef {
                         address: *address,
                         access: GlobalAccess::Read,
                         indexed: false,
+                        read_only: false,
                     })
                     .collect(),
                 calls: BTreeSet::new(),
@@ -1725,9 +2234,11 @@ mod tests {
                 helper_pushes: 0,
                 arity: None,
                 arity_candidates: BTreeSet::new(),
-                operand_count_unbounded: false,
+                operand_loop_carried: false,
+                operand_state_cap_hit: false,
                 returns_arguments: 0,
                 indirect_calls: 0,
+                virtual_calls: BTreeSet::new(),
                 unresolved_indirect_jumps: 0,
                 resolved_jump_tables: 0,
                 invalid_instructions: 0,

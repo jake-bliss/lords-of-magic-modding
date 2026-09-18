@@ -27,14 +27,16 @@ Bodies whose walk ran past the next operator entry point: **56** (2.9%). Operato
 
 | class | operators | share |
 | --- | ---: | ---: |
-| reads-state | 1058 | 55.5% |
-| mutates-state | 487 | 25.6% |
-| unknown | 256 | 13.4% |
+| reads-state | 1094 | 57.4% |
+| mutates-state | 334 | 17.5% |
+| unknown | 270 | 14.2% |
 | file-or-resource-io | 86 | 4.5% |
-| stack | 17 | 0.9% |
+| operand-only | 81 | 4.2% |
+| floating-point | 26 | 1.4% |
+| stub | 13 | 0.7% |
 | rendering | 2 | 0.1% |
 
-Classified: **1650** of 1906 (86.6%). `unknown` is what an incomplete walk produces, and is left as it is.
+Classified: **1636** of 1906 (85.8%). Of the 270 left `unknown`, **1** are bodies the walk could not finish and **269** are bodies it finished and could not describe: they reference no data of their own and only forward to an engine function. `unknown` is a real answer for the second group, not a coverage failure.
 
 ## Import reach by call depth
 
@@ -51,7 +53,7 @@ Each cell is the share of operators that reach that kind of import within that m
 | window-input | 0% | 1% | 26% | 93% | 94% | 94% | 94% |
 | time | 0% | 3% | 31% | 93% | 94% | 94% | 94% |
 | other | 1% | 2% | 28% | 93% | 94% | 94% | 95% |
-| *writes engine state* | 17% | 27% | 52% | 96% | 97% | 97% | 97% |
+| *writes engine state* | 18% | 27% | 53% | 96% | 97% | 97% | 97% |
 
 Separately, **57%** of operators call a method on a singleton they named that stores through `this`. That is too common to classify on, and is carried as its own column rather than folded into the row above.
 
@@ -63,7 +65,7 @@ A kind reached by most operators is not a signal about any of them; the row is p
 | --- | ---: |
 | single arity on every returning path | 544 |
 | paths disagree, so the nominal count is the successful path | 1362 |
-| nominal count **higher** than the count already recorded | **68** |
+| nominal count **higher** than the count already recorded | **70** |
 | nominal count **lower** than the count already recorded | **3** |
 
 The disagreements, largest gap first:
@@ -71,6 +73,7 @@ The disagreements, largest gap first:
 | operator | body walk | previously recorded |
 | --- | ---: | ---: |
 | `launchmissile` | 21 | 2 |
+| `lightning` | 16 | 2 |
 | `addbuildinginfo` | 15 | 6 |
 | `toptriangle` | 11 | 3 |
 | `addcitymod` | 9 | 2 |
@@ -79,6 +82,7 @@ The disagreements, largest gap first:
 | `preparecitybattlemap` | 9 | 2 |
 | `buttonframeautofree` | 8 | 2 |
 | `bargraph` | 8 | 2 |
+| `addspelldef` | 16 | 10 |
 | `addfollower` | 7 | 1 |
 | `dialoginfo` | 8 | 3 |
 | `drawline` | 8 | 3 |
@@ -108,55 +112,53 @@ The disagreements, largest gap first:
 | `setunitdata` | 4 | 6 |
 | `nsetunitdata` | 5 | 7 |
 | `createghost` | 8 | 6 |
-| `addunitmodifier` | 8 | 6 |
-| `enumallplayeractivearmies` | 3 | 1 |
 
-…and 31 more, in `operator-bodies.tsv` where `arity_agrees` is `NO`.
+…and 33 more, in `operator-bodies.tsv` where `arity_agrees` is `NO`.
 
 ## How many clusters the gap makes
 
 | gap | clusters |
 | --- | ---: |
-| `0x20` | 247 |
-| `0x40` | 162 |
-| `0x100` | 86 |
-| `0x400` | 32 |
-| `0x1000` | 12 |
+| `0x20` | 284 |
+| `0x40` | 208 |
+| `0x100` | 152 |
+| `0x400` | 104 |
+| `0x1000` | 85 |
 
 ## Global-address clusters (gap 0x100)
 
 Each row is a run of data addresses no more than one page apart, and the operators that touch it. The reading in the docs is inferred from the operator names in the cluster; the addresses and counts are observed.
 
-| range | bytes | addresses | operators | a few of them |
-| --- | ---: | ---: | ---: | --- |
-| `0x005aa08c`–`0x005aa264` | 472 | 71 | 350 | addartifacttowonlist, addbuilding, addcapitol, addchildbuilding, addextramilitaryunitnow, addfaithselection |
-| `0x005ae880`–`0x005aea70` | 496 | 54 | 276 | abracadabra, addfollower, addsatellite, addspelleffect, any_en_route?, anyartifactplayerdontknow? |
-| `0x005a7b50`–`0x005a7da8` | 600 | 105 | 257 | animatearmy, animation, armybeginturnproc, armychangedproc, armydieproc, attackorder |
-| `0x00584ae0`–`0x00584af0` | 16 | 4 | 128 | additem, ambientlight, autoplay, autoregions, blackbackbuffer, blackrenderbuffer |
-| `0x005cd18c`–`0x005cd358` | 460 | 22 | 88 | addauratype, addbuildinginfo, addextramilitaryunitnow, addfaithselection, addmissiletype, addmounttype |
-| `0x00584c1c`–`0x00584d64` | 328 | 34 | 84 | addhotkey, addspelleffect, addtobarter, adjustbartertoratio, barteraccept, barterattack |
-| `0x005aee6c`–`0x005aef10` | 164 | 17 | 83 | addquest, addspelldef, autoregions, canceldiscoveralarm, cancelendofcombattickalarms, canceleventalarm |
-| `0x00555b78`–`0x00556168` | 1520 | 33 | 78 | addartifacttowonlist, addauratype, artifactarmy, artifactself, artifactunit, bargraph |
-| `0x00572584`–`0x00572af0` | 1388 | 68 | 72 | any_en_route?, anythinglocation, anythingowner, army_en_route?, blttest, break |
-| `0x00573df4`–`0x0057447c` | 1672 | 49 | 56 | addbestetaattackrequest, airstrengthinregion, enuminvaders, getairesponse, getcombatselectionbits, gethighlightcolor |
-| `0x005564b8`–`0x00556838` | 896 | 35 | 46 | addbuildinginfo, addsatellite, assignexperience, buybuilding, buybuildingoffaith, buyunit |
-| `0x00555710`–`0x005559c8` | 696 | 21 | 45 | addtogroup, armythatdiscovered, canceldiscoveralarm, canceleventalarm, cancelmovealarm, canceltickalarm |
-| `0x00557734`–`0x005577cc` | 152 | 9 | 40 | addplayitem, aimedattackorder, armiesaveragespeed, armiesstrengthgreaterthan, armiesstrengthlessthan, can_flank_attack? |
-| `0x005876c4`–`0x00587720` | 92 | 6 | 38 | ambientlight, arrow_scroll, calclighttables, cameraorientation, cameraposition, centermilitaryunit |
-| `0x0055c6f4`–`0x0055c988` | 660 | 21 | 37 | changeplayerintelinfo, drawimpframe, enumarmiesingroup, enumimphotspots, enumplayerarmiesingroup, enumplayerknownspells |
-| `0x005af0b4`–`0x005af194` | 224 | 27 | 37 | cancelendofcombattickalarms, combattime, connectedbyland, connectedbywater, currentscenario, currentturn |
-| `0x005a9dd0`–`0x005a9ee8` | 280 | 21 | 36 | cancelpathballs, center_toolip_quick, disablemap, gethighlightcolor, getminimumdragbox, hidecursor |
-| `0x005aa644`–`0x005aa7d4` | 400 | 16 | 33 | armiesstrengthgreaterthan, armiesstrengthlessthan, attackerfacing, centermilitaryunit, combatopponent, cpr |
-| `0x0058676c`–`0x005867c0` | 84 | 18 | 31 | getambientvolume, getbuildingspeechflag, getmusicvolume, getsoundfxvolume, getspeechvolume, interruptsound |
-| `0x0055d5e4`–`0x0055dac4` | 1248 | 27 | 30 | autoregions, enumadjacentlocations, enumadjacentregions, enumhistoricevents, flagimp, font |
-| `0x005853ec`–`0x00585588` | 412 | 9 | 30 | fadeoutmusic, interruptsound, issoundplaying, loaddynamicsound, loadstaticsound, lomlighttables |
-| `0x00573914`–`0x00573c58` | 836 | 22 | 29 | addpromise, addterrainspritetype, calclighttables, coarsescrollpixels, createtreaty, currentai |
-| `0x0054dbc0`–`0x0054dd38` | 376 | 7 | 28 | abs, add, atan, cos, cvf, cvr |
-| `0x0055c330`–`0x0055c5c4` | 660 | 27 | 28 | addblankitem, additem, cleardialog, closedialog, crop, dialoginfo |
-| `0x005d1e84`–`0x005d1e88` | 4 | 2 | 27 | createnetworkgame, deselectfaith, enumnetworkcomputers, enumnetworkgames, enumproviders, getcomputername |
-| `0x005787ac`–`0x00578b47` | 923 | 33 | 26 | artifacttype, attackfacingvalue, getarmyleavealonecheck, getarmyplaceholderproc, getcurrentartifactdata, getcurrentartifactvalue |
-| `0x005869dc`–`0x00586a4c` | 112 | 16 | 25 | addvirtualunit, createvirtualarmy, getbarterpoints, getvirtualarmyid, getvirtualgreattemple, getvirtualresources |
-| `0x005843e0`–`0x005844d4` | 244 | 31 | 23 | enternetgameselscreen, enternetpikfaithscreen, enternetspscreen, exitmessageproc, exitnetgameselscreen, exitnetpikfaithscreen |
-| `0x005d2ca0`–`0x005d2d5c` | 188 | 24 | 21 | getdungeonarmyinstantiateproc, getpromisedata, getterrainspritebartervalueproc, getterrainspritechangeownershipproc, getterrainspritedeltaproc, getterrainspritemapfileproc |
-| `0x005572ec`–`0x005575ac` | 704 | 15 | 20 | createtemparmy, createvirtualarmy, destroycity, enumchildbuildings, enumpossiblebuildings, faithselect |
+| range | bytes | addresses | read-only | operators | a few of them |
+| --- | ---: | ---: | :---: | ---: | --- |
+| `0x005aa08c`–`0x005aa264` | 472 | 71 |  | 350 | addartifacttowonlist, addbuilding, addcapitol, addchildbuilding, addextramilitaryunitnow, addfaithselection |
+| `0x005ae880`–`0x005aea70` | 496 | 54 |  | 276 | abracadabra, addfollower, addsatellite, addspelleffect, any_en_route?, anyartifactplayerdontknow? |
+| `0x005a7b50`–`0x005a7da8` | 600 | 105 |  | 257 | animatearmy, animation, armybeginturnproc, armychangedproc, armydieproc, attackorder |
+| `0x00584ae0`–`0x00584af0` | 16 | 4 |  | 128 | additem, ambientlight, autoplay, autoregions, blackbackbuffer, blackrenderbuffer |
+| `0x005cd18c`–`0x005cd358` | 460 | 22 |  | 88 | addauratype, addbuildinginfo, addextramilitaryunitnow, addfaithselection, addmissiletype, addmounttype |
+| `0x00584c1c`–`0x00584d64` | 328 | 34 |  | 84 | addhotkey, addspelleffect, addtobarter, adjustbartertoratio, barteraccept, barterattack |
+| `0x005aee6c`–`0x005aef10` | 164 | 17 |  | 83 | addquest, addspelldef, autoregions, canceldiscoveralarm, cancelendofcombattickalarms, canceleventalarm |
+| `0x005876c4`–`0x00587720` | 92 | 6 |  | 38 | ambientlight, arrow_scroll, calclighttables, cameraorientation, cameraposition, centermilitaryunit |
+| `0x0055c6f4`–`0x0055c988` | 660 | 21 | yes | 37 | changeplayerintelinfo, drawimpframe, enumarmiesingroup, enumimphotspots, enumplayerarmiesingroup, enumplayerknownspells |
+| `0x00572684`–`0x00572924` | 672 | 34 | yes | 37 | button, characterwidth, collectletters, copydoodad, doodad, filldoodad |
+| `0x005af0b4`–`0x005af194` | 224 | 27 |  | 37 | cancelendofcombattickalarms, combattime, connectedbyland, connectedbywater, currentscenario, currentturn |
+| `0x005a9dd0`–`0x005a9ee8` | 280 | 21 |  | 36 | cancelpathballs, center_toolip_quick, disablemap, gethighlightcolor, getminimumdragbox, hidecursor |
+| `0x005aa644`–`0x005aa7d4` | 400 | 16 |  | 33 | armiesstrengthgreaterthan, armiesstrengthlessthan, attackerfacing, centermilitaryunit, combatopponent, cpr |
+| `0x005577c8`–`0x005577c8` | 0 | 1 |  | 31 | addplayitem, armiesaveragespeed, armiesstrengthgreaterthan, armiesstrengthlessthan, can_flank_attack?, checkaimissileunittarget |
+| `0x0058676c`–`0x005867c0` | 84 | 18 |  | 31 | getambientvolume, getbuildingspeechflag, getmusicvolume, getsoundfxvolume, getspeechvolume, interruptsound |
+| `0x00555d78`–`0x00555eb4` | 316 | 10 | yes | 30 | addartifacttowonlist, addauratype, canuseartifact, canuseleftartifact, canuserightartifact, canwieldartifact |
+| `0x005853ec`–`0x00585588` | 412 | 9 |  | 30 | fadeoutmusic, interruptsound, issoundplaying, loaddynamicsound, loadstaticsound, lomlighttables |
+| `0x0054dbc0`–`0x0054dd38` | 376 | 7 | yes | 28 | abs, add, atan, cos, cvf, cvr |
+| `0x00555738`–`0x005557c8` | 144 | 9 | yes | 28 | canceldiscoveralarm, canceleventalarm, cancelmovealarm, canceltickalarm, cancelturnalarm, discoveralarm |
+| `0x005d1e84`–`0x005d1e88` | 4 | 2 |  | 27 | createnetworkgame, deselectfaith, enumnetworkcomputers, enumnetworkgames, enumproviders, getcomputername |
+| `0x0055c358`–`0x0055c5c4` | 620 | 24 | yes | 26 | addblankitem, additem, cleardialog, closedialog, crop, dialoginfo |
+| `0x00573df4`–`0x00573ee8` | 244 | 12 | yes | 26 | addbestetaattackrequest, airstrengthinregion, enuminvaders, getairesponse, getregiontoinvade, getrelationship |
+| `0x005787ac`–`0x00578b47` | 923 | 33 |  | 26 | artifacttype, attackfacingvalue, getarmyleavealonecheck, getarmyplaceholderproc, getcurrentartifactdata, getcurrentartifactvalue |
+| `0x00574110`–`0x005743ec` | 732 | 19 | yes | 25 | getcombatselectionbits, gethighlightcolor, getunitindex, getunittypecodecount, getunittypecount, getunittypedata |
+| `0x005869dc`–`0x00586a4c` | 112 | 16 |  | 25 | addvirtualunit, createvirtualarmy, getbarterpoints, getvirtualarmyid, getvirtualgreattemple, getvirtualresources |
+| `0x00573914`–`0x00573af4` | 480 | 16 | yes | 24 | addpromise, addterrainspritetype, createtreaty, enterterrainsprite, enumpromises, findpromise |
+| `0x005843e0`–`0x005844d4` | 244 | 31 |  | 23 | enternetgameselscreen, enternetpikfaithscreen, enternetspscreen, exitmessageproc, exitnetgameselscreen, exitnetpikfaithscreen |
+| `0x00555f80`–`0x0055615c` | 476 | 8 | yes | 22 | bargraph, barteraccept, barterattack, barterattackautocalc, bartercancelrenegotiate, barternotinterested |
+| `0x005d2ca0`–`0x005d2d5c` | 188 | 24 |  | 21 | getdungeonarmyinstantiateproc, getpromisedata, getterrainspritebartervalueproc, getterrainspritechangeownershipproc, getterrainspritedeltaproc, getterrainspritemapfileproc |
+| `0x005a8078`–`0x005a8094` | 28 | 5 |  | 20 | attackorder, cpr, currentscreen, getblockon, getblockunitindex, getcenteronmovement |
 

@@ -61,6 +61,7 @@ struct Section {
     raw_offset: u32,
     raw_size: u32,
     executable: bool,
+    writable: bool,
 }
 
 /// A parsed 32-bit PE image: enough of the headers to translate addresses and classify sections.
@@ -118,6 +119,11 @@ impl<'a> PeImage<'a> {
                 raw_size,
                 // IMAGE_SCN_MEM_EXECUTE
                 executable: characteristics & 0x2000_0000 != 0,
+                // IMAGE_SCN_MEM_WRITE. The distinction matters: `.rdata` here is `0x40000040`
+                // and `.data` is `0xc0000040`, so a check that only asked "not executable" put
+                // the arithmetic operators' float pool in the same bucket as the engine's state
+                // and reported `abs` as touching engine data.
+                writable: characteristics & 0x8000_0000 != 0,
             });
         }
         if sections.is_empty() {
@@ -158,10 +164,21 @@ impl<'a> PeImage<'a> {
     }
 
     /// Whether an address falls inside a mapped, non-executable section: engine data rather than
-    /// engine code.
+    /// engine code. Says nothing about whether the data is mutable — see
+    /// `is_writable_data_address`.
     pub fn is_data_address(&self, address: u32) -> bool {
         self.section_containing(address)
             .is_some_and(|section| !section.executable)
+    }
+
+    /// Whether an address falls inside mapped, non-executable, **writable** data: engine state.
+    ///
+    /// This is the test a claim about state must use. A read-only data address is a constant the
+    /// compiler emitted — a float literal, a jump table, a string — and reading one says nothing
+    /// about the engine's state at all.
+    pub fn is_writable_data_address(&self, address: u32) -> bool {
+        self.section_containing(address)
+            .is_some_and(|section| !section.executable && section.writable)
     }
 
     fn section_containing(&self, address: u32) -> Option<&Section> {

@@ -14,8 +14,7 @@ use std::path::PathBuf;
 
 use lom_asset_viewer::native_table::{self, PeImage};
 use lom_asset_viewer::operator_bodies::{
-    self, Behaviour, CLASSIFY_DEPTH, GlobalAccess, ImportKind, MAXIMUM_SEARCH_DEPTH,
-    OperatorReport,
+    self, Behaviour, CLASSIFY_DEPTH, ImportKind, MAXIMUM_SEARCH_DEPTH, OperatorReport,
 };
 
 /// Address gap below which two globals are treated as one subject.
@@ -38,9 +37,15 @@ fn main() -> Result<(), String> {
         .ok_or("usage: operator_bodies <lomse.exe> [--out DIRECTORY]")?;
     let mut out: Option<PathBuf> = None;
     let mut gap = CLUSTER_GAP;
+    let mut function: Option<u32> = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--out" => out = arguments.next().map(PathBuf::from),
+            "--function" => {
+                function = arguments.next().and_then(|value| {
+                    u32::from_str_radix(value.trim_start_matches("0x"), 16).ok()
+                });
+            }
             "--gap" => {
                 gap = arguments
                     .next()
@@ -67,6 +72,13 @@ fn main() -> Result<(), String> {
         }
     }
 
+    if let Some(entry_point) = function {
+        let entry_points: Vec<u32> = operators.iter().map(|(_, entry)| *entry).collect();
+        let body = operator_bodies::inspect(&image, entry_point, &entry_points)
+            .map_err(|error| error.to_string())?;
+        println!("{body:#?}");
+        return Ok(());
+    }
     let analysis = operator_bodies::analyse(&image, &operators).map_err(|error| error.to_string())?;
     let clusters = operator_bodies::cluster_globals(&analysis.reports, gap);
 
@@ -75,8 +87,14 @@ fn main() -> Result<(), String> {
         None => print!("{summary}"),
         Some(directory) => {
             std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-            write(&directory.join("operator-bodies.tsv"), &operator_table(&analysis.reports))?;
-            write(&directory.join("global-clusters.tsv"), &cluster_table(&clusters))?;
+            write(
+                &directory.join("operator-bodies.tsv"),
+                &operator_bodies::operator_table(&analysis.reports),
+            )?;
+            write(
+                &directory.join("global-clusters.tsv"),
+                &operator_bodies::cluster_table(&clusters),
+            )?;
             write(&directory.join("summary.md"), &summary)?;
             print!("{summary}");
         }
@@ -86,147 +104,6 @@ fn main() -> Result<(), String> {
 
 fn write(path: &std::path::Path, contents: &str) -> Result<(), String> {
     std::fs::write(path, contents).map_err(|error| format!("{}: {error}", path.display()))
-}
-
-/// The per-operator table. One row per operator, tab separated, sorted by name so a diff between
-/// two runs is a diff of findings rather than of table order.
-fn operator_table(reports: &[OperatorReport]) -> String {
-    const COLUMNS: [&str; 28] = [
-        "name",
-        "entry_point",
-        "behaviour",
-        "boundary",
-        "instructions",
-        "span_bytes",
-        "arity",
-        "arity_candidates",
-        "nominal_arity",
-        "declared_arity",
-        "arity_agrees",
-        "unbounded",
-        "helper_pops",
-        "helper_pushes",
-        "inline_pops",
-        "inline_pushes",
-        "calls",
-        "call_targets",
-        "tail_calls",
-        "indirect_calls",
-        "globals_read",
-        "globals_written",
-        "global_addresses",
-        "string_refs",
-        "import_kinds_at_depth",
-        "state_write_depth",
-        "calls_mutating_method",
-        "direct_imports",
-    ];
-
-    let mut rows: Vec<&OperatorReport> = reports.iter().collect();
-    rows.sort_by(|left, right| left.name.cmp(&right.name));
-
-    let mut text = COLUMNS.join("\t");
-    text.push('\n');
-    for report in rows {
-        let body = &report.body;
-        let reads = body
-            .globals
-            .iter()
-            .filter(|global| global.access != GlobalAccess::Write)
-            .count();
-        let writes = body
-            .globals
-            .iter()
-            .filter(|global| global.access == GlobalAccess::Write)
-            .count();
-        let list = |values: Vec<String>| {
-            if values.is_empty() {
-                "-".to_owned()
-            } else {
-                values.join(",")
-            }
-        };
-        let number = |value: Option<usize>| {
-            value.map_or_else(|| "-".to_owned(), |value| value.to_string())
-        };
-        let fields: Vec<String> = vec![
-            report.name.clone(),
-            format!("{:#010x}", report.entry_point),
-            report.behaviour.label().to_owned(),
-            body.boundary_failure().unwrap_or("complete").to_owned(),
-            body.instructions.to_string(),
-            body.span_end.saturating_sub(report.entry_point).to_string(),
-            number(body.arity),
-            list(body.arity_candidates.iter().map(usize::to_string).collect()),
-            number(body.nominal_arity()),
-            number(report.declared_arity),
-            match report.arity_disagreement() {
-                None => "yes".to_owned(),
-                Some(_) => "NO".to_owned(),
-            },
-            if body.operand_count_unbounded { "yes" } else { "no" }.to_owned(),
-            body.helper_pops.to_string(),
-            body.helper_pushes.to_string(),
-            body.inline_pops.to_string(),
-            body.inline_pushes.to_string(),
-            body.calls.len().to_string(),
-            list(
-                body.calls
-                    .iter()
-                    .chain(body.tail_calls.iter())
-                    .map(|target| format!("{target:#x}"))
-                    .collect(),
-            ),
-            body.tail_calls.len().to_string(),
-            body.indirect_calls.to_string(),
-            reads.to_string(),
-            writes.to_string(),
-            list(
-                body.globals
-                    .iter()
-                    .map(|global| format!("{:#x}", global.address))
-                    .collect(),
-            ),
-            body.string_refs.len().to_string(),
-            list(
-                report
-                    .reach
-                    .import_depth
-                    .iter()
-                    .map(|(kind, depth)| format!("{}@{depth}", kind.label()))
-                    .collect(),
-            ),
-            report
-                .reach
-                .write_depth
-                .map_or_else(|| "-".to_owned(), |depth| depth.to_string()),
-            if report.reach.calls_mutating_method { "yes" } else { "no" }.to_owned(),
-            list(body.direct_imports.iter().cloned().collect()),
-        ];
-        debug_assert_eq!(fields.len(), COLUMNS.len());
-        text.push_str(&fields.join("\t"));
-        text.push('\n');
-    }
-    text
-}
-
-fn cluster_table(clusters: &[operator_bodies::GlobalCluster]) -> String {
-    let mut text =
-        String::from("start\tend\tbytes\tdistinct_addresses\toperators\toperator_names\n");
-    for cluster in clusters {
-        let mut names: Vec<&str> = cluster.operators.iter().map(String::as_str).collect();
-        names.sort_unstable();
-        text.push_str(&format!(
-            "{:#010x}\t{:#010x}\t{}\t{}\t{}\t{}\n",
-            cluster.start,
-            cluster.end,
-            cluster.end - cluster.start,
-            cluster.addresses,
-            cluster.operators.len(),
-            names.join(","),
-        ));
-    }
-    text
 }
 
 fn summarise(
@@ -285,9 +162,23 @@ fn summarise(
         ));
     }
     let classified = total - behaviours.get("unknown").copied().unwrap_or(0);
+    let incomplete = reports
+        .iter()
+        .filter(|report| !report.body.boundary_complete())
+        .count();
+    let unknown_but_complete = reports
+        .iter()
+        .filter(|report| {
+            report.behaviour == Behaviour::Unknown && report.body.boundary_complete()
+        })
+        .count();
+    // Printed from the data, not asserted in prose. The first version of this line said `unknown`
+    // was what an incomplete walk produces, two sections below a table reporting one incomplete
+    // walk in 1,906 -- so a reader of this file alone concluded the coverage was 86%.
     text.push_str(&format!(
-        "\nClassified: **{classified}** of {total} ({:.1}%). `unknown` is what an incomplete walk produces, and is left as it is.\n\n",
-        percent(classified, total)
+        "\nClassified: **{classified}** of {total} ({:.1}%). Of the {} left `unknown`, **{incomplete}** are bodies the walk could not finish and **{unknown_but_complete}** are bodies it finished and could not describe: they reference no data of their own and only forward to an engine function. `unknown` is a real answer for the second group, not a coverage failure.\n\n",
+        percent(classified, total),
+        total - classified,
     ));
 
     // Import reach, printed as a curve so saturation is visible instead of assumed.
@@ -397,7 +288,7 @@ fn summarise(
     }
     text.push('\n');
     text.push_str(&format!(
-        "## Global-address clusters (gap {gap:#x})\n\nEach row is a run of data addresses no more than one page apart, and the operators that touch it. The reading in the docs is inferred from the operator names in the cluster; the addresses and counts are observed.\n\n| range | bytes | addresses | operators | a few of them |\n| --- | ---: | ---: | ---: | --- |\n"
+        "## Global-address clusters (gap {gap:#x})\n\nEach row is a run of data addresses no more than one page apart, and the operators that touch it. The reading in the docs is inferred from the operator names in the cluster; the addresses and counts are observed.\n\n| range | bytes | addresses | read-only | operators | a few of them |\n| --- | ---: | ---: | :---: | ---: | --- |\n"
     ));
     for cluster in clusters
         .iter()
@@ -411,11 +302,12 @@ fn summarise(
             .map(String::as_str)
             .collect();
         text.push_str(&format!(
-            "| `{:#010x}`–`{:#010x}` | {} | {} | {} | {} |\n",
+            "| `{:#010x}`–`{:#010x}` | {} | {} | {} | {} | {} |\n",
             cluster.start,
             cluster.end,
             cluster.end - cluster.start,
             cluster.addresses,
+            if cluster.read_only { "yes" } else { "" },
             cluster.operators.len(),
             sample.join(", "),
         ));
