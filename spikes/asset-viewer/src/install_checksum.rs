@@ -193,18 +193,31 @@ mod tests {
     }
 
     #[test]
-    fn the_exe_checksum_wraps_at_32_bits_rather_than_saturating_or_panicking() {
-        // 0x0101_0101 bytes of 0xff would overflow a u32; the engine's `add` wraps, and a debug
-        // build of a naive `+` would panic here instead.
-        let expected = (0xff_u64 * 0x0101_0101_u64) as u32;
-        // Build the input by folding rather than allocating 16 MB.
-        let mut total = 0_u32;
-        for _ in 0..0x0101_0101_u32 {
-            total = total.wrapping_add(0xff);
+    fn both_checksums_wrap_through_the_public_function_rather_than_saturating() {
+        // This test used to fold `wrapping_add` in the test body and then call the public function
+        // on four bytes. That exercised std, not the implementation: four bytes cannot overflow, so
+        // a saturating or a checked implementation passed it. Overflowing for real needs an input
+        // big enough to pass the bound, which is ~16 MB, and that is the price of the test meaning
+        // anything. The buffers are built and dropped one at a time to keep the peak modest.
+        //
+        // 255 * 16_843_010 == 2^32 + 254, so a wrapping sum is 254 and a saturating one is
+        // u32::MAX. A debug build of a plain `+` would panic here instead.
+        {
+            let high = vec![0xff_u8; 16_843_010];
+            assert_eq!(exe_checksum(&high), 254);
+            assert_ne!(exe_checksum(&high), u32::MAX);
         }
-        assert_eq!(total, expected);
-        // And the public function agrees on a small slice of the same construction.
-        assert_eq!(exe_checksum(&[0xff; 4]), 0xff * 4);
+        // 127 * 16_909_321 == i32::MAX + 120, so a wrapping sum lands 120 past the top, at
+        // i32::MIN + 119. Sign-extension is irrelevant here -- 0x7f is positive either way -- so
+        // this isolates the wrap from the extension that the high-byte test covers.
+        {
+            let positive = vec![0x7f_u8; 16_909_321];
+            assert_eq!(script_checksum(&positive), -2_147_483_529);
+            assert!(
+                script_checksum(&positive) < 0,
+                "a saturating sum would stay at i32::MAX"
+            );
+        }
     }
 
     #[test]

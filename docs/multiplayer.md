@@ -6,10 +6,20 @@ established by running the game; nothing here was tested against a second machin
 
 Every claim carries an evidence label, using the repo's classes:
 
-- **Observed** — reproduced locally or read directly out of a file, with the address or path cited.
+- **Observed** — reproduced locally or read directly out of a file. Every Observed claim cites the
+  address or path it was read from; instruction text is quoted where the exact encoding is what the
+  claim turns on, and omitted where the address is enough to re-read it.
 - **Documented** — stated in original or community documentation.
 - **Inferred** — strongly suggested by the evidence, not proven.
 - **Unknown** — open, and named as open rather than guessed.
+- **Corrected** — a claim this document made earlier and got wrong. Corrections are left in place
+  with the original reasoning rather than edited away, because how a wrong answer was reached is
+  part of what the next reader needs.
+
+This document was written in three passes and the later passes overturned parts of the earlier
+ones. Where that happened the earlier text carries a **Corrected** note pointing forward; there
+should be no place where two sections give different answers. If you find one, the later section
+is the current answer.
 
 The distinction that matters most in this document is between what was read out of *this* binary and
 what is merely true of DirectPlay in general. General DirectPlay behaviour is labelled
@@ -117,13 +127,21 @@ force:
 | `SCRIPTCALLBACK`, `CHAMPION_BRAIN_NOTIFICATION`, `EVENT_ALARM_NOTIFICATION`, `SET_SPRITE_PROC` | **GameScript execution itself is replicated** |
 | `CHECKSUM` | the comparison from 1a, as its own message type |
 | `SET_UNIT_DATA`, `SET_ARMY_DATA`, `SET_PLAYER_DATA`, `SET_CITY_DATA`, `SET_BUILDING_DATA`, `SET_TERRAIN`, `SET_ELEVATION`, `PAINT_TERRAIN` | targeted state pokes |
-| `REQUEST_SCENARIO`, `XFER`, `XFER_PROGRESS`, `RESYNC_START`, `RESYNC_REQUEST` | bulk transfer, used at setup and for recovery |
+| `REQUEST_SCENARIO`, `XFER`, `XFER_PROGRESS` | bulk transfer, used at setup |
+| `RESYNC_START`, `RESYNC_REQUEST` | names in the table only — **never sent**, see [section 10](#10-resync-is-unreachable-nothing-ever-sends-it) |
 
 **Observed.** So it is not purely lockstep: there is a state-poke vocabulary alongside the command
-vocabulary, and a resync path. **Inferred:** the pokes exist for quantities the designers did not
-trust to reproduce, and the resync path is a recovery mechanism rather than the normal data flow —
+vocabulary. **Inferred:** the pokes exist for quantities the designers did not trust to reproduce —
 because if state were shipped normally, `CHECKSUM` and the six divergence classes would have nothing
 to do.
+
+**Corrected, third pass.** This section first read `RESYNC_START`/`RESYNC_REQUEST` as evidence of a
+live recovery path and treated that as a qualification on the lockstep answer. It is not one:
+**nothing in the executable ever builds either message**, which
+[section 10](#10-resync-is-unreachable-nothing-ever-sends-it) establishes by enumerating all 54
+typed calls to the only parameterised message-header builder. The names exist in the table and the
+routing tables have entries for them; no code constructs them. The lockstep conclusion is
+unqualified.
 
 The presence of `SCRIPTCALLBACK` is the reason `'GS' files` is a divergence class. **Inferred:** the
 GameScript interpreter runs on every peer, so the entire script corpus is part of the deterministic
@@ -581,7 +599,7 @@ state — which are configuration decisions, not infrastructure:
 2. **`COMBAT_MODE = Always Autocalc Combat`**, to keep real-time tactical combat out of the
    replicated stream. (**Inferred** from [3g](#3g-there-is-a-real-time-turn-clock-and-a-real-time-combat-mode).)
 3. **Identical Wine/Windows and renderer configuration**, because `'PlayAnimation Count'` is a
-   divergence class ([1a](#1a-the-engine-compares-six-checksums-between-peers-and-calls-divergence-disagreement)).
+   divergence class ([1a](#1a-the-engine-compares-six-checksums-between-peers-and-calls-disagreement-divergence)).
    A peer with a different frame-pacing or `cnc-ddraw` setting is an unnecessary risk. **Unknown**
    how strongly it matters; it is a play test.
 4. **A `.scn` with all eight faiths**, or the map will not even be selectable
@@ -600,9 +618,12 @@ Not as a fix, as a reduction in setup friction:
   an L2 VPN is.
 - **A file-serving role.** Serve the canonical archives from the same box, so "run the same build"
   is enforced by the distribution mechanism.
-- **`RESYNC_REQUEST` exists** ([1c](#1c-what-crosses-the-wire-is-orders-not-state)), so a
-  well-connected host may recover a desynced peer more often than a flaky one would. **Inferred and
-  weak** — I did not read the resync implementation and cannot say whether it works.
+- **Not resync.** An earlier draft of this section offered `RESYNC_REQUEST` as a reason a
+  well-connected host might repair a desynced peer. **Corrected:** that message is never sent
+  ([section 10](#10-resync-is-unreachable-nothing-ever-sends-it)), and the file-transfer path it
+  would have used cannot reach an archive in any configuration this document could find
+  ([section 11](#11-what-the-file-transfer-path-can-ship)). There is no
+  automatic repair to be had from better connectivity.
 
 ### One honest alternative worth weighing
 
@@ -665,7 +686,7 @@ they would change the picture. Each names what result would mean what.
    What happens between 9 and 16 is **Unknown** and only observable by trying it.
 
 8. **Capture the network log.** *Superseded — see
-   [the desync post-mortem is disabled](#5-the-desync-post-mortem-is-wired-up-and-disabled). The
+   [the desync post-mortem is disabled](#7-the-desync-post-mortem-is-wired-up-and-disabled). The
    answer is that it cannot be captured, and no second machine is needed to know that.*
 
 ---
@@ -797,16 +818,42 @@ script byte.
 
 ### `'IMP' files` — no algorithm found
 
-**Observed.** `lomse.exe` contains no `.mpq` filename string at all, and the only two whole-file
-byte-sum routines in the image are the executable sum above and a generic one at `0x004b1e60`
-(identical idiom, unsigned, filename obtained by running the script's `setscenarionameproc`
-procedure) which serves the scenario-file transfer and writes its results to `0x00583ad4`/
-`0x00583ad8`. Neither touches `imp.mpq`.
+**Corrected.** This section first argued from "`lomse.exe` contains no `.mpq` filename string at
+all". **That is false.** There are five, in a packed table:
 
-**Inferred:** `'IMP' files` is one of the four dead payload slots and is not computed in this build.
-I could not prove which slot, so this is inference, not observation. It also means **the
-coordinating expectation that `'GS' files` and `'IMP' files` are archive digests is only half
-right**, and the pre-flight checker is built accordingly rather than around a guessed hash.
+| Address | String | Pushed at |
+| ---: | --- | --- |
+| `0x005734d0` | `special.mpq` | `0x004ff4ad` |
+| `0x005734dc` | `gs.mpq` | `0x004ff49d`, `0x004ff4e6` |
+| `0x005734e4` | `pic.mpq` | `0x004ff48a`, `0x004ff4d3` |
+| `0x005734ec` | `imp.mpq` | `0x004ff479`, `0x004ff4be` |
+| `0x005734f4` | `sndfx.mpq` | `0x004ff466`, `0x004ff4f7` |
+
+I missed them because `strings -n 4` on this PE did not emit that region; a raw byte search does.
+**That is the same lesson this repository already recorded once — a negative result from one
+spelling of a search is not absence — and I repeated it.**
+
+**Observed.** Every one of those pushes feeds the same two-argument helper `0x004feb10`, which
+receives the name and the address of a handle field and is called at `0x004ff491`, `0x004ff4b2`,
+`0x004ff4c5`, `0x004ff4d8`, `0x004ff4eb` and `0x004ff4fc`, storing handles at object offsets
+`+0x114`, `+0x118`, `+0x11c` and `+0x124`. The archives are **opened** there, not digested.
+
+**So the conclusion survives, on evidence that never depended on the filename claim.** The sole
+`CHECKSUM` builder (`0x004b4c20`, one caller) has a complete, enumerated set of payload stores
+([the table above](#the-one-message-builder-and-everything-it-puts-in-the-message)): four
+identified quantities — the executable sum `0x00584424`, the script content checksum `0x00584604`,
+the game seed `0x00573428`, and the `setchecksumproc` result — plus two hardcoded zeros and two
+slots never written. **No archive digest reaches the CHECKSUM message.**
+
+**Inferred:** `'IMP' files` is one of the four dead payload slots. Which slot, I could not prove.
+
+**Unknown**, and newly so: whether an `imp.mpq` digest is computed anywhere in the executable for
+some other purpose. My earlier reason for ruling that out was wrong, and I have not replaced it
+with a search that would settle it.
+
+It remains the case that **the expectation that `'GS' files` and `'IMP' files` are archive digests
+is only half right**, and the pre-flight checker is built accordingly rather than around a guessed
+hash.
 
 ### The comparison is bounded, and the bounds are small
 
@@ -1115,14 +1162,15 @@ The enum slot and the routing tables exist for them, which is what made them loo
 - **Observed.** The 31..65 gate at `0x00489ad5` (`add ecx,0FFFFFFE1h` / `cmp ecx,22h`) routes both
   to `0x00489aec`, the same branch as 28 other types.
 
-**So the routing is wired and the messages are never built.** That is the same shape of finding as
-the disabled post-mortem: a facility present in the tables and unreachable in the code.
+**Observed: the routing tables have entries for both types, and no call site constructs either
+message.** **Inferred** from those two facts together: the facility is present in the tables and
+unreachable in the code, which is the same shape as the disabled post-mortem.
 
 **Inferred:** resync was designed, the plumbing survived, and the trigger was never written or was
 removed. **Unknown:** what it would have transferred, because there is no builder whose payload
 could be read.
 
-## 11. What the file-transfer path can ship — and it is not scripts
+## 11. What the file-transfer path can ship
 
 This matters because it is what a resync would have had to use, and it decides whether an
 always-on host could ever have brought a mismatched peer into line.
@@ -1165,15 +1213,24 @@ index table at `0x004b95f4` and a jump table at `0x004b95e0` onto the path build
 | 6 | `LOM_TSPR.TMP` |
 | 7 | `LOMD%.4d.TMP` |
 
-**There is no path template for an MPQ archive, and no way for a caller to supply an arbitrary
-filename** — the tag is a literal at every call site and the resolver's range is eight fixed kinds
-plus the scenario-name procedure.
+**Observed:** the tag is a literal at every one of the four call sites, and seven of the eight
+resolver outcomes are fixed templates, none of which names an archive.
 
-**So the decisive question has a clean answer: a resync could not have repaired a `'GS' files`
-mismatch even if it existed.** The transfer path can move a savegame, a scenario and a handful of
-temporaries — game state — and cannot move `gs.mpq`. **The homelab verdict in
-[question 4](#4-what-a-homelab-could-and-could-not-do) stands unchanged**, and now for a
-structural reason rather than for want of evidence.
+**Not proved, and I am not going to claim it.** Tag 77 does not resolve to a template — it runs the
+**script-supplied** `setscenarionameproc` procedure through `0x004b54c0`, and I did not establish
+any constraint on what that procedure may return. In the vanilla corpus it is
+**Observed** to build `"multisav/" + getmultiscenarioname` or `"map/" + getmultiscenarioname`
+(`gs/network.gs`, `get_scenario_name`), so in a stock install it yields a scenario path. But a mod
+replaces `gs.mpq`, and therefore replaces that procedure, so nothing in the engine stops it naming
+another file.
+
+So the honest statement is: **no path was found by which `XFER` could ship an archive, with tag 77
+unchecked.** Not "cannot".
+
+**The homelab verdict in [question 4](#4-what-a-homelab-could-and-could-not-do) does not rest on
+this and stands unchanged**, because it rests on resync being unbuildable
+([section 10](#10-resync-is-unreachable-nothing-ever-sends-it)) — no message, no automatic repair,
+whatever the transfer path could in principle carry.
 
 ## 12. The engine already marks incompatible games in the list
 

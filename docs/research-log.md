@@ -3736,3 +3736,75 @@ violated — the two byte sums differ because one sign-extends and the other zer
 asserted by `the_two_checksums_disagree_on_a_high_byte`, which always runs and was confirmed to fail
 when the sign extension is swapped. The install test demonstrates separation only, and that same
 swap passes it.
+
+## 2026-09-18 — Corrections from cross-model review
+
+A correctness pass over the three multiplayer entries above, after an independent Codex review of
+`3dec492`. Four of its findings were verified and left alone: the two checksum algorithms, the
+unreachability of resync, and the off-by-one with its `push 5Fh` cross-check. Three were disputes
+and one was a bad test. All four are fixed here; nothing new was investigated.
+
+### Corrected: `lomse.exe` does contain `.mpq` filename strings
+
+I wrote that it contains none, and used that as the stated basis for "`'IMP' files` appears not to
+be computed at all". **The premise is false.** There are five, in a packed table:
+
+| Address | String | Pushed at |
+| ---: | --- | --- |
+| `0x005734d0` | `special.mpq` | `0x004ff4ad` |
+| `0x005734dc` | `gs.mpq` | `0x004ff49d`, `0x004ff4e6` |
+| `0x005734e4` | `pic.mpq` | `0x004ff48a`, `0x004ff4d3` |
+| `0x005734ec` | `imp.mpq` | `0x004ff479`, `0x004ff4be` |
+| `0x005734f4` | `sndfx.mpq` | `0x004ff466`, `0x004ff4f7` |
+
+**Observed.** Every push feeds one two-argument helper, `0x004feb10`, called at `0x004ff491`,
+`0x004ff4b2`, `0x004ff4c5`, `0x004ff4d8`, `0x004ff4eb` and `0x004ff4fc`, which stores archive
+handles at object offsets `+0x114`, `+0x118`, `+0x11c` and `+0x124`. The archives are opened there,
+not digested — so the conclusion is unchanged, but its stated reason was wrong.
+
+**How I got it wrong, because that is the reusable part.** I searched with
+`strings -n 4 | grep -iE '\.mpq'` and got nothing. `strings` on this PE does not emit that region;
+a raw byte search over the file finds all five immediately. **This repository already records the
+lesson — a negative result from one spelling of a search is not absence — and I repeated it inside
+the same branch that records it.** The check that would have caught it costs one line.
+
+**What the conclusion now rests on**, which never depended on filename strings: the sole `CHECKSUM`
+builder (`0x004b4c20`, one caller) has a complete enumerated set of payload stores, and they are
+four identified quantities plus two hardcoded zeros plus two slots never written. No archive digest
+reaches the message. **Inferred** (unchanged): `'IMP' files` is one of the dead slots.
+**Unknown**, and newly so: whether an `imp.mpq` digest is computed anywhere for another purpose.
+
+### Softened: "XFER cannot ship an MPQ" was one step short
+
+**Observed** and unchanged: the tag is a literal at all four `XFER` call sites, and seven of the
+eight resolver outcomes are fixed templates, none naming an archive.
+
+**Not proved:** tag 77 resolves through the **script-supplied** `setscenarionameproc` procedure at
+`0x004b54c0`, and I established no constraint on its output. Vanilla `gs/network.gs` is
+**Observed** to build `"map/"` or `"multisav/"` plus `getmultiscenarioname`, but a mod replaces
+`gs.mpq` and therefore that procedure. The doc now says "no path found, tag 77 unchecked" rather
+than "cannot". The homelab verdict never depended on it — it rests on resync being unbuildable.
+
+### Reconciled: the first pass contradicted the third
+
+The document was written in three passes and the early ones still described resync as a live
+recovery path — in the wire-message table, in the prose after it, and as a homelab benefit. A reader
+could find two answers. All three now carry forward-pointing **Corrected** notes and the wire table
+lists `RESYNC_*` as names-only. The evidence-label preamble now also states what an `Observed` claim
+cites, defines **Corrected**, and says outright that where passes disagree the later one is current.
+
+Also relabelled: "the routing is wired and the messages are never built" was stated as `Observed`
+when only its two halves are; the conjunction is `Inferred`.
+
+### Fixed: a test that could not fail
+
+`the_exe_checksum_wraps_at_32_bits_rather_than_saturating_or_panicking` folded `wrapping_add` in the
+test body and then called the public function on four bytes, which cannot overflow — so it passed
+under a saturating implementation. Replaced with
+`both_checksums_wrap_through_the_public_function_rather_than_saturating`, which pushes ~16 MB
+through each public function to cross the bound for real: 255 × 16,843,010 = 2³² + 254, and
+127 × 16,909,321 = `i32::MAX` + 120.
+
+Mutation-verified both ways. Swapping `wrapping_add` for `saturating_add` in `exe_checksum` fails
+with `left: 4294967295, right: 254`; the same swap in `script_checksum` fails at the second
+assertion. The old test survived both.
