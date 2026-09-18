@@ -11,7 +11,7 @@ since PR #51 and did not describe nine merged pull requests.
 
 | Phase | State |
 |---|---|
-| 1 — Archive inventory | 8 of 9 items. One open: the deterministic repack command. |
+| 1 — Archive inventory | **Complete.** The repack command landed with a block-index shape check. |
 | 2 — Script documentation | 2 of 3 boxes. The semantic symbol database and its searchable reference are open. |
 | **3 — Build and validation pipeline** | **Not started.** |
 | **4 — First vertical slice** | **Not started.** |
@@ -43,12 +43,18 @@ own section below rather than being retro-fitted into phases it was never part o
 - [x] Recover the public Lords of Magic filename catalog and apply it without modifying archives.
 - [x] Classify every member in the five core GS5R3 archives by detected format.
 - [x] Prove archive write-back: `SFileAddFileEx` round-trips a `gs.mpq` member and the game executes the rewritten archive (2026-09-16).
-- [ ] Wrap that in a deterministic, reproducible repack command with a byte-shape check before any development-profile install.
+- [x] Wrap that in a deterministic, reproducible repack command with a byte-shape check before any development-profile install. **`scripts/repack-archive.sh` + `lom-mpq repack` + `tools/mpq_shape.py`** ([repack](repack.md)). Byte-identical output measured across repeated runs, and across changed mtimes, changed source paths, `umask` and `TZ`. Refuses and exits nonzero on a shape mismatch, and `--install` refuses outright, because installing is Phase 3.
 
-The remaining item is the only thing standing between "we proved we can write an archive" and "we
-have a command that does it safely and the same way every time". The existing write path is
-`spikes/asset-viewer/examples/mpq_replace.rs`, which describes itself as a throwaway feasibility
-probe, modifies archives in place, and says to run it only against a copy.
+**Phase 1 is complete.** Two measured limits are recorded rather than papered over: StormLib
+regenerates `(listfile)` on every write so its bytes cannot be preserved — the single exemption,
+safe only because every member name is verified individually — and compaction is off by default
+because `SFileCompactArchive` fails with `ERROR_UNKNOWN_FILE_NAMES` on any archive holding unnamed
+members. Archives are copied-then-patched rather than rebuilt from an extracted tree, because 409
+PIC5R3 members have no name and **the name is part of the encryption key**.
+
+Shape preserved is not the same as playable. The only engine evidence remains the attended
+2026-09-16 round trip, and that was an `MPQ_FILE_IMPLODE` member of `gs.mpq`; the compression choice
+for a `pic.mpq` replacement is **Inferred** and has never faced the engine.
 
 Delivered: [MPQ inventory](mpq-inventory.md), tracked comparison summaries, and reproducible extraction commands.
 
@@ -90,9 +96,13 @@ Deliverable: `build`, `validate`, `install-dev`, and `restore-dev` commands.
 Prior art to build on rather than duplicate: `scripts/restore-game-archives.sh` already encodes the
 repo's safety discipline — it refuses to run while `lomse.exe` is alive and always prints the hashes
 it produced. `scripts/inventory-installed-profiles.sh` already produces the manifests a change
-report would compare against. The validation bullet has a known hard case: the macOS filesystem is
-case-insensitive by default, and PIC5R3 contains two entries differing only in case, so extraction
-yields 1,405 files from 1,406 entries ([MPQ inventory](mpq-inventory.md)).
+report would compare against. The validation bullet has a known hard case: PIC5R3 holds **two
+distinct members under one byte-identical name**, `portrait\AIpotM.lbm`, so extraction yields 1,405
+files from 1,406 entries on *any* filesystem. An earlier reading of this as a case-insensitivity
+problem is **Refuted** — the two names are the same bytes, and an MPQ cannot hold two names
+differing only in case at all. Any shape check built from extracted files, or from names alone,
+therefore cannot tell 1,406 members from 1,405; it has to address members by block index
+([MPQ inventory](mpq-inventory.md)).
 
 ## Phase 4 — First vertical slice
 
