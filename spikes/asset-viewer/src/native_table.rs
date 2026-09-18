@@ -385,6 +385,14 @@ impl OperatorIndex {
         self.entry_points.is_empty()
     }
 
+    /// Every operator name the tables register, lowercased as the index holds them.
+    ///
+    /// The census that asks "how much of this surface does the corpus actually reach?" needs the
+    /// denominator, not just membership.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.entry_points.keys().map(String::as_str)
+    }
+
     pub fn classify(&self, name: &str) -> NameClass {
         if let Some(entry_point) = self.entry_points.get(&name.to_ascii_lowercase()) {
             NameClass::Operator {

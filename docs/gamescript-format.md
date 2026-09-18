@@ -2,7 +2,7 @@
 
 ## Status
 
-**Lexical, vocabulary and language milestones complete; the engine's operator tables and their arity are recovered from the binary; the VM executes shipped utility code and stops, traceably, at the engine boundary.** What remains is module loading ([issue #5](https://github.com/jake-bliss/lords-of-magic-modding/issues/5)). The native Rust tool tokenizes every named `.gs` member in the preserved baseline, 3.02, and GS5R3 archives, inventories names and static `run` references, and correlates executable tokens with strings embedded in each profile's `lomse.exe`. The interpreter implements 68 language primitives plus GameScript's two non-PostScript features — procedure locals and typed dictionary keys — which is enough to load 3.02's `gs\standard.gs` and run its whole utility surface, and enough for 406 of that profile's 1,681 members to execute with no engine support at all. The candidate vocabulary is now partitioned against the operator table rather than guessed at.
+**Lexical, vocabulary and language milestones complete; the engine's operator tables and their arity are recovered from the binary; module loading works; the VM executes shipped script and stops, traceably, at the engine boundary.** The native Rust tool tokenizes every named `.gs` member in the preserved baseline, 3.02, and GS5R3 archives, inventories names and static `run` references, and correlates executable tokens with strings embedded in each profile's `lomse.exe`. The interpreter implements 68 language primitives plus GameScript's two non-PostScript features — procedure locals and typed dictionary keys — and **1,551 of the corpus's 4,692 `.gs` members (33.1%) now execute to completion with no engine support at all**, up from 912 (19.4%). The candidate vocabulary is partitioned against the operator table rather than guessed at. See [the execution census](#the-execution-census) for what the remaining two thirds are waiting on; the short answer is that it is **not** the 1,906-operator host API.
 
 This is the first Stage 2 preservation-engine result. It establishes that the source language is tractable enough for a bounded parser and experimental interpreter. It does **not** prove that the native host API, simulation, or complete game can be reproduced economically.
 
@@ -153,6 +153,12 @@ Recommended first VM stubs, all pure reads of game state with small return types
 `getdifficultylevel`, `getmultiplayerflag`, `getplayeraistatus`, `getarmydata`, `getunitdata`,
 `getuniteffectivedata`. Stubbing those six lets the `gs\LEVLMODS5.gs` AI-bonus block execute
 deterministically against a synthetic state.
+
+`bind` is not cosmetic and is not optional. It captures, inside a procedure, every name that
+*currently* means a language primitive, so a later `def` of the same name cannot change what the
+body does. `START.GS:135` relies on exactly that to wrap module loading in a progress meter:
+`/run{ ... run}...bind def`, where the trailing `run` must stay the primitive. Evidence class:
+Observed in the corpus.
 
 A shipped member demonstrates that scripts can shadow native names: `START.GS:76` redefines `run`
 itself. `gs5_globals.gs` ships a 50-line constant table intended to *"supplement, add or replace EXE
@@ -607,7 +613,10 @@ Slot zero is read as the name `dummy` because every procedure using the `put` fo
 
 ## VM checkpoint: what executes now
 
-The interpreter implements 68 language primitives, listed in `gamescript_vm::PRIMITIVE_NAMES`:
+The interpreter implements **68** language primitives, listed in `gamescript_vm::PRIMITIVE_NAMES`,
+plus the two names the lexer resolves before dispatch ever sees them (`true`, `false`), which
+`gamescript_vm::PRIMITIVE_LITERAL_NAMES` holds. This paragraph used to say 68 when the list held
+67; the count is now read off the list.
 
 - **stack** — `dup pop exch copy index roll count clear`
 - **arithmetic** — `add sub mul div idiv mod neg abs sqrt sin cos round truncate floor ceiling bitshift`
@@ -615,6 +624,7 @@ The interpreter implements 68 language primitives, listed in `gamescript_vm::PRI
 - **control flow** — `if ifelse repeat for loop exit forall exec`
 - **aggregates** — `array dict string [ ] << >> get put length known undef load currentdict begin end def replace`
 - **conversion** — `cvx cvlit cvi cvr cvs type bind`
+- **module loading** — `run`
 
 `sin` and `cos` take **radians**, unlike PostScript's degree-taking pair: `standard.gs` defines `/radians {180 div 3.141596 mul}` and applies it before every call. Evidence class: Inferred.
 
@@ -721,7 +731,10 @@ The nine engine names the battery reached, with their `lomse.exe` entry points w
 
 None of the three unresolved ones is an engine *call*: `build_statement` is defined in `gs\text.gs`, `sysdlg` in `gs\dlg\sysdlg.gs`, `unitdictxref` in `units\easyunit.gs`. For `build_statement` and `unitdictxref` that closes the dependency; for `sysdlg` it only **relocates** it, because its definition is `/sysdlg 50 dialog def` and `dialog` is an operator. Loading resolves the name and then needs the host anyway.
 
-The tool reports `standard.gs`'s static debt as 21 names. One of them, `outfilename`, is the module's own local, defined inside `eval` with a value spanning more than the attachment window, so the real debt is **20** — 17 operator-table entries and 3 unresolved names.
+The tool reports `standard.gs`'s static debt as 20 names, down from 21 now that the VM implements
+`run`. One of them, `outfilename`, is the module's own local, defined inside `eval` with a value
+spanning more than the attachment window, so the real debt is **19** — 16 operator-table entries and
+3 unresolved names.
 
 ## Vocabulary classification
 
@@ -773,6 +786,12 @@ Eleven 3.02 names moved *into* it when the three non-definition shapes were excl
 Names the corpus defines that the engine *also* registers are reported separately — 15 in 3.02, including `exec`, `ne`, `type`, `run` and `sleep`. The dictionary wins at run time, so these are script overrides of engine behaviour.
 
 ## How much of the corpus is pure language
+
+**Superseded by [the execution census](#the-execution-census), 2026-09-18.** This section is the
+measurement *before* `run`, `bind` and opaque engine constants; it is kept because the prediction
+recorded against it was wrong and the reasoning it supported was partly refuted. The current
+figure for 3.02 is 635 members, not 406, and `engine-constant` is no longer a first-blocker class
+at all because a declared constant no longer stops a member that only stores it.
 
 `--survey` loads every `.gs` member on its own machine and records what stopped it. On 3.02's 1,681 members:
 
@@ -852,8 +871,15 @@ cargo run --example gamescript_standard -- \
   --gs '/path/to/English/gs.mpq' --exe '/path/to/English/lomse.exe'
 
 # Add --survey to load every .gs member on its own machine and tabulate what stopped each one.
+# `--exe` is what makes engine constants declarable, so without it the survey runs stricter.
 cargo run --release --example gamescript_standard -- \
   --gs '/path/to/English/gs.mpq' --exe '/path/to/English/lomse.exe' --survey
+
+# --preload names modules to execute into each survey machine first. A declared input, like
+# --stub: nothing is preloaded unless it is named, and the run reports what it preloaded.
+cargo run --release --example gamescript_standard -- \
+  --gs '/path/to/English/gs.mpq' --exe '/path/to/English/lomse.exe' --survey \
+  --preload 'gs/textdict.gs' --preload 'gs/standard.gs' 
 
 # Classify a profile's whole executable vocabulary and write the derived table.
 cargo run --example gamescript_vocabulary -- \
@@ -861,12 +887,125 @@ cargo run --example gamescript_vocabulary -- \
   --out ../../reports/gs
 ```
 
+## The execution census
+
+`--survey` runs every `.gs` member on its own fresh machine and records what stopped it. Measured
+2026-09-18 against all three installed profiles; reproduced verbatim in the
+`survey-*` and `reach-*` lines of `reports/gs/standard-run-*.tsv`. Two runs of the same command are byte-identical.
+
+Predictions were written down before the run. They are kept here because both were wrong in the
+same direction, and by a lot:
+
+| | predicted | measured |
+| --- | ---: | ---: |
+| members executing to completion, before this slice | 1,150 (24.5%) | **912 (19.4%)** |
+| members executing to completion, after | 2,350 (50%) | **1,551 (33.1%)** |
+
+### Members executing to completion
+
+| Profile | members | before | after | with the declared preload |
+| --- | ---: | ---: | ---: | ---: |
+| vanilla | 1,315 | 242 | 429 | 473 |
+| patch302 | 1,681 | 406 | 635 | 680 |
+| gs5r3 | 1,696 | 264 | 487 | 529 |
+| **total** | **4,692** | **912 (19.4%)** | **1,551 (33.1%)** | **1,682 (35.8%)** |
+
+Three things moved the number, and none of them is a host call:
+
+- **`run`, backed by the archive.** Read-only, with cycle detection and a nesting bound. A module
+  already on the load stack is refused; a module reached twice on disjoint paths is executed twice,
+  which is PostScript's rule.
+- **`bind`, implemented.** It was a no-op. `START.GS:135` defines a progress-meter wrapper around
+  module loading whose body **ends in `run`** — `bind` runs before `def`, so the wrapper captures
+  the primitive; without that the name resolves after the `def` to the wrapper itself and the
+  engine's own entry point recurses to the call-depth limit.
+- **Opaque engine constants.** `/faith FIRE def` files a value; nothing defines `FIRE`. A constant
+  the caller has *declared* (SCREAMING_CASE and absent from `lomse.exe`'s operator tables) now
+  pushes its **identity and nothing else**. It can be stored, copied and read back; every operation
+  needing its number stops. Two references to `FIRE` compare equal; `FIRE` against `WATER` **stops**,
+  because `gs5_globals.gs` ships `/UNDEFINED_ATTACK{0}def` beside `/ATTACK_UNDEFINED{0}def` and two
+  constant names are therefore not known to hold two values.
+
+The preload column is a *declared input*, exactly as `--stub` is: `gs/textdict.gs` and
+`gs/standard.gs`, executed into each machine before the member under test. Both run to completion
+on their own. Preloading `START.GS` itself buys nothing — it stops at **step 2**, on `maxgraphics`.
+
+### How much of the engine's operator surface is actually reached
+
+| | vanilla | patch302 | gs5r3 |
+| --- | ---: | ---: | ---: |
+| operators in the table | 1,906 | 1,906 | 1,906 |
+| never named by any script | 461 | 426 | 453 |
+| named by some script | 1,445 | 1,480 | 1,453 |
+| **reached by execution** | **52** | **63** | **57** |
+| of those, implemented here as a primitive | 19 | 20 | 22 |
+| of those, satisfied by a declared stub | 0 | 0 | 0 |
+| of those, **blocking** | **33** | **43** | **35** |
+
+The gap between "named by some script" and "reached by execution" is the honest limit of this
+instrument: a survey that stops each member at its first unresolved name cannot see what lies past
+the stop. So 1,445–1,480 is a sound **upper** bound on what the corpus could reach, 52–63 is a
+sound **lower** bound on what it does reach, and the truth is between them. The one number that is
+not an estimate is the last row: **33–43 distinct engine operators are what execution is actually
+standing on today**, out of 1,906.
+
+### The blocking ranking — the backlog, in order
+
+Collated across all three profiles, by members blocked (each member counted at its *first* blocker,
+so a name below the top can only be undercounted, never over):
+
+| Name | members blocked | class |
+| --- | ---: | --- |
+| `textdict` | 576 | defined in a member that runs |
+| `begin_unit_definition` | 413 | defined in a member that does **not** run |
+| `spelldict` | 357 | defined in a member that does **not** run |
+| `userdict` | 193 | defined in a member that does **not** run |
+| `dialog` | 135 | engine operator |
+| `addmounttype` | 86 | engine operator |
+| `stack` | 53 | defined in a member that runs |
+| `terrainsprites` | 51 | defined in a member that does **not** run |
+| `T_Crystal_Mine` | 30 | defined in a member that runs |
+| `panel_dict` | 27 | defined in a member that does **not** run |
+| `file` | 26 | engine operator |
+| `spell_page` | 15 | unresolved |
+
+### What this refutes
+
+The previous stop/go assessment said the two large blocking classes were **both cheap** — "a `run`
+that reads the archive, and a declared constant table — and neither requires simulating anything."
+The constant half held. The module-loading half did not, and the survey now splits the class so the
+difference cannot be stated wrongly again:
+
+`--survey` reports `defined-in-a-member-that-runs` separately from
+`defined-in-a-member-that-does-not-run-either`. Of the 2,758 members still blocked on a name across
+the corpus, 1,155 name something a runnable member defines and **1,117 name something whose only
+definers stop too** — so barely half of the "cheap" class is actually cheap. Module loading does not
+help the other half, because the module that would define the name stops on its own first line:
+
+- `gs\tree.gs` defines `terrainsprites` and stops at its **step 2** on `maxterrainspritetypes`.
+- `units\easyunit.gs` defines `begin_unit_definition` and stops at its **step 1** on `userdict`.
+- 3.02's own `START.GS` names **30 members its own `gs.mpq` does not contain** (`gs/TEXTDICT5.gs`,
+  `gs/GRAPHICS5.gs`, `gs/PLAYER5.gs` and the rest of the `*5.gs` set), so a loader driven by it is
+  incomplete against that archive by construction. Evidence class: Observed in a local binary.
+
+So the cheap class is roughly half the size it was described as, and the path forward is not "load
+more modules" but "stub the handful of operators that gate the modules everything else depends on".
+`maxterrainspritetypes`, `maxunittypes`, `dialog` and `addmounttype` are the whole of it at the top,
+along with `userdict`, which is not an operator at all — `gs\editor.gs` defines it.
+
+The **park trigger** the previous assessment set — park when `engine-operator` becomes the largest
+first-blocker class — has **not** fired. It is 98/139/157 per profile against 679/735/858 for the
+two script-definition classes combined. But the trigger should be read alongside the row above it:
+the reason the script-definition class stays large is that its members are themselves waiting on a
+few engine operators, so the classes are not as independent as the trigger assumes.
+
 ## Stop/go assessment
 
 **Go, and the scope is now measured rather than estimated.**
 
 - every known script tokenizes with a small, bounds-checked implementation, across all three line-ending conventions;
-- 406 of 3.02's 1,681 `.gs` members execute to completion with **no** engine support at all;
+- 1,551 of the corpus's 4,692 `.gs` members — 429/635/487 across the three profiles — execute to
+  completion with **no** engine support at all, and 1,682 with a two-module declared preload;
 - `gs\standard.gs` loads and 31 stated expectations over its utility procedures all hold, including three that contradicted a reading of the source;
 - the broad engine-name heuristic is now resolved: ~98.5% of it is real, ~33 names per profile are coincidence;
 - unknown engine names stop with a trace naming the operator's entry point, no host call has been guessed, and no arithmetic result is invented either;
@@ -891,3 +1030,10 @@ The next slice is therefore:
 Constants must be *declared*, with their values stated as inputs, exactly as `--stub` already works. An engine constant whose value is invented is the same failure mode as an invented host call, one step further from being noticed.
 
 **Park if** the cheap classes stop dominating. Concretely: re-run `--survey` after each of the two steps above and park when `engine-operator` becomes the largest first-blocker class. It is 124 of 1,267 today. The trigger is stated against `engine-operator` rather than against which of the two cheap classes is larger, because that comparison is a near tie between two heuristics and it already moved once under correction.
+
+**Update, 2026-09-18.** Both steps are now done and the trigger has not fired — `engine-operator` is
+98/139/157 per profile. But the reasoning above needs one correction, recorded in
+[What this refutes](#what-this-refutes): about half of the `defined-in-another-member` class is
+**not** unblocked by module loading, because the defining module stops on an engine operator of its
+own. The classes are coupled, so the next slice is stubbing the few operators that gate the shared
+modules — `maxterrainspritetypes`, `maxunittypes`, `dialog`, `addmounttype` — not loading more.
