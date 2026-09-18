@@ -5313,3 +5313,70 @@ total-accounting check passed it. The real case is now constructed: a **96x32 ma
 plane occupies exactly the same bytes as a 96x64 map with a 6,144-word plane**, because
 `8*3072 + 4*12288 == 8*6144 + 4*6144`. The total accounts, and the plane covers four times the
 cells.
+
+## 2026-09-18 — Deterministic MPQ repack and its shape check
+
+Closes the last open Phase 1 item: a repeatable repack command with a byte-shape check that runs
+before anything could be installed. Details and the full "what this does not guarantee" list are in
+[deterministic MPQ repack](repack.md).
+
+### What was built
+
+`lom-mpq` gained three verbs — `manifest`, `repack`, `create` — and the shape check went into
+`tools/mpq_shape.py`, deliberately separate from the writer so it can be tested against archives
+that do not exist. `scripts/repack-archive.sh` orders them: manifest the source, repack, manifest the
+output, check, and refuse. A refused archive is deleted, and the command will not write anywhere
+under `~/Applications` at all. `--install` refuses; installation is Phase 3.
+
+### Determinism, measured rather than assumed
+
+- **Observed:** repacking GS5R3 `gs.mpq` six times produced six identical SHA-256s, and PIC5R3
+  `pic.mpq` five times likewise. The output also survived a changed replacement-file mtime, a changed
+  source path, a changed `umask`, `TZ` and `LC_ALL`, and reversed `--replace` argument order.
+- **Observed:** this holds because the archive is produced by copying the source file and replacing
+  members within it. Rebuilding from an extracted tree is not possible for this corpus: 409 PIC5R3
+  members have no name, and a member's name is part of its encryption key.
+- **Observed:** `SFileCompactArchive` fails with `ERROR_UNKNOWN_FILE_NAMES` (10007) on PIC5R3
+  `pic.mpq`. Compaction is therefore off by default; it is available as `--compact` and is itself
+  deterministic, but it cannot run on any archive with unnamed members, which includes vanilla
+  `gs.mpq` with its 372.
+- **Observed:** StormLib regenerates `(listfile)` on every write (48,469 → 48,457 bytes on GS5R3
+  `gs.mpq`), so byte-preservation of that one member is impossible. It is the only exemption in the
+  check, and it is safe only because every member name is verified individually.
+- **Not determined:** whether the engine executes a repacked archive. The only engine acceptance
+  evidence remains the attended 2026-09-16 round trip. Shape preserved is not playable.
+
+### The 1,406-versus-1,405 entry gap was misattributed
+
+- **Corrected:** [MPQ inventory](mpq-inventory.md) blamed the case-insensitive macOS filesystem. The
+  two `portrait\AIpotM.lbm` entry names are byte-identical, so the loss happens on any filesystem.
+- **Observed:** the two entries hold different content — `9dc00e94…` at block 1108, `884f4bb9…` at
+  block 1144. Reading members by StormLib's `File%08u.xxx` pseudo-name addresses the block table
+  directly and sees both. That addressing was validated against name-based extraction on all 1,700
+  GS5R3 `gs.mpq` members: 1,700 matched, 0 mismatched.
+- **Observed:** an MPQ cannot hold two members whose names differ only in case. The name hash is
+  case-insensitive: adding `A.txt` then `a.txt` leaves one member under the first name holding the
+  second content.
+- **Observed:** StormLib 9.40 returns success for a zero-length read, contradicting a defensive
+  comment written here earlier the same day. The guard stays, but as defence, not as fact.
+
+### Two defects the mutation sweep found
+
+The first was in the sweep itself. A mutation that keeps a file's byte size and is reverted inside
+the same second is served from a stale `__pycache__` entry, so the test run never sees it and the
+mutation is scored "caught". Under that bug the first sweep reported 44 of 52 caught; with
+`PYTHONDONTWRITEBYTECODE=1` and the caches cleared between runs, three of those results changed. A
+mutation harness that cannot prove the mutation ran is measuring nothing.
+
+The second was in the shape check. Case-folded rename detection paired the missing and added halves
+while emitting findings, which only worked when the missing half sorted first — a property of the
+example names, not of the data. The mirrored fixture (`portrait\aipotm.lbm` renamed *up* to
+`Portrait\AIpotM.lbm`) reported both halves, and the same one-direction fixture had also let a
+"case-fold map keyed on exact names" mutant survive. Partners are now collected before anything is
+emitted, and both directions are tested.
+
+Final sweep: **54 mutations, 49 caught, 5 survivors**, each named in the handoff — two equivalent
+mutants (an `MPQ_FILE_EXISTS` bit that is already set as `MPQ_FILE_REPLACEEXISTING`; the zero-length
+read guard), one that needs two members sharing a name (no fixture can build one), and two on the
+determinism-failure branch, which no fixture can reach because no fixture produces nondeterministic
+output.

@@ -1,15 +1,22 @@
+#include <CommonCrypto/CommonDigest.h>
 #include <StormLib.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -19,9 +26,13 @@ namespace {
 struct Archive {
   HANDLE handle = nullptr;
 
-  explicit Archive(const fs::path &path) {
-    if (!SFileOpenArchive(path.c_str(), 0, MPQ_OPEN_READ_ONLY, &handle)) {
-      throw std::runtime_error("could not open MPQ: " + path.string());
+  Archive() = default;
+
+  explicit Archive(const fs::path &path, DWORD flags = MPQ_OPEN_READ_ONLY) {
+    if (!SFileOpenArchive(path.c_str(), 0, flags, &handle)) {
+      throw std::runtime_error("could not open MPQ: " + path.string() +
+                               " (StormLib error " +
+                               std::to_string(SErrGetLastError()) + ")");
     }
   }
 
@@ -41,7 +52,16 @@ struct Entry {
   std::uint32_t compressed_size;
   std::uint32_t flags;
   std::uint32_t locale;
+  std::uint32_t block_index;
+  std::uint32_t hash_index;
 };
+
+// Storage flags worth carrying from a source member onto its replacement. The
+// high MPQ_FILE_EXISTS bit is deliberately excluded: SFileAddFileEx reads that
+// same bit position as MPQ_FILE_REPLACEEXISTING.
+constexpr std::uint32_t kPreservedStorageFlags =
+    MPQ_FILE_IMPLODE | MPQ_FILE_COMPRESS | MPQ_FILE_ENCRYPTED |
+    MPQ_FILE_FIX_KEY | MPQ_FILE_SINGLE_UNIT | MPQ_FILE_SECTOR_CRC;
 
 void load_internal_listfile(HANDLE archive) {
   HANDLE listfile = nullptr;
@@ -101,12 +121,16 @@ std::vector<Entry> list_entries(HANDLE archive) {
   std::vector<Entry> entries;
   do {
     entries.push_back({data.cFileName, data.dwFileSize, data.dwCompSize,
-                       data.dwFileFlags, data.lcLocale});
+                       data.dwFileFlags, data.lcLocale, data.dwBlockIndex,
+                       data.dwHashIndex});
   } while (SFileFindNextFile(search, &data));
   SFileFindClose(search);
 
   std::sort(entries.begin(), entries.end(), [](const Entry &a, const Entry &b) {
-    return a.name < b.name;
+    if (a.name != b.name) {
+      return a.name < b.name;
+    }
+    return a.block_index < b.block_index;
   });
   return entries;
 }
@@ -125,10 +149,265 @@ fs::path safe_relative_path(std::string name) {
   return relative;
 }
 
+
+// Read one member's bytes. Members are addressed by BLOCK INDEX, not by name.
+// PIC5R3 holds two distinct entries under the single name `portrait\AIpotM.lbm`
+// (docs/mpq-inventory.md), and opening that name resolves to only one of them,
+// so a name-addressed manifest cannot see that one of the two went missing.
+// StormLib's `File%08u.xxx` pseudo-name addresses the block table directly.
+std::string read_member_by_index(HANDLE archive, const Entry &entry) {
+  std::array<char, 32> pseudo_name{};
+  std::snprintf(pseudo_name.data(), pseudo_name.size(), "File%08u.xxx",
+                entry.block_index);
+
+  HANDLE file = nullptr;
+  if (!SFileOpenFileEx(archive, pseudo_name.data(), SFILE_OPEN_FROM_MPQ,
+                       &file)) {
+    throw std::runtime_error("could not open block " +
+                             std::to_string(entry.block_index) + " (" +
+                             entry.name + ")");
+  }
+
+  const DWORD size = SFileGetFileSize(file, nullptr);
+  if (size == SFILE_INVALID_SIZE) {
+    SFileCloseFile(file);
+    throw std::runtime_error("could not size member: " + entry.name);
+  }
+
+  std::string contents(size, '\0');
+  DWORD bytes_read = 0;
+  // A zero-byte member is legal. StormLib 9.40 happens to return success for a
+  // zero-length read (measured 2026-09-18 by removing this guard and watching
+  // the zero-byte member test still pass), so this short-circuit is defensive
+  // rather than load-bearing. It stays because that success is not documented.
+  const bool read_ok =
+      size == 0 ||
+      SFileReadFile(file, contents.data(), size, &bytes_read, nullptr);
+  SFileCloseFile(file);
+  if (!read_ok || bytes_read != size) {
+    throw std::runtime_error("could not read member: " + entry.name);
+  }
+  return contents;
+}
+
+std::string sha256_hex(const std::string &data) {
+  std::array<unsigned char, CC_SHA256_DIGEST_LENGTH> digest{};
+  CC_SHA256(data.data(), static_cast<CC_LONG>(data.size()), digest.data());
+  std::ostringstream text;
+  text << std::hex << std::setfill('0');
+  for (const unsigned char byte : digest) {
+    text << std::setw(2) << static_cast<unsigned>(byte);
+  }
+  return text.str();
+}
+
+std::string read_local_file(const fs::path &path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    throw std::runtime_error("could not read local file: " + path.string());
+  }
+  return std::string((std::istreambuf_iterator<char>(input)),
+                     std::istreambuf_iterator<char>());
+}
+
+// `archive\name=local/path`, split at the FIRST `=`. Local paths do contain
+// `=` in practice (a temporary directory is enough to produce one) while no
+// member name in any of the five installed archives contains one -- measured
+// 2026-09-18 across all 3,106 gs/pic entries. An archive name containing `=` is
+// therefore not addressable and is a known limit, not an oversight.
+std::pair<std::string, fs::path> parse_assignment(const std::string &argument) {
+  const auto separator = argument.find('=');
+  if (separator == std::string::npos || separator == 0 ||
+      separator + 1 == argument.size()) {
+    throw std::runtime_error("expected ARCHIVE_NAME=LOCAL_PATH, got: " +
+                             argument);
+  }
+  return {argument.substr(0, separator), fs::path(argument.substr(separator + 1))};
+}
+
+int manifest_archive(const fs::path &archive_path) {
+  Archive archive(archive_path);
+  const auto entries = list_entries(archive.handle);
+
+  std::cout << "path\tblock_index\thash_index\tsize\tcompressed_size\tflags"
+               "\tlocale\tsha256\n";
+  for (const auto &entry : entries) {
+    const std::string contents = read_member_by_index(archive.handle, entry);
+    if (contents.size() != entry.size) {
+      throw std::runtime_error("short read for member: " + entry.name);
+    }
+    std::cout << entry.name << '\t' << entry.block_index << '\t'
+              << entry.hash_index << '\t' << entry.size << '\t'
+              << entry.compressed_size << "\t0x" << std::hex << std::setw(8)
+              << std::setfill('0') << entry.flags << std::dec
+              << std::setfill(' ') << '\t' << entry.locale << '\t'
+              << sha256_hex(contents) << '\n';
+  }
+  return 0;
+}
+
+// Add one member, reporting what StormLib actually did rather than assuming.
+void add_member(HANDLE archive, const std::string &archived_name,
+                const fs::path &local_path, std::uint32_t storage_flags) {
+  const std::uint32_t flags = storage_flags | MPQ_FILE_REPLACEEXISTING;
+  // MPQ_FILE_COMPRESS needs a method; MPQ_FILE_IMPLODE ignores the argument.
+  // PKWARE DCL is the method the 1997 engine is known to read, and is what the
+  // whole of `gs.mpq` uses under MPQ_FILE_IMPLODE.
+  const std::uint32_t compression =
+      (storage_flags & MPQ_FILE_COMPRESS) != 0 ? MPQ_COMPRESSION_PKWARE : 0;
+  if (!SFileAddFileEx(archive, local_path.c_str(), archived_name.c_str(), flags,
+                      compression, compression)) {
+    throw std::runtime_error("could not add member " + archived_name +
+                             " from " + local_path.string() +
+                             " (StormLib error " +
+                             std::to_string(SErrGetLastError()) + ")");
+  }
+}
+
+int repack_archive(const fs::path &source_path, const fs::path &output_path,
+                   const std::vector<std::string> &assignments, bool compact) {
+  if (fs::exists(output_path)) {
+    throw std::runtime_error("output archive already exists: " +
+                             output_path.string());
+  }
+  if (assignments.empty()) {
+    throw std::runtime_error("repack requires at least one --replace");
+  }
+
+  std::map<std::string, std::uint32_t> storage_flags;
+  {
+    Archive source(source_path);
+    for (const auto &entry : list_entries(source.handle)) {
+      // Keep the FIRST entry for a duplicated name, matching the entry that
+      // StormLib resolves that name to.
+      storage_flags.emplace(entry.name, entry.flags & kPreservedStorageFlags);
+    }
+  }
+
+  std::vector<std::pair<std::string, fs::path>> replacements;
+  for (const auto &assignment : assignments) {
+    auto parsed = parse_assignment(assignment);
+    if (storage_flags.find(parsed.first) == storage_flags.end()) {
+      throw std::runtime_error(
+          "refusing to repack: source archive has no member named " +
+          parsed.first);
+    }
+    if (!fs::is_regular_file(parsed.second)) {
+      throw std::runtime_error("replacement is not a regular file: " +
+                               parsed.second.string());
+    }
+    replacements.push_back(std::move(parsed));
+  }
+  // Applying replacements in a fixed order keeps repeated runs comparable.
+  std::sort(replacements.begin(), replacements.end());
+
+  // The archive is built beside the requested output and moved into place only
+  // after it closes cleanly, so a failed repack never leaves a half-written
+  // archive under the name a later step would install.
+  const fs::path staging_path = output_path.string() + ".partial";
+  fs::remove(staging_path);
+  if (output_path.has_parent_path()) {
+    fs::create_directories(output_path.parent_path());
+  }
+  fs::copy_file(source_path, staging_path);
+
+  try {
+    Archive staging(staging_path, 0);
+    for (const auto &replacement : replacements) {
+      add_member(staging.handle, replacement.first, replacement.second,
+                 storage_flags.at(replacement.first));
+    }
+    // Compaction is off by default. SFileCompactArchive re-packs every member,
+    // which it can only do if it knows every member's name -- the name is part
+    // of the encryption key. Vanilla `gs.mpq` (372 unnamed entries) and every
+    // `pic.mpq` (409 unnamed in PIC5R3) therefore fail it with
+    // ERROR_UNKNOWN_FILE_NAMES (10007), measured 2026-09-18. Without it the
+    // replaced member's old data stays in the file as dead space, which costs
+    // size and nothing else.
+    if (compact && !SFileCompactArchive(staging.handle, nullptr, false)) {
+      throw std::runtime_error("could not compact archive (StormLib error " +
+                               std::to_string(SErrGetLastError()) +
+                               "; 10007 means the archive has members whose "
+                               "names are unknown, which cannot be compacted)");
+    }
+  } catch (...) {
+    fs::remove(staging_path);
+    throw;
+  }
+
+  fs::rename(staging_path, output_path);
+  std::cout << "Repacked " << source_path.filename().string() << " -> "
+            << output_path.string() << " with " << replacements.size()
+            << " replaced member(s)\n";
+  for (const auto &replacement : replacements) {
+    std::cout << "  " << replacement.first << " <- "
+              << replacement.second.string() << '\n';
+  }
+  std::cout << "Output " << fs::file_size(output_path) << " bytes, sha256 "
+            << sha256_hex(read_local_file(output_path)) << '\n';
+  return 0;
+}
+
+// Archive creation exists so the repack pipeline can be tested on archives that
+// look nothing like the shipped corpus -- an empty archive, a zero-byte member,
+// names differing only in case. It is not a mod packaging command.
+int create_archive(const fs::path &output_path,
+                   const std::vector<std::string> &assignments,
+                   std::uint32_t storage_flags) {
+  if (fs::exists(output_path)) {
+    throw std::runtime_error("output archive already exists: " +
+                             output_path.string());
+  }
+  if (output_path.has_parent_path()) {
+    fs::create_directories(output_path.parent_path());
+  }
+
+  std::vector<std::pair<std::string, fs::path>> members;
+  for (const auto &assignment : assignments) {
+    auto parsed = parse_assignment(assignment);
+    if (!fs::is_regular_file(parsed.second)) {
+      throw std::runtime_error("member source is not a regular file: " +
+                               parsed.second.string());
+    }
+    members.push_back(std::move(parsed));
+  }
+  std::sort(members.begin(), members.end());
+
+  HANDLE handle = nullptr;
+  // StormLib rejects a zero maximum file count, so an empty archive still
+  // reserves one slot.
+  const DWORD capacity =
+      static_cast<DWORD>(members.empty() ? 1 : members.size() + 1);
+  if (!SFileCreateArchive(output_path.c_str(),
+                          MPQ_CREATE_LISTFILE | MPQ_CREATE_ARCHIVE_V1, capacity,
+                          &handle)) {
+    throw std::runtime_error("could not create archive: " +
+                             output_path.string() + " (StormLib error " +
+                             std::to_string(SErrGetLastError()) + ")");
+  }
+  Archive created{};
+  created.handle = handle;
+
+  for (const auto &member : members) {
+    add_member(created.handle, member.first, member.second, storage_flags);
+  }
+  std::cout << "Created " << output_path.string() << " with " << members.size()
+            << " member(s)\n";
+  return 0;
+}
+
 void print_usage(const char *program) {
   std::cerr << "Usage:\n"
             << "  " << program << " list ARCHIVE.mpq\n"
-            << "  " << program << " extract ARCHIVE.mpq OUTPUT_DIR\n";
+            << "  " << program << " extract ARCHIVE.mpq OUTPUT_DIR\n"
+            << "  " << program << " manifest ARCHIVE.mpq\n"
+            << "  " << program
+            << " repack SOURCE.mpq OUTPUT.mpq [--compact] --replace "
+               "'NAME=LOCAL' ...\n"
+            << "  " << program
+            << " create OUTPUT.mpq [--implode|--compress|--store] "
+               "[--add 'NAME=LOCAL'] "
+               "...\n";
 }
 
 int list_archive(const fs::path &archive_path) {
@@ -197,6 +476,45 @@ int main(int argc, char **argv) {
     }
     if (argc == 4 && std::string(argv[1]) == "extract") {
       return extract_archive(argv[2], argv[3]);
+    }
+    if (argc == 3 && std::string(argv[1]) == "manifest") {
+      return manifest_archive(argv[2]);
+    }
+    if (argc >= 5 && std::string(argv[1]) == "repack") {
+      std::vector<std::string> assignments;
+      bool compact = false;
+      for (int index = 4; index < argc; ++index) {
+        const std::string option(argv[index]);
+        if (option == "--compact") {
+          compact = true;
+        } else if (option == "--replace" && index + 1 < argc) {
+          assignments.emplace_back(argv[++index]);
+        } else {
+          print_usage(argv[0]);
+          return 2;
+        }
+      }
+      return repack_archive(argv[2], argv[3], assignments, compact);
+    }
+    if (argc >= 3 && std::string(argv[1]) == "create") {
+      std::vector<std::string> assignments;
+      std::uint32_t storage_flags = MPQ_FILE_IMPLODE;
+      for (int index = 3; index < argc; ++index) {
+        const std::string option(argv[index]);
+        if (option == "--store") {
+          storage_flags = 0;
+        } else if (option == "--compress") {
+          storage_flags = MPQ_FILE_COMPRESS;
+        } else if (option == "--implode") {
+          storage_flags = MPQ_FILE_IMPLODE;
+        } else if (option == "--add" && index + 1 < argc) {
+          assignments.emplace_back(argv[++index]);
+        } else {
+          print_usage(argv[0]);
+          return 2;
+        }
+      }
+      return create_archive(argv[2], assignments, storage_flags);
     }
     print_usage(argv[0]);
     return 2;
