@@ -58,6 +58,15 @@ const MAP_OBJECT: u32 = 0x005A_E958;
 const SCENARIO_OBJECT: u32 = 0x005A_A12C;
 /// Offset of the cell array pointer inside the map object.
 const MAP_CELLS_FIELD: u32 = 0x54;
+/// Offset of the terrain member inside the scenario object. `SCENARIO_OBJECT + this == MAP_OBJECT`.
+const SCENARIO_TERRAIN_FIELD: u32 = 0x482C;
+/// A two-instruction accessor that returns the map object in `eax`: `mov eax, MAP_OBJECT; ret`.
+///
+/// **This is the third route to the object and the largest.** Hundreds of call sites reach the map
+/// object through it, and none of them contains the literal `0x005ae958` or the `lea` form, so
+/// neither of the other two discovery patterns can see any of them. [`verify_anchors`] checks the
+/// function really is that pair of instructions rather than trusting the address.
+const MAP_OBJECT_ACCESSOR: u32 = 0x004C_6FC0;
 
 /// `terrain_read(FILE *stream, int)` -- width, height, cell size, then the cell grid.
 const TERRAIN_READER: u32 = 0x004A_52E0;
@@ -69,10 +78,19 @@ const SCENARIO_READER: u32 = 0x0048_55C0;
 const SCENARIO_WRITER: u32 = 0x0048_5550;
 /// `records_read(FILE *stream, int, int)` -- count, then one dispatch per record kind.
 const RECORD_SECTION_READER: u32 = 0x004F_7120;
-/// The record-kind jump table behind `jmp dword [eax*4+...]` in [`RECORD_SECTION_READER`].
-const RECORD_KIND_TABLE: u32 = 0x004F_73B8;
-/// Number of entries in [`RECORD_KIND_TABLE`]: the dispatch is guarded by `cmp eax,9; ja`.
-const RECORD_KIND_COUNT: usize = 10;
+/// The record-kind jump table and its bound, as recovered from the dispatch itself.
+///
+/// Both used to be constants here. That defeated the point of [`verify_anchors`]: a build whose
+/// dispatch had a different bound would have been surveyed against this file's idea of it. They are
+/// now read out of the `cmp`/`ja`/`jmp` sequence by [`recover_record_kind_dispatch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RecordKindDispatch {
+    /// Address of the `jmp dword [reg*4 + table]`.
+    address: u32,
+    table: u32,
+    /// Entries in the table: the `cmp` bound plus one.
+    count: usize,
+}
 
 /// How many rounds of `this`-forwarding to follow when collecting map-object methods.
 const MAP_METHOD_ROUNDS: usize = 4;
@@ -90,6 +108,42 @@ const RECORD_BASE_PREFIX: u32 = 0x004F_6B00;
 const RESET_VISIBILITY_BODY: u32 = 0x004A_90B0;
 /// The map object's allocator: it stores width, height, cell count and the `count * 8` cell array.
 const MAP_ALLOCATOR: u32 = 0x004A_4F20;
+
+/// Recover the record-kind dispatch: its bound, its table and where it lives.
+///
+/// The engine guards the jump table with `cmp reg, N` and `ja error`, then `jmp dword [reg*4 + T]`.
+/// Reading `N` and `T` out of those instructions is what lets the anchor check refuse a build whose
+/// dispatch is shaped differently, rather than silently indexing this build's table by another
+/// build's bound.
+fn recover_record_kind_dispatch(image: &PeImage<'_>) -> Result<RecordKindDispatch, String> {
+    let instructions = disassemble(image, RECORD_SECTION_READER, 400)?;
+    let mut bound: Option<u32> = None;
+    for window in instructions.windows(3) {
+        if window[0].mnemonic() == Mnemonic::Cmp && is_immediate(window[0].op1_kind()) {
+            bound = Some(window[0].immediate32());
+        }
+        if window[1].mnemonic() != Mnemonic::Ja {
+            continue;
+        }
+        let jump = &window[2];
+        if jump.mnemonic() != Mnemonic::Jmp
+            || jump.op0_kind() != OpKind::Memory
+            || jump.memory_index_scale() != 4
+            || jump.memory_base() != Register::None
+        {
+            continue;
+        }
+        let Some(bound) = bound else { continue };
+        return Ok(RecordKindDispatch {
+            address: jump.ip() as u32,
+            table: jump.memory_displacement64() as u32,
+            count: bound as usize + 1,
+        });
+    }
+    Err(format!(
+        "no `cmp`/`ja`/`jmp [reg*4+table]` dispatch in {RECORD_SECTION_READER:#010x}"
+    ))
+}
 
 /// Header words observed in the shipped corpus, so the computed record sizes can be listed against
 /// the values that actually occur. This is corpus knowledge, not binary knowledge; the sizes beside
@@ -171,7 +225,7 @@ fn verify_anchors(image: &PeImage<'_>) -> Result<(), String> {
     // The scenario object's terrain member is the global map object. Both loaders reach the same
     // reader, so there is one cell array in the process, and `resetvisibility` and the file loader
     // are talking about the same memory.
-    if SCENARIO_OBJECT + 0x482C != MAP_OBJECT {
+    if SCENARIO_OBJECT + SCENARIO_TERRAIN_FIELD != MAP_OBJECT {
         return Err("scenario terrain member does not coincide with the map object".to_owned());
     }
 
@@ -198,6 +252,43 @@ fn verify_anchors(image: &PeImage<'_>) -> Result<(), String> {
             "terrain reader at {TERRAIN_READER:#010x} makes {} stream calls, expected at least 4",
             reader.len()
         ));
+    }
+
+    // The accessor must be exactly `mov eax, MAP_OBJECT; ret`. Anything else and treating its
+    // return value as the map object would taint an unrelated register in hundreds of functions.
+    let accessor = disassemble(image, MAP_OBJECT_ACCESSOR, 4)?;
+    let returns_the_object = accessor.first().is_some_and(|instruction| {
+        instruction.mnemonic() == Mnemonic::Mov
+            && instruction.op0_register() == Register::EAX
+            && is_immediate(instruction.op1_kind())
+            && instruction.immediate32() == MAP_OBJECT
+    }) && accessor
+        .get(1)
+        .is_some_and(|instruction| instruction.mnemonic() == Mnemonic::Ret);
+    if !returns_the_object {
+        return Err(format!(
+            "{MAP_OBJECT_ACCESSOR:#010x} is not `mov eax, {MAP_OBJECT:#010x}; ret`"
+        ));
+    }
+
+    // The record-kind dispatch must be recoverable, and its table must hold code addresses.
+    let dispatch = recover_record_kind_dispatch(image)?;
+    if dispatch.count < 2 || dispatch.count > 64 {
+        return Err(format!(
+            "record-kind dispatch at {:#010x} claims {} kinds",
+            dispatch.address, dispatch.count
+        ));
+    }
+    for kind in 0..dispatch.count {
+        let handler = image
+            .file_offset(dispatch.table)
+            .and_then(|offset| read_u32(image.bytes(), offset + kind * 4))
+            .ok_or_else(|| format!("record-kind table at {:#010x} is truncated", dispatch.table))?;
+        if !image.is_code_address(handler) {
+            return Err(format!(
+                "record-kind {kind} points at {handler:#010x}, which is not code"
+            ));
+        }
     }
 
     // The record serialiser must gate fields on the scenario object's first dword.
@@ -252,8 +343,8 @@ fn report_serialisation(image: &PeImage<'_>) {
         }
     }
 
-    // The record-kind dispatch. Two of the ten slots point at the error path, which is how the
-    // engine says "this kind does not exist" rather than the table being eight entries long. The
+    // The record-kind dispatch. Two of the slots point at the error path, which is how the
+    // engine says "this kind does not exist" rather than the table being shorter. The
     // count and the kind dword the table is indexed by are read by the section reader itself.
     match trace_stream_fields(image, RECORD_SECTION_READER, STREAM_READ, 60) {
         Ok(fields) => {
@@ -271,19 +362,38 @@ fn report_serialisation(image: &PeImage<'_>) {
         Err(error) => println!("serialisation\trecord-section\terror\t{error}"),
     }
 
-    let error_slot = image
-        .file_offset(RECORD_KIND_TABLE)
-        .and_then(|offset| read_u32(image.bytes(), offset + 5 * 4));
+    let Ok(dispatch) = recover_record_kind_dispatch(image) else {
+        return;
+    };
+    println!(
+        "record-kind-dispatch\t{:#010x}\ttable\t{:#010x}\tkinds\t{}",
+        dispatch.address, dispatch.table, dispatch.count
+    );
+    // The error target is whichever handler the most slots share; the engine points every
+    // non-existent kind at one address. Deciding it by majority rather than by naming a slot means
+    // a build with a different set of dead kinds still reports them correctly.
+    let handlers: Vec<u32> = (0..dispatch.count)
+        .filter_map(|kind| {
+            image
+                .file_offset(dispatch.table)
+                .and_then(|offset| read_u32(image.bytes(), offset + kind * 4))
+        })
+        .collect();
+    let mut tally: BTreeMap<u32, usize> = BTreeMap::new();
+    for handler in &handlers {
+        *tally.entry(*handler).or_default() += 1;
+    }
+    let error_slot = tally
+        .iter()
+        .filter(|(_, count)| **count > 1)
+        .max_by_key(|(_, count)| **count)
+        .map(|(handler, _)| *handler);
     println!("record-kind-columns\tkind\thandler\tvalid");
-    for kind in 0..RECORD_KIND_COUNT {
-        let Some(handler) = image
-            .file_offset(RECORD_KIND_TABLE)
-            .and_then(|offset| read_u32(image.bytes(), offset + kind * 4))
-        else {
-            continue;
-        };
-        let valid = Some(handler) != error_slot;
-        println!("record-kind\t{kind}\t{handler:#010x}\t{valid}");
+    for (kind, handler) in handlers.iter().enumerate() {
+        println!(
+            "record-kind\t{kind}\t{handler:#010x}\t{}",
+            Some(*handler) != error_slot
+        );
     }
 }
 
@@ -573,8 +683,12 @@ struct CellReference {
     /// `direct` when the instruction's own operand is the cell; `one-hop` when the mask lands on a
     /// register loaded from the cell by the immediately preceding instruction.
     tier: &'static str,
-    /// `read`, `write` or `flags` -- the last for instructions that only set flags.
+    /// `read`, `write` or `read-write`.
     access: &'static str,
+    /// How the cell was addressed: `index*8`, `byte-offset` or `cell-pointer`. See [`cell_lane`].
+    addressing: &'static str,
+    /// How the base register was established: `this` or `field-0x54`. See [`cell_lane`].
+    basis: &'static str,
     text: String,
 }
 
@@ -587,34 +701,86 @@ fn report_cell_tag_bits(image: &PeImage<'_>) -> Vec<CellReference> {
         }
     }
 
+    // Two kinds of analysis entry. A map-object method starts with the object in `ecx`. An
+    // accessor call site is a point *inside* some other function where the object lands in `eax`;
+    // those functions are not in the method set at all, and hundreds of them exist, so without
+    // this the whole third access route would contribute nothing to the survey.
+    let accessor_sites = accessor_call_sites(image);
+    let cell_pointer_sites = absolute_reference_sites(image, MAP_OBJECT + MAP_CELLS_FIELD);
+    println!("map-object-accessor-call-sites\t{}", accessor_sites.len());
+    println!(
+        "map-cell-array-absolute-loads\t{}",
+        cell_pointer_sites.len()
+    );
+    let entries: Vec<(u32, TaintState)> = methods
+        .iter()
+        .map(|method| (*method, TaintState::at_entry()))
+        .chain(
+            accessor_sites
+                .iter()
+                .chain(cell_pointer_sites.iter())
+                .map(|site| (*site, TaintState::empty())),
+        )
+        .collect();
+
     let mut references: Vec<CellReference> = Vec::new();
     let mut seen: BTreeSet<u32> = BTreeSet::new();
-    for method in &methods {
-        let Ok(instructions) = disassemble(image, *method, 1200) else {
+    let mut unclassified: BTreeSet<u32> = BTreeSet::new();
+    for (entry, seed) in &entries {
+        let Ok(instructions) = disassemble(image, *entry, 1200) else {
             continue;
         };
-        for reference in cell_references(&instructions) {
+        let (found, dropped) = cell_references(&instructions, seed.clone());
+        for reference in found {
             if seen.insert(reference.address) {
                 references.push(reference);
             }
         }
+        unclassified.extend(dropped);
     }
     references.sort_by_key(|reference| reference.address);
+    // Addressed through the cell array but not decoded. A non-zero count here is the warning that
+    // the negative results below are negatives over an incomplete set.
+    unclassified.retain(|address| !seen.contains(address));
+    println!("cell-unclassified\t{}", unclassified.len());
+    for address in &unclassified {
+        println!("cell-unclassified-site\t{address:#010x}");
+    }
 
-    println!("cell-reference-columns\taddress\tlane\twidth\ttier\taccess\tmask\tinstruction");
+    println!(
+        "cell-reference-columns\taddress\tlane\twidth\ttier\taccess\taddressing\tbasis\tmask\tinstruction"
+    );
     for reference in &references {
         println!(
-            "cell-reference\t{:#010x}\t+{}\t{}\t{}\t{}\t{}\t{}",
+            "cell-reference\t{:#010x}\t+{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             reference.address,
             reference.lane,
             reference.width,
             reference.tier,
             reference.access,
+            reference.addressing,
+            reference.basis,
             reference
                 .mask
                 .map_or_else(|| "-".to_owned(), |mask| format!("{mask:#018x}")),
             reference.text,
         );
+    }
+
+    // How the surveyed sites were reached. Printed because the three addressing forms and the two
+    // bases do not carry equal weight: an `index*8` operand off a register proven to hold the map
+    // object is the strongest kind of site, and a `byte-offset` operand off a `field-0x54` load is
+    // the weakest. A negative result should be readable against that split rather than as one
+    // undifferentiated count.
+    let mut provenance: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+    for reference in &references {
+        *provenance
+            .entry((reference.addressing, reference.basis))
+            .or_default() += 1;
+    }
+    println!("cell-provenance-columns\taddressing\tbasis\tsites");
+    for ((addressing, basis), count) in &provenance {
+        println!("cell-provenance\t{addressing}\t{basis}\t{count}");
     }
 
     // Byte-lane coverage: which of the eight bytes any instruction reaches at all, and how wide
@@ -629,8 +795,10 @@ fn report_cell_tag_bits(image: &PeImage<'_>) -> Vec<CellReference> {
                 .insert((reference.width, "access"));
         }
     }
-    let census = unfiltered_lane_census(image);
-    println!("cell-lane-columns\tbyte\tword\treads\twrites\twidths\tunfiltered-stride8-operands");
+    let census = surveyed_lane_census(image, &methods);
+    println!(
+        "cell-lane-columns\tbyte\tword\treads\twrites\twidths\tstride8-operands-in-surveyed-methods"
+    );
     for lane in 0..8_u64 {
         let of_lane = |access: &str| {
             references
@@ -697,7 +865,127 @@ fn report_cell_tag_bits(image: &PeImage<'_>) -> Vec<CellReference> {
         }
     }
     println!("cell-word1-fpu-sites\t{float_sites}");
+
+    // The ceiling on every negative result above, stated where the negatives are printed.
+    //
+    // Both discovery paths require `op0_kind() == NearBranch32`, so **virtual dispatch is entirely
+    // uncovered**: a method reached only through a vtable slot is not in the surveyed set and its
+    // cell accesses are not in these counts. Recovering vtables is the next step, not a caveat to
+    // wave at. Until then the honest form of the no-masks finding is scoped to directly-called
+    // map-object methods.
+    let indirect = indirect_call_sites(image, &methods);
+    println!("cell-survey-ceiling\tdirectly-called-map-object-methods-only");
+    println!("cell-survey-indirect-calls-in-surveyed-methods\t{indirect}");
     references
+}
+
+/// Every instruction that names an absolute address, by address.
+///
+/// Used for the cell-array pointer at `MAP_OBJECT + 0x54`. **This is the fourth route to the cells**
+/// and the widest-reaching: code that needs the grid and nothing else loads the pointer straight out
+/// of the global with `mov ecx, [0x5ae9ac]`, touching neither the object's address nor the accessor.
+/// Three `+2` readers live in functions reached only this way -- `0x004c5cc2`, `0x00517b67` and
+/// `0x00519ced` -- and none of the first three discovery routes can see any of them.
+///
+/// Found by scanning the raw section bytes for the four-byte constant and then trying to decode an
+/// instruction that *covers* the hit, over every start offset that could produce one. Decoding
+/// around the constant rather than assuming an encoding is what makes this independent of whether
+/// the operand is `8b 0d`, `a1`, or a form with a prefix.
+fn absolute_reference_sites(image: &PeImage<'_>, target: u32) -> BTreeSet<u32> {
+    /// Longest backward reach tried when looking for the instruction covering a constant. An x86
+    /// instruction is at most 15 bytes, and a `disp32` cannot start more than 11 bytes into one.
+    const MAXIMUM_LEAD: usize = 11;
+
+    let mut sites: BTreeSet<u32> = BTreeSet::new();
+    let needle = target.to_le_bytes();
+    for (start, length) in image.executable_ranges() {
+        let Some(offset) = image.file_offset(start) else {
+            continue;
+        };
+        let end = (offset + length as usize).min(image.bytes().len());
+        let Some(section) = image.bytes().get(offset..end) else {
+            continue;
+        };
+        for position in 0..section.len().saturating_sub(4) {
+            if section[position..position + 4] != needle {
+                continue;
+            }
+            for lead in 1..=MAXIMUM_LEAD {
+                if lead > position {
+                    break;
+                }
+                let address = start + (position - lead) as u32;
+                let Ok(window) = disassemble_window(image, address, 1) else {
+                    continue;
+                };
+                let Some(instruction) = window.first() else {
+                    continue;
+                };
+                // The instruction must reach the constant, and must reach it as an absolute
+                // memory operand rather than happening to span those bytes.
+                if instruction.len() <= lead {
+                    continue;
+                }
+                if instruction.memory_base() == Register::None
+                    && instruction.memory_index() == Register::None
+                    && instruction.memory_displacement64() == u64::from(target)
+                {
+                    sites.insert(address);
+                    break;
+                }
+            }
+        }
+    }
+    sites
+}
+
+/// Every direct `call` to the map-object accessor, by address.
+///
+/// Found by a raw byte scan for `E8` and a relative target equal to the accessor, then confirmed by
+/// decoding at the hit -- so a coincidental `E8` inside data or inside a longer instruction cannot
+/// contribute. A byte scan rather than a linear disassembly for the reason this file has already
+/// been bitten by: a linear decode of a whole section drifts out of phase on embedded data and
+/// silently loses everything after it.
+fn accessor_call_sites(image: &PeImage<'_>) -> BTreeSet<u32> {
+    let mut sites: BTreeSet<u32> = BTreeSet::new();
+    for (start, length) in image.executable_ranges() {
+        let Some(offset) = image.file_offset(start) else {
+            continue;
+        };
+        let end = (offset + length as usize).min(image.bytes().len());
+        let Some(section) = image.bytes().get(offset..end) else {
+            continue;
+        };
+        for position in 0..section.len().saturating_sub(5) {
+            if section[position] != 0xE8 {
+                continue;
+            }
+            let Some(relative) = read_u32(section, position + 1) else {
+                continue;
+            };
+            let address = start + position as u32;
+            // A `call rel32` is five bytes, so the target is relative to the next instruction.
+            if address
+                .wrapping_add(5)
+                .wrapping_add(relative)
+                != MAP_OBJECT_ACCESSOR
+            {
+                continue;
+            }
+            let Ok(window) = disassemble_window(image, address, 1) else {
+                continue;
+            };
+            let confirmed = window.first().is_some_and(|instruction| {
+                instruction.mnemonic() == Mnemonic::Call
+                    && instruction.op0_kind() == OpKind::NearBranch32
+                    && instruction.near_branch32() == MAP_OBJECT_ACCESSOR
+            });
+            if confirmed {
+                sites.insert(address);
+            }
+        }
+    }
+    sites
 }
 
 /// Every function the engine calls as a method of the global map object.
@@ -708,13 +996,36 @@ fn report_cell_tag_bits(image: &PeImage<'_>) -> Vec<CellReference> {
 fn map_object_methods(image: &PeImage<'_>) -> BTreeSet<u32> {
     let mut methods: BTreeSet<u32> = BTreeSet::new();
 
-    // Find the call sites by searching for the `mov ecx, MAP_OBJECT` encoding in the raw section
-    // bytes and decoding forward from each hit, rather than by decoding the section linearly from
-    // its start. A linear decode drifts out of phase on the first embedded jump table and then
-    // silently misses every call site after it -- which is what made an earlier run of this survey
-    // report a third of the methods it should have.
-    let mut pattern = vec![0xB9_u8];
-    pattern.extend_from_slice(&MAP_OBJECT.to_le_bytes());
+    // Find the call sites by searching the raw section bytes for the two encodings that put the
+    // map object in `ecx`, then decoding forward from each hit rather than decoding the section
+    // linearly from its start. A linear decode drifts out of phase on the first embedded jump
+    // table and then silently misses every call site after it.
+    //
+    // **Two encodings, not one.** `mov ecx, 0x005ae958` is the obvious one. But the map object is
+    // also the scenario object's terrain member, so code that already holds the scenario object
+    // reaches it as `lea ecx, [reg + 0x482c]` -- which never mentions `0x005ae958` at all and is
+    // invisible to a scan keyed on that constant. Missing this form cost nine methods, one of
+    // which contains a plain eight-byte-stride `+2` write the lane filter would have caught.
+    //
+    // A probe for `mov ecx, [reg + 0x482c]` finds nothing and is not evidence either way: the
+    // member is a subobject, so its address is taken with `lea`, never loaded with `mov`.
+    let mut patterns: Vec<Vec<u8>> = Vec::new();
+    // mov ecx, imm32
+    let mut mov_immediate = vec![0xB9_u8];
+    mov_immediate.extend_from_slice(&MAP_OBJECT.to_le_bytes());
+    patterns.push(mov_immediate);
+    // lea ecx, [reg + disp32], for every base register encoding. ModRM = 0b10_001_rrr: mod=10
+    // (disp32), reg=ecx, rm=the base. `esp` (rm=100) needs a SIB byte and `ebp` (rm=101) is the
+    // plain disp32 form, so both are handled by the decode check rather than the pattern.
+    for register in 0..8_u8 {
+        if register == 4 {
+            continue;
+        }
+        let mut lea = vec![0x8D_u8, 0x88 | register];
+        lea.extend_from_slice(&SCENARIO_TERRAIN_FIELD.to_le_bytes());
+        patterns.push(lea);
+    }
+
     for (start, length) in image.executable_ranges() {
         let Some(offset) = image.file_offset(start) else {
             continue;
@@ -723,27 +1034,95 @@ fn map_object_methods(image: &PeImage<'_>) -> BTreeSet<u32> {
         let Some(section) = image.bytes().get(offset..end) else {
             continue;
         };
-        for position in 0..section.len().saturating_sub(pattern.len()) {
-            if &section[position..position + pattern.len()] != pattern.as_slice() {
-                continue;
+        for pattern in &patterns {
+            for position in 0..section.len().saturating_sub(pattern.len()) {
+                if &section[position..position + pattern.len()] != pattern.as_slice() {
+                    continue;
+                }
+                let address = start + position as u32;
+                let Ok(window) = disassemble_window(image, address, 12) else {
+                    continue;
+                };
+                // Confirm the hit really decodes as one of the two forms, so a byte coincidence
+                // inside a longer instruction cannot introduce a bogus method.
+                let Some(first) = window.first() else { continue };
+                let loads_the_object = match first.mnemonic() {
+                    Mnemonic::Mov => {
+                        first.op0_register() == Register::ECX
+                            && is_immediate(first.op1_kind())
+                            && first.immediate32() == MAP_OBJECT
+                    }
+                    Mnemonic::Lea => {
+                        first.op0_register() == Register::ECX
+                            && first.memory_base() != Register::None
+                            && first.memory_index() == Register::None
+                            && first.memory_displacement64() == u64::from(SCENARIO_TERRAIN_FIELD)
+                    }
+                    _ => false,
+                };
+                if !loads_the_object {
+                    continue;
+                }
+                for instruction in window.iter().skip(1) {
+                    if instruction.mnemonic() == Mnemonic::Call {
+                        if instruction.op0_kind() == OpKind::NearBranch32 {
+                            methods.insert(instruction.near_branch32());
+                        }
+                        break;
+                    }
+                    // Anything that redefines `ecx` before the call means the object was not the
+                    // `this` pointer of that call.
+                    if instruction.op0_kind() == OpKind::Register
+                        && instruction.op0_register().full_register32() == Register::ECX
+                    {
+                        break;
+                    }
+                }
             }
-            let address = start + position as u32;
-            let Ok(window) = disassemble_window(image, address, 12) else {
-                continue;
-            };
-            for instruction in window.iter().skip(1) {
-                if instruction.mnemonic() == Mnemonic::Call {
-                    if instruction.op0_kind() == OpKind::NearBranch32 {
+        }
+    }
+
+    // Route three: `call MAP_OBJECT_ACCESSOR` leaves the object in `eax`, and a caller that then
+    // moves it to `ecx` and calls is invoking a map-object method. Neither byte pattern above can
+    // see any of these, because such a call site contains neither the literal nor the `lea`.
+    for site in accessor_call_sites(image) {
+        let Ok(window) = disassemble_window(image, site, 16) else {
+            continue;
+        };
+        // Registers currently holding the object. `eax` does, immediately after the call.
+        let mut holders: BTreeSet<Register> = BTreeSet::from([Register::EAX]);
+        for instruction in window.iter().skip(1) {
+            match instruction.mnemonic() {
+                Mnemonic::Call => {
+                    if holders.contains(&Register::ECX)
+                        && instruction.op0_kind() == OpKind::NearBranch32
+                    {
                         methods.insert(instruction.near_branch32());
                     }
-                    break;
+                    // A call clobbers the volatile registers, so the object survives only where it
+                    // was moved into a callee-saved one.
+                    for volatile in [Register::EAX, Register::ECX, Register::EDX] {
+                        holders.remove(&volatile);
+                    }
+                    if holders.is_empty() {
+                        break;
+                    }
                 }
-                // Anything that redefines `ecx` before the call means the object was not the
-                // `this` pointer of that call.
-                if instruction.op0_kind() == OpKind::Register
-                    && instruction.op0_register().full_register32() == Register::ECX
+                Mnemonic::Mov
+                    if instruction.op0_kind() == OpKind::Register
+                        && instruction.op1_kind() == OpKind::Register =>
                 {
-                    break;
+                    let destination = instruction.op0_register().full_register32();
+                    if holders.contains(&instruction.op1_register().full_register32()) {
+                        holders.insert(destination);
+                    } else {
+                        holders.remove(&destination);
+                    }
+                }
+                _ => {
+                    if instruction.op0_kind() == OpKind::Register {
+                        holders.remove(&instruction.op0_register().full_register32());
+                    }
                 }
             }
         }
@@ -818,7 +1197,10 @@ fn map_object_methods(image: &PeImage<'_>) -> BTreeSet<u32> {
 /// operand based on that register with an eight-byte index scale. Only registers that were loaded
 /// from `+0x54` count, which is what stops the survey drifting onto the other eight-byte array the
 /// same object holds at `+0x64`.
-fn cell_references(instructions: &[Instruction]) -> Vec<CellReference> {
+fn cell_references(
+    instructions: &[Instruction],
+    seed: TaintState,
+) -> (Vec<CellReference>, Vec<u32>) {
     let positions: BTreeMap<u64, usize> = instructions
         .iter()
         .enumerate()
@@ -855,7 +1237,7 @@ fn cell_references(instructions: &[Instruction]) -> Vec<CellReference> {
     // merge is an intersection. A linear walk instead of this reported a third of the cell
     // accesses, because the taint died at every early-return epilogue it walked through.
     let mut entry_states: Vec<Option<TaintState>> = vec![None; blocks.len()];
-    entry_states[0] = Some(TaintState::at_entry());
+    entry_states[0] = Some(seed);
     let mut worklist: Vec<usize> = vec![0];
     let mut rounds = 0_usize;
     while let Some(block) = worklist.pop() {
@@ -901,25 +1283,33 @@ fn cell_references(instructions: &[Instruction]) -> Vec<CellReference> {
     }
 
     let mut references = Vec::new();
+    let mut unclassified = Vec::new();
     for (block, entry) in entry_states.iter().enumerate() {
         let Some(entry) = entry else { continue };
         let mut state = entry.clone();
         let first = blocks[block];
         let last = blocks.get(block + 1).copied().unwrap_or(instructions.len());
-        let mut emitted = Some(Vec::new());
+        let mut emitted = Some((Vec::new(), Vec::new()));
         for instruction in &instructions[first..last] {
             step(&mut state, instruction, &mut emitted);
         }
-        references.extend(emitted.unwrap_or_default());
+        let (block_references, block_unclassified) = emitted.unwrap_or_default();
+        references.extend(block_references);
+        unclassified.extend(block_unclassified);
     }
-    references
+    (references, unclassified)
 }
 
 /// Which registers hold the map object, the cell array, or a pointer into one cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TaintState {
     this_registers: BTreeSet<Register>,
+    /// Loaded from `+0x54` of a register **proven** to hold the map object on every path here.
     cell_registers: BTreeSet<Register>,
+    /// Loaded from `+0x54` of some other register, inside a function already known to be a
+    /// map-object method. See [`cell_lane`] for why this weaker basis is kept and labelled rather
+    /// than dropped.
+    field_registers: BTreeSet<Register>,
     cell_pointers: BTreeMap<Register, u64>,
     /// A register just loaded from a cell lane, for the one-hop mask rule.
     loaded: Option<(Register, u64, u64)>,
@@ -931,6 +1321,20 @@ impl TaintState {
         Self {
             this_registers: BTreeSet::from([Register::ECX]),
             cell_registers: BTreeSet::new(),
+            field_registers: BTreeSet::new(),
+            cell_pointers: BTreeMap::new(),
+            loaded: None,
+        }
+    }
+
+    /// At an arbitrary point inside a function, nothing is known. Used when the analysis starts at
+    /// a `call MAP_OBJECT_ACCESSOR` rather than at a function entry: `ecx` there is whatever the
+    /// surrounding code was doing, so seeding it as the object would invent cell accesses.
+    fn empty() -> Self {
+        Self {
+            this_registers: BTreeSet::new(),
+            cell_registers: BTreeSet::new(),
+            field_registers: BTreeSet::new(),
             cell_pointers: BTreeMap::new(),
             loaded: None,
         }
@@ -941,6 +1345,11 @@ impl TaintState {
         let merged = Self {
             this_registers: self.this_registers.intersection(&other.this_registers).copied().collect(),
             cell_registers: self.cell_registers.intersection(&other.cell_registers).copied().collect(),
+            field_registers: self
+                .field_registers
+                .intersection(&other.field_registers)
+                .copied()
+                .collect(),
             cell_pointers: self
                 .cell_pointers
                 .iter()
@@ -959,18 +1368,26 @@ impl TaintState {
 fn step(
     state: &mut TaintState,
     instruction: &Instruction,
-    emitted: &mut Option<Vec<CellReference>>,
+    emitted: &mut Option<(Vec<CellReference>, Vec<u32>)>,
 ) {
-    if let Some(sink) = emitted.as_mut() {
+    if let Some((sink, unclassified)) = emitted.as_mut() {
         let mut formatter = NasmFormatter::new();
         let mut info = InstructionInfoFactory::new();
         let mut text = String::new();
         formatter.format(instruction, &mut text);
 
-        if let Some((lane, width)) =
-            cell_lane(instruction, &state.cell_registers, &state.cell_pointers)
-        {
-            sink.push(CellReference {
+        match cell_lane(
+            instruction,
+            &state.cell_registers,
+            &state.field_registers,
+            &state.cell_pointers,
+        ) {
+            LaneClass::Lane {
+                lane,
+                width,
+                addressing,
+                basis,
+            } => sink.push(CellReference {
                 address: instruction.ip() as u32,
                 lane,
                 width,
@@ -978,8 +1395,12 @@ fn step(
                 mask: immediate_mask(instruction, lane, width),
                 tier: "direct",
                 access: lane_access(&mut info, instruction),
+                addressing,
+                basis,
                 text: text.clone(),
-            });
+            }),
+            LaneClass::Unclassified => unclassified.push(instruction.ip() as u32),
+            LaneClass::Elsewhere => {}
         }
 
         if let Some((register, lane, width)) = state.loaded
@@ -1008,6 +1429,8 @@ fn step(
                 mask: shift_mask(instruction, lane, width, sub_shift),
                 tier: "one-hop",
                 access: "read",
+                addressing: "register",
+                basis: "register",
                 text,
             });
         }
@@ -1018,14 +1441,21 @@ fn step(
     match instruction.mnemonic() {
         Mnemonic::Lea if instruction.op0_kind() == OpKind::Register => {
             let destination = instruction.op0_register();
-            let lane = if instruction.memory_index_scale() == 8
-                && state.cell_registers.contains(&instruction.memory_base())
-            {
-                Some((instruction.memory_displacement64() as i64).rem_euclid(8) as u64)
+            // `lea` is how the engine reaches a cell it is about to write: compute the address
+            // once, then `mov [reg], cx`. Both addressing forms must be carried, including the
+            // scale-1 one -- `lea eax,[eax+esi+2]` at 0x004a9393 is followed by the `+2` write at
+            // 0x004a93a6, and missing the `lea` loses the write.
+            let scale = instruction.memory_index_scale();
+            let tainted_base = state.cell_registers.contains(&instruction.memory_base())
+                || state.field_registers.contains(&instruction.memory_base());
+            let tainted_index = state.cell_registers.contains(&instruction.memory_index())
+                || state.field_registers.contains(&instruction.memory_index());
+            let displacement = instruction.memory_displacement64() as i64;
+            let lane = if (scale == 8 && tainted_base) || (scale == 1 && (tainted_base || tainted_index)) {
+                Some(displacement.rem_euclid(8) as u64)
             } else if let Some(base) = state.cell_pointers.get(&instruction.memory_base()) {
-                (instruction.memory_index() == Register::None).then(|| {
-                    (*base as i64 + instruction.memory_displacement64() as i64).rem_euclid(8) as u64
-                })
+                (instruction.memory_index() == Register::None)
+                    .then(|| (*base as i64 + displacement).rem_euclid(8) as u64)
             } else {
                 None
             };
@@ -1042,13 +1472,25 @@ fn step(
                     .contains(&instruction.op1_register().full_register32());
             let source_is_object =
                 is_immediate(instruction.op1_kind()) && instruction.immediate32() == MAP_OBJECT;
-            let source_is_cell_field = instruction.op1_kind() == OpKind::Memory
+            let loads_cells_field = instruction.op1_kind() == OpKind::Memory
                 && instruction.memory_index() == Register::None
-                && ((instruction.memory_displacement64() == u64::from(MAP_CELLS_FIELD)
-                    && state.this_registers.contains(&instruction.memory_base()))
-                    || (instruction.memory_base() == Register::None
-                        && instruction.memory_displacement64()
-                            == u64::from(MAP_OBJECT + MAP_CELLS_FIELD)));
+                && instruction.memory_displacement64() == u64::from(MAP_CELLS_FIELD);
+            let source_is_cell_field = (loads_cells_field
+                && state.this_registers.contains(&instruction.memory_base()))
+                || (instruction.op1_kind() == OpKind::Memory
+                    && instruction.memory_index() == Register::None
+                    && instruction.memory_base() == Register::None
+                    && instruction.memory_displacement64()
+                        == u64::from(MAP_OBJECT + MAP_CELLS_FIELD));
+            // The weaker basis. Inside a function already established as a map-object method,
+            // `mov r, [b+0x54]` loads this class's cell array even where the must-analysis has
+            // lost the proof that `b` is the object -- which it does in long functions that spill
+            // `this` to the stack and reload it, such as `0x004a8c40`, where `ebx` holds the
+            // object but some path redefines it. Dropping these lost four `+2` accesses including
+            // the only *read* of that field in the binary, so they are kept and labelled.
+            let source_is_object_field = loads_cells_field
+                && !source_is_cell_field
+                && instruction.memory_base() != Register::None;
             let carried = (instruction.op1_kind() == OpKind::Register)
                 .then(|| {
                     state
@@ -1057,25 +1499,52 @@ fn step(
                         .copied()
                 })
                 .flatten();
-            let lane = cell_lane(instruction, &state.cell_registers, &state.cell_pointers);
+            let lane = cell_lane(
+                instruction,
+                &state.cell_registers,
+                &state.field_registers,
+                &state.cell_pointers,
+            );
             forget(destination, state);
             let destination = destination.full_register32();
             if source_is_this || source_is_object {
                 state.this_registers.insert(destination);
             } else if source_is_cell_field {
                 state.cell_registers.insert(destination);
+            } else if source_is_object_field {
+                state.field_registers.insert(destination);
             } else if let Some(base) = carried {
                 state.cell_pointers.insert(destination, base);
-            } else if let Some((lane, width)) = lane {
+            } else if let LaneClass::Lane { lane, width, .. } = lane {
                 state.loaded = Some((destination, lane, width));
             }
         }
         Mnemonic::Movsx | Mnemonic::Movzx if instruction.op0_kind() == OpKind::Register => {
             let destination = instruction.op0_register();
-            let lane = cell_lane(instruction, &state.cell_registers, &state.cell_pointers);
+            let lane = cell_lane(
+                instruction,
+                &state.cell_registers,
+                &state.field_registers,
+                &state.cell_pointers,
+            );
             forget(destination, state);
-            if let Some((lane, width)) = lane {
+            if let LaneClass::Lane { lane, width, .. } = lane {
                 state.loaded = Some((destination.full_register32(), lane, width));
+            }
+        }
+        Mnemonic::Call => {
+            // A call clobbers the volatile registers, so every taint on them is dropped. Doing
+            // this at all is new: an earlier version left them alone, which is unsound in the
+            // permissive direction.
+            for volatile in [Register::EAX, Register::ECX, Register::EDX] {
+                forget(volatile, state);
+            }
+            // ...and a call to the accessor then *defines* `eax` as the map object. This is the
+            // third route to the object, and the one that reaches the most code.
+            if instruction.op0_kind() == OpKind::NearBranch32
+                && instruction.near_branch32() == MAP_OBJECT_ACCESSOR
+            {
+                state.this_registers.insert(Register::EAX);
             }
         }
         Mnemonic::Test | Mnemonic::Cmp | Mnemonic::Push => {
@@ -1096,44 +1565,112 @@ fn forget(register: Register, state: &mut TaintState) {
     let full = register.full_register32();
     state.this_registers.remove(&full);
     state.cell_registers.remove(&full);
+    state.field_registers.remove(&full);
     state.cell_pointers.remove(&full);
 }
 
-/// The cell lane a memory operand names, and its width, if it names one.
+/// What a memory operand turned out to be, relative to the cell grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaneClass {
+    /// Not addressed through anything this analysis has tainted.
+    Elsewhere,
+    /// Byte offset within the eight-byte cell, the access width, and how it was addressed.
+    Lane {
+        lane: u64,
+        width: u64,
+        addressing: &'static str,
+        /// `this` when the base register was proven to hold the map object on every path reaching
+        /// the instruction; `field-0x54` when it was only loaded from some register's `+0x54`
+        /// inside a known map-object method.
+        basis: &'static str,
+    },
+    /// Addressed through a tainted register, but the lane could not be decided. **These are the
+    /// blind spot.** They are counted and printed, because the first version of this survey
+    /// silently returned `Elsewhere` for a whole addressing form the engine uses constantly, and a
+    /// negative result over an incomplete set reads exactly like a negative result over a complete
+    /// one.
+    Unclassified,
+}
+
+/// The cell lane a memory operand names.
+///
+/// Two addressing forms reach a cell and both must be accepted:
+///
+/// - `[cell_array + index*8 + disp]`, where the index is a cell number. The lane is `disp mod 8`.
+/// - `[cell_array + offset + disp]` with **scale 1**, where the register already holds
+///   `cell_number * 8`. The engine uses this constantly -- `movsx ecx, word [eax+esi+2]` at
+///   `0x004a938e` is one, and `resetvisibility`'s own second perimeter write at `0x004a9178` is
+///   another. An earlier version of this program required scale 8 and so dropped every one of
+///   them, including a write inside its own anchor.
+///
+/// The scale-1 form carries an assumption the scale-8 form does not: that the register holds a
+/// multiple of the eight-byte stride. Nothing here proves that, so those sites are reported under a
+/// distinct `addressing` value rather than being mixed in. A `[cell_array + index*4]` would look
+/// identical and would be misreported -- which is why the distinction is printed and not collapsed.
 fn cell_lane(
     instruction: &Instruction,
     cell_registers: &BTreeSet<Register>,
+    field_registers: &BTreeSet<Register>,
     cell_pointers: &BTreeMap<Register, u64>,
-) -> Option<(u64, u64)> {
-    let has_memory = (0..instruction.op_count()).any(|operand| {
-        matches!(
-            instruction.op_kind(operand),
-            OpKind::Memory
-        )
-    });
-    if !has_memory {
-        return None;
+) -> LaneClass {
+    // `lea` names a cell address but accesses no cell byte, and has no memory size at all. The
+    // taint propagation consumes it; counting it here would report every address computation as an
+    // undecodable access.
+    if instruction.mnemonic() == Mnemonic::Lea {
+        return LaneClass::Elsewhere;
     }
+    let has_memory = (0..instruction.op_count())
+        .any(|operand| instruction.op_kind(operand) == OpKind::Memory);
+    if !has_memory {
+        return LaneClass::Elsewhere;
+    }
+    let base = instruction.memory_base();
+    let index = instruction.memory_index();
+    let scale = instruction.memory_index_scale();
     // Displacements like `-8` and `-6` appear where the index was pre-incremented; the lane is the
     // displacement modulo the cell stride either way.
     let displacement = instruction.memory_displacement64() as i64;
-    let lane = if instruction.memory_index_scale() == 8
-        && cell_registers.contains(&instruction.memory_base())
-    {
-        displacement.rem_euclid(8) as u64
-    } else if let Some(base) = cell_pointers.get(&instruction.memory_base()) {
-        if instruction.memory_index() != Register::None {
-            return None;
-        }
-        (*base as i64 + displacement).rem_euclid(8) as u64
+
+    let proven_base = cell_registers.contains(&base);
+    let proven_index = cell_registers.contains(&index);
+    let tainted_base = proven_base || field_registers.contains(&base);
+    let tainted_index = proven_index || field_registers.contains(&index);
+    let pointer_base = cell_pointers.get(&base).copied();
+    let basis = if proven_base || proven_index {
+        "this"
     } else {
-        return None;
+        "field-0x54"
     };
+
+    let (lane, addressing) = if scale == 8 && tainted_base {
+        (displacement.rem_euclid(8) as u64, "index*8")
+    } else if scale == 1 && (tainted_base || tainted_index) {
+        // Either register may be the array: `[eax+esi+2]` and `[edx+ecx+2]` both occur, with the
+        // array in either position.
+        (displacement.rem_euclid(8) as u64, "byte-offset")
+    } else if let Some(pointer) = pointer_base {
+        if index != Register::None {
+            return LaneClass::Unclassified;
+        }
+        ((pointer as i64 + displacement).rem_euclid(8) as u64, "cell-pointer")
+    } else if tainted_base || tainted_index {
+        // Reached through the cell array but in a shape this does not decode -- a scale of 2 or 4,
+        // or an eight-byte scale on the index rather than the base.
+        return LaneClass::Unclassified;
+    } else {
+        return LaneClass::Elsewhere;
+    };
+
     let width = instruction.memory_size().size() as u64;
     if width == 0 || width > 8 {
-        return None;
+        return LaneClass::Unclassified;
     }
-    Some((lane, width))
+    LaneClass::Lane {
+        lane,
+        width,
+        addressing,
+        basis,
+    }
 }
 
 /// The bits of the whole cell an instruction with an immediate names.
@@ -1202,24 +1739,60 @@ fn lane_access(info: &mut InstructionInfoFactory, instruction: &Instruction) -> 
     }
 }
 
-/// How many memory operands in the whole image use an eight-byte index scale, per lane.
+/// How many calls inside the surveyed methods go through a register or memory operand.
 ///
-/// This is deliberately **unfiltered**: it counts every eight-byte-strided array in the binary, not
-/// just the cell grid, and a linear decode of a whole section misaligns on embedded data. It is a
-/// scope figure, not evidence. Its job is to make it obvious when the filtered survey has collapsed
-/// to a handful of sites because the analysis stopped early rather than because the engine is
-/// quiet -- the failure mode where an empty result gets read as a clean one.
-fn unfiltered_lane_census(image: &PeImage<'_>) -> BTreeMap<u64, usize> {
-    let mut census: BTreeMap<u64, usize> = BTreeMap::new();
-    let Ok(instructions) = disassemble_section(image) else {
-        return census;
-    };
-    for instruction in &instructions {
-        if instruction.memory_index_scale() != 8 || instruction.memory_base() == Register::None {
+/// Every one is a method this survey did not follow. The figure is the size of the hole in the
+/// negative results, reported rather than described.
+fn indirect_call_sites(image: &PeImage<'_>, methods: &BTreeSet<u32>) -> usize {
+    let mut seen: BTreeSet<u32> = BTreeSet::new();
+    for method in methods {
+        let Ok(instructions) = disassemble(image, *method, 1200) else {
             continue;
+        };
+        for instruction in &instructions {
+            if instruction.mnemonic() == Mnemonic::Call
+                && instruction.op0_kind() != OpKind::NearBranch32
+            {
+                seen.insert(instruction.ip() as u32);
+            }
         }
-        let lane = (instruction.memory_displacement64() as i64).rem_euclid(8) as u64;
-        *census.entry(lane).or_default() += 1;
+    }
+    seen.len()
+}
+
+/// How many eight-byte-strided memory operands the surveyed methods contain, per lane, regardless
+/// of whether the base was tainted.
+///
+/// **This is the scope denominator, and it is computed from the same per-function decodes the
+/// survey itself uses** -- not from a linear decode of the whole `.text`. An earlier version took
+/// the figure from a whole-section linear disassembly, which drifts out of phase on embedded jump
+/// tables; quoting a deliberately misaligned decode as the denominator of a negative result was
+/// wrong in the same direction as the result it was supposed to qualify.
+///
+/// It is still not evidence. Several unrelated eight-byte arrays live in these functions, the map
+/// object's own second array at `+0x64` among them. Its job is to make it obvious when the
+/// filtered survey has collapsed because the analysis stopped early rather than because the engine
+/// is quiet. [`LaneClass::Unclassified`] is the sharper instrument for that; this is the blunt one.
+fn surveyed_lane_census(image: &PeImage<'_>, methods: &BTreeSet<u32>) -> BTreeMap<u64, usize> {
+    let mut census: BTreeMap<u64, usize> = BTreeMap::new();
+    let mut seen: BTreeSet<u32> = BTreeSet::new();
+    for method in methods {
+        let Ok(instructions) = disassemble(image, *method, 1200) else {
+            continue;
+        };
+        for instruction in &instructions {
+            if instruction.memory_index_scale() != 8
+                || instruction.memory_base() == Register::None
+                || instruction.mnemonic() == Mnemonic::Lea
+            {
+                continue;
+            }
+            if !seen.insert(instruction.ip() as u32) {
+                continue;
+            }
+            let lane = (instruction.memory_displacement64() as i64).rem_euclid(8) as u64;
+            *census.entry(lane).or_default() += 1;
+        }
     }
     census
 }
@@ -1285,25 +1858,6 @@ fn disassemble_window(
         DecoderOptions::NONE,
     );
     Ok(decoder.iter().take(count).collect())
-}
-
-/// Decode every executable section linearly. Linear decoding of a whole section misaligns on data
-/// embedded in code, which is why this feeds only the call-site scan and never a field reading.
-fn disassemble_section(image: &PeImage<'_>) -> Result<Vec<Instruction>, String> {
-    let mut instructions = Vec::new();
-    for (start, length) in image.executable_ranges() {
-        let offset = image
-            .file_offset(start)
-            .ok_or_else(|| format!("{start:#010x} is not mapped"))?;
-        let end = offset + length as usize;
-        let slice = image
-            .bytes()
-            .get(offset..end.min(image.bytes().len()))
-            .ok_or_else(|| format!("section at {start:#010x} is truncated"))?;
-        let mut decoder = Decoder::with_ip(32, slice, u64::from(start), DecoderOptions::NONE);
-        instructions.extend(decoder.iter());
-    }
-    Ok(instructions)
 }
 
 fn is_immediate(kind: OpKind) -> bool {

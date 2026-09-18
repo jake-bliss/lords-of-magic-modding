@@ -19,7 +19,15 @@ const PLACED_SPRITE_HEAD_SIZE: usize = 32;
 /// The `u32` record count that leads every trailing section.
 const PLACED_SPRITE_COUNT_BYTES: usize = 4;
 
-/// Bit `0x00800000` of a cell tag. Its meaning is **Unknown**.
+/// Mask of the cell's second 16-bit field: bits `16..32` of the first word.
+///
+/// **Observed in a local binary, 2026-09-17.** The engine treats the cell's first word as two
+/// `u16`s, and this is the upper one. A writer that sets the tile slot must preserve **all** of it,
+/// not one bit of it. See [`CELL_TAG_HIGH_FLAG`] for what the corpus puts in it and
+/// [`MapCell::tile_index`] for the reading that establishes the split.
+pub const CELL_TAG_UPPER_FIELD: u32 = 0xffff_0000;
+
+/// The value `0x0080` of the cell's second 16-bit field, i.e. `0x00800000` of the whole word.
 ///
 /// **Refuted in gameplay, 2026-09-17.** This constant used to be called
 /// `CELL_TAG_FORCED_TEXTURE`, on the corpus reasoning that the bit appears only in `.smp` files
@@ -58,8 +66,14 @@ const PLACED_SPRITE_COUNT_BYTES: usize = 4;
 /// A writer must therefore treat this bit as **cosmetic**: preserving it costs nothing and loses
 /// nothing, and setting it achieves nothing the engine will keep.
 ///
-/// It is still masked out of [`MapCell::tile_index`], which is independent of what it means: with
-/// the mask every corpus cell indexes a tile in `0..623`, and without it the flagged cells do not.
+/// **Corrected, 2026-09-17: this is not a bit of the tile field, and masking it alone was wrong.**
+/// An earlier version of this comment said the constant "is still masked out of
+/// `MapCell::tile_index`", on the reasoning that with the mask every corpus cell indexes a tile in
+/// `0..623` and without it the flagged cells do not. That reasoning reached the right answer on the
+/// corpus for the wrong reason. The engine reads the tile slot as the low `u16`
+/// ([`MapCell::tile_index`]) and this value lives in the upper one, so the correct mask is
+/// [`CELL_TAG_UPPER_FIELD`]. The two agree on every shipped cell only because `0x00800000` is the
+/// only bit above 15 any of them sets.
 pub const CELL_TAG_HIGH_FLAG: u32 = 0x0080_0000;
 
 /// One engine terrain type: the tile slot `setterrain` paints with, and its `gs\maplib.gs` names.
@@ -201,11 +215,17 @@ impl MapCell {
 
     /// The tile-atlas slot this cell paints: the **low sixteen bits** of the tag.
     ///
-    /// **Observed in a local binary, 2026-09-17.** The engine never reads a cell's first word as a
-    /// dword. Every read of it in `lomse.exe` is a sixteen-bit one -- `movsx eax, word [cell]` at
-    /// `0x004a5261` (the worker behind `getterrain`), `0x004a4c3d`, `0x004a56d7`, `0x004a5cea`,
-    /// `0x004a5dce`, `0x004a5e00`, `0x004a5efe` and `0x004a6388` -- and every write of it is
+    /// **Observed in a local binary, 2026-09-17.** Every *interpreting* read of the cell's first
+    /// word in `lomse.exe` is a sixteen-bit one -- `movsx eax, word [cell]` at `0x004a5261` (the
+    /// worker behind `getterrain`), `0x004a4c3d`, `0x004a56d7`, `0x004a5cea`, `0x004a5dce`,
+    /// `0x004a5e00`, `0x004a5efe`, `0x004a6388` and `0x004a9671` -- and every write of it is
     /// `mov [cell], cx` (`0x004a5e08`, `0x004a5f06`, and `0x004a50da` when the grid is cleared).
+    ///
+    /// **Corrected, 2026-09-17: "never as a dword" was too strong.** The cell is copied whole at
+    /// `0x004a9660`/`0x004a9666`, a pair of dword moves into a second array, and that access does
+    /// exist. It decodes nothing -- the very next thing that function does is re-read the same
+    /// cell's low word with `movsx eax, word [edx+eax]` at `0x004a9671` and bounds-check it -- so
+    /// the two-field conclusion is unaffected. The universal sentence was not.
     /// The value goes straight into a bounds-checked tileset lookup at `0x00508f10`, which
     /// compares it against the tileset's tile count and answers `-1` when it is negative or past
     /// the end. So the field is a signed sixteen-bit tile index and the upper half of the word is
@@ -2206,27 +2226,32 @@ impl MapAsset {
     }
 }
 
-/// Reject a tile index that no corpus cell could hold.
+/// Reject a tile index larger than any corpus cell holds.
 ///
 /// The tileset's own capacity is deliberately *not* checked -- `tilesb01.til` declares 624 slots,
-/// but that is one tileset's answer rather than the format's, and the active `.til` decides. What
-/// is checked is the **tag word's** layout: bits `10..22` are zero across all 1,258,496 corpus
-/// cells, so an index of 1024 or more is outside every observed shape, and `0x00800000` is a
-/// separate flag whose meaning is Unknown. A fat-fingered `3920` for `392` is the realistic input.
+/// but that is one tileset's answer rather than the format's, and the active `.til` decides.
+///
+/// **Corrected, 2026-09-17: the limit is a corpus guard, not a field width.** This used to justify
+/// itself by the tag word's layout -- "bits `10..22` are unused, so an index of 1024 or more is
+/// outside every observed shape". That model is retired: the engine's tile field is the whole low
+/// `u16` and it is signed, so the format can express `0..=32767` and the only thing stopping it is
+/// the tileset. The `1024` cap stays because it is a good conservative guard against a
+/// fat-fingered `3920` for `392`, which is the realistic input; what changed is that it is no
+/// longer claimed to be the field's width.
 fn check_tile_index(tile_index: u32) -> Result<(), MapError> {
     if tile_index >= TILE_INDEX_LIMIT {
         return Err(MapError::new(format!(
-            "tile index {tile_index} is outside 0..{TILE_INDEX_LIMIT}; corpus tag bits 10..22 are \
-             unused, so no observed cell holds an index this large"
+            "tile index {tile_index} is outside 0..{TILE_INDEX_LIMIT}; no shipped map holds an \
+             index this large, and the largest tileset declares 624 slots"
         )));
     }
     Ok(())
 }
 
-/// One past the largest tile index the corpus tag layout can express.
+/// One past the largest tile index this project will write.
 ///
-/// Corpus tag bits `10..22` are zero in every one of the 1,258,496 cells, so the tile field is the
-/// low ten bits.
+/// A conservative guard, not a field width: see [`check_tile_index`]. Every one of the 1,258,496
+/// corpus cells is below it, and the engine's field could hold far more.
 pub const TILE_INDEX_LIMIT: u32 = 1 << 10;
 
 impl MapAsset {
@@ -2267,18 +2292,22 @@ impl MapAsset {
     /// project has **not** measured which tiles it blends in, so that operation is deliberately
     /// not offered rather than approximated. See `docs/map-format.md`.
     ///
-    /// Bit `0x00800000` of the existing tag is **preserved**, and that is now the
-    /// measured-correct choice rather than only the conservative one. `forcetexture` *does* set the
-    /// bit -- a `clearmap` save carried it on all 4,096 cells -- and the renderer path clears it.
-    /// Sixteen cells handed to the engine with the bit already set came back cleared, but through a
-    /// save that also rebuilt the mesh, so which step cleared them is not separated. See
-    /// [`CELL_TAG_HIGH_FLAG`]. Preserving a bit whose lifetime this project does not control is the
-    /// only option that cannot destroy data.
+    /// **The cell's second 16-bit field is preserved in full**, which is what the engine does.
+    /// `forcetexture`'s worker at `0x004a5ed0` writes the slot with `mov [eax],cx` at `0x004a5f06`
+    /// -- a sixteen-bit store that cannot touch the upper field at all. So preserving
+    /// [`CELL_TAG_UPPER_FIELD`] is not a conservative choice here; it is the measured one.
+    ///
+    /// **Corrected, 2026-09-17.** This used to preserve [`CELL_TAG_HIGH_FLAG`] alone and argue the
+    /// case one bit at a time, which silently zeroed the rest of a field the engine reads as a
+    /// scalar. It was latent rather than live: across all 353 parseable shipped maps and 1,040,384
+    /// cells the upper field takes exactly two values, `0x0000` and `0x0080`, so no shipped map
+    /// loses anything either way. Fixed regardless, per this file's own rule that preserving what
+    /// it does not understand costs nothing.
     pub fn set_tile(&mut self, x: u32, y: u32, tile_index: u32) -> Result<(), MapError> {
         check_tile_index(tile_index)?;
         let index = self.cell_index_checked(x, y)?;
         let cell = &mut self.cells[index];
-        cell.tag = (cell.tag & CELL_TAG_HIGH_FLAG) | tile_index;
+        cell.tag = (cell.tag & CELL_TAG_UPPER_FIELD) | tile_index;
         Ok(())
     }
 
@@ -2301,7 +2330,7 @@ impl MapAsset {
         })?;
         check_tile_index(tile_index)?;
         for cell in &mut self.cells {
-            cell.tag = (cell.tag & CELL_TAG_HIGH_FLAG) | tile_index;
+            cell.tag = (cell.tag & CELL_TAG_UPPER_FIELD) | tile_index;
         }
         Ok(())
     }
@@ -2842,6 +2871,45 @@ mod tests {
                 ),
             }
         }
+    }
+
+    #[test]
+    fn setting_a_tile_preserves_the_whole_upper_sixteen_bit_field() {
+        // Observed in a local binary, 2026-09-17: `forcetexture`'s worker writes the slot with
+        // `mov [eax],cx` at 0x004a5f06, a sixteen-bit store that cannot reach the upper field.
+        //
+        // The old writer masked with CELL_TAG_HIGH_FLAG, keeping one bit of that field and zeroing
+        // the other fifteen. `0x0080` is the only value the corpus puts there, so no shipped map
+        // distinguishes the rules; this asserts the rule instead, with a value the corpus does not
+        // contain.
+        let upper = 0x1234_u32 << 16;
+        let mut map = map_with_one_cell_tag(upper | 111);
+        map.set_tile(0, 0, 392).expect("in bounds");
+        assert_eq!(map.cells[0].tag, upper | 392);
+        assert_eq!(map.cells[0].tile_index(), 392);
+
+        // `fill_terrain` is the same write over every cell and had the same bug.
+        let mut filled = map_with_one_cell_tag(upper | 111);
+        filled.fill_terrain(1).expect("water is a terrain type");
+        assert_eq!(
+            filled.cells[0].tag & super::CELL_TAG_UPPER_FIELD,
+            upper,
+            "fill_terrain dropped the upper field"
+        );
+    }
+
+    /// A one-cell map whose single cell carries a chosen tag, built through the parser so the
+    /// fixture cannot disagree with the reader about the layout.
+    fn map_with_one_cell_tag(tag: u32) -> MapAsset {
+        let mut source = Vec::new();
+        source.extend_from_slice(&super::GENERATED_HEADER_WORD.to_le_bytes());
+        source.extend_from_slice(&1_u32.to_le_bytes());
+        source.extend_from_slice(&1_u32.to_le_bytes());
+        source.extend_from_slice(&8_u32.to_le_bytes());
+        source.extend_from_slice(&tag.to_le_bytes());
+        source.extend_from_slice(&0_u32.to_le_bytes());
+        source.extend_from_slice(&0_u32.to_le_bytes());
+        MapAsset::parse(&source).expect("a one-cell map parses")
     }
 
     #[test]

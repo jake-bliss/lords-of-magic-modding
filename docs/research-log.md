@@ -3511,3 +3511,174 @@ another costume.
 of phase on the first embedded jump table and never recovers. Searching the raw bytes for the
 five-byte `mov ecx, imm32` encoding and decoding forward from each hit is what made
 `forcetexture`'s and `getterrain`'s workers visible.
+
+### 2026-09-17, same day — cross-review of the above, and what it overturned
+
+Claude and Codex both reviewed the entry above independently. Every *positive* binary fact survived
+byte for byte: the `shl ecx,6` block sizing, the 8-byte stride, the signed bounds check at
+`0x00508f10`, `fld dword [ecx+eax*8+4]`, the `cmp eax,9`/`ja`/`jmp dword [eax*4+0x4f73b8]` dispatch,
+and the section-boundary reinterpretation at `0x00485617`. The *negatives* did not, and neither did
+the writer.
+
+**The negatives were negatives over an incomplete set — three separate ways.**
+
+1. **`cell_lane` required an eight-byte index scale.** The engine constantly uses the scale-1 form
+   `[array + byte_offset_register + disp]`, where the register already holds `cell * 8`. Every one
+   of those was dropped, *including a write inside the survey's own anchor*:
+   `resetvisibility`'s second perimeter write at `0x004a9178`. Also dropped: reads `0x004a9025`,
+   `0x004a9048`, `0x004a938e` and writes `0x004a9036`, `0x004a9055`, `0x004a93a6`.
+2. **Method discovery keyed only on `mov ecx, 0x005ae958`.** But the map object *is*
+   `scenario + 0x482c` — my own claim 7 — and 28 sites reach it as `lea ecx, [reg + 0x482c]`, which
+   mentions `0x005ae958` nowhere. Nine methods were invisible, one of which contains a plain
+   scale-8 `+2` write the existing filter would have caught. Worth recording: the coordinator
+   probed for `mov ecx, [reg+0x482c]`, found zero, and reported that as evidence the coverage was
+   fine. The probe was structurally incapable of finding the `lea` form. That is the third instance
+   on this branch of a measurement that could not fail.
+3. **Neither path follows indirect calls.** The surveyed methods contain 35 indirect call sites.
+   Virtual dispatch is uncovered, and the finding is now scoped to say so.
+
+After fixing 1 and 2 the survey walked 159 methods (was 148) and found 53 cell-lane instructions
+(was 35). **The no-masks result survived.** It then survived twice more — see the next section,
+where two further access routes took it to 70 sites.
+
+`cell_lane` now **counts every operand it reaches through the cell array but cannot decode** and
+prints the total. It reports zero. The point is that the next gap of this kind will be loud.
+
+**Two "never" sentences were false, and both were false in the same way: a true claim about
+*interpreting* accesses written as a universal.**
+
+- "The engine never reads a cell's first word as a dword" — refuted by `0x004a9660`/`0x004a9666`, a
+  two-dword whole-cell copy. It decodes nothing, and the same function re-reads the low word with
+  `movsx` at `0x004a9671` and bounds-checks it, so the two-`u16` conclusion stands. The sentence did
+  not.
+- "`+2` is never read by any of the 148 surveyed methods" — false *inside a method I had walked*.
+  `0x004a938e movsx ecx,word [eax+esi+2]` → `cmp ecx,ebx` → `jle` → `mov [eax],bx`, plus the same
+  shape at `0x004a9025` and `0x004a9048`.
+
+**And the reader's shape is worth more than the miss.** `movsx` plus a signed `cmp`, never a mask:
+the field is a **signed 16-bit scalar**, which *strengthens* the two-field split — a bitfield packed
+beside a tile index would be tested, and this is compared. I had reached "Inferred" for the `+2`
+field's meaning by the wrong route ("nothing reads it"); the label was right and the reasoning was
+not, and the reasoning is now the update shape instead.
+
+**One correction to the review itself.** It described the field as "monotonically raised". The
+direction is the opposite: `cmp ecx,ebx; jle skip` reaches the store only when the stored value is
+strictly *greater* than the candidate, so the stored value is replaced by a smaller one —
+monotonically non-**in**creasing at the two `jle` sites. (`0x004a9025` uses `je` and writes on any
+difference.) It does not change the reviewer's point, which was that the field is a scalar.
+
+**The writer had not moved with the reader.** `set_tile` and `fill_terrain` still wrote
+`(tag & 0x00800000) | tile`, preserving one bit of a field this branch had just redefined as 16 bits
+wide and zeroing the other fifteen. Fixed to `tag & 0xffff0000`, with a test that fails under the
+old mask. Severity, measured rather than asserted: across all 353 parseable shipped maps and
+1,040,384 cells the upper field takes exactly two values, `0x0000` (1,012,936) and `0x0080`
+(27,448). So it was **latent, not live** — no shipped map loses anything either way. Fixed anyway,
+per this file's own standing rule that preserving what it does not understand costs nothing.
+
+**Two smaller ones, both self-inflicted.** The 4,892/4,284 figures I quoted as the *scope
+denominator* of a negative result came from `disassemble_section`, a deliberately misaligned linear
+decode of the whole `.text`. They are withdrawn; the census is now computed from the same
+per-function decodes the survey uses (45/45/7), and `disassemble_section` is deleted. And
+`verify_anchors` hardcoded `RECORD_KIND_COUNT = 10` without reading the `cmp eax,9` operand — the
+one thing that function exists to prevent. It now recovers the bound, the table address and the
+handler set from the dispatch itself, and checks every slot lands in code.
+
+**Four stale passages in files this branch edited** restated the retired 32-bit-tag model: the
+`CELL_TAG_HIGH_FLAG` doc comment, the user-visible `--map-set-tile` error, and two prose passages in
+`map-format.md`. All four now carry the correction rather than the old claim. The `1024` cap stays —
+it is a good guard against a fat-fingered `3920` — but it is no longer claimed to be the field's
+width, because the field is a signed `u16` and the tileset decides the real limit.
+
+### 2026-09-17, later — two more access routes, and `0x00800000` is a saturated scalar
+
+The coordinator inventoried the references the fix above still did not account for and found two
+more ways into the map object. Both were invisible to every pattern the survey had. Verified against
+the bytes before changing anything.
+
+**Route 3: a dedicated accessor with 208 callers.**
+
+```
+004c6fc0  mov eax,5AE958h
+004c6fc5  ret
+```
+
+That is the entire function. Callers do `call 0x004c6fc0`, then use `eax` — or move it to `ecx` and
+call a method. No call site contains the literal `0x005ae958`, so neither the immediate scan nor the
+`lea` scan could see a single one of them. Adding it: **+10 methods and +7 cell sites**, including
+five `+2` readers.
+
+**Route 4: the cell array loaded straight from the global.** `mov ecx, [0x005ae9ac]` —
+`MAP_OBJECT + 0x54` — reaching the grid without touching the object at all. Eleven sites. This is
+where the three `+2` readers the review cited but I could not reproduce actually live:
+`0x004c5cc2`, `0x00517b67`, `0x00519ced`. They were real; my survey was blind to their route, not to
+them. Adding it: **+10 cell sites**.
+
+Final counts: **169 methods**, plus 219 mid-function entry points (208 accessor calls, 11 absolute
+loads), and **70 cell-lane instructions** — double the 35 the first pass reported.
+
+**The no-masks result survived all four widenings: 35 → 53 → 60 → 70 sites, still zero masks.**
+Every one of the 35 recovered instructions is a `movsx`, `mov` or `cmp` with no immediate. That was
+the predicted outcome each time and it was measured each time, which is the only reason it is worth
+anything. The finding's honest scope is now: *no interpreting bitwise-immediate access to a cell lane
+exists among map-object methods reachable without virtual dispatch.* The surveyed methods contain 36
+indirect call sites; vtables remain unexplored and are the next step.
+
+**The real prize was not the negative.** Route 4 led to the arithmetic that reframes `0x00800000`
+entirely:
+
+```
+00519ced  movsx edx,word [ecx+eax*8+2]
+00519cfb  mov eax,80h
+00519d00  sub eax,edx                       ; 128 - field
+00519d05  imul eax,esi
+00519d08  sar eax,7                         ; ... * k / 128
+```
+
+`(0x80 - field) * k >> 7` is a linear interpolation whose denominator **is** `0x80`. The same shape
+is at `0x00517b6f`. And `0x004c5cc7` compares the field against map object `+0x4c` rather than
+against a constant. So the `+2` field is a **level on a 0..128 scale**, and the `0x00800000` this
+project has chased for two days — through "forced texture" (refuted), then "a bit whose meaning is
+unknown" — is that scale **saturated**. It was never a flag. Every reading of it as a bit was
+looking at a maxed-out scalar, which is why the corpus pattern (exactly the perimeter ring of 146
+`.smp` files) looked like a flag: a perimeter at full value.
+
+Eleven readers exist, spread across the binary, and **every single one is a `movsx`**. Not one is a
+mask. That is what makes the two-`u16` split solid rather than merely consistent: a bitfield packed
+beside a tile index would be tested, and this is compared and interpolated.
+
+The meaning is still **Inferred** — a 0..128 level that decreases monotonically, is compared against
+a global threshold and scales a rendering quantity is consistent with fog or light intensity, and
+`resetvisibility` writing it fits. The missing step is the consumer of the array `0x00519d0b` writes
+into. But the label now rests on arithmetic rather than on an operator's name, which is a different
+and much better position than yesterday's.
+
+**One anomaly recorded without explanation.** Three byte stores write computed values into the map
+object's offset `0` — `0x004a82b7`, `0x004a82c5`, `0x004a82f5`, with `and al,0Ch` and `sar eax,8`
+feeding them, inside an operator body that also raises script error `0x0e`. It rules out offset `0`
+being a vtable pointer, and that is all this survey can say about it.
+
+### The lesson this branch actually taught
+
+Four discovery patterns, four blind spots, and **every single failed probe failed by being unable to
+find what it was looking for**:
+
+- A linear `.text` decode drifts out of phase on the first embedded jump table and loses every call
+  site after it.
+- A linear taint walk dies at early-return epilogues it walks through but no path reaches.
+- A search for `mov ecx, [reg+0x482c]` returns nothing because the member is a subobject whose
+  address is taken with `lea` — and that nothing was read as reassurance.
+- A count of "499 of 503 references to `0x005ae958`" cannot see routes 2, 3 or 4, because none of
+  them contains that constant in the form being counted.
+
+In every case the instrument returned a clean-looking result and the conclusion drawn was broader
+than the instrument could support. The countermeasure now in the code is not a better pattern, it is
+a **counter**: `cell_lane` tallies every operand it reaches through the cell array and cannot decode,
+and the survey prints the total. It reads zero today. The point is that the next blind spot of this
+kind arrives as a number instead of as silence.
+
+**Process note.** The "Codex side" of the review of this branch was not Codex — that run produced
+nothing usable and the review was written by a second Claude pass without saying so. The
+cross-model gate is therefore unmet on this work, and the three `+2` read sites that pass cited
+were nonetheless real and correct. Its one substantive error was direction: it described the field
+as monotonically *raised*, where `cmp ecx,ebx; jle` reaches the store only when the stored value is
+strictly greater, so it is lowered. A real Codex pass on the fixed branch is still owed.
