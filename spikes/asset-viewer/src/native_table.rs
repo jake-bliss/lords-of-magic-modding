@@ -138,6 +138,25 @@ impl<'a> PeImage<'a> {
         None
     }
 
+    /// Every executable section, as `(virtual address, size of its file-backed bytes)`.
+    ///
+    /// The size is the section's **raw** size, not its virtual size. Scans want the bytes that
+    /// exist: a section's virtual tail beyond its raw data is zero-fill the loader supplies and is
+    /// not in this buffer at all. `.text` in `lomse.exe` 3.02 is 0x14B200 raw against 0x14B535
+    /// virtual, and those 309 bytes hold nothing to decode.
+    ///
+    /// Added so callers stop hardcoding the length of the code section.
+    pub fn executable_ranges(&self) -> Vec<(u32, usize)> {
+        self.sections
+            .iter()
+            .filter(|section| section.executable)
+            .filter_map(|section| {
+                let start = self.image_base.checked_add(section.virtual_address)?;
+                Some((start, section.raw_size as usize))
+            })
+            .collect()
+    }
+
     pub fn is_code_address(&self, address: u32) -> bool {
         self.sections.iter().any(|section| {
             if !section.executable {
@@ -385,7 +404,15 @@ mod tests {
     #[test]
     fn recovers_an_operator_table_with_names_and_entry_points() {
         let names = [
-            "pop", "def", "undef", "begin", "end", "exch", "dup", "getarmydata", "setarmydata",
+            "pop",
+            "def",
+            "undef",
+            "begin",
+            "end",
+            "exch",
+            "dup",
+            "getarmydata",
+            "setarmydata",
         ];
         let image = synthetic_image(&names);
         let runs = extract(&image).expect("synthetic image parses");
@@ -397,9 +424,12 @@ mod tests {
         assert_eq!(recovered, names);
         let first = &runs[0].entries[0];
         assert_eq!(first.entry_point, 0x0040_1000);
-        assert!(runs[0].entries.windows(2).all(|pair| {
-            pair[1].record_offset - pair[0].record_offset == RECORD_SIZE
-        }));
+        assert!(
+            runs[0]
+                .entries
+                .windows(2)
+                .all(|pair| { pair[1].record_offset - pair[0].record_offset == RECORD_SIZE })
+        );
     }
 
     #[test]
@@ -425,7 +455,15 @@ mod tests {
     #[test]
     fn classifies_a_name_the_engine_implements_as_an_operator() {
         let image = synthetic_image(&[
-            "pop", "def", "undef", "begin", "end", "exch", "dup", "getarmydata", "setarmydata",
+            "pop",
+            "def",
+            "undef",
+            "begin",
+            "end",
+            "exch",
+            "dup",
+            "getarmydata",
+            "setarmydata",
         ]);
         let index = OperatorIndex::from_image(&image).expect("synthetic image parses");
         assert_eq!(index.len(), 9);
@@ -446,7 +484,15 @@ mod tests {
     #[test]
     fn classifies_screaming_case_names_as_engine_constants() {
         let image = synthetic_image(&[
-            "pop", "def", "undef", "begin", "end", "exch", "dup", "getarmydata", "setarmydata",
+            "pop",
+            "def",
+            "undef",
+            "begin",
+            "end",
+            "exch",
+            "dup",
+            "getarmydata",
+            "setarmydata",
         ]);
         let index = OperatorIndex::from_image(&image).expect("synthetic image parses");
         assert_eq!(index.classify("SD_MANA"), NameClass::EngineConstant);
