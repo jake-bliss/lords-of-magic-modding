@@ -198,6 +198,12 @@ Linux uses `zenity` or `kdialog`, whichever is on `PATH`. Where none is availabl
 neither installed — the endpoint reports itself unavailable and names what to install, and the typed
 field keeps working.
 
+**A dialog program on `PATH` is not a dialog that can be shown.** Running the editor over SSH on a
+headless box is supported, and there `zenity` is very often installed with no display at all — it
+then fails `gtk_init` and exits 1 with empty stdout, which is indistinguishable from a cancel. So
+`DISPLAY` or `WAYLAND_DISPLAY` is required before a Unix flavour is claimed at all. Without that
+check Browse became a button that did nothing, logged nothing, and no amount of retrying fixed.
+
 **What is verified, and what is not.** Only the macOS dialog has been watched by a human. The
 Windows and Linux builders are asserted at the level of the argument list, the environment, and the
 cancel/failure reading; nobody has clicked through either. That is a real limit, so it is worth
@@ -209,9 +215,18 @@ that no test anywhere could look at.
 
 Per-platform details that are easy to get wrong, each pinned by a test:
 
-- **`-STA` is load-bearing on Windows.** WinForms dialogs throw outside a single-threaded apartment,
-  and PowerShell 5 runs `-Command` in an MTA by default, so without it the dialog never draws.
-  `-NoProfile` is there too: a profile that writes to stdout would corrupt the path read back.
+- **`-NoProfile` is the load-bearing Windows flag**: a user profile that writes anything to stdout
+  corrupts the path read back off it. `-STA` is passed too, but as explicit insurance rather than a
+  fix — an earlier version of this note claimed PowerShell 5 runs `-Command` as MTA and that is
+  **wrong**: STA has been the default since PowerShell 3.0 and `-MTA` is the opt-out. Codex caught
+  that; the Claude reviewer did not.
+- **A cancel exits with a reserved code, not 1.** The scripts are ours, so they can say
+  "dismissed" unambiguously — and they must, because the interesting Windows failures exit 1 with
+  stderr only, which is the exact shape of a cancel. `Add-Type` failing on a box with no .NET
+  Desktop runtime is the real case; a lost `-STA` would be another.
+- **The scripts set their output encoding to UTF-8.** `[Console]::Out` otherwise uses the console
+  code page, and Rust decodes as UTF-8 unconditionally, so a user whose path contains non-ASCII
+  characters would get replacement characters and a path that does not exist.
 - **The Windows strings travel as environment variables, never interpolated into the script.** A
   path like `C:\Program Files (x86)\…` is full of PowerShell metacharacters, and needing to type
   such a path is the problem this feature exists to remove — re-introducing it as a quoting bug
@@ -220,7 +235,9 @@ Per-platform details that are easy to get wrong, each pinned by a test:
 - **zenity's `--filename` needs its trailing separator** to mean "start inside this directory"
   rather than "select this directory"; without it the chooser opens one level up.
 - **kdialog needs a positional start directory**; given the flag alone it prints usage and exits
-  non-zero, which would surface to the user as a broken dialog.
+  non-zero, which would surface to the user as a broken dialog. Its positionals are also parsed as
+  options, so anything beginning with `-` is prefixed `./` — otherwise a file named `--help` makes
+  kdialog print help and exit *successfully*, and the help text becomes the chosen path.
 
 **On a Wine-wrapper install the folder dialog may not be able to reach your maps at all, and that
 is macOS's rule rather than ours.** This community mostly runs the game inside a wrapper, so the
@@ -308,8 +325,7 @@ not offered. Ctrl-scroll or a trackpad pinch over the map zooms **to the cursor*
 pans the pane.
 
 Not in this version: creating a map, sprite placement or removal, elevation, flag editing, redo,
-navigating between directories, a native file dialog anywhere but macOS, and opening more than one
-map at a time. **One process holds one
+navigating between directories, and opening more than one map at a time. **One process holds one
 map**, so a second browser tab does not get a second session — it gets a handle the server then
 refuses, which is the loud version of a tab silently painting into a map it is not showing.
 
@@ -328,12 +344,23 @@ live, that a refused open cannot leave the page saying "No map open." over a liv
 the page does with each of the file dialog's three answers. A missing `node` fails that file rather
 than skipping it.
 
-**What no test covers, because it needs a human and a desktop:** that the macOS dialog actually
-appears, that it is usable, that `with showing package contents` really lets a person click into a
-`.app` bundle, and that a real cancel from a real click produces the `-128` this code reads. The
-scripts were confirmed to compile and reach the dialog by running each one under a short kill timer,
-including with a default location inside the user's own bundle; everything past that point is the
-seam's stub.
+**What no test covers, because it needs a human and a desktop:** that a dialog actually appears,
+that it is usable, that `with showing package contents` really lets a person click into a `.app`
+bundle, and that a real cancel from a real click produces the `-128` this code reads. **Only the
+four AppleScript scripts** were confirmed to compile and reach the dialog, by running each under a
+short kill timer, including with a default location inside the user's own bundle. The PowerShell
+scripts have never been executed at all — they are asserted as text, against the variable names and
+exit code the Rust side actually uses, and nothing more.
+
+Two limits are known and **not** closed, both raised in review:
+
+- `Child::kill` is not a process-tree kill. None of `osascript`, `zenity`, `kdialog` or
+  `powershell.exe` launches its dialog as a separate child, but a distribution that shims one into
+  a wrapper script would leave the window up after a timeout — and a descendant still holding the
+  pipes could make the editor block, which is the one outcome there is no recovering from.
+- `kdialog` writes its path with Qt's `toLocal8Bit`, so on a machine whose locale is not UTF-8 a
+  non-ASCII path arrives mis-encoded. The PowerShell scripts set their output encoding to sidestep
+  exactly this; `kdialog` has no equivalent switch and converting would need a dependency.
 
 **Filed, not built: remembering the last-used maps directory between runs.** It would sidestep the
 dialog entirely after one successful List, and it is the obvious next thing. It is not in v1 because

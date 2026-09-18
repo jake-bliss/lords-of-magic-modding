@@ -18,6 +18,7 @@ unable to fail.
 import json
 import re
 import shutil
+import os
 import subprocess
 import unittest
 from pathlib import Path
@@ -28,7 +29,7 @@ APP_JS = ROOT / "spikes" / "asset-viewer" / "src" / "ui" / "app.js"
 STYLE_CSS = ROOT / "spikes" / "asset-viewer" / "src" / "ui" / "style.css"
 
 
-def run_harness():
+def run_harness(platform=None):
     node = shutil.which("node")
     if node is None:
         raise AssertionError(
@@ -36,11 +37,15 @@ def run_harness():
             "Install it (brew install node) rather than skipping: an unrunnable check is not a "
             "check."
         )
+    environment = dict(os.environ)
+    if platform is not None:
+        environment["LOM_TEST_PLATFORM"] = platform
     finished = subprocess.run(
         [node, str(HARNESS), str(APP_JS)],
         capture_output=True,
         text=True,
         check=False,
+        env=environment,
     )
     if finished.returncode != 0:
         raise AssertionError(
@@ -349,3 +354,39 @@ class CanvasSizingContract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlatformHints(unittest.TestCase):
+    """The "type a path instead" instruction, which is a different key on every platform.
+
+    This text said ``Cmd+Shift+G`` unconditionally while macOS was the only platform with a
+    dialog. Now that Browse opens a GTK, Qt or Windows chooser too, an unqualified macOS keystroke
+    is an instruction that does nothing for most of the people reading it -- and the page is the
+    surface that matters, because a note in a README is worth nothing to somebody standing in
+    front of the dialog right now.
+    """
+
+    def test_each_platform_is_told_its_own_way_to_type_a_path(self):
+        expected = {
+            "MacIntel": ("Cmd+Shift+G", False),
+            "Win32": ("File name box", True),
+            "Linux x86_64": ("Ctrl+L", True),
+        }
+        for platform, (key, bundle_note_hidden) in expected.items():
+            with self.subTest(platform=platform):
+                hints = run_harness(platform)["platformHints"]
+                self.assertIn(key, hints["open"])
+                self.assertIn(key, hints["save"])
+                # The `.app` bundle warning is macOS's rule. Left up elsewhere it sends a Linux
+                # user looking for a problem their chooser does not have.
+                self.assertEqual(hints["bundleNoteHidden"], bundle_note_hidden)
+
+    def test_no_platform_is_offered_another_platforms_shortcut(self):
+        for platform, wrong in [
+            ("Win32", "Cmd+Shift+G"),
+            ("Linux x86_64", "Cmd+Shift+G"),
+            ("MacIntel", "Ctrl+L"),
+        ]:
+            with self.subTest(platform=platform):
+                hints = run_harness(platform)["platformHints"]
+                self.assertNotIn(wrong, hints["open"] + hints["save"])

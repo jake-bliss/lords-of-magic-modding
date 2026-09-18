@@ -91,7 +91,7 @@ function makeElement(id) {
 const IDS = [
   "dir-form", "maps-dir", "browse-dir", "map-file", "open-form", "map-summary", "palette", "seed",
   "undo", "zoom", "save-form", "save-name", "browse-save", "map", "overlay", "centre",
-  "cursor-cell", "log",
+  "cursor-cell", "log", "bundle-mac-note", "type-path-open", "type-path-save",
 ];
 const elements = new Map(IDS.map((id) => [id, makeElement(id)]));
 
@@ -170,6 +170,7 @@ const sandbox = {
   JSON,
   Error,
   Promise,
+  navigator: { platform: process.env.LOM_TEST_PLATFORM || "MacIntel" },
   document: {
     getElementById(id) {
       const element = elements.get(id);
@@ -258,6 +259,15 @@ async function cellAt(clientX, clientY) {
   measurements.startupRequests = requests.map((request) => request.url.split("?")[0]);
   measurements.seededDirectory = elements.get("maps-dir").value;
   measurements.pickerOptions = elements.get("map-file").children.map((option) => option.value);
+
+  // The "type a path instead" hint, which is a different key on every platform. `LOM_TEST_PLATFORM`
+  // picks which one the stub `navigator` reports, so all three are checkable from one machine.
+  measurements.platformHints = {
+    platform: sandbox.navigator.platform,
+    open: elements.get("type-path-open").textContent,
+    save: elements.get("type-path-save").textContent,
+    bundleNoteHidden: elements.get("bundle-mac-note").style.display === "none",
+  };
 
   // Open the map the picker offers, through the real submit handler.
   requests.length = 0;
