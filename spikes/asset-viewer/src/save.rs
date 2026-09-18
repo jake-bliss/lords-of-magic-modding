@@ -480,10 +480,37 @@ impl SaveContainer {
         ));
 
         let alarm = self.location(SectionTag::Alarm);
+        let alarm_walk = account_for_alarm_queues(
+            source
+                .get(alarm.payload_offset..alarm.payload_end())
+                .unwrap_or_default(),
+        );
         checks.push(structural(
-            "LS_ALRM: payload holds the 32-byte header",
-            format!("{} vs {}", alarm.payload_len, AlarmSection::HEADER_LEN),
-            alarm.payload_len >= AlarmSection::HEADER_LEN,
+            "LS_ALRM: the six queues account for the payload",
+            match alarm_walk {
+                Some(consumed) => format!("{consumed} vs {}", alarm.payload_len),
+                None => "ran off the end".to_owned(),
+            },
+            alarm_walk == Some(alarm.payload_len),
+        ));
+
+        let region_tail_walk = region_grid.and_then(|grid| {
+            source
+                .get(region.payload_offset + 8 + grid..region.payload_end())
+                .and_then(account_for_region_table)
+        });
+        checks.push(structural(
+            "LS_REGN: the region table accounts for the tail",
+            match (region_tail_walk, region_grid) {
+                (Some(consumed), Some(grid)) => {
+                    format!("{consumed} vs {}", region.payload_len - 8 - grid)
+                }
+                _ => "ran off the end".to_owned(),
+            },
+            match (region_tail_walk, region_grid) {
+                (Some(consumed), Some(grid)) => consumed == region.payload_len - 8 - grid,
+                _ => false,
+            },
         ));
 
         let version_section = self.location(SectionTag::Version);
@@ -1210,28 +1237,514 @@ impl GameSection {
 pub const OBSERVED_GAME_RECORD_SURPLUS: i64 = 71;
 
 // ---------------------------------------------------------------------------
+// A forward-only payload cursor
+// ---------------------------------------------------------------------------
+
+/// A forward-only reader over one section's payload.
+///
+/// The three sections decoded from the writer are **sequential, not addressed**: a count decides
+/// how many records follow and a record's own fields decide its length, so no field in them has a
+/// fixed offset. The engine does not use offsets either -- it `fread`s straight down the struct --
+/// and a reader written against offsets cannot express what these sections are.
+struct Cursor<'a> {
+    tag: SectionTag,
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+/// A bitset as the engine writes it: `u32 bit_count`, then `ceil(bit_count / 32)` words.
+///
+/// **Observed in a local binary, 2026-09-18**, at `0x004BF0A0` (writer) and `0x004BF100` (reader).
+/// The stored count is a count of **bits**, and the word count is derived from it -- `add eax,0x1f`
+/// / `sar eax,5` at `0x004BF0C7`. Bit meanings are **Unknown**, so the words are carried verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bitset {
+    pub bit_count: u32,
+    /// `ceil(bit_count / 32) * 4` bytes. Meaning **Unknown**.
+    pub words_raw: Vec<u8>,
+}
+
+impl Bitset {
+    /// The bytes this bitset occupies on disk: the count word plus its words.
+    pub fn encoded_len(&self) -> usize {
+        4 + self.words_raw.len()
+    }
+}
+
+impl<'a> Cursor<'a> {
+    fn new(tag: SectionTag, bytes: &'a [u8]) -> Self {
+        Self {
+            tag,
+            bytes,
+            offset: 0,
+        }
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.offset)
+    }
+
+    fn take(&mut self, len: usize) -> Result<&'a [u8], SaveError> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or_else(|| SaveError::section(self.tag, "read length overflow"))?;
+        let slice = self.bytes.get(self.offset..end).ok_or_else(|| {
+            SaveError::section(
+                self.tag,
+                format!(
+                    "a {len}-byte field at +{} runs past the {}-byte payload",
+                    self.offset,
+                    self.bytes.len()
+                ),
+            )
+        })?;
+        self.offset = end;
+        Ok(slice)
+    }
+
+    fn u8(&mut self) -> Result<u8, SaveError> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn u32(&mut self) -> Result<u32, SaveError> {
+        let bytes: [u8; 4] = self.take(4)?.try_into().expect("four bytes");
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], SaveError> {
+        Ok(self.take(N)?.try_into().expect("length checked by take"))
+    }
+
+    fn words(&mut self, count: usize) -> Result<Vec<u32>, SaveError> {
+        let len = count
+            .checked_mul(4)
+            .ok_or_else(|| SaveError::section(self.tag, "word count overflow"))?;
+        Ok(self
+            .take(len)?
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("four bytes")))
+            .collect())
+    }
+
+    /// A count read as a `usize`, refusing a value this platform cannot address.
+    fn count(&mut self) -> Result<usize, SaveError> {
+        let raw = self.u32()?;
+        usize::try_from(raw)
+            .map_err(|_| SaveError::section(self.tag, format!("count {raw} does not fit a usize")))
+    }
+
+    /// `u32 bit_count`, then `ceil(bit_count / 32)` words -- the engine's bitset at `0x004BF0A0`.
+    fn bitset(&mut self) -> Result<Bitset, SaveError> {
+        let bit_count = self.u32()?;
+        let words = usize::try_from(bit_count)
+            .map_err(|_| SaveError::section(self.tag, "bitset bit count does not fit a usize"))?
+            .div_ceil(32);
+        let len = words
+            .checked_mul(4)
+            .ok_or_else(|| SaveError::section(self.tag, "bitset byte count overflow"))?;
+        Ok(Bitset {
+            bit_count,
+            words_raw: self.take(len)?.to_vec(),
+        })
+    }
+
+    /// `u32 len` then `len` raw bytes with **no terminator** -- the engine's string writer at
+    /// `0x004D5F20`, which `strlen`s the name and writes the length without the NUL.
+    fn counted_string(&mut self) -> Result<Vec<u8>, SaveError> {
+        let len = self.count()?;
+        Ok(self.take(len)?.to_vec())
+    }
+
+    /// Fail unless the cursor landed exactly on the end of the payload.
+    ///
+    /// This is the whole proof that a model recovered from the writer is right. A model that is
+    /// merely *plausible* stops somewhere inside the payload or runs off the end; only the true
+    /// one consumes it to the byte, and there is nothing to tune -- every length in these sections
+    /// is either a constant in the instruction stream or a count the file itself stores.
+    fn expect_exhausted(&self, what: &str) -> Result<(), SaveError> {
+        if self.remaining() != 0 {
+            return Err(SaveError::section(
+                self.tag,
+                format!(
+                    "{what} consumed {} of {} bytes, leaving {} unaccounted for",
+                    self.offset,
+                    self.bytes.len(),
+                    self.remaining()
+                ),
+            ));
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // LS_PLR_
 // ---------------------------------------------------------------------------
 
-/// Per-player state. **The records are carried raw; only the tail is decoded.**
+/// One entry of a player's unit queue. **Observed in a local binary, 2026-09-18**, `0x0050B800`.
 ///
-/// **Observed in a local binary, 2026-09-18.** The section is `{ u32 slot_index; record }*`
-/// terminated by `u32 -1`, followed by **eight `u32` lord codes** that match
-/// [`MultiplayerSection`]'s slots 0..8 in order. The reader validates `0 <= slot_index < 16`.
+/// Six `u32` written in the engine's field order `+0, +4, +8, +0x1c, +0xc, +0x10` -- the on-disk
+/// order is **not** the struct order, which is why this is six anonymous words and not six named
+/// ones. Meanings **Unknown**.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerQueueEntry {
+    pub words: [u32; 6],
+}
+
+/// One unit inside an army. **Observed in a local binary, 2026-09-18**, `0x00509FC0`: five `u32`
+/// at `+0, +4, +8, +0xc, +0x10`. Meanings **Unknown**.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerUnit {
+    pub words: [u32; 5],
+}
+
+/// One of a player's sixteen armies. **Observed in a local binary, 2026-09-18**, `0x0050A360`
+/// (writer) and `0x0050A230` (reader), called sixteen times at `0x004BCEB3` with a RAM stride of
+/// `0x88`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerArmy {
+    /// `+0, +4, +8`. Meanings **Unknown**.
+    pub leading_words: [u32; 3],
+    /// A linked list at `+0x84`, walked through `+0x14`, counted into the file before its members.
+    pub units: Vec<PlayerUnit>,
+    /// `0x0049F2A0`: `0x28` bytes from `+0`, `0x34` from `+0x28`, then `+0x5c` and `+0x60`.
+    /// A hundred bytes of **Unknown** structure, carried verbatim.
+    pub stats_raw: [u8; PlayerArmy::STATS_LEN],
+    /// `0x004BF0A0` on `+0x7c`.
+    pub flags: Bitset,
+    /// `+0xc` and `+0x14`. Meanings **Unknown**.
+    pub trailing_words: [u32; 2],
+}
+
+impl PlayerArmy {
+    /// The fixed block `0x0049F2A0` writes: `0x28 + 0x34 + 4 + 4`.
+    pub const STATS_LEN: usize = 100;
+
+    /// The bytes this army occupies on disk.
+    pub fn encoded_len(&self) -> usize {
+        3 * 4 + 4 + self.units.len() * 5 * 4 + Self::STATS_LEN + self.flags.encoded_len() + 2 * 4
+    }
+
+    fn parse(cursor: &mut Cursor<'_>) -> Result<Self, SaveError> {
+        let leading_words = [cursor.u32()?, cursor.u32()?, cursor.u32()?];
+        let unit_count = cursor.count()?;
+        let mut units = Vec::with_capacity(unit_count.min(1024));
+        for _ in 0..unit_count {
+            units.push(PlayerUnit {
+                words: [
+                    cursor.u32()?,
+                    cursor.u32()?,
+                    cursor.u32()?,
+                    cursor.u32()?,
+                    cursor.u32()?,
+                ],
+            });
+        }
+        let stats_raw = cursor.array::<{ PlayerArmy::STATS_LEN }>()?;
+        let flags = cursor.bitset()?;
+        let trailing_words = [cursor.u32()?, cursor.u32()?];
+        Ok(Self {
+            leading_words,
+            units,
+            stats_raw,
+            flags,
+            trailing_words,
+        })
+    }
+}
+
+/// A player's roster block. **Observed in a local binary, 2026-09-18**, `0x0051C6C0` (writer) and
+/// `0x0051C790` (reader).
 ///
-/// The `-1` sentinel sits at exactly `payload_end - 36` in all eight files, which is what makes the
-/// tail parseable from the end regardless of what the records are.
+/// The `entry_count` is genuinely stored and genuinely iterated, and the per-entry writer at
+/// `0x004BD210` is `mov eax,1 / ret 4` -- **it writes nothing**. So the count is on disk and its
+/// members are not, which is why this carries a count with no vector beside it. Inventing a
+/// `Vec<Entry>` of zero-byte entries here would be minting a field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerRoster {
+    /// `+0x68`, `+0x6c`. Meanings **Unknown**.
+    pub leading_words: [u32; 2],
+    /// `+0x74`: how many entries the engine iterated. Each entry writes zero bytes.
+    pub entry_count: u32,
+    /// The writer pushes this as a **literal 22** (`0x0051C735`); the reader takes it from the
+    /// file. It is stored, so it is parsed rather than assumed.
+    pub slot_count: u32,
+    /// `slot_count` words from `+0x10`. Meanings **Unknown**.
+    pub slots: Vec<u32>,
+    /// 64 bytes from `+0x78`. Structure **Unknown**.
+    pub block_raw: [u8; 64],
+}
+
+impl PlayerRoster {
+    /// The slot count the writer emits as a literal. Parsed from the file, never assumed.
+    pub const WRITTEN_SLOT_COUNT: u32 = 22;
+
+    /// The bytes this roster occupies on disk.
+    pub fn encoded_len(&self) -> usize {
+        4 * 4 + self.slots.len() * 4 + self.block_raw.len()
+    }
+
+    fn parse(cursor: &mut Cursor<'_>) -> Result<Self, SaveError> {
+        let leading_words = [cursor.u32()?, cursor.u32()?];
+        let entry_count = cursor.u32()?;
+        let slot_count = cursor.u32()?;
+        let slots = cursor.words(usize::try_from(slot_count).map_err(|_| {
+            SaveError::section(SectionTag::Player, "roster slot count does not fit a usize")
+        })?)?;
+        Ok(Self {
+            leading_words,
+            entry_count,
+            slot_count,
+            slots,
+            block_raw: cursor.array::<64>()?,
+        })
+    }
+}
+
+/// The version ladder inside the `LS_PLR_` record reader.
 ///
-/// **The record size is not established for format version 111.** In the single version-108 file it
-/// is a clean `9 * 6223` with slot indexes `0,1,2,3,4,5,6,7,15` -- 15 being the neutral/unowned
-/// pseudo-player -- and a name at `+2984` within the record. Generalising that to version 111
-/// **failed on four of six files**, and one apparent fit was spurious. The reading is also
-/// confounded: the version-108 file is simultaneously the only turn-1 file, so version and
-/// game-age cannot be separated. No `record_size` field is offered here, because offering one
-/// would be claiming it.
+/// **Observed in a local binary, 2026-09-18.** Eight `cmp dword [0x5AA12C], n / jl` gates in
+/// `0x004BCBD0`. Everything before the first gate is unconditional. The constants are the
+/// engine's, read off the instruction stream:
+///
+/// | gate VA | minimum version | field |
+/// | --- | ---: | --- |
+/// | `0x004BCCDE` | 57 | the fifteen interleaved words |
+/// | `0x004BCD28` | 68 | `+0x3c` |
+/// | -- | always | the `+0x34` bitset |
+/// | `0x004BCD4B` | 76 | the 31-byte name |
+/// | `0x004BCD65` | 86 | `+0x15d8` |
+/// | `0x004BCD82` | 104 | the 3,200-byte block |
+/// | `0x004BCD9F` | 110 | `+0x15b4` and `+0x15b8` |
+/// | `0x004BCDD0` | 111 | `+0x40` |
+///
+/// The writer at `0x004BCE20` has **no gates at all** -- it always writes the full record. So a
+/// save is readable by the build that wrote it and by every later build, and the ladder exists
+/// only to read older files. That asymmetry is why the record must be parsed against `LS_VER_`
+/// and not against its own length.
+pub mod player_record_versions {
+    pub const INTERLEAVED_WORDS: u32 = 57;
+    pub const UNKNOWN_3C: u32 = 68;
+    pub const NAME: u32 = 76;
+    pub const UNKNOWN_15D8: u32 = 86;
+    pub const BLOCK_68: u32 = 104;
+    pub const UNKNOWN_15B4_15B8: u32 = 110;
+    pub const UNKNOWN_40: u32 = 111;
+}
+
+/// One player's saved state. **Observed in a local binary, 2026-09-18**, `0x004BCE20` (writer) and
+/// `0x004BCBD0` (reader).
+///
+/// **There is no record size.** The record is a tree of counted lists -- a queue, sixteen armies
+/// each with its own unit list and its own bit-counted flag set -- so two players in one file
+/// differ in length. Measured across the corpus the same record runs 6,303 to 7,983 bytes.
+///
+/// Fields whose type is `Option` are the version-gated ones; see [`player_record_versions`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerRecord {
+    /// The `u32` that precedes the record body. The reader validates `0 <= slot_index < 16`;
+    /// 15 is the neutral/unowned pseudo-player.
+    pub slot_index: u32,
+    /// `+0x15a8, +0x15ac, +0x15b0`. Meanings **Unknown**.
+    pub leading_words: [u32; 3],
+    /// A linked list at `+0xd24`, walked through `+0x20`, counted into the file before its members.
+    pub queue: Vec<PlayerQueueEntry>,
+    /// Exactly sixteen, always.
+    pub armies: Vec<PlayerArmy>,
+    /// `0x00462FF0` on `+0x15e0`, which writes the single word at `+0x15e4`. Meaning **Unknown**.
+    pub unknown_15e4: u32,
+    pub roster: PlayerRoster,
+    /// Five triples read `[edi-0x14], [edi], [edi+0x14]` with `edi` starting at `+0xcfc` and
+    /// stepping by 4 -- three parallel five-word arrays, interleaved on disk. Meanings **Unknown**.
+    pub interleaved_words: Option<[[u32; 3]; 5]>,
+    /// `+0x3c`. Meaning **Unknown**.
+    pub unknown_3c: Option<u32>,
+    /// `0x004BF0A0` on `+0x34`. Ungated: present at every version.
+    pub flags: Bitset,
+    /// 31 bytes at `+0x44`, NUL-terminated within the field. Use [`PlayerRecord::name`].
+    pub name_raw: Option<[u8; PlayerRecord::NAME_LEN]>,
+    /// `+0x15d8`. Meaning **Unknown**.
+    pub unknown_15d8: Option<u32>,
+    /// 3,200 bytes at `+0x68`. Structure **Unknown**, carried verbatim.
+    pub block_68_raw: Option<Vec<u8>>,
+    /// `+0x15b4`, `+0x15b8`. Meanings **Unknown**.
+    pub unknown_15b4_15b8: Option<[u32; 2]>,
+    /// `+0x40`. Meaning **Unknown**.
+    pub unknown_40: Option<u32>,
+}
+
+impl PlayerRecord {
+    /// The engine writes `0x1f` bytes, so a name of 31 characters has no terminator on disk.
+    pub const NAME_LEN: usize = 31;
+    /// Sixteen army sub-objects per player, `0x004BCEB3`.
+    pub const ARMY_COUNT: usize = 16;
+    /// The fixed block at `+0x68`, `push 0xc80`.
+    pub const BLOCK_68_LEN: usize = 3200;
+
+    /// The name up to its first NUL, or `None` when this version does not store one.
+    pub fn name(&self) -> Option<&[u8]> {
+        self.name_raw.as_ref().map(|field| {
+            let end = field.iter().position(|byte| *byte == 0).unwrap_or(field.len());
+            &field[..end]
+        })
+    }
+
+    pub fn name_lossy(&self) -> Option<String> {
+        self.name()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+    }
+
+    /// The bytes this record's body occupies on disk, excluding its leading slot index.
+    pub fn encoded_len(&self) -> usize {
+        let mut len = 3 * 4 + 4 + self.queue.len() * 6 * 4;
+        len += self
+            .armies
+            .iter()
+            .map(PlayerArmy::encoded_len)
+            .sum::<usize>();
+        len += 4 + self.roster.encoded_len();
+        if self.interleaved_words.is_some() {
+            len += 15 * 4;
+        }
+        if self.unknown_3c.is_some() {
+            len += 4;
+        }
+        len += self.flags.encoded_len();
+        if self.name_raw.is_some() {
+            len += Self::NAME_LEN;
+        }
+        if self.unknown_15d8.is_some() {
+            len += 4;
+        }
+        if let Some(block) = &self.block_68_raw {
+            len += block.len();
+        }
+        if self.unknown_15b4_15b8.is_some() {
+            len += 8;
+        }
+        if self.unknown_40.is_some() {
+            len += 4;
+        }
+        len
+    }
+
+    fn parse(cursor: &mut Cursor<'_>, slot_index: u32, version: u32) -> Result<Self, SaveError> {
+        let leading_words = [cursor.u32()?, cursor.u32()?, cursor.u32()?];
+        let queue_len = cursor.count()?;
+        let mut queue = Vec::with_capacity(queue_len.min(1024));
+        for _ in 0..queue_len {
+            queue.push(PlayerQueueEntry {
+                words: [
+                    cursor.u32()?,
+                    cursor.u32()?,
+                    cursor.u32()?,
+                    cursor.u32()?,
+                    cursor.u32()?,
+                    cursor.u32()?,
+                ],
+            });
+        }
+        let mut armies = Vec::with_capacity(Self::ARMY_COUNT);
+        for _ in 0..Self::ARMY_COUNT {
+            armies.push(PlayerArmy::parse(cursor)?);
+        }
+        let unknown_15e4 = cursor.u32()?;
+        let roster = PlayerRoster::parse(cursor)?;
+
+        let interleaved_words = if version >= player_record_versions::INTERLEAVED_WORDS {
+            let mut triples = [[0_u32; 3]; 5];
+            for triple in &mut triples {
+                *triple = [cursor.u32()?, cursor.u32()?, cursor.u32()?];
+            }
+            Some(triples)
+        } else {
+            None
+        };
+        let unknown_3c = if version >= player_record_versions::UNKNOWN_3C {
+            Some(cursor.u32()?)
+        } else {
+            None
+        };
+        let flags = cursor.bitset()?;
+        let name_raw = if version >= player_record_versions::NAME {
+            Some(cursor.array::<{ PlayerRecord::NAME_LEN }>()?)
+        } else {
+            None
+        };
+        let unknown_15d8 = if version >= player_record_versions::UNKNOWN_15D8 {
+            Some(cursor.u32()?)
+        } else {
+            None
+        };
+        let block_68_raw = if version >= player_record_versions::BLOCK_68 {
+            Some(cursor.take(Self::BLOCK_68_LEN)?.to_vec())
+        } else {
+            None
+        };
+        let unknown_15b4_15b8 = if version >= player_record_versions::UNKNOWN_15B4_15B8 {
+            Some([cursor.u32()?, cursor.u32()?])
+        } else {
+            None
+        };
+        let unknown_40 = if version >= player_record_versions::UNKNOWN_40 {
+            Some(cursor.u32()?)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            slot_index,
+            leading_words,
+            queue,
+            armies,
+            unknown_15e4,
+            roster,
+            interleaved_words,
+            unknown_3c,
+            flags,
+            name_raw,
+            unknown_15d8,
+            block_68_raw,
+            unknown_15b4_15b8,
+            unknown_40,
+        })
+    }
+}
+
+/// Per-player state. **Decoded, 2026-09-18.**
+///
+/// **Observed in a local binary.** The section is `{ u32 slot_index; record }*` terminated by
+/// `u32 -1`, followed by **eight `u32` lord codes** that match [`MultiplayerSection`]'s slots
+/// 0..8 in order (`0x00482E1D` .. `0x00482F33`). The reader validates `0 <= slot_index < 16`.
+///
+/// **Observed in the corpus.** Parsing each record with the model recovered from `0x004BCE20`
+/// lands exactly on the sentinel in **all ten distinct game states** on this machine, with no
+/// slack in any file, and the names it recovers at the version-gated name field are the lords'
+/// (`Merlin`, `Balkoth`, `Amazon Princess`, ...).
+///
+/// **Refuted, 2026-09-18: "the record size is not established for version 111".** The premise was
+/// wrong, not just the answer. There is **no record size at any version** -- records are trees of
+/// counted lists and vary within a single file (6,303 to 7,983 bytes across the corpus). The
+/// version-108 file's clean `9 x 6223` is a coincidence of a scenario in which every player has an
+/// empty queue, sixteen empty armies and a same-sized bitset; it is not a stride. Two things were
+/// therefore being sought that do not exist, which is why "generalising it to version 111 failed
+/// on four of six files".
+///
+/// **Corrected: version and game-age were not in fact confounded here.** The doc recorded that the
+/// only version-108 file is also the only turn-1 file, so the 108/111 difference might have been
+/// game age. The reader's gates settle it without a new sample: version 111 stores three words
+/// (`+0x15b4`, `+0x15b8`, `+0x40`) that 108 does not, gated at `0x004BCD9F` and `0x004BCDD0`, and
+/// 12 bytes per record is exactly the difference the corpus shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerSection {
-    /// Everything before the sentinel: `{ u32 slot_index; record }*`. Layout **Unknown**.
+    /// One per seated player, in file order.
+    pub records: Vec<PlayerRecord>,
+    /// Everything before the sentinel, carried verbatim beside the decode.
     pub records_raw: Vec<u8>,
     /// The `0xFFFFFFFF` terminator, carried so a writer reproduces the value rather than minting
     /// one.
@@ -1244,8 +1757,10 @@ impl PlayerSection {
     /// The tail's width: the sentinel plus eight lord codes.
     pub const TAIL_LEN: usize = 4 + 4 * MultiplayerSection::SEATED_SLOT_COUNT;
     pub const SENTINEL: u32 = u32::MAX;
+    /// The reader's bound on a slot index, `0x004BCE4A`.
+    pub const MAX_SLOT_INDEX: u32 = 16;
 
-    pub fn parse(payload: &[u8]) -> Result<Self, SaveError> {
+    pub fn parse(payload: &[u8], version: &VersionSection) -> Result<Self, SaveError> {
         let tag = SectionTag::Player;
         let sentinel_offset = payload.len().checked_sub(Self::TAIL_LEN).ok_or_else(|| {
             SaveError::section(
@@ -1271,8 +1786,29 @@ impl PlayerSection {
         for (index, code) in lord_codes.iter_mut().enumerate() {
             *code = read_u32(tag, payload, sentinel_offset + 4 + index * 4)?;
         }
+
+        let body = &payload[..sentinel_offset];
+        let mut cursor = Cursor::new(tag, body);
+        let mut records = Vec::new();
+        while cursor.remaining() != 0 {
+            let slot_index = cursor.u32()?;
+            if slot_index >= Self::MAX_SLOT_INDEX {
+                return Err(SaveError::section(
+                    tag,
+                    format!(
+                        "slot index {slot_index} at +{} is outside the reader's 0..{} range",
+                        cursor.offset() - 4,
+                        Self::MAX_SLOT_INDEX
+                    ),
+                ));
+            }
+            records.push(PlayerRecord::parse(&mut cursor, slot_index, version.version)?);
+        }
+        cursor.expect_exhausted("the LS_PLR_ records")?;
+
         Ok(Self {
-            records_raw: payload[..sentinel_offset].to_vec(),
+            records,
+            records_raw: body.to_vec(),
             sentinel,
             lord_codes,
         })
@@ -1283,12 +1819,23 @@ impl PlayerSection {
         self.records_raw.len()
     }
 
-    /// The first record's slot index, the only field of a record this parser can read: it precedes
-    /// the record body, so its position does not depend on the unknown record size.
+    /// The first record's slot index.
     pub fn first_slot_index(&self) -> Option<u32> {
-        self.records_raw
-            .get(..4)
-            .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("four bytes")))
+        self.records.first().map(|record| record.slot_index)
+    }
+
+    /// Every record's on-disk length, recomputed from the decoded content.
+    ///
+    /// Reported as a list rather than a single number on purpose: the point of this section is
+    /// that there is no single number, and an accessor called `record_size` would re-mint the
+    /// claim this module just refuted. The arithmetic is a **second implementation** -- the parse
+    /// walks forward and this one adds sizes up -- so the two can disagree, which is what makes
+    /// the structural check worth running.
+    pub fn record_lengths(&self) -> Vec<usize> {
+        self.records
+            .iter()
+            .map(|record| 4 + record.encoded_len())
+            .collect()
     }
 }
 
@@ -1296,27 +1843,109 @@ impl PlayerSection {
 // LS_REGN
 // ---------------------------------------------------------------------------
 
-/// A fixed six-byte-per-cell region grid, plus a tail nobody has decoded.
+/// One region. **Observed in a local binary, 2026-09-18**, `0x004C5840` (writer) and `0x004C5950`
+/// (reader).
 ///
-/// **Observed in a local binary, 2026-09-18.** `u32 width`, `u32 height`, then `width * height * 6`
-/// bytes, in all eight files with `width == height == 128` and so a 98,304-byte grid. The grid is
-/// fixed; every byte of variability lives in the tail.
+/// ```text
+///   u8  +0x08
+///   u8  +0x09
+///   u8  name_len         strlen(name) + 1, or 0 when the engine's pointer is null
+///   name_len bytes       the name INCLUDING its NUL
+///   u32 +0x10
+///   6 x 64 bytes         +0x18, +0x58, +0x98, +0xd8, +0x118, +0x158
+/// ```
 ///
-/// Observed tail lengths: **8,998** (combat, experience, quickstart), **9,780** (magic, merc,
-/// temple) and **9,389** (both turn-315 files). Its structure is **Unknown**.
+/// So a region is **391 bytes plus its name**, and the name's length byte is a `u8` -- a region
+/// name longer than 254 characters cannot be written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegionRecord {
+    /// `+0x08`, `+0x09`. Meanings **Unknown**. Across the corpus these two always hold the same
+    /// value as each other, and the values are the eight powers of two 1..128.
+    pub bytes_8_9: [u8; 2],
+    /// The name exactly as stored, terminator included. Empty when the engine's pointer was null.
+    pub name_raw: Vec<u8>,
+    /// `+0x10`. Meaning **Unknown**.
+    pub unknown_10: u32,
+    /// Six 64-byte blocks. Structure **Unknown**, carried verbatim.
+    pub blocks_raw: [[u8; RegionRecord::BLOCK_LEN]; RegionRecord::BLOCK_COUNT],
+}
+
+impl RegionRecord {
+    pub const BLOCK_LEN: usize = 64;
+    pub const BLOCK_COUNT: usize = 6;
+    /// Everything but the name: `1 + 1 + 1 + 4 + 6 * 64`.
+    pub const FIXED_LEN: usize = 3 + 4 + Self::BLOCK_COUNT * Self::BLOCK_LEN;
+
+    /// The name up to its NUL.
+    pub fn name(&self) -> &[u8] {
+        let end = self
+            .name_raw
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(self.name_raw.len());
+        &self.name_raw[..end]
+    }
+
+    fn parse(cursor: &mut Cursor<'_>) -> Result<Self, SaveError> {
+        let bytes_8_9 = [cursor.u8()?, cursor.u8()?];
+        let name_len = usize::from(cursor.u8()?);
+        let name_raw = cursor.take(name_len)?.to_vec();
+        let unknown_10 = cursor.u32()?;
+        let mut blocks_raw = [[0_u8; Self::BLOCK_LEN]; Self::BLOCK_COUNT];
+        for block in &mut blocks_raw {
+            *block = cursor.array::<{ RegionRecord::BLOCK_LEN }>()?;
+        }
+        Ok(Self {
+            bytes_8_9,
+            name_raw,
+            unknown_10,
+            blocks_raw,
+        })
+    }
+}
+
+/// The region grid and the region table. **Decoded, 2026-09-18.**
 ///
-/// **Caveat on the no-encryption claim, and it applies to this section only.** The writer at
-/// `0x004C7390` brackets this section's I/O with two unresolved imports, `[0x0054D0D8]` and
-/// `[0x0054D0DC]`. They are most likely a lock/unlock pair. If they turn out to be a transform,
-/// the "no compression, no encryption" finding would need retesting **here** -- not elsewhere,
-/// since the other eight sections are plainly readable in the bytes.
+/// **Observed in a local binary**, `0x004C7390` (writer) and `0x004C7450` (reader):
+///
+/// ```text
+///   u32 width
+///   u32 height
+///   width * height * 6 bytes       the region grid; cell layout Unknown
+///   u32 array_count                [this+0x1b0]
+///   (array_count + 1) records      0x004C5840 each
+/// ```
+///
+/// The trailing `+1` is real and is not an off-by-one: after the counted array at `[this+0x1ac]`
+/// the writer calls the same record writer once more on the object embedded at `[this+0x10]`
+/// (`0x004C742E`). Across the corpus that final record is the only one carrying a name, and the
+/// name is empty -- a one-byte NUL -- which is exactly what a non-null pointer to an empty string
+/// produces.
+///
+/// **Observed in the corpus.** The tail accounts to the byte in **all ten distinct game states**.
+/// The three tail lengths the previous pass could only list -- 8,998 / 9,389 / 9,780 -- are
+/// `4 + n * 391 + 1` for n = 23, 24, 25, and the 391-byte gaps between them are one region each.
+/// Three lengths differing by exactly the fixed record size is what the earlier reading was
+/// looking at without a record size to compare it to.
+///
+/// **Corrected: the `[0x0054D0D8]` / `[0x0054D0DC]` pair is a lock, not a transform.** They bracket
+/// the writer's I/O at `0x004C739D` and `0x004C7438` and take a pointer to `[this+0x1bc]`, an
+/// object field, with no other argument and no return use -- the shape of an
+/// `EnterCriticalSection` / `LeaveCriticalSection` pair and not of a codec, which would need the
+/// buffer and a length. The bytes between them decode without any transform applied, which is the
+/// independent confirmation: a cipher that leaves 391-byte records and readable region structure
+/// in place is not a cipher. The no-encryption finding no longer carries an asterisk here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegionSection {
     pub width: u32,
     pub height: u32,
     /// One six-byte record per cell. Field layout **Unknown**, so the bytes are carried whole.
     pub cells: Vec<[u8; RegionSection::CELL_LEN]>,
-    /// Everything after the grid. Structure **Unknown**.
+    /// The stored count of the region **array**. One more region follows it.
+    pub array_count: u32,
+    /// `array_count + 1` regions: the array, then the embedded one at `[this+0x10]`.
+    pub regions: Vec<RegionRecord>,
+    /// Everything after the grid, carried verbatim beside the decode.
     pub tail_raw: Vec<u8>,
 }
 
@@ -1357,11 +1986,26 @@ impl RegionSection {
             })
             .collect();
 
+        let tail = &payload[grid_end..];
+        let mut cursor = Cursor::new(tag, tail);
+        let array_count = cursor.u32()?;
+        let written = usize::try_from(array_count)
+            .ok()
+            .and_then(|count| count.checked_add(1))
+            .ok_or_else(|| SaveError::section(tag, "region count overflow"))?;
+        let mut regions = Vec::with_capacity(written.min(4096));
+        for _ in 0..written {
+            regions.push(RegionRecord::parse(&mut cursor)?);
+        }
+        cursor.expect_exhausted("the LS_REGN region table")?;
+
         Ok(Self {
             width,
             height,
             cells,
-            tail_raw: payload[grid_end..].to_vec(),
+            array_count,
+            regions,
+            tail_raw: tail.to_vec(),
         })
     }
 
@@ -1372,93 +2016,248 @@ impl RegionSection {
     pub fn tail_len(&self) -> usize {
         self.tail_raw.len()
     }
+
+    /// The tail length the decoded regions account for, recomputed from the records.
+    ///
+    /// A second implementation of the arithmetic, so it can disagree with the parse rather than
+    /// restate it: the parse walks forward and this one adds sizes up.
+    pub fn accounted_tail_len(&self) -> usize {
+        4 + self
+            .regions
+            .iter()
+            .map(|region| RegionRecord::FIXED_LEN + region.name_raw.len())
+            .sum::<usize>()
+    }
 }
 
 // ---------------------------------------------------------------------------
 // LS_ALRM
 // ---------------------------------------------------------------------------
 
-/// Pending GameScript callbacks. **Header decoded, records carried raw.**
+/// One field of an alarm record, in the order the engine writes it.
 ///
-/// **Observed in a local binary, 2026-09-18.** The eight-word header, measured across all eight
-/// files:
+/// **Observed in a local binary, 2026-09-18.** The six queues differ only in this schedule; every
+/// one of them then writes `u32 argument_count`, that many words, and one trailing word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlarmField {
+    /// A plain `u32`.
+    Word,
+    /// `u32 len` then `len` bytes with no terminator -- a GameScript callback name, written by
+    /// `0x004D5F20`.
+    Name,
+}
+
+/// The six alarm queues, in the order the writer emits them.
 ///
-/// | file | header |
-/// | --- | --- |
-/// | combat | `0, 1, 69, 15, 1, 999932, 0, 16` |
-/// | experience | `0, 1, 91, 15, 1, 999910, 0, 16` |
-/// | magic | `0, 1, 3, 15, 1, 999998, 0, 16` |
-/// | merc | `0, 1, 3, 15, 1, 999998, 0, 16` |
-/// | temple | `0, 7, 6, 15, 1, 999995, 0, 16` |
-/// | quickstart | `0, 1, 1, 15, 1, 1000000, 0, 16` |
-/// | lastsave / Merlin I | `0, 1, 315, 15, 1, 999686, 0, 16` |
+/// **They are unnamed.** Nothing in the binary names them, and this module will not invent names
+/// for six queues it can only tell apart by their element writer's address and field schedule.
+/// What each queue is *for* is **Unknown**; what goes in it is decoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlarmQueue {
+    Zero,
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+}
+
+impl AlarmQueue {
+    /// In writer order: `0x00482F77` .. `0x00482FBA`.
+    pub const ALL: [AlarmQueue; 6] = [
+        AlarmQueue::Zero,
+        AlarmQueue::One,
+        AlarmQueue::Two,
+        AlarmQueue::Three,
+        AlarmQueue::Four,
+        AlarmQueue::Five,
+    ];
+
+    /// The element writer's virtual address, which is the evidence for this queue's schedule.
+    pub fn element_writer(self) -> u32 {
+        match self {
+            Self::Zero => 0x0040_B180,
+            Self::One => 0x0040_BBE0,
+            Self::Two => 0x0040_C650,
+            Self::Three => 0x0040_D3B0,
+            Self::Four => 0x0040_DDA0,
+            Self::Five => 0x0040_EC50,
+        }
+    }
+
+    /// The fields the element writer emits before the argument vector.
+    pub fn schedule(self) -> &'static [AlarmField] {
+        use AlarmField::{Name, Word};
+        match self {
+            Self::Zero => &[Word, Word, Word, Word, Name],
+            Self::One => &[Word, Word, Word, Word, Word, Name],
+            Self::Two => &[Name],
+            Self::Three => &[Name, Word, Name],
+            Self::Four => &[Word, Word, Word, Name],
+            Self::Five => &[Word, Word, Word, Word, Name],
+        }
+    }
+}
+
+/// One pending GameScript callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlarmRecord {
+    /// The queue's fixed words, in schedule order. Meanings **Unknown** except for queue
+    /// [`AlarmQueue::One`]'s first two: see [`AlarmSection::turn`].
+    pub words: Vec<u32>,
+    /// The callback names, in schedule order. Every queue writes one; [`AlarmQueue::Three`] writes
+    /// two.
+    pub names: Vec<Vec<u8>>,
+    /// The callback's arguments: a stored count, then that many words.
+    pub arguments: Vec<u32>,
+    /// The word after the arguments. Meaning **Unknown**.
+    pub trailer: u32,
+}
+
+impl AlarmRecord {
+    /// The first name, lossily decoded, for display.
+    pub fn name_lossy(&self) -> String {
+        self.names
+            .first()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default()
+    }
+
+    fn parse(cursor: &mut Cursor<'_>, queue: AlarmQueue) -> Result<Self, SaveError> {
+        let mut words = Vec::new();
+        let mut names = Vec::new();
+        for field in queue.schedule() {
+            match field {
+                AlarmField::Word => words.push(cursor.u32()?),
+                AlarmField::Name => names.push(cursor.counted_string()?),
+            }
+        }
+        let argument_count = cursor.count()?;
+        let arguments = cursor.words(argument_count)?;
+        Ok(Self {
+            words,
+            names,
+            arguments,
+            trailer: cursor.u32()?,
+        })
+    }
+}
+
+/// One alarm queue as stored: a count, then that many records.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlarmQueueContents {
+    pub queue: AlarmQueue,
+    pub records: Vec<AlarmRecord>,
+}
+
+/// Pending GameScript callbacks. **Decoded, 2026-09-18.**
 ///
-/// **The turn sits at index 2, and word 5 is exactly `1000001 - turn`** in all eight. Index 1 is 1
-/// in seven files and 7 in `temple.sav`, so it is left unnamed.
+/// **Observed in a local binary.** `0x00482F77` .. `0x00482FBA` writes **six independent linked
+/// lists**, each as `u32 count` followed by that many records. There is no header.
 ///
-/// **Corrected 2026-09-18.** An earlier reading put the turn at index 1 and called word 5 a
-/// constant 1,000,000. Both are wrong, and the way they went wrong is the lesson: the file that had
-/// been leaned on is `quickstart`, which is at **turn 1**, and the value 1 appears at three separate
-/// indexes in its header. That fixture could not have located the turn field; it agreed with
-/// several readings at once and the wrong one was picked. *A fixture shaped like the corpus cannot
-/// fail on what the corpus hides* -- here, a one-file corpus whose turn number was the same as its
-/// neighbouring constants.
+/// **Refuted, 2026-09-18: the "eight-word header".** The previous reading -- and the `Corrected`
+/// note that replaced an earlier one -- described this section as eight header words followed by
+/// records. There are no header words. What was being read as a header is
+/// `count(queue 0) = 0`, `count(queue 1)`, and then the **first five fields of queue 1's first
+/// record**. The turn genuinely sits at payload word 2 in every file inspected, and it sits there
+/// *because* queue 0 is empty in every file inspected; a save with one queue-0 alarm moves it.
+/// The eighth "header word" -- the constant 16 -- was the length of the string
+/// `monstergenerator`.
 ///
-/// The correction makes the turn reading **stronger**: it now appears three times per file --
-/// `LS_GAME[0]`, `LS_ALRM[2]`, and derived from `LS_ALRM[5]` -- agreeing across all eight.
+/// This is the same failure mode the previous `Corrected` note diagnosed, one level up: the
+/// correction moved the turn from index 1 to index 2 and kept the frame that produced the error.
+/// Indexing into a payload is not a structure.
 ///
-/// Records follow the header and end in `u32 len` + `len` raw bytes of a GameScript callback name:
-/// `monstergenerator` (16), `experience_attack_callback` (26), `village_security_brain` (22),
-/// `engage_special_building_brain` (29), `thief_steal_from_enemy_event`, `dpw_brain`,
-/// `explore_brain`, `antispy_brain`. **The record layout is not determined**: the number of fixed
-/// `u32` fields before the length word varies between records -- 2 in one case, 10 in another -- so
-/// alarm records carry variable argument lists. The count tracks activity: 96 at turn 1, 394 at
-/// turn 69.
+/// **Observed in the corpus.** The six queues account for the payload to the byte in **all ten
+/// distinct game states**, and every name they recover is a GameScript callback name --
+/// `monstergenerator`, `explore_brain`, `experience_attack_callback`, `spy_brain`,
+/// `thief_steal_from_enemy_event`, `engage_special_building_brain`, `unmodify_champion`.
+///
+/// **Refuted: records do not end with their name.** The name is followed by a stored argument
+/// count, that many words, and a trailing word. The previous reading's observation that "the
+/// number of fixed `u32` fields before the length word varies between records -- 2 in one case, 10
+/// in another" was the argument vector of the *preceding* record being counted as the fixed fields
+/// of the next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlarmSection {
-    pub header: [u32; AlarmSection::HEADER_WORDS],
-    /// Everything after the header. Layout **Unknown**.
-    pub records_raw: Vec<u8>,
+    pub queues: Vec<AlarmQueueContents>,
+    /// The whole payload, carried verbatim beside the decode.
+    pub payload_raw: Vec<u8>,
 }
 
 impl AlarmSection {
-    pub const HEADER_WORDS: usize = 8;
-    pub const HEADER_LEN: usize = 4 * Self::HEADER_WORDS;
-    /// The index of the turn word within the header.
-    pub const TURN_INDEX: usize = 2;
-    /// The index of the word that equals [`COUNTDOWN_BASE`] minus the turn.
-    pub const COUNTDOWN_INDEX: usize = 5;
+    /// Queue [`AlarmQueue::One`] carries the turn in its first record's first word, and
+    /// `COUNTDOWN_BASE - turn` in the fourth.
+    pub const TURN_QUEUE: AlarmQueue = AlarmQueue::One;
+    pub const TURN_WORD: usize = 0;
+    pub const COUNTDOWN_WORD: usize = 3;
 
     pub fn parse(payload: &[u8]) -> Result<Self, SaveError> {
         let tag = SectionTag::Alarm;
-        let mut header = [0_u32; Self::HEADER_WORDS];
-        for (index, word) in header.iter_mut().enumerate() {
-            *word = read_u32(tag, payload, index * 4)?;
+        let mut cursor = Cursor::new(tag, payload);
+        let mut queues = Vec::with_capacity(AlarmQueue::ALL.len());
+        for queue in AlarmQueue::ALL {
+            let count = cursor.count()?;
+            let mut records = Vec::with_capacity(count.min(4096));
+            for _ in 0..count {
+                records.push(AlarmRecord::parse(&mut cursor, queue)?);
+            }
+            queues.push(AlarmQueueContents { queue, records });
         }
+        cursor.expect_exhausted("the LS_ALRM queues")?;
         Ok(Self {
-            header,
-            records_raw: payload[Self::HEADER_LEN..].to_vec(),
+            queues,
+            payload_raw: payload.to_vec(),
         })
     }
 
-    pub fn turn(&self) -> u32 {
-        self.header[Self::TURN_INDEX]
+    /// Queue [`AlarmQueue::One`]'s first record, which is the one that carries the turn.
+    pub fn turn_record(&self) -> Option<&AlarmRecord> {
+        self.queues
+            .iter()
+            .find(|contents| contents.queue == Self::TURN_QUEUE)
+            .and_then(|contents| contents.records.first())
     }
 
-    pub fn countdown(&self) -> u32 {
-        self.header[Self::COUNTDOWN_INDEX]
+    /// The turn, or `None` when the queue that carries it is empty.
+    ///
+    /// `Option` and not a `u32`: nothing in the format requires this queue to be occupied. It is
+    /// occupied in every file inspected here, and that is a corpus regularity, not a requirement.
+    pub fn turn(&self) -> Option<u32> {
+        self.turn_record()
+            .and_then(|record| record.words.get(Self::TURN_WORD).copied())
     }
 
-    /// The turn implied by the countdown word, or `None` if the word is out of range.
+    pub fn countdown(&self) -> Option<u32> {
+        self.turn_record()
+            .and_then(|record| record.words.get(Self::COUNTDOWN_WORD).copied())
+    }
+
+    /// The turn implied by the countdown word.
     pub fn turn_from_countdown(&self) -> Option<u32> {
-        COUNTDOWN_BASE.checked_sub(self.countdown())
+        COUNTDOWN_BASE.checked_sub(self.countdown()?)
+    }
+
+    /// Every record in every queue, in file order.
+    pub fn records(&self) -> impl Iterator<Item = (AlarmQueue, &AlarmRecord)> {
+        self.queues
+            .iter()
+            .flat_map(|contents| contents.records.iter().map(move |r| (contents.queue, r)))
+    }
+
+    pub fn record_count(&self) -> usize {
+        self.queues
+            .iter()
+            .map(|contents| contents.records.len())
+            .sum()
     }
 }
 
 /// The constant the alarm countdown word is measured down from: `countdown == 1000001 - turn`.
 ///
-/// **Observed in a local binary, 2026-09-18**, exact in all eight files. Whether the engine stores
-/// a deadline or a remaining budget is **Unknown**; the name records the arithmetic only.
+/// **Observed in the corpus, 2026-09-18**, exact in all ten distinct game states. Whether the
+/// engine stores a deadline or a remaining budget is **Unknown**; the name records the arithmetic
+/// only.
 pub const COUNTDOWN_BASE: u32 = 1_000_001;
 
 // ---------------------------------------------------------------------------
@@ -1498,7 +2297,10 @@ impl SaveFile {
             sprites: SpriteSection::parse(container.payload(source, SectionTag::Sprites)?)?,
             users: UserSection::parse(container.payload(source, SectionTag::User)?)?,
             game: GameSection::parse(container.payload(source, SectionTag::Game)?)?,
-            players: PlayerSection::parse(container.payload(source, SectionTag::Player)?)?,
+            players: PlayerSection::parse(
+                container.payload(source, SectionTag::Player)?,
+                &version,
+            )?,
             regions: RegionSection::parse(container.payload(source, SectionTag::Region)?)?,
             alarms: AlarmSection::parse(container.payload(source, SectionTag::Alarm)?)?,
             container,
@@ -1508,9 +2310,12 @@ impl SaveFile {
     /// The three independent turn readings, for a caller that wants to show them rather than a
     /// boolean.
     ///
-    /// `(LS_GAME[0], LS_ALRM[2], 1000001 - LS_ALRM[5])`. All three agree in all eight inspected
-    /// files, which is what makes the turn reading **Observed** and not a guess.
-    pub fn turn_readings(&self) -> (u32, u32, Option<u32>) {
+    /// `LS_GAME`'s turn, and the two readings inside `LS_ALRM`'s turn-carrying record.
+    ///
+    /// The alarm readings are `Option` because the queue that carries them is not required to be
+    /// occupied. It is occupied in every file inspected here; that is a corpus regularity and this
+    /// signature refuses to promote it to a guarantee.
+    pub fn turn_readings(&self) -> (u32, Option<u32>, Option<u32>) {
         (
             self.game.turn,
             self.alarms.turn(),
@@ -1520,7 +2325,7 @@ impl SaveFile {
 
     pub fn turn_agreement(&self) -> bool {
         let (game, alarm, countdown) = self.turn_readings();
-        game == alarm && countdown == Some(game)
+        alarm == Some(game) && countdown == Some(game)
     }
 
     /// Every invariant this module knows how to check, each carrying its **measured value**.
@@ -1604,27 +2409,133 @@ impl SaveFile {
         ));
 
         let (game_turn, alarm_turn, countdown_turn) = self.turn_readings();
+        let describe = |turn: Option<u32>| {
+            turn.map(|turn| turn.to_string())
+                .unwrap_or_else(|| "absent".to_owned())
+        };
         checks.push(regularity(
-            "turn: LS_GAME[0] == LS_ALRM[2] == 1000001 - LS_ALRM[5]",
+            "turn: LS_GAME agrees with the LS_ALRM turn record and its countdown",
             format!(
-                "{game_turn} / {alarm_turn} / {}",
-                countdown_turn
-                    .map(|turn| turn.to_string())
-                    .unwrap_or_else(|| "out-of-range".to_owned())
+                "{game_turn} / {} / {}",
+                describe(alarm_turn),
+                describe(countdown_turn)
             ),
             self.turn_agreement(),
         ));
+        let turn_record = self.alarms.turn_record();
         checks.push(regularity(
-            "LS_ALRM: header[3,4,6,7] == 15, 1, 0, 16",
-            format!("{:?}", self.alarms.header),
-            self.alarms.header[3] == 15
-                && self.alarms.header[4] == 1
-                && self.alarms.header[6] == 0
-                && self.alarms.header[7] == 16,
+            "LS_ALRM: queue 0 is empty, so the turn lands at payload word 2",
+            format!(
+                "{}",
+                self.alarms
+                    .queues
+                    .first()
+                    .map_or(usize::MAX, |queue| queue.records.len())
+            ),
+            self.alarms
+                .queues
+                .first()
+                .is_some_and(|queue| queue.records.is_empty()),
+        ));
+        checks.push(regularity(
+            "LS_ALRM: the turn record is monstergenerator with words 15, 1 and 0",
+            match turn_record {
+                Some(record) => format!("{:?} {:?}", record.name_lossy(), record.words),
+                None => "queue 1 is empty".to_owned(),
+            },
+            turn_record.is_some_and(|record| {
+                record.words.get(1) == Some(&15)
+                    && record.words.get(2) == Some(&1)
+                    && record.words.get(4) == Some(&0)
+                    && record.names.first().map(Vec::as_slice) == Some(b"monstergenerator".as_slice())
+            }),
+        ));
+        let named_regions = self
+            .regions
+            .regions
+            .iter()
+            .filter(|region| !region.name_raw.is_empty())
+            .count();
+        checks.push(regularity(
+            "LS_REGN: exactly one region stores a name, and it is the empty string",
+            format!(
+                "{named_regions} named; last name {:?}",
+                self.regions
+                    .regions
+                    .last()
+                    .map(|region| String::from_utf8_lossy(region.name()).into_owned())
+            ),
+            named_regions == 1
+                && self
+                    .regions
+                    .regions
+                    .last()
+                    .is_some_and(|region| region.name().is_empty() && region.name_raw == [0]),
+        ));
+        checks.push(regularity(
+            "LS_PLR_: the record lengths sum to the body",
+            format!(
+                "{} vs {}",
+                self.players.record_lengths().iter().sum::<usize>(),
+                self.players.sentinel_offset()
+            ),
+            self.players.record_lengths().iter().sum::<usize>() == self.players.sentinel_offset(),
         ));
 
         checks
     }
+}
+
+/// How many bytes `LS_ALRM`'s six queues account for, walked straight over the raw payload.
+///
+/// A **second implementation** of [`AlarmSection::parse`], deliberately sharing no code with it:
+/// this one counts and never builds a record. An invariant read back off the structs `parse`
+/// already validated cannot fail, which is the same defect as a test that cannot fail -- and this
+/// one runs on files `SaveFile::parse` refuses.
+fn account_for_alarm_queues(payload: &[u8]) -> Option<usize> {
+    let mut at = 0_usize;
+    let word = |at: &mut usize| -> Option<u32> {
+        let bytes = payload.get(*at..at.checked_add(4)?)?;
+        *at += 4;
+        Some(u32::from_le_bytes(bytes.try_into().expect("four bytes")))
+    };
+    for queue in AlarmQueue::ALL {
+        let count = word(&mut at)?;
+        for _ in 0..count {
+            for field in queue.schedule() {
+                match field {
+                    AlarmField::Word => {
+                        word(&mut at)?;
+                    }
+                    AlarmField::Name => {
+                        let len = usize::try_from(word(&mut at)?).ok()?;
+                        at = at.checked_add(len)?;
+                        payload.get(..at)?;
+                    }
+                }
+            }
+            let arguments = usize::try_from(word(&mut at)?).ok()?;
+            at = at.checked_add(arguments.checked_mul(4)?)?;
+            payload.get(..at)?;
+            word(&mut at)?;
+        }
+    }
+    Some(at)
+}
+
+/// How many bytes `LS_REGN`'s region table accounts for, walked straight over the raw tail.
+///
+/// The counterpart of [`account_for_alarm_queues`], and for the same reason.
+fn account_for_region_table(tail: &[u8]) -> Option<usize> {
+    let count = u32::from_le_bytes(tail.get(..4)?.try_into().expect("four bytes"));
+    let mut at = 4_usize;
+    for _ in 0..u64::from(count) + 1 {
+        let name_len = usize::from(*tail.get(at.checked_add(2)?)?);
+        at = at.checked_add(3)?.checked_add(name_len)?;
+        at = at.checked_add(4 + RegionRecord::BLOCK_COUNT * RegionRecord::BLOCK_LEN)?;
+        tail.get(..at)?;
+    }
+    Some(at)
 }
 
 /// The `LS_REGN` tail lengths the corpus contains. Unexplained; see `docs/save-format.md`.
@@ -1685,14 +2596,22 @@ mod tests {
         map_plane_words: Option<u32>,
         region_width: u32,
         region_height: u32,
-        region_tail: usize,
+        /// One entry per region the fixture emits, innermost first; the last is the embedded one.
+        /// `None` is a null name pointer, `Some` a stored NUL-terminated name. The stored array
+        /// count is `len() - 1`.
+        region_names: Vec<Option<&'static str>>,
         /// `Some` forces the slot block on or off; `None` decides from the fixture's own literal
         /// threshold. **Never from `MULTIPLAYER_SLOTS_MIN_VERSION`** -- a fixture generated from
         /// the constant it is testing moves with the constant and cannot fail on it.
         emit_mult_slots: Option<bool>,
         turn: u32,
-        /// `LS_ALRM` header words 0, 1, 3, 4, 6, 7. Word 2 is the turn and word 5 is derived.
-        alarm_filler: [u32; 6],
+        /// How many records each of the six alarm queues holds. **Queue 0 is deliberately not
+        /// empty**: it is empty in every corpus file, which is the only reason the turn lands at
+        /// payload word 2 there, and a fixture that copied that could not fail on a reader which
+        /// went back to indexing the payload.
+        alarm_queue_records: [usize; 6],
+        /// The argument count every synthetic alarm record carries.
+        alarm_arguments: usize,
         game_live_count: u32,
         game_records: u32,
         sprite_count: u32,
@@ -1703,7 +2622,10 @@ mod tests {
         /// Bytes written into each name field *after* the terminator, standing in for the
         /// uninitialised process memory the engine leaks there.
         name_padding_fill: u8,
-        player_records: usize,
+        /// One entry per `LS_PLR_` record. The shapes differ from each other on purpose: a record
+        /// has no size, and a fixture whose records are all the same length cannot fail on a
+        /// reader that assumes one.
+        player_records: Vec<PlayerFixture>,
         order: Vec<SectionTag>,
     }
 
@@ -1716,10 +2638,11 @@ mod tests {
                 map_plane_words: None,
                 region_width: 96,
                 region_height: 64,
-                region_tail: 8998,
+                region_names: vec![None, Some("Ruins of Balkoth"), Some(""), None],
                 emit_mult_slots: None,
                 turn: 42,
-                alarm_filler: [0, 7, 15, 1, 0, 16],
+                alarm_queue_records: [1, 2, 3, 1, 2, 4],
+                alarm_arguments: 3,
                 game_live_count: 9,
                 game_records: 80,
                 sprite_count: 5,
@@ -1747,7 +2670,7 @@ mod tests {
                     "a", "bb", "ccc", "d", "e", "f", "g", "h", "", "", "", "", "", "", "", "",
                 ],
                 name_padding_fill: 0xcd,
-                player_records: 40,
+                player_records: PlayerFixture::default_set(),
                 // Deliberately not the corpus order, and deliberately not the array order either.
                 order: vec![
                     SectionTag::Alarm,
@@ -1766,6 +2689,142 @@ mod tests {
 
     fn push_u32(buffer: &mut Vec<u8>, value: u32) {
         buffer.extend_from_slice(&value.to_le_bytes());
+    }
+
+    /// `u32 len` then the bytes, with no terminator -- the engine's counted string.
+    fn push_name(buffer: &mut Vec<u8>, name: &str) {
+        push_u32(buffer, name.len() as u32);
+        buffer.extend_from_slice(name.as_bytes());
+    }
+
+    /// `u32 bit_count` then `ceil(bit_count / 32)` words.
+    fn push_bitset(buffer: &mut Vec<u8>, bits: u32, fill: u8) {
+        push_u32(buffer, bits);
+        // Literal 32, not a constant shared with the parser.
+        let words = (bits as usize).div_ceil(32);
+        buffer.extend(std::iter::repeat_n(fill, words * 4));
+    }
+
+    /// One synthetic `LS_PLR_` record. The shapes are deliberately unequal.
+    #[derive(Debug, Clone)]
+    struct PlayerFixture {
+        slot: u32,
+        queue_len: usize,
+        /// Units in each of the sixteen armies.
+        unit_counts: [usize; 16],
+        army_bits: u32,
+        flag_bits: u32,
+        roster_entries: u32,
+        roster_slots: u32,
+        name: &'static str,
+    }
+
+    impl PlayerFixture {
+        /// Three records, no two the same length, and slot 15 -- the neutral pseudo-player.
+        fn default_set() -> Vec<Self> {
+            vec![
+                Self {
+                    slot: 0,
+                    queue_len: 2,
+                    unit_counts: [1, 0, 3, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5],
+                    army_bits: 64,
+                    flag_bits: 300,
+                    roster_entries: 4,
+                    roster_slots: 22,
+                    name: "Merlin",
+                },
+                Self {
+                    slot: 3,
+                    queue_len: 0,
+                    unit_counts: [0; 16],
+                    army_bits: 1,
+                    flag_bits: 31,
+                    roster_entries: 0,
+                    roster_slots: 7,
+                    name: "Amazon Princess",
+                },
+                Self {
+                    slot: 15,
+                    queue_len: 7,
+                    unit_counts: [2; 16],
+                    army_bits: 129,
+                    flag_bits: 0,
+                    roster_entries: 9,
+                    roster_slots: 40,
+                    name: "",
+                },
+            ]
+        }
+
+        fn write(&self, out: &mut Vec<u8>, version: u32) {
+            push_u32(out, self.slot);
+            for word in 0..3_u32 {
+                push_u32(out, 0x1500 + word);
+            }
+            push_u32(out, self.queue_len as u32);
+            for entry in 0..self.queue_len {
+                for word in 0..6_u32 {
+                    push_u32(out, 0xb800 + entry as u32 * 16 + word);
+                }
+            }
+            for (army, units) in self.unit_counts.iter().enumerate() {
+                for word in 0..3_u32 {
+                    push_u32(out, 0xa360 + army as u32 * 16 + word);
+                }
+                push_u32(out, *units as u32);
+                for unit in 0..*units {
+                    for word in 0..5_u32 {
+                        push_u32(out, 0x9fc0 + unit as u32 * 8 + word);
+                    }
+                }
+                // Literal 100: the block `0x0049F2A0` writes.
+                out.extend((0..100_usize).map(|byte| (army + byte) as u8 | 0x80));
+                push_bitset(out, self.army_bits, 0xa5);
+                push_u32(out, 0xa36c);
+                push_u32(out, 0xa374);
+            }
+            push_u32(out, 0x15e4);
+            // The roster.
+            push_u32(out, 0x6800);
+            push_u32(out, 0x6c00);
+            push_u32(out, self.roster_entries);
+            push_u32(out, self.roster_slots);
+            for slot in 0..self.roster_slots {
+                push_u32(out, 0xc600 + slot);
+            }
+            out.extend((0..64_usize).map(|byte| byte as u8 | 0x80));
+            // Version gates, as literals. Never `player_record_versions::*`: a fixture generated
+            // from the ladder it is testing moves with the ladder.
+            if version >= 57 {
+                for word in 0..15_u32 {
+                    push_u32(out, 0xcfc0 + word);
+                }
+            }
+            if version >= 68 {
+                push_u32(out, 0x003c);
+            }
+            push_bitset(out, self.flag_bits, 0x5a);
+            if version >= 76 {
+                // Literal 31.
+                let mut field = [0_u8; 31];
+                field[..self.name.len()].copy_from_slice(self.name.as_bytes());
+                out.extend_from_slice(&field);
+            }
+            if version >= 86 {
+                push_u32(out, 0x15d8);
+            }
+            if version >= 104 {
+                // Literal 3200.
+                out.extend((0..3200_usize).map(|byte| (byte % 251) as u8 | 0x80));
+            }
+            if version >= 110 {
+                push_u32(out, 0x15b4);
+                push_u32(out, 0x15b8);
+            }
+            if version >= 111 {
+                push_u32(out, 0x0040);
+            }
+        }
     }
 
     impl Fixture {
@@ -1843,7 +2902,9 @@ mod tests {
                     push_u32(&mut out, 77);
                 }
                 SectionTag::Player => {
-                    out.extend((0..self.player_records).map(|index| (index % 89) as u8 | 0x80));
+                    for record in &self.player_records {
+                        record.write(&mut out, self.version);
+                    }
                     // Literal, not `PlayerSection::SENTINEL`: writing the constant here let a
                     // `SENTINEL` mutation change both sides together and survive.
                     push_u32(&mut out, 0xffff_ffff);
@@ -1858,26 +2919,81 @@ mod tests {
                     out.extend(
                         (0..cells * RegionSection::CELL_LEN).map(|i| (i % 211) as u8 | 0x80),
                     );
-                    out.extend((0..self.region_tail).map(|i| (i % 83) as u8 | 0x80));
+                    // The stored count is of the *array*; one further region follows it, so the
+                    // count written here is one less than the number of records emitted. A
+                    // fixture that wrote `len()` would agree with an off-by-one reader.
+                    push_u32(&mut out, self.region_names.len().saturating_sub(1) as u32);
+                    for (index, name) in self.region_names.iter().enumerate() {
+                        out.push((index + 1) as u8);
+                        out.push((index + 1) as u8);
+                        match name {
+                            None => out.push(0),
+                            Some(name) => {
+                                out.push((name.len() + 1) as u8);
+                                out.extend_from_slice(name.as_bytes());
+                                out.push(0);
+                            }
+                        }
+                        push_u32(&mut out, 0x5000 + index as u32);
+                        // Literal 6 x 64, not the constants: a fixture built from the constant it
+                        // is testing moves with it and the mutation goes invisible.
+                        for block in 0..6_usize {
+                            out.extend((0..64).map(|byte| (index * 6 + block + byte) as u8 | 0x80));
+                        }
+                    }
                 }
                 SectionTag::Alarm => {
-                    let [w0, w1, w3, w4, w6, w7] = self.alarm_filler;
-                    for word in [
-                        w0,
-                        w1,
-                        self.turn,
-                        w3,
-                        w4,
-                        // Deliberately the literal and not `COUNTDOWN_BASE`. Building the fixture
-                        // from the constant under test makes the two move together, and a mutation
-                        // of the constant then survives -- which is exactly what happened.
-                        1_000_001 - self.turn,
-                        w6,
-                        w7,
-                    ] {
-                        push_u32(&mut out, word);
+                    // The six schedules as literals, not `AlarmQueue::schedule()`. Generating the
+                    // fixture from the table under test makes both sides move together, which is
+                    // how three mutations survived an earlier sweep of this module.
+                    const WORDS: [usize; 6] = [4, 5, 0, 1, 3, 4];
+                    const NAMES: [usize; 6] = [1, 1, 1, 2, 1, 1];
+                    for queue in 0..6_usize {
+                        push_u32(&mut out, self.alarm_queue_records[queue] as u32);
+                        for record in 0..self.alarm_queue_records[queue] {
+                            let mut words = Vec::new();
+                            for word in 0..WORDS[queue] {
+                                words.push((queue * 100 + record * 10 + word) as u32 + 900);
+                            }
+                            // Queue 1's first record is the turn record.
+                            if queue == 1 && record == 0 {
+                                words[0] = self.turn;
+                                words[1] = 15;
+                                words[2] = 1;
+                                // Deliberately the literal and not `COUNTDOWN_BASE`. Building the
+                                // fixture from the constant under test makes the two move together
+                                // and a mutation of the constant survives.
+                                words[3] = 1_000_001 - self.turn;
+                                words[4] = 0;
+                            }
+                            // Queue 3 interleaves its word between two names, so emitting the
+                            // words first would pass a reader that got the order wrong.
+                            let mut word_iter = words.iter();
+                            let mut names_left = NAMES[queue];
+                            if queue == 3 {
+                                push_name(&mut out, "explore_brain");
+                                push_u32(&mut out, *word_iter.next().expect("queue 3 has a word"));
+                                push_name(&mut out, "dpw_brain");
+                                names_left = 0;
+                            } else {
+                                for word in word_iter.by_ref() {
+                                    push_u32(&mut out, *word);
+                                }
+                            }
+                            for _ in 0..names_left {
+                                if queue == 1 && record == 0 {
+                                    push_name(&mut out, "monstergenerator");
+                                } else {
+                                    push_name(&mut out, "antispy_brain");
+                                }
+                            }
+                            push_u32(&mut out, self.alarm_arguments as u32);
+                            for argument in 0..self.alarm_arguments {
+                                push_u32(&mut out, 0x7000 + argument as u32);
+                            }
+                            push_u32(&mut out, 0x1234 + queue as u32);
+                        }
                     }
-                    out.extend([0x81, 0x82, 0x83, 0x84]);
                 }
             }
             out
@@ -1907,43 +3023,46 @@ mod tests {
 
         let bytes = fixture.build();
         let structural = save.container.structural_checks(&bytes);
-        assert_eq!(structural.len(), 9);
+        assert_eq!(structural.len(), 10);
         for check in &structural {
             assert!(check.is_structural());
             assert!(check.passed, "{} failed: {}", check.name, check.measured);
         }
         let regularities = save.regularities();
-        assert_eq!(regularities.len(), 9);
+        assert_eq!(regularities.len(), 12);
         for check in &regularities {
             assert!(!check.is_structural());
-            assert!(check.passed, "{} failed: {}", check.name, check.measured);
         }
     }
 
     /// A synthetic save may legitimately break a **corpus regularity** without being malformed.
-    /// That is the whole reason the two classes are separate: a region tail of 37 bytes is a
-    /// perfectly well-formed save that simply is not one of the three lengths this corpus happens
-    /// to contain, and calling it malformed would bury a real discovery under a parse error.
+    /// That is the whole reason the two classes are separate: this fixture's regions, its alarm
+    /// queue 0 and its `LS_REGN` tail length are all perfectly well-formed and none of them is
+    /// what the seven shipped scenarios happen to contain. Calling that malformed would bury a
+    /// real discovery under a parse error.
     #[test]
     fn a_broken_regularity_is_not_a_broken_structure() {
-        let fixture = Fixture {
-            region_tail: 37,
-            ..Fixture::default()
-        };
-        let bytes = fixture.build();
+        let bytes = Fixture::default().build();
         let save = SaveFile::parse(&bytes).unwrap();
 
         for check in save.container.structural_checks(&bytes) {
             assert!(check.passed, "{} failed: {}", check.name, check.measured);
         }
-        let broken: Vec<Invariant> = save
+        let broken: Vec<&str> = save
             .regularities()
             .into_iter()
             .filter(|check| !check.passed)
+            .map(|check| check.name)
             .collect();
-        assert_eq!(broken.len(), 1);
-        assert!(broken[0].name.contains("tail length"));
-        assert_eq!(broken[0].measured, "37");
+        assert_eq!(
+            broken,
+            vec![
+                "LS_REGN: tail length is one of 8998 / 9389 / 9780",
+                "LS_ALRM: queue 0 is empty, so the turn lands at payload word 2",
+                "LS_REGN: exactly one region stores a name, and it is the empty string",
+            ],
+            "the fixture is deliberately unlike the corpus in exactly these three ways"
+        );
     }
 
     /// Order is irrelevant to the engine, so it must be irrelevant here: the same nine payloads in
@@ -2596,21 +3715,142 @@ mod tests {
     // -- LS_PLR_ ------------------------------------------------------------
 
     #[test]
-    fn the_player_tail_is_read_from_the_end_regardless_of_the_record_size() {
-        for records in [0_usize, 1, 40, 4000] {
+    fn player_records_decode_at_every_shape_and_have_no_common_size() {
+        let save = SaveFile::parse(&Fixture::default().build()).unwrap();
+        assert_eq!(save.players.records.len(), 3);
+        assert_eq!(
+            save.players
+                .records
+                .iter()
+                .map(|record| record.slot_index)
+                .collect::<Vec<u32>>(),
+            vec![0, 3, 15]
+        );
+        assert_eq!(
+            save.players
+                .records
+                .iter()
+                .map(|record| record.name_lossy().unwrap_or_default())
+                .collect::<Vec<String>>(),
+            vec![
+                "Merlin".to_owned(),
+                "Amazon Princess".to_owned(),
+                String::new()
+            ]
+        );
+        let lengths = save.players.record_lengths();
+        assert_eq!(lengths.len(), 3);
+        assert_eq!(lengths.iter().sum::<usize>(), save.players.sentinel_offset());
+        assert!(
+            lengths[0] != lengths[1] && lengths[1] != lengths[2],
+            "three records of one size could not fail on a fixed-stride reader: {lengths:?}"
+        );
+        assert_eq!(save.players.first_slot_index(), Some(0));
+        assert_eq!(save.players.lord_codes, [1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(
+            Some(save.players.lord_codes),
+            save.multiplayer.seated_lord_codes()
+        );
+    }
+
+    /// A section holding no records at all is well-formed: the sentinel is the first word.
+    #[test]
+    fn a_player_section_with_no_records_is_accepted() {
+        let fixture = Fixture {
+            player_records: Vec::new(),
+            ..Fixture::default()
+        };
+        let save = SaveFile::parse(&fixture.build()).unwrap();
+        assert!(save.players.records.is_empty());
+        assert_eq!(save.players.sentinel_offset(), 0);
+        assert_eq!(save.players.first_slot_index(), None);
+    }
+
+    /// The version ladder at `0x004BCBD0`. Below 111 the record is shorter, and the difference is
+    /// the reason the version-108 file's records were 12 bytes smaller than the writer emits.
+    #[test]
+    fn the_record_shrinks_by_exactly_the_fields_each_version_gate_adds() {
+        // Every gate and the version **immediately below** it, as literals -- never from
+        // `player_record_versions`. A sweep that only samples the gates catches a gate moved up
+        // and misses one moved down: 76 -> 75, 104 -> 103 and 110 -> 109 all survived a sweep
+        // built that way, because no fixture stood between the old value and the new one.
+        let mut lengths = Vec::new();
+        for version in [
+            56_u32, 57, 67, 68, 75, 76, 85, 86, 103, 104, 109, 110, 111,
+        ] {
             let fixture = Fixture {
-                player_records: records,
+                version,
                 ..Fixture::default()
             };
             let save = SaveFile::parse(&fixture.build()).unwrap();
-            assert_eq!(save.players.sentinel_offset(), records);
-            assert_eq!(save.players.records_raw.len(), records);
-            assert_eq!(save.players.lord_codes, [1, 2, 3, 4, 5, 6, 7, 8]);
-            assert_eq!(
-                Some(save.players.lord_codes),
-                save.multiplayer.seated_lord_codes()
-            );
+            let record = &save.players.records[0];
+            assert_eq!(record.interleaved_words.is_some(), version >= 57);
+            assert_eq!(record.unknown_3c.is_some(), version >= 68);
+            assert_eq!(record.name_raw.is_some(), version >= 76);
+            assert_eq!(record.unknown_15d8.is_some(), version >= 86);
+            assert_eq!(record.block_68_raw.is_some(), version >= 104);
+            assert_eq!(record.unknown_15b4_15b8.is_some(), version >= 110);
+            assert_eq!(record.unknown_40.is_some(), version >= 111);
+            lengths.push(record.encoded_len());
         }
+        // The gaps between consecutive versions in the sweep. A gate contributes its field's width
+        // when it is crossed and zero when it is not, so the zeros are as load-bearing as the
+        // widths: they are what fails when a gate moves down onto the version below it.
+        let gaps: Vec<usize> = lengths.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        assert_eq!(gaps, vec![60, 0, 4, 0, 31, 0, 4, 0, 3200, 0, 8, 4]);
+    }
+
+    /// The 12 bytes that separate version 108 from version 111, which is what the corpus shows.
+    #[test]
+    fn version_108_records_are_twelve_bytes_shorter_than_version_111() {
+        let at = |version| {
+            let fixture = Fixture {
+                version,
+                ..Fixture::default()
+            };
+            let save = SaveFile::parse(&fixture.build()).unwrap();
+            save.players.record_lengths()
+        };
+        let old = at(108);
+        let new = at(111);
+        assert_eq!(old.len(), new.len());
+        for (old, new) in old.iter().zip(new.iter()) {
+            assert_eq!(new - old, 12);
+        }
+    }
+
+    #[test]
+    fn refuses_a_player_slot_index_outside_the_readers_range() {
+        let fixture = Fixture::default();
+        let mut bytes = fixture.build();
+        let player = SaveContainer::locate(&bytes)
+            .unwrap()
+            .location(SectionTag::Player);
+        bytes[player.payload_offset..player.payload_offset + 4]
+            .copy_from_slice(&16_u32.to_le_bytes());
+
+        let error = SaveFile::parse(&bytes).unwrap_err();
+        assert!(error.to_string().starts_with("LS_PLR_:"), "{error}");
+        assert!(error.to_string().contains("slot index 16"), "{error}");
+    }
+
+    /// Every count inside a record is a length, so a corrupted one must be refused rather than
+    /// walked off the end of the payload.
+    #[test]
+    fn refuses_a_record_whose_army_unit_count_runs_past_the_payload() {
+        let fixture = Fixture::default();
+        let mut bytes = fixture.build();
+        let player = SaveContainer::locate(&bytes)
+            .unwrap()
+            .location(SectionTag::Player);
+        // 4 slot index + 12 leading words + 4 queue count, then the queue, then army 0's three
+        // words: the unit count sits right after them.
+        let queue_entries = 2_usize;
+        let at = player.payload_offset + 4 + 12 + 4 + queue_entries * 24 + 12;
+        bytes[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+
+        let error = SaveFile::parse(&bytes).unwrap_err();
+        assert!(error.to_string().starts_with("LS_PLR_:"), "{error}");
     }
 
     #[test]
@@ -2684,17 +3924,85 @@ mod tests {
     // -- LS_REGN ------------------------------------------------------------
 
     #[test]
-    fn the_region_tail_is_carried_whole_at_whatever_length_it_has() {
-        for tail in [0_usize, 37, 8998, 9389, 9780] {
+    fn the_region_table_accounts_for_the_tail_at_every_shape_tried() {
+        let shapes: Vec<Vec<Option<&'static str>>> = vec![
+            vec![None],
+            vec![None, None],
+            vec![Some(""), None, Some("x")],
+            vec![None; 23],
+            (0..25).map(|_| Some("Lake of Mist")).collect(),
+        ];
+        for names in shapes {
+            let regions = names.len();
+            let named: usize = names.iter().filter_map(|n| n.map(|n| n.len() + 1)).sum();
             let fixture = Fixture {
-                region_tail: tail,
+                region_names: names,
+                ..Fixture::default()
+            };
+            let save = SaveFile::parse(&fixture.build()).unwrap();
+            assert_eq!(save.regions.regions.len(), regions);
+            assert_eq!(save.regions.array_count as usize, regions - 1);
+            assert_eq!(save.regions.cells.len(), 96 * 64);
+            assert_eq!(save.regions.grid_len(), 96 * 64 * 6);
+            // The arithmetic written out, not `RegionRecord::FIXED_LEN`: 3 + 4 + 6 * 64.
+            assert_eq!(save.regions.tail_len(), 4 + regions * 391 + named);
+            assert_eq!(save.regions.accounted_tail_len(), save.regions.tail_len());
+        }
+    }
+
+    /// The three tail lengths the previous pass could only list are `4 + n * 391 + 1`, and the
+    /// 391-byte gaps between them are one region each. Written as the arithmetic, so it fails if
+    /// the record's fixed size is wrong rather than agreeing with a remembered table.
+    #[test]
+    fn the_corpus_region_tail_lengths_are_whole_numbers_of_records() {
+        for (regions, tail) in [(23_usize, 8998_usize), (24, 9389), (25, 9780)] {
+            let mut names: Vec<Option<&'static str>> = vec![None; regions - 1];
+            names.push(Some(""));
+            let fixture = Fixture {
+                region_names: names,
                 ..Fixture::default()
             };
             let save = SaveFile::parse(&fixture.build()).unwrap();
             assert_eq!(save.regions.tail_len(), tail);
-            assert_eq!(save.regions.cells.len(), 96 * 64);
-            assert_eq!(save.regions.grid_len(), 96 * 64 * 6);
         }
+    }
+
+    #[test]
+    fn refuses_a_region_table_whose_last_record_runs_off_the_end() {
+        let fixture = Fixture::default();
+        let mut bytes = fixture.build();
+        let region = SaveContainer::locate(&bytes)
+            .unwrap()
+            .location(SectionTag::Region);
+        let count = region.payload_offset + 8 + 96 * 64 * 6;
+        let inflated = u32::from_le_bytes(bytes[count..count + 4].try_into().unwrap()) + 1;
+        bytes[count..count + 4].copy_from_slice(&inflated.to_le_bytes());
+
+        let error = SaveFile::parse(&bytes).unwrap_err();
+        assert!(error.to_string().starts_with("LS_REGN:"), "{error}");
+
+        let container = SaveContainer::locate(&bytes).unwrap();
+        let check = container
+            .structural_checks(&bytes)
+            .into_iter()
+            .find(|check| check.name.contains("region table"))
+            .expect("the structural check is present");
+        assert!(!check.passed, "{}", check.measured);
+    }
+
+    #[test]
+    fn refuses_a_region_table_that_stops_short_of_the_tail_end() {
+        let fixture = Fixture::default();
+        let mut bytes = fixture.build();
+        let region = SaveContainer::locate(&bytes)
+            .unwrap()
+            .location(SectionTag::Region);
+        let count = region.payload_offset + 8 + 96 * 64 * 6;
+        let deflated = u32::from_le_bytes(bytes[count..count + 4].try_into().unwrap()) - 1;
+        bytes[count..count + 4].copy_from_slice(&deflated.to_le_bytes());
+
+        let error = SaveFile::parse(&bytes).unwrap_err();
+        assert!(error.to_string().contains("unaccounted for"), "{error}");
     }
 
     #[test]
@@ -2713,38 +4021,75 @@ mod tests {
 
     // -- LS_ALRM and the turn -----------------------------------------------
 
-    /// The regression test for the off-by-one. The turn is at header index **2**; index 1 holds a
-    /// different value here, so a reader that took index 1 -- as an earlier pass did -- fails.
+    /// The regression test for two generations of the same mistake. An earlier pass put the turn
+    /// at payload word 1; a correction moved it to word 2 and kept the frame. There is no header:
+    /// this fixture's queue 0 is **occupied**, so the turn is not at word 2 either, and a reader
+    /// that indexes the payload fails here whichever index it picks.
     #[test]
-    fn the_turn_is_read_from_alarm_header_index_two_and_not_index_one() {
+    fn the_turn_comes_from_the_queue_record_and_not_from_a_payload_index() {
         let fixture = Fixture {
             turn: 42,
-            alarm_filler: [0, 7, 15, 1, 0, 16],
+            alarm_queue_records: [1, 2, 3, 1, 2, 4],
             ..Fixture::default()
         };
-        let save = SaveFile::parse(&fixture.build()).unwrap();
+        let bytes = fixture.build();
+        let save = SaveFile::parse(&bytes).unwrap();
 
-        assert_eq!(save.alarms.header[1], 7);
-        assert_eq!(save.alarms.header[AlarmSection::TURN_INDEX], 42);
-        assert_eq!(save.alarms.turn(), 42);
-        assert_eq!(save.turn_readings(), (42, 42, Some(42)));
+        assert_eq!(save.alarms.turn(), Some(42));
+        assert_eq!(save.turn_readings(), (42, Some(42), Some(42)));
         assert!(save.turn_agreement());
+
+        let alarm = save.container.location(SectionTag::Alarm);
+        let payload = &bytes[alarm.payload_offset..alarm.payload_end()];
+        let indexes: Vec<usize> = (0..8)
+            .filter(|index| {
+                u32::from_le_bytes(payload[index * 4..index * 4 + 4].try_into().unwrap()) == 42
+            })
+            .collect();
+        assert!(
+            !indexes.contains(&2),
+            "word 2 must not be the turn in this fixture, or the test proves nothing: {indexes:?}"
+        );
     }
 
-    /// `quickstart` is turn 1 and the value 1 appears at three indexes of its header, so it agrees
-    /// with several readings at once. This is that shape, and it must be the fixture that *cannot*
-    /// distinguish -- proving the discriminating fixture above is doing real work.
+    /// The corpus's shape: queue 0 empty and queue 1 occupied, which is the *only* reason the turn
+    /// lands at payload word 2 there. Building it deliberately shows that the coincidence is a
+    /// property of those files and not of the format.
+    #[test]
+    fn an_empty_queue_zero_is_what_put_the_turn_at_payload_word_two() {
+        let fixture = Fixture {
+            turn: 42,
+            alarm_queue_records: [0, 1, 0, 0, 0, 0],
+            ..Fixture::default()
+        };
+        let bytes = fixture.build();
+        let save = SaveFile::parse(&bytes).unwrap();
+        let alarm = save.container.location(SectionTag::Alarm);
+        let payload = &bytes[alarm.payload_offset..alarm.payload_end()];
+        let word2 = u32::from_le_bytes(payload[8..12].try_into().unwrap());
+        assert_eq!(word2, 42);
+        assert_eq!(save.alarms.turn(), Some(42));
+    }
+
+    /// `quickstart` is turn 1 and the value 1 appears at three payload indexes, so it agrees with
+    /// several readings at once. This is that shape, and it must be the fixture that *cannot*
+    /// distinguish -- proving the discriminating fixtures above do real work.
     #[test]
     fn a_turn_one_fixture_cannot_locate_the_turn_field() {
         let fixture = Fixture {
             turn: 1,
-            alarm_filler: [0, 1, 15, 1, 0, 16],
+            alarm_queue_records: [0, 1, 0, 0, 0, 0],
             ..Fixture::default()
         };
-        let save = SaveFile::parse(&fixture.build()).unwrap();
-
-        let matching: Vec<usize> = (0..AlarmSection::HEADER_WORDS)
-            .filter(|index| save.alarms.header[*index] == save.game.turn)
+        let bytes = fixture.build();
+        let save = SaveFile::parse(&bytes).unwrap();
+        let alarm = save.container.location(SectionTag::Alarm);
+        let payload = &bytes[alarm.payload_offset..alarm.payload_end()];
+        let matching: Vec<usize> = (0..8)
+            .filter(|index| {
+                u32::from_le_bytes(payload[index * 4..index * 4 + 4].try_into().unwrap())
+                    == save.game.turn
+            })
             .collect();
         assert_eq!(
             matching,
@@ -2755,12 +4100,16 @@ mod tests {
 
     #[test]
     fn the_turn_cross_check_fails_when_the_alarm_turn_disagrees() {
-        let fixture = Fixture::default();
+        let fixture = Fixture {
+            alarm_queue_records: [0, 1, 0, 0, 0, 0],
+            ..Fixture::default()
+        };
         let mut bytes = fixture.build();
         let alarm = SaveContainer::locate(&bytes)
             .unwrap()
             .location(SectionTag::Alarm);
-        let turn_word = alarm.payload_offset + 4 * AlarmSection::TURN_INDEX;
+        // Queue 0 is empty here, so the turn record's first word is payload word 2.
+        let turn_word = alarm.payload_offset + 8;
         bytes[turn_word..turn_word + 4].copy_from_slice(&43_u32.to_le_bytes());
 
         let save = SaveFile::parse(&bytes).unwrap();
@@ -2776,28 +4125,34 @@ mod tests {
 
     #[test]
     fn the_turn_cross_check_fails_when_the_countdown_disagrees() {
-        let fixture = Fixture::default();
+        let fixture = Fixture {
+            alarm_queue_records: [0, 1, 0, 0, 0, 0],
+            ..Fixture::default()
+        };
         let mut bytes = fixture.build();
         let alarm = SaveContainer::locate(&bytes)
             .unwrap()
             .location(SectionTag::Alarm);
-        let countdown = alarm.payload_offset + 4 * AlarmSection::COUNTDOWN_INDEX;
+        let countdown = alarm.payload_offset + 8 + 4 * 3;
         bytes[countdown..countdown + 4].copy_from_slice(&(COUNTDOWN_BASE - 9).to_le_bytes());
 
         let save = SaveFile::parse(&bytes).unwrap();
-        assert_eq!(save.turn_readings(), (42, 42, Some(9)));
+        assert_eq!(save.turn_readings(), (42, Some(42), Some(9)));
         assert!(!save.turn_agreement());
     }
 
     /// A countdown word above the base would underflow a naive subtraction.
     #[test]
     fn an_out_of_range_countdown_word_yields_no_turn_rather_than_wrapping() {
-        let fixture = Fixture::default();
+        let fixture = Fixture {
+            alarm_queue_records: [0, 1, 0, 0, 0, 0],
+            ..Fixture::default()
+        };
         let mut bytes = fixture.build();
         let alarm = SaveContainer::locate(&bytes)
             .unwrap()
             .location(SectionTag::Alarm);
-        let countdown = alarm.payload_offset + 4 * AlarmSection::COUNTDOWN_INDEX;
+        let countdown = alarm.payload_offset + 8 + 4 * 3;
         bytes[countdown..countdown + 4].copy_from_slice(&u32::MAX.to_le_bytes());
 
         let save = SaveFile::parse(&bytes).unwrap();
@@ -2808,18 +4163,78 @@ mod tests {
             .into_iter()
             .find(|check| check.name.starts_with("turn:"))
             .expect("invariant is present");
-        assert!(
-            check.measured.contains("out-of-range"),
-            "{}",
-            check.measured
-        );
+        assert!(check.measured.contains("absent"), "{}", check.measured);
+    }
+
+    /// An empty turn queue is well-formed. The reading must go absent rather than invent a turn.
+    #[test]
+    fn an_empty_turn_queue_yields_no_turn_rather_than_zero() {
+        let fixture = Fixture {
+            alarm_queue_records: [2, 0, 0, 0, 0, 1],
+            ..Fixture::default()
+        };
+        let save = SaveFile::parse(&fixture.build()).unwrap();
+        assert_eq!(save.alarms.turn(), None);
+        assert_eq!(save.alarms.countdown(), None);
+        assert!(!save.turn_agreement());
     }
 
     #[test]
-    fn alarm_records_are_carried_after_the_eight_word_header() {
-        let save = SaveFile::parse(&Fixture::default().build()).unwrap();
-        assert_eq!(save.alarms.records_raw, vec![0x81, 0x82, 0x83, 0x84]);
-        assert_eq!(AlarmSection::HEADER_LEN, 32);
+    fn every_queue_decodes_its_own_field_schedule() {
+        let fixture = Fixture {
+            alarm_queue_records: [1, 1, 1, 1, 1, 1],
+            alarm_arguments: 2,
+            ..Fixture::default()
+        };
+        let save = SaveFile::parse(&fixture.build()).unwrap();
+        // The schedules written out, not read back from `AlarmQueue::schedule()`.
+        let expected_words = [4_usize, 5, 0, 1, 3, 4];
+        let expected_names = [1_usize, 1, 1, 2, 1, 1];
+        for (index, queue) in save.alarms.queues.iter().enumerate() {
+            let record = &queue.records[0];
+            assert_eq!(record.words.len(), expected_words[index], "queue {index}");
+            assert_eq!(record.names.len(), expected_names[index], "queue {index}");
+            assert_eq!(record.arguments.len(), 2, "queue {index}");
+            assert_eq!(record.trailer, 0x1234 + index as u32, "queue {index}");
+        }
+        assert_eq!(save.alarms.record_count(), 6);
+    }
+
+    #[test]
+    fn a_queue_three_record_keeps_its_two_names_and_the_word_between_them() {
+        let fixture = Fixture {
+            alarm_queue_records: [0, 1, 0, 1, 0, 0],
+            ..Fixture::default()
+        };
+        let save = SaveFile::parse(&fixture.build()).unwrap();
+        let record = &save.alarms.queues[3].records[0];
+        assert_eq!(record.names.len(), 2);
+        assert_eq!(record.names[0], b"explore_brain");
+        assert_eq!(record.names[1], b"dpw_brain");
+        assert_eq!(record.words.len(), 1);
+    }
+
+    #[test]
+    fn refuses_an_alarm_payload_whose_queues_do_not_reach_the_end() {
+        let fixture = Fixture::default();
+        let mut bytes = fixture.build();
+        let alarm = SaveContainer::locate(&bytes)
+            .unwrap()
+            .location(SectionTag::Alarm);
+        // One fewer record in queue 0 leaves that record's bytes unaccounted for.
+        bytes[alarm.payload_offset..alarm.payload_offset + 4]
+            .copy_from_slice(&0_u32.to_le_bytes());
+
+        let error = SaveFile::parse(&bytes).unwrap_err();
+        assert!(error.to_string().starts_with("LS_ALRM:"), "{error}");
+
+        let container = SaveContainer::locate(&bytes).unwrap();
+        let check = container
+            .structural_checks(&bytes)
+            .into_iter()
+            .find(|check| check.name.contains("six queues"))
+            .expect("the structural check is present");
+        assert!(!check.passed, "{}", check.measured);
     }
 
     // -- tags ---------------------------------------------------------------
