@@ -179,8 +179,14 @@ def read_manifest(path: Path) -> ModManifest:
     )
 
 
-def load(root: Path) -> ModTree:
-    """Read a mod tree, mapping every file under `archives/` to a member name."""
+def load_manifest(root: Path) -> ModManifest:
+    """Read and check a mod's `mod.toml` WITHOUT requiring its `archives/` tree to exist yet.
+
+    Seeding is the step that creates `archives/`, so it cannot use `load()` -- which requires the
+    directory seeding is about to make. Splitting the manifest half out keeps the id check in one
+    place rather than letting the bootstrap path skip it, which is how a mod directory renamed
+    after creation would otherwise get past `mod-seed.sh` and fail only at build time.
+    """
     root = Path(root)
     if not root.is_dir():
         raise ModTreeError(f"{root}: not a directory")
@@ -192,11 +198,21 @@ def load(root: Path) -> ModTree:
             "They are kept equal so a build artifact can be traced back to one source directory "
             "by name alone."
         )
+    return manifest
+
+
+def load(root: Path) -> ModTree:
+    """Read a mod tree, mapping every file under `archives/` to a member name."""
+    root = Path(root)
+    manifest = load_manifest(root)
 
     tree = ModTree(root=root, manifest=manifest)
     archives_root = root / "archives"
     if not archives_root.is_dir():
-        raise ModTreeError(f"{root}: no archives/ directory")
+        raise ModTreeError(
+            f"{root}: no archives/ directory. A mod tree's members are not committed -- seed them "
+            f"from a local install first: scripts/mod-seed.sh {root} 'gs.mpq:units\\orinf.gs'"
+        )
 
     seen: dict[tuple[str, str], str] = {}
     for path in sorted(archives_root.rglob("*")):

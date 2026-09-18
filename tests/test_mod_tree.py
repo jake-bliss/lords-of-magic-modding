@@ -14,6 +14,7 @@ from tools.mod_tree import (
     SUPPORTED_ARCHIVES,
     ModTreeError,
     load,
+    load_manifest,
     member_name_for,
     source_digest,
 )
@@ -270,3 +271,50 @@ class SourceDigestTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class SeedBootstrapTest(unittest.TestCase):
+    """`mod-seed.sh` is the step that CREATES `archives/`, so it cannot require it to exist.
+
+    The first command in every mod's README failed on a clean checkout: `mods/*/archives/` is
+    gitignored, `mod-seed.sh` asked `load()` for the base profile, and `load()` refuses a tree
+    with no `archives/` directory. It went unnoticed because that directory is present in any
+    working tree that has already seeded once.
+    """
+
+    def _mod(self, root: Path, mod_id: str = "demo") -> Path:
+        mod = root / mod_id
+        mod.mkdir(parents=True)
+        (mod / "mod.toml").write_text(
+            MANIFEST.format(mod_id=mod_id, profile="vanilla"), encoding="utf-8"
+        )
+        return mod
+
+    def test_load_manifest_works_before_archives_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = self._mod(Path(tmp))
+            self.assertFalse((mod / "archives").exists())
+            self.assertEqual(load_manifest(mod).base_profile, "vanilla")
+
+    def test_load_manifest_still_enforces_the_id_check(self) -> None:
+        # The bootstrap path must not be a hole in the id/directory agreement rule: a mod
+        # directory renamed after creation has to fail here, not silently at build time.
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = self._mod(Path(tmp), "demo")
+            renamed = mod.parent / "renamed"
+            mod.rename(renamed)
+            with self.assertRaises(ModTreeError) as caught:
+                load_manifest(renamed)
+            self.assertIn("does not match the directory name", str(caught.exception))
+
+    def test_load_still_requires_archives_and_names_the_fix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mod = self._mod(Path(tmp))
+            with self.assertRaises(ModTreeError) as caught:
+                load(mod)
+            message = str(caught.exception)
+            self.assertIn("no archives/ directory", message)
+            # A refusal that states a precondition without naming the step that satisfies it
+            # sends its reader to the source. This one names mod-seed.sh.
+            self.assertIn("mod-seed.sh", message)
