@@ -78,29 +78,29 @@ exercise	interpolate, between two keys	ok
 exercise-note	interpolate, between two keys	numeric dictionary keys walked with forall, then linear interpolation
 exercise	interpolate, exact key	ok
 exercise-note	interpolate, exact key	an exact hit returns the stored value without interpolating
-exercise	string_cvi	STOPPED	expected [1234 -42]	unknown executable name string_cvi at VM step 2427
+exercise	string_cvi	DISAGREES	expected [1234 -42], stopped: unknown executable name string_cvi at VM step 2427
 exercise-note	string_cvi	digit-by-digit conversion over the string's character codes
-exercise	char_cvs reads the procedure's attached array	STOPPED	expected ["A" "a"]	unknown executable name char_cvs at VM step 2429
+exercise	char_cvs reads the procedure's attached array	DISAGREES	expected ["A" "a"], stopped: unknown executable name char_cvs at VM step 2429
 exercise-note	char_cvs reads the procedure's attached array	/char_array is attached with `replace` and read as a literal name
 exercise	stackdump is empty	ok
 exercise-note	stackdump is empty	the shipped body is `{}`
-exercise	makeregion needs the terrain host	ok	stopped on rand
+exercise	makeregion needs the terrain host	ok
 exercise-note	makeregion needs the terrain host	map painting; the first engine call is the random source
-exercise	writestring needs file output	ok	stopped on write
+exercise	writestring needs file output	ok
 exercise-note	writestring needs file output	byte output to an engine file handle
-exercise	eval needs the temporary-file host	ok	stopped on gettemppath
+exercise	eval needs the temporary-file host	ok
 exercise-note	eval needs the temporary-file host	the module writes a scratch file and `run`s it
-exercise	free_stack_elements needs the allocator	ok	stopped on free
+exercise	free_stack_elements needs the allocator	ok
 exercise-note	free_stack_elements needs the allocator	releases engine-owned handles held in a stack
-exercise	closeifopen needs the dialog host	ok	stopped on dialogisopen?
+exercise	closeifopen needs the dialog host	ok
 exercise-note	closeifopen needs the dialog host	user interface state
-exercise	exitapplication needs the dialog host	ok	stopped on sysdlg
+exercise	exitapplication needs the dialog host	ok
 exercise-note	exitapplication needs the dialog host	user interface state
-exercise	geteasyunitdata needs the unit tables	ok	stopped on unitdictxref
+exercise	geteasyunitdata needs the unit tables	ok
 exercise-note	geteasyunitdata needs the unit tables	game data the engine owns
-exercise	addrect needs the dialog host	ok	stopped on additem
+exercise	addrect needs the dialog host	ok
 exercise-note	addrect needs the dialog host	dialog layout
-exercise	retrievefromstack's error path needs the reporter	ok	stopped on build_statement
+exercise	retrievefromstack's error path needs the reporter	ok
 exercise-note	retrievefromstack's error path needs the reporter	the out-of-range branch formats a message with an engine helper
 exercises	31
 exercise-failures	2

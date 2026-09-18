@@ -227,8 +227,27 @@ impl GameScriptDocument {
 
     /// Decide whether the literal name at `index` occupies a definition position.
     fn is_definition_site(&self, index: usize) -> bool {
-        if self.dictionary_depth_before(index) > 0 {
-            // Inside `<< >>` a literal name is a key, and the following token is its value.
+        // A name the very next operator throws away is not defined by any later `def`.
+        // `fonts\balloon.gs` opens with `/CopperplateGothicBT-BoldCond pop /gridsize[16 14]def`,
+        // where the font name is pushed as a label and discarded; the scanner used to read the
+        // `def` two statements later as that label's. `gs\diplo.gs` has the same shape with
+        // `/i undef /majorrace?{4 lt}bind def`. Evidence class: Observed in a local binary.
+        if let Some(TokenKind::ExecutableName(next)) =
+            self.tokens.get(index + 1).map(|token| &token.kind)
+            && NAME_CONSUMING_OPERATORS
+                .iter()
+                .any(|operator| next.eq_ignore_ascii_case(operator))
+        {
+            return false;
+        }
+
+        if let Some(open) = self.enclosing_dictionary(index) {
+            // Inside `<< >>` a literal name is a key, and the following token is its value -- but
+            // only at an even offset from the `<<`. `<< /a /value /b 1 >>` used to mark `/value`,
+            // the *value* of `/a`, as a definition. Evidence class: Corrected.
+            if !self.dictionary_entry_offset(open, index).is_multiple_of(2) {
+                return false;
+            }
             return matches!(
                 self.tokens.get(index + 1).map(|token| &token.kind),
                 Some(
@@ -284,16 +303,60 @@ impl GameScriptDocument {
         false
     }
 
-    fn dictionary_depth_before(&self, index: usize) -> usize {
-        let mut depth = 0_usize;
-        for token in self.tokens.iter().take(index) {
-            match &token.kind {
-                TokenKind::Delimiter(Delimiter::DictionaryOpen) => depth += 1,
-                TokenKind::Delimiter(Delimiter::DictionaryClose) => depth = depth.saturating_sub(1),
-                _ => {}
+    /// The index of the `<<` that *directly* encloses `index`, if a dictionary literal does.
+    ///
+    /// The old test was "is the `<<` depth above zero", which ignored every other kind of bracket.
+    /// `gs\actvrect.gs` ships `/xdict << /left{/x parentrect /x get def} ... >>`, so the literals
+    /// inside that procedure were being read as keys of the surrounding dictionary. What matters
+    /// is the *innermost* enclosing group, not whether a dictionary is open somewhere outside.
+    /// Evidence class: Corrected.
+    fn enclosing_dictionary(&self, index: usize) -> Option<usize> {
+        let mut open_groups: Vec<(Delimiter, usize)> = Vec::new();
+        for (position, token) in self.tokens.iter().take(index).enumerate() {
+            if let TokenKind::Delimiter(delimiter) = &token.kind {
+                match delimiter {
+                    Delimiter::ProcedureOpen | Delimiter::ArrayOpen | Delimiter::DictionaryOpen => {
+                        open_groups.push((*delimiter, position));
+                    }
+                    Delimiter::ProcedureClose
+                    | Delimiter::ArrayClose
+                    | Delimiter::DictionaryClose => {
+                        open_groups.pop();
+                    }
+                }
             }
         }
-        depth
+        match open_groups.last() {
+            Some((Delimiter::DictionaryOpen, position)) => Some(*position),
+            _ => None,
+        }
+    }
+
+    /// How many entries deep into a `<< >>` literal the token at `index` sits, counting a nested
+    /// group as one token. Even means a key position, odd means a value position.
+    fn dictionary_entry_offset(&self, open: usize, index: usize) -> usize {
+        let mut offset = 0_usize;
+        let mut depth = 0_isize;
+        for token in &self.tokens[open + 1..index] {
+            if let TokenKind::Delimiter(delimiter) = &token.kind {
+                match delimiter {
+                    Delimiter::ProcedureOpen | Delimiter::ArrayOpen | Delimiter::DictionaryOpen => {
+                        if depth == 0 {
+                            offset += 1;
+                        }
+                        depth += 1;
+                    }
+                    Delimiter::ProcedureClose
+                    | Delimiter::ArrayClose
+                    | Delimiter::DictionaryClose => depth -= 1,
+                }
+                continue;
+            }
+            if depth == 0 {
+                offset += 1;
+            }
+        }
+        offset
     }
 }
 
@@ -303,6 +366,14 @@ impl GameScriptDocument {
 /// forms that attach a procedure's private storage, `dup 0 N dict put` and `/name VALUE replace`.
 /// Anything else at the same nesting depth means the `def` further on belongs to a different
 /// statement -- which is what keeps `/invoke_spell cvx ... def` out of the definition set.
+/// Operators that discard the literal name immediately before them.
+///
+/// Neither defines anything: `pop` throws the name away and `undef` removes a binding. A literal
+/// followed by one of these is therefore never the subject of a later `def`, whatever the tokens
+/// in between look like. The list is short and semantic on purpose -- it is not a general fix for
+/// statement bleed, which needs operand-arity modelling this scanner does not have.
+const NAME_CONSUMING_OPERATORS: &[&str] = &["pop", "undef"];
+
 const DEFINITION_MODIFIERS: &[&str] = &[
     "bind",
     "dup",
@@ -592,6 +663,61 @@ mod tests {
         assert_eq!(analysis.definition_names["char_cvs"], 1);
         // The attached local is script-bound data too, not a call into the engine.
         assert_eq!(analysis.definition_names["char_array"], 1);
+    }
+
+    /// Three false-positive shapes a cross-model review found, each confirmed against a local
+    /// `gs.mpq` before being fixed here. Removing any one of the three guards fails this test.
+    #[test]
+    fn rejects_the_three_shapes_that_are_not_definitions() {
+        // (A) The name is discarded by the very next operator, and the `def` belongs to the next
+        // statement. `fonts\balloon.gs` and `gs\diplo.gs` both ship this.
+        let analysis =
+            GameScriptDocument::parse(b"/CopperplateGothicBT-BoldCond pop /gridsize[16 14]def")
+                .unwrap()
+                .analyze();
+        assert!(
+            !analysis
+                .definition_names
+                .contains_key("CopperplateGothicBT-BoldCond")
+        );
+        assert_eq!(analysis.definition_names["gridsize"], 1);
+
+        let analysis = GameScriptDocument::parse(b"/i undef /majorrace?{4 lt}bind def")
+            .unwrap()
+            .analyze();
+        assert!(!analysis.definition_names.contains_key("i"));
+        assert_eq!(analysis.definition_names["majorrace?"], 1);
+
+        // (B) A value inside a `<< >>` literal is not a key. `/value` is `/a`'s value.
+        let analysis = GameScriptDocument::parse(b"<< /a /value /b 1 >>")
+            .unwrap()
+            .analyze();
+        assert_eq!(analysis.definition_names["a"], 1);
+        assert_eq!(analysis.definition_names["b"], 1);
+        assert!(!analysis.definition_names.contains_key("value"));
+
+        // (C) A literal inside a procedure inside a dictionary is not a key of that dictionary.
+        // `/invoke_spell cvx` is the corpus's way of deferring a *native* call.
+        let analysis = GameScriptDocument::parse(b"<< /handler { /invoke_spell cvx } >>")
+            .unwrap()
+            .analyze();
+        assert_eq!(analysis.definition_names["handler"], 1);
+        assert!(!analysis.definition_names.contains_key("invoke_spell"));
+
+        // ... and the shape (C) came from: a procedure value whose body reads a key off another
+        // dictionary, as `gs\actvrect.gs` does. The literals inside the procedure are no longer
+        // read as keys of the enclosing dictionary.
+        let analysis = GameScriptDocument::parse(b"<< /left{/x parentrect /x get def} >>")
+            .unwrap()
+            .analyze();
+        assert_eq!(analysis.definition_names["left"], 1);
+        // **A recorded limitation, not a target.** `x` counts 2: the leading `/x` is genuinely
+        // defined, and the second is a `get` operand that the scanner still cannot tell apart,
+        // because separating them needs the operand arity of `parentrect` -- a native whose arity
+        // this project does not have. That residual is measured at 14 names in 3.02 (0.11% of
+        // 12,979). If this ever reads 1, the residual has been closed and this expectation should
+        // be tightened rather than deleted.
+        assert_eq!(analysis.definition_names["x"], 2);
     }
 
     #[test]

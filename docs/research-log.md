@@ -3688,3 +3688,90 @@ vanilla and 113 patch302 rows assume the registry carries the same names across 
 assumption this run does not test. The error is confined to `engine-dictionary-key` and
 `unclassified-residue` and cannot reach `native-host-call` or the candidate totals. Re-running the
 sprite-type probe per profile would settle it.
+
+## 2026-09-17 — The battery was never in the test suite; three shapes were not definitions
+
+A Codex pass over the same branch found three things the Claude review and my two correction rounds
+had all missed. The report was partly contaminated — its closing bullets describe a map-loader
+getter at `0x004c6fc0` that has nothing to do with this branch — which is a reason to verify its
+claims rather than take them. All three below were verified against the real archives before being
+acted on.
+
+### 1. The 31 exercises never ran under `cargo test`. Corrected.
+
+`examples/gamescript_standard.rs` carried 32 exercise records and **zero** `#[test]` attributes, and
+the crate had no `tests/` directory. So the battery executed only when a person typed the command,
+and every "225 passed" / "229 passed" figure I published about this work was a suite that never
+touched one exercise. Pointing `sin` at `f64::cos` would have left it green — and with no CI in
+this repo, green everywhere.
+
+This is worse than the provenance question the previous round spent its effort on. Whether the
+expectations were written before the first run matters much less than nothing re-checking them
+afterwards; I committed run transcripts to address the first and left the second in place.
+
+The table now lives in `src/gamescript_standard.rs` and runs from
+`tests/gamescript_standard.rs`. The three tests are `#[ignore]`d because they execute shipped
+script that is not in Git, so they report as `ignored` rather than being absent, and
+`LOM_GS_PROFILE` asserts the per-profile disagreements instead of tolerating them — `patch302` must
+disagree on nothing, `vanilla` on its two missing string helpers, `gs5r3` on those plus the swapped
+`min`/`max`. A declared disagreement that stops happening fails too.
+
+For the default suite, which cannot reach the corpus, I added
+`trigonometry_is_not_self_consistent_under_a_swap` (sin is odd, cos is even; a swap breaks both
+identities and both orderings) and
+`arithmetic_and_comparison_primitives_are_wired_to_the_right_operations` (non-commutativity catches
+swapped operands where `add` and `mul` cannot). **Verified: the `sin`-calls-`cos` mutation now
+fails the default `cargo test` *and* the battery.** Before this change it failed neither.
+
+### 2. Three definition-site shapes that are not definitions. Corrected, with the residual measured.
+
+All three confirmed against a local 3.02 `gs.mpq` before any change:
+
+| Shape | Corpus site | Distinct names |
+| --- | --- | ---: |
+| the name is discarded by the next operator | `fonts\balloon.gs`: `/CopperplateGothicBT-BoldCond pop /gridsize[16 14]def`; `gs\diplo.gs`: `/i undef /majorrace?{4 lt}bind def` | 12 |
+| a dictionary *value* read as a key | `<< /a /value /b 1 >>` | 114 |
+| a literal nested inside a dictionary | `gs\actvrect.gs`: `/xdict << /left{/x parentrect /x get def} … >>` | 202 |
+
+Fixed by, respectively: treating `pop` and `undef` as consuming the name before them; requiring a
+key to sit at an **even** offset from its `<<`; and requiring the `<<` to be the **innermost**
+enclosing group rather than merely open somewhere outside.
+
+**A fourth shape is left in, deliberately.** The second `/x` in `/x parentrect /x get def` is a
+`get` operand, not a definition, and separating it from the genuine leading `/x` needs the operand
+arity of `parentrect` — a native whose arity this project does not have. I tried a general rule
+("stop at an intervening literal once real work has been seen") and it rejects the true positive as
+readily as the false one, so it is not a fix, it is a trade. The test records the over-count as an
+expectation of 2 rather than pretending it is 1.
+
+**The damage, bounded by measurement rather than guess.** Of the 12,979 names the pre-fix rule
+admitted on 3.02, **83** (0.64%) had no sound definition site anywhere in the corpus. Fixing the
+three shapes reclassified **12** of them; the rest sit in the residual above. And the question as
+asked — how many of the newly-admitted names are of these shapes — is **6 of 1,131**, so the
+definition-window widening was itself ~99.5% sound. (The 950 figure in the prompt came from my own
+earlier case-folded class counts, a different quantity; measured directly, the widening admits
+1,131 names.)
+
+Twelve names changed class in 3.02: eleven dictionary values (`button2_t`, `crystalsvaluestring`,
+`up_button_x`, …) moved to `unclassified-residue`, and `exec` moved from `script-definition` to
+`language-primitive` because its only "definition" was a false site. Definition totals moved
+12,979 → 12,922 (3.02) and 14,978 → 14,917 (GS5R3). **No VM behaviour changed**: 3.02's survey is
+still 406 loaded / 1,267 stopped / 8 other and 564/556/124/23.
+
+### 3. String and name dictionary keys aliased. Corrected.
+
+`as_dictionary_key` mapped both to `DictKey::Name`, so `<< /a 1 "a" 2 >> /a get` answered `2` — a
+**silent overwrite**, the exact failure class this VM is supposed to refuse. My own documentation
+already said keys are "numbers or names, never strings", so the code contradicted the doc. There is
+direct corpus evidence for name keys and for numeric keys and none for string keys, so a string key
+now stops. If a shipped member uses one, it will say so rather than quietly reading a neighbour.
+3.02's survey is unchanged by it, so no 3.02 member does.
+
+### One finding I am not acting on, and why
+
+Codex called `primitive_names_match_the_dispatch` circular because it extracts quoted labels rather
+than behaviour. It is not circular for its stated purpose — it pins `PRIMITIVE_NAMES` to the
+dispatch arms and fails when either side moves, which is what keeps the vocabulary classification's
+"native call = engine lists it and the VM does not implement it" boundary honest. What it cannot do
+is detect a *wrong implementation* behind a right name, and that gap is now covered by the two new
+primitive-wiring tests rather than by widening this one's claim.

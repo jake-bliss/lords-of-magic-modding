@@ -153,9 +153,17 @@ impl Value {
         }
     }
 
+    /// The dictionary key this value is, if it can be one.
+    ///
+    /// A **string is not a key.** It used to map to the same variant as a name, which made
+    /// `<< /a 1 "a" 2 >> /a get` answer `2`: the second entry silently overwrote the first. The
+    /// corpus gives direct evidence for name keys and for numeric keys (`gs\spells\weaken.gs`
+    /// keys a table by number) and none at all for string keys, so a string key stops here rather
+    /// than aliasing onto a name. If a shipped member turns out to use one, it will stop with a
+    /// message saying so, which is the outcome that gets the question answered instead of buried.
     fn as_dictionary_key(&self) -> Option<DictKey> {
         match self {
-            Self::LiteralName(name) | Self::String(name) | Self::ExecutableName(name) => {
+            Self::LiteralName(name) | Self::ExecutableName(name) => {
                 Some(DictKey::Name(name.clone()))
             }
             Self::Number(number) => Some(DictKey::Number(number_key_text(*number))),
@@ -1493,6 +1501,30 @@ mod tests {
         assert_eq!(rendered_stack(b"<< 3 1.5 >> {} forall"), "3 1.5");
     }
 
+    /// Two key types that looked like one. A string key aliasing onto a name key is a *silent
+    /// overwrite*, which is the failure mode this VM exists to avoid.
+    #[test]
+    fn a_string_is_not_a_dictionary_key() {
+        // The aliasing this prevents: `"a"` used to land on the same key as `/a`, so the literal
+        // below answered 2 for `/a get` and the first entry vanished.
+        let error = run(b"<< /a 1 \"a\" 2 >>").unwrap_err();
+        assert!(
+            error.contains("name or number key"),
+            "a string key must stop, got {error}"
+        );
+        // Access refuses it for the same reason, rather than reading a neighbouring entry.
+        let error = run(b"<< /a 1 >> \"a\" get").unwrap_err();
+        assert!(error.contains("name or number key"), "{error}");
+        let error = run(b"<< >> dup \"a\" 1 put").unwrap_err();
+        assert!(error.contains("name or number key"), "{error}");
+        // Names and numbers still work, and remain distinct from each other.
+        assert_eq!(rendered_stack(b"<< /a 1 >> /a get"), "1");
+        assert_eq!(
+            rendered_stack(b"<< 3 1 >> dup 3 known exch /3 known"),
+            "true false"
+        );
+    }
+
     #[test]
     fn numeric_dictionary_keys_are_not_names() {
         // `gs\spells\weaken.gs` keys its level-advantage table by number.
@@ -1636,6 +1668,67 @@ mod tests {
         vm.define_native_stub("nan_source", Value::Number(f64::NAN));
         let error = vm.execute_document(&document).unwrap_err();
         assert_eq!(error.message, "gt cannot order a not-a-number operand");
+    }
+
+    /// Catch a primitive wired to the wrong function, which the corpus battery would catch but
+    /// which only runs against a local archive.
+    ///
+    /// Asserted as *identities*, not as tabulated values: `sin` is odd and `cos` is even, so
+    /// `sin(-x) + sin(x)` is zero and `cos(-x) - cos(x)` is zero. Swapping the two makes both
+    /// sums non-zero, and the orderings below disagree as well. These are facts about the
+    /// functions rather than a restatement of the dispatch, so the test can fail on the dispatch
+    /// being wrong. Verified by mutation: pointing `sin` at `f64::cos` fails it.
+    #[test]
+    fn trigonometry_is_not_self_consistent_under_a_swap() {
+        // sin is odd.
+        assert_eq!(rendered_stack(b"-1 sin 1 sin add abs 1e-12 lt"), "true");
+        // cos is even.
+        assert_eq!(rendered_stack(b"-1 cos 1 cos sub abs 1e-12 lt"), "true");
+        // And they are ordered oppositely on either side of their crossing near 0.785 radians.
+        assert_eq!(rendered_stack(b"0 sin 0 cos lt"), "true");
+        assert_eq!(rendered_stack(b"1 sin 1 cos gt"), "true");
+    }
+
+    /// The remaining arithmetic and comparison primitives, pinned by properties that a
+    /// wrong-operand-order or wrong-operator wiring breaks.
+    #[test]
+    fn arithmetic_and_comparison_primitives_are_wired_to_the_right_operations() {
+        // Subtraction and division are not commutative, so these catch a swapped operand order
+        // that `add` and `mul` cannot.
+        assert_eq!(rendered_stack(b"5 3 sub 3 5 sub"), "2 -2");
+        assert_eq!(rendered_stack(b"6 3 div 3 6 div"), "2 0.5");
+        assert_eq!(rendered_stack(b"7 2 idiv 7 2 mod"), "3 1");
+        // add and mul, checked against each other rather than against a literal: doubling and
+        // squaring agree only at 0 and 2, so a mul wired to add would show up at 3.
+        assert_eq!(rendered_stack(b"3 3 add 3 3 mul eq"), "false");
+        assert_eq!(rendered_stack(b"2 2 add 2 2 mul eq"), "true");
+        // The ordering family, each against its own negation.
+        assert_eq!(
+            rendered_stack(b"1 2 lt 2 1 lt 1 2 gt 2 1 gt"),
+            "true false false true"
+        );
+        assert_eq!(
+            rendered_stack(b"2 2 le 2 2 ge 2 2 lt 2 2 gt"),
+            "true true false false"
+        );
+        assert_eq!(rendered_stack(b"2 2 eq 2 2 ne"), "true false");
+        // Bitwise on numbers, logical on booleans, from the same three operators.
+        assert_eq!(rendered_stack(b"6 3 and 6 3 or 6 3 xor"), "2 7 5");
+        assert_eq!(
+            rendered_stack(b"true false and true false or true false xor"),
+            "false true true"
+        );
+        // Rounding directions are distinct: a single wrong wiring collapses two of these.
+        assert_eq!(
+            rendered_stack(b"-1.5 floor -1.5 ceiling -1.5 truncate -1.5 abs"),
+            "-2 -1 -1 1.5"
+        );
+        assert_eq!(rendered_stack(b"9 sqrt 3 neg"), "3 -3");
+        // `type` distinguishes what the corpus branches on.
+        assert_eq!(
+            rendered_stack(b"2 type 2.5 type true type \"a\" type"),
+            "/integertype /realtype /booleantype /stringtype"
+        );
     }
 
     #[test]

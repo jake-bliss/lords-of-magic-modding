@@ -3988,7 +3988,7 @@ attacker_health_factor	2	script-definition	no	-
 attacker_hit_points	48	script-definition	no	-
 attacker_level	113	script-definition	no	-
 attacker_luck	103	script-definition	no	-
-attacker_max_health	1	script-definition	no	-
+attacker_max_health	1	unclassified-residue	no	-
 attacker_max_hp	56	script-definition	no	-
 attacker_name	63	script-definition	no	-
 attacker_name_box	4	script-definition	no	-
@@ -4019,7 +4019,7 @@ au_to_a_u	30	native-host-call	yes	0x004e5b20
 aura_alpha_filename	8	script-definition	no	-
 aura_dict	3	script-definition	no	-
 aura_imp_filename	8	script-definition	no	-
-aut	1	script-definition	no	-
+aut	1	unclassified-residue	yes	-
 auto_fight	1	unclassified-residue	no	-
 auto_retreat	1	unclassified-residue	no	-
 autocalc_allowed?	3	script-definition	no	-
@@ -4819,7 +4819,7 @@ can_research	2	script-definition	no	-
 can_research_here?	1	script-definition	no	-
 can_resurrect?	2	script-definition	no	-
 can_steal_spy?	4	script-definition	no	-
-can_train_wildmen?	29	script-definition	no	-
+can_train_wildmen?	29	unclassified-residue	no	-
 can_use_artifact_graphic	3	script-definition	no	-
 canaffordbuilding?	6	native-host-call	yes	0x00445120
 canaffordbuilding_getresourcesinfo	6	native-host-call	yes	0x00445390
@@ -5701,7 +5701,7 @@ crystals_item	4	script-definition	no	-
 crystals_str	4	script-definition	no	-
 crystals_to_steal	1	unclassified-residue	no	-
 crystalsdelta	3	script-definition	no	-
-crystalsvaluestring	1	script-definition	no	-
+crystalsvaluestring	1	unclassified-residue	no	-
 crystb	11	engine-dictionary-key	no	-
 crystp	6	engine-dictionary-key	no	-
 crystr	8	engine-dictionary-key	no	-
@@ -5870,7 +5870,7 @@ currunitnumber	14	script-definition	no	-
 curse_aura	3	unclassified-residue	no	-
 curse_type	2	unclassified-residue	no	-
 custom_array	1	script-definition	no	-
-custom_dialog	4	script-definition	no	-
+custom_dialog	4	unclassified-residue	no	-
 custom_enc_dlg_dict	8	script-definition	no	-
 custom_experience_amount?	1	script-definition	no	-
 custom_game	3	script-definition	no	-
@@ -7930,7 +7930,7 @@ exchange_rate_for_ale	21	script-definition	no	-
 exchange_rate_for_crystals	21	script-definition	no	-
 exchange_rate_for_fame	21	script-definition	no	-
 exchange_rate_for_gold	21	script-definition	no	-
-exec	3245	script-definition	no	0x004ca740
+exec	3245	language-primitive	yes	0x004ca740
 execute_targeting_procedure	6	script-definition	no	-
 executeprisonerproc	2	native-host-call	yes	0x004e2ab0
 executeprisoners	14	native-host-call	yes	0x004c3690
@@ -9121,7 +9121,7 @@ goldmine_win	11	script-definition	no	-
 goldoutline	25	script-definition	no	-
 golds	64	script-definition	no	-
 golds_to_steal	1	unclassified-residue	no	-
-goldvaluestring	1	script-definition	no	-
+goldvaluestring	1	unclassified-residue	no	-
 golgotha_aura	6	unclassified-residue	no	-
 golgothasgift_aura	1	unclassified-residue	no	-
 golgoths_gift	17	script-definition	no	-
@@ -10585,7 +10585,7 @@ leader_unit_type_dict	14	script-definition	no	-
 leader_ut	4	script-definition	no	-
 leaderinarmy?	48	script-definition	no	-
 leaderinparty?	9	script-definition	no	-
-leaders_for_cities_only?	2	script-definition	no	-
+leaders_for_cities_only?	2	unclassified-residue	no	-
 leadership	17	script-definition	no	-
 leadership_mod	2	script-definition	no	-
 leadersprites	5	script-definition	no	-
@@ -10718,7 +10718,7 @@ lifit	29	script-definition	no	-
 lifitm	2	unclassified-residue	no	-
 light_rain	13	script-definition	no	-
 lightblue_numbers	2	unclassified-residue	no	-
-lightning	2	script-definition	no	0x004a3c40
+lightning	2	native-host-call	yes	0x004a3c40
 lightning_aura	8	unclassified-residue	no	-
 lightning_charge	15	script-definition	no	-
 lightorientation	1	native-host-call	yes	0x0046a740
@@ -11687,7 +11687,7 @@ newlocationproc	1	native-host-call	yes	0x004e2460
 newmap	9	native-host-call	yes	0x004def80
 newmap_dlg	11	script-definition	no	-
 newmapdict	14	script-definition	no	-
-newname	18	script-definition	no	-
+newname	18	unclassified-residue	no	-
 newnetdlg	5	script-definition	no	-
 newplay	23	native-host-call	yes	0x004649e0
 newtextrect	2	script-definition	no	-
@@ -11806,7 +11806,7 @@ num_items	44	script-definition	no	-
 num_mercenaries_dismissed	4	script-definition	no	-
 num_mil_units	11	script-definition	no	-
 num_mine	3	script-definition	no	-
-num_missing	1	script-definition	no	-
+num_missing	1	unclassified-residue	no	-
 num_months	8	script-definition	no	-
 num_of_artifacts_won	4	script-definition	no	-
 num_open_dialogs	2	script-definition	no	-
@@ -13126,7 +13126,7 @@ rblocks_high	6	script-definition	no	-
 rblocks_wide	6	script-definition	no	-
 rbp	26	script-definition	no	-
 rbuttonup	12	native-host-call	yes	0x004e3d90
-react	1	script-definition	no	-
+react	1	unclassified-residue	no	-
 reaction_dict	1	script-definition	no	-
 ready	1	script-definition	no	-
 realgriddistance	83	native-host-call	yes	0x004e6070
@@ -16852,5 +16852,5 @@ zerovisibility	1	native-host-call	yes	0x004a9210
 zoom_b_button	4	unclassified-residue	no	-
 zoom_c_button	4	unclassified-residue	no	-
 zoom_d_button	4	unclassified-residue	no	-
-zoomoutdood	3	script-definition	no	-
+zoomoutdood	3	unclassified-residue	no	-
 |\\	2	unclassified-residue	no	-

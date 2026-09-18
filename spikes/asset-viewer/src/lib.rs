@@ -1,5 +1,6 @@
 pub mod asset;
 pub mod gamescript;
+pub mod gamescript_standard;
 pub mod gamescript_vm;
 pub mod imp;
 pub mod map;

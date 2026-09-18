@@ -30,8 +30,8 @@ candidate totals**, because names like `GOLD` had been suppressed by a lowercase
 
 | | vanilla | patch302 | gs5r3 |
 | --- | ---: | ---: | ---: |
-| broad candidates, case-sensitive | 2,159 | 2,262 | 2,195 |
-| under the old case fold | 2,113 | 2,211 | 2,148 |
+| broad candidates, case-sensitive | 2,160 | 2,263 | 2,198 |
+| under the old case fold | 2,114 | 2,212 | 2,151 |
 | recovered by the correction | 46 | 51 | 47 |
 
 Every recovered name is an engine constant — `GOLD` (290 uses), `FOOD`, `CRYSTALS`, `WARRIOR`,
@@ -46,12 +46,12 @@ to agree with the interpreter.
 
 | Class | vanilla | patch302 | gs5r3 |
 | --- | ---: | ---: | ---: |
-| script-definition | 10,317 | 10,913 | 12,368 |
-| language-primitive | 55 | 55 | 54 |
-| native-host-call | 1,383 | 1,414 | 1,390 |
+| script-definition | 10,305 | 10,901 | 12,355 |
+| language-primitive | 56 | 56 | 55 |
+| native-host-call | 1,383 | 1,414 | 1,391 |
 | constant-or-data | 693 | 786 | 722 |
 | engine-dictionary-key | 112 | 113 | 126 |
-| unclassified-residue | 1,520 | 1,893 | 2,195 |
+| unclassified-residue | 1,531 | 1,904 | 2,206 |
 | **distinct executable names** | **14,080** | **15,174** | **16,855** |
 | parsed members | 1,315 | 1,681 | 1,696 |
 | operator-table entries | 1,906 | 1,906 | 1,906 |
@@ -60,12 +60,12 @@ to agree with the interpreter.
 
 | Class | vanilla | patch302 | gs5r3 |
 | --- | ---: | ---: | ---: |
-| language-primitive | 55 | 55 | 54 |
-| native-host-call | 1,383 | 1,414 | 1,390 |
+| language-primitive | 56 | 56 | 55 |
+| native-host-call | 1,383 | 1,414 | 1,391 |
 | constant-or-data | 689 | 760 | 717 |
 | engine-dictionary-key | 0 | 0 | 1 |
-| unclassified-residue | 32 | 33 | 33 |
-| **broad candidates** | **2,159** | **2,262** | **2,195** |
+| unclassified-residue | 32 | 33 | 34 |
+| **broad candidates** | **2,160** | **2,263** | **2,198** |
 
 `script-definition` is zero in this table by construction: the heuristic already excludes every
 name the corpus defines. About 98.5% of the candidate list is real; roughly 33 names per profile
@@ -87,6 +87,13 @@ A further 113 rows in 3.02 are engine terrain-sprite dictionary keys, now split 
 `engine-dictionary-key`. Shrinking this class is work for the definition scanner, not the operator
 table. Every row discussed here is `broad-candidate = no`, so none of it bears on the 98.5% figure
 above.
+
+Eleven 3.02 names moved *into* this class when three non-definition shapes were excluded from the
+definition scanner — `button2_t`, `crystalsvaluestring`, `up_button_x` and similar, all dictionary
+*values* that had been read as keys. One moved out: `exec` had a false definition site and is now
+correctly `language-primitive`, which is why that row reads 56 rather than 55. The `script-definition`
+total remains an upper bound; on 3.02 its measured contamination is 83 names of 12,979 (0.64%), of
+which these fixes removed 12.
 
 ## Caveat: `engine-dictionary-key` is GS5R3-derived
 

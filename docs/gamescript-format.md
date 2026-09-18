@@ -113,10 +113,30 @@ old heuristic excluded any name appearing as a literal anywhere, hiding genuine 
   def`. Any other operator at that depth ends the statement, so `/invoke_spell cvx` is still not a
   definition;
 - `/name <value>` directly inside a `<< >>` dictionary literal, which is how scenario tables such as
-  `gs\scenario\default.gs` declare entries.
+  `gs\scenario\default.gs` declare entries — where the `<<` must be the **innermost** enclosing
+  group, and the name must sit at an **even** offset from it.
 
-Measured on GS5R3: 17,641 distinct literal names and **14,978 definitions**, so 2,663 literals were
-never definitions. The native-candidate count is **2,195**. Two corrections moved it from the
+Three shapes are explicitly *not* definitions, each confirmed against a local archive before being
+excluded. Evidence class: Corrected.
+
+| Shape | Corpus example | Why it is not a definition |
+| --- | --- | --- |
+| the name is consumed immediately | `fonts\balloon.gs`: `/CopperplateGothicBT-BoldCond pop /gridsize[16 14]def`; `gs\diplo.gs`: `/i undef /majorrace?{4 lt}bind def` | `pop` and `undef` discard the name; the `def` belongs to the next statement |
+| a dictionary *value* read as a key | `<< /a /value /b 1 >>` | `/value` is `/a`'s value; key positions are the even offsets |
+| a literal nested inside a dictionary | `gs\actvrect.gs`: `/xdict << /left{/x parentrect /x get def} … >>` | the innermost enclosing group is the procedure, not the dictionary |
+
+**The residual, measured rather than asserted.** A fourth shape remains: a literal that is an
+operand of a later operator, as the second `/x` in `/x parentrect /x get def`. Separating it from
+the genuine leading `/x` needs the operand arity of `parentrect`, a native whose arity this project
+does not have, so it is left in and bounded instead. On 3.02: of 12,979 names the pre-fix rule
+admitted, **83** (0.64%) had no sound definition site anywhere in the corpus; fixing the three
+shapes above reclassified **12** of them, and the rest are this residual. Of the **1,131** names
+the definition-window widening newly admitted, **6** were bad-shape-only — so the widening itself
+was ~99.5% sound. The 10,901 script-definition figure is still an upper bound; it is an upper bound
+whose error is now measured at well under one percent rather than unknown.
+
+Measured on GS5R3: 17,641 distinct literal names and **14,917 definitions**, so 2,724 literals were
+never definitions. The native-candidate count is **2,198**. Two corrections moved it from the
 13,609 definitions and 2,151 candidates that the flat three-token rule produced: the widened rule
 recognised definitions the window had missed, which removes candidates, and the case-fold
 correction added back 47 engine constants that a lowercase definition of the same word had been
@@ -163,14 +183,15 @@ above with no length threshold applied.
 ### What this settles about the candidate vocabulary
 
 Reconciling the GS5R3 candidate vocabulary against the table (re-measured after the definition-shape
-widening and the case-fold correction; the figures were 2,151 / 1,445 / 671 / 35 before both):
+widening, the case-fold correction and the three rejected shapes; the figures were
+2,151 / 1,445 / 671 / 35 before all three):
 
 | Class | Count | Reading |
 | --- | ---: | --- |
-| Confirmed operators | 1,444 | present in the table with an entry point |
+| Confirmed operators | 1,446 | present in the table with an entry point |
 | SCREAMING_CASE | 717 | engine **constants** pushed by name, not operators |
-| Remainder | 34 | see below |
-| **Candidates** | **2,195** | |
+| Remainder | 35 | see below |
+| **Candidates** | **2,198** | |
 
 The heuristic's stated weakness — *"can contain false positives from unrelated binary strings"* — is
 now measured rather than assumed. Two thirds of the vocabulary are confirmed procedures, and almost
@@ -181,12 +202,12 @@ so they are absent from the table by construction rather than by error. The cons
 were always absent from the operator table, but they had been absent from the *candidate list* too,
 which is the part that was wrong.
 
-The 34-name remainder is the heuristic's actual error bar. Twenty are `Type_*` engine type tags
+The 35-name remainder is the heuristic's actual error bar. Twenty are `Type_*` engine type tags
 (`Type_Imp`, `Type_Font`, `Type_EditBox`) that `is_screaming_case` does not match because they are
 mixed case. The other fourteen are short, low-use names (`e1`, `uf`, `hh`, `jx`, `rx`, `xp`, `ice`,
 `log`, `no`, `building_type`) that look like dictionary keys our definition-shape classifier does not
 recognise as definitions. That is a **precision limit of the classifier**, not evidence of engine
-surface, and it is the tightest bound we have on it: roughly 1.5% of candidates.
+surface, and it is the tightest bound we have on it: roughly 1.6% of candidates.
 
 ### Operator arity, recovered from the code
 
@@ -612,6 +633,33 @@ so any nearer binding wins. 15 of 3.02's script definitions depend on it by over
 engine also implements, `standard.gs`'s own `/index` among them. A procedure local named after a
 primitive would shadow it too; nothing in the corpus does that today.
 
+### Where the battery runs, and what a default `cargo test` covers
+
+The exercise table lives in `src/gamescript_standard.rs` and is executed by
+`tests/gamescript_standard.rs`. It used to live inside the example, which meant **it ran only when
+a person typed the command**: 32 exercises, zero `#[test]` attributes, and no `tests/` directory in
+the crate. Every "225 passed" figure published about this work was a suite that never executed one
+exercise, and pointing `sin` at `f64::cos` would have left it green. Evidence class: Corrected.
+
+The battery needs the shipped `gs\standard.gs`, which is not in Git, so its three tests are
+`#[ignore]`d — they report as `ignored` rather than not existing:
+
+```sh
+LOM_GS_MPQ='/path/to/English/gs.mpq' LOM_GS_PROFILE=patch302 cargo test -- --ignored
+```
+
+`LOM_GS_PROFILE` is asserted, not tolerated: `patch302` must disagree on nothing, `vanilla` on
+exactly the two 3.02 string helpers it does not ship, and `gs5r3` on those two plus `min` and `max`.
+A declared disagreement that stops happening fails the test too, which is what catches an
+expectation quietly rotting into agreement.
+
+A *default* `cargo test` cannot touch the corpus, so what covers the primitives underneath is
+`gamescript_vm`'s own unit tests — in particular `trigonometry_is_not_self_consistent_under_a_swap`,
+which pins `sin` and `cos` by their odd/even identities rather than by tabulated values, and
+`arithmetic_and_comparison_primitives_are_wired_to_the_right_operations`, which uses
+non-commutativity to catch swapped operands. The `sin`-calls-`cos` mutation now fails both the
+default suite and the battery; verified by making it.
+
 ### The `standard.gs` battery
 
 `cargo run --example gamescript_standard` loads 3.02's `gs\standard.gs` (339 VM steps, 36 names, empty operand stack) and then runs 31 exercises whose expected stacks were worked out from the shipped bodies rather than recorded from output. **All 31 behave as expected**: 22 produce a stated stack, and 9 stop on a named engine call. Six were wrong on the first run and the run said so, which is the point of stating the expectation first.
@@ -648,24 +696,24 @@ The tool reports `standard.gs`'s static debt as 21 names. One of them, `outfilen
 
 | Class | vanilla | patch302 | gs5r3 |
 | --- | ---: | ---: | ---: |
-| script-definition | 10,317 | 10,913 | 12,368 |
-| language-primitive | 55 | 55 | 54 |
-| native-host-call | 1,383 | 1,414 | 1,390 |
+| script-definition | 10,305 | 10,901 | 12,355 |
+| language-primitive | 56 | 56 | 55 |
+| native-host-call | 1,383 | 1,414 | 1,391 |
 | constant-or-data | 693 | 786 | 722 |
 | engine-dictionary-key | 112 | 113 | 126 |
-| unclassified-residue | 1,520 | 1,893 | 2,195 |
+| unclassified-residue | 1,531 | 1,904 | 2,206 |
 | **distinct executable names** | **14,080** | **15,174** | **16,855** |
 
 Restricted to the broad "likely hardcoded engine name" candidate list, which is what issue #5 asked to partition:
 
 | Class | vanilla | patch302 | gs5r3 |
 | --- | ---: | ---: | ---: |
-| language-primitive | 55 | 55 | 54 |
-| native-host-call | 1,383 | 1,414 | 1,390 |
+| language-primitive | 56 | 56 | 55 |
+| native-host-call | 1,383 | 1,414 | 1,391 |
 | constant-or-data | 689 | 760 | 717 |
 | engine-dictionary-key | 0 | 0 | 1 |
-| unclassified-residue | 32 | 33 | 33 |
-| **broad candidates** | **2,159** | **2,262** | **2,195** |
+| unclassified-residue | 32 | 33 | 34 |
+| **broad candidates** | **2,160** | **2,263** | **2,198** |
 
 So **roughly 98.5% of the broad candidate list is real** — a primitive, an operator the engine registers, or a constant — and about 33 names per profile are coincidences of the string filter. `script-definition` is zero there, now for a principled reason rather than by construction: a candidate is by definition a name the corpus does not define, and both sides of that comparison are case-sensitive.
 
@@ -673,8 +721,8 @@ So **roughly 98.5% of the broad candidate list is real** — a primitive, an ope
 
 | | vanilla | patch302 | gs5r3 |
 | --- | ---: | ---: | ---: |
-| candidates, case-sensitive | 2,159 | 2,262 | 2,195 |
-| under the old fold | 2,113 | 2,211 | 2,148 |
+| candidates, case-sensitive | 2,160 | 2,263 | 2,198 |
+| under the old fold | 2,114 | 2,212 | 2,151 |
 | recovered | 46 | 51 | 47 |
 
 Every recovered name is an engine constant (`GOLD`, `FOOD`, `CRYSTALS`, `WARRIOR`, `WIZARD`, `TARGET_ARMY`, `CITY_OWNER`), which is the class the filter exists to surface. Both the scanner and the classifier report the same deltas from independently written code, and both print them (`engine-names-recovered-from-the-old-case-fold`, `broad-candidates-recovered-from-the-old-case-fold`) so the movement is stated rather than silent. Evidence class: Corrected.
@@ -686,6 +734,8 @@ The *binary-string* half of the rule stays folded in both places: it asks whethe
 That table was dumped from a **GS5R3** script set, so applying it to the vanilla and 3.02 columns is an **assumption, not a measurement**: it assumes the registry carries the same names across profiles, which this run does not establish. The 126 GS5R3 rows are measured against their own profile; the 112 vanilla and 113 patch302 rows are not. A name wrongly placed here has moved out of `unclassified-residue` and nowhere else, so the error is confined to those two classes. Re-running the sprite-type probe per profile would settle it.
 
 `unclassified-residue` is named for what is not known about it. It is **not** a false-positive list: its highest-use members are genuine script definitions whose definition sites the scanner still cannot see — `set_level_modifications` (279 uses, `gs\levlmods.gs`), `getdungeonstrength` (204 uses, `gs\placedng.gs`), `build_statement` (340 uses, `gs\text.gs`, its value spanning more than the attachment window). The rest is mixed-case engine type names such as `Type_GraphicPage` that `is_screaming_case` does not match. Shrinking this class is a job for the definition scanner, not for the operator table.
+
+Eleven 3.02 names moved *into* it when the three non-definition shapes were excluded — `button2_t`, `crystalsvaluestring`, `up_button_x` and the like, all dictionary *values* that had been read as keys. One name moved the other way: `exec` had a false definition site and is now correctly a `language-primitive`, which is why that column reads 56 rather than 55.
 
 Names the corpus defines that the engine *also* registers are reported separately — 15 in 3.02, including `exec`, `ne`, `type`, `run` and `sleep`. The dictionary wins at run time, so these are script overrides of engine behaviour.
 

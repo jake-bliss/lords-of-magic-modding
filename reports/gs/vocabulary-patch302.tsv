@@ -4219,11 +4219,11 @@ button1_t	1	script-definition	no	-
 button1_y	4	script-definition	no	-
 button2	9	script-definition	no	-
 button2_fn	1	script-definition	no	-
-button2_t	1	script-definition	no	-
+button2_t	1	unclassified-residue	no	-
 button3	9	script-definition	no	-
 button3_t	1	script-definition	no	-
 button4	11	script-definition	no	-
-button4_t	1	script-definition	no	-
+button4_t	1	unclassified-residue	no	-
 button5	14	unclassified-residue	no	-
 button6	5	unclassified-residue	no	-
 button7	5	script-definition	no	-
@@ -5203,7 +5203,7 @@ crystals_item	2	script-definition	no	-
 crystals_str	2	script-definition	no	-
 crystals_to_steal	1	unclassified-residue	no	-
 crystalsdelta	3	script-definition	no	-
-crystalsvaluestring	1	script-definition	no	-
+crystalsvaluestring	1	unclassified-residue	no	-
 crystb	9	engine-dictionary-key	no	-
 crystdood	2	unclassified-residue	no	-
 crystp	4	engine-dictionary-key	no	-
@@ -6150,8 +6150,8 @@ down_button	2	script-definition	no	-
 down_button_dd	2	script-definition	no	-
 down_button_dd_in	2	script-definition	no	-
 down_button_frame	2	script-definition	no	-
-down_button_x	1	script-definition	no	-
-down_button_y	1	script-definition	no	-
+down_button_x	1	unclassified-residue	no	-
+down_button_y	1	unclassified-residue	no	-
 down_stonepanel	3	script-definition	no	-
 downarrow	1	script-definition	no	-
 downarrow_b1	1	script-definition	no	-
@@ -7145,7 +7145,7 @@ exame_post_combat_spells	1	script-definition	no	-
 excalibr	2	script-definition	no	-
 excg	4	unclassified-residue	no	-
 exch	6366	language-primitive	yes	0x004ca7e0
-exec	478	script-definition	no	0x004ca740
+exec	478	language-primitive	yes	0x004ca740
 exec_if_known	23	script-definition	no	-
 execute_targeting_procedure	3	script-definition	no	-
 executeprisonerproc	1	native-host-call	yes	0x004e2ab0
@@ -8243,7 +8243,7 @@ goldmine_delta	9	script-definition	no	-
 goldmine_win	11	script-definition	no	-
 golds	33	script-definition	no	-
 golds_to_steal	1	unclassified-residue	no	-
-goldvaluestring	1	script-definition	no	-
+goldvaluestring	1	unclassified-residue	no	-
 golggift	14	script-definition	no	-
 golgotha_aura	2	unclassified-residue	no	-
 golgothasgift_aura	1	unclassified-residue	no	-
@@ -10564,7 +10564,7 @@ num_items	44	script-definition	no	-
 num_mercenaries_dismissed	4	script-definition	no	-
 num_mil_units	1	script-definition	no	-
 num_mine	3	script-definition	no	-
-num_missing	1	script-definition	no	-
+num_missing	1	unclassified-residue	no	-
 num_months	4	script-definition	no	-
 num_of_artifacts_won	2	script-definition	no	-
 num_open_dialogs	2	script-definition	no	-
@@ -11791,7 +11791,7 @@ rblocks_high	3	script-definition	no	-
 rblocks_wide	3	script-definition	no	-
 rbp	13	script-definition	no	-
 rbuttonup	5	native-host-call	yes	0x004e3d90
-react	1	script-definition	no	-
+react	1	unclassified-residue	no	-
 reaction_dict	1	script-definition	no	-
 read	1	native-host-call	yes	0x004cc110
 ready	1	script-definition	no	-
@@ -14558,8 +14558,8 @@ up_button	2	script-definition	no	-
 up_button_dd	2	script-definition	no	-
 up_button_dd_in	2	script-definition	no	-
 up_button_frame	2	script-definition	no	-
-up_button_x	1	script-definition	no	-
-up_button_y	1	script-definition	no	-
+up_button_x	1	unclassified-residue	no	-
+up_button_y	1	unclassified-residue	no	-
 up_doodad	53	script-definition	no	-
 up_stonepanel	3	script-definition	no	-
 up_xywh	52	script-definition	no	-
@@ -15171,5 +15171,5 @@ zoom_d_button	12	unclassified-residue	no	-
 zoom_dict	8	script-definition	no	-
 zoomcity	1	unclassified-residue	no	-
 zoomdict	9	script-definition	no	-
-zoomoutdood	3	script-definition	no	-
+zoomoutdood	3	unclassified-residue	no	-
 |\\	1	unclassified-residue	no	-
