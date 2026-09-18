@@ -100,6 +100,29 @@ turn that member into a `File%08u.xxx` slot in the output manifest and surface a
 plus an added one. Its flags and locale are still checked. An `(attributes)` member, which carries
 timestamps, is **not** exempt; if one appears, that is reported as an added member and refused.
 
+The exemption only ever applies to an archive that *has* a `(listfile)`. **Observed 2026-09-18**:
+repacking `pic.mpq`, which has none, does **not** cause StormLib to create one. The entry count
+holds at 1,071 before and after, and no `(listfile)` appears in the output. So an archive that names
+none of its own members stays that way through a repack, and its shape check has nothing to waive.
+
+### Naming members of an archive that names none
+
+`pic.mpq`, `imp.mpq`, `sndfx.mpq` and `special.mpq` carry no `(listfile)` and **no self-named member
+at all**, so every member lists under the `File%08u.xxx` pseudo-name synthesised from its block
+index. `repack` therefore takes `--listfile NAMES.txt`, and without it those four archives cannot be
+repacked at all. Both ways round fail, **Observed 2026-09-18**:
+
+- naming a real member is refused, because the storage-flags map built from the source archive has
+  no such key;
+- naming the pseudo-name reaches `SFileAddFileEx`, which rejects it with **StormLib error 22**. The
+  pseudo-name is a read-side convenience that resolves by *block position*; nothing hashes it into
+  the hash table, so there is nothing for a write to replace.
+
+A recovered name does hash to the member's existing hash-table entry, which is what makes the
+replacement a replacement rather than an addition. `scripts/repack-archive.sh` passes the same list
+to the repack **and to both manifests** — naming one side and not the other would compare two
+different addressings of one archive.
+
 ## The determinism actually measured
 
 **Observed 2026-09-18**, StormLib 9.40 via Homebrew, macOS 26.5.2, M4 Max:
@@ -125,8 +148,15 @@ than pass silently.
 Two things make that possible and should be understood as conditions, not guarantees:
 
 - The archive is produced by **copying the source file and replacing members in it**, not by building
-  a new archive from an extracted tree. Rebuilding from a tree is impossible for this corpus anyway:
-  409 PIC5R3 members have no name, and a member's name is part of its encryption key.
+  a new archive from an extracted tree.
+
+  This used to be justified by "409 PIC5R3 members have no name, and a member's name is part of its
+  encryption key". **That premise is stale as of PR #66** and is corrected here rather than quietly
+  dropped: name recovery leaves 21 unnamed members in the whole corpus, and PIC5R3's own remainder
+  is 1, not 409 ([member names](member-names.md)). The conclusion survives for reasons recovery does
+  not touch -- 21 members still have no name at all, `name -> block` is not injective (PIC5R3 holds
+  two distinct members under one byte-identical name), and a rebuild must reproduce each member's
+  flags, locale and storage decisions, which nothing here addresses.
 - **Compaction is off by default.** The replaced member's old data stays in the file as dead space.
   `--compact` is available and also deterministic (three runs identical on `gs.mpq`), but
   `SFileCompactArchive` **fails with `ERROR_UNKNOWN_FILE_NAMES` (10007) on any archive containing
@@ -135,9 +165,13 @@ Two things make that possible and should be understood as conditions, not guaran
 
 ## What this does not guarantee
 
-- **It does not prove the game runs the output.** The only engine acceptance evidence for a rewritten
-  archive is the attended 2026-09-16 round trip of a `gs.mpq` member. Nothing here has been put in
-  front of `lomse.exe`. Shape preserved ≠ playable.
+- **It does not prove the game runs the output** in general, though it no longer has no evidence
+  either. Two attended runs have now put archives this writer produced in front of `lomse.exe` and
+  both were read: a `gs.mpq` member on 2026-09-16 and 2026-09-18, and a `pic.mpq` member on
+  2026-09-18. Both archives are `MPQ_FILE_IMPLODE`, which is the storage class of every member of
+  `gs.mpq`, `pic.mpq` and `imp.mpq`; `sndfx.mpq` and `special.mpq` are stored and untested. Every
+  one of those runs replaced a member with one of **exactly the same size**, and none added a
+  member. Shape preserved ≠ playable.
 - **It does not validate content.** A syntactically broken `.gs` file passes the shape check
   perfectly. Content validation is Phase 3.
 - **A replaced member is rewritten by StormLib, not reproduced.** Its compressed bytes are whatever

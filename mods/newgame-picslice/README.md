@@ -1,6 +1,18 @@
 # New-game screen slice
 
-The first `pic.mpq` member ever put in front of the engine.
+The first `pic.mpq` member ever put in front of the engine. **Observed in gameplay 2026-09-18: the
+engine read it.**
+
+The top third of the main menu rendered spattered red and the bottom two thirds rendered exactly as
+shipped, matching the reference PNG exported beside the build. `lbm\start01.lbm` -- a different
+member of the same rewritten archive -- rendered correctly, which is an independent control that the
+archive was not broadly damaged. Rollback afterwards was verified by extracting the member and
+comparing its bytes to the pristine seed, not by trusting a digest.
+
+One thing the run corrected: **`lbm\newgame.lbm` is the main menu itself**, not a screen shown during
+new-game setup. The name means "the new-game menu". The observation cost no navigation as a result,
+but the instruction given to the human observer was wrong about where to look, because it was based
+on reading the image rather than on knowing where the engine draws it.
 
 ## Why this mod exists
 
