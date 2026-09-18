@@ -211,14 +211,43 @@ impl GameScriptDocument {
         }
     }
 
-    /// How many tokens after a literal name a `def` may appear and still be read as that
-    /// name's definition. Three covers the observed forms without spanning statements.
+    /// How many tokens after a literal name may be *anything at all* and still leave a following
+    /// `def` reading as that name's definition. A nested `{...}`, `[...]` or `<<...>>` group
+    /// counts as one. Three covers `/NAME{...}def`, `/NAME 3 def` and `/a exch def`.
     const DEFINITION_WINDOW: usize = 3;
+
+    /// The hard cap once only [`DEFINITION_MODIFIERS`] are allowed through.
+    ///
+    /// Three tokens alone was too few: it missed both of the corpus's procedure-local attachment
+    /// forms, so `gs\standard.gs`'s own `writestring`, `pushonstack`, `popoffstack` and `onstack?`
+    /// were filed as names nothing in the corpus defines. Executing the module is what exposed
+    /// that. This cap is wide enough for the longest observed form,
+    /// `/NAME {...} dup 0 N dict put bind def`. Evidence class: Corrected.
+    const DEFINITION_ATTACHMENT_WINDOW: usize = 10;
 
     /// Decide whether the literal name at `index` occupies a definition position.
     fn is_definition_site(&self, index: usize) -> bool {
-        if self.dictionary_depth_before(index) > 0 {
-            // Inside `<< >>` a literal name is a key, and the following token is its value.
+        // A name the very next operator throws away is not defined by any later `def`.
+        // `fonts\balloon.gs` opens with `/CopperplateGothicBT-BoldCond pop /gridsize[16 14]def`,
+        // where the font name is pushed as a label and discarded; the scanner used to read the
+        // `def` two statements later as that label's. `gs\diplo.gs` has the same shape with
+        // `/i undef /majorrace?{4 lt}bind def`. Evidence class: Observed in a local binary.
+        if let Some(TokenKind::ExecutableName(next)) =
+            self.tokens.get(index + 1).map(|token| &token.kind)
+            && NAME_CONSUMING_OPERATORS
+                .iter()
+                .any(|operator| next.eq_ignore_ascii_case(operator))
+        {
+            return false;
+        }
+
+        if let Some(open) = self.enclosing_dictionary(index) {
+            // Inside `<< >>` a literal name is a key, and the following token is its value -- but
+            // only at an even offset from the `<<`. `<< /a /value /b 1 >>` used to mark `/value`,
+            // the *value* of `/a`, as a definition. Evidence class: Corrected.
+            if !self.dictionary_entry_offset(open, index).is_multiple_of(2) {
+                return false;
+            }
             return matches!(
                 self.tokens.get(index + 1).map(|token| &token.kind),
                 Some(
@@ -226,9 +255,7 @@ impl GameScriptDocument {
                         | TokenKind::StringLiteral(_)
                         | TokenKind::ExecutableName(_)
                         | TokenKind::LiteralName(_)
-                        | TokenKind::Delimiter(
-                            Delimiter::ProcedureOpen | Delimiter::ArrayOpen
-                        )
+                        | TokenKind::Delimiter(Delimiter::ProcedureOpen | Delimiter::ArrayOpen)
                 )
             );
         }
@@ -248,15 +275,27 @@ impl GameScriptDocument {
                         return false;
                     }
                 }
-                TokenKind::ExecutableName(name) if depth == 0 && name.eq_ignore_ascii_case("def") => {
-                    return true;
+                TokenKind::ExecutableName(name) if depth == 0 => {
+                    if name.eq_ignore_ascii_case("def") {
+                        return true;
+                    }
+                    if seen >= Self::DEFINITION_WINDOW
+                        && !DEFINITION_MODIFIERS
+                            .iter()
+                            .any(|modifier| name.eq_ignore_ascii_case(modifier))
+                    {
+                        // Past the short window, only the operators that finish a definition may
+                        // stand between the value and its `def`. Any other operator is doing
+                        // something else, so the `def` further on belongs to a later statement.
+                        return false;
+                    }
                 }
                 _ => {}
             }
             // A nested group counts as one token, matching `/NAME{...}def`.
             if depth == 0 {
                 seen += 1;
-                if seen > Self::DEFINITION_WINDOW {
+                if seen > Self::DEFINITION_ATTACHMENT_WINDOW {
                     return false;
                 }
             }
@@ -264,18 +303,89 @@ impl GameScriptDocument {
         false
     }
 
-    fn dictionary_depth_before(&self, index: usize) -> usize {
-        let mut depth = 0_usize;
-        for token in self.tokens.iter().take(index) {
-            match &token.kind {
-                TokenKind::Delimiter(Delimiter::DictionaryOpen) => depth += 1,
-                TokenKind::Delimiter(Delimiter::DictionaryClose) => depth = depth.saturating_sub(1),
-                _ => {}
+    /// The index of the `<<` that *directly* encloses `index`, if a dictionary literal does.
+    ///
+    /// The old test was "is the `<<` depth above zero", which ignored every other kind of bracket.
+    /// `gs\actvrect.gs` ships `/xdict << /left{/x parentrect /x get def} ... >>`, so the literals
+    /// inside that procedure were being read as keys of the surrounding dictionary. What matters
+    /// is the *innermost* enclosing group, not whether a dictionary is open somewhere outside.
+    /// Evidence class: Corrected.
+    fn enclosing_dictionary(&self, index: usize) -> Option<usize> {
+        let mut open_groups: Vec<(Delimiter, usize)> = Vec::new();
+        for (position, token) in self.tokens.iter().take(index).enumerate() {
+            if let TokenKind::Delimiter(delimiter) = &token.kind {
+                match delimiter {
+                    Delimiter::ProcedureOpen | Delimiter::ArrayOpen | Delimiter::DictionaryOpen => {
+                        open_groups.push((*delimiter, position));
+                    }
+                    Delimiter::ProcedureClose
+                    | Delimiter::ArrayClose
+                    | Delimiter::DictionaryClose => {
+                        open_groups.pop();
+                    }
+                }
             }
         }
-        depth
+        match open_groups.last() {
+            Some((Delimiter::DictionaryOpen, position)) => Some(*position),
+            _ => None,
+        }
+    }
+
+    /// How many entries deep into a `<< >>` literal the token at `index` sits, counting a nested
+    /// group as one token. Even means a key position, odd means a value position.
+    fn dictionary_entry_offset(&self, open: usize, index: usize) -> usize {
+        let mut offset = 0_usize;
+        let mut depth = 0_isize;
+        for token in &self.tokens[open + 1..index] {
+            if let TokenKind::Delimiter(delimiter) = &token.kind {
+                match delimiter {
+                    Delimiter::ProcedureOpen | Delimiter::ArrayOpen | Delimiter::DictionaryOpen => {
+                        if depth == 0 {
+                            offset += 1;
+                        }
+                        depth += 1;
+                    }
+                    Delimiter::ProcedureClose
+                    | Delimiter::ArrayClose
+                    | Delimiter::DictionaryClose => depth -= 1,
+                }
+                continue;
+            }
+            if depth == 0 {
+                offset += 1;
+            }
+        }
+        offset
     }
 }
+
+/// Operators that may stand between a name's value and its `def` without ending the statement.
+///
+/// These are exactly the operators the corpus uses to finish a definition: `bind`, and the two
+/// forms that attach a procedure's private storage, `dup 0 N dict put` and `/name VALUE replace`.
+/// Anything else at the same nesting depth means the `def` further on belongs to a different
+/// statement -- which is what keeps `/invoke_spell cvx ... def` out of the definition set.
+/// Operators that discard the literal name immediately before them.
+///
+/// Neither defines anything: `pop` throws the name away and `undef` removes a binding. A literal
+/// followed by one of these is therefore never the subject of a later `def`, whatever the tokens
+/// in between look like. The list is short and semantic on purpose -- it is not a general fix for
+/// statement bleed, which needs operand-arity modelling this scanner does not have.
+const NAME_CONSUMING_OPERATORS: &[&str] = &["pop", "undef"];
+
+const DEFINITION_MODIFIERS: &[&str] = &[
+    "bind",
+    "dup",
+    "put",
+    "dict",
+    "array",
+    "string",
+    "replace",
+    "currentdict",
+    "begin",
+    "end",
+];
 
 struct Lexer<'a> {
     source: &'a [u8],
@@ -440,7 +550,15 @@ impl<'a> Lexer<'a> {
             return;
         };
         self.offset += 1;
-        if byte == b'\n' {
+        // GameScript members use every line ending: `gs.mpq` in a local GS5R3 install holds 1,123
+        // CRLF members, 242 with **bare CR**, and 63 with bare LF. Evidence class: Observed in a
+        // local binary. A bare CR is a line ending, so it has to advance the line counter, and a
+        // CRLF pair has to advance it once rather than twice -- otherwise every position this
+        // lexer reports in a Mac-line-ended member is line 1, which is exactly the sort of report
+        // that sends a reader to the wrong statement.
+        let ends_line =
+            byte == b'\n' || (byte == b'\r' && self.source.get(self.offset) != Some(&b'\n'));
+        if ends_line {
             self.line += 1;
             self.column = 1;
         } else {
@@ -533,6 +651,75 @@ mod tests {
         assert_eq!(analysis.definition_names["extra_strong?"], 1);
     }
 
+    /// Both attachment forms end in `def` and both define the name they open with. Missing them
+    /// filed four of `gs\standard.gs`'s own procedures as names nothing in the corpus defines.
+    #[test]
+    fn counts_the_procedure_local_attachment_forms_as_definitions() {
+        let source = b"/writestring{1}dup 0 3 dict put bind def /onstack?{2}/dummy 2 dict replace bind def /char_cvs{3}/char_array[0 1 2]replace bind def";
+        let analysis = GameScriptDocument::parse(source).unwrap().analyze();
+
+        assert_eq!(analysis.definition_names["writestring"], 1);
+        assert_eq!(analysis.definition_names["onstack?"], 1);
+        assert_eq!(analysis.definition_names["char_cvs"], 1);
+        // The attached local is script-bound data too, not a call into the engine.
+        assert_eq!(analysis.definition_names["char_array"], 1);
+    }
+
+    /// Three false-positive shapes a cross-model review found, each confirmed against a local
+    /// `gs.mpq` before being fixed here. Removing any one of the three guards fails this test.
+    #[test]
+    fn rejects_the_three_shapes_that_are_not_definitions() {
+        // (A) The name is discarded by the very next operator, and the `def` belongs to the next
+        // statement. `fonts\balloon.gs` and `gs\diplo.gs` both ship this.
+        let analysis =
+            GameScriptDocument::parse(b"/CopperplateGothicBT-BoldCond pop /gridsize[16 14]def")
+                .unwrap()
+                .analyze();
+        assert!(
+            !analysis
+                .definition_names
+                .contains_key("CopperplateGothicBT-BoldCond")
+        );
+        assert_eq!(analysis.definition_names["gridsize"], 1);
+
+        let analysis = GameScriptDocument::parse(b"/i undef /majorrace?{4 lt}bind def")
+            .unwrap()
+            .analyze();
+        assert!(!analysis.definition_names.contains_key("i"));
+        assert_eq!(analysis.definition_names["majorrace?"], 1);
+
+        // (B) A value inside a `<< >>` literal is not a key. `/value` is `/a`'s value.
+        let analysis = GameScriptDocument::parse(b"<< /a /value /b 1 >>")
+            .unwrap()
+            .analyze();
+        assert_eq!(analysis.definition_names["a"], 1);
+        assert_eq!(analysis.definition_names["b"], 1);
+        assert!(!analysis.definition_names.contains_key("value"));
+
+        // (C) A literal inside a procedure inside a dictionary is not a key of that dictionary.
+        // `/invoke_spell cvx` is the corpus's way of deferring a *native* call.
+        let analysis = GameScriptDocument::parse(b"<< /handler { /invoke_spell cvx } >>")
+            .unwrap()
+            .analyze();
+        assert_eq!(analysis.definition_names["handler"], 1);
+        assert!(!analysis.definition_names.contains_key("invoke_spell"));
+
+        // ... and the shape (C) came from: a procedure value whose body reads a key off another
+        // dictionary, as `gs\actvrect.gs` does. The literals inside the procedure are no longer
+        // read as keys of the enclosing dictionary.
+        let analysis = GameScriptDocument::parse(b"<< /left{/x parentrect /x get def} >>")
+            .unwrap()
+            .analyze();
+        assert_eq!(analysis.definition_names["left"], 1);
+        // **A recorded limitation, not a target.** `x` counts 2: the leading `/x` is genuinely
+        // defined, and the second is a `get` operand that the scanner still cannot tell apart,
+        // because separating them needs the operand arity of `parentrect` -- a native whose arity
+        // this project does not have. That residual is measured at 14 names in 3.02 (0.11% of
+        // 12,979). If this ever reads 1, the residual has been closed and this expectation should
+        // be tightened rather than deleted.
+        assert_eq!(analysis.definition_names["x"], 2);
+    }
+
     #[test]
     fn does_not_treat_a_distant_def_as_a_definition() {
         // `def` beyond the window belongs to a later statement, not to `/first`.
@@ -541,6 +728,48 @@ mod tests {
 
         assert!(!analysis.definition_names.contains_key("first"));
         assert_eq!(analysis.definition_names["second"], 1);
+    }
+
+    /// Bare CR is a line ending in this corpus, and treating it as ordinary text is the
+    /// project's known way to harvest commented-out code as if it were live: a `;` comment then
+    /// appears to run to the end of the member and every following statement disappears.
+    ///
+    /// 242 members of a local GS5R3 `gs.mpq` use bare CR. Evidence class: Observed in a local
+    /// binary. This fixture reproduces the shape rather than shipping one of them.
+    #[test]
+    fn a_comment_ends_at_a_bare_carriage_return() {
+        let source = b"; a Mac-line-ended header comment\r/kept{1}def\r; another comment\r/also_kept{2}def\r";
+        let document = GameScriptDocument::parse(source).unwrap();
+        let analysis = document.analyze();
+
+        assert_eq!(document.comment_count, 2);
+        assert_eq!(analysis.definition_names["kept"], 1);
+        assert_eq!(analysis.definition_names["also_kept"], 1);
+        assert_eq!(analysis.executable_names["def"], 2);
+
+        // The same bytes with LF line endings must tokenize identically; if they do not, the
+        // lexer is treating one of the two as text.
+        let with_line_feeds: Vec<u8> = source
+            .iter()
+            .map(|byte| if *byte == b'\r' { b'\n' } else { *byte })
+            .collect();
+        let converted = GameScriptDocument::parse(&with_line_feeds).unwrap();
+        let kinds: Vec<_> = document.tokens.iter().map(|token| &token.kind).collect();
+        let converted_kinds: Vec<_> = converted.tokens.iter().map(|token| &token.kind).collect();
+        assert_eq!(kinds, converted_kinds);
+    }
+
+    /// A position report is only useful if the line is the line a reader would count.
+    #[test]
+    fn line_numbers_count_bare_carriage_returns_and_pair_crlf() {
+        // Bare CR: the stray `}` is on the fourth line.
+        let document = GameScriptDocument::parse(b"/a{1}def\r/b{2}def\r/c{3}def\r}").unwrap();
+        assert_eq!(document.procedure_anomalies.len(), 1);
+        assert_eq!(document.procedure_anomalies[0].line, 4);
+
+        // CRLF: the same four lines, and the pair must advance the counter once, not twice.
+        let document = GameScriptDocument::parse(b"/a{1}def\r\n/b{2}def\r\n/c{3}def\r\n}").unwrap();
+        assert_eq!(document.procedure_anomalies[0].line, 4);
     }
 
     #[test]
