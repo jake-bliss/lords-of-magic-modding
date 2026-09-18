@@ -91,10 +91,25 @@ pub enum Value {
     String(String),
     LiteralName(String),
     ExecutableName(String),
+    /// A language primitive `bind` captured into a procedure body, so a later definition of the
+    /// same name cannot change what that body means. See [`GameScriptVm::bind`].
+    BoundPrimitive(String),
     Procedure(Rc<RefCell<ProcedureValue>>),
     Array(Rc<RefCell<Vec<Value>>>),
     Dictionary(Dictionary),
     Mark(CollectionKind),
+    /// A constant the engine owns whose **value is not known**.
+    ///
+    /// `/faith FIRE def` stores a value; nothing in any profile defines `FIRE`, and
+    /// `docs/gameplay-reference.md` records that the eight faiths are engine constants whose
+    /// values live in `lomse.exe`. Stopping on the name cost the whole member even though almost
+    /// every use of one is opaque data being filed into a dictionary. This variant carries the
+    /// constant's **identity and nothing else**: it can be stored, copied, defined and read back,
+    /// and every operation that would need its numeric value stops instead of inventing one.
+    ///
+    /// A name only becomes one of these when the caller has *declared* it a constant — see
+    /// [`GameScriptVm::declare_opaque_constants`]. The VM never decides that on its own.
+    EngineConstant(String),
 }
 
 impl Value {
@@ -105,11 +120,13 @@ impl Value {
             Self::String(_) => "string",
             Self::LiteralName(_) => "literal-name",
             Self::ExecutableName(_) => "executable-name",
+            Self::BoundPrimitive(_) => "bound-primitive",
             Self::Procedure(_) => "procedure",
             Self::Array(_) => "array",
             Self::Dictionary(_) => "dictionary",
             Self::Mark(CollectionKind::Array) => "array-mark",
             Self::Mark(CollectionKind::Dictionary) => "dictionary-mark",
+            Self::EngineConstant(_) => "engine-constant",
         }
     }
 
@@ -125,10 +142,15 @@ impl Value {
             Self::Boolean(_) => "booleantype",
             Self::String(_) => "stringtype",
             Self::LiteralName(_) | Self::ExecutableName(_) => "nametype",
+            // PostScript reports a bound operator as `operatortype`.
+            Self::BoundPrimitive(_) => "operatortype",
             // PostScript reports a procedure as an array, and the corpus follows it.
             Self::Procedure(_) | Self::Array(_) => "arraytype",
             Self::Dictionary(_) => "dicttype",
             Self::Mark(_) => "marktype",
+            // Unreachable: `type` refuses an engine constant before asking, because whether the
+            // engine holds a faith as an integer or as something else is not established here.
+            Self::EngineConstant(_) => "engineconstanttype",
         }
     }
 
@@ -148,6 +170,7 @@ impl Value {
             Self::String(value) => format!("\"{value}\""),
             Self::LiteralName(name) => format!("/{name}"),
             Self::ExecutableName(name) => name.clone(),
+            Self::BoundPrimitive(name) => format!("--{name}--"),
             Self::Procedure(_) => "{...}".to_owned(),
             Self::Array(values) => {
                 let rendered: Vec<String> = values.borrow().iter().map(Value::render).collect();
@@ -155,6 +178,7 @@ impl Value {
             }
             Self::Dictionary(values) => format!("<<{} entries>>", values.borrow().len()),
             Self::Mark(kind) => format!("mark:{kind:?}"),
+            Self::EngineConstant(name) => format!("<{name}>"),
         }
     }
 
@@ -220,6 +244,71 @@ const DEFAULT_MAXIMUM_CALL_DEPTH: usize = 256;
 /// The largest `array` or `string` a script may ask this VM to allocate.
 const MAXIMUM_ALLOCATION_LENGTH: usize = 1_000_000;
 
+/// How many procedure nodes one `bind` may walk.
+///
+/// A bound is needed because `put` can place a procedure inside itself, and this walk would then
+/// not terminate. The figure is far above anything the corpus contains -- the largest shipped
+/// member holds a few thousand tokens in total -- so it bounds a pathological structure rather
+/// than a real one.
+const MAXIMUM_BIND_NODES: usize = 100_000;
+
+/// How deep `run` may nest one module inside another.
+///
+/// Separate from the procedure call depth because a module load is not a procedure call and
+/// consumes far more host stack per level: `run` reads, lexes, compiles and then executes. The
+/// deepest static `run` chain the analyzer finds in any profile is a small single-digit number, so
+/// this is roughly an order of magnitude of headroom rather than a constraint anything real meets.
+const MAXIMUM_MODULE_DEPTH: usize = 32;
+
+/// Where `run` reads a module from.
+///
+/// Injected rather than built in, for the same reason the archive paths are never discovered by
+/// this crate: the VM must not decide on its own which files it may open. An implementation is
+/// expected to be **read-only**.
+pub trait ModuleSource {
+    /// Read the module a script named, or say why it could not be.
+    ///
+    /// `path` is the string the script passed to `run`, verbatim. Implementations own the
+    /// separator and case conventions, because those are archive facts rather than VM facts:
+    /// `run` targets are written with `/` and members are named with `\`.
+    fn load(&self, path: &str) -> Result<Vec<u8>, String>;
+}
+
+/// How a name was resolved, for the reach census.
+///
+/// This is what turns "the VM ran" into "the VM ran *this much of the vocabulary*". A name can
+/// legitimately appear under more than one resolution across a run -- a script can define a name
+/// the VM also implements -- so reaches are counted per (name, resolution) pair rather than
+/// collapsed to one class per name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NameResolution {
+    /// A value attached to the running procedure by `replace` or slot-0 `put`.
+    ProcedureLocal,
+    /// Found on the dictionary stack: a script definition.
+    Definition,
+    /// Implemented by this VM as a language primitive.
+    Primitive,
+    /// Satisfied from the declared stub table, standing in for a host call.
+    Stub,
+    /// Declared an engine constant whose value was not supplied, so its identity was pushed.
+    OpaqueConstant,
+    /// Nothing resolved it and execution stopped here.
+    Unresolved,
+}
+
+impl NameResolution {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ProcedureLocal => "procedure-local",
+            Self::Definition => "definition",
+            Self::Primitive => "primitive",
+            Self::Stub => "stub",
+            Self::OpaqueConstant => "opaque-constant",
+            Self::Unresolved => "unresolved",
+        }
+    }
+}
+
 /// Whether execution of a value sequence ran to the end or was cut short by `exit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Flow {
@@ -262,7 +351,6 @@ impl fmt::Display for GameScriptVmError {
 
 impl std::error::Error for GameScriptVmError {}
 
-#[derive(Debug)]
 pub struct GameScriptVm {
     operand_stack: Vec<Value>,
     dictionaries: Vec<Dictionary>,
@@ -276,6 +364,28 @@ pub struct GameScriptVm {
     maximum_call_depth: usize,
     native_stubs: BTreeMap<String, Value>,
     native_calls: BTreeMap<String, usize>,
+    /// Names the caller has declared to be engine constants of unknown value.
+    opaque_constants: std::collections::BTreeSet<String>,
+    modules: Option<Rc<dyn ModuleSource>>,
+    /// The modules `run` is currently inside, innermost last. Only for cycle detection; a module
+    /// loaded twice on disjoint paths is executed twice, as PostScript's `run` does.
+    module_stack: Vec<String>,
+    module_loads: usize,
+    reaches: BTreeMap<(String, NameResolution), usize>,
+}
+
+impl fmt::Debug for GameScriptVm {
+    /// Hand-written because `ModuleSource` is a trait object and cannot be derived through.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GameScriptVm")
+            .field("operand_stack", &self.operand_stack)
+            .field("call_stack", &self.call_stack)
+            .field("steps", &self.steps)
+            .field("module_stack", &self.module_stack)
+            .field("module_loads", &self.module_loads)
+            .finish_non_exhaustive()
+    }
 }
 
 /// One observation of an executable name the VM could not resolve.
@@ -301,7 +411,58 @@ impl GameScriptVm {
             maximum_call_depth: DEFAULT_MAXIMUM_CALL_DEPTH,
             native_stubs: BTreeMap::new(),
             native_calls: BTreeMap::new(),
+            opaque_constants: std::collections::BTreeSet::new(),
+            modules: None,
+            module_stack: Vec::new(),
+            module_loads: 0,
+            reaches: BTreeMap::new(),
         }
+    }
+
+    /// Declare the names that are engine constants whose values this run does not have.
+    ///
+    /// The VM does **not** work this set out for itself. The caller is expected to derive it from
+    /// the engine's own operator tables -- SCREAMING_CASE and absent from them, which is what
+    /// `native_table::OperatorIndex::classify` reports as `EngineConstant` -- so that the decision
+    /// rests on `lomse.exe` rather than on a shape heuristic inside the interpreter. A name in
+    /// this set that the dictionary stack resolves is still a definition: declaring it here only
+    /// changes what happens when nothing else resolves it.
+    ///
+    /// Supplying a *value* with [`Self::define_native_stub`] takes precedence, and is the way to
+    /// execute logic that needs the number rather than the identity.
+    pub fn declare_opaque_constants(
+        &mut self,
+        names: impl IntoIterator<Item = String>,
+    ) {
+        self.opaque_constants.extend(names);
+    }
+
+    /// Give `run` somewhere to read modules from. Without this, `run` stops like any other
+    /// unimplemented name, so a caller that has not opted into module loading cannot get it by
+    /// accident.
+    pub fn set_module_source(&mut self, source: Rc<dyn ModuleSource>) {
+        self.modules = Some(source);
+    }
+
+    /// How many modules `run` has executed, counting a module reached twice once per execution.
+    pub fn module_loads(&self) -> usize {
+        self.module_loads
+    }
+
+    /// Every executable name this machine reached, and how it resolved.
+    ///
+    /// Reached is the operative word. An operator the corpus never calls is not a gap in the VM,
+    /// and a census that cannot tell those apart overstates the remaining work by the size of the
+    /// engine's unused surface.
+    pub fn reaches(&self) -> &BTreeMap<(String, NameResolution), usize> {
+        &self.reaches
+    }
+
+    fn record_reach(&mut self, name: &str, resolution: NameResolution) {
+        *self
+            .reaches
+            .entry((name.to_owned(), resolution))
+            .or_default() += 1;
     }
 
     /// Supply a value for a native host call the engine would otherwise provide.
@@ -345,10 +506,24 @@ impl GameScriptVm {
     /// stops on a native call leaves operands and an open `begin` behind, and carrying that debris
     /// into the next exercise would make its result depend on the previous one's failure.
     pub fn reset_stacks(&mut self) {
-        self.operand_stack.clear();
+        self.discard_operands();
         self.dictionaries.truncate(1);
+    }
+
+    /// Drop a run's leftover operands **without** closing the dictionaries it opened.
+    ///
+    /// Preloading a module needs this and [`Self::reset_stacks`] would be wrong for it.
+    /// `gs\textdict.gs` ends with `>> begin /textdict currentdict def` — it opens its own
+    /// dictionary, defines itself *inside* it, and never writes a matching `end`. An unbalanced
+    /// `begin` is therefore how a shipped module publishes its contents, not debris; truncating
+    /// the dictionary stack after a preload threw away everything the preload existed to provide,
+    /// and `textdict` stayed the corpus's single largest blocker with the preload in place.
+    /// Evidence class: Observed in the corpus.
+    pub fn discard_operands(&mut self) {
+        self.operand_stack.clear();
         self.call_stack.clear();
         self.frames.clear();
+        self.module_stack.clear();
     }
 
     pub fn defined_names(&self) -> Vec<String> {
@@ -379,6 +554,20 @@ impl GameScriptVm {
                         return Ok(Flow::Exit);
                     }
                 }
+                Value::BoundPrimitive(name) => {
+                    // Bound at `bind` time, so it bypasses name resolution entirely -- that is the
+                    // whole point of having been bound. It is still a *reach*, so the census sees
+                    // it, and it is still a primitive, so the dispatch is the same one.
+                    self.record_reach(name, NameResolution::Primitive);
+                    let flow = self.execute_builtin(name)?.ok_or_else(|| {
+                        // Unreachable: `bind` only produces this for a name `is_primitive`
+                        // accepted, and that list is checked against the dispatch by a test.
+                        self.error(format!("bound primitive {name} has no implementation"))
+                    })?;
+                    if flow == Flow::Exit {
+                        return Ok(Flow::Exit);
+                    }
+                }
                 other => self.operand_stack.push(other.clone()),
             }
         }
@@ -396,20 +585,31 @@ impl GameScriptVm {
         }
         if let Some(value) = self.frame_local(name) {
             // A procedure's attached local is data, not something to call.
+            self.record_reach(name, NameResolution::ProcedureLocal);
             self.operand_stack.push(value);
             return Ok(Flow::Normal);
         }
         if let Some(value) = self.lookup(name) {
+            self.record_reach(name, NameResolution::Definition);
             return self.execute_resolved(name, value);
         }
         if let Some(flow) = self.execute_builtin(name)? {
+            self.record_reach(name, NameResolution::Primitive);
             return Ok(flow);
         }
         if let Some(value) = self.native_stubs.get(name).cloned() {
             *self.native_calls.entry(name.to_owned()).or_default() += 1;
+            self.record_reach(name, NameResolution::Stub);
             self.operand_stack.push(value);
             return Ok(Flow::Normal);
         }
+        if self.opaque_constants.contains(name) {
+            self.record_reach(name, NameResolution::OpaqueConstant);
+            self.operand_stack
+                .push(Value::EngineConstant(name.to_owned()));
+            return Ok(Flow::Normal);
+        }
+        self.record_reach(name, NameResolution::Unresolved);
         Err(self.error(format!("unknown executable name {name}")))
     }
 
@@ -523,9 +723,7 @@ impl GameScriptVm {
                     .ok_or_else(|| self.error(format!("load found no name {}", key.display())))?;
                 self.operand_stack.push(value);
             }
-            "bind" => {
-                self.peek()?;
-            }
+            "bind" => self.bind()?,
             "replace" => self.replace_local()?,
             "put" => self.put()?,
             "get" => self.get()?,
@@ -593,6 +791,14 @@ impl GameScriptVm {
             }
             "type" => {
                 let value = self.pop()?;
+                if let Value::EngineConstant(name) = &value {
+                    // `free_stack_elements` in `gs\standard.gs` routes on `integertype` versus
+                    // `arraytype`, so answering this wrong silently sends a value down the wrong
+                    // branch. Whether the engine holds a faith as an integer is not established.
+                    return Err(self.error(format!(
+                        "type cannot report the type of the engine constant {name}, whose value is not declared"
+                    )));
+                }
                 self.operand_stack
                     .push(Value::LiteralName(value.type_name().to_owned()));
             }
@@ -615,16 +821,9 @@ impl GameScriptVm {
             "floor" => self.unary_number("floor", f64::floor)?,
             "ceiling" => self.unary_number("ceiling", f64::ceil)?,
             "bitshift" => self.bitshift()?,
-            "eq" => {
-                let right = self.pop()?;
-                let left = self.pop()?;
-                self.operand_stack.push(Value::Boolean(left == right));
-            }
-            "ne" => {
-                let right = self.pop()?;
-                let left = self.pop()?;
-                self.operand_stack.push(Value::Boolean(left != right));
-            }
+            "eq" => self.equality("eq", true)?,
+            "ne" => self.equality("ne", false)?,
+            "run" => return self.run_module().map(Some),
             "gt" => self.compare_numbers("gt", |left, right| left > right)?,
             "lt" => self.compare_numbers("lt", |left, right| left < right)?,
             "ge" => self.compare_numbers("ge", |left, right| left >= right)?,
@@ -701,6 +900,165 @@ impl GameScriptVm {
             _ => return Ok(None),
         }
         Ok(Some(Flow::Normal))
+    }
+
+    /// `a b eq` / `a b ne`, refusing a comparison an engine constant makes unanswerable.
+    ///
+    /// Structural equality is right for every other value, and wrong for a constant whose value is
+    /// not known. Two references to `FIRE` are the same engine value, so those compare. `FIRE` and
+    /// `WATER` are **not** known to differ: `gs5_globals.gs` ships `/UNDEFINED_ATTACK{0}def` and
+    /// `/ATTACK_UNDEFINED{0}def`, two differently-named constants with the same value, which is
+    /// direct evidence that distinct names may alias. Answering `ne` with `true` there would be an
+    /// invented result reached by a comparison instead of by a host call, so it stops.
+    /// Evidence class: Observed in the corpus, for the aliasing.
+    fn equality(&mut self, operator: &str, want_equal: bool) -> Result<(), GameScriptVmError> {
+        let right = self.pop()?;
+        let left = self.pop()?;
+        let answerable = match (&left, &right) {
+            (Value::EngineConstant(left), Value::EngineConstant(right)) => left == right,
+            (Value::EngineConstant(_), _) | (_, Value::EngineConstant(_)) => false,
+            _ => true,
+        };
+        if !answerable {
+            return Err(self.error(format!(
+                "{operator} cannot compare {} with {}: the engine constant's value is not declared, and distinct constant names are not known to hold distinct values"
+            , left.render(), right.render())));
+        }
+        self.operand_stack
+            .push(Value::Boolean((left == right) == want_equal));
+        Ok(())
+    }
+
+    /// `"path/to/module.gs" run` — execute another module in this machine's dictionaries.
+    ///
+    /// Read-only, and only where a caller has installed a [`ModuleSource`]; with none installed
+    /// `run` is not reachable at all, because [`Self::execute_builtin`] is only consulted for
+    /// names the dictionary stack did not resolve and this arm then stops. A module already on the
+    /// load stack is **refused**, since re-entering it cannot terminate. A module reached twice on
+    /// disjoint paths is executed twice, which is what PostScript's `run` does; the alternative --
+    /// an include-style load set -- would be a behaviour this project has no evidence for.
+    /// Evidence class: Documented for the re-execution rule, Inferred for the refusal.
+    fn run_module(&mut self) -> Result<Flow, GameScriptVmError> {
+        let path = match self.pop()? {
+            Value::String(path) => path,
+            other => return Err(self.type_error("run", "module path string", &other)),
+        };
+        let Some(modules) = self.modules.clone() else {
+            return Err(self.error(format!(
+                "run has no module source installed, so {path} cannot be read"
+            )));
+        };
+        // Compared on the path as the caller's source spells it after normalisation, so that
+        // `gs/standard.gs` and `GS\STANDARD.GS` are recognised as one module by the cycle check.
+        let key = normalize_module_path(&path);
+        if self.module_stack.contains(&key) {
+            return Err(self.error(format!(
+                "run would re-enter {path} while it is still loading ({})",
+                self.module_stack.join(" -> ")
+            )));
+        }
+        if self.module_stack.len() >= MAXIMUM_MODULE_DEPTH {
+            return Err(self.error(format!(
+                "run exceeded the {MAXIMUM_MODULE_DEPTH}-module nesting limit at {path}"
+            )));
+        }
+        let bytes = modules
+            .load(&path)
+            .map_err(|error| self.error(format!("run could not read {path}: {error}")))?;
+        let document = GameScriptDocument::parse(&bytes)
+            .map_err(|error| self.error(format!("run could not lex {path}: {error}")))?;
+        let values = compile_document(&document)?;
+        self.module_loads += 1;
+        self.module_stack.push(key);
+        let result = self.execute_values(&values);
+        self.module_stack.pop();
+        result
+    }
+
+    /// `PROC bind` — capture, inside `PROC`, every name that currently means a language primitive.
+    ///
+    /// This was a no-op, which was wrong in a way nothing synthetic could show. `START.GS:135`
+    /// defines a progress-meter wrapper around module loading whose body **ends in `run`**:
+    /// `/run{ ... update_progress_meter ... run}...bind def`. `bind` runs before `def`, so at that
+    /// moment `run` still means the primitive and the wrapper captures it. Without `bind`, the
+    /// name in the body resolves *after* the `def` to the wrapper itself and the engine's own
+    /// entry point recurses until the call-depth limit. Evidence class: Observed in the corpus.
+    ///
+    /// Only names that are primitives **and are not currently defined** are captured, which is
+    /// PostScript's rule: `bind` replaces a name whose current value is an operator, and a script
+    /// definition is not one. So a member that has already redefined `run` keeps its own. Binding
+    /// descends into nested procedures, and stops at the allocation limit rather than chasing a
+    /// cyclic structure — a procedure can be put into itself with `put`.
+    fn bind(&mut self) -> Result<(), GameScriptVmError> {
+        let Value::Procedure(procedure) = self.peek()?.clone() else {
+            // PostScript leaves a non-procedure alone rather than failing, and the corpus writes
+            // `bind` after dictionary-valued definitions too.
+            return Ok(());
+        };
+        // Two passes. The first collects every name attached as a procedure local anywhere in the
+        // tree, because `X /name VALUE replace bind def` -- the corpus's dominant closure idiom,
+        // 7,472 uses of `replace` in GS5R3 -- attaches before it binds, and a local named after a
+        // primitive must keep meaning the local. `gs\standard.gs` has one:
+        // `/probe{add 0 get}/add[7]replace bind def`. Collecting the whole tree first rather than
+        // as the walk descends errs toward *not* binding, which is the previous behaviour and the
+        // safe direction. Evidence class: Observed in the corpus.
+        let mut locals: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut pending = vec![Rc::clone(&procedure)];
+        let mut seen = 0_usize;
+        while let Some(node) = pending.pop() {
+            seen += 1;
+            if seen > MAXIMUM_BIND_NODES {
+                return Err(self.error(format!(
+                    "bind walked more than {MAXIMUM_BIND_NODES} procedures; the structure is cyclic or larger than this VM will bind"
+                )));
+            }
+            let (body, node_locals) = {
+                let node = node.borrow();
+                (node.body.clone(), node.local_names())
+            };
+            locals.extend(node_locals);
+            for value in body {
+                if let Value::Procedure(nested) = value {
+                    pending.push(nested);
+                }
+            }
+        }
+
+        let mut pending = vec![procedure];
+        let mut bound = 0_usize;
+        while let Some(procedure) = pending.pop() {
+            bound += 1;
+            if bound > MAXIMUM_BIND_NODES {
+                return Err(self.error(format!(
+                    "bind walked more than {MAXIMUM_BIND_NODES} procedures; the structure is cyclic or larger than this VM will bind"
+                )));
+            }
+            // The borrow is released before recursing, because a procedure may hold itself.
+            let body = procedure.borrow().body.clone();
+            let mut replaced = Vec::with_capacity(body.len());
+            for value in body {
+                match value {
+                    // `PRIMITIVE_NAMES`, deliberately, not `is_primitive`: the latter also
+                    // admits `true` and `false`, which `execute_name` turns into pushed values
+                    // before the dispatch ever sees them. Binding one produced a value the
+                    // dispatch had no arm for. Caught by `bind_descends_into_nested_procedures`.
+                    Value::ExecutableName(name)
+                        if PRIMITIVE_NAMES.contains(&name.as_str())
+                            && !locals.contains(&name)
+                            && self.lookup(&name).is_none() =>
+                    {
+                        replaced.push(Value::BoundPrimitive(name));
+                    }
+                    Value::Procedure(nested) => {
+                        pending.push(Rc::clone(&nested));
+                        replaced.push(Value::Procedure(nested));
+                    }
+                    other => replaced.push(other),
+                }
+            }
+            procedure.borrow_mut().body = replaced;
+        }
+        Ok(())
     }
 
     fn roll(&mut self) -> Result<(), GameScriptVmError> {
@@ -871,9 +1229,16 @@ impl GameScriptVm {
             }
             (aggregate, index) => {
                 return Err(self.error(format!(
-                    "put does not support {} with {} index",
+                    "put does not support {} with {} index{}",
                     aggregate.kind(),
-                    index.kind()
+                    index.kind(),
+                    // An engine constant is named, because "this run did not declare its value"
+                    // is a different remedy from "this script indexed with the wrong type".
+                    match &index {
+                        Value::EngineConstant(name) =>
+                            format!(" {name}, whose value this run did not declare"),
+                        _ => String::new(),
+                    }
                 )));
             }
         }
@@ -949,9 +1314,16 @@ impl GameScriptVm {
             }
             (aggregate, index) => {
                 return Err(self.error(format!(
-                    "get does not support {} with {} index",
+                    "get does not support {} with {} index{}",
                     aggregate.kind(),
-                    index.kind()
+                    index.kind(),
+                    // An engine constant is named, because "this run did not declare its value"
+                    // is a different remedy from "this script indexed with the wrong type".
+                    match &index {
+                        Value::EngineConstant(name) =>
+                            format!(" {name}, whose value this run did not declare"),
+                        _ => String::new(),
+                    }
                 )));
             }
         };
@@ -1185,6 +1557,11 @@ impl GameScriptVm {
     fn pop_number(&mut self, operator: &str) -> Result<f64, GameScriptVmError> {
         match self.pop()? {
             Value::Number(value) => Ok(value),
+            // Named apart from the generic type error because the remedy is different: this is
+            // not a script bug or a VM gap, it is a declared input this run was not given.
+            Value::EngineConstant(name) => Err(self.error(format!(
+                "{operator} needs the value of the engine constant {name}, which this run did not declare"
+            ))),
             value => Err(self.type_error(operator, "number", &value)),
         }
     }
@@ -1305,6 +1682,7 @@ pub const PRIMITIVE_NAMES: &[&str] = &[
     "replace",
     "roll",
     "round",
+    "run",
     "sin",
     "sqrt",
     "string",
@@ -1321,6 +1699,20 @@ pub const PRIMITIVE_LITERAL_NAMES: &[&str] = &["true", "false"];
 /// Whether the VM implements `name` as a language primitive.
 pub fn is_primitive(name: &str) -> bool {
     PRIMITIVE_NAMES.contains(&name) || PRIMITIVE_LITERAL_NAMES.contains(&name)
+}
+
+/// The canonical form of a module path: the single source of the `run`-target-to-member-name fold.
+///
+/// Public because a [`ModuleSource`] has to index its members by the same rule the cycle check
+/// compares by. Three private copies of this had started to appear; two that disagree would make
+/// `run` load a module the cycle check then treats as a different one.
+///
+/// `docs/gamescript-format.md` records that `run` targets are written with `/` while members are
+/// named with `\`, and the archive resolves members case-insensitively. Both differences are
+/// spelling, not identity, so both are folded away here — otherwise `"gs/x.gs" run` inside
+/// `gs\x.gs` would look like a different module and recurse until the step ceiling.
+pub fn normalize_module_path(path: &str) -> String {
+    path.replace('\\', "/").to_ascii_lowercase()
 }
 
 fn number_to_index(number: f64, purpose: &str) -> Result<usize, String> {
@@ -1407,9 +1799,12 @@ fn compile_error(message: impl Into<String>) -> GameScriptVmError {
 
 #[cfg(test)]
 mod tests {
-    use super::{GameScriptVm, PRIMITIVE_NAMES, Value};
+    use super::{
+        GameScriptVm, ModuleSource, NameResolution, PRIMITIVE_NAMES, Value, normalize_module_path,
+    };
     use crate::gamescript::GameScriptDocument;
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::rc::Rc;
 
     fn run(source: &[u8]) -> Result<GameScriptVm, String> {
         let document = GameScriptDocument::parse(source).map_err(|error| error.to_string())?;
@@ -1427,6 +1822,333 @@ mod tests {
             .map(Value::render)
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+
+    /// A module source that answers from a fixed table. Synthetic: no shipped content here.
+    struct FixedModules(BTreeMap<String, Vec<u8>>);
+
+    impl FixedModules {
+        fn new(entries: &[(&str, &str)]) -> Rc<Self> {
+            Rc::new(Self(
+                entries
+                    .iter()
+                    .map(|(name, body)| {
+                        (normalize_module_path(name), body.as_bytes().to_vec())
+                    })
+                    .collect(),
+            ))
+        }
+    }
+
+    impl ModuleSource for FixedModules {
+        fn load(&self, path: &str) -> Result<Vec<u8>, String> {
+            self.0
+                .get(&normalize_module_path(path))
+                .cloned()
+                .ok_or_else(|| format!("no module named {path}"))
+        }
+    }
+
+    fn run_with(source: &[u8], build: impl FnOnce(&mut GameScriptVm)) -> Result<GameScriptVm, String> {
+        let document = GameScriptDocument::parse(source).map_err(|error| error.to_string())?;
+        let mut vm = GameScriptVm::new(100_000);
+        build(&mut vm);
+        vm.execute_document(&document)
+            .map_err(|error| error.to_string())?;
+        Ok(vm)
+    }
+
+    #[test]
+    fn run_executes_a_module_and_keeps_its_definitions() {
+        let modules = FixedModules::new(&[("lib/util.gs", "/twice{2 mul}bind def")]);
+        let vm = run_with(b"\"lib/util.gs\" run 21 twice", |vm| {
+            vm.set_module_source(Rc::clone(&modules) as Rc<dyn ModuleSource>);
+        })
+        .unwrap();
+        assert_eq!(vm.operand_stack(), &[Value::Number(42.0)]);
+        assert_eq!(vm.module_loads(), 1);
+    }
+
+    /// `run` targets are written with `/` and members are named with `\`, and the archive matches
+    /// case-insensitively. Both are spelling; folding them is what lets the cycle check see one
+    /// module rather than two.
+    #[test]
+    fn run_folds_the_separator_and_case_of_a_module_path() {
+        let modules = FixedModules::new(&[("gs\\Standard.GS", "7")]);
+        let vm = run_with(b"\"gs/standard.gs\" run", |vm| {
+            vm.set_module_source(Rc::clone(&modules) as Rc<dyn ModuleSource>);
+        })
+        .unwrap();
+        assert_eq!(vm.operand_stack(), &[Value::Number(7.0)]);
+    }
+
+    /// The failing case that matters: without the cycle check this pair recurses until the step
+    /// ceiling and reports a limit rather than the actual fault.
+    #[test]
+    fn run_refuses_to_re_enter_a_module_that_is_still_loading() {
+        let modules = FixedModules::new(&[
+            ("a.gs", "\"b.gs\" run"),
+            ("b.gs", "\"a.gs\" run"),
+        ]);
+        let error = run_with(b"\"a.gs\" run", |vm| {
+            vm.set_module_source(Rc::clone(&modules) as Rc<dyn ModuleSource>);
+        })
+        .unwrap_err();
+        assert!(error.contains("re-enter a.gs"), "{error}");
+        assert!(!error.contains("step limit"), "{error}");
+    }
+
+    /// A module reached twice on disjoint paths is executed twice, as PostScript's `run` does.
+    /// An include-style load set would be a behaviour nothing here establishes.
+    #[test]
+    fn run_executes_a_module_reached_twice_on_disjoint_paths_twice() {
+        let modules = FixedModules::new(&[("leaf.gs", "1")]);
+        let vm = run_with(b"\"leaf.gs\" run \"leaf.gs\" run", |vm| {
+            vm.set_module_source(Rc::clone(&modules) as Rc<dyn ModuleSource>);
+        })
+        .unwrap();
+        assert_eq!(vm.operand_stack(), &[Value::Number(1.0), Value::Number(1.0)]);
+        assert_eq!(vm.module_loads(), 2);
+    }
+
+    #[test]
+    fn run_without_a_module_source_stops_rather_than_skipping_the_load() {
+        let error = run_with(b"\"lib/util.gs\" run", |_| {}).unwrap_err();
+        assert!(error.contains("no module source installed"), "{error}");
+    }
+
+    #[test]
+    fn run_reports_a_module_it_cannot_read() {
+        let modules = FixedModules::new(&[]);
+        let error = run_with(b"\"missing.gs\" run", |vm| {
+            vm.set_module_source(Rc::clone(&modules) as Rc<dyn ModuleSource>);
+        })
+        .unwrap_err();
+        assert!(error.contains("could not read missing.gs"), "{error}");
+    }
+
+    /// A script that shadows `run` keeps its own meaning: `START.GS:76` does exactly this.
+    #[test]
+    fn a_script_definition_shadows_the_run_primitive() {
+        let modules = FixedModules::new(&[("x.gs", "99")]);
+        let vm = run_with(b"/run{pop 5}bind def \"x.gs\" run", |vm| {
+            vm.set_module_source(Rc::clone(&modules) as Rc<dyn ModuleSource>);
+        })
+        .unwrap();
+        assert_eq!(vm.operand_stack(), &[Value::Number(5.0)]);
+        assert_eq!(vm.module_loads(), 0);
+    }
+
+    fn with_faiths(vm: &mut GameScriptVm) {
+        vm.declare_opaque_constants(["FIRE".to_owned(), "WATER".to_owned()]);
+    }
+
+    /// The shape that motivates the whole variant: `/faith FIRE def` is data being filed, and the
+    /// member does not need the number.
+    #[test]
+    fn an_undeclared_engine_constant_can_be_stored_and_read_back() {
+        let vm = run_with(b"<< >> dup /faith FIRE put /faith get", with_faiths).unwrap();
+        assert_eq!(
+            vm.operand_stack(),
+            &[Value::EngineConstant("FIRE".to_owned())]
+        );
+        assert_eq!(vm.operand_stack()[0].render(), "<FIRE>");
+    }
+
+    #[test]
+    fn the_same_engine_constant_compares_equal_to_itself() {
+        let vm = run_with(b"FIRE FIRE eq FIRE FIRE ne", with_faiths).unwrap();
+        assert_eq!(
+            vm.operand_stack(),
+            &[Value::Boolean(true), Value::Boolean(false)]
+        );
+    }
+
+    /// Two differently-named constants are **not** known to differ — `gs5_globals.gs` ships
+    /// `/UNDEFINED_ATTACK{0}def` beside `/ATTACK_CRUSHING{2}def` and `/ATTACK_UNDEFINED{0}def`,
+    /// so names alias. Answering `ne` here would invent a result.
+    #[test]
+    fn two_differently_named_engine_constants_cannot_be_compared() {
+        let error = run_with(b"FIRE WATER eq", with_faiths).unwrap_err();
+        assert!(error.contains("not known to hold distinct values"), "{error}");
+        let error = run_with(b"FIRE 3 ne", with_faiths).unwrap_err();
+        assert!(error.contains("<FIRE>"), "{error}");
+    }
+
+    #[test]
+    fn arithmetic_on_an_undeclared_engine_constant_stops_instead_of_guessing() {
+        for source in [
+            b"FIRE 1 add".as_slice(),
+            b"FIRE 1 lt".as_slice(),
+            b"[1 2 3] FIRE get".as_slice(),
+        ] {
+            let error = run_with(source, with_faiths)
+                .unwrap_err();
+            assert!(
+                error.contains("FIRE"),
+                "{}: {error}",
+                String::from_utf8_lossy(source)
+            );
+        }
+    }
+
+    #[test]
+    fn the_type_of_an_undeclared_engine_constant_is_refused() {
+        let error = run_with(b"FIRE type", with_faiths).unwrap_err();
+        assert!(error.contains("whose value is not declared"), "{error}");
+    }
+
+    /// Declaring a value is the way to execute logic that needs the number, and it wins over the
+    /// opaque form so a probe can move a constant from identity to value without editing scripts.
+    #[test]
+    fn a_declared_stub_value_takes_precedence_over_the_opaque_constant() {
+        let vm = run_with(b"FIRE 1 add", |vm| {
+            with_faiths(vm);
+            vm.define_native_stub("FIRE", Value::Number(4.0));
+        })
+        .unwrap();
+        assert_eq!(vm.operand_stack(), &[Value::Number(5.0)]);
+    }
+
+    /// A definition wins over the declaration: declaring a name a constant only changes what
+    /// happens when nothing else resolves it.
+    #[test]
+    fn a_script_definition_wins_over_an_opaque_constant_declaration() {
+        let vm = run_with(b"/FIRE 8 def FIRE 1 add", with_faiths).unwrap();
+        assert_eq!(vm.operand_stack(), &[Value::Number(9.0)]);
+    }
+
+    #[test]
+    fn the_reach_census_separates_how_each_name_resolved() {
+        let vm = run_with(b"/twice{2 mul}bind def 3 twice FIRE pop gamerand pop", |vm| {
+            with_faiths(vm);
+            vm.define_native_stub("gamerand", Value::Number(1.0));
+            vm.define_native_stub("uncalled", Value::Number(1.0));
+        })
+        .unwrap();
+        let reaches = vm.reaches();
+        assert_eq!(
+            reaches.get(&("twice".to_owned(), NameResolution::Definition)),
+            Some(&1)
+        );
+        assert_eq!(
+            reaches.get(&("mul".to_owned(), NameResolution::Primitive)),
+            Some(&1)
+        );
+        assert_eq!(
+            reaches.get(&("FIRE".to_owned(), NameResolution::OpaqueConstant)),
+            Some(&1)
+        );
+        // A stub is its own class. Counting one as a primitive would make the census report
+        // engine surface this VM had *implemented* when it had only been told the answer, which
+        // is the one number in the whole census that must not be inflated.
+        assert_eq!(
+            reaches.get(&("gamerand".to_owned(), NameResolution::Stub)),
+            Some(&1)
+        );
+        assert_eq!(
+            reaches.get(&("gamerand".to_owned(), NameResolution::Primitive)),
+            None
+        );
+        // A stub that was never called must not appear: the census is of names *reached*.
+        assert!(
+            !reaches.keys().any(|(name, _)| name == "uncalled"),
+            "an uncalled stub was counted as reached"
+        );
+    }
+
+    #[test]
+    fn an_unresolved_name_is_recorded_in_the_census_before_it_stops() {
+        let document = GameScriptDocument::parse(b"1 nosuchname").unwrap();
+        let mut vm = GameScriptVm::new(100_000);
+        vm.execute_document(&document).unwrap_err();
+        assert_eq!(
+            vm.reaches()
+                .get(&("nosuchname".to_owned(), NameResolution::Unresolved)),
+            Some(&1)
+        );
+    }
+
+
+    /// The shape from `START.GS:135`: a wrapper whose body ends in the very name it is about to
+    /// be defined as. Without a real `bind` this recurses to the call-depth limit, and the
+    /// engine's own entry point cannot be loaded at all.
+    #[test]
+    fn bind_captures_a_primitive_a_later_def_would_otherwise_shadow() {
+        let modules = FixedModules::new(&[("x.gs", "41")]);
+        // The shipped body does bookkeeping and then ends in `run`; this one pushes a marker and
+        // then ends in `run`, which is the same shape and the same trap.
+        let vm = run_with(b"/run{99 exch run}bind def \"x.gs\" run", |vm| {
+            vm.set_module_source(Rc::clone(&modules) as Rc<dyn ModuleSource>);
+        })
+        .unwrap();
+        assert_eq!(
+            vm.operand_stack(),
+            &[Value::Number(99.0), Value::Number(41.0)]
+        );
+        assert_eq!(vm.module_loads(), 1);
+    }
+
+    /// The failing case that the no-op `bind` produced, stated on its own so a regression names
+    /// itself: remove the capture and this recurses instead of finishing.
+    #[test]
+    fn without_binding_a_self_named_wrapper_would_recurse() {
+        let modules = FixedModules::new(&[("x.gs", "1")]);
+        let error = run_with(b"/run{\"x.gs\" run}def \"x.gs\" run", |vm| {
+            vm.set_module_source(Rc::clone(&modules) as Rc<dyn ModuleSource>);
+        })
+        .unwrap_err();
+        assert!(error.contains("call depth"), "{error}");
+    }
+
+    /// `bind` must not capture a name the dictionary stack already resolves: PostScript binds a
+    /// name whose current value is an operator, and a script definition is not one.
+    #[test]
+    fn bind_leaves_a_name_an_existing_definition_already_owns() {
+        let vm = run(b"/add{99}def /probe{1 2 add}bind def probe").unwrap();
+        assert_eq!(
+            vm.operand_stack(),
+            &[Value::Number(1.0), Value::Number(2.0), Value::Number(99.0)]
+        );
+    }
+
+    #[test]
+    fn bind_descends_into_nested_procedures() {
+        let vm = run(b"/probe{true{2 mul}if}bind def /mul{0}def 21 probe").unwrap();
+        assert_eq!(vm.operand_stack(), &[Value::Number(42.0)]);
+    }
+
+    /// `bind` on a non-procedure leaves the operand alone rather than failing: the corpus writes
+    /// `... replace bind def` after dictionary-valued definitions too.
+    #[test]
+    fn bind_leaves_a_non_procedure_operand_untouched() {
+        let vm = run(b"<< /a 1 >> bind /a get").unwrap();
+        assert_eq!(vm.operand_stack(), &[Value::Number(1.0)]);
+    }
+
+
+    /// The distinction `discard_operands` exists for. `gs\textdict.gs` ends with
+    /// `>> begin /textdict currentdict def` and never writes the matching `end`, so a preloaded
+    /// module publishes itself through an **open** dictionary. Truncating the dictionary stack
+    /// after a preload discarded exactly what the preload was for.
+    #[test]
+    fn discard_operands_keeps_a_dictionary_a_module_left_open() {
+        let document =
+            GameScriptDocument::parse(b"<< /answer 42 >> begin 1 2 3").unwrap();
+        let mut vm = GameScriptVm::new(10_000);
+        vm.execute_document(&document).unwrap();
+        vm.discard_operands();
+        assert!(vm.operand_stack().is_empty());
+
+        let probe = GameScriptDocument::parse(b"answer").unwrap();
+        vm.execute_document(&probe).unwrap();
+        assert_eq!(vm.operand_stack(), &[Value::Number(42.0)]);
+
+        // `reset_stacks` is the other half of the contract: it *does* close it.
+        vm.reset_stacks();
+        let probe = GameScriptDocument::parse(b"answer").unwrap();
+        vm.execute_document(&probe).unwrap_err();
     }
 
     #[test]

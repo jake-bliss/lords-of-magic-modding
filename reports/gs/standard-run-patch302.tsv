@@ -116,7 +116,7 @@ unknown-native	rand	1	operator	0x004c9f20	makeregion
 unknown-native	sysdlg	1	unresolved		exitapplication
 unknown-native	unitdictxref	1	unresolved		geteasyunitdata
 unknown-native	write	1	operator	0x004cc120	writestring
-static-engine-debt	21
+static-engine-debt	20
 static-engine-debt-name	additem	operator
 static-engine-debt-name	build_statement	unresolved
 static-engine-debt-name	closedialog	operator
@@ -132,7 +132,6 @@ static-engine-debt-name	opendialog	operator
 static-engine-debt-name	outfilename	unresolved
 static-engine-debt-name	paintelevation	operator
 static-engine-debt-name	rand	operator
-static-engine-debt-name	run	operator
 static-engine-debt-name	strcat	operator
 static-engine-debt-name	strcpy	operator
 static-engine-debt-name	sysdlg	unresolved
@@ -144,46 +143,68 @@ line-endings-containing-bare-cr	0
 line-endings-containing-bare-lf	0
 line-endings-bare-cr-only	0
 line-endings-without-any	1379
-survey-members-loaded	406
-survey-members-stopped-on-a-name	1267
-survey-members-failed-otherwise	8
+survey-members	1681
+survey-members-loaded	635
+survey-members-stopped-on-a-name	920
+survey-members-failed-otherwise	126
 survey-members-unreadable	0
-survey-distinct-blocking-names	201
-survey-first-blocker-class	defined-in-another-member	564
-survey-first-blocker-class	engine-constant	556
-survey-first-blocker-class	engine-operator	124
-survey-first-blocker-class	unresolved	23
-survey-blocker	begin_unit_definition	145	defined-in-another-member
-survey-blocker	textdict	143	defined-in-another-member
-survey-blocker	GOLD	75	engine-constant
-survey-blocker	ORDER	71	engine-constant
-survey-blocker	DEATH	56	engine-constant
-survey-blocker	EARTH	53	engine-constant
-survey-blocker	FIRE	51	engine-constant
-survey-blocker	LIFE	49	engine-constant
-survey-blocker	AIR	48	engine-constant
-survey-blocker	dialog	48	engine-operator
-survey-blocker	WATER	42	engine-constant
-survey-blocker	WANDERING_MONSTER_PLAYER	41	engine-constant
-survey-blocker	userdict	41	defined-in-another-member
-survey-blocker	CHAOS	39	engine-constant
+survey-preloaded-members	0
+survey-declared-opaque-constants	787
+survey-distinct-blocking-names	195
+survey-first-blocker-class	defined-in-a-member-that-does-not-run-either	330
+survey-first-blocker-class	defined-in-a-member-that-runs	405
+survey-first-blocker-class	engine-operator	139
+survey-first-blocker-class	unresolved	46
+survey-blocker	textdict	193	defined-in-a-member-that-runs
+survey-blocker	begin_unit_definition	145	defined-in-a-member-that-does-not-run-either
+survey-blocker	spelldict	82	defined-in-a-member-that-does-not-run-either
+survey-blocker	userdict	64	defined-in-a-member-that-does-not-run-either
+survey-blocker	dialog	52	engine-operator
 survey-blocker	addmounttype	28	engine-operator
-survey-blocker	run	23	defined-in-another-member
+survey-blocker	terrainsprites	20	defined-in-a-member-that-runs
+survey-blocker	stack	17	defined-in-a-member-that-runs
 survey-blocker	spell_page	15	unresolved
-survey-blocker	stack	14	defined-in-another-member
-survey-blocker	T_Crystal_Mine	10	defined-in-another-member
-survey-blocker	panel_dict	9	defined-in-another-member
-survey-blocker	T_Gold_Mine	8	defined-in-another-member
-survey-blocker	T_Statue	8	defined-in-another-member
-survey-blocker	SPELLCAT1	7	engine-constant
-survey-blocker	T_Brewery	7	defined-in-another-member
-survey-blocker	T_Mysterious_Keep	7	defined-in-another-member
-survey-blocker	T_Tower	7	defined-in-another-member
+survey-blocker	T_Crystal_Mine	10	defined-in-a-member-that-runs
+survey-blocker	panel_dict	9	defined-in-a-member-that-does-not-run-either
+survey-blocker	T_Gold_Mine	8	defined-in-a-member-that-runs
+survey-blocker	T_Statue	8	defined-in-a-member-that-runs
+survey-blocker	buildingdict	8	defined-in-a-member-that-runs
+survey-blocker	T_Brewery	7	defined-in-a-member-that-runs
+survey-blocker	T_Mysterious_Keep	7	defined-in-a-member-that-runs
+survey-blocker	T_Tower	7	defined-in-a-member-that-runs
+survey-blocker	gassault_play	6	defined-in-a-member-that-runs
 survey-blocker	lbm	6	engine-operator
-survey-blocker	EDITBOX_SCROLL	4	engine-constant
-survey-blocker	T_Cave2	4	defined-in-another-member
-survey-blocker	spelldict	4	defined-in-another-member
-survey-other-failure	unclosed procedure delimiter {	4
+survey-blocker	cv_page	5	defined-in-a-member-that-does-not-run-either
+survey-blocker	T_Cave2	4	defined-in-a-member-that-runs
+survey-blocker	addspelldef	4	engine-operator
+survey-blocker	unittypedict	4	defined-in-a-member-that-does-not-run-either
+survey-blocker	yellow_numbers	4	unresolved
+survey-blocker	T_Cave	3	defined-in-a-member-that-runs
+survey-blocker	T_Multi_hermit	3	defined-in-a-member-that-runs
+survey-blocker	T_scenario_earth_orc_caves_name	3	defined-in-a-member-that-runs
+survey-blocker	citybeginturnproc	3	engine-operator
+survey-blocker	fireball_type	3	unresolved
+survey-blocker	thief_dlg_dict	3	defined-in-a-member-that-does-not-run-either
+survey-other-failure	dictionary literal expected name or number key, found engine-constant	84
+survey-other-failure	or expects two numbers or two booleans, found engine-constant and engine-constant	27
+survey-other-failure	unclosed procedure delimiter {	5
+survey-other-failure	or expects two numbers or two booleans, found number and engine-constant	3
 survey-other-failure	forall expected array, string or dictionary, found procedure	2
+survey-other-failure	add needs the value of the engine constant MAX_UNITS_IN_ARMY, which this run did not declare	1
+survey-other-failure	array length needs the value of the engine constant MAX_PLAYERS, which this run did not declare	1
+survey-other-failure	array length needs the value of the engine constant MAX_UNITS_PER_ARMY, which this run did not declare	1
 survey-other-failure	procedure has no metadata slot 0	1
 survey-other-failure	put does not support procedure with procedure index	1
+reach-distinct-names	406
+reach-names-by-resolution	definition	63
+reach-names-by-resolution	opaque-constant	129
+reach-names-by-resolution	primitive	24
+reach-names-by-resolution	unresolved	195
+reach-operators-in-table	1906
+reach-operators-never-named-by-any-script	426
+reach-operators-named-by-a-script	1480
+reach-operators-reached-by-execution	63
+reach-operators-implemented	20
+reach-operators-stubbed	0
+reach-operators-shadowed-by-a-script	0
+reach-operators-blocked	43

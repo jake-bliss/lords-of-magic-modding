@@ -4,6 +4,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -12,7 +13,7 @@ use lom_asset_viewer::gameplay_symbols;
 use lom_asset_viewer::gamescript::{GameScriptDocument, is_number_token};
 use lom_asset_viewer::gs_facts::GsFacts;
 use lom_asset_viewer::gamescript_vm::{
-    GameScriptVm, GameScriptVmError, Value as GameScriptValue,
+    GameScriptVm, GameScriptVmError, ModuleSource, Value as GameScriptValue, normalize_module_path,
 };
 use lom_asset_viewer::imp;
 use lom_asset_viewer::imp::{
@@ -2233,6 +2234,26 @@ fn operator_signature_lines(
     }
 }
 
+/// A read-only [`ModuleSource`] over one archive, for `--probe-gamescript`.
+///
+/// Members are named with `\` and `run` targets are written with `/`, and the archive resolves
+/// case-insensitively, so the index is keyed on the folded form and read under the archive's own
+/// spelling.
+struct ProbeModules {
+    archive: Rc<Archive>,
+    members: BTreeMap<String, String>,
+}
+
+impl ModuleSource for ProbeModules {
+    fn load(&self, path: &str) -> Result<Vec<u8>, String> {
+        let name = self
+            .members
+            .get(&normalize_module_path(path))
+            .ok_or_else(|| format!("archive has no member named {path}"))?;
+        self.archive.read(name).map_err(|error| error.to_string())
+    }
+}
+
 fn probe_gamescript_member(
     source: &Source,
     member: &str,
@@ -2263,6 +2284,7 @@ fn probe_gamescript_member(
     // Both come from the same successfully-loaded image, so either both are present or neither is.
     let operator_context = operators.as_ref().zip(pe_image.as_ref());
     let (archive, entries) = open_archive(source)?;
+    let archive = Rc::new(archive);
     let entry = entries
         .iter()
         .find(|entry| entry.name.eq_ignore_ascii_case(member))
@@ -2274,6 +2296,16 @@ fn probe_gamescript_member(
     let token_count = document.tokens.len();
     let anomaly_count = document.procedure_anomalies.len();
     let mut vm = GameScriptVm::new(1_000_000);
+    // `run` reads from the same archive the member came from, read-only. Without this a probed
+    // member that loads a module stops on the load itself, which is a worse trace than the one it
+    // would have produced inside the module.
+    vm.set_module_source(Rc::new(ProbeModules {
+        members: entries
+            .iter()
+            .map(|entry| (normalize_module_path(&entry.name), entry.name.clone()))
+            .collect(),
+        archive: Rc::clone(&archive),
+    }));
     for (name, value) in stubs {
         vm.define_native_stub(name.clone(), value.clone());
     }
