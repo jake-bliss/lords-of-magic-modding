@@ -5639,3 +5639,61 @@ unreachable for tokens from this lexer, because every form the predicate admits 
 `f64::from_str`. `src/main.rs`'s `--stub NAME=VALUE` **did** have the same hole and is fixed: it
 classifies with `is_number_token` first, so `--stub x=inf` is now the error the help text promises
 instead of an infinity on the stub's stack.
+
+## 2026-09-18 — The `value` column was cut mid-token; prose and data now differ
+
+`gameplay_symbols.rs` built every non-aggregate field value with one rule,
+`.chars().take(120)`. It cut **414 of 62,211 rows** in `reports/gameplay/fields.tsv` — the maximum
+length in the committed file was exactly 120 and the histogram was a cliff, 119:2 then 120:414 —
+and it cut them **mid-token with no marker**. The published data therefore contained the flag names
+`CAN_USE_R`, `CAN_USE_LE` and `CAN_TRAN`, which the game does not have, and a bare `o` that had
+been the operator `or`. A consumer could only detect the cut by noticing a length of exactly 120,
+and had to discard the trailing partial token by hand. Evidence class: Corrected.
+
+**The two classes are now bounded differently, because they are different things.**
+
+| Value class | Rule | Longest in the corpus |
+| --- | --- | ---: |
+| procedure, dictionary, array | unchanged: `<procedure 12 tokens>`, shape and size only | — |
+| number, name, expression | emitted **in full** | 2,951 chars / 227 tokens |
+| text (a lone string literal) | up to 120 chars, cut on a **word** boundary, then `<truncated, N chars>` | 709 chars |
+
+Emitting a symbolic value whole does not reopen the no-script-text rule the cap was there to serve:
+every braced or bracketed aggregate has already been replaced by its shape, so what reaches this
+point is flat. Measured across all three profiles, expressions are 3,010 values with a median well
+under 20 tokens; the longest is `alt_spells_id` on `chalice_chaos` and `scroll_sages`, a list of
+spell names, and exactly **four** expression values contain a string at all, each the asset path
+`iface/ordragb.imp`. Prose keeps a bound because a shipped description is game content and these
+reports are published. Evidence class: Observed in a local binary.
+
+**Before and after, `reports/gameplay/fields.tsv`:**
+
+| | before | after |
+| --- | ---: | ---: |
+| rows | 62,211 | 62,211 |
+| values cut | 414 | 0 cut, 264 bounded and marked |
+| rows changed | — | 412 (264 artifact `description`, 142 unit `flags`, 6 spell and artifact expressions) |
+| longest value | 120 | 2,951 |
+| values at exactly 120 | 414 | 2, both complete `ring_of_shelter` descriptions |
+
+**The cut was hiding a real cross-profile difference.** `unit:dethf` and `unit:waldf` have `flags`
+whose first 120 characters are identical in all three profiles and which diverge after them: GS5R3
+adds `CAN_USE_RIGHT_ARTIFACT` to `dethf` and `NO_DEFEND_ANIM` to `waldf`. Both now appear in the
+`changed-fields` column of `reports/gameplay/profile-diff.tsv`, which had reported no difference.
+That is the concrete cost of a silent truncation: not only was the published value wrong, the
+*comparison* built on it was wrong in the direction that hides a mod's changes. Evidence class:
+Corrected.
+
+No prose in `docs/` quoted a figure derived from the truncated column; the counts that moved are
+the two `profile-diff` rows above and the test counts in
+[gameplay-reference.md](gameplay-reference.md#tests).
+
+**The finiteness guard stays, and now has a different job.** With the lexer fixed, `INF` can no
+longer arrive as a number token, so the guard's original case is gone. It is not redundant:
+a number the predicate correctly accepts can still exceed `f64` — `1e400`, or a 400-digit integer —
+and would reach it as infinity through a lexer doing its job. The shipped corpus does not exercise
+that: across all three profiles there are **zero** non-finite number tokens, the largest magnitude
+is `300000000`, and the longest numeric token is `3.14159265` at ten characters against the 309 it
+would take to overflow. So the guard is unexercised rather than dead, and the unit test now drives
+it with `1e400` and `-1e400` instead of `INF`, which would no longer reach it. Evidence class:
+Observed in a local binary.

@@ -18,10 +18,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use lom_asset_viewer::gameplay_symbols::{
-    RECORD_MARKERS, contains_marker, looked_up_key, record_fields, registered_symbols, run_targets,
-    unit_records,
+    RECORD_MARKERS, ValueShape, contains_marker, looked_up_key, record_fields, registered_symbols,
+    run_targets, unit_records,
 };
-use lom_asset_viewer::gamescript::GameScriptDocument;
+use lom_asset_viewer::gamescript::{Delimiter, GameScriptDocument, TokenKind};
 use lom_asset_viewer::mpq::Archive;
 
 struct Corpus {
@@ -344,5 +344,146 @@ fn a_deferred_native_call_still_stops_the_value_scan() {
     assert!(
         offenders.is_empty(),
         "a deferred native call was read as a record field: {offenders:?}"
+    );
+}
+
+/// Every word the corpus contains as a token, written independently of `token_text` so the
+/// comparison is against the archive rather than against the same mapping under test.
+fn corpus_words(corpus: &Corpus) -> BTreeSet<String> {
+    let mut words = BTreeSet::new();
+    for tokens in corpus.members.values() {
+        for token in tokens {
+            match &token.kind {
+                TokenKind::ExecutableName(name) => {
+                    words.insert(name.clone());
+                }
+                TokenKind::LiteralName(name) => {
+                    words.insert(format!("/{name}"));
+                }
+                TokenKind::Number(text) => {
+                    words.insert(text.clone());
+                }
+                TokenKind::StringLiteral(text) => {
+                    // A string reaches a value as its contents, so its words are corpus words.
+                    words.extend(text.split_whitespace().map(str::to_owned));
+                    words.insert(text.clone());
+                }
+                TokenKind::Delimiter(delimiter) => {
+                    words.insert(
+                        match delimiter {
+                            Delimiter::ProcedureOpen => "{",
+                            Delimiter::ProcedureClose => "}",
+                            Delimiter::ArrayOpen => "[",
+                            Delimiter::ArrayClose => "]",
+                            Delimiter::DictionaryOpen => "<<",
+                            Delimiter::DictionaryClose => ">>",
+                        }
+                        .to_owned(),
+                    );
+                }
+            }
+        }
+    }
+    words
+}
+
+#[test]
+#[ignore = "reads a shipped archive; set LOM_GS_MPQ"]
+fn no_published_value_contains_a_word_the_corpus_does_not_have() {
+    // The defect this guards: a 120-character cut through a flags expression published
+    // `CAN_USE_R`, `CAN_USE_LE`, `CAN_TRAN` and a bare `o`. None of those is a token anywhere in
+    // the archive, which is the property asserted here -- against the corpus's own vocabulary
+    // rather than against a list of the four names that happened to be severed.
+    let corpus = corpus();
+    let words = corpus_words(&corpus);
+
+    let mut severed = Vec::new();
+    let mut longest = 0_usize;
+    let mut over_the_old_cap = 0_usize;
+    for (member, tokens) in &corpus.members {
+        let (fields, _) = record_fields(tokens);
+        for (key, field) in &fields {
+            if !matches!(
+                field.shape,
+                ValueShape::Number | ValueShape::Name | ValueShape::Expression
+            ) {
+                continue;
+            }
+            longest = longest.max(field.text.chars().count());
+            if field.text.chars().count() > 120 {
+                over_the_old_cap += 1;
+            }
+            for word in field.text.split(' ') {
+                if !words.contains(word) {
+                    severed.push(format!("{member}:{key} has {word:?}"));
+                }
+            }
+        }
+    }
+    // The guard: if no symbolic value were longer than the cap that used to apply, this test would
+    // pass on a corpus that never exercised the defect.
+    assert!(
+        over_the_old_cap > 0,
+        "no symbolic value exceeds 120 characters, so this test does not reach the case it exists for"
+    );
+    severed.sort();
+    severed.dedup();
+    assert!(
+        severed.is_empty(),
+        "these published values contain words the archive does not: {severed:?} (longest value {longest} chars)"
+    );
+}
+
+#[test]
+#[ignore = "reads a shipped archive; set LOM_GS_MPQ"]
+fn a_bounded_value_says_it_is_bounded_and_no_other_value_sits_at_the_bound() {
+    // A consumer must be able to tell a cut value from a complete one without measuring it. The
+    // old rule failed that twice over: the marker did not exist, and the length that betrayed the
+    // cut was shared with values that merely happened to be that long.
+    let corpus = corpus();
+    let mut marked = 0_usize;
+    let mut unmarked_at_the_old_cap = Vec::new();
+    for tokens in corpus.members.values() {
+        let (fields, _) = record_fields(tokens);
+        for (key, field) in &fields {
+            if field.text.contains("<truncated") {
+                marked += 1;
+                let stated: usize = field
+                    .text
+                    .rsplit_once("<truncated, ")
+                    .and_then(|(_, tail)| tail.split(' ').next().map(str::to_owned))
+                    .expect("the marker carries a length")
+                    .parse()
+                    .expect("the stated length is a number");
+                let kept = field
+                    .text
+                    .rsplit_once(" <truncated, ")
+                    .expect("the marker splits the value")
+                    .0;
+                assert!(
+                    stated > kept.chars().count(),
+                    "{key} claims to be cut but the part it published is the whole of it"
+                );
+                assert!(
+                    !kept.ends_with(char::is_whitespace) && !kept.is_empty(),
+                    "{key} published a prefix ending in whitespace: {kept:?}"
+                );
+                continue;
+            }
+            if field.text.chars().count() == 120 {
+                unmarked_at_the_old_cap.push(key.clone());
+            }
+        }
+    }
+    assert!(
+        marked > 0,
+        "nothing in the corpus is bounded, so this test does not reach the case it exists for"
+    );
+    // Values of exactly 120 characters may legitimately exist; what must not exist is a *cut* one
+    // that says nothing. Each one here is checked against its own untruncated shape by the test
+    // above, which would have caught a severed word.
+    assert!(
+        unmarked_at_the_old_cap.len() < marked,
+        "the old cap's length still dominates the distribution: {unmarked_at_the_old_cap:?}"
     );
 }

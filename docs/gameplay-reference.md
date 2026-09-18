@@ -42,6 +42,26 @@ while tracking `.tsv`, so the repository had already chosen aggregate TSV as the
 No script text is in any of it. A field whose value is a procedure, dictionary or array is recorded
 as its shape and token count, never its body.
 
+**A flat value is published whole; only prose is bounded.** The two classes are treated differently
+on purpose, and a bounded value says so in the value itself:
+
+| Value class | What `fields.tsv` holds | Longest in the corpus |
+| --- | --- | ---: |
+| procedure, dictionary, array | `<procedure 12 tokens>` — shape and size only | — |
+| number, name, expression | the whole value, every token intact | 2,951 chars (`alt_spells_id` on `chalice_chaos`) |
+| text (a lone string literal) | up to 120 characters, cut on a **word** boundary, then `<truncated, N chars>` | 709 chars before the cut |
+
+This replaced a single `.chars().take(120)` that cut both classes mid-token with no marker. It had
+severed 414 values, publishing the flag names `CAN_USE_R`, `CAN_USE_LE` and `CAN_TRAN` — which the
+game does not have — and a bare `o` that had been the operator `or`. A consumer could only detect
+the cut by noticing a length of exactly 120. Evidence class: Corrected.
+
+**The cut was hiding a real cross-profile difference.** `unit:dethf` and `unit:waldf` have `flags`
+values whose first 120 characters are identical across all three profiles and which diverge after
+them: GS5R3 adds `CAN_USE_RIGHT_ARTIFACT` to `dethf` and `NO_DEFEND_ANIM` to `waldf`. Both are now
+listed in the `changed-fields` column of `reports/gameplay/profile-diff.tsv`, where the truncated
+comparison had reported no difference at all. Evidence class: Corrected.
+
 ## Reproducing it
 
 ```sh
@@ -552,15 +572,18 @@ profile diff here is computed from the Rust lexer instead. Evidence class: Obser
 
 ## Tests
 
-- `src/gameplay_symbols.rs` — 39 unit tests. Fixtures are written to probe shapes the corpus does
+- `src/gameplay_symbols.rs` — 42 unit tests. Fixtures are written to probe shapes the corpus does
   **not** contain as well as ones it does: a repeated top-level key, a value of two numbers, an
   unclosed procedure, a decoy `/decoy bind def` before the real unit binding, a literal followed by
   `put def` rather than `get def`. A suite built only from corpus-shaped input cannot fail on what
   the corpus happens never to do.
-- `tests/gameplay_symbols.rs` — 7 corpus-gated tests (`LOM_GS_MPQ`, `#[ignore]`d), passing on all
+- `tests/gameplay_symbols.rs` — 9 corpus-gated tests (`LOM_GS_MPQ`, `#[ignore]`d), passing on all
   three profiles. None compares a count to a constant; each states a property the corpus must have
   if the rule is right. One fails if the registrar rule and the directory rule ever stop disagreeing;
-  another fails if any looked-up dictionary key becomes a field name.
+  another fails if any looked-up dictionary key becomes a field name; another fails if any published
+  value contains a word the archive does not, which is what a mid-token cut leaves behind, and it
+  is checked against the corpus's own vocabulary rather than against the four names that were
+  severed.
 - **Mutation run: 49 mutations, 49 caught, 0 survivors**, and every mutation compiled and ran —
   a mutation that fails to build is not a caught mutation. Constants mutated in both directions
   (minimum→maximum and maximum→minimum; `== 1`→`>= 1` and `== 1`→`== 2`; marker search forced to
