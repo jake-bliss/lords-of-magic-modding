@@ -255,56 +255,116 @@ arithmetic was looking in the wrong place.
 
 ### Part 1 — who can obtain a sequence-record pointer
 
-`Imp::GetSequence` (`0x0049ADB0`) is the only function that returns one. Enumerating its direct
-call sites over the whole `.text` is exhaustive, and there are **five**: `0x0049D89F`,
-`0x0049D9C4`, `0x0049DA97`, `0x0049DB31`, `0x0049DBF7`. All five are inside the IMP module. The four
-inline formation sites are in-module too. So no code outside the module ever holds a sequence-record
-pointer, and bounding the field scan to the module is a closure rather than a guess.
+`Imp::GetSequence` (`0x0049ADB0`) is the only function that returns one. Enumerating its direct call
+sites over the whole `.text` gives **five**: `0x0049D89F`, `0x0049D9C4`, `0x0049DA97`, `0x0049DB31`,
+`0x0049DBF7`. All five are inside the IMP module.
+
+That enumeration only sees `NearBranch32` operands, so on its own it leaves the indirect route open
+— a vtable slot, a dispatch table, a `mov reg,imm32` and an indirect call. **The address
+`0x0049ADB0` appears nowhere in the file as a literal dword**, which is what actually closes it: an
+address that is never taken cannot be called indirectly. The survey prints that count, and the
+opt-in test asserts it is zero.
 
 Out-of-module callers of `CycleLength` and `Advance` *call* those functions; they never receive the
 pointer.
+
+**What Part 1 does not cover.** A sequence record can also be formed inline, without calling
+`GetSequence`, by anything holding the IMP header. The stride heuristic cannot bound that:
+`sequence_record_sites` over the whole `.text` finds 226 `shl reg,4` sites, 22 of them near a dword
+load at displacement `0x1C`, and **13 of those 22 are outside the module**. Offset `0x1C` is used by
+plenty of structs, so that scan is a device for narrowing a set to read by hand, not evidence.
+Parts 2 and 2b are what cover the inline route. An earlier revision of this page ran that scan over
+the module only and concluded the sites were all in-module, which was true by construction and
+therefore worth nothing.
 
 ### Part 2 — what the module reads through such a pointer
 
 The survey follows every sequence-record pointer from both places one comes into existence — the
 header's table at `0x1C` (with an index added, since a table base is not a record) and the player's
-cached record at `0x24` — and reports every field read through it. Inside the module the answer is:
+cached record at `0x24` — and reports every field read through it. Inside the module:
 
 | Displacement | In-module reads | What they are |
 | ---: | ---: | --- |
-| 0 | 1 | the control byte (`0x0049AC88`) |
-| 1 | 2 | the mirror bit (`0x0049AC4E`, `0x0049AD50`) |
+| 0 | 2 | the control byte (`0x0049AC88`, `0x0049D8FE`) |
+| 1 | 3 | the mirror bit (`0x0049AC4E`, `0x0049AD50`, `0x0049D95F`) |
 | **2–10** | **0** | — |
-| 11 | 5 | the facing count |
+| 11 | 6 | the facing count |
 | 12 | 6 | the facing-table pointer |
 
-Two limits, since the negative rests on them. The walk is linear and stops at the first `call`, so
-reads reached only through a call return are invisible to it — the control-byte reads at
-`0x0049D9E6` and `0x0049D900` are two such, and both are at displacement 0, already covered.
-And a displacement cannot type a struct: offset `0x1C` is the sequence table on the IMP header but
-the *current frame record* on the player object (`0x0049CC80`), and `0x24` is used by many unrelated
-objects. That is why the table above is filtered to the module, and why Part 1 has to exist.
+**Corrected, 2026-09-17 (second round).** The first version of this table read 1 / 2 / 5 / 5,
+because the walk had two blind spots and both were in the code that produced the table:
+
+- It cleared taint from any register that appeared as a first operand, whether or not the
+  instruction wrote it. `test`, `cmp` and `push` all have a register first operand and write
+  nothing. **Every cached-pointer reload in this engine is immediately null-checked** —
+  `0x0049D8F7 mov ecx,[ecx+24h]` / `0x0049D8FA test ecx,ecx` / `0x0049D8FE mov cl,[ecx]` — so the
+  `test` erased a pointer it never touched and the `0x24` source contributed **zero** reads. Part 2
+  was a walk of the `0x1C` chains only. Now decided by `instr_info` operand access, not by a
+  mnemonic list.
+- Its `add` rule only carried the pointer when the *destination* was already tainted.
+  `Imp::DirectionCount` forms its record the other way round — `0x0049D95D add eax,edx`, table in
+  `edx` — so `0x0049D95F` and `0x0049D967` were invisible.
+
+**The 2–10 conclusion is unchanged by both fixes**, which is the only reason the result stands; it
+was checked, not assumed. Three regression tests pin the shapes, and the opt-in test pins all four
+row counts, including that the `0x24` source contributes at least one in-module read — because "zero
+reads from that source" is the signature of the bug, not a fact about the engine.
+
+Two limits, and they are real limits. The walk is linear and stops at the first `call`, so a read
+reached only through a call return is invisible. And a displacement cannot type a struct: offset
+`0x1C` is the sequence table on the IMP header but the **current frame record** on the player object
+(`0x0049CC80`), and `0x24` is used by many unrelated objects. That second limit is why Part 2b
+exists.
+
+**Withdrawn, 2026-09-17 (second round).** An earlier revision of this page attributed the missing
+rows to the `call` boundary and cited `0x0049D9E6` and `0x0049D900`. That was wrong twice —
+`0x0049D900` is `and cl,7`, not a read at all, and `0x0049D8FE` is reachable in a straight line from
+`0x0049D8F7` with no `call` in between — and it was worse than merely wrong, because a stated
+limitation that plausibly explains a defect stops anyone looking for the defect.
+
+### Part 2b — typing the out-of-module hits
+
+Following the pointer over all of `.text` finds hits at displacements 2, 4 and 8 outside the module.
+Setting them aside as "offset collisions" is an assertion; this checks it. A `[x+0x1C]` load is only
+an IMP header load if `x` is an IMP file image, and a file image is only ever obtained from an `Imp`
+object's field 8 (`0x0049ADB7 mov esi,[eax+8]`). Following that field finds **25** distinct
+`[x+0x1C]` loads, of which the 10 in-module ones are exactly those Part 2 already reports.
+
+**Reads at displacements 2–10 whose source is one of those 25: zero** — in-module or not. That is a
+stronger statement than the module filter alone, and it is the one the negative rests on.
+
+This leg is a heuristic too: offset 8 is as common as `0x1C`, so the 15 out-of-module members of
+that set are probably not IMP headers either. It does not need to be tight in that direction. It
+needs to be *inclusive*, and being inclusive is what makes the zero mean something.
 
 ### The reporting scan, stated as measured
 
 The survey also lists every base-relative read at displacements 0–15 anywhere in the module,
-regardless of which struct it touches. Read that output as measured, not as the negative:
+regardless of which struct it touches. This is reporting, not the negative — read it as measured:
 
-- **Byte-sized reads at displacement 2: exactly one in the whole module** — `0x0049B25D`, inside the
-  1,024-byte palette copy loop at `0x0049B220` (which reaches the palette through header offset 8 at
-  `0x0049B247`), not on any record. That loop is also the subject of a recorded channel-order
-  contradiction — see the research log; `imp.rs` is deliberately unchanged.
-- **Byte-sized reads at displacements 3–10: none.**
-- **Wider reads at those displacements: 124 of them** — 20 word and 43 dword reads at displacement
-  4, 2 and 56 at displacement 8, 2 at displacement 6, 1 at displacement 10. They are not zero, and
-  the earlier revision of this page said they were; only the byte-sized rows are empty. They are
-  reads of other structures — frame heights at frame `+4`, frame-table pointers at facing `+4`,
-  pixel pointers at frame `+0xC`, and fields of unrelated objects. Part 2 is what excludes them from
-  being sequence-record reads; this list on its own does not.
+- **Displacement 2: 1 byte-sized read and 27 wider ones.** The byte-sized one is `0x0049B25D`,
+  inside the 1,024-byte palette copy loop at `0x0049B220` (which reaches the palette through header
+  offset 8 at `0x0049B247`), not on any record. That loop is also the subject of a recorded
+  channel-order contradiction — see the research log; `imp.rs` is deliberately unchanged. The 27
+  wider ones are 24 word reads with a plain base, 2 word reads with a base and index, and 1 dword
+  read with a base and index — frame widths at frame `+2` and facing frame counts at facing `+2`,
+  mostly.
+- **Displacements 3–10: 0 byte-sized reads and 124 wider ones** — 20 word and 43 dword at
+  displacement 4, 2 word and 56 dword at 8, 2 at 6, 1 at 10. Only the byte-sized rows are empty.
+  They are reads of other structures: frame heights at frame `+4`, frame-table pointers at facing
+  `+4`, pixel pointers at frame `+0xC`, and fields of unrelated objects.
 
-The scan excludes absolute and `esp`-based operands, stores, and `lea` — the last because it
-computes an address and touches no memory, and counting it inflated these totals by six. **Indexed
-operands and `ebp` bases are included**, which matters: `0x0049AC8F mov di,[ebx+esi*8+2]` is a real record read at
+**Corrected, 2026-09-17 (second round).** The displacement-2 bullet previously said "exactly one
+read in the whole module", counting only the byte-sized row — the identical asymmetry corrected at
+displacements 3–10 in the round before, repeated on the headline byte. Neither bullet excludes the
+wider reads from being sequence-record reads; Parts 2 and 2b do that.
+
+The scan excludes absolute and `esp`-based operands, and anything that does not actually read its
+memory operand. That last test is asked of `instr_info`'s operand access rather than of a mnemonic
+list, which is where two rounds of bugs came from: one predicate covers the store
+(`mov [mem],reg` — memory access `Write`), the address computation (`lea` — `NoMemAccess`) and the
+read-modify-write (`add [mem],reg` — `ReadWrite`, and it does read). **Indexed operands and `ebp`
+bases are included**, which matters: `0x0049AC8F mov di,[ebx+esi*8+2]` is a real record read at
 displacement 2, and `ebp` is an object pointer in this module rather than a frame pointer
 (`0x0049ABFC`, `0x0049AC0F`, `0x0049AC43`). An earlier revision dropped both, which would have let a
 timing field read as `mov cx,[edi+ebx*16+2]` produce no hits at all.
@@ -390,6 +450,12 @@ Default:
   `a_comparison_without_a_doubling_is_not_taken_for_the_ping_pong_mode` — the ping-pong mode must
   come from the `cmp` that guards the `2N−1`, and a bare comparison must not be mistaken for it.
 - `recovers_the_mirror_bit_from_the_doubled_direction_count` — likewise for the mirror bit.
+- `a_null_check_between_a_load_and_a_dereference_does_not_erase_the_pointer`,
+  `an_index_added_to_a_table_carries_the_pointer_either_way_round`,
+  `stores_and_address_computations_are_not_reported_as_reads` and
+  `a_table_base_read_before_any_index_is_not_reported` — the four shapes the pointer walk has to
+  get right. The first two are regressions: each one silently emptied part of the timing negative,
+  and reintroducing either now fails here as well as in the opt-in test.
 - `a_jne_over_the_decrement_means_the_decrement_runs_on_even_widths` and
   `a_je_over_the_decrement_means_the_opposite_parity` — both branch polarities, which is the
   specific error this page carried.
@@ -404,22 +470,37 @@ Opt-in, with `LOM_GAME_DIR` set to the `English` directory and `LOM_LISTFILE` to
 `cargo test --release -- --ignored`:
 
 - `the_recovered_rules_match_the_installed_executable` — `recover` refuses on any disagreement with
-  this module, so reaching the end is the check. It also asserts Part 1 of the negative (every
-  `GetSequence` call site is in-module) and Part 2 (no in-module read at displacements 2–10 through
-  a record pointer).
+  this module, so reaching the end is the check. It also asserts Part 1 (every `GetSequence` call
+  site is in-module **and** its address appears nowhere as a literal dword), Part 2 (no in-module
+  read at displacements 2–10 through a record pointer, plus all four measured row counts and the
+  fact that the cached-pointer source contributes at least one read) and Part 2b (no read at an
+  unexplained displacement is reached from a confirmed IMP header load).
 - `the_corpus_matches_the_recovered_rules` — every mode the archive uses has a dispatch slot, every
   advertised direction resolves, every facing metadata word is zero, and the measured counts hold:
-  4,667 sequences, 955 ping-pong, 3,379 with the mirror bit set, 2,931 whose byte 1 is exactly the
-  bit. Those counts are what make `PING_PONG_MODE` falsifiable against the shipped archive — set it
-  to 3 and the ping-pong count goes to zero.
+  4,667 sequences, **14,921 facing records**, 955 ping-pong, 3,379 with the mirror bit set, 2,931
+  whose byte 1 is exactly the bit. Those counts are what make `PING_PONG_MODE` falsifiable against
+  the shipped archive — set it to 3 and the ping-pong count goes to zero. The facing-record total is
+  pinned because the "all 14,921 are zero" claim is otherwise satisfied vacuously by a corpus that
+  has shrunk.
 
 ### Why the constants are parameters
 
-`PING_PONG_MODE` and `SEQUENCE_MIRROR_BIT` are no longer read by the rules that use them. Both are
-passed in from what `recover` read out of the binary, and the constants exist only as the value
-`recover` refuses to disagree with. The reason is a review finding worth recording: with
-`PING_PONG_MODE` mutated from 4 to 3, an earlier version of this suite stayed **green** — every
-ping-pong sequence in the archive would have truncated to forward-only and the survey would have
-labelled a mode with no users as the ping-pong. The traversal test compared `cycle_length` against
-`frame_for_cycle_index`, and both read the same constant, so it was self-consistent for any value.
-That is this repository's own recorded lesson: agreement is not confirmation.
+`PING_PONG_MODE` and `SEQUENCE_MIRROR_BIT` are not read by the rules that use them. `cycle_length`,
+`frame_for_cycle_index`, `mirrors_facings`, `direction_count` and `facing_for_direction` all take
+the value `recover` read out of the binary; the constants exist only as the value `recover` refuses
+to disagree with.
+
+The reason is a review finding worth recording. With `PING_PONG_MODE` mutated from 4 to 3, an
+earlier version of this suite stayed **green** — every ping-pong sequence in the archive would have
+truncated to forward-only and the survey would have labelled a mode with no users as the ping-pong.
+The traversal test compared `cycle_length` against `frame_for_cycle_index`, and both read the same
+constant, so it was self-consistent for any value. That is this repository's own recorded lesson:
+agreement is not confirmation.
+
+**Corrected, 2026-09-17 (second round).** The previous revision of this paragraph claimed both
+constants had been parameterised. Only `PING_PONG_MODE` had. `mirrors_facings` still read
+`SEQUENCE_MIRROR_BIT` directly, so `direction_count` and `facing_for_direction` did too, and
+`AnimRules::mirror_bit` was consumed by nothing — it was printed and asserted and never used. The
+hole `ping_pong_mode` was threaded through `AnimRules` to close was still open on the mirror axis,
+and open exactly for the caller who wires this into `src/main.rs` without calling `recover` first,
+which is the next step on issue #2. Both are parameters now.

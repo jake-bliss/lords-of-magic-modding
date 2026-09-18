@@ -3541,10 +3541,15 @@ The argument that actually reaches the conclusion is in two parts:
 
 1. **Who can obtain a sequence-record pointer.** `Imp::GetSequence` (`0x0049ADB0`) is the only
    function that returns one. Its direct call sites over the whole `.text` number **five**, and all
-   five are in-module. So bounding the field scan to the module is a closure, not a guess.
+   five are in-module.
 2. **What the module reads through one.** Following the pointer from both places it is created —
    the header table at `0x1C` with an index added, and the player's cached record at `0x24` — the
    in-module reads land at displacements **0, 1, 11 and 12 only. Zero at 2 through 10.**
+
+*Both parts were amended again in the [second review round](#2026-09-17-second-review-round--the-instrument-was-blind-twice-more-and-a-stated-limit-hid-it):
+part 1 needed the absolute-reference check to close the indirect route, part 2 was silently walking
+only one of its two sources, and a third leg was added to type the out-of-module hits. The row
+counts quoted here are the pre-fix ones; [imp-format.md](imp-format.md) carries the current table.*
 
 The one rule that made part 2 work is worth stating: a `mov` that *dereferences* a tainted pointer
 must kill the taint, because `mov eax,[eax+edx+0Ch]` yields the facing table a sequence record
@@ -3641,3 +3646,103 @@ its own convention. The two candidate resolutions are:
 `ff 00 00` renders blue — and this repository's rule is that a recorded contradicting symptom wins
 over a clean-looking disassembly. This entry exists so that if the palette is ever questioned again,
 the four addresses are already written down.
+
+## 2026-09-17 (second review round) — The instrument was blind twice more, and a stated limit hid it
+
+The IMP animation result survived every challenge to its content. The instrument that produced it
+did not, for the third round running. Field-level detail is in [imp-format.md](imp-format.md); this
+entry is about the pattern, because the pattern is now the finding.
+
+### The two blind spots, both introduced by the previous round's fix
+
+`record_pointer_reads` — the scan written specifically to replace an argument that had been refuted
+— cleared taint from any register that appeared as an instruction's first operand. `test`, `cmp` and
+`push` all have a register first operand and write nothing. **Every cached-pointer reload in this
+engine is immediately null-checked:**
+
+```asm
+0049d8f7  mov  ecx,[ecx+24h]     ; the cached sequence record
+0049d8fa  test ecx,ecx           ; <- erased the pointer it never touched
+0049d8fe  mov  cl,[ecx]          ; never seen
+```
+
+So the `PLAYER_CACHED_SEQUENCE` source — the source added that round, the whole point of the
+rewrite, the thing whose absence had *refuted* the previous argument — contributed **zero** reads.
+Part 2 was a walk of two `[reg+0x1C]` chains with a second source that did nothing. Fixed by asking
+`instr_info` which registers an instruction writes instead of guessing from operand position, which
+is the general form of the fix and was available the whole time: `instr_info` was already an enabled
+feature.
+
+Second: the `add` rule carried the pointer only when the destination was already tainted.
+`Imp::DirectionCount` forms its record the other way round — `0x0049D95D add eax,edx` with the table
+in `edx` — so `0x0049D95F` and `0x0049D967`, the mirror-bit test and the facing-count read this very
+document quotes, were invisible to the scan that was supposed to enumerate them.
+
+Corrected rows: displacement 0 goes 1 → **2**, displacement 1 goes 2 → **3**, displacement 11 goes
+5 → **6**. **Displacements 2–10 stay at zero**, which is the only reason the conclusion stands, and
+it is a checked fact rather than an assumed one.
+
+### The worse half: a stated limitation that explained the defect away
+
+The previous entry and the field document both said the missing rows were a consequence of the walk
+stopping at the first `call`, citing `0x0049D9E6` and `0x0049D900`. Both citations were wrong —
+`0x0049D900` is `and cl,7`, not a read at all, and the read that was actually missing,
+`0x0049D8FE`, sits four instructions after its load with no `call` between them. The rows were lost
+to the taint bug.
+
+That is the part worth keeping. A limitation section is supposed to be where a reader goes to
+calibrate a result. A limitation that *plausibly explains a bug* converts the bug into expected
+behaviour and stops anyone looking for it — including the person who wrote it. I had a symptom
+(a source contributing nothing) and an explanation ready to hand, and the explanation was close
+enough to true in general that I never tested whether it was true here.
+
+### The pattern across three rounds
+
+**Every defect in this work was an instrument that could not find what it was looking for, and twice
+a stated limitation made the blindness look intentional.**
+
+| Round | The instrument's blindness | What it hid |
+| --- | --- | --- |
+| 1 | scan dropped indexed and `ebp`-based operands | a field read as `mov cx,[edi+ebx*16+2]` would have shown nothing |
+| 1 | the argument searched for `shl`+header arithmetic | the cached-pointer route, which has no arithmetic |
+| 2 | taint propagated through a dereference | facing-record reads reported as sequence-record reads |
+| 2 | `lea` counted as a read | six phantom reads in a quoted total |
+| 3 | taint cleared on non-writing instructions | the entire second pointer source |
+| 3 | `add` carried only one way round | the two reads in `DirectionCount` |
+
+Not one of these was a wrong conclusion about the engine. All six were the measuring device
+answering a narrower question than the one being asked, while reporting in the vocabulary of the
+wider one. The standing lesson from this repository's own files — *verify the instrument before
+building on it*, and *an empty result is not a clean result* — applies to a disassembly scan exactly
+as it applies to a speed monitor: **when a scan built to find something finds nothing, the first
+hypothesis is that the scan is broken, not that the thing is absent.** Three regression tests now
+encode that for this scan: a null check between a load and a dereference, an `add` either way round,
+and a store or `lea` mistaken for a read.
+
+### Also this round
+
+- **Part 1 is now actually closed.** `call_sites` only sees `NearBranch32`, so enumerating direct
+  callers of `Imp::GetSequence` left the indirect route open. The address `0x0049ADB0` appears
+  **nowhere in the file as a literal dword**, so no vtable slot and no `mov reg,imm32` can reach it.
+  That is the fact that closes it, and it is now asserted rather than assumed.
+- **Part 1 does not cover the inline route, and the scan I offered for it was circular.**
+  `sequence_record_sites` was being run over the module and then used to conclude the sites were all
+  in-module. Run over the whole `.text` it finds 226 stride-by-16 sites, 22 near a `[x+0x1C]` load,
+  and **13 of those outside the module** — so it narrows a set to read by hand and evidences
+  nothing. The inline route is covered by a new leg that types the loads: a `[x+0x1C]` load is only
+  an IMP header load if `x` came from an `Imp` object's field 8 (`0x0049ADB7`), and **no read at
+  displacements 2–10 anywhere in `.text` has a source in that set.**
+- **Only one of the two constants had actually been parameterised.** The previous entry claimed
+  both; `mirrors_facings` still read `SEQUENCE_MIRROR_BIT` directly and `AnimRules::mirror_bit` was
+  consumed by nothing. The hole was open precisely for the next caller — the one who wires this into
+  the viewer without calling `recover`.
+- **`Imp::CycleLength` has 12 out-of-module callers, not 25.** 25 is `Advance`'s. Both `.md` files
+  had it right and the source comment introduced that round had it wrong: the third
+  one-file-not-the-other inconsistency on this branch, and the source comment is the copy that gets
+  read while editing.
+- **`iced-x86`'s `nasm` feature is back to a dev-dependency.** Making it a real dependency linked a
+  formatter's tables into the SDL viewer and the map editor so that one analysis example could print
+  a debug string, in a crate that pins `default-features = false` on four dependencies.
+  `FieldRead` and `TaintedRead` now carry the decoded `Instruction`; the example owns the formatter.
+- The code range comes from `PeImage::executable_ranges` rather than a hardcoded length, so "the
+  whole of `.text`" means it.

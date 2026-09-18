@@ -23,7 +23,9 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, Mnemonic, NasmFormatter, OpKind};
+use iced_x86::{
+    Decoder, DecoderOptions, Instruction, InstructionInfoFactory, Mnemonic, OpAccess, OpKind,
+};
 
 use crate::native_table::PeImage;
 
@@ -84,16 +86,22 @@ pub fn cycle_mode(metadata: &[u8; 11]) -> u8 {
 }
 
 /// Whether the engine mirrors the sequence's facings to reach the directions beyond the last one.
-pub fn mirrors_facings(metadata: &[u8; 11]) -> bool {
-    metadata[SEQUENCE_MIRROR_BYTE] & SEQUENCE_MIRROR_BIT != 0
+///
+/// Pass [`AnimRules::mirror_bit`] as `mirror_bit`, not a literal and not [`SEQUENCE_MIRROR_BIT`].
+/// The constant is the value [`recover`] refuses to disagree with; it is not the authority. This
+/// used to read the constant directly, which left the hole `ping_pong_mode` was threaded through
+/// `AnimRules` to close still open on this axis -- and open precisely for the next caller, who
+/// wires this into the viewer without calling `recover` first.
+pub fn mirrors_facings(mirror_bit: u8, metadata: &[u8; 11]) -> bool {
+    metadata[SEQUENCE_MIRROR_BYTE] & mirror_bit != 0
 }
 
 /// How many distinct directions a sequence exposes.
 ///
 /// `Imp::DirectionCount` at 0x0049D920: `2 * facings - 2` when the mirror bit is set
 /// (`lea eax,[ecx+ecx-2]`, 0x0049D96A), otherwise the stored facing count (0x0049D976).
-pub fn direction_count(metadata: &[u8; 11], facing_count: usize) -> usize {
-    if mirrors_facings(metadata) {
+pub fn direction_count(mirror_bit: u8, metadata: &[u8; 11], facing_count: usize) -> usize {
+    if mirrors_facings(mirror_bit, metadata) {
         (2 * facing_count).saturating_sub(2)
     } else {
         facing_count
@@ -113,6 +121,7 @@ pub fn direction_count(metadata: &[u8; 11], facing_count: usize) -> usize {
 /// drawn flipped. Callers are expected to stay inside [`direction_count`]; this function
 /// reproduces the engine rather than tightening it.
 pub fn facing_for_direction(
+    mirror_bit: u8,
     metadata: &[u8; 11],
     facing_count: usize,
     direction: usize,
@@ -123,7 +132,7 @@ pub fn facing_for_direction(
     if direction < facing_count {
         return Some((direction, false));
     }
-    if !mirrors_facings(metadata) {
+    if !mirrors_facings(mirror_bit, metadata) {
         return None;
     }
     let folded = (2 * facing_count).checked_sub(direction + 2)?;
@@ -675,7 +684,12 @@ pub struct FieldRead {
     pub operand_size: usize,
     /// Whether the operand also carried a scaled index register.
     pub indexed: bool,
-    pub text: String,
+    /// The decoded instruction, for a caller that wants to render it.
+    ///
+    /// Deliberately not a pre-formatted string: rendering needs `iced-x86`'s `nasm` feature, and
+    /// nothing in this library consumes prose. Carrying the `Instruction` keeps the formatter's
+    /// tables out of the SDL viewer and the map editor, which link this crate for other reasons.
+    pub instruction: Instruction,
 }
 
 /// Every base-register-relative memory read in a code range whose displacement falls in `range`.
@@ -702,15 +716,9 @@ pub fn field_reads(
 ) -> Result<Vec<FieldRead>, ImpAnimError> {
     use iced_x86::Register;
 
-    let mut formatter = NasmFormatter::new();
-    let mut text = String::new();
+    let mut factory = InstructionInfoFactory::new();
     let mut reads = Vec::new();
     for instruction in decode_range(image, start, length)? {
-        let reads_memory =
-            (0..instruction.op_count()).any(|index| instruction.op_kind(index) == OpKind::Memory);
-        if !reads_memory {
-            continue;
-        }
         if matches!(
             instruction.memory_base(),
             Register::None | Register::ESP | Register::EIP
@@ -720,26 +728,36 @@ pub fn field_reads(
         if !range.contains(&instruction.memory_displacement64()) {
             continue;
         }
-        // A store writes the field; only loads can be reading a meaning out of it.
-        if instruction.op0_kind() == OpKind::Memory && instruction.mnemonic() == Mnemonic::Mov {
+        if !reads_a_memory_operand(&mut factory, &instruction) {
             continue;
         }
-        // `lea` computes an address and touches no memory at all. Counting it as a read inflated
-        // the totals this scan is quoted for.
-        if instruction.mnemonic() == Mnemonic::Lea {
-            continue;
-        }
-        text.clear();
-        formatter.format(&instruction, &mut text);
         reads.push(FieldRead {
             address: instruction.ip() as u32,
             displacement: instruction.memory_displacement64(),
             operand_size: instruction.memory_size().size(),
             indexed: instruction.memory_index() != Register::None,
-            text: text.clone(),
+            instruction,
         });
     }
     Ok(reads)
+}
+
+/// Whether an instruction actually **reads** a memory operand.
+///
+/// Asked through `instr_info` rather than by listing mnemonics, because the mnemonic list is where
+/// the bugs live. This one predicate covers all three cases that were previously special-cased or
+/// missed: a store (`mov [mem],reg` -- memory is `Write`), an address computation (`lea` -- iced
+/// reports `NoMemAccess`), and a read-modify-write (`add [mem],reg` -- `ReadWrite`, and it does
+/// read).
+fn reads_a_memory_operand(factory: &mut InstructionInfoFactory, instruction: &Instruction) -> bool {
+    let info = factory.info(instruction);
+    (0..instruction.op_count()).any(|index| {
+        instruction.op_kind(index) == OpKind::Memory
+            && matches!(
+                info.op_access(index),
+                OpAccess::Read | OpAccess::ReadWrite | OpAccess::CondRead | OpAccess::ReadCondWrite
+            )
+    })
 }
 
 /// A read reached through a pointer that was loaded out of a known struct field.
@@ -753,7 +771,8 @@ pub struct TaintedRead {
     pub address: u32,
     pub displacement: u64,
     pub operand_size: usize,
-    pub text: String,
+    /// The decoded instruction; see [`FieldRead::instruction`] for why it is not a string.
+    pub instruction: Instruction,
 }
 
 /// How a pointer becomes a *record* pointer, and therefore what counts as a source.
@@ -791,7 +810,9 @@ impl PointerSource {
 /// sequence-record address can only be formed by scaling an index by 16 and adding the header
 /// pointer". It cannot: `Imp::SetAction` caches the record pointer into the player object at
 /// `0x0049DAA2 mov [esi+24h],eax`, and `Imp::CycleLength` reads it straight back at `0x0049D8F7`
-/// with no scaling anywhere, from a function 25 out-of-module callers can reach.
+/// with no scaling anywhere, from a function **12** out-of-module callers can reach. (25 is
+/// `Imp::Advance`'s out-of-module caller count, which an earlier revision of this comment used by
+/// mistake while both `.md` files had it right.)
 ///
 /// So the search starts from the *loads*. For each dword load at one of `sources`, the pointer is
 /// followed for `window` instructions through register moves and through the `shl`/`add` that turns
@@ -814,8 +835,7 @@ pub fn record_pointer_reads(
     use std::collections::BTreeSet;
 
     let instructions = decode_range(image, start, length)?;
-    let mut formatter = NasmFormatter::new();
-    let mut text = String::new();
+    let mut factory = InstructionInfoFactory::new();
     let mut found = Vec::new();
     for (position, load) in instructions.iter().enumerate() {
         let is_load = load.mnemonic() == Mnemonic::Mov
@@ -841,57 +861,79 @@ pub fn record_pointer_reads(
                 break;
             }
             let base = instruction.memory_base().full_register32();
-            let reads_memory = (0..instruction.op_count())
-                .any(|index| instruction.op_kind(index) == OpKind::Memory);
             // An operand that carries its own scaled index is a record access in one step.
             let self_indexed = instruction.memory_index() != Register::None;
-            // `lea` off a record pointer propagates the pointer (handled below) but reads nothing.
-            let is_read = reads_memory && instruction.mnemonic() != Mnemonic::Lea;
-            if is_read && tainted.contains(&base) && (indexed || self_indexed) {
-                text.clear();
-                formatter.format(instruction, &mut text);
+            if reads_a_memory_operand(&mut factory, instruction)
+                && tainted.contains(&base)
+                && (indexed || self_indexed)
+            {
                 found.push(TaintedRead {
                     source: load.ip() as u32,
                     source_displacement: load.memory_displacement64(),
                     address: instruction.ip() as u32,
                     displacement: instruction.memory_displacement64(),
                     operand_size: instruction.memory_size().size(),
-                    text: text.clone(),
+                    instruction: *instruction,
                 });
             }
-            // Propagate through a move, and through the scaling that turns a table base into a
-            // record address. Any other write to a register clears it.
-            if instruction.op0_kind() != OpKind::Register {
-                continue;
-            }
-            let destination = instruction.op0_register().full_register32();
-            let propagates = match instruction.mnemonic() {
+
+            let destination = (instruction.op0_kind() == OpKind::Register)
+                .then(|| instruction.op0_register().full_register32());
+            let source_register = (instruction.op1_kind() == OpKind::Register)
+                .then(|| instruction.op1_register().full_register32());
+            let propagates = match (destination, instruction.mnemonic()) {
                 // A register-to-register move carries the pointer; a load *through* it does not.
                 // `mov eax,[eax+edx+0Ch]` yields the pointee -- the facing table a sequence record
-                // points at -- which is a different object. Treating that as the same pointer is
-                // what made the first run of this scan report facing-record reads as sequence-record
-                // reads, and it is the single most important rule here.
-                Mnemonic::Mov => {
-                    instruction.op1_kind() == OpKind::Register
-                        && tainted.contains(&instruction.op1_register().full_register32())
+                // points at -- which is a different object.
+                (Some(_), Mnemonic::Mov) => {
+                    source_register.is_some_and(|register| tainted.contains(&register))
                 }
                 // `lea` computes an address rather than dereferencing, so it does carry.
-                Mnemonic::Lea => {
+                (Some(_), Mnemonic::Lea) => {
                     tainted.contains(&base)
                         || tainted.contains(&instruction.memory_index().full_register32())
                 }
-                // The index has landed: from here the pointer designates a record.
-                Mnemonic::Add if tainted.contains(&destination) => {
-                    indexed = true;
-                    true
+                // The index has landed: from here the pointer designates a record. The addition
+                // runs both ways round -- `add record,index` and `add index,record` -- and taking
+                // only the first made `Imp::DirectionCount`, which forms its record as
+                // `add eax,edx` with the *table* in `edx`, invisible to this scan.
+                (Some(destination), Mnemonic::Add) => {
+                    let carries = tainted.contains(&destination)
+                        || source_register.is_some_and(|register| tainted.contains(&register));
+                    if carries {
+                        indexed = true;
+                    }
+                    carries
                 }
-                Mnemonic::Shl | Mnemonic::Sub | Mnemonic::And => tainted.contains(&destination),
+                (Some(destination), Mnemonic::Shl | Mnemonic::Sub | Mnemonic::And) => {
+                    tainted.contains(&destination)
+                }
                 _ => false,
             };
-            if propagates {
+
+            // Clear taint from every register this instruction *writes*, and only those. Asking
+            // `instr_info` rather than assuming "first operand is a register" means it is written:
+            // `test ecx,ecx`, `cmp`, and `push` all have a register first operand and write
+            // nothing. That assumption cost this scan its entire second source -- every cached
+            // pointer in this engine is reloaded and immediately null-checked
+            // (`0x0049D8F7 mov ecx,[ecx+24h]` / `0x0049D8FA test ecx,ecx`), so the `test` was
+            // erasing a pointer it never touched and `0x0049D8FE mov cl,[ecx]` went unseen.
+            let info = factory.info(instruction);
+            for used in info.used_registers() {
+                if !matches!(
+                    used.access(),
+                    OpAccess::Write | OpAccess::ReadWrite | OpAccess::CondWrite
+                ) {
+                    continue;
+                }
+                let register = used.register().full_register32();
+                if propagates && destination == Some(register) {
+                    continue;
+                }
+                tainted.remove(&register);
+            }
+            if let Some(destination) = destination.filter(|_| propagates) {
                 tainted.insert(destination);
-            } else {
-                tainted.remove(&destination);
             }
         }
     }
@@ -912,6 +954,13 @@ pub const HEADER_SEQUENCE_TABLE: u64 = 0x1c;
 /// overstated.
 pub const PLAYER_CACHED_SEQUENCE: u64 = 0x24;
 
+/// Offset at which an `Imp` object holds the loaded file image the header lives at the front of.
+///
+/// `0x0049ADB7 mov esi,[eax+8]`, where `eax` came from `[ecx]` -- the object behind the animation
+/// player. Every route to a sequence record passes through this field, which is what lets an
+/// otherwise untypeable `[x+0x1C]` load be tested for actually being an IMP header.
+pub const IMP_FILE_IMAGE: u64 = 0x08;
+
 /// The sequence-record bytes with no established meaning.
 pub const UNEXPLAINED_SEQUENCE_BYTES: std::ops::RangeInclusive<u64> = 2..=10;
 
@@ -927,23 +976,8 @@ pub fn sequence_record_sites(
     image: &PeImage<'_>,
     start: u32,
     length: usize,
-) -> Result<Vec<(u32, bool, String)>, ImpAnimError> {
-    let offset = image
-        .file_offset(start)
-        .ok_or_else(|| ImpAnimError::new(format!("{start:#010x} is not mapped")))?;
-    let end = offset
-        .checked_add(length)
-        .filter(|end| *end <= image.bytes().len())
-        .ok_or_else(|| ImpAnimError::new("the scan range runs past the image"))?;
-    let mut decoder = Decoder::with_ip(
-        32,
-        &image.bytes()[offset..end],
-        u64::from(start),
-        DecoderOptions::NONE,
-    );
-    let instructions: Vec<Instruction> = decoder.iter().collect();
-    let mut formatter = NasmFormatter::new();
-    let mut text = String::new();
+) -> Result<Vec<RecordAddressSite>, ImpAnimError> {
+    let instructions = decode_range(image, start, length)?;
     let mut sites = Vec::new();
     const WINDOW: usize = 8;
     for (position, instruction) in instructions.iter().enumerate() {
@@ -961,11 +995,41 @@ pub fn sequence_record_sites(
                 && candidate.memory_displacement64() == HEADER_SEQUENCE_TABLE
                 && candidate.memory_size().size() == 4
         });
-        text.clear();
-        formatter.format(instruction, &mut text);
-        sites.push((instruction.ip() as u32, near_header_load, text.clone()));
+        sites.push(RecordAddressSite {
+            address: instruction.ip() as u32,
+            near_header_load,
+            instruction: *instruction,
+        });
     }
     Ok(sites)
+}
+
+/// One site that scales an index by the 16-byte record stride.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordAddressSite {
+    pub address: u32,
+    /// Whether a dword load at [`HEADER_SEQUENCE_TABLE`] sits within eight instructions.
+    pub near_header_load: bool,
+    pub instruction: Instruction,
+}
+
+/// Every little-endian dword in the image equal to `address`, as file offsets.
+///
+/// [`call_sites`] only finds `NearBranch32` operands, so on its own it leaves open the premise that
+/// the target is never reached indirectly -- through a vtable slot, a dispatch table or a
+/// `mov reg,imm32` followed by an indirect call. This closes that premise the only way it can be
+/// closed: an address that appears nowhere as a literal dword cannot be loaded as one.
+///
+/// Scanned over the whole file rather than the code sections, because a function pointer is data.
+pub fn absolute_references(image: &PeImage<'_>, address: u32) -> Vec<usize> {
+    let needle = address.to_le_bytes();
+    image
+        .bytes()
+        .windows(4)
+        .enumerate()
+        .filter(|(_, window)| *window == needle)
+        .map(|(offset, _)| offset)
+        .collect()
 }
 
 /// Every direct `call`/`jmp` to `target` in a code range.
@@ -1287,11 +1351,12 @@ mod tests {
         let mirrored = [0, SEQUENCE_MIRROR_BIT, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let plain = [0_u8; 11];
         for facings in 2..10_usize {
-            let directions = direction_count(&mirrored, facings);
+            let directions = direction_count(SEQUENCE_MIRROR_BIT, &mirrored, facings);
             assert_eq!(directions, 2 * facings - 2);
             let resolved: Vec<(usize, bool)> = (0..directions)
                 .map(|direction| {
-                    facing_for_direction(&mirrored, facings, direction).expect("covered")
+                    facing_for_direction(SEQUENCE_MIRROR_BIT, &mirrored, facings, direction)
+                        .expect("covered")
                 })
                 .collect();
             // The first and last stored facings are the two that are never mirrored: they face
@@ -1307,11 +1372,14 @@ mod tests {
             // One past the end folds back onto facing 0 rather than being rejected: the engine
             // range-checks after the fold, and reproducing that is the point.
             assert_eq!(
-                facing_for_direction(&mirrored, facings, directions),
+                facing_for_direction(SEQUENCE_MIRROR_BIT, &mirrored, facings, directions),
                 Some((0, true))
             );
-            assert_eq!(direction_count(&plain, facings), facings);
-            assert!(facing_for_direction(&plain, facings, facings).is_none());
+            assert_eq!(
+                direction_count(SEQUENCE_MIRROR_BIT, &plain, facings),
+                facings
+            );
+            assert!(facing_for_direction(SEQUENCE_MIRROR_BIT, &plain, facings, facings).is_none());
         }
     }
 
@@ -1320,9 +1388,14 @@ mod tests {
         // `anchor_x` is the x half of the rule in `docs/hotspots.md`, established by a different
         // method months earlier. Reflecting the span it produces about the anchor column must
         // reproduce the engine's flipped value -- and on odd widths it does, exactly. On even
-        // widths the engine lands two pixels away, which is why the extra pixel is recorded as
-        // observed rather than derived. Asserting both is what stops the even case being quietly
-        // "fixed" to match the algebra.
+        // widths it lands two pixels away.
+        //
+        // Scope, stated because it is easy to overread: both sides of this comparison are closed
+        // forms in this file, so the `- 2` is **algebra, not measurement**. The engine fact it
+        // depends on -- that the `dec` runs on even widths -- is pinned by `recover_mirror_parity`
+        // against the instruction stream, which is the right place for it. What this test buys is
+        // that the two forms stay in the relationship the engine put them in, so the even case
+        // cannot be quietly "fixed" to match the reflection.
         let rules = AnimRules {
             cycle_modes: CycleModeTable {
                 advance: 0,
@@ -1355,6 +1428,128 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The shape every cached-pointer reload in this engine has: load, null-check, dereference.
+    ///
+    /// `test ecx,ecx` has a register first operand and writes nothing. A walk that cleared taint on
+    /// "first operand is a register" erased the pointer at the null check, so `mov cl,[ecx]` was
+    /// never seen and the `PLAYER_CACHED_SEQUENCE` source contributed **zero** reads to a scan
+    /// whose whole purpose was to find reads. This is `Imp::CycleLength` at
+    /// `0x0049D8F7`-`0x0049D8FE`, reduced.
+    #[test]
+    fn a_null_check_between_a_load_and_a_dereference_does_not_erase_the_pointer() {
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0x8b, 0x49, 0x24]); // mov ecx,[ecx+24h]
+        code.extend_from_slice(&[0x85, 0xc9]); // test ecx,ecx
+        code.extend_from_slice(&[0x8a, 0x09]); // mov cl,[ecx]
+        code.extend_from_slice(&[0xc3]); // ret
+        let bytes = image_with_code(&code, &[]);
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let reads = record_pointer_reads(
+            &image,
+            ENTRY,
+            code.len(),
+            &[PointerSource::Record { displacement: 0x24 }],
+            8,
+        )
+        .expect("scan runs");
+        assert_eq!(reads.len(), 1, "{reads:#x?}");
+        assert_eq!(reads[0].address, ENTRY + 5);
+        assert_eq!(reads[0].displacement, 0);
+    }
+
+    /// `add index, table` carries the pointer just as `add table, index` does.
+    ///
+    /// `Imp::DirectionCount` forms its record the second way round -- `0x0049D95D add eax,edx` with
+    /// the table in `edx` -- so an `Add` arm that only looked at the destination made two reads at
+    /// `0x0049D95F` and `0x0049D967` invisible.
+    #[test]
+    fn an_index_added_to_a_table_carries_the_pointer_either_way_round() {
+        for (label, encoding) in [
+            // add eax,edx  (index in eax, table in edx)
+            ("index + table", vec![0x03, 0xc2]),
+            // add edx,eax  (table in edx, index in eax)
+            ("table + index", vec![0x03, 0xd0]),
+        ] {
+            let mut code = Vec::new();
+            code.extend_from_slice(&[0x8b, 0x51, 0x1c]); // mov edx,[ecx+1Ch]
+            code.extend_from_slice(&[0xc1, 0xe0, 0x04]); // shl eax,4
+            code.extend_from_slice(&encoding);
+            let read_at = ENTRY + code.len() as u32;
+            // test byte [eax+1],80h  /  test byte [edx+1],80h
+            let base = if label == "index + table" { 0x40 } else { 0x42 };
+            code.extend_from_slice(&[0xf6, base, 0x01, 0x80]);
+            code.extend_from_slice(&[0xc3]); // ret
+            let bytes = image_with_code(&code, &[]);
+            let image = PeImage::parse(&bytes).expect("synthetic image parses");
+            let reads = record_pointer_reads(
+                &image,
+                ENTRY,
+                code.len(),
+                &[PointerSource::Table { displacement: 0x1c }],
+                8,
+            )
+            .expect("scan runs");
+            assert_eq!(reads.len(), 1, "{label}: {reads:#x?}");
+            assert_eq!(reads[0].address, read_at, "{label}");
+            assert_eq!(reads[0].displacement, 1, "{label}");
+        }
+    }
+
+    /// A store is not a read, and neither is `lea`.
+    ///
+    /// The survey was printing `mov [esi+54h],eax` under a heading that said "every field read".
+    /// Both cases are decided by `instr_info`'s operand access rather than by a mnemonic list.
+    #[test]
+    fn stores_and_address_computations_are_not_reported_as_reads() {
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0x8b, 0x49, 0x24]); // mov ecx,[ecx+24h]   (the source)
+        code.extend_from_slice(&[0x89, 0x41, 0x04]); // mov [ecx+4],eax     (a store)
+        code.extend_from_slice(&[0x8d, 0x51, 0x08]); // lea edx,[ecx+8]     (no access)
+        let read_at = ENTRY + code.len() as u32;
+        code.extend_from_slice(&[0x8b, 0x41, 0x0c]); // mov eax,[ecx+0Ch]   (a read)
+        code.extend_from_slice(&[0xc3]); // ret
+        let bytes = image_with_code(&code, &[]);
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let reads = record_pointer_reads(
+            &image,
+            ENTRY,
+            code.len(),
+            &[PointerSource::Record { displacement: 0x24 }],
+            8,
+        )
+        .expect("scan runs");
+        assert_eq!(reads.len(), 1, "{reads:#x?}");
+        assert_eq!(reads[0].address, read_at);
+        assert_eq!(reads[0].displacement, 0x0c);
+
+        // `field_reads` applies the same predicate. Displacement 0x24 is outside the range asked
+        // for, so the only survivor is the one genuine read at 0x0C: the store at 4 and the `lea`
+        // at 8 are both inside the range and both correctly dropped.
+        let all = field_reads(&image, ENTRY, code.len(), 0..=15).expect("scan runs");
+        let displacements: Vec<u64> = all.iter().map(|read| read.displacement).collect();
+        assert_eq!(displacements, vec![0x0c]);
+    }
+
+    /// A table base is not a record until an index reaches it.
+    #[test]
+    fn a_table_base_read_before_any_index_is_not_reported() {
+        let mut code = Vec::new();
+        code.extend_from_slice(&[0x8b, 0x51, 0x1c]); // mov edx,[ecx+1Ch]
+        code.extend_from_slice(&[0xf6, 0x42, 0x01, 0x80]); // test byte [edx+1],80h -- on the table
+        code.extend_from_slice(&[0xc3]); // ret
+        let bytes = image_with_code(&code, &[]);
+        let image = PeImage::parse(&bytes).expect("synthetic image parses");
+        let reads = record_pointer_reads(
+            &image,
+            ENTRY,
+            code.len(),
+            &[PointerSource::Table { displacement: 0x1c }],
+            8,
+        )
+        .expect("scan runs");
+        assert!(reads.is_empty(), "{reads:#x?}");
     }
 
     /// The installed game. `#[ignore]`d rather than silently skipped: an `eprintln!` from a passing
@@ -1390,22 +1585,35 @@ mod tests {
         assert_eq!(rules.mirror_decrements_when, Parity::Even);
         assert_eq!(rules.cycle_modes.modes.len(), 5);
 
+        let (text_start, text_length) = *image
+            .executable_ranges()
+            .first()
+            .expect("the image has a code section");
+
         // Part one of the timing negative: the only producer of a sequence-record pointer is
-        // called from inside the IMP module and nowhere else.
+        // called from inside the IMP module and nowhere else, *and* its address is never taken --
+        // so no vtable slot or `mov reg,imm32` can reach it either. `call_sites` only sees direct
+        // branches, which is exactly why the second assertion has to exist.
         const IMP_MODULE: std::ops::Range<u32> = 0x0049_9000..0x004a_0000;
         let producers =
-            call_sites(&image, 0x0040_1000, 1_357_312, 0x0049_ADB0).expect("enumerate call sites");
+            call_sites(&image, text_start, text_length, 0x0049_ADB0).expect("enumerate call sites");
         assert!(!producers.is_empty(), "the producer is never called");
         assert!(
             producers.iter().all(|site| IMP_MODULE.contains(site)),
             "a sequence-record pointer is produced outside the IMP module: {producers:#x?}"
         );
+        let absolute = absolute_references(&image, 0x0049_ADB0);
+        assert!(
+            absolute.is_empty(),
+            "the producer's address appears as a literal dword, so an indirect call could reach \
+             it: {absolute:#x?}"
+        );
 
         // Part two: inside the module, nothing reads the unexplained bytes through such a pointer.
         let tainted = record_pointer_reads(
             &image,
-            0x0040_1000,
-            1_357_312,
+            text_start,
+            text_length,
             &[
                 PointerSource::Table {
                     displacement: HEADER_SEQUENCE_TABLE,
@@ -1428,6 +1636,65 @@ mod tests {
             offending.is_empty(),
             "the engine reads an unexplained sequence byte after all: {offending:#x?}"
         );
+
+        // The rows the documentation quotes. Pinned because both were wrong once: the
+        // cached-pointer source contributed nothing until the null-check bug was fixed
+        // (displacement 0 read 1, not 2) and `Imp::DirectionCount` was invisible until
+        // `add index,table` propagated (displacements 1 and 11 read 2 and 5, not 3 and 6).
+        let in_module_at = |displacement: u64| {
+            tainted
+                .iter()
+                .filter(|read| {
+                    IMP_MODULE.contains(&read.address) && read.displacement == displacement
+                })
+                .count()
+        };
+        assert_eq!(in_module_at(0), 2, "in-module reads at displacement 0");
+        assert_eq!(in_module_at(1), 3, "in-module reads at displacement 1");
+        assert_eq!(in_module_at(11), 6, "in-module reads at displacement 11");
+        assert_eq!(in_module_at(12), 6, "in-module reads at displacement 12");
+        assert!(
+            tainted.iter().any(|read| {
+                read.source_displacement == PLAYER_CACHED_SEQUENCE
+                    && IMP_MODULE.contains(&read.address)
+            }),
+            "the cached-pointer source contributes no in-module reads, which is the symptom of \
+             the null-check bug rather than a fact about the engine"
+        );
+
+        // Part 2b: no read at an unexplained displacement is reached from a load confirmed to be
+        // on an IMP header. This types the out-of-module hits that the module filter merely sets
+        // aside, since a displacement cannot type a struct on its own.
+        let header_loads: std::collections::BTreeSet<u32> = record_pointer_reads(
+            &image,
+            text_start,
+            text_length,
+            &[PointerSource::Record {
+                displacement: IMP_FILE_IMAGE,
+            }],
+            48,
+        )
+        .expect("follow file-image pointers")
+        .iter()
+        .filter(|read| read.displacement == HEADER_SEQUENCE_TABLE && read.operand_size == 4)
+        .map(|read| read.address)
+        .collect();
+        assert!(
+            header_loads.len() >= 10,
+            "only {} header loads found; the chain walk has broken",
+            header_loads.len()
+        );
+        let from_a_header: Vec<&TaintedRead> = tainted
+            .iter()
+            .filter(|read| {
+                UNEXPLAINED_SEQUENCE_BYTES.contains(&read.displacement)
+                    && header_loads.contains(&read.source)
+            })
+            .collect();
+        assert!(
+            from_a_header.is_empty(),
+            "an unexplained byte is read through a confirmed IMP header: {from_a_header:#x?}"
+        );
     }
 
     #[test]
@@ -1447,6 +1714,7 @@ mod tests {
         let mut ping_pong = 0_usize;
         let mut mirrored = 0_usize;
         let mut exactly_mirror_byte = 0_usize;
+        let mut facing_records = 0_usize;
         for name in names.lines() {
             if !name.to_ascii_lowercase().ends_with(".imp") {
                 continue;
@@ -1468,16 +1736,21 @@ mod tests {
                 if mode == rules.ping_pong_mode {
                     ping_pong += 1;
                 }
-                if mirrors_facings(&sequence.metadata) {
+                if mirrors_facings(rules.mirror_bit, &sequence.metadata) {
                     mirrored += 1;
                 }
                 if sequence.metadata[SEQUENCE_MIRROR_BYTE] == SEQUENCE_MIRROR_BIT {
                     exactly_mirror_byte += 1;
                 }
-                let directions = direction_count(&sequence.metadata, sequence.facing_count);
+                let directions =
+                    direction_count(rules.mirror_bit, &sequence.metadata, sequence.facing_count);
                 for direction in 0..directions {
-                    let (facing, _) =
-                        facing_for_direction(&sequence.metadata, sequence.facing_count, direction)
+                    let (facing, _) = facing_for_direction(
+                        rules.mirror_bit,
+                        &sequence.metadata,
+                        sequence.facing_count,
+                        direction,
+                    )
                             .unwrap_or_else(|| {
                                 panic!("{name} advertises {directions} directions but {direction} resolves to nothing")
                             });
@@ -1487,6 +1760,7 @@ mod tests {
                     );
                 }
             }
+            facing_records += sprite.facings.len();
             for facing in &sprite.facings {
                 // The issue's "raw 16-bit field". If a build or a mod ever puts something there,
                 // this is the assertion that says so.
@@ -1500,6 +1774,9 @@ mod tests {
             sequences, 4_667,
             "the archive is not the one this was measured on"
         );
+        // Pinned too, because the facing count is the figure the "all 14,921 are zero" claim rests
+        // on: without it a shrinking corpus would satisfy the zero check vacuously.
+        assert_eq!(facing_records, 14_921, "facing records");
         // Measured counts, not restatements of the code. With `PING_PONG_MODE` set to any other
         // value these both collapse -- 3 has no users at all and the ping-pong count would be 0 --
         // which is what makes the constant falsifiable against the shipped archive.

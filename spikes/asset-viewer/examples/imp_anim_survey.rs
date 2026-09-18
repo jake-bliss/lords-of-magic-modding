@@ -12,21 +12,27 @@
 //! corpus half reports what the fields actually hold.
 use std::collections::{BTreeMap, BTreeSet};
 
+use iced_x86::{Formatter, Instruction, NasmFormatter};
 use lom_asset_viewer::imp::{ImpHeaderStats, ImpSprite};
 use lom_asset_viewer::imp_anim::{
-    CycleEnd, EngineAddresses, HEADER_SEQUENCE_TABLE, PLAYER_CACHED_SEQUENCE, PointerSource,
-    UNEXPLAINED_SEQUENCE_BYTES, call_sites, cycle_mode, direction_count, field_reads,
-    mirrored_anchor_x, mirrors_facings, record_pointer_reads, recover, sequence_record_sites,
+    CycleEnd, EngineAddresses, HEADER_SEQUENCE_TABLE, IMP_FILE_IMAGE, PLAYER_CACHED_SEQUENCE,
+    PointerSource, UNEXPLAINED_SEQUENCE_BYTES, absolute_references, call_sites, cycle_mode,
+    direction_count, field_reads, mirrored_anchor_x, mirrors_facings, record_pointer_reads,
+    recover, sequence_record_sites,
 };
 use lom_asset_viewer::mpq::Archive;
 use lom_asset_viewer::native_table::PeImage;
 
-/// The executable's code section, for the scans that must not be bounded by a guessed module span.
-const TEXT_START: u32 = 0x0040_1000;
-const TEXT_LENGTH: usize = 1_357_312;
-
 /// `Imp::GetSequence(action)`: the only function that returns a sequence-record pointer.
 const GET_SEQUENCE: u32 = 0x0049_ADB0;
+
+/// Rendering lives here, not in the library: nothing in `imp_anim` consumes prose, and keeping
+/// `iced-x86`'s `nasm` tables a dev-dependency keeps them out of the SDL viewer and the map editor.
+fn render(formatter: &mut NasmFormatter, instruction: &Instruction) -> String {
+    let mut text = String::new();
+    formatter.format(instruction, &mut text);
+    text
+}
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -36,8 +42,15 @@ fn main() {
 
     let exe = std::fs::read(&exe_path).expect("read executable");
     let image = PeImage::parse(&exe).expect("parse executable");
+    let mut formatter = NasmFormatter::new();
     let addresses = EngineAddresses::default();
     let rules = recover(&image, &addresses).expect("recover the animation rules");
+    // Taken from the image rather than hardcoded, so "the whole of .text" means it. The size is
+    // the section's file-backed extent; its 309-byte virtual tail is loader zero-fill.
+    let (text_start, text_length) = *image
+        .executable_ranges()
+        .first()
+        .expect("the image has a code section");
     // The module span bounds the *reporting*, not the negative. It is an operator entry-point
     // range, not a call-graph closure; part 1 below is what closes the graph.
     let module = addresses.module.clone();
@@ -99,7 +112,7 @@ fn main() {
     println!("== the negative, part 1: who can obtain a sequence-record pointer");
     println!("   `Imp::GetSequence` ({GET_SEQUENCE:#010x}) is the only function that returns one.");
     let producers =
-        call_sites(&image, TEXT_START, TEXT_LENGTH, GET_SEQUENCE).expect("enumerate call sites");
+        call_sites(&image, text_start, text_length, GET_SEQUENCE).expect("enumerate call sites");
     let outside: Vec<u32> = producers
         .iter()
         .copied()
@@ -109,9 +122,28 @@ fn main() {
         println!("   called from {site:#010x}");
     }
     println!(
-        "   {} call sites, {} outside the IMP module",
+        "   {} direct call sites, {} outside the IMP module",
         producers.len(),
         outside.len()
+    );
+    // `call_sites` only sees NearBranch32 operands, so on its own it leaves the indirect route
+    // open. An address that never appears as a literal dword cannot be loaded into a register or
+    // sit in a vtable slot, and that is what makes the direct enumeration exhaustive.
+    let absolute = absolute_references(&image, GET_SEQUENCE);
+    println!(
+        "   absolute dword references to {GET_SEQUENCE:#010x} anywhere in the file: {}",
+        absolute.len()
+    );
+    for offset in absolute.iter().take(8) {
+        println!("     at file offset {offset:#x}");
+    }
+    println!(
+        "   => {}",
+        if absolute.is_empty() && outside.is_empty() {
+            "closed: no indirect route exists and every direct caller is in-module"
+        } else {
+            "NOT closed: read the rows above"
+        }
     );
 
     println!();
@@ -124,8 +156,8 @@ fn main() {
     println!("   on unrelated objects; part 1 is what rules them out. The in-module rows decide.");
     let tainted = record_pointer_reads(
         &image,
-        TEXT_START,
-        TEXT_LENGTH,
+        text_start,
+        text_length,
         &[
             PointerSource::Table {
                 displacement: HEADER_SEQUENCE_TABLE,
@@ -163,10 +195,64 @@ fn main() {
         for read in inside {
             println!(
                 "      {:#010x}  {:<34} via {:#010x} [{:#x}]",
-                read.address, read.text, read.source, read.source_displacement
+                read.address,
+                render(&mut formatter, &read.instruction),
+                read.source,
+                read.source_displacement
             );
         }
     }
+    // Part 2b: typing the out-of-module hits instead of waving at them.
+    //
+    // A `[x+0x1C]` load is only an IMP header load if `x` is an IMP file image, and a file image is
+    // only ever obtained from an `Imp` object's field 8 (`0x0049ADB7`). So follow that field and
+    // collect the `[x+0x1C]` loads it reaches; any header load outside that set is a load on some
+    // other struct, whatever its displacement happens to be.
+    let header_loads: BTreeSet<u32> = record_pointer_reads(
+        &image,
+        text_start,
+        text_length,
+        &[PointerSource::Record {
+            displacement: IMP_FILE_IMAGE,
+        }],
+        48,
+    )
+    .expect("follow imp file-image pointers")
+    .iter()
+    .filter(|read| read.displacement == HEADER_SEQUENCE_TABLE && read.operand_size == 4)
+    .map(|read| read.address)
+    .collect();
+    println!();
+    println!("== the negative, part 2b: which header loads are really on an IMP header");
+    println!(
+        "   `[x+{IMP_FILE_IMAGE:#x}]` reaches {} distinct `[x+{HEADER_SEQUENCE_TABLE:#x}]` loads",
+        header_loads.len()
+    );
+    for address in &header_loads {
+        println!(
+            "     {address:#010x}{}",
+            if in_module(*address) { "" } else { "  OUTSIDE" }
+        );
+    }
+    let unexplained_from_a_real_header: Vec<_> = tainted
+        .iter()
+        .filter(|read| {
+            UNEXPLAINED_SEQUENCE_BYTES.contains(&read.displacement)
+                && header_loads.contains(&read.source)
+        })
+        .collect();
+    println!(
+        "   reads at the unexplained displacements whose source is a confirmed header load: {}",
+        unexplained_from_a_real_header.len()
+    );
+    for read in &unexplained_from_a_real_header {
+        println!(
+            "     {:#010x}  {}",
+            read.address,
+            render(&mut formatter, &read.instruction)
+        );
+    }
+
     let unexplained_in_module = tainted
         .iter()
         .filter(|read| {
@@ -201,25 +287,47 @@ fn main() {
             .collect();
         println!("    disp {displacement:>2}: {}", hits.len());
         for hit in hits {
-            println!("      {:#010x}  {}", hit.address, hit.text);
+            println!(
+                "      {:#010x}  {}",
+                hit.address,
+                render(&mut formatter, &hit.instruction)
+            );
         }
     }
 
     println!();
     println!("== sites that scale an index by 16 near a header sequence-table load");
-    let sites = sequence_record_sites(&image, module.start, module_length)
-        .expect("scan for record addressing");
-    for (address, near_header_load, text) in &sites {
+    println!("   scanned over the whole of .text, not over the module: bounding this to the");
+    println!("   module would make \"the inline formation sites are in-module\" true by");
+    println!("   construction and therefore worthless as evidence.");
+    let sites =
+        sequence_record_sites(&image, text_start, text_length).expect("scan record addressing");
+    let candidates: Vec<_> = sites.iter().filter(|site| site.near_header_load).collect();
+    for site in &candidates {
         // The window cannot tell a sequence-table index from a frame-table index inside the same
         // function -- both stride by 16 and both sit near the header load. This narrows the set
         // that has to be read by hand; it is not by itself the negative.
-        let kind = if *near_header_load {
-            "candidate: near a header sequence-table load"
+        let inside = if in_module(site.address) {
+            "in-module"
         } else {
-            "unrelated 16-byte stride"
+            "OUTSIDE THE MODULE"
         };
-        println!("  {address:#010x}  {text:<16} {kind}");
+        println!(
+            "  {:#010x}  {:<16} {inside}",
+            site.address,
+            render(&mut formatter, &site.instruction)
+        );
     }
+    println!(
+        "  {} sites stride by 16 in all of .text; {} sit near a header sequence-table load; {} of \
+         those are outside the module",
+        sites.len(),
+        candidates.len(),
+        candidates
+            .iter()
+            .filter(|site| !in_module(site.address))
+            .count()
+    );
 
     println!();
     println!("== corpus");
@@ -286,7 +394,7 @@ fn main() {
         for (index, sequence) in sprite.sequences.iter().enumerate() {
             sequences += 1;
             let mode = cycle_mode(&sequence.metadata);
-            let mirrored = mirrors_facings(&sequence.metadata);
+            let mirrored = mirrors_facings(rules.mirror_bit, &sequence.metadata);
             *mode_counts.entry(mode).or_default() += 1;
             if mirrored {
                 mirror_set += 1;
@@ -305,7 +413,11 @@ fn main() {
                 .entry((mirrored, sequence.facing_count))
                 .or_default() += 1;
             *directions
-                .entry(direction_count(&sequence.metadata, sequence.facing_count))
+                .entry(direction_count(
+                    rules.mirror_bit,
+                    &sequence.metadata,
+                    sequence.facing_count,
+                ))
                 .or_default() += 1;
             for (offset, value) in sequence.metadata.iter().enumerate() {
                 *metadata_bytes[offset].entry(*value).or_default() += 1;
