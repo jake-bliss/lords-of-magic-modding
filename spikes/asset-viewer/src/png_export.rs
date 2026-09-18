@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{BufRead, Seek, Write};
 
 use crate::imp::ImpSprite;
 use crate::pbm::PbmImage;
@@ -44,6 +44,111 @@ pub fn write_pbm_png<W: Write>(writer: W, image: &PbmImage) -> Result<(), String
         &image.indices,
         transparent_index,
     )
+}
+
+/// An indexed PNG read back in, in the terms a PBM re-encode needs.
+#[derive(Debug)]
+pub struct IndexedPng {
+    pub width: u16,
+    pub height: u16,
+    pub palette: Vec<[u8; 3]>,
+    pub indices: Vec<u8>,
+}
+
+/// Reads an 8-bit indexed PNG and hands back its raw palette indices.
+///
+/// Anything else is refused rather than converted. A truecolour or 4-bit PNG
+/// carries no palette indices to re-import, and quantising one here would mint
+/// pixel values the editor never chose.
+///
+/// `expected` is the template's size, and it is checked against the PNG's
+/// *header* before any pixel buffer is allocated. That ordering is the point:
+/// the decode buffer is sized from the header, so a truncated PNG declaring
+/// 65535x65535 would otherwise ask for ~4.29 GB and could kill the process
+/// before its short IDAT was ever reported. The import already requires the
+/// sizes to match, so refusing the mismatch first costs nothing and bounds the
+/// allocation by a file the caller already holds.
+pub fn read_indexed_png<R: BufRead + Seek>(
+    reader: R,
+    expected: (u16, u16),
+) -> Result<IndexedPng, String> {
+    let decoder = png::Decoder::new(reader);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("could not read PNG header: {error}"))?;
+    let info = reader.info().clone();
+    // Before anything is sized from the header, refuse a header that does not
+    // describe the template.
+    if (info.width, info.height) != (u32::from(expected.0), u32::from(expected.1)) {
+        return Err(format!(
+            "PNG is {}x{} but the template is {}x{}; the PBM header is inherited, so the sizes \
+             must match",
+            info.width, info.height, expected.0, expected.1,
+        ));
+    }
+    if info.color_type != png::ColorType::Indexed {
+        return Err(format!(
+            "expected an indexed PNG; got {:?}. Export with --export-pbm, edit the palette \
+             indices, and save as an 8-bit indexed PNG",
+            info.color_type
+        ));
+    }
+    if info.bit_depth != png::BitDepth::Eight {
+        return Err(format!(
+            "expected an 8-bit indexed PNG; got {:?}",
+            info.bit_depth
+        ));
+    }
+    let palette = info
+        .palette
+        .as_deref()
+        .ok_or_else(|| "indexed PNG has no PLTE chunk".to_owned())?;
+    if palette.len() % 3 != 0 {
+        return Err(format!(
+            "indexed PNG palette is {} bytes, which is not a whole number of RGB triples",
+            palette.len()
+        ));
+    }
+    let palette: Vec<[u8; 3]> = palette
+        .chunks_exact(3)
+        .map(|color| [color[0], color[1], color[2]])
+        .collect();
+
+    // The header was checked against the template above, so these are the
+    // template's own dimensions and the buffer below is bounded by them.
+    let (width, height) = expected;
+
+    let mut buffer = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .ok_or_else(|| "PNG dimensions overflow".to_owned())?
+    ];
+    let frame = reader
+        .next_frame(&mut buffer)
+        .map_err(|error| format!("could not read PNG pixels: {error}"))?;
+    buffer.truncate(frame.buffer_size());
+
+    // The PNG spec makes an index past the end of PLTE an error, and it matters
+    // here beyond conformance: the import keeps the *template's* CMAP, so an
+    // index the PNG's own palette never described would silently pick up a
+    // colour from the template that the editor never saw.
+    if let Some(index) = buffer
+        .iter()
+        .find(|index| usize::from(**index) >= palette.len())
+    {
+        return Err(format!(
+            "indexed PNG uses palette index {index} but its PLTE has only {} entries",
+            palette.len()
+        ));
+    }
+
+    Ok(IndexedPng {
+        width,
+        height,
+        palette,
+        indices: buffer,
+    })
 }
 
 pub fn write_rgba_png<W: Write>(
@@ -143,8 +248,119 @@ fn write_indexed_png<W: Write>(
 mod tests {
     use std::io::Cursor;
 
-    use super::{write_indexed_png, write_pbm_png, write_rgba_png};
+    use super::{read_indexed_png, write_indexed_png, write_pbm_png, write_rgba_png};
     use crate::pbm::PbmImage;
+
+    /// Encodes an indexed PNG through the `png` crate directly, so a test can
+    /// build files [`write_indexed_png`] would refuse -- such as one whose
+    /// pixels reach past its own PLTE.
+    fn raw_indexed_png(width: u32, height: u32, palette: &[u8], indices: &[u8]) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        let mut encoder = png::Encoder::new(&mut encoded, width, height);
+        encoder.set_color(png::ColorType::Indexed);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_palette(palette.to_vec());
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(indices).unwrap();
+        drop(writer);
+        encoded
+    }
+
+    /// The PNG spec makes an index past the end of PLTE an error. It is worse
+    /// than a conformance miss here: the import keeps the *template's* CMAP, so
+    /// index 200 under a one-entry PLTE would be written as the template's
+    /// colour 200 -- a colour the PNG never described and the editor never saw.
+    #[test]
+    fn refuses_an_index_beyond_the_pngs_own_palette() {
+        let encoded = raw_indexed_png(2, 1, &[7, 8, 9], &[0, 200]);
+
+        let error = read_indexed_png(Cursor::new(encoded), (2, 1)).unwrap_err();
+
+        assert!(
+            error.contains("palette index 200") && error.contains("only 1"),
+            "{error}"
+        );
+    }
+
+    /// The boundary the off-by-one lives on: with two entries, index 2 is one
+    /// past the end. A `>` in place of `>=` would wave this through.
+    #[test]
+    fn refuses_the_index_one_past_the_last_palette_entry() {
+        let encoded = raw_indexed_png(2, 1, &[7, 8, 9, 1, 2, 3], &[1, 2]);
+
+        let error = read_indexed_png(Cursor::new(encoded), (2, 1)).unwrap_err();
+
+        assert!(
+            error.contains("palette index 2") && error.contains("only 2"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn accepts_an_index_at_the_last_palette_entry() {
+        let encoded = raw_indexed_png(2, 1, &[7, 8, 9, 1, 2, 3], &[1, 0]);
+
+        let png = read_indexed_png(Cursor::new(encoded), (2, 1)).unwrap();
+
+        assert_eq!(png.indices, [1, 0], "index 1 of a 2-entry PLTE is legal");
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffff_u32;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    fn png_chunk(id: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut chunk = Vec::new();
+        chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        chunk.extend_from_slice(id);
+        chunk.extend_from_slice(data);
+        let mut crc_input = id.to_vec();
+        crc_input.extend_from_slice(data);
+        chunk.extend_from_slice(&crc32(&crc_input).to_be_bytes());
+        chunk
+    }
+
+    /// The decode buffer is sized from the PNG *header*, so a file that declares
+    /// 65535x65535 and then carries no pixels at all asks for ~4.29 GB before
+    /// the missing IDAT can be reported. Checking the header against the
+    /// template first bounds the allocation by a file the caller already holds.
+    ///
+    /// The fixture declares that size and then carries a two-byte IDAT: enough
+    /// for the header parse to complete, nowhere near enough pixels. Any code
+    /// path that reaches the allocation has already lost.
+    #[test]
+    fn refuses_a_header_that_does_not_match_the_template_before_decoding() {
+        let mut header = Vec::new();
+        header.extend_from_slice(&65535_u32.to_be_bytes());
+        header.extend_from_slice(&65535_u32.to_be_bytes());
+        // 8-bit, colour type 3 (indexed), deflate, no filter, no interlace.
+        header.extend_from_slice(&[8, 3, 0, 0, 0]);
+        let mut encoded = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        encoded.extend_from_slice(&png_chunk(b"IHDR", &header));
+        encoded.extend_from_slice(&png_chunk(b"PLTE", &[1, 2, 3]));
+        // A zlib header and nothing after it: `read_info` stops at the IDAT
+        // boundary, so the stream only has to exist, not to decode.
+        encoded.extend_from_slice(&png_chunk(b"IDAT", &[0x78, 0x01]));
+        encoded.extend_from_slice(&png_chunk(b"IEND", &[]));
+
+        let error = read_indexed_png(Cursor::new(encoded), (4, 2)).unwrap_err();
+
+        assert!(
+            error.contains("PNG is 65535x65535 but the template is 4x2"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn marks_a_nonzero_colour_key_transparent() {

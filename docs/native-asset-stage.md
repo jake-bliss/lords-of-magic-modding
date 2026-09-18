@@ -297,7 +297,12 @@ indices and the 256-entry palette exactly. Transparency follows the file's own B
 is written only when `masking` is 2, the IFF value for "has a transparent colour", keyed on the
 declared `transparent_color` index.
 
-**Measured across all 1,044 LBM members of the installed archives: every one has `masking = 0`.**
+**Measured across all 1,045 PBM members of vanilla `pic.mpq`: every one has `masking = 0`.**
+(This said "1,044 LBM members of the installed archives". The count was right for what it counted
+and the scope was loose, so both are stated exactly here: `pic.mpq` is the *only* archive holding
+images -- `gs.mpq`, `imp.mpq`, `sndfx.mpq` and `special.mpq` hold none -- and its 1,045 are 1,044
+named `.lbm` plus `File00001070.xxx`, the single member of vanilla `pic.mpq` that resisted name
+recovery. The 26 `.til` members are not images; they begin `LBM=`, which is a tileset declaration.)
 No shipped LBM declares a transparent colour, so the `tRNS` path never fires on real data and is
 covered by synthetic tests only. Recording that here because the tempting "fix" for an LBM that
 looks opaque is to key transparency on index 0 — which is exactly the bug that was removed from IMP
