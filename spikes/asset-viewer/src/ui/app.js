@@ -22,6 +22,7 @@ const state = {
 
 const mapCanvas = document.getElementById("map");
 const overlay = document.getElementById("overlay");
+const readout = document.getElementById("cursor-cell");
 const logPanel = document.getElementById("log");
 
 function log(text, kind) {
@@ -268,9 +269,22 @@ overlay.addEventListener("mousedown", (event) => {
 });
 
 overlay.addEventListener("mousemove", (event) => {
+  // The readout is not decoration. Every handler test drives `Editor::handle` directly, so the
+  // browser's pixel-to-cell mapping is the one layer nothing exercises -- and a refusal looks
+  // exactly like a dead canvas, which is how the first human to use this could not tell a
+  // correctly-rejected paint from a broken UI. Showing the cell under the cursor makes the
+  // mapping observable rather than inferred.
+  if (state.open) {
+    const [cx, cy] = cellAt(event);
+    readout.textContent = `cell: ${cx}, ${cy}`;
+  }
   if (state.drag) {
     drawSelection(normalise(state.drag, cellAt(event)));
   }
+});
+
+overlay.addEventListener("mouseleave", () => {
+  readout.textContent = "cell: \u2014";
 });
 
 window.addEventListener("mouseup", (event) => {
