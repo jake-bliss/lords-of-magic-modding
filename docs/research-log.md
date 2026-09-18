@@ -3417,3 +3417,95 @@ reporting; `COMBAT_TILESET_ARRAY_CANDIDATES` is what an encounter may *reach* an
 so the paint gate never refuses it. **Reporting is precise; refusing is permissive.** Refusing the
 engine's own answer is the bug that shipped on this branch once already, and the permissive side of
 the gate is where that lesson lives.
+
+## 2026-09-18 — Savegame container decoded
+
+### Scope
+
+A native `.sav` decoder (`spikes/asset-viewer/src/save.rs`), a corpus survey
+(`examples/save_survey.rs`) and `docs/save-format.md`. Corpus: every savegame in the three installs
+on this machine — 14 files, **7 distinct game states**.
+
+### Container
+
+- **Observed in a local binary:** a save is a bare concatenation of nine sections,
+  `tag[8] ++ payload`, with **no length or count word between a tag and its payload**. The `u32`
+  after a tag is the first field of that section and means something different in each one.
+- **Observed in a local binary:** the loader at `0x0048322A` is a **tag-dispatch loop**, not a fixed
+  sequence. It `memcmp`s **seven** bytes and jumps through the 9-entry table at `0x00483970`.
+  Section order in the file is therefore meaningless, and the parser and its tests treat it so.
+- Because there is no length word, a section cannot be skipped without decoding it, and two of the
+  nine cannot be decoded. The parser is a **tag locator**, not a reimplementation of the reader —
+  guarded by a census that requires exactly nine tags each occurring exactly once. **9/9 in all 14
+  files.**
+
+### Sections
+
+Fully decoded: `LS_VER_`, `LS_MULT`, `LS_MAP_`, `LS_USER`, `LS_GAME`, `LS_REGN` header and grid,
+`LS_PLR_` tail, `LS_ALRM` header. Carried verbatim: `LS_SPR_` records, `LS_PLR_` records, `LS_REGN`
+tail, `LS_ALRM` records.
+
+Fifteen invariants hold on **14/14 files**, including `LS_USER == 8 × 784`, `LS_MULT == 4+164+576`,
+the `LS_MAP_` 196,628 accounting, `LS_GAME`'s unexplained `N − live_count == 71`, and the `-1`
+terminator at `LS_PLR_`'s `payload_end − 36`.
+
+### Three corrections
+
+**`LS_ALRM`'s turn is at header index 2, not index 1.** The header is eight words,
+`[0][A][turn][15][1][1000001 − turn][0][16]`, exact in all 14 files. The earlier index-1 reading and
+its "constant 1,000,000" are both **Corrected**. The reason it survived is the reusable part:
+`quickstart` is at **turn 1**, and the value `1` sits at three separate indexes of its header, so
+that file agrees with several readings at once and can single out none of them. *A fixture shaped
+like the corpus cannot fail on what the corpus hides.* The correction makes the turn reading
+stronger, not weaker — it now appears three times per file and all three agree everywhere.
+
+**The `LS_MAP_` span is not `128*128*12 + 16`.** That was a **false arithmetic fit**, and an
+instructive one: the bulk term is *exact*, because `8 + 4` really is 12 bytes of per-cell data, so
+regrouping the two arrays into one reproduces 196,608 precisely. Only the scaffolding differs
+(`+16` against the true `+20`). The lesson is that an accounting check comparing only a sum cannot
+fail on a regrouping of its terms; the parser now checks the structure as well, asserting the stored
+plane count equals the cell count, which no regrouping can satisfy.
+
+**There is no first-hero name at a fixed `LS_SPR_` offset.** **Refuted:** the word at payload `+0x4c`
+varies with no pattern, and in `experience.sav` and `lastsave.lom` the bytes where a name was
+reported are **all zero**. Variable-length records have no fixed offsets.
+
+### The name-padding leak
+
+- **Observed in a local binary:** the engine `strcpy`s a lord name into a 32-byte field from
+  `[player_i + 0x50AC]` with **no preceding `memset`**, so every save writes whatever the buffer
+  held.
+- `lastsave.lom` and `Merlin I` have different md5s and are **the same game state**: eight of nine
+  sections byte-identical, and all **356** differing bytes strictly past a name's NUL — checked byte
+  by byte, 356 past the terminator and 0 elsewhere. The leaked bytes are Win32 stack and heap
+  pointers.
+- Consequences: a `.sav` is **not** a pure function of game state; any save-diffing tool must mask
+  the padding or report identical states as different; saves carry fragments of process memory.
+- This nearly produced a wrong conclusion. The md5 difference is real evidence and the inference
+  from it — "two independent player saves, so invariants holding on both are strong" — was false.
+  Recorded in the doc as a retraction rather than quietly dropped.
+
+### Corpus limits worth carrying forward
+
+- 14 files, **7 states**. The six demo saves are byte-identical across all three installs and may
+  share a generator; only **one** state is genuine play.
+- **Every grid is 128×128**, so `y*width + x` is inherited from `docs/map-format.md` and **not**
+  confirmed here. Tests use a non-square 96×64 fixture for both the map and the region grid.
+- **Only one file is version 108 and it is also the only turn-1 file**, so version and game-age are
+  perfectly confounded. This is what blocks `LS_PLR_`'s version-111 record size: the version-108
+  layout (`9 × 6223`) is Observed, generalising it failed on four of six files, and no `record_size`
+  field is offered because offering one would be claiming it.
+- **All three installs' `Multisav/` directories are empty.** The multiplayer save path is entirely
+  unexercised, which is exactly where `LS_MULT`'s setup block and slots 8..15 would be.
+
+### Testing
+
+31 mutations applied by script; **30 caught, 0 survivors**, 1 rejected by the compiler. The first run
+left five survivors: **three were tests phrased in terms of the constant they were testing** — the
+countdown fixture built its value from `COUNTDOWN_BASE`, the version-gate assertion compared against
+`MULTIPLAYER_SLOTS_MIN_VERSION`, and the stride search never looked past the section length. The
+other two were no-op mutations that could not change behaviour and were replaced rather than counted.
+
+One always-true "invariant" was removed rather than kept green: `LS_SPR_`'s no-fixed-stride property
+is a property of the **corpus**, not of any one file — individual files do admit a dividing header
+size, `combat.sav` exactly one (717). The survey now intersects across files and measures it once.

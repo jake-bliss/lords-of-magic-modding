@@ -9,5 +9,6 @@ pub mod operator_arity;
 pub mod paths;
 pub mod pbm;
 pub mod png_export;
+pub mod save;
 pub mod server;
 pub mod tile;
