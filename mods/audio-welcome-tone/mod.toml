@@ -5,17 +5,23 @@
 # `gs/soundfx.gs` defines `/Welcome_wav "wav/welcome.wav" addsoundfx def`. No click, no navigation,
 # and nothing to compare pixel by pixel: the listener either hears the shipped voice or does not.
 #
-# Both archives hold that member byte-identically, so each gets a DIFFERENT tone: 220 Hz into
-# `sndfx.mpq` and 1760 Hz into `special.mpq`, three octaves apart. One listen therefore separates
-# three hypotheses instead of two -- low tone means the engine read sndfx.mpq, high tone means it
-# read special.mpq, and the shipped voice means it read neither.
+# `wav\button.wav` is replaced alongside it and is the other half of the instrument: it is the
+# engine's default button sound (`button_sound setdefaultbuttonsound` in `gs/soundfx.gs`, and no
+# script in the corpus calls `setbuttonsound`), so it can be triggered on demand as often as the
+# listener likes -- and unlike `welcome.wav` it has an odd-sized data chunk and a `LIST`, so it is
+# the member that exercises the pad byte and the verbatim ancillary carry.
+#
+# Both archives hold both members byte-identically, so each ARCHIVE gets a DIFFERENT tone: 220 Hz
+# into `sndfx.mpq` and 1760 Hz into `special.mpq`, three octaves apart. One listen therefore
+# separates three hypotheses instead of two -- low means the engine read sndfx.mpq, high means it
+# read special.mpq, and the shipped sound means it read neither.
 #
 # The replacement keeps the member's exact length: 125,049 frames of stereo 8-bit 22,050 Hz, 250,142
 # bytes, the same as shipped. That is deliberate and it is the first audio test for the same reason
 # the length-preserving `pbm_patch.py` edit was the right first `pic.mpq` test. `cue ` and `smpl`
-# chunks are carried verbatim by `--import-wave` and never interpreted, so a shortened looping sound
-# would leave a `smpl` chunk pointing past the end of its own data. A length-changing audio rung
-# belongs after this one, not instead of it.
+# offsets are now READ by `--import-wave`, which refuses a length change that would strand them --
+# 147 corpus files carry such metadata -- with `--allow-dangling-loops` as the deliberate escape. A
+# length-changing audio rung belongs after this one, not instead of it.
 #
 # Its own control travels with it: only the first 750 ms is tone and the remaining 4.9 seconds is
 # silence, at the shipped length. "A beep then quiet, for as long as the voice used to last" is a

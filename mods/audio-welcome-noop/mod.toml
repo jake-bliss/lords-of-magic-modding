@@ -6,15 +6,29 @@
 # imploded. So this is not another image member. It is a storage class the engine has never been
 # asked to accept from us.
 #
-# `wav\welcome.wav` is rewritten in BOTH archives, because both hold it and they hold it
-# byte-identically -- digest 3966266dcf504bab, 250,142 bytes, measured 2026-09-18 -- and nothing
-# known says which one the engine opens. Rewriting one and not the other would make a null result
-# mean either "the engine rejected our archive" or "the engine read the other copy", which is two
-# answers wearing one observation.
+# TWO members are rewritten in BOTH archives. Both archives hold both members byte-identically --
+# `wav\welcome.wav` digest 3966266dcf504bab at 250,142 bytes, `wav\button.wav` digest
+# b1d645c57fff9668 at 1,036 -- and nothing known says which archive the engine opens. Rewriting one
+# archive and not the other would make a null result mean either "the engine rejected our archive"
+# or "the engine read the other copy", which is two answers wearing one observation.
 #
-# The rewrite goes through `--import-wave`, whose output measured byte-identical to the shipped
-# member for all 3,140 files of the corpus. So, exactly as with rungs 0 and 1, the control and the
-# encoder share one artefact and the build asserts the equality rather than assuming it.
+# Two members, because one of them covers what the other cannot. `welcome.wav` is the observable:
+# 5.7 seconds, played unattended as the main menu opens. Its WAVE layout is the weakest in the
+# archive -- `fmt |data`, an EVEN data chunk, no ancillary chunk at all -- so it exercises no pad
+# byte and carries nothing verbatim. `button.wav` is `fmt |data|LIST` with an ODD 915-byte data
+# chunk, so a pad byte is written BETWEEN two chunks, and a 68-byte `LIST` rides through untouched.
+#
+# Measured 2026-09-18 over all 3,098 members of the two archives: the only chunk that is ever odd is
+# `data`, NO member of either has an odd-sized ancillary chunk, and every one of those 2,048 pad
+# bytes is 0x00. The corpus therefore cannot exercise a non-zero pad at all, which is why
+# `scripts/build-acceptance-ladder.sh` gates this mod on a FIXTURE with a 0x20 pad rather than on a
+# member: `rebuild()` briefly wrote 0 for every pad, and a control that passed because the corpus
+# agreed with a bug would be a control that proved nothing.
+#
+# The rewrite goes through `--import-wave`, which now re-parses its own output and compares it to
+# the template chunk by chunk, body by body and pad by pad. Exactly as with rungs 0 and 1, the
+# control and the encoder share one artefact, and the build asserts the equality against the
+# PRISTINE EXTRACTED BYTES rather than against any digest recorded earlier.
 id = "audio-welcome-noop"
 name = "Welcome sound, repacked unchanged"
 version = "0.1.0"

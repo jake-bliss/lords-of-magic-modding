@@ -94,8 +94,8 @@ produced and are here to be compared against, not copied blindly.
 | 3 | `pic-newgame-reencode b630c5fdf97a` | `pic.mpq` `d8d59a106112ef98` |
 | 4 | `pic-newgame-stripe 677597622f4e` | `pic.mpq` `e78486a2be7170e6` |
 | 5 | `imp-added-member 04999ceaaa69` | `imp.mpq` `ef834c35483471a6` |
-| 6 | `audio-welcome-noop 81389d8b45b0` | `sndfx.mpq` `c82323af22335959`, `special.mpq` `140cef430465ab06` |
-| 7 | `audio-welcome-tone 3a2a6b59ff64` | `sndfx.mpq` `bf7c93ecb9ad46f1`, `special.mpq` `61102efd225d9677` |
+| 6 | `audio-welcome-noop 48ba953d15c7` | `sndfx.mpq` `c82323af22335959`, `special.mpq` `140cef430465ab06` |
+| 7 | `audio-welcome-tone b7452899a1c3` | `sndfx.mpq` `bf7c93ecb9ad46f1`, `special.mpq` `61102efd225d9677` |
 
 The archive digests are a function of the archive bytes alone and did not move when the tools were
 rebuilt; the build ids did. That is the difference the warning above is about.
