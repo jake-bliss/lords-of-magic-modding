@@ -59,6 +59,9 @@ AUDIO_MEMBERS=('wav\welcome.wav' 'wav\button.wav')
 AUDIO_ARCHIVES=(sndfx.mpq special.mpq)
 SNDFX_HERTZ=220
 SPECIAL_HERTZ=1760
+# Rung 9's liveness control: `wav\welcome.wav` gets this SAME tone in BOTH archives, distinct from
+# both 220 and 1760 so it cannot be confused with a previous sitting.
+WELCOME_HERTZ=440
 TONE_MS=750
 
 wanted_rungs=()
@@ -201,6 +204,69 @@ if left[:4] != right[:4]:
 differing = sum(1 for a, b in zip(left[4], right[4]) if a != b)
 print(f"compare\t{sys.argv[1]}\t{sys.argv[2]}\tframes={left[3]}\tdiffering-bytes={differing}")
 sys.exit(0 if differing == 0 else 1)
+' "$1" "$2"
+}
+
+# wav_data_is_uniform_byte WAVE_PATH BYTE -- every byte of the DATA chunk, as decoded by Python's
+# own `wave` module rather than by assuming an offset, equals BYTE. Rung 9 uses this to prove
+# `sndfx.mpq`'s `button.wav` is digital silence -- 0x80 for 8-bit unsigned PCM, the zero level, not
+# an empty or truncated chunk.
+wav_data_is_uniform_byte() {
+  PYTHONDONTWRITEBYTECODE=1 python3 -c '
+import sys, wave
+path, expected = sys.argv[1], int(sys.argv[2], 0)
+with wave.open(path, "rb") as handle:
+    data = handle.readframes(handle.getnframes())
+bad = sum(1 for b in data if b != expected)
+print(f"{len(data)} sample byte(s), {bad} not at 0x{expected:02x}")
+sys.exit(1 if (bad or not data) else 0)
+' "$1" "$2"
+}
+
+# wav_ancillary_identical TEMPLATE CANDIDATE -- every RIFF chunk except `data` is byte-identical
+# between the two files (chunk id, size and body), and `data` itself matches in size and, if its
+# size is odd, in its pad byte. It says nothing about the DATA payload itself -- asserting that
+# would be asserting the edit did nothing -- which is why rung 9 pairs it with a `files_differ`
+# check on the member as a whole.
+wav_ancillary_identical() {
+  PYTHONDONTWRITEBYTECODE=1 python3 -c '
+import struct, sys
+
+def chunks(data):
+    cursor = 12  # past "RIFF" size(4) "WAVE"
+    out = []
+    while cursor + 8 <= len(data):
+        chunk_id = data[cursor:cursor + 4]
+        (size,) = struct.unpack_from("<I", data, cursor + 4)
+        payload_start = cursor + 8
+        payload = data[payload_start:payload_start + size]
+        pad = size & 1
+        pad_byte = data[payload_start + size:payload_start + size + pad]
+        out.append((chunk_id, size, payload, pad_byte))
+        cursor = payload_start + size + pad
+    return out
+
+left, right = open(sys.argv[1], "rb").read(), open(sys.argv[2], "rb").read()
+left_chunks, right_chunks = chunks(left), chunks(right)
+left_ids, right_ids = [c[0] for c in left_chunks], [c[0] for c in right_chunks]
+if left_ids != right_ids:
+    print(f"chunk order/ids differ: {left_ids} vs {right_ids}")
+    sys.exit(1)
+mismatches = []
+for (chunk_id, lsize, lpayload, lpad), (_, rsize, rpayload, rpad) in zip(left_chunks, right_chunks):
+    name = chunk_id.decode("ascii", "replace")
+    if chunk_id == b"data":
+        if lsize != rsize:
+            mismatches.append(f"data size {lsize} vs {rsize}")
+        if lpad != rpad:
+            mismatches.append(f"data pad byte {lpad!r} vs {rpad!r}")
+        continue
+    if lsize != rsize or lpayload != rpayload or lpad != rpad:
+        mismatches.append(f"{name} chunk differs")
+if mismatches:
+    print("; ".join(mismatches))
+    sys.exit(1)
+print("ancillary chunks and data shape match")
 ' "$1" "$2"
 }
 
@@ -536,14 +602,14 @@ open(sys.argv[1], "wb").write(b"RIFF" + struct.pack("<I", len(body)) + body)
   cmp -s "${fixture}" "${rebuilt}"
 }
 
-if wants 6 || wants 7 || wants 8; then
+if wants 6 || wants 7 || wants 8 || wants 9; then
   note "== audio rungs: is the writer fit to build them? =="
   if wave_pad_preserved; then
     note "  PASS  --import-wave preserves an odd-chunk pad byte; the audio rungs are buildable"
     audio_writer_ready=1
   else
     note "  FAIL  --import-wave does NOT preserve an odd-chunk pad byte (wave.rs rebuild())."
-    note "        Rungs 6, 7 and 8 are NOT built. Rebuild them from scratch once the fix lands;"
+    note "        Rungs 6, 7, 8 and 9 are NOT built. Rebuild them from scratch once the fix lands;"
     note "        do not patch the artifacts a previous run left behind."
     audio_writer_ready=0
     failures=$(( failures + 1 ))
@@ -737,6 +803,149 @@ if wants 8 && (( audio_writer_ready )); then
       files_identical "${work_dir}/rung8.${leaf}.special.mpq.tone.wav" \
       "${work_dir}/reconstructed.${leaf}.rung7-sndfx-equivalent.wav"
   done
+  note
+fi
+
+# ------------------------------------------------------------------------------------------------
+# Rung 9: a presence judgement instead of a pitch judgement
+# ------------------------------------------------------------------------------------------------
+# Rung 8 flipped `welcome.wav` exactly as predicted (low on rung 7, high on rung 8), so
+# `wav\welcome.wav` is served from `sndfx.mpq` -- measured, not inferred. `button.wav` did not read:
+# at 220 Hz its 41 ms is nine cycles, which the ear receives as a click with no perceptible pitch,
+# and rung 7's tone played moments after 5.67 s of the OTHER frequency, so "higher" may have been
+# relative to what had just stopped. Rung 7's split conclusion is withdrawn for `button.wav`.
+#
+# Rung 9 replaces the pitch judgement with a presence judgement. `button.wav` in `sndfx.mpq` becomes
+# digital silence -- 0x80 for every 8-bit sample, the zero level, not zero bytes -- while
+# `special.mpq` keeps rung 8's own tone there unchanged; this rung only moves `sndfx.mpq`.
+# `welcome.wav` gets the SAME tone, 440 Hz, in BOTH archives: distinct from 220 and 1760 so it
+# cannot be confused with a previous sitting, and identical between archives so it fires
+# unconditionally as the liveness control -- a silent button click is then attributable to which
+# archive the engine read, not to the build having failed. Click a main-menu button: sound means
+# `special.mpq`, silence means `sndfx.mpq` and both members share an archive. Neither answer needs a
+# pitch judgement.
+#
+# This does not reuse build_tone_rung: that helper's shape is one hertz per archive, applied
+# identically to every member, and rung 9 needs three different treatments in one mod (one archive's
+# button silenced, the other archive's button copied unchanged from rung 8, and welcome.wav alone
+# given the same new tone everywhere). Forcing that through build_tone_rung would have meant
+# weakening its per-member symmetry or its own checks to make room; duplicating the shared steps
+# (seeding, the byte-count and differs checks, the packed readback) here instead keeps rung 7 and 8
+# exactly as they were.
+if wants 9 && (( audio_writer_ready )); then
+  note "== rung 9: audio-button-silence =="
+  mod_id=audio-button-silence
+  mod_dir="${project_dir}/mods/${mod_id}"
+  reset_tree "${mod_id}"
+  seed_audio_members "${mod_dir}"
+
+  # welcome.wav: the SAME 440 Hz tone in both archives.
+  leaf=welcome.wav
+  for archive in "${AUDIO_ARCHIVES[@]}"; do
+    tree_file="${mod_dir}/archives/${archive}/wav/${leaf}"
+    rm -f "${work_dir}/rung9.tone.${leaf}.${archive}.wav" "${work_dir}/rung9.${leaf}.${archive}.tone.wav"
+    PYTHONDONTWRITEBYTECODE=1 python3 "${project_dir}/tools/wav_tone.py" \
+      "${work_dir}/${leaf}.${archive}.pristine.wav" "${work_dir}/rung9.tone.${leaf}.${archive}.wav" \
+      --hertz "${WELCOME_HERTZ}" --tone-ms "${TONE_MS}"
+    "${viewer_tool}" --import-wave "${work_dir}/rung9.tone.${leaf}.${archive}.wav" \
+      "${work_dir}/${leaf}.${archive}.pristine.wav" "${work_dir}/rung9.${leaf}.${archive}.tone.wav" \
+      >/dev/null
+    cp "${work_dir}/rung9.${leaf}.${archive}.tone.wav" "${tree_file}"
+    check "rung 9: ${archive}:wav\\${leaf} keeps the shipped member's byte count" \
+      test "$(wc -c < "${work_dir}/rung9.${leaf}.${archive}.tone.wav")" \
+      -eq "$(wc -c < "${work_dir}/${leaf}.${archive}.pristine.wav")"
+    check "rung 9: ${archive}:wav\\${leaf} really differs from the shipped member" \
+      files_differ "${work_dir}/rung9.${leaf}.${archive}.tone.wav" \
+      "${work_dir}/${leaf}.${archive}.pristine.wav"
+  done
+  # Check 4: the liveness control shares one variable across archives. If the two archives'
+  # welcome.wav differed, the rung would have two things changing and a silent click would not
+  # name which one moved.
+  check "rung 9: the two archives' wav\\welcome.wav are byte-identical (the liveness control shares one variable)" \
+    files_identical "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav" \
+    "${work_dir}/rung9.${leaf}.special.mpq.tone.wav"
+
+  # button.wav: sndfx.mpq -> digital silence. --tone-ms 0 leaves every frame inside wav_tone.py's
+  # own "no tone" branch, which for 8-bit unsigned PCM writes the format's silence level, 0x80, to
+  # every sample -- exactly the zero level this rung wants, not a shortened or zeroed-bytes member.
+  # The frequency argument is required but unused when there are zero tone frames.
+  leaf=button.wav
+  tree_file="${mod_dir}/archives/sndfx.mpq/wav/${leaf}"
+  rm -f "${work_dir}/rung9.silence.${leaf}.wav" "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav"
+  PYTHONDONTWRITEBYTECODE=1 python3 "${project_dir}/tools/wav_tone.py" \
+    "${work_dir}/${leaf}.sndfx.mpq.pristine.wav" "${work_dir}/rung9.silence.${leaf}.wav" \
+    --hertz 0 --tone-ms 0
+  "${viewer_tool}" --import-wave "${work_dir}/rung9.silence.${leaf}.wav" \
+    "${work_dir}/${leaf}.sndfx.mpq.pristine.wav" "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav" \
+    >/dev/null
+  cp "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav" "${tree_file}"
+  check "rung 9: sndfx.mpq:wav\\${leaf} keeps the shipped member's byte count" \
+    test "$(wc -c < "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav")" \
+    -eq "$(wc -c < "${work_dir}/${leaf}.sndfx.mpq.pristine.wav")"
+  check "rung 9: sndfx.mpq:wav\\${leaf} really differs from the shipped member" \
+    files_differ "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav" \
+    "${work_dir}/${leaf}.sndfx.mpq.pristine.wav"
+
+  # special.mpq: rung 8's own special.mpq button tone, unchanged -- reconstructed from this rung's
+  # own seeded pristine (see reconstruct_tone), so it holds even when `--rung 9` runs without rung 8
+  # in the same invocation. Rung 8 assigned special.mpq the SNDFX_HERTZ value (its sndfx.mpq and
+  # special.mpq frequencies are exchanged relative to rung 7); that is the value used here, whatever
+  # it is, because the requirement is "unchanged from rung 8's special.mpq button tone", not a
+  # restated frequency.
+  reconstruct_tone special.mpq "${SNDFX_HERTZ}" "${leaf}" \
+    "${work_dir}/rung9.${leaf}.special.mpq.tone.wav"
+  cp "${work_dir}/rung9.${leaf}.special.mpq.tone.wav" "${mod_dir}/archives/special.mpq/wav/${leaf}"
+  check "rung 9: special.mpq:wav\\${leaf} keeps the shipped member's byte count" \
+    test "$(wc -c < "${work_dir}/rung9.${leaf}.special.mpq.tone.wav")" \
+    -eq "$(wc -c < "${work_dir}/${leaf}.special.mpq.pristine.wav")"
+  check "rung 9: special.mpq:wav\\${leaf} really differs from the shipped member" \
+    files_differ "${work_dir}/rung9.${leaf}.special.mpq.tone.wav" \
+    "${work_dir}/${leaf}.special.mpq.pristine.wav"
+
+  # Check 5: the rung's entire discriminating power is that the two archives' button.wav differ.
+  check "rung 9: the two archives' wav\\${leaf} differ from each other (the rung's entire discriminating power)" \
+    files_differ "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav" \
+    "${work_dir}/rung9.${leaf}.special.mpq.tone.wav"
+
+  build_mod "${mod_id}"
+  note "  build ${build_dir}"
+  for archive in "${AUDIO_ARCHIVES[@]}"; do
+    for member in "${AUDIO_MEMBERS[@]}"; do
+      leaf="${member##*\\}"
+      rm -f "${work_dir}/rung9.${leaf}.${archive}.packed.wav"
+      export_wave "${build_dir}/${archive}" "${member}" \
+        "${work_dir}/rung9.${leaf}.${archive}.packed.wav" "${archive}"
+      check "rung 9: ${archive}:${member} read back out of the packed archive is the member we wrote" \
+        wave_samples_equal "${work_dir}/rung9.${leaf}.${archive}.packed.wav" \
+        "${work_dir}/rung9.${leaf}.${archive}.tone.wav"
+      cp "${work_dir}/rung9.${leaf}.${archive}.packed.wav" \
+        "$(fresh_output "${out_dir}/rung9-${leaf%.wav}-expected-${archive%.mpq}.wav")"
+    done
+    note "  ${archive} sha256 $(file_hash "${build_dir}/${archive}")"
+  done
+
+  # Check 1: the DATA CHUNK sndfx.mpq now serves for button.wav is uniformly the zero level, read
+  # back out of the PACKED archive -- not the work file that was staged into the tree.
+  check "rung 9: sndfx.mpq's wav\\button.wav data chunk read back out of the packed archive is uniformly the zero level (0x80)" \
+    wav_data_is_uniform_byte "${work_dir}/rung9.button.wav.sndfx.mpq.packed.wav" 0x80
+
+  # Check 2: silence kept the shipped byte length (already checked above) and every ancillary chunk
+  # verbatim; only the data payload was allowed to change. Checked against the PACKED readback, not
+  # the work file, for the same reason as check 1.
+  check "rung 9: sndfx.mpq's wav\\button.wav keeps every ancillary chunk byte-for-byte against the shipped member; only the data payload changed" \
+    wav_ancillary_identical "${work_dir}/button.wav.sndfx.mpq.pristine.wav" \
+    "${work_dir}/rung9.button.wav.sndfx.mpq.packed.wav"
+
+  # Check 3: special.mpq's button.wav, read back out of the packed archive, is rung 8's special.mpq
+  # button tone.
+  check "rung 9: special.mpq's wav\\button.wav read back out of the packed archive is byte-identical to rung 8's special.mpq button tone" \
+    files_identical "${work_dir}/rung9.button.wav.special.mpq.packed.wav" \
+    "${work_dir}/rung9.button.wav.special.mpq.tone.wav"
+
+  note "  expected values: ${out_dir}/rung9-welcome-expected-sndfx.wav, -special.wav (${WELCOME_HERTZ} Hz, both archives)"
+  note "                   ${out_dir}/rung9-button-expected-sndfx.wav (digital silence)"
+  note "                   ${out_dir}/rung9-button-expected-special.wav (rung 8's special.mpq tone, unchanged)"
+  note "  build id ${build_id}"
   note
 fi
 
