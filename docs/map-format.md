@@ -1762,9 +1762,16 @@ tail sections. The operators reach the two forms separately:
 the instant the grid is in, so a grid-form file has no tail to read and a trailing byte would never
 be seen.
 
-**Observed in the corpus, 2026-09-19.** The word `0x0055b1b0` that `savescenariomap` stamps is
-`0x6f` = 111, which is the highest version any shipped file carries -- consistent with the header
-word being a format version that the engine rewrites from its own state.
+Two halves of one sentence, which used to carry one evidence class between them and should not:
+
+- **Observed in a local binary, 2026-09-19.** The word at `0x0055b1b0` -- the one
+  `savescenariomap` stamps -- is `0x6f` = 111 in the shipped image. That is read out of the
+  executable's `.data`, not off a map file.
+- **Observed in the corpus, 2026-09-19.** 111 is also the highest version word any shipped
+  scenario file carries, across all 365 in the GS5R3 profile.
+
+Together they are consistent with the header word being a format version the engine rewrites from
+its own state, which `docs/map-format.md` already establishes separately.
 
 **Observed in the corpus, 2026-09-19.** `English/map/e3map2.map` is grid-form: `64, 64, 8` and then
 4,096 cells, `12 + 64 x 64 x 8 = 32,780` bytes with nothing left over. Its nearest neighbour is
@@ -1780,6 +1787,15 @@ its own terms -- shape words present, dimensions nonzero, bytes-per-cell 8, and 
 (scenario) or exactly (grid) the header plus the grid -- and every file in every profile's
 `English/map/` matches exactly one, which is what makes sniffing legitimate rather than a guess.
 Pinned by `both_header_forms_are_mutually_exclusive_across_the_corpus`.
+
+**Sniffing needs a tie-break, and the reason is specific.** The two structural tests are
+asymmetric — a grid file must account for every byte, a scenario file only has to be *at least*
+header-plus-grid — so a grid file can satisfy both, and exactly one value makes it do so: reading a
+grid file as a scenario takes its cell-0 tag as the bytes-per-cell word, and tile slot **8** makes
+that word 8. `--map-set-tile e3map2.map 0 0 8` was refused as ambiguous while slots 7 and 9 wrote
+fine. When both fit, `MapHeaderForm::detect` keeps the scenario reading only if its remainder is
+section-shaped — a count word present and some decoded layout accounting for the remainder exactly
+— and otherwise takes the grid reading, which has no unexplained bytes.
 
 **The save file's map section was already this format.** `save::MapSection` has always read
 `width, height, bytes_per_cell` and then the grid; it used to prepend a synthesized zero version

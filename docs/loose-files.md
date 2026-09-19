@@ -257,6 +257,17 @@ byte is **sign-extended**, so a byte at or above `0x80` contributes a negative v
 page-name word `0x0033155f` from `Menu`. Six for six, and that is asserted as an equation over the
 installed file rather than as a transcribed table.
 
+**Five of the six dimensions are corpus-pinned. The sign extension is not, and that is the weak
+one.** Review tested the neighbours rather than taking the rule on trust: multiplier 33,
+multiplier 37, hashing the terminator, and no case folding each **fail on all six words**, so those
+four choices are forced by the data. But **unsigned byte extension reproduces all six
+identically**, because every key in the one installed file is ASCII below `0x80`. So `movsx` rests
+on a single reading of the instruction at `0x004018db` and on nothing else — no second instrument
+has confirmed it. If it were wrong, every plain-ASCII key would still hash correctly and only a key
+containing a high byte would diverge. Graded **Observed in a local binary, single source**; what
+would settle it is a second disassembly of `0x004018b0`, or an `.asr` from another Rebellion title
+whose keys are not pure ASCII.
+
 #### Composability, and what has and has not been shown
 
 - **Adding a key is possible**, and that is what the hash unblocked. Before it was recovered only
@@ -288,10 +299,14 @@ parser; it now parses, re-encodes byte for byte, and `--scan-map-dir` counts it.
 parallel. `0x004a52e0` reads a bare grid: `u32` width into map object `+0x5c`, `u32` height into
 `+0x60`, `u32` bytes-per-cell into a stack local, then a loop that reads `local << 6` bytes at a
 time into the cell array at `+0x54`, advancing 64 cells a pass. `0x004855c0` reads a scenario: one
-`u32` into the scenario object's `+0x00` and then a **call to that same `0x004a52e0`** on the
-embedded map at `+0x482c`, then the placed-sprite section and a version-gated dword. The writers
-mirror it: `0x004a5440` writes the grid, `0x00485550` writes four bytes from `0x0055b1b0` and then
-calls `0x004a5440`.
+`u32` into the scenario object's `+0x00` and then a **call to that same `0x004a52e0`** -- the
+instruction is at `0x004855f8` -- on the embedded map at `+0x482c`, then the placed-sprite section
+and a version-gated dword. The writers mirror it: `0x004a5440` writes the grid (emitting the third
+header word from a local set to `8`, `c7 44 24 08 08 00 00 00` at `0x004a544b`), and `0x00485550`
+writes four bytes from `0x0055b1b0` and then calls `0x004a5440` at `0x0048558a`.
+
+Those four addresses were independently re-derived by an adversarial review that disassembled the
+image itself, so this is two readings of one binary rather than one.
 
 So `.smp`/`.scn`/`.lgd` **is** a version word in front of a `.map`, and the operators reach the two
 separately -- `loadmap` (`0x004dfad0`) / `savemap` (`0x004dfbe0`) for the grid form,
@@ -329,10 +344,56 @@ parser therefore sniffs the header: each form is tested on its own terms and eve
 profile's `English/map/` matches exactly one — 353 scenario + 1 grid in three profiles, 365 + 1 in
 `gs5r3`. Pinned by `both_header_forms_are_mutually_exclusive_across_the_corpus`.
 
-**The nesting claim is tested against the corpus, not against a fixture.** For every scenario file
-installed, dropping the first four bytes and re-reading the remainder as a grid reproduces the same
-shape words and the same cells, and re-encodes to that same slice. A fixture built to this shape
-could not fail on it. Pinned by `a_scenario_file_is_a_version_word_in_front_of_a_grid_file`.
+**The two structural tests are asymmetric, and that asymmetry bit immediately.** A grid file must
+account for every byte; a scenario file only has to be *at least* header-plus-grid, since a tail
+follows. So a grid file can accidentally satisfy the scenario test and not the reverse — reading a
+grid file as a scenario takes its **cell-0 tag as the bytes-per-cell word**, and a cell whose tile
+slot is `8` makes that word `8`. Found by adversarial review, on the installed corpus, not reasoned
+about:
+
+```text
+slot 7 -> set-tile (0,0) tile:7
+slot 8 -> error: refusing to write: the edited map no longer parses:
+          map header is ambiguous: it reads as Scenario and Grid equally well
+slot 9 -> set-tile (0,0) tile:9
+```
+
+Every other slot worked. The same refusal reached `--map-set-terrain`, `--map-fill-terrain`,
+`--map-paint-terrain` and the editor server's save path whenever cell (0, 0) landed on slot 8. **No
+data was at risk** — the writers re-parse before writing, and that guard is what caught it — but
+the tool refused a legal file and blamed the header for the edit.
+
+**The tie-break, and why it is not arbitrary.** When both fit, ask whether the *scenario* reading's
+remainder is actually a placed-sprite section: a count word present, and a count that some decoded
+layout accounts for to the byte. If not, the scenario reading has left bytes it cannot explain while
+the grid reading explained all of them, so the file is grid-form. The slot-8 case fails by a mile —
+28,668 unexplained bytes behind a 512-cell grid. If the remainder *is* section-shaped, both readings
+are internally consistent, nothing in the bytes can choose, and `Scenario` wins as the conservative
+answer; no corpus file can reach that branch, because the grid test would need a scenario `height`
+word of 8 and none is. Pinned by three unit tests, and all three of the obvious wrong rules — always
+`Scenario`, always `Grid`, and the old refuse-on-tie — are killed by them.
+
+**Retracted, 2026-09-19: the corpus does not test the nesting claim.** This page said that
+dropping a scenario file's first four bytes and re-reading the remainder as a grid "tests the
+nesting claim against the corpus". It does not, and the reason is worth keeping. The scenario
+reader takes its shape words from absolute offsets 4/8/12 and its cells from 16; the grid reader
+applied to `bytes[4..]` takes them from the **same absolute offsets of the same buffer**. The
+agreement is a *mathematical identity*: it holds for any file that parses as scenario form, whether
+or not the engine nests the two readers. `a_scenario_file_is_a_version_word_in_front_of_a_grid_file`
+is a consistency check, not evidence, and its docstring now says so.
+
+**Measured, and this is the part that matters.** Swapping the `width` and `height` reads in
+`parse_as` -- a real, different header-layout hypothesis -- leaves that test green **and all eleven
+corpus-gated checks green**, `the_committed_inventory_reproduces` included. The corpus cannot see
+it because every shipped map is square. This project has been bitten by exactly that blind spot
+before (the transposed cell index, corrected 2026-09-17), and it was about to publish a test whose
+docstring claimed falsifiability it did not have. The mutant *is* killed -- by 44 of the library's
+own unit tests, which use non-square fixtures -- so the layout is pinned; the credit was in the
+wrong place.
+
+**The nesting is Observed in a local binary, and only there.** `call 0x004a52e0` at `0x004855f8` in
+the scenario reader, `call 0x004a5440` at `0x0048558a` in its writer, and the third header word
+emitted from a local set to `8` at `0x004a544b`. Independently re-derived by review.
 
 **Corrected in the code, not newly learned.** `MapAsset`'s third header field was called
 `bits_per_pixel`; `docs/map-format.md` has called it **bytes per cell** since 2026-09-17, on the

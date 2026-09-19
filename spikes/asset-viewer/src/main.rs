@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use lom_asset_viewer::asset::{AssetKind, probe};
+use lom_asset_viewer::asset::{self, AssetKind, probe};
 use lom_asset_viewer::asura::AsuraText;
 use lom_asset_viewer::gameplay_symbols;
 use lom_asset_viewer::gamescript::{GameScriptDocument, is_number_token};
@@ -3443,7 +3443,7 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
     let mut failures = Vec::new();
 
     for path in &paths {
-        let Some(kind) = map_kind(path) else {
+        let Some(extension_kind) = map_kind(path) else {
             continue;
         };
         let result = fs::read(path)
@@ -3457,6 +3457,8 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
             }
         };
         parsed += 1;
+        // Counted under what the header says it is, not under what it is called.
+        let kind = asset::map_kind_for_form(extension_kind, map.header_form);
         *kind_counts.entry(kind).or_default() += 1;
         *dimension_counts
             .entry((kind, map.width, map.height))
@@ -3597,6 +3599,13 @@ fn metadata_field(map: &MapAsset) -> String {
         .map_or_else(|| "none".to_owned(), |word| format!("0x{word:08x}"))
 }
 
+/// Whether this path is offered to the map parser at all, and the kind its extension suggests.
+///
+/// **Candidacy only.** The kind a row is finally counted under comes from the sniffed
+/// `header_form`, through `asset::map_kind_for_form`, because the extension does not decide the
+/// format in the engine either -- `lomse.exe` holds no `.map`, `.smp`, `.scn` or `.lgd` literal,
+/// and a script passes `"map/thanh.smp"` and `"map/test.map"` to the same `startspecialcombat`
+/// argument. Counting by extension bucketed a scenario-form file named `.map` under `map-grid`.
 fn map_kind(path: &Path) -> Option<AssetKind> {
     match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
         "lgd" => Some(AssetKind::LegendScenario),

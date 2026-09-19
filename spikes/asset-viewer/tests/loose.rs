@@ -1059,16 +1059,34 @@ fn both_header_forms_are_mutually_exclusive_across_the_corpus() {
     );
 }
 
-/// A scenario file is a version word followed by a grid file, byte for byte.
+/// The two readers agree on every installed scenario file, cell for cell.
 ///
-/// **This is the corpus test of the nesting claim**, which comes from the engine: `0x004855c0`
-/// reads one word and then calls `0x004a52e0`, the whole of the grid reader, on the embedded map.
-/// If that were wrong -- if the scenario header were four independent words rather than a version
-/// in front of a grid header -- then dropping the first word and re-reading the remainder as a
-/// grid would not reproduce the cells. It does, in every installed file.
+/// **Retracted claim, kept as a warning.** An earlier version of this comment called this "the
+/// corpus test of the nesting claim" and said that if the scenario header were four independent
+/// words rather than a version in front of a grid header, re-reading the remainder as a grid would
+/// not reproduce the cells. **That is false.** `parse` on the scenario form reads its shape words
+/// at absolute offsets 4/8/12 and its cells from 16; `parse_as(&bytes[4..], Grid)` reads relative
+/// 0/4/8 and cells from 12 -- the same absolute offsets of the same buffer. The equality is a
+/// **mathematical identity** and holds for any input that parses as scenario form, nesting or no
+/// nesting. Found by review, not by this test.
 ///
-/// Asserted against the corpus rather than against a fixture: a fixture built to this shape could
-/// not fail on it.
+/// **Measured, 2026-09-19.** Swapping the `width` and `height` reads in `MapAsset::parse_as` -- a
+/// genuinely different header-layout hypothesis -- leaves this test green, leaves
+/// `both_header_forms_are_mutually_exclusive_across_the_corpus` and
+/// `the_grid_form_map_uses_the_corpus_tile_and_elevation_vocabulary` green, and leaves **all
+/// eleven** corpus-gated checks green including `the_committed_inventory_reproduces`. The corpus
+/// cannot see it because every shipped map is square. The mutant is killed by 44 of the library's
+/// own unit tests, which use non-square fixtures, so the layout **is** pinned -- just not here.
+///
+/// **What the nesting claim actually rests on is the binary**, and only the binary: `0x004855c0`
+/// reads one `u32` and then `call 0x004a52e0` at `0x004855f8`; its writer `0x00485550` does
+/// `call 0x004a5440` at `0x0048558a`; and `0x004a5440` emits the third header word from a local
+/// set to `8` (`c7 44 24 08 08 00 00 00` at `0x004a544b`). That is **Observed in a local binary**.
+///
+/// **What this test is for**, stated at the grade it earns: it is a consistency check over the
+/// installed files. It fails if `parse_as` stops honouring the `header_form` it is handed -- the
+/// header-size mutant kills it -- and it keeps the grid entry point exercised against 353-365 real
+/// files rather than against a fixture. It is not evidence for the nesting.
 #[test]
 #[ignore = "needs LOM_GAME_DIR"]
 fn a_scenario_file_is_a_version_word_in_front_of_a_grid_file() {

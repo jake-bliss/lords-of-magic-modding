@@ -62,6 +62,15 @@ const PAGE_NAME_FIELD: usize = 8;
 ///
 /// **Observed in the corpus, 2026-09-19.** It reproduces all five of the file's record hashes from
 /// their keys, and the page-name word `0x0033155f` from `Menu`. Six for six.
+///
+/// **Five of the six dimensions are corpus-pinned; the sign extension is not.** Review tested the
+/// neighbours: multiplier 33, multiplier 37, hashing the terminator, and no case folding each fail
+/// on all six words, so those choices are forced by the data. **Unsigned byte extension reproduces
+/// all six identically**, because every key in the one installed file is ASCII below `0x80`. So
+/// `movsx` rests on a single reading of `0x004018db` and on nothing else — no second instrument
+/// has confirmed it, and if it were wrong every key of plain ASCII would still hash correctly and
+/// only a key with a high byte would diverge. Treat that one detail as **Observed in a local
+/// binary, single source**.
 pub fn asura_hash(text: &str) -> u32 {
     let mut hash = 0_u32;
     for byte in text.as_bytes() {
@@ -321,16 +330,22 @@ impl AsuraText {
             )));
         }
         let key_block = &source[keys_start..keys_end];
-        if key_block.last() != Some(&0) {
-            return Err(AsuraError::new("the key table's last key is unterminated"));
-        }
+        // A zero-length table is **no keys**, not a malformed one. `to_bytes` emits
+        // `key_bytes = 0` for an empty `keys` vector, so without this the encoder could produce a
+        // file its own parser rejected -- reachable by building an `AsuraText` field by field,
+        // which is exactly what "make a new page from scratch" does. Found by review.
         let mut keys = Vec::new();
-        for key in key_block[..key_block.len() - 1].split(|byte| *byte == 0) {
-            keys.push(
-                std::str::from_utf8(key)
-                    .map_err(|_| AsuraError::new("a key is not valid UTF-8"))?
-                    .to_owned(),
-            );
+        if !key_block.is_empty() {
+            if key_block.last() != Some(&0) {
+                return Err(AsuraError::new("the key table's last key is unterminated"));
+            }
+            for key in key_block[..key_block.len() - 1].split(|byte| *byte == 0) {
+                keys.push(
+                    std::str::from_utf8(key)
+                        .map_err(|_| AsuraError::new("a key is not valid UTF-8"))?
+                        .to_owned(),
+                );
+            }
         }
         let trailer = source[keys_end..].to_vec();
 
@@ -502,6 +517,61 @@ mod tests {
         bytes[32..36].copy_from_slice(&claimed.to_le_bytes());
         let error = AsuraText::parse(&bytes).expect_err("the head no longer matches the body");
         assert!(error.to_string().contains("bytes of text"), "{error}");
+    }
+
+    /// A page with no keys at all encodes to something this parser accepts.
+    ///
+    /// **Regression, found by review.** The fields are `pub`, so a caller building a page from
+    /// scratch rather than through `push` gets an empty `keys` vector; `to_bytes` wrote
+    /// `key_bytes = 0` and `parse` then rejected its own output.
+    #[test]
+    fn an_empty_key_table_round_trips() {
+        let empty = AsuraText {
+            chunk_id: CHUNK_HTXT,
+            chunk_version: 3,
+            chunk_reserved: 0,
+            payload_reserved: 0,
+            strings: Vec::new(),
+            page_name_field: *b"Menu\0\0\0\0",
+            keys: Vec::new(),
+            trailer: Vec::new(),
+        };
+        let bytes = empty.to_bytes();
+        let reparsed = AsuraText::parse(&bytes).expect("an empty page is a page");
+        assert_eq!(reparsed, empty);
+        assert!(reparsed.keys.is_empty());
+        assert!(reparsed.keys_match_records());
+    }
+
+    /// Whatever `to_bytes` writes, `parse` must accept. Swept over the shapes a caller can build.
+    #[test]
+    fn everything_the_encoder_writes_the_parser_reads() {
+        let base = AsuraText {
+            chunk_id: CHUNK_HTXT,
+            chunk_version: 3,
+            chunk_reserved: 0,
+            payload_reserved: 0,
+            strings: Vec::new(),
+            page_name_field: *b"Menu\0\0\0\0",
+            keys: Vec::new(),
+            trailer: Vec::new(),
+        };
+        for keys in 0..4_usize {
+            for trailer in [0, 1, 16] {
+                let mut page = base.clone();
+                page.trailer = vec![0; trailer];
+                for index in 0..keys {
+                    page.push(&format!("KEY_{index}"), format!("text {index}"))
+                        .expect("fresh keys");
+                }
+                let bytes = page.to_bytes();
+                assert_eq!(
+                    AsuraText::parse(&bytes).as_ref(),
+                    Ok(&page),
+                    "{keys} keys, {trailer}-byte trailer"
+                );
+            }
+        }
     }
 
     #[test]
