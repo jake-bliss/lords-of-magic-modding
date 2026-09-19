@@ -50,33 +50,63 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def game_is_running() -> bool:
-    """True when `lomse.exe` is alive, which these tests cannot run around.
+GAME_PATTERN = r"\\lomse\.exe"
+BROAD_PATTERN = r"lomse\.exe"
 
-    `scripts/install-dev.sh` and `scripts/restore-dev.sh` refuse while the game is up -- swapping an
-    archive under a live process is a class of corruption no checksum afterwards can undo -- so every
-    test that drives them fails, with a message about the game rather than about the code.
 
-    That is a correct refusal and a useless test result. Skipping names the real reason: measured
-    2026-09-18, opening the Map Editor for an unrelated experiment turned 11 tests red and 3 more
-    into errors, and the suite said nothing about which. A red suite that means "a game is open"
-    teaches people to disbelieve red.
+def matching_processes(pattern: str) -> list[str]:
+    """`pid command` for every process whose command line matches, newest first.
+
+    Named rather than counted, because the whole problem here is that a match is not evidence of
+    what matched.
     """
     try:
-        return (
-            subprocess.run(
-                ["pgrep", "-f", "lomse.exe"],
-                capture_output=True,
-                check=False,
-            ).returncode
-            == 0
+        found = subprocess.run(
+            ["pgrep", "-f", pattern], capture_output=True, check=False, text=True
         )
     except OSError:
         # No pgrep: assume clear rather than skip the suite on a machine that cannot answer.
-        return False
+        return []
+    described = []
+    for pid in found.stdout.split():
+        listed = subprocess.run(
+            ["ps", "-p", pid, "-o", "pid=,command="],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        described.append(" ".join(listed.stdout.split()) or pid)
+    return described
 
 
-@unittest.skipIf(game_is_running(), "lomse.exe is running; install/restore refuse while it is up")
+def game_processes() -> list[str]:
+    """Processes that are the running game, as distinct from processes that mention it.
+
+    **The pattern is narrow on purpose.** `pgrep -f` matches the whole command line, so the
+    obvious pattern -- `lomse.exe` -- matches every one of this project's own tools, which take the
+    path to that executable as an argument: `engine_probe.py`, `dumpva`, the save survey, and the
+    corpus-gated `cargo test` that disassembles the image. The game itself runs under Wine and
+    shows as `d:\lomse.exe`, with a **backslash**; our paths have forward slashes. Demonstrated
+    2026-09-18 with two sleeping processes, one carrying each form: the broad pattern matched both,
+    `\\lomse\.exe` matched only the Wine one. (The `.` is escaped for the same reason -- it is an
+    any-character in a regex.)
+
+    This matters more than a tidier pattern usually would. The broad pattern's false positive fires
+    exactly while this project's corpus-gated tooling runs, and the consequence is a *skip*: the
+    install, profile-creation and restore coverage would disappear silently, at the moment it is
+    most likely to be needed. A guard that cannot be wrong loudly reports safety it has not earned,
+    which is the failure this file's neighbours have spent several rounds removing.
+    """
+    return matching_processes(GAME_PATTERN)
+
+
+GAME_PROCESSES = game_processes()
+
+
+@unittest.skipIf(
+    bool(GAME_PROCESSES),
+    f"the game is running, so install/restore refuse: {GAME_PROCESSES}",
+)
 class PipelineTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
@@ -115,26 +145,63 @@ class PipelineTestCase(unittest.TestCase):
         """
         self.assertEqual(self.snapshot(), self.pristine_state)
 
-    def run_script(self, name: str, *arguments: str) -> subprocess.CompletedProcess:
+    def _invoke(self, name: str, arguments: tuple[str, ...]) -> subprocess.CompletedProcess:
         environment = dict(os.environ)
         environment["LOM_APPLICATIONS_DIR"] = str(self.applications)
         environment["LOM_ARTIFACTS_DIR"] = str(self.artifacts)
-        completed = subprocess.run(
+        return subprocess.run(
             [str(PROJECT_DIR / "scripts" / name), *arguments],
             capture_output=True,
             text=True,
             env=environment,
             cwd=PROJECT_DIR,
         )
-        if GAME_IS_UP in completed.stderr:
-            # The class-level `skipIf` asks once, before any test runs. A game opened *during* the
-            # suite slips past it, and then every script refuses and every assertion about stderr
-            # fails with a message about the game -- which is the state this file's `skipIf` exists
-            # to avoid, arriving through the one door it does not cover. Observed 2026-09-18: three
-            # runs of `tests.test_mod_pipeline` went red this way while the class ran green on its
-            # own, and the failure text was `lomse.exe is running; quit the game first.`
-            raise unittest.SkipTest("lomse.exe started while the suite was running")
-        return completed
+
+    def run_script(self, name: str, *arguments: str) -> subprocess.CompletedProcess:
+        """Run a pipeline script, and decide honestly what a "game is running" refusal means.
+
+        The scripts refuse while the game is up, which is correct and makes every assertion about
+        their output fail with a message about the game rather than about the code. The
+        class-level `skipIf` asks once, before any test runs, so a game that appears *during* the
+        suite slips past it.
+
+        Skipping on the refusal alone would be worse than the red it replaces. The shell guard is
+        `pgrep -f 'lomse.exe'` (`scripts/lib-mod-pipeline.sh`), and `-f` matches whole command
+        lines, so it also matches this project's own tools, which take that path as an argument --
+        `engine_probe.py`, `dumpva`, the save survey, the corpus-gated disassembly test.
+        Skipping on *that* would delete this file's install, profile-creation and restore coverage
+        silently, at exactly the moment the corpus tooling is running. So:
+
+        - a process that really is the game (Wine's `d:\lomse.exe`, backslash) -> skip, naming it;
+        - a refusal with no such process -> retry once, because the match may have been a
+          process that has already exited, and then **fail**, printing whatever the broad pattern
+          matches, because a persistent false positive is a defect in the guard.
+
+        Retrying is safe by construction: the guard refuses before the script writes anything.
+        """
+        completed = self._invoke(name, arguments)
+        if GAME_IS_UP not in completed.stderr:
+            return completed
+
+        running = game_processes()
+        if running:
+            raise unittest.SkipTest(f"the game started while the suite ran: {running}")
+
+        broad = matching_processes(BROAD_PATTERN)
+        completed = self._invoke(name, arguments)
+        if GAME_IS_UP not in completed.stderr:
+            return completed
+
+        running = game_processes()
+        if running:
+            raise unittest.SkipTest(f"the game started while the suite ran: {running}")
+        self.fail(
+            f"{name} refused twice because `pgrep -f 'lomse.exe'` matched, but nothing matches "
+            f"{GAME_PATTERN!r}, so the game is not running. The broad pattern matched: "
+            f"{broad or 'nothing, by the time this test could look'}. A persistent match that is "
+            "not the game is a defect in the guard (scripts/lib-mod-pipeline.sh), not a state to "
+            "tolerate."
+        )
 
     @property
     def dev_root(self) -> Path:

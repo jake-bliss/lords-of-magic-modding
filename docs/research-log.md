@@ -6045,3 +6045,33 @@ Two smaller repairs in the same pass: the tie-break test asserted a mean run len
 **both** tie outcomes satisfy, so it now names the winning directory through a new
 `dominant_directories` helper; and the number rule refused a truthful observation citing
 `0x80010100`, because the digit scan did not know hexadecimal.
+
+### The game-running guard matches our own tools, and a skip was hiding it
+
+The round-five note above said three pipeline tests had gone red because "a game is open". **That
+diagnosis was probably wrong for at least some of those runs**, and the fix it produced was worse
+than the failure.
+
+`scripts/lib-mod-pipeline.sh` refuses while the game is up, by asking `pgrep -f 'lomse.exe'`.
+`-f` matches the **whole command line**, so it matches every one of this project's own tools that
+takes that path as an argument -- `tools/engine_probe.py`, `dumpva`, the save survey, the
+corpus-gated disassembly test -- and a false positive lasts exactly as long as the tool runs.
+Demonstrated 2026-09-18 with two sleeping processes, one carrying
+`.../English/lomse.exe` and one carrying Wine's `d:\lomse.exe`: `pgrep -f 'lomse.exe'` matched
+**both**; `pgrep -f '\\lomse\.exe'` matched only the Wine one. The game runs under Wine and its
+command line has a **backslash**; ours have forward slashes. (The `.` needs escaping too -- it is
+an any-character, which is how `lomse.exe` also matches `lomseXexe`.)
+
+Converting that refusal into a `SkipTest`, as the round-five change did, made the two cases
+indistinguishable: a real game skipped, and a false positive from our own tooling *also* skipped,
+taking the whole install / profile-creation / restore coverage with it, silently, at the moment
+that tooling was running. **A green suite that means the guard misfired is worse than a red one
+that means a game is open** -- it is the same defect as the caveat test five rounds running: an
+instrument reporting safety it has not earned.
+
+The Python side now separates them: a process matching the narrow pattern is named in the skip
+reason, so a skip says *which* process caused it; a refusal with no such process is retried once
+(safe, because the guard refuses before the script writes anything) and then **fails loudly**,
+printing whatever the broad pattern matched. Verified both ways by starting a process of each
+shape. **The shell guard itself still carries the broad pattern** and is left for a branch already
+editing that file.
