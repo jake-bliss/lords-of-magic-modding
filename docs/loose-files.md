@@ -41,40 +41,28 @@ lom-asset-viewer --loose-config "$ROOT/English/settings.cfg"
 Both `--loose-config` parsers re-encode; the CLI prints `round-trips` so a partial read is visible
 rather than silent.
 
-### A known flake in the mod-pipeline tests, and what is actually established
+### The mod-pipeline guard, for whoever next has to touch it
 
-`tests/test_mod_pipeline.py` sometimes fails with `lomse.exe is running; quit the game first.`
-while no game is running, and sometimes skips all 16 of its tests for the same reason. Both come
-from one guard: `game_is_running()` in that file and `refuse_if_game_running` in
-`scripts/lib-mod-pipeline.sh`, each `pgrep -f 'lomse.exe'`.
+This section used to describe a live flake: `pgrep -f 'lomse.exe'` matching a harness shell or a
+`python3 -c` whose command line merely mentioned the string, so the guard answered "does any live
+command line mention this name?" instead of "is the game running?". That guard has since been
+rewritten and is no longer the bare, unanchored form -- see `game_command_pattern` in
+`scripts/lib-mod-pipeline.sh`, which is the one place this repository still names the pattern. Its
+own comment carries the current derivation, the false-positive/false-negative trade it makes on
+purpose, and the defect history that produced it; it is not repeated here so this page cannot go
+stale against it a second time.
 
-**Observed, with the command lines captured.** `-f` matches the whole command line of every
-process, and it matched two processes that were not the game:
+For orientation, the two command lines that motivated the current pattern, both observed live on
+2026-09-19:
 
-- the agent harness shell (`/bin/zsh -c ...`) running a command whose text happened to contain
-  `lomse.exe`;
-- a bare `python3 -c` whose source contained the literal, with nothing to do with this repository.
+- `c:\program files (x86)\steam\steamapps\common\lords of magic special edition\english\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1`
+  (Development, Steam, 32-bit path)
+- `d:\lomse.exe /*` (the 3.02 profile, launched from the drive root)
 
-So the guard answers "is the game running?" with "does any live command line mention this string?".
-Whether it fires depends on what else is running at that instant, which is why the suite oscillates
-between *16 skipped* (the guard fired at module import, where the `skipIf` is evaluated once) and
-*runs and fails* (it did not fire at import but did fire mid-test).
-
-**Not established**: a minimal deterministic reproduction. Two instances were captured, not a rule
-about when `pgrep` matches. It is recorded at that grade rather than written up as a mechanism.
-
-**Not caused by this work**: no commit on this branch touches either file, and the captured
-instances are a harness shell and an unrelated `python3 -c`.
-
-The distinguishing signal for whoever fixes it: the real game runs as `d:\lomse.exe`, a Wine drive
-path with a **backslash**, while this project's own tools use forward slashes -- so
-`pgrep -f '\\lomse\.exe'` separates them. (`.` is an any-character wildcard in that pattern too,
-so `lomseXexe` matches; minor by comparison.) **Deliberately not fixed here**: both files are being
-edited on other branches, and a three-way collision on a test guard is how a real failure gets lost
-in a merge.
-
-Until it lands, run `scripts/loose-file-reports.sh` and the Python suite one after the other, and
-re-run the Python suite before believing a red result from it.
+`tests/test_mod_pipeline.py`'s `GameGuardPattern` class drives the shipped `refuse_if_game_running`
+against both of these plus deliberate decoys, including one the guard is expected to refuse for
+even though it is not the game (`ACCEPTED_FALSE_POSITIVES`) -- read there before changing either
+file.
 
 ## What the sweep covers, and what it does not
 

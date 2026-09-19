@@ -15,13 +15,18 @@ game_subpath='Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/st
 game_dir="${app_dir}/${game_subpath}"
 capture_dir="${2:-${artifacts_dir}/engine-probe-captures}"
 
+# shellcheck source=scripts/lib-mod-pipeline.sh
+source "${project_dir}/scripts/lib-mod-pipeline.sh"
 # shellcheck source=scripts/lib-game-archives.sh
 source "${project_dir}/scripts/lib-game-archives.sh"
 
-if pgrep -f 'lomse.exe' >/dev/null 2>&1; then
-  echo "lomse.exe is still running; quit the game first." >&2
-  exit 1
-fi
+# This guards an ATTENDED engine-probe restore: a false positive here costs a human a game session,
+# not just a loud refusal. It used to be `pgrep -f 'lomse.exe'` -- unanchored, and with an
+# unescaped `.` that also fires on `lomseXexe` -- which is the same bare-name pattern
+# `scripts/lib-mod-pipeline.sh` retired for matching this project's own tools and anything that
+# merely quotes the name in an argument. `refuse_if_game_running` is that retirement's replacement
+# and is now the only copy of this guard in the repository.
+refuse_if_game_running
 
 # nullglob only drops patterns that match nothing, so zprobe.log is written as a pattern too.
 shopt -s nullglob

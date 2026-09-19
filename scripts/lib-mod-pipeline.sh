@@ -125,24 +125,38 @@ base_gs_facts() {
 #     line mentioning the path in an argument.
 #   * The full path with no optional part matched Development and missed 3.02 -- the first defect
 #     again, with the profiles swapped.
+#   * A version derived from `game_subpath` -- the path this pipeline INSTALLS TO -- closed both of
+#     the above by making the directory optional but pinned to that exact path. **That is still the
+#     wrong source.** `game_subpath` names where the pipeline writes; it says nothing about where a
+#     running game was LAUNCHED FROM, and nothing requires those to be the same tree. A 64-bit
+#     Wineskin bottle (`Program Files`, no `(x86)`) and a Wineskin profile mapping its game drive to
+#     something other than `c:`/`d:` are two more real layouts a game can launch from that the
+#     installer never names -- a pattern built from the install path is one unlisted layout behind
+#     by construction, which is exactly the defect class the profile-vs-profile bullets above are
+#     made of, recurring one level up.
 #
-# Derived from `game_subpath` so a change to the install layout cannot leave the guard matching a
-# path the pipeline no longer uses. Everything after `drive_c/` is the Windows-side path; `/`
-# becomes `\`, and the ERE metacharacters in `Program Files (x86)` are bracket-escaped.
+# So the directory is no longer named at all. The only property shared by every observed and every
+# plausible layout is that the command line is a DOS path ending in `lomse.exe`:
+#
+#   ^[A-Za-z]:[\\](.*[\\])?lomse[.]exe([[:space:]]|$)
+#
+# This closes the false-negative class above at the cost of a new false-positive class: a Windows
+# process running inside Wine that merely NAMES `lomse.exe` in its own arguments --
+# `c:\windows\system32\cmd.exe /c dir c:\games\lomse.exe` -- now matches too, and so does a real
+# `lomse.exe` sitting under any directory, e.g. `c:\games\lomse.exe`. That trade is deliberate, not
+# an oversight, and it is asymmetric on purpose: a false positive here REFUSES LOUDLY --
+# `install-dev.sh`/`restore-dev.sh` print "lomse.exe is running; quit the game first." and exit --
+# while a false negative swaps archives under a live process, a corruption no checksum afterwards
+# can undo. See `tests/test_mod_pipeline.py`'s `ACCEPTED_FALSE_POSITIVES`, which pins the trade with
+# a test asserting the cmd.exe case DOES match, on purpose.
 game_command_pattern() {
-  local tail="${game_subpath#*drive_c/}"
-  # Bracket-escape every ERE metacharacter. A bracket expression is the one escaping form that
-  # needs no backslash bookkeeping through two levels of quoting.
-  tail="$(printf '%s' "${tail}" | sed 's/[][(){}.*+?^$|]/[&]/g')"
-  # Every separator becomes the bracket expression [\\]. A bracket expression is the one form that
-  # survives two levels of shell quoting and means the same thing to Python's generator, which is
-  # what lets the test assert the two are byte-identical.
-  tail="${tail//\//[\\\\]}"
   # Anchored at the drive letter, and terminated by whitespace or end of line, so a command line
-  # that merely MENTIONS the executable later in its arguments cannot match. The directory group is
-  # OPTIONAL because 3.02 runs from the drive root; it is a specific path rather than `.*`, so an
-  # unrelated executable under some other directory still cannot match.
-  printf '^[A-Za-z]:[\\\\](%s[\\\\])?lomse[.]exe([[:space:]]|$)' "${tail}"
+  # that merely MENTIONS the executable somewhere later in its own arguments -- as opposed to
+  # BEGINNING with a path ending in it -- still cannot match; the `grep --fixed-strings ...` and
+  # bare-name-prefixed decoys in the test file exist for exactly that boundary. The directory group
+  # is OPTIONAL, for the drive-root profile, and unstructured (`.*`) rather than a specific path,
+  # for every profile that is not.
+  printf '^[A-Za-z]:[\\\\](.*[\\\\])?lomse[.]exe([[:space:]]|$)'
 }
 
 refuse_if_game_running() {
@@ -154,23 +168,23 @@ refuse_if_game_running() {
   #
   #   c:\program files (x86)\steam\steamapps\common\lords of magic special edition\english\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1
   #
-  # Two failures are guarded against here, and they pull in opposite directions:
+  # `game_command_pattern` above has its own history of failures; see it for the full ladder. The
+  # short version is that a bare drive-root pattern went dead for a day, and the first fix
+  # (`^[A-Za-z]:[\\].*lomse[.]exe`) reopened the false-positive class the anchor exists to close.
   #
-  #   1. `^[A-Za-z]:[\\]lomse[.]exe` -- the 2026-09-18 pattern -- demanded the executable at the
-  #      drive root and so matched NOTHING. The guard was dead for a day.
-  #   2. `^[A-Za-z]:[\\].*lomse[.]exe` -- the first fix -- matched `c:\tools\notlomse.exe` and
-  #      `c:\windows\system32\cmd.exe /c dir c:\games\lomse.exe`, reopening exactly the
-  #      false-positive class the anchor exists to close. A false positive SKIPS install and
-  #      restore coverage silently.
-  #
-  # The full path plus a trailing boundary is what separates them.
-  #
-  # `-i` is NOT because Wine hands back a lower-case command line -- `[A-Za-z]` and the lower-case
-  # literals already match that, so the observation does not justify the flag. It is because
-  # Windows paths and executable names are case-INSENSITIVE, so a profile presenting
-  # `E:\LOMSE.EXE` is equally valid. `tests/test_mod_pipeline.py` spawns exactly that, which is
-  # the one fixture pinning both this flag and the `[A-Za-z]` class; every other fixture drives
-  # `c:` or `d:` in lower case and so cannot see either.
+  # **`-i` re-measured 2026-09-19 against the pattern actually shipped here.** The earlier
+  # justification was narrower than "Wine hands back lower case" but WAS load-bearing for more
+  # than the uppercase fixture: that earlier pattern was derived from `game_subpath` and so
+  # embedded literal, mixed-case path components (`Program Files`, `Steam`); without `-i`, the
+  # observed Development command line -- itself all lower-case -- failed to match THAT literal
+  # text, while `d:\lomse.exe` still matched. That reason is gone now that the directory is `.*`:
+  # there is no literal mixed-case text left to fail against. Measured directly against the
+  # pattern above: with `-i` dropped, both `d:\lomse.exe` and the observed Development command
+  # line still match (their own text is already lower-case), and only an upper-case profile like
+  # `E:\LOMSE.EXE` stops matching. So `-i` is kept for that one case alone -- Windows paths and
+  # executable names are case-INSENSITIVE, and a Wineskin profile presenting an upper-case command
+  # line is equally valid -- not for the reason the previous comment gave.
+  # `tests/test_mod_pipeline.py`'s `UPPERCASE_OTHER_DRIVE_ARGV0` is the one fixture pinning it.
   if pgrep -if "$(game_command_pattern)" >/dev/null 2>&1; then
     die "lomse.exe is running; quit the game first."
   fi
