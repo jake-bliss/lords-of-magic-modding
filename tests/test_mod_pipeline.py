@@ -175,18 +175,24 @@ class PipelineTestCase(unittest.TestCase):
         suite slips past it.
 
         Skipping on the refusal alone would be worse than the red it replaces. The shell guard is
-        `pgrep -f 'lomse.exe'` (`scripts/lib-mod-pipeline.sh`), and `-f` matches whole command
-        lines, so it also matches this project's own tools, which take that path as an argument --
-        `engine_probe.py`, `dumpva`, the save survey, the corpus-gated disassembly test.
-        Skipping on *that* would delete this file's install, profile-creation and restore coverage
-        silently, at exactly the moment the corpus tooling is running. So:
+        a `pgrep -f` against the same anchored pattern this module uses; it used to be the bare
+        name, which matched this project's own tools -- they take that path as an argument -- and
+        matched anything that merely quoted it. Skipping on *that* would have deleted this file's
+        install, profile-creation and restore coverage silently, at exactly the moment the corpus
+        tooling runs. So:
 
         - a process that really is the game (Wine's `d:\lomse.exe`, backslash) -> skip, naming it;
         - a refusal with no such process -> retry once, because the match may have been a
-          process that has already exited, and then **fail**, printing whatever the broad pattern
-          matches, because a persistent false positive is a defect in the guard.
+          process that has already exited, and then **fail**, printing whatever a looser match
+          finds, because a refusal that cannot be attributed to the game is a defect in the guard
+          rather than a state to tolerate.
 
-        Retrying is safe by construction: the guard refuses before the script writes anything.
+        **The retry is load-bearing, not caution, and deleting it restores the flake it fixes.**
+        Anchoring shrinks the false-positive population but cannot win a race: sampling `ps`
+        continuously through a failing run caught **zero** matching command lines, so some matches
+        are processes that exit within milliseconds and are gone before anything can name them.
+        Retrying is safe by construction -- the guard refuses *before* the script writes anything,
+        so a refused run has changed nothing to re-run over.
         """
         completed = self._invoke(name, arguments)
         if GAME_IS_UP not in completed.stderr:
@@ -205,8 +211,8 @@ class PipelineTestCase(unittest.TestCase):
         if running:
             raise unittest.SkipTest(f"the game started while the suite ran: {running}")
         self.fail(
-            f"{name} refused twice because `pgrep -f 'lomse.exe'` matched, but nothing matches "
-            f"{GAME_PATTERN!r}, so the game is not running. The broad pattern matched: "
+            f"{name} refused twice because its `pgrep -f` matched, but nothing matches "
+            f"{GAME_PATTERN!r}, so the game is not running. A looser `lomse.exe` match found: "
             f"{broad or 'nothing, by the time this test could look'}. A persistent match that is "
             "not the game is a defect in the guard (scripts/lib-mod-pipeline.sh), not a state to "
             "tolerate."
