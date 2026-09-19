@@ -5489,7 +5489,9 @@ findings rather than gaps:
   over `code` reads `inf … inf`. This module guards locally — a non-finite number keeps its text but
   is never summarised — and the lexer is left alone because its token counts are load-bearing
   elsewhere. Anything reading `TokenKind::Number` has the same exposure. Evidence class: Observed.
-- **`tools/gs_syntax.py` terminates a `;` comment at `\n` only**, but bare CR is a line ending in
+- **`tools/gs_syntax.py` terminates a `;` comment at `\n` only** *(fixed on 2026-09-18, with three
+  sibling divergences found beside it; see [the entry below](#2026-09-18--four-lexer-divergences-closed-and-what-the-first-one-hid))*,
+  but bare CR is a line ending in
   this corpus and **25 GS5R3 members contain a comment and no LF at all**. In those the first comment
   swallows the file: `gs\dungeons\water\wacave.gs` is 5,347 bytes and normalises to **six tokens**.
   It feeds `compare_trees.py`'s token hash, so the "Layout/comments only" column in
@@ -5774,3 +5776,318 @@ asymmetry already recorded for the visibility level `63`, walked into again in a
 version sweep that samples only the gates cannot fail on a gate moved down.** The fix sweeps each
 gate *and the version immediately below it*, and asserts the per-step size deltas including the
 zeros, since a zero is exactly what a downward gate move destroys.
+
+
+## 2026-09-18 — Four lexer divergences closed, and what the first one hid
+
+The recorded defect was one line: `tools/gs_syntax.py` ended a `;` comment at `\n` only, though
+bare CR is a line ending in this corpus. Fixing it took a line too. **Everything of value in this
+entry came from what happened next** — reading `gs_syntax.py` against
+`spikes/asset-viewer/src/gamescript.rs` statement by statement instead of stopping at the defect
+that had been named.
+
+**The instrument came before the numbers.** A Python port of the Rust lexer's rules was written and
+then validated against the real thing: its NUL-joined token digest equals `--gs-facts`'s
+`token_sha256` on **4,692 of 4,692** members of the three installed profiles, zero parse-error
+disagreements. Only after that was any divergence attributed to `gs_syntax.py`. The port also had
+to decode the way the comparison decodes: the Rust lexer uses `from_utf8_lossy`, so the 17 members
+carrying a byte above 0x7e that is not valid UTF-8 differ in *token text* while agreeing on every
+token *boundary*. Compared naively that is 17 false findings out of 23.
+
+| Divergence | Members changed | Where |
+|---|---:|---|
+| `;` comment ended at `\n` only | 34 | all GS5R3 (25 with no LF at all) |
+| `\` treated as a string escape | 5 | vanilla 1, 3.02 2, GS5R3 2 |
+| `/` did not end a name | 5 | vanilla 1, 3.02 1, GS5R3 3 |
+| `str.isspace()` wider than `is_ascii_whitespace` | 0 | one member has such a byte, inside a string |
+| **after all four** | **0 of 4,692** | |
+
+**The recorded defect was not the worst one.** The comment rule cost `gs\dungeons\water\wacave.gs`
+706 of its 712 tokens, which is the figure this log already carried, and every one of its 34 members
+is in GS5R3. The string rule is in **vanilla**: `gs\Dlg\lib_dlg.gs` holds the punctuation table
+`"@#${}()[]\"`, whose closing quote the escape rule ate, and the member lexed to 3,247 tokens
+against its real 2,324. Two pages here had reasoned from "bare CR is a GS5R3 phenomenon" to "this
+class of defect cannot reach a mod built against vanilla, which is what `mods/orinf-rebalance` is".
+That inference was **Refuted** by a sibling of the defect it was written about. The authority has no
+escape rule at all — `read_string` matches on `"` and takes every other byte verbatim, and its own
+fixture `"path\to\file"` keeps both backslashes — so the escape branch was never anything but a
+Python habit applied to a language that does not have it.
+
+**A divergence with zero corpus reach is still worth closing, and still has to be measured.**
+`str.isspace()` accepts ASCII `\x0b` and `\x1c`-`\x1f` as well as `\x85` and `\xa0`; the
+authority accepts none of them. Exactly one member of the corpus contains such a byte — GS5R3's
+`gs\artifact\_custom\shield_balkoth.gs`, one `\x85` — and it is **inside a string literal**, where
+no layout rule looks, so the reach is zero, not one. An earlier draft of the build-pipeline page
+said that member "trips it", conflating *containing the byte* with *lexing differently because of
+it*, and a test premised on that conflation would have been asserting nothing.
+
+**Two measurements that would have passed while the code was wrong.** A token-count comparison was
+tried first for the whitespace case: `/hit_points\x85 13 def` is three tokens under both rules, one
+of them with the name split and one with it whole, so the count is blind to exactly the mutation it
+was there to catch. It was replaced with a digest comparison that applies only the lossy decoder to
+this side and nothing else. Separately, `test_comment_ends_at_the_carriage_return_of_a_crlf_pair`
+passed under the LF-only rule it was named for — the LF of a CRLF pair had always terminated the
+comment — and is now named `test_crlf_tokenizes_like_lf`, which is what it actually checks. Both are
+the same error: a measurement whose name promises more than its mechanism can deliver.
+
+**What is left, stated rather than implied.** `<` and `>` end a name for the authority and do not
+here, so `x<<y` is three tokens to one lexer and one to the other. **No corpus member reaches it**,
+and closing it needs a decision `gs_syntax.py` cannot make: a single `<` is a parse error to the
+authority and this tokenizer has no error channel, as with an unterminated string and an empty
+literal name. It is named in [gamescript-format.md](gamescript-format.md#lexer-parity-the-two-tokenizers-and-what-still-separates-them)
+and is what the change report's two-lexer check is left watching.
+
+**`reports/gs/summary.md` regenerates byte-identical after all four fixes**, at every step. Token
+hashes moved for the affected members in each comparison and **no member changed status**, so the
+"layout/comments only" column was never wrong in its *classification* for these members even while
+its input was — which is luck, not design, and is why it was checked after each change rather than
+once at the end.
+
+**A stale caveat was being stamped into every build.** `tools/mod_build.py` wrote
+`engine_acceptance["pic.mpq"] = "Never tested. No rewritten pic.mpq has been put in front of the
+engine and the compression choice for one is Inferred."` into `build.json`, deliberately, "so a
+build carries its own caveat". Both halves had been refuted on 2026-09-18 by this repository's own
+roadmap. It now states the measured scope — one member, replaced not added, a length-preserving
+`pbm_patch.py` edit, with the size-changing edit, the added member and the ByteRun1 encoder all
+still untested — and `tests/test_mod_pipeline.py` reads `docs/roadmap.md` and fails if the two
+drift apart again. The `gs.mpq` entry beside it was checked and is accurate, as is
+`mod_validate.py`'s added-member warning; those are the only two places in the repository that
+stamp a caveat into an artifact rather than into prose.
+
+**Left alone, deliberately.** `tools/gs_callsites.py` computes line and column with `\n`
+arithmetic, which looks like the same defect and is **inert**: it reads members through
+`Path.read_text()`, whose universal-newline translation turns every bare CR into `\n` before the
+tokenizer sees it. Recorded here so the next reader does not "fix" it and change what those offsets
+mean.
+
+### Corrections to the entry above, same day, from two independent reviews
+
+Both reviewers ran over the same diff and found the same two defects, which is the strongest signal
+this process produces. Neither could verify a single corpus number, because the archives are not in
+this repository — the measurements below remain the only evidence for them.
+
+**A fifth divergence, and every "what is still open" list above was wrong.** `DELIMITERS` in
+`gs_syntax.py` was `frozenset("{}[]()")`. The authority's `is_separator` lists no parenthesis: they
+are ordinary name bytes, so `/a{ foo(1) }def` is **5 tokens** to `--gs-facts` and was **8** here.
+It is not in the same class as the `<`/`>` divergence and filing it beside that one would have been
+wrong: `<` needs an error channel this tokenizer does not have, while the parentheses needed
+`frozenset("{}[]")` and nothing else. Corpus reach **0**, measured the same way as the rest: 530
+members contain a parenthesis and in every one of them it is inside a string or a comment. Both
+zero-reach divergences were fixed anyway — a disagreement about a shipped grammar is a defect
+whether or not the shipped corpus exercises it, and the case it would break is an edit from
+`foo(1)` to `foo (1)` in a mod nobody has written yet, which is the case this pipeline exists for.
+
+**A guard that signed off on the direction it existed to block.** `EngineAcceptanceCaveatTest`
+checked that five phrases appeared *somewhere* in the `build.json` caveat. Both reviewers broke it
+the same way: rewrite "NOT established: … have none of them been put in front of the engine" as
+"ALSO established: … have every one of them", and all three tests still reported `ok`. The
+direction it did block — the old "Never tested" — merely *understated* what had been proved; the
+direction it let through would have shipped a build claiming engine acceptance for a size-changing
+edit and the full ByteRun1 encoder, neither of which has run. Vocabulary is not a sentence. The
+tests now take the limits from the roadmap's own `Not established.` paragraph at runtime, assert
+the caveat makes exactly one establishment claim and that it is negative, and assert each limit
+sits inside the negative clause. Four mutations, including the reviewers' exact inversion, all
+fail. The `assertIn("2026-09-18", roadmap)` it also carried is gone: any occurrence of a date
+anywhere in a 400-line document satisfied it.
+
+**The published operator-ordering table had an unrecorded delta, and "those rows cannot have
+moved" was not good enough.** `tools/operator_groups.py` consumes `gs_syntax.tokens`, so the fixes
+changed its inputs; restoring 706 tokens to `wacave.gs` and splitting `w/name`-shaped tokens grows
+caller sets, and three of the four rows are computed from caller sets. Re-run with the tokenizer
+immediately before the fixes and immediately after, over the same 1,696-member GS5R3 dump: the
+first three rows are **identical**, and the fourth moves — observed mean run length 1.45 → 1.44,
+shuffled baseline 1.09 → 1.10, ratio 1.32x either way. The table is republished with that row and
+dated. Its published ratio had been 1.33x. The reproduction recipe was also wrong by omission and
+is now written out: `caller_index` uses `Path.iterdir` and does not descend, and the
+dominant-directory row recovers a directory by splitting the file *name* on `__`, so the dump has
+to be flattened with that separator. Pointed at a nested tree the tool reports 30 operators with
+callers instead of 1,371 and nobody is told.
+
+**A parity test that skips is a parity test that is not run.** The new fixtures guarded on
+`VIEWER.is_file()`, so a fresh checkout would report OK with all of them silently skipped, and an
+edit to `gamescript.rs` without a rebuild would have them agree with a months-old authority. They
+now build the viewer when it is missing *or older than `gamescript.rs`*, and skip only when the
+build genuinely fails — the shape `stormlib_available` already uses in `tests/test_member_names.py`.
+A stranded `unittest.main()` sat above the class, which under direct invocation would have defined
+none of it; it is at the bottom of the file now.
+
+**One claim three sections away was refuted by this work.** `gamescript-format.md` said, of `<<`
+and `>>`, "Both of ours already do — checked, not assumed". `gs_syntax.py` does not: `x<<y` is one
+token here and three to the authority. The original check saw the corpus's habit of
+whitespace-separating `<<` and read it as evidence about the lexer. Corrected in place, with a
+pointer to the parity section. A "checked, not assumed" phrase is worth exactly as much as the
+mechanism behind it, and this one was a corpus coincidence.
+
+### Corrections to the corrections, same day, round four
+
+Three of the five claims the round-three note made about its own work were wrong. They are
+corrected here rather than edited above, because the shape of the errors is the finding.
+
+**The test said it took its limits from the roadmap at runtime. It did not.** The round-three note
+and that test's docstring both claimed the caveat's limits were derived from the roadmap's
+`Not established.` paragraph. The code computed that paragraph and then asserted three *other*
+hardcoded strings into the caveat; nothing flowed from one to the other, one of the three
+("ByteRun1 encoder") does not appear in that paragraph at all, and the whole class passed when the
+roadmap's paragraph was monkeypatched to grow a limit. A test that reads a file and ignores what it
+read is worse than one that never opens it, because the docstring buys trust the mechanism has not
+earned.
+
+**The prose approach was the defect, and the third bypass proved it.** Round one broke the caveat
+test by turning `NOT established` into `ALSO established`; round two by turning `have none of them`
+into `have every one of them`; round three by appending "In fact, the engine accepted a
+size-changing edit, an added member, and the full ByteRun1 encoder" *after* the clause every
+assertion was about. Each repair closed the previous bypass without narrowing the gap, because a
+finite set of assertions about prose cannot constrain the open set of sentences prose can be. The
+sentence is now rendered, not written: `tools/engine_acceptance.py` holds the run as data — count,
+replaced-or-added, length-preserving-or-size-changing, date, mechanism, observation — and derives
+the limits from it, so "the engine accepted a size-changing edit" cannot be said without recording
+that the run *was* size-changing, which changes the rendered roadmap paragraph, which no longer
+matches `docs/roadmap.md`. `build.json` carries the structure beside the sentence.
+
+**That claim was checked and was wrong.** The round-four note said six mutations "including all
+three historical bypasses" failed. Two of the three still worked, through fields the module stored
+as free text and never guarded — `mechanism` and `storage_class` — and a third bypass worked at
+the build site, past a check that read the source rather than the output. See the round-five note
+below; the claim is corrected there rather than deleted here, because a repaired guard that still
+claims more than it does is the exact failure this sequence keeps repeating.
+
+Two holes stayed open after the first rewrite and were closed too: a wrapper at the build site
+(`{k: dict(v, summary=v["summary"] + "…")}`) bypassed every assertion about the module's own
+output, so the build's dict is now checked through the syntax tree and must be exactly
+`engine_acceptance.build_metadata()`; and the one free-text field left, `observation`, could still
+be widened to "Each of the 1,071 members was re-encoded and accepted", so a quantity that is not
+the run's own count or date is now refused outright, and every observation has to be a sentence the
+documentation already carries.
+
+**`foo(1)` was four tokens, not five.** The parenthesis note shipped in five files with a wrong
+count — `foo`, `(`, `1`, `)` is four — in a repository whose premise is that a stated count is a
+measurement. The one place that was right used the fuller example (`/a{ foo(1) }def`, 8 against 5),
+which is the lesson: a worked example carries its own check, a bare number does not.
+
+**The operator-ordering table did not move, and the reported movement was hash noise.** Round three
+reported the fourth row going 1.45 → 1.44 observed and 1.33x → 1.32x, and credited the tokenizer.
+Re-running the two tokenizers with a fixed `PYTHONHASHSEED` gives **bit-identical floats on all
+four rows**. The movement came from `caller_group_agreement`, which picked each operator's dominant
+directory with `Counter.most_common` over a `set`, so ties broke by hash order: five runs of one
+unchanged tokenizer give observed 1.43, 1.44, 1.44, 1.44, 1.45. The tie is now broken by name, and
+`tests/test_operator_groups.py` runs the measurement under eight hash seeds and demands one answer.
+**A one-run-against-one-run comparison could not have told a real delta from this**, and the way to
+have known that was to run the do-nothing case first, which is a lesson this repository has already
+written down.
+
+The same page's "three of four rows are computed from caller sets" is also corrected: rows 1 and 2
+are two projections of a single `call_site_agreement` computation and row 3 never touches the
+caller index at all, so the invariance is one statistic plus one constant, not three independent
+confirmations.
+
+**What was re-run rather than reasoned about.** `docs/native-operator-bodies.md`'s operand-count
+table is read through `gs_callsites.py` and so through this tokenizer. All five cited operators,
+plus `launchmissile` and `relative2actual`, produce **byte-identical reports** before and after the
+five fixes. The five members the string fix moved are named there now. One number in that section
+could not be reproduced and predates this work: `launchmissile` has 4 + 7 + 5 = 16 call sites across
+the three profiles against a recorded "twelve".
+
+**Also closed.** `viewer_is_stale` compared the built viewer against `gamescript.rs` only, while
+the value these tests compare is `token_digest` in `gs_facts.rs` — so an edit there would have left
+the fixtures agreeing with a stale binary. The manual staleness rule is gone; `cargo build
+--release` runs unconditionally and Cargo decides freshness, with the build's own stderr printed
+when it fails instead of a guessed cause. And the parity measurement now states its denominator's
+other half: **0 of 4,692 members produced a parse error**, which matters because `GsFacts::measure`
+returns an empty digest for a member it cannot lex, so an erroring member would have left the
+comparison silently.
+
+## 2026-09-18 — Round five: every field that renders carries a rule, and the test reads the output
+
+Three more bypasses of the engine-acceptance guard, all demonstrated by running them, and all of
+one kind: **the module stored three sentences and guarded one.**
+
+`mechanism` and `storage_class` were free text interpolated straight into the rendered caveat.
+Appending the historical bypass sentence to either shipped it in every `build.json` with the whole
+suite green — and `gs.mpq`'s mechanism was asserted nowhere at all, so nothing even pinned its
+wording. Both are enums now, with fixed text and a name per value; the only choice a record makes
+is which value applies. `observation` is the one sentence left, and it is constrained twice.
+
+**A source-shape check cannot bound runtime behaviour, learned twice in one module.** The
+round-four guard walked `mod_build.py`'s syntax tree and asserted the dict literal held
+`engine_acceptance.build_metadata()`. It says nothing about what happens to that dict afterwards,
+and a reviewer appended to every summary between the literal and `write_text` with the suite still
+green. It is replaced by the obvious thing, which is also one line: run `command_report` in a
+temporary directory and assert `json.loads(build.json)["engine_acceptance"] ==
+build_metadata()`. That closes the class including the sources the AST walk never read. The same
+mistake in miniature had already been made once here — a test that read `docs/roadmap.md` and then
+asserted hardcoded strings — and the lesson is the same both times: **assert the artifact, not the
+recipe.**
+
+**A derivation can derive nothing.** `derived_limits` returns the empty tuple for a run that is
+size-changing, added and multi-member, and nothing required the result to be non-empty — so a
+record could claim 1,071 added members with size-changing edits and render "Not established: ."
+The docstring claiming that could not happen was itself the evidence that nobody had tried it. An
+`ArchiveAcceptance` whose limits are empty is now refused at import: no single attended run
+establishes a whole archive.
+
+**Containment was blind to polarity and to place.** The round-four rule asked whether an
+observation appeared anywhere in two documents — 1,400 lines that include, deliberately, a
+*quotation of a refuted claim* in `build-pipeline.md` ("a rewritten archive has never faced the
+engine and the compression choice is Inferred"), so a sub-span of a sentence the repository exists
+to refute would have passed as evidence. The rule now compares a **marked region** —
+`<!-- engine-acceptance:<archive> -->` — against the render, for **every** archive with a run,
+enumerated from the data rather than hardcoded to `pic.mpq`. `gs.mpq` had no such paragraph at all
+and was therefore coupled to nothing; it has one now. Every rendered field, enums included, is in
+that paragraph, so editing any of them breaks the comparison.
+
+Mutations re-run after all of this, each one previously green: bypass through `pic.mpq`'s
+mechanism, through `gs.mpq`'s mechanism, through `storage_class`, appending inside the renderer,
+appending at the build site, a wrapper between the literal and the write, an em-dash continuation
+inside the clause, a widened observation, a run with no limits, and both directions of the number
+rule. All fail.
+
+Two smaller repairs in the same pass: the tie-break test asserted a mean run length of 2, which
+**both** tie outcomes satisfy, so it now names the winning directory through a new
+`dominant_directories` helper; and the number rule refused a truthful observation citing
+`0x80010100`, because the digit scan did not know hexadecimal.
+
+### The game-running guard matches our own tools, and a skip was hiding it
+
+The round-five note above said three pipeline tests had gone red because "a game is open". **That
+diagnosis was probably wrong for at least some of those runs**, and the fix it produced was worse
+than the failure.
+
+`scripts/lib-mod-pipeline.sh` refuses while the game is up, by asking `pgrep -f 'lomse.exe'`.
+`-f` matches the **whole command line**, so it matches every one of this project's own tools that
+takes that path as an argument -- `tools/engine_probe.py`, `dumpva`, the save survey, the
+corpus-gated disassembly test -- and a false positive lasts exactly as long as the tool runs.
+Demonstrated 2026-09-18 with two sleeping processes, one carrying
+`.../English/lomse.exe` and one carrying Wine's `d:\lomse.exe`: `pgrep -f 'lomse.exe'` matched
+**both**; `pgrep -f '\\lomse\.exe'` matched only the Wine one. The game runs under Wine and its
+command line has a **backslash**; ours have forward slashes. (The `.` needs escaping too -- it is
+an any-character, which is how `lomse.exe` also matches `lomseXexe`.)
+
+Converting that refusal into a `SkipTest`, as the round-five change did, made the two cases
+indistinguishable: a real game skipped, and a false positive from our own tooling *also* skipped,
+taking the whole install / profile-creation / restore coverage with it, silently, at the moment
+that tooling was running. **A green suite that means the guard misfired is worse than a red one
+that means a game is open** -- it is the same defect as the caveat test five rounds running: an
+instrument reporting safety it has not earned.
+
+The Python side now separates them: a process matching the narrow pattern is named in the skip
+reason, so a skip says *which* process caused it; a refusal with no such process is retried once
+(safe, because the guard refuses before the script writes anything) and then **fails loudly**,
+printing whatever the broad pattern matched. Verified both ways by starting a process of each
+shape.
+
+**The pattern in this branch was still too loose, and a parallel fix on `main` is the one to
+keep.** Requiring the backslash form only asks whether a command line *mentions* a Wine path, which
+an agent, an editor or a shell quoting the name satisfies -- three agents tripped the guard in one
+day, and writing the fix tripped it, because a comment in the patch command contained
+`d:\lomse.exe`. The game's own command line **begins** with a DOS drive path, so the pattern is
+anchored: `^[A-Za-z]:[\\]lomse[.]exe`, in both the shell guard and here. Verified in both
+directions, which needs `exec -a` to fake convincingly: a process whose argv merely *contains* the
+path does **not** match, and one whose command line *begins* with it does. Six consecutive suite
+runs report `OK (skipped=1)` rather than 17, so the install and restore coverage that had been
+disappearing is executing again.
+
+**The retry is load-bearing rather than belt-and-braces, and the measurement above is why.**
+Sampling `ps` through a failing run caught zero matching command lines: some matches are processes
+that exit within milliseconds, so no pattern can close the race by itself. Anchoring shrinks the
+false-positive population; the retry survives the ones that are already gone by the time anything
+can look.

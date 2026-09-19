@@ -174,10 +174,11 @@ agreeing on six counts is confirmation, so nothing there is corrected; what the 
 scope -- 1,696 members to 4,692 -- and the fact that **bare CR is a GS5R3 phenomenon only**, absent
 from vanilla and 3.02 entirely.
 
-That also narrows the `gs_syntax.py` bullet below. Measured by comparing its token count against the
-same rule with CR treated as a terminator, **34 members lose tokens, all 34 in GS5R3 and none in
-vanilla or 3.02** -- the 25 already recorded there are a subset. Counting every member containing a
-bare CR would give 242 and overstate the reach sevenfold.
+That also sized the `gs_syntax.py` defect below, which was **fixed on 2026-09-18**. Measured by
+comparing its token count against the same rule with CR treated as a terminator, **34 members lose
+tokens, all 34 in GS5R3 and none in vanilla or 3.02** -- the 25 already recorded there are a subset.
+The same measurement after the fix reports zero. Counting every member containing a bare CR would
+give 242 and overstate the reach sevenfold.
 
 Separately, the only control bytes anywhere in the corpus are TAB, CR and LF, and the 17 members
 with a byte above 0x7e are **none of them valid UTF-8** -- so a validator demanding UTF-8 would
@@ -250,6 +251,22 @@ there, not on the map.
 **Not established by Phase 4.** This was one member, one archive, one compression class. Adding a
 member rather than replacing one has still never been tried, and nothing here says a *large* mod
 loads -- only that a correct one-member rewrite does.
+
+<!-- The two blocks marked `engine-acceptance:<archive>` are RENDERED from
+     tools/engine_acceptance.py. Do not edit them by hand: change the facts there and paste
+     what `roadmap_paragraph("<archive>")` prints. tests/test_mod_pipeline.py requires each
+     marked region to equal the render, for every archive with a run -- which is what keeps a
+     claim here and the caveat in every build.json from drifting apart. -->
+<!-- engine-acceptance:gs.mpq -->
+**Not established.** 1 member of one `gs.mpq`, replaced rather than added, with a length-preserving
+edit made by the mod pipeline's own writer, 2026-09-16. The attended 2026-09-16 round trip of an
+MPQ_FILE_IMPLODE member of gs.mpq. The engine has not been shown an edit that changes a member's
+size. The engine has not been shown a member added to an archive rather than replaced. The engine
+has not been shown a second member of the same archive in one build. The engine has not been shown
+any flag combination other than 0x80010100. The member carried flags 0x80010100 (EXISTS | ENCRYPTED
+| IMPLODE), which is the only storage class any run has covered. `imp.mpq`, `sndfx.mpq` and
+`special.mpq` remain untested.
+<!-- /engine-acceptance:gs.mpq -->
 
 The `pic.mpq` half of this paragraph was closed on 2026-09-18; see the `pic.mpq` slice under Phase 5.
 
@@ -341,9 +358,16 @@ new-game setup. The name means "the new-game menu". An instruction to the human 
 reading the image rather than on knowing where the engine draws it was wrong about where to look;
 the observation succeeded anyway because the main menu is the first thing drawn.
 
-**Not established.** One member of one `pic.mpq`, replaced rather than added, with a
-length-preserving edit. An edit that changes a member's *size* has not been put in front of the
-engine, and neither has an added member. `imp.mpq`, `sndfx.mpq` and `special.mpq` remain untested.
+<!-- engine-acceptance:pic.mpq -->
+**Not established.** 1 member of one `pic.mpq`, replaced rather than added, with a length-preserving
+edit made by tools/pbm_patch.py, 2026-09-18. The engine read an archive this pipeline built from
+pic.mpq, and a human read the change off the screen. The engine has not been shown an edit that
+changes a member's size. The engine has not been shown a member added to an archive rather than
+replaced. The engine has not been shown a second member of the same archive in one build. The engine
+has not been shown the full ByteRun1 encoder, which no run has used. The compression choice is not
+Inferred: all 1,071 baseline members carry flags 0x80010100, the same storage class the gs.mpq run
+proved. `imp.mpq`, `sndfx.mpq` and `special.mpq` remain untested.
+<!-- /engine-acceptance:pic.mpq -->
 
 Note that painting has never been verified by a probe loading a painted map, and the core tile
 family, road in either role, and painting across an existing boundary are refused rather than
@@ -385,22 +409,47 @@ string table behind the Steam launcher, and the trailing word of `lom.cfg` are a
 - [x] Establish how multiplayer works and why it desyncs ([multiplayer](multiplayer.md)). It is lockstep-deterministic, the shipped desync post-mortem is **gated off at load**, and the asterisk in the game list already means the host's build differs from yours. A home server cannot fix desync, because the problem is determinism rather than the network.
 - [ ] Measure difficulty-dependent computer AI behavior in controlled games ([issue #6](https://github.com/jake-bliss/lords-of-magic-modding/issues/6)).
 
-Three known latent defects are recorded rather than fixed, because each needs its own corpus
-re-verification:
+This list recorded three known latent defects. **All three are now fixed, and the list was itself
+stale when checked on 2026-09-18** — two of the three had been corrected in code on 2026-09-17 and
+only this page still said otherwise:
 
-- `MapCell::tile_index()` in `src/map.rs` still masks `tag & !0x00800000` rather than `tag & 0xffff`,
-  which agrees on every shipped map only because the high bits there take just two values.
-- The map editor's `set_tile` preserves a bit it should not — byte-correct on every shipped map and
-  wrong in general.
-- **`tools/gs_syntax.py` ends a `;` comment at `\n` only**, but bare CR is a line ending in
-  GameScript. The build pipeline routes around this rather than fixing it -- it lexes through the
-  CR-aware Rust lexer -- and its change report calls `gs_syntax.py` as well and **reports when the
-  two disagree**, so the defect is now visible at the one place it would do damage. 25 GS5R3 members
-  have a comment and no LF at all; `gs\dungeons\water\wacave.gs` is 5,347 bytes and normalises to
-  **six tokens** against its real 712. This feeds `compare_trees.py`'s token hash, so the
-  "layout/comments only" column in `reports/gs/summary.md` is unreliable for those members. Its full
-  reach, measured 2026-09-18 over all three profiles, is **34 members, every one in GS5R3**; the 25
-  are the subset with no LF anywhere.
+- `MapCell::tile_index()` in `src/map.rs` — **fixed 2026-09-17.** It masks `self.tag & 0xffff`; the
+  claim that it still masks `tag & !0x00800000` was stale. The upper half of the word is a separate
+  sixteen-bit field, measured from the engine's bounds-checked tileset lookup rather than from the
+  corpus, which cannot distinguish the two rules.
+- The map editor's `set_tile` — **fixed 2026-09-17.** It writes
+  `(cell.tag & CELL_TAG_UPPER_FIELD) | tile_index`, preserving the whole upper field rather than one
+  bit of it. Latent either way: across 353 shipped maps and 1,040,384 cells that field takes only
+  `0x0000` and `0x0080`.
+- **`tools/gs_syntax.py` diverged from the authority in five places** — **all five fixed
+  2026-09-18.** Only the first was recorded here; the other four were found by reading the two
+  lexers side by side after it, which is the reason this entry is now a list. (1) A `;` comment
+  ended at `\n` only, though bare CR is a line ending, so in a member with no LF the first comment
+  swallowed the rest of the file: **34 members**, every one in GS5R3, 25 of them with no LF at all,
+  and `gs\dungeons\water\wacave.gs` normalised to **six tokens** against its real 712 (it now
+  yields 712, the count `--gs-facts` reports). (2) `\` was treated as a string escape, which the
+  authority's `read_string` has no rule for, so a string ending in a backslash ate its own closing
+  quote: **5 members**, in **all three profiles** — vanilla's `gs\Dlg\lib_dlg.gs` holds the
+  punctuation table `"@#${}()[]\"` and lexed to 3,247 tokens against its real 2,324. That one
+  refutes the earlier claim on this page that the defect class could not reach a mod built against
+  `vanilla`. (3) `/` did not end a name, though `is_separator` lists it: **5 members**. (4)
+  `str.isspace()` is wider than `is_ascii_whitespace` — it also accepts ASCII `\x0b` and
+  `\x1c`-`\x1f`: **0 members**, and the one member holding such a byte holds it inside a string
+  literal, where no layout rule looks. (5) `(` and `)` were delimiters here and are ordinary name
+  bytes to the authority, which lists no parenthesis in `is_separator`, so `foo(1)` was four tokens
+  here and one there: **0 members** — 530 hold a parenthesis and in every one of them it is inside
+  a string or a comment. The last two were fixed despite measuring zero, because a disagreement
+  about the grammar is a defect whether or not the shipped corpus exercises it. Measured over all 4,692 `.gs` members of the three profiles
+  before and after, with a port of the Rust rules validated against `--gs-facts` on 4,692 of 4,692
+  first: **after the five fixes, zero members tokenize differently.** Zero of the 4,692 produced a
+  parse error, so none dropped out of the comparison unseen. `reports/gs/summary.md`
+  regenerates byte-identical throughout — token hashes moved, **no member changed status**. What is
+  left is listed in
+  [the lexer parity section](gamescript-format.md#lexer-parity-the-two-tokenizers-and-what-still-separates-them):
+  `<` and `>` end a name for the authority and not here, which no corpus member reaches and which
+  cannot be closed without an error channel this tokenizer does not have. That one also retired a
+  "checked, not assumed" claim elsewhere in that document, which had read the corpus's habit of
+  whitespace-separating `<<` as evidence that both lexers treated it as a delimiter.
 
 **Fixed since:** `gamescript.rs` no longer lexes the shipped infantry unit code `INF` as
 floating-point infinity. Classification was `name.parse::<f64>().is_ok()`, and Rust accepts `inf`,

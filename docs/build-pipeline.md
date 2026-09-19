@@ -166,27 +166,82 @@ engine has never been shown to read.
 
 ### Why the lexer is the Rust one
 
-`tools/gs_syntax.py` ends a `;` comment at `\n` only, but bare CR is a line ending in GameScript.
-That is a recorded latent defect (`docs/roadmap.md`), and it is why validation lexes through
-`lom-asset-viewer --gs-facts`, which uses `spikes/asset-viewer/src/gamescript.rs`: it handles bare
-CR, and it reports `line` and `column`. There is no third lexer. The change report calls
-`gs_syntax.py` as well, on purpose, and **reports when the two disagree** rather than choosing one
-silently.
+Validation lexes through `lom-asset-viewer --gs-facts`, which uses
+`spikes/asset-viewer/src/gamescript.rs`: it reports `line` and `column`, which the Python tokenizer
+does not. There is no third lexer. The change report calls `tools/gs_syntax.py` as well, on purpose,
+and **reports when the two disagree** rather than choosing one silently.
 
-**The defect's reach, measured rather than bounded from above.** A bare CR only costs `gs_syntax.py`
-anything when the member also has a `;` comment that the missing terminator lets run on. Comparing
-its token count against the same rule with CR treated as a terminator, over all 4,692 `.gs` members:
-**34 members lose tokens, every one of them in GS5R3, and zero in vanilla or 3.02.** The worst is
-`gs\dungeons\water\wacave.gs` — 5,347 bytes, 712 tokens, of which `gs_syntax.py` sees **6** —
-which reproduces `docs/research-log.md`'s figure exactly, as does its count of 25 GS5R3 members with
-a comment and no LF at all (those 25 are a subset of the 34; the other 9 have some LF and bare CRs
-as well). Counting instead every member containing a bare CR would give 242 and overstate the reach
-by seven times.
+**Five divergences from that lexer were closed in `gs_syntax.py` on 2026-09-18**, all five found
+the same way — by reading the two implementations side by side rather than by a failure — and all
+five measured against the corpus rather than bounded from above. The instrument is a Python port of
+`gamescript.rs`'s rules, validated first: its token digest matches `--gs-facts`'s `token_sha256` on
+**4,692 of 4,692** members, so a disagreement it reports is a disagreement in `gs_syntax.py` and
+not in the port. That port is a throwaway instrument and is **not committed**, so this number is
+not reproducible from the repository; what is committed is `AuthorityParityTest` in
+`tests/test_gs_syntax.py`, which measures one fixture per divergence against the real
+`lom-asset-viewer` and rebuilds it first, letting Cargo decide freshness rather than guessing at
+it. **Zero of the 4,692 produced a parse error**, which is worth stating because
+`GsFacts::measure` returns an empty `token_sha256` for a member the authority refuses to lex: had
+any member errored it would have dropped out of the comparison silently and shrunk the denominator
+with nobody told.
 
-So the disagreement check is real and its instrument is small: it can only fire on 34 of 4,692
-members, and on **none at all** for a mod built against `vanilla`, which is what
-`mods/orinf-rebalance` is. A run of it that reports no disagreement has proved very little, and this
-is the number that says how little.
+The one difference that is about decoding rather than about token boundaries is handled rather
+than ignored. The Rust lexer decodes with `from_utf8_lossy`, so a byte above 0x7e that is not
+valid UTF-8 becomes U+FFFD in its token text; `gs_syntax.py` decodes latin1 and keeps it. The
+comparison therefore applies the *same* decoder to both sides — either both latin1, or the port's
+own tokens put through `from_utf8_lossy` — and a separator survives either transform, so a moved
+token boundary cannot hide inside it. Compared without that, 17 members read as divergent and
+none of them is. Evidence class: Observed, 2026-09-18, over the three installed profiles; the
+archives are not in this repository, so this measurement is the only evidence for these numbers.
+
+| Divergence in `gs_syntax.py` | Members it changed | Where |
+|---|---:|---|
+| A `;` comment ended at `\n` only, but bare CR is a line ending | **34** | all GS5R3; 25 of them have no LF at all |
+| `\` was an escape inside a string, which the authority has no rule for | **5** | vanilla 1, 3.02 2, GS5R3 2 |
+| `/` did not end a name, and `is_separator` says it does | **5** | vanilla 1, 3.02 1, GS5R3 3 |
+| `str.isspace()` is wider than `is_ascii_whitespace` | **0** | 1 member holds such a byte, inside a string |
+| `(` and `)` were delimiters here; the authority has no parenthesis in `is_separator` | **0** | 530 members hold one, always inside a string or a comment |
+| **After all five: members where the two tokenizers disagree** | **0 of 4,692** | |
+
+The rows are not disjoint: `Dlg\lib_dlg.gs` trips both the string rule and the `/` rule, in
+all three profiles, which is why the totals cannot simply be added.
+
+The worst single case was `gs\dungeons\water\wacave.gs` — 5,347 bytes, 712 tokens, of which
+`gs_syntax.py` saw **6**. The most alarming was not in GS5R3 at all: vanilla's `gs\Dlg\lib_dlg.gs`
+holds the punctuation table `"@#${}()[]\"`, whose closing quote the escape rule ate, and that
+member lexed to 3,247 tokens against its real 2,324. `vanilla` is the profile
+`mods/orinf-rebalance` is built against, so the claim that this class of defect could not reach a
+first mod was wrong before it was written here.
+
+The last two rows are the ones to read carefully, and they were fixed despite measuring zero
+because a disagreement about the grammar is a defect whether or not the shipped corpus exercises
+it. `foo(1)` was four tokens here (`foo`, `(`, `1`, `)`) and one to the engine's lexer, so an edit to `foo (1)` would read
+as a real change to the authority and as layout-only here — in a mod that does not exist yet, which
+is the case this pipeline is for.
+
+The whitespace row is the other one. It is a real divergence in the code —
+`str.isspace()` accepts ASCII `\x0b` and `\x1c`-`\x1f` as well as `\x85` and `\xa0`, and the
+authority accepts none of them — but its corpus reach is **zero**: exactly one member,
+GS5R3's `gs\artifact\_custom\shield_balkoth.gs`, contains such a byte (one `\x85`) and it sits
+**inside a string literal**, where no layout rule looks. It was fixed for parity, not because it
+was costing anything. An earlier draft of this page said that member "trips it", which confused
+containing the byte with lexing differently because of it.
+
+`reports/gs/summary.md` regenerates **byte-identical** after all five fixes. The token hash moved
+for the affected members in each comparison and **no member changed status**, so no tracked report
+needed regenerating.
+
+**What is still open, and why the disagreement check stays.** One divergence: `<` and `>` end a
+name for the authority and do not here, so `x<<y` is three tokens to the engine's lexer and one to
+`gs_syntax.py`. **Zero** corpus members reach it — every `<<` and `>>` in the corpus is already
+whitespace-separated or inside a string, which is also why
+[gamescript-format.md](gamescript-format.md) claimed until 2026-09-18 that both lexers handled
+dictionary delimiters and was wrong. Unlike the parentheses it cannot be closed by editing a set: a
+single `<` not followed by `<` is a *parse error* to the authority, and `gs_syntax.py` has no error
+channel. The same is true of an unterminated string and of an empty literal name. Those
+are named here rather than fixed, and they are what the change report's two-lexer check is left
+watching for. A run of it that reports no disagreement now proves more than it did — the two agree
+on the whole corpus — but it is still a check on two implementations, not on the engine.
 
 ## `build`
 
@@ -356,9 +411,14 @@ This is the part of the document worth reading twice.
   rewritten archive remains the attended 2026-09-16 round trip of an `MPQ_FILE_IMPLODE` member of
   `gs.mpq`. The Phase 4 target `units\orinf.gs` has flags `0x80010100` — EXISTS | ENCRYPTED |
   IMPLODE — so it is in **that same class**, and that is the strongest thing that can be said. It is
-  not a statement about `gs.mpq` in general, about other flag combinations, or about `pic.mpq`, for
-  which a rewritten archive has **never** faced the engine and the compression choice is
-  **Inferred**. Validate warns on every `pic.mpq` member for exactly this reason.
+  not a statement about `gs.mpq` in general or about other flag combinations. **Corrected
+  2026-09-18:** this used to add "and about `pic.mpq`, for which a rewritten archive has never faced
+  the engine and the compression choice is Inferred". Both halves are now stale. A rewritten
+  `pic.mpq` **was** read by the engine and the change read off the screen on 2026-09-18
+  ([roadmap](roadmap.md#the-picmpq-slice-observed-in-gameplay-2026-09-18)), and the compression
+  choice was never Inferred: every one of the 1,071 baseline `pic.mpq` members carries flags
+  `0x80010100`, the same storage class Phase 4 proved. Validate still warns on `pic.mpq` members,
+  which is now a caution about one attended member rather than about an untried archive.
 - **A token classified as a number is never reference-checked.** Reference resolution walks
   `executable_names`, so anything the lexer files as a number, a string or a literal name is outside
   it by construction. This is not hypothetical: before PR #64 the lexer read `INF` as a float, so

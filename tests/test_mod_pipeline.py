@@ -10,19 +10,38 @@ the file is `assert_other_profiles_untouched`, which re-hashes every fabricated 
 operation. It is called by every test that writes anything.
 """
 
+import contextlib
 import hashlib
+import io
 import json
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
+from tools.engine_acceptance import (
+    ACCEPTANCE,
+    ArchiveAcceptance,
+    Disposition,
+    EditKind,
+    EngineRun,
+    Mechanism,
+    StorageClass,
+    build_metadata,
+    roadmap_paragraph,
+    roadmap_region,
+)
+from tools.mod_build import command_report
+from tools.mpq_shape import MANIFEST_COLUMNS
 from tools.mod_tree import GAME_SUBPATH, PROFILE_APPS
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 DEV_PROFILE_NAME = "Lords of Magic Development.app"
+GAME_IS_UP = "lomse.exe is running"
 BASELINE = PROFILE_APPS["vanilla"]
 ARCHIVES = ("gs.mpq", "pic.mpq")
 
@@ -31,37 +50,72 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def game_is_running() -> bool:
-    """True when `lomse.exe` is alive, which these tests cannot run around.
+GAME_PATTERN = r"^[A-Za-z]:[\\]lomse[.]exe"
+BROAD_PATTERN = r"lomse\.exe"
 
-    `scripts/install-dev.sh` and `scripts/restore-dev.sh` refuse while the game is up -- swapping an
-    archive under a live process is a class of corruption no checksum afterwards can undo -- so every
-    test that drives them fails, with a message about the game rather than about the code.
 
-    That is a correct refusal and a useless test result. Skipping names the real reason: measured
-    2026-09-18, opening the Map Editor for an unrelated experiment turned 11 tests red and 3 more
-    into errors, and the suite said nothing about which. A red suite that means "a game is open"
-    teaches people to disbelieve red.
+def matching_processes(pattern: str) -> list[str]:
+    """`pid command` for every process whose command line matches, newest first.
+
+    Named rather than counted, because the whole problem here is that a match is not evidence of
+    what matched.
     """
     try:
-        return (
-            subprocess.run(
-                # `pgrep -f` matches ANY live command line containing the pattern --
-                # including the shell running this check, and any agent or editor that
-                # merely mentions the name. The game itself runs under Wine and its
-                # command line BEGINS with a DOS drive path, so anchor to the start.
-                ["pgrep", "-f", '^[A-Za-z]:[\\\\]lomse[.]exe'],
-                capture_output=True,
-                check=False,
-            ).returncode
-            == 0
+        found = subprocess.run(
+            ["pgrep", "-f", pattern], capture_output=True, check=False, text=True
         )
     except OSError:
         # No pgrep: assume clear rather than skip the suite on a machine that cannot answer.
-        return False
+        return []
+    described = []
+    for pid in found.stdout.split():
+        listed = subprocess.run(
+            ["ps", "-p", pid, "-o", "pid=,command="],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        described.append(" ".join(listed.stdout.split()) or pid)
+    return described
 
 
-@unittest.skipIf(game_is_running(), "lomse.exe is running; install/restore refuse while it is up")
+def game_processes() -> list[str]:
+    r"""Processes that are the running game, as distinct from processes that mention it.
+
+    **The pattern is anchored on purpose**, and matches `scripts/lib-mod-pipeline.sh`'s. `pgrep -f`
+    matches the whole command line, so the obvious pattern -- `lomse.exe` -- answers "does anything
+    mention this name?" rather than "is the game running?". It matches this project's own tools,
+    which take that path as an argument (`engine_probe.py`, `dumpva`, the save survey, the
+    corpus-gated disassembly test), and it matches any agent, editor or shell whose command line
+    quotes the name. Three agents tripped it in one day, and writing the fix tripped it: a comment
+    in the patch command contained `d:\lomse.exe`.
+
+    Merely requiring the backslash form is not enough for the same reason -- it still matches
+    anything that *quotes* a Wine path. The game's own command line **begins** with a DOS drive
+    path, `d:\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1`, so the pattern is anchored to a
+    leading drive letter. Verified in both directions rather than only the quiet one: with the game
+    closed it does not match, and a decoy process carrying a game-shaped command line does.
+
+    **No pattern is sufficient on its own**, which is why `run_script` retries rather than trusting
+    this. Sampling `ps` continuously through a failing run caught **zero** matching command lines,
+    so some matches are processes that exit within milliseconds -- anchoring shrinks the
+    false-positive population but cannot win a race against a process that is already gone.
+
+    The stakes are the skip, not the tidiness. A false positive here would *skip* the install,
+    profile-creation and restore coverage, silently, exactly while the corpus tooling runs. A guard
+    that cannot be wrong loudly reports safety it has not earned, which is the failure this file's
+    neighbours have spent several rounds removing.
+    """
+    return matching_processes(GAME_PATTERN)
+
+
+GAME_PROCESSES = game_processes()
+
+
+@unittest.skipIf(
+    bool(GAME_PROCESSES),
+    f"the game is running, so install/restore refuse: {GAME_PROCESSES}",
+)
 class PipelineTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
@@ -100,7 +154,7 @@ class PipelineTestCase(unittest.TestCase):
         """
         self.assertEqual(self.snapshot(), self.pristine_state)
 
-    def run_script(self, name: str, *arguments: str) -> subprocess.CompletedProcess:
+    def _invoke(self, name: str, arguments: tuple[str, ...]) -> subprocess.CompletedProcess:
         environment = dict(os.environ)
         environment["LOM_APPLICATIONS_DIR"] = str(self.applications)
         environment["LOM_ARTIFACTS_DIR"] = str(self.artifacts)
@@ -110,6 +164,58 @@ class PipelineTestCase(unittest.TestCase):
             text=True,
             env=environment,
             cwd=PROJECT_DIR,
+        )
+
+    def run_script(self, name: str, *arguments: str) -> subprocess.CompletedProcess:
+        r"""Run a pipeline script, and decide honestly what a "game is running" refusal means.
+
+        The scripts refuse while the game is up, which is correct and makes every assertion about
+        their output fail with a message about the game rather than about the code. The
+        class-level `skipIf` asks once, before any test runs, so a game that appears *during* the
+        suite slips past it.
+
+        Skipping on the refusal alone would be worse than the red it replaces. The shell guard is
+        a `pgrep -f` against the same anchored pattern this module uses; it used to be the bare
+        name, which matched this project's own tools -- they take that path as an argument -- and
+        matched anything that merely quoted it. Skipping on *that* would have deleted this file's
+        install, profile-creation and restore coverage silently, at exactly the moment the corpus
+        tooling runs. So:
+
+        - a process that really is the game (Wine's `d:\lomse.exe`, backslash) -> skip, naming it;
+        - a refusal with no such process -> retry once, because the match may have been a
+          process that has already exited, and then **fail**, printing whatever a looser match
+          finds, because a refusal that cannot be attributed to the game is a defect in the guard
+          rather than a state to tolerate.
+
+        **The retry is load-bearing, not caution, and deleting it restores the flake it fixes.**
+        Anchoring shrinks the false-positive population but cannot win a race: sampling `ps`
+        continuously through a failing run caught **zero** matching command lines, so some matches
+        are processes that exit within milliseconds and are gone before anything can name them.
+        Retrying is safe by construction -- the guard refuses *before* the script writes anything,
+        so a refused run has changed nothing to re-run over.
+        """
+        completed = self._invoke(name, arguments)
+        if GAME_IS_UP not in completed.stderr:
+            return completed
+
+        running = game_processes()
+        if running:
+            raise unittest.SkipTest(f"the game started while the suite ran: {running}")
+
+        broad = matching_processes(BROAD_PATTERN)
+        completed = self._invoke(name, arguments)
+        if GAME_IS_UP not in completed.stderr:
+            return completed
+
+        running = game_processes()
+        if running:
+            raise unittest.SkipTest(f"the game started while the suite ran: {running}")
+        self.fail(
+            f"{name} refused twice because its `pgrep -f` matched, but nothing matches "
+            f"{GAME_PATTERN!r}, so the game is not running. A looser `lomse.exe` match found: "
+            f"{broad or 'nothing, by the time this test could look'}. A persistent match that is "
+            "not the game is a defect in the guard (scripts/lib-mod-pipeline.sh), not a state to "
+            "tolerate."
         )
 
     @property
@@ -354,6 +460,313 @@ class ProfileTableTest(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unknown profile label", result.stderr)
+
+
+class EngineAcceptanceCaveatTest(unittest.TestCase):
+    """What the engine has accepted is data, and these tests assert the data.
+
+    The history matters more than the tests do. The caveat `build.json` carries was a hand-written
+    sentence; it went stale, claiming no rewritten `pic.mpq` had faced the engine after one had.
+    The repair was a test that grepped that sentence, and review then broke it three times running:
+    `NOT established` became `ALSO established`; then `have none of them` became `have every one of
+    them`; then a new sentence was appended after the clause being asserted -- "In fact, the engine
+    accepted a size-changing edit, an added member, and the full ByteRun1 encoder" -- and every
+    assertion stayed green. Three bypasses, one cause: a finite set of assertions about prose
+    cannot constrain the open set of sentences prose can be.
+
+    So the sentence is no longer written. `tools/engine_acceptance.py` holds the facts, every
+    sentence is rendered from them, and these tests assert the facts and the rendering. A false
+    claim is now unrepresentable rather than un-greppable: the limits are *derived* from what the
+    run was, so saying the engine accepted a size-changing edit means saying the run was
+    size-changing, which changes the rendered roadmap paragraph, which stops matching
+    `docs/roadmap.md`, which fails here.
+    """
+
+    def roadmap(self) -> str:
+        return (PROJECT_DIR / "docs" / "roadmap.md").read_text(encoding="utf-8")
+
+    @staticmethod
+    def flatten(text: str) -> str:
+        """Compare wording, not line breaks: the doc is wrapped and the renderer is not."""
+        return " ".join(text.split())
+
+    def test_the_pic_run_is_recorded_as_the_narrow_thing_it_was(self) -> None:
+        run = ACCEPTANCE["pic.mpq"].run
+        self.assertIsNotNone(run)
+        self.assertEqual(run.date, "2026-09-18")
+        self.assertEqual(run.members, 1)
+        self.assertIs(run.disposition, Disposition.REPLACED)
+        self.assertIs(run.edit_kind, EditKind.LENGTH_PRESERVING)
+        self.assertIs(run.mechanism, Mechanism.PBM_PATCH)
+
+    def test_the_limits_are_derived_from_the_run_rather_than_typed_beside_it(self) -> None:
+        """The property that makes the false claim unrepresentable, asserted directly.
+
+        A run that was length-preserving *implies* that a size-changing edit is untested, and a
+        run that replaced a member implies that an added one is. Nobody can delete those limits
+        while leaving the run describing what it describes.
+        """
+        run = ACCEPTANCE["pic.mpq"].run
+        self.assertIn("an edit that changes a member's size", run.derived_limits)
+        self.assertIn("a member added to an archive rather than replaced", run.derived_limits)
+
+        widened = replace(run, edit_kind=EditKind.SIZE_CHANGING, disposition=Disposition.ADDED)
+        self.assertNotIn("an edit that changes a member's size", widened.derived_limits)
+        self.assertNotIn(
+            "a member added to an archive rather than replaced", widened.derived_limits
+        )
+
+    def test_every_archive_with_a_run_has_a_marked_region_that_is_the_render(self) -> None:
+        """Enumerated, not hardcoded, and equal rather than contained.
+
+        Two earlier versions of this were weaker in ways that only show up when someone adds an
+        archive: one checked `pic.mpq` by name, so `gs.mpq` -- and any future archive -- was
+        coupled to nothing; and one asked whether a sentence appeared *anywhere* in the document,
+        which cannot see polarity or place. `docs/build-pipeline.md` quotes a refuted claim in
+        order to refute it, and any sub-span of that quotation would have satisfied the old rule.
+        A marked region compared for equality has neither problem.
+        """
+        roadmap = self.roadmap()
+        covered = 0
+        for archive, acceptance in sorted(ACCEPTANCE.items()):
+            if acceptance.run is None:
+                continue
+            covered += 1
+            with self.subTest(archive=archive):
+                open_marker, close_marker = roadmap_region(archive)
+                self.assertIn(open_marker, roadmap, f"{archive} has no marked region")
+                self.assertIn(close_marker, roadmap, f"{archive}'s marked region is not closed")
+                region = roadmap.split(open_marker, 1)[1].split(close_marker, 1)[0]
+                self.assertEqual(
+                    self.flatten(region),
+                    self.flatten(roadmap_paragraph(archive)),
+                    f"docs/roadmap.md's {archive} region is not what "
+                    "tools/engine_acceptance.py renders. The facts are the source: change them "
+                    "there and paste what roadmap_paragraph prints.",
+                )
+        self.assertGreater(covered, 1, "at least gs.mpq and pic.mpq have runs")
+
+    def test_the_roadmap_still_records_the_acceptance_the_facts_claim(self) -> None:
+        run = ACCEPTANCE["pic.mpq"].run
+        self.assertIn(
+            "- [x] Put a rewritten `pic.mpq` in front of the engine. **Observed in gameplay "
+            f"{run.date}**",
+            self.roadmap(),
+            "the facts claim an accepted pic.mpq run on that date and the roadmap does not record "
+            "it; the build caveat follows the roadmap rather than leading it",
+        )
+
+    def test_the_build_metadata_carries_the_structure_and_not_only_the_sentence(self) -> None:
+        metadata = build_metadata()
+        self.assertEqual(sorted(metadata), sorted(ACCEPTANCE))
+        pic = metadata["pic.mpq"]
+        self.assertEqual(pic["summary"], ACCEPTANCE["pic.mpq"].summary())
+        self.assertEqual(pic["established"]["edit_kind"], "length_preserving")
+        self.assertEqual(pic["established"]["disposition"], "replaced")
+        self.assertEqual(pic["not_established"], list(ACCEPTANCE["pic.mpq"].not_established))
+        for archive in ("imp.mpq", "sndfx.mpq", "special.mpq"):
+            with self.subTest(archive=archive):
+                self.assertIsNone(metadata[archive]["established"])
+                self.assertIn("Never tested", metadata[archive]["summary"])
+
+    def test_every_observation_reaches_the_documentation_through_its_region(self) -> None:
+        """The one free-text field, pinned to a place rather than to a document.
+
+        `observation` is the only sentence a record still writes, and the previous rule -- does it
+        appear somewhere in `roadmap.md` or `build-pipeline.md` -- was blind to both polarity and
+        place. It now has to appear inside that archive's own marked region, which the test above
+        holds equal to the render, so widening it means writing the wider claim into the roadmap
+        where a reader will meet it.
+        """
+        roadmap = self.roadmap()
+        for archive, acceptance in sorted(ACCEPTANCE.items()):
+            if acceptance.run is None:
+                continue
+            with self.subTest(archive=archive):
+                open_marker, close_marker = roadmap_region(archive)
+                region = roadmap.split(open_marker, 1)[1].split(close_marker, 1)[0]
+                self.assertIn(
+                    self.flatten(acceptance.run.observation),
+                    self.flatten(region),
+                    "an observation has to be a claim the roadmap makes in this archive's region",
+                )
+
+    def test_an_observation_may_not_carry_a_quantity_the_run_does_not_record(self) -> None:
+        with self.assertRaises(ValueError):
+            EngineRun(
+                date="2026-09-18",
+                members=1,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism=Mechanism.PBM_PATCH,
+                observation="Each of the 1,071 members was re-encoded and accepted.",
+            )
+        # And the other direction: the run's own count and its date are quantities it records, so
+        # a sentence citing them is allowed. Without this the rule could be narrowed to forbid
+        # every number and no test would notice.
+        EngineRun(
+            date="2026-09-18",
+            members=3,
+            disposition=Disposition.REPLACED,
+            edit_kind=EditKind.LENGTH_PRESERVING,
+            mechanism=Mechanism.PBM_PATCH,
+            observation="The engine read 3 members on 2026-09-18.",
+        )
+
+    def test_the_summary_is_nothing_but_its_facts(self) -> None:
+        """Rebuild every sentence from the record and demand equality. Deliberately brittle.
+
+        Structure alone does not stop a renderer from appending a claim no field holds -- a
+        reviewer demonstrated exactly that, with "In fact, the engine accepted a size-changing
+        edit, an added member, and the full ByteRun1 encoder" added inside `summary()`. Asserting
+        *properties* of the output cannot catch that, because the output is prose again by the time
+        it is a string. So this reconstructs the string from the fields and compares it, which
+        means a reflow of the template fails here and a human re-approves it. Brittle and loud
+        beats permissive and quiet for a claim about what the engine has accepted.
+        """
+        for name, acceptance in sorted(ACCEPTANCE.items()):
+            with self.subTest(archive=name):
+                limits = "; ".join(acceptance.not_established)
+                if acceptance.run is None:
+                    expected = (
+                        f"Never tested. No {name} this pipeline wrote has been put in front of "
+                        f"the engine. Not established: {limits}."
+                    )
+                else:
+                    run = acceptance.run
+                    expected = (
+                        f"Observed {run.date}, once: {run.members} member of {name}, "
+                        f"{run.disposition.value}, with a {run.edit_kind.value} edit made by "
+                        f"{run.mechanism.value}. {run.observation} Not established: "
+                        f"{limits}."
+                    )
+                    if acceptance.storage_class:
+                        expected += f" {acceptance.storage_class.value}"
+                self.assertEqual(acceptance.summary(), expected)
+
+    def test_the_build_json_a_real_report_writes_is_the_rendered_facts(self) -> None:
+        """Run the build's own report command and read what it wrote.
+
+        This replaces a check on the *shape of the source* -- an AST walk asserting the dict
+        literal held `engine_acceptance.build_metadata()`. That could not see what happened to the
+        dict afterwards, and a reviewer walked straight past it by mutating `build` between the
+        literal and `write_text`. A source-shape check cannot bound runtime behaviour. One
+        equality on the file the command actually produces closes the whole class.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mod = root / "caveat-probe"
+            (mod / "archives" / "gs.mpq" / "units").mkdir(parents=True)
+            (mod / "mod.toml").write_text(
+                'id = "caveat-probe"\n'
+                'name = "Caveat probe"\n'
+                'version = "0.0.1"\n'
+                'description = "A tree that exists only so the report command can run."\n'
+                'base_profile = "vanilla"\n',
+                encoding="utf-8",
+            )
+            member = mod / "archives" / "gs.mpq" / "units" / "orinf.gs"
+            member.write_bytes(b"/hit_points 18 def")
+
+            manifest = root / "gs.tsv"
+            manifest.write_text(
+                "\t".join(MANIFEST_COLUMNS)
+                + "\n"
+                + "\t".join(
+                    [
+                        "units\\orinf.gs",
+                        "3",
+                        "7",
+                        "18",
+                        "18",
+                        "0x80010100",
+                        "0",
+                        "a" * 64,
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            def facts_file(name: str, member: str) -> Path:
+                # `--gs-facts` output: the base file is keyed by member path, the mod file by the
+                # path inside the tree, which is how `build_change_report` looks each of them up.
+                path = root / name
+                path.write_text(
+                    json.dumps(
+                        {
+                            "name": member,
+                            "sha256": "a" * 64,
+                            "token_sha256": "b" * 64,
+                            "token_count": 4,
+                            "parse_error": None,
+                            "scalar_definitions": {"hit_points": "18"},
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                return path
+
+            base_facts = facts_file("base-facts.jsonl", "units\\orinf.gs")
+            mod_facts = facts_file("mod-facts.jsonl", "archives/gs.mpq/units/orinf.gs")
+            symbols = root / "symbols.tsv"
+            symbols.write_text(
+                "name\tkind\tevidence\tprofiles\tmember\tline\n", encoding="utf-8"
+            )
+            output = root / "out"
+            output.mkdir()
+
+            arguments = SimpleNamespace(
+                mod=mod,
+                base_manifest=[("gs.mpq", str(manifest))],
+                base_gs_facts=str(base_facts),
+                mod_gs_facts=str(mod_facts),
+                base_file=[],
+                base_digest=[],
+                tool_digest=[],
+                output_digest=[],
+                symbols=str(symbols),
+                build_id="probe",
+                output_dir=str(output),
+            )
+            # The command prints its change report; this test is about the file it writes.
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_report(arguments), 0)
+            written = json.loads((output / "build.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(written["engine_acceptance"], build_metadata())
+
+    def test_a_run_that_cannot_have_happened_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            EngineRun(
+                date="2026-09-18",
+                members=0,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism=Mechanism.PBM_PATCH,
+                observation="y",
+            )
+        with self.assertRaises(ValueError):
+            EngineRun(
+                date="last Tuesday",
+                members=1,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism=Mechanism.PBM_PATCH,
+                observation="y",
+            )
+        with self.assertRaises(ValueError):
+            ArchiveAcceptance(archive="imp.mpq", run=None)
+
+    def test_the_gs_run_still_matches_the_prose_that_cites_it(self) -> None:
+        run = ACCEPTANCE["gs.mpq"].run
+        self.assertEqual(run.date, "2026-09-16")
+        self.assertIn(
+            f"attended {run.date} round trip of an `MPQ_FILE_IMPLODE` member of",
+            (PROJECT_DIR / "docs" / "build-pipeline.md").read_text(encoding="utf-8"),
+        )
+        self.assertIs(ACCEPTANCE["gs.mpq"].storage_class, StorageClass.IMPLODE_PROVED)
+        self.assertIn("0x80010100", ACCEPTANCE["gs.mpq"].storage_class.value)
 
 
 if __name__ == "__main__":

@@ -200,6 +200,11 @@ def scan(corpus: Path, operator: str, window: int = DEFAULT_WINDOW) -> tuple[lis
         if not path.is_file() or path.suffix.lower() not in {".gs", ".txt"}:
             continue
         try:
+            # `read_text` applies universal-newline translation, so every bare CR and CRLF in a
+            # member becomes `\n` before the tokenizer or the line arithmetic below sees it. That
+            # is why the `\n`-only counting at the bottom of this function is correct here and is
+            # NOT the defect `tools/gs_syntax.py` carried until 2026-09-18: this module never sees
+            # a bare CR. Reading bytes instead would silently break the reported line numbers.
             source = path.read_text(errors="replace")
         except OSError:
             continue

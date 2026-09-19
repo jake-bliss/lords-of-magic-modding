@@ -345,7 +345,8 @@ number locates nothing. 501 GS5R3 members have the same shape. The offset is the
 `profile-diff.tsv` carries presence per profile and, for each pair, a difference class. Formatting is
 separated from content the same way [`tools/compare_trees.py`](../tools/compare_trees.py) separates
 them for trees, and for the same reason Phase 1 required it — but computed from this crate's lexer
-rather than that tool's tokenizer, which matters (see [below](#a-defect-in-toolsgs_syntaxpy)).
+rather than that tool's tokenizer, which mattered (see
+[below](#a-defect-in-toolsgs_syntaxpy-fixed-2026-09-18)).
 
 ### 3.02 changes no gameplay record at all
 
@@ -547,9 +548,9 @@ summarised, and `a_non_finite_number_token_is_never_summarised_as_a_value` fails
 removed. It is now defence against an overflowing literal rather than against a spelled-out
 infinity, which the lexer no longer produces.
 
-### A defect in `tools/gs_syntax.py`
+### A defect in `tools/gs_syntax.py`, fixed 2026-09-18
 
-`tokens()` terminates a `;` comment at the next `\n`:
+`tokens()` used to terminate a `;` comment at the next `\n`:
 
 ```python
 if character == ";":
@@ -560,15 +561,29 @@ if character == ";":
 
 But [bare CR is a line ending in this corpus](gamescript-format.md#line-endings-bare-cr-is-a-line-ending-here),
 and 25 GS5R3 members contain a `;` comment and **no LF at all**. In those members the first comment
-swallows the rest of the file. `gs\dungeons\water\wacave.gs` is 5,347 bytes and normalises to **six
-tokens**. Measured 2026-09-18.
+swallowed the rest of the file. `gs\dungeons\water\wacave.gs` is 5,347 bytes and normalised to
+**six tokens**. Measured 2026-09-18.
 
-This is the exact failure `gamescript-format.md` already warns about — "a reader that splits on LF
+This was the exact failure `gamescript-format.md` already warns about — "a reader that splits on LF
 sees a single comment swallow dozens of live statements" — surviving in a tool the warning did not
-reach. It feeds `tools/compare_trees.py`'s token hash, so the **"Layout/comments only" column** in
-[`reports/gs/summary.md`](../reports/gs/summary.md) is unreliable for those members: two files
-differing only inside a swallowed region hash equal and are called formatting-only. It is why the
-profile diff here is computed from the Rust lexer instead. Evidence class: Observed.
+reach. It fed `tools/compare_trees.py`'s token hash, so the **"Layout/comments only" column** in
+[`reports/gs/summary.md`](../reports/gs/summary.md) was unreliable for those members: two files
+differing only inside a swallowed region hash equal and are called formatting-only.
+
+**Fixed the same day, along with three more.** The comment now ends at the first of `\r` or `\n`,
+with the terminator left to the whitespace branch, which is what `skip_layout` in the Rust lexer
+does. Looking for siblings of it found three: `\` was treated as a string escape the authority has
+no rule for (**5 members, in all three profiles** — vanilla's `Dlg\lib_dlg.gs` lexed to 3,247
+tokens against its real 2,324), `/` did not end a name (**5 members**), and `str.isspace()` is
+wider than `is_ascii_whitespace` (**0 members**). Re-measured over all 4,692 `.gs` members of the
+three profiles: **zero** now tokenize differently, against 34 before for the comment rule alone,
+and `wacave.gs` yields 712 tokens — the count `--gs-facts` reports for it. The classified output
+did not move: `reports/gs/summary.md` is byte-identical after regeneration, with token hashes
+changing and no member changing status. The profile diff here is still computed from the Rust
+lexer, which is the one that reports `line` and `column`, and what is left between the two is
+listed in
+[the lexer parity section](gamescript-format.md#lexer-parity-the-two-tokenizers-and-what-still-separates-them).
+Evidence class: Observed.
 
 ## Tests
 

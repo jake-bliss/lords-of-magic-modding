@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import engine_acceptance  # noqa: E402
 from mod_report import (  # noqa: E402
     build_change_report,
     read_symbol_members,
@@ -181,17 +182,13 @@ def command_report(arguments) -> int:
         "tool_digests": dict(arguments.tool_digest),
         "output_archive_digests": dict(arguments.output_digest),
         "changed_members": [change.as_row() for change in changes],
-        # Recorded in the build rather than only in the docs, so a build carries its own caveat.
-        "engine_acceptance": {
-            "gs.mpq": (
-                "Observed 2026-09-16, once, for an MPQ_FILE_IMPLODE member. The engine ran a "
-                "gs.mpq this pipeline's writer produced."
-            ),
-            "pic.mpq": (
-                "Never tested. No rewritten pic.mpq has been put in front of the engine and the "
-                "compression choice for one is Inferred."
-            ),
-        },
+        # Recorded in the build rather than only in the docs, so a build carries its own caveat --
+        # rendered from `tools/engine_acceptance.py` rather than written here. It is deliberately
+        # authoritative, which is exactly why it must not be prose a hand can edit: it used to be a
+        # literal, it went stale, and three successive tests that asserted things *about* the
+        # literal were each defeated by rewording it. The build carries the structure as well as
+        # the sentence, and both come from the same facts.
+        "engine_acceptance": engine_acceptance.build_metadata(),
     }
     (output_dir / "build.json").write_text(
         json.dumps(build, indent=2, sort_keys=True) + "\n", encoding="utf-8"
