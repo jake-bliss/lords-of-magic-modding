@@ -252,6 +252,22 @@ there, not on the map.
 member rather than replacing one has still never been tried, and nothing here says a *large* mod
 loads -- only that a correct one-member rewrite does.
 
+<!-- The two blocks marked `engine-acceptance:<archive>` are RENDERED from
+     tools/engine_acceptance.py. Do not edit them by hand: change the facts there and paste
+     what `roadmap_paragraph("<archive>")` prints. tests/test_mod_pipeline.py requires each
+     marked region to equal the render, for every archive with a run -- which is what keeps a
+     claim here and the caveat in every build.json from drifting apart. -->
+<!-- engine-acceptance:gs.mpq -->
+**Not established.** 1 member of one `gs.mpq`, replaced rather than added, with a length-preserving
+edit made by the mod pipeline's own writer, 2026-09-16. The attended 2026-09-16 round trip of an
+MPQ_FILE_IMPLODE member of gs.mpq. The engine has not been shown an edit that changes a member's
+size. The engine has not been shown a member added to an archive rather than replaced. The engine
+has not been shown a second member of the same archive in one build. The engine has not been shown
+any flag combination other than 0x80010100. The member carried flags 0x80010100 (EXISTS | ENCRYPTED
+| IMPLODE), which is the only storage class any run has covered. `imp.mpq`, `sndfx.mpq` and
+`special.mpq` remain untested.
+<!-- /engine-acceptance:gs.mpq -->
+
 The `pic.mpq` half of this paragraph was closed on 2026-09-18; see the `pic.mpq` slice under Phase 5.
 
 ## Phase 5 — Asset pipeline
@@ -342,16 +358,16 @@ new-game setup. The name means "the new-game menu". An instruction to the human 
 reading the image rather than on knowing where the engine draws it was wrong about where to look;
 the observation succeeded anyway because the main menu is the first thing drawn.
 
-<!-- Rendered from tools/engine_acceptance.py. Do not edit this paragraph by hand: change the
-     facts there and paste what `roadmap_paragraph("pic.mpq")` prints. tests/test_mod_pipeline.py
-     fails when the two differ, which is how a claim here and a claim in every build.json are kept
-     from drifting apart -- the defect this whole arrangement exists for. -->
-
+<!-- engine-acceptance:pic.mpq -->
 **Not established.** 1 member of one `pic.mpq`, replaced rather than added, with a length-preserving
-edit. The engine has not been shown an edit that changes a member's size. The engine has not been
-shown a member added to an archive rather than replaced. The engine has not been shown a second
-member of the same archive in one build. The engine has not been shown the full ByteRun1 encoder,
-which no run has used. `imp.mpq`, `sndfx.mpq` and `special.mpq` remain untested.
+edit made by tools/pbm_patch.py, 2026-09-18. The engine read an archive this pipeline built from
+pic.mpq, and a human read the change off the screen. The engine has not been shown an edit that
+changes a member's size. The engine has not been shown a member added to an archive rather than
+replaced. The engine has not been shown a second member of the same archive in one build. The engine
+has not been shown the full ByteRun1 encoder, which no run has used. The compression choice is not
+Inferred: all 1,071 baseline members carry flags 0x80010100, the same storage class the gs.mpq run
+proved. `imp.mpq`, `sndfx.mpq` and `special.mpq` remain untested.
+<!-- /engine-acceptance:pic.mpq -->
 
 Note that painting has never been verified by a probe loading a painted map, and the core tile
 family, road in either role, and painting across an existing boundary are refused rather than

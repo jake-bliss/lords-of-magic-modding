@@ -157,13 +157,14 @@ def stem_runs(order: list[str], minimum: int = 3) -> list[tuple[str, list[str]]]
     return runs
 
 
-def caller_group_agreement(
-    order: list[str], callers: dict[str, set[str]], depth: int = 2, seed: int = 11
-) -> dict[str, float]:
-    """Compare run structure of each operator's dominant caller directory against a shuffle.
+def dominant_directories(
+    order: list[str], callers: dict[str, set[str]], depth: int = 2
+) -> list[str | None]:
+    """Each operator's dominant caller directory, or None when it has no callers.
 
-    Reported because it is the obvious hypothesis and it does **not** hold: the script tree is
-    organised for the mod's authors, not along the engine's internal seams.
+    Split out of `caller_group_agreement` so the choice itself is testable. A test that can only
+    see the mean run length cannot tell which of two tied directories won, which is the whole
+    property the tie-break exists to fix.
     """
     dominant: list[str | None] = []
     for name in order:
@@ -173,11 +174,24 @@ def caller_group_agreement(
             continue
         # Deterministic tie-break. `files` is a set, so its iteration order varies with Python's
         # string hash randomisation, and `Counter.most_common` breaks ties by insertion order --
-        # which made this row, and only this row, move between runs of the same corpus with the
-        # same tokenizer: observed 1.43-1.45 and ratio 1.31-1.32x over five runs. A published
-        # measurement a reader cannot reproduce is not a measurement. Measured 2026-09-18.
+        # which made the dominant-directory row, and only that row, move between runs of the same
+        # corpus with the same tokenizer: observed 1.43-1.45 and ratio 1.31-1.32x over five runs.
+        # A published measurement a reader cannot reproduce is not a measurement. Measured
+        # 2026-09-18.
         groups = Counter("\\".join(file.split("__")[:depth]) for file in sorted(files))
         dominant.append(min(groups.items(), key=lambda group: (-group[1], group[0]))[0])
+    return dominant
+
+
+def caller_group_agreement(
+    order: list[str], callers: dict[str, set[str]], depth: int = 2, seed: int = 11
+) -> dict[str, float]:
+    """Compare run structure of each operator's dominant caller directory against a shuffle.
+
+    Reported because it is the obvious hypothesis and it does **not** hold: the script tree is
+    organised for the mod's authors, not along the engine's internal seams.
+    """
+    dominant = dominant_directories(order, callers, depth)
 
     def mean_run(sequence: list[str | None]) -> float:
         runs = []

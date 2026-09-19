@@ -11,6 +11,7 @@ from tools.operator_groups import (
     call_site_agreement,
     caller_group_agreement,
     caller_index,
+    dominant_directories,
     name_stem,
     read_table_order,
     stem_agreement,
@@ -177,7 +178,9 @@ print(caller_group_agreement(order, callers)["observed"])
         }
         self.assertEqual(first, caller_group_agreement(order, reversed_callers))
 
-        # Both operators resolve to the same dominant directory, so they form one run of two.
+        # Naming the winner, because a run length of 2 is satisfied by EITHER tie outcome as long
+        # as both operators pick the same one -- which is not the property under test.
+        self.assertEqual(dominant_directories(order, callers), ["a\\y", "a\\y"])
         self.assertEqual(first["observed"], 2.0)
 
     def test_a_clear_majority_still_wins(self) -> None:

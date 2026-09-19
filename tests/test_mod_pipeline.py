@@ -10,8 +10,9 @@ the file is `assert_other_profiles_untouched`, which re-hashes every fabricated 
 operation. It is called by every test that writes anything.
 """
 
-import ast
+import contextlib
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -20,6 +21,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from tools.engine_acceptance import (
     ACCEPTANCE,
@@ -27,13 +29,19 @@ from tools.engine_acceptance import (
     Disposition,
     EditKind,
     EngineRun,
+    Mechanism,
+    StorageClass,
     build_metadata,
     roadmap_paragraph,
+    roadmap_region,
 )
+from tools.mod_build import command_report
+from tools.mpq_shape import MANIFEST_COLUMNS
 from tools.mod_tree import GAME_SUBPATH, PROFILE_APPS
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 DEV_PROFILE_NAME = "Lords of Magic Development.app"
+GAME_IS_UP = "lomse.exe is running"
 BASELINE = PROFILE_APPS["vanilla"]
 ARCHIVES = ("gs.mpq", "pic.mpq")
 
@@ -111,13 +119,22 @@ class PipelineTestCase(unittest.TestCase):
         environment = dict(os.environ)
         environment["LOM_APPLICATIONS_DIR"] = str(self.applications)
         environment["LOM_ARTIFACTS_DIR"] = str(self.artifacts)
-        return subprocess.run(
+        completed = subprocess.run(
             [str(PROJECT_DIR / "scripts" / name), *arguments],
             capture_output=True,
             text=True,
             env=environment,
             cwd=PROJECT_DIR,
         )
+        if GAME_IS_UP in completed.stderr:
+            # The class-level `skipIf` asks once, before any test runs. A game opened *during* the
+            # suite slips past it, and then every script refuses and every assertion about stderr
+            # fails with a message about the game -- which is the state this file's `skipIf` exists
+            # to avoid, arriving through the one door it does not cover. Observed 2026-09-18: three
+            # runs of `tests.test_mod_pipeline` went red this way while the class ran green on its
+            # own, and the failure text was `lomse.exe is running; quit the game first.`
+            raise unittest.SkipTest("lomse.exe started while the suite was running")
+        return completed
 
     @property
     def dev_root(self) -> Path:
@@ -398,7 +415,7 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
         self.assertEqual(run.members, 1)
         self.assertIs(run.disposition, Disposition.REPLACED)
         self.assertIs(run.edit_kind, EditKind.LENGTH_PRESERVING)
-        self.assertEqual(run.mechanism, "tools/pbm_patch.py")
+        self.assertIs(run.mechanism, Mechanism.PBM_PATCH)
 
     def test_the_limits_are_derived_from_the_run_rather_than_typed_beside_it(self) -> None:
         """The property that makes the false claim unrepresentable, asserted directly.
@@ -417,14 +434,35 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
             "a member added to an archive rather than replaced", widened.derived_limits
         )
 
-    def test_the_roadmap_paragraph_is_the_rendered_one(self) -> None:
-        """The build and the doc cannot drift apart, because both are printed from one record."""
-        self.assertIn(
-            self.flatten(roadmap_paragraph("pic.mpq")),
-            self.flatten(self.roadmap()),
-            "docs/roadmap.md no longer matches tools/engine_acceptance.py. Whichever moved, the "
-            "facts are the source: change them there and paste what roadmap_paragraph prints.",
-        )
+    def test_every_archive_with_a_run_has_a_marked_region_that_is_the_render(self) -> None:
+        """Enumerated, not hardcoded, and equal rather than contained.
+
+        Two earlier versions of this were weaker in ways that only show up when someone adds an
+        archive: one checked `pic.mpq` by name, so `gs.mpq` -- and any future archive -- was
+        coupled to nothing; and one asked whether a sentence appeared *anywhere* in the document,
+        which cannot see polarity or place. `docs/build-pipeline.md` quotes a refuted claim in
+        order to refute it, and any sub-span of that quotation would have satisfied the old rule.
+        A marked region compared for equality has neither problem.
+        """
+        roadmap = self.roadmap()
+        covered = 0
+        for archive, acceptance in sorted(ACCEPTANCE.items()):
+            if acceptance.run is None:
+                continue
+            covered += 1
+            with self.subTest(archive=archive):
+                open_marker, close_marker = roadmap_region(archive)
+                self.assertIn(open_marker, roadmap, f"{archive} has no marked region")
+                self.assertIn(close_marker, roadmap, f"{archive}'s marked region is not closed")
+                region = roadmap.split(open_marker, 1)[1].split(close_marker, 1)[0]
+                self.assertEqual(
+                    self.flatten(region),
+                    self.flatten(roadmap_paragraph(archive)),
+                    f"docs/roadmap.md's {archive} region is not what "
+                    "tools/engine_acceptance.py renders. The facts are the source: change them "
+                    "there and paste what roadmap_paragraph prints.",
+                )
+        self.assertGreater(covered, 1, "at least gs.mpq and pic.mpq have runs")
 
     def test_the_roadmap_still_records_the_acceptance_the_facts_claim(self) -> None:
         run = ACCEPTANCE["pic.mpq"].run
@@ -449,30 +487,26 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
                 self.assertIsNone(metadata[archive]["established"])
                 self.assertIn("Never tested", metadata[archive]["summary"])
 
-    def test_every_observation_is_a_sentence_the_documentation_already_carries(self) -> None:
-        """The last free-text field, tied to prose a human reviewed.
+    def test_every_observation_reaches_the_documentation_through_its_region(self) -> None:
+        """The one free-text field, pinned to a place rather than to a document.
 
-        `observation` is the only sentence in the record, and free text is where a widened claim
-        hides -- a reviewer changed it to "Each of the 1,071 members was re-encoded and accepted"
-        and every structural assertion passed. Two things stop that now: `EngineRun` refuses a
-        number the run does not record, and this test requires the sentence to appear in the
-        documentation, so widening it means also writing the wider claim where a reader will see
-        it.
+        `observation` is the only sentence a record still writes, and the previous rule -- does it
+        appear somewhere in `roadmap.md` or `build-pipeline.md` -- was blind to both polarity and
+        place. It now has to appear inside that archive's own marked region, which the test above
+        holds equal to the render, so widening it means writing the wider claim into the roadmap
+        where a reader will meet it.
         """
-        prose = self.flatten(
-            " ".join(
-                (PROJECT_DIR / "docs" / name).read_text(encoding="utf-8")
-                for name in ("roadmap.md", "build-pipeline.md")
-            )
-        ).replace("`", "")
-        for name, acceptance in sorted(ACCEPTANCE.items()):
+        roadmap = self.roadmap()
+        for archive, acceptance in sorted(ACCEPTANCE.items()):
             if acceptance.run is None:
                 continue
-            with self.subTest(archive=name):
+            with self.subTest(archive=archive):
+                open_marker, close_marker = roadmap_region(archive)
+                region = roadmap.split(open_marker, 1)[1].split(close_marker, 1)[0]
                 self.assertIn(
-                    self.flatten(acceptance.run.observation).rstrip(".").lower(),
-                    prose.lower(),
-                    "an observation has to be a claim the documentation makes too",
+                    self.flatten(acceptance.run.observation),
+                    self.flatten(region),
+                    "an observation has to be a claim the roadmap makes in this archive's region",
                 )
 
     def test_an_observation_may_not_carry_a_quantity_the_run_does_not_record(self) -> None:
@@ -482,7 +516,7 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
                 members=1,
                 disposition=Disposition.REPLACED,
                 edit_kind=EditKind.LENGTH_PRESERVING,
-                mechanism="tools/pbm_patch.py",
+                mechanism=Mechanism.PBM_PATCH,
                 observation="Each of the 1,071 members was re-encoded and accepted.",
             )
         # And the other direction: the run's own count and its date are quantities it records, so
@@ -493,7 +527,7 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
             members=3,
             disposition=Disposition.REPLACED,
             edit_kind=EditKind.LENGTH_PRESERVING,
-            mechanism="tools/pbm_patch.py",
+            mechanism=Mechanism.PBM_PATCH,
             observation="The engine read 3 members on 2026-09-18.",
         )
 
@@ -521,43 +555,104 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
                     expected = (
                         f"Observed {run.date}, once: {run.members} member of {name}, "
                         f"{run.disposition.value}, with a {run.edit_kind.value} edit made by "
-                        f"{run.mechanism}. {run.observation} Not established: {limits}."
+                        f"{run.mechanism.value}. {run.observation} Not established: "
+                        f"{limits}."
                     )
                     if acceptance.storage_class:
-                        expected += f" {acceptance.storage_class}"
+                        expected += f" {acceptance.storage_class.value}"
                 self.assertEqual(acceptance.summary(), expected)
 
-    def test_the_build_writes_the_rendered_facts_unmodified(self) -> None:
-        """The build's own dict has to be `build_metadata()` and not a transformation of it.
+    def test_the_build_json_a_real_report_writes_is_the_rendered_facts(self) -> None:
+        """Run the build's own report command and read what it wrote.
 
-        Checked through the syntax tree rather than the text, because the bypass to catch is a
-        wrapper -- a comprehension appending a sentence to every summary on the way into
-        `build.json` passes every test that only looks at `engine_acceptance`'s own output.
+        This replaces a check on the *shape of the source* -- an AST walk asserting the dict
+        literal held `engine_acceptance.build_metadata()`. That could not see what happened to the
+        dict afterwards, and a reviewer walked straight past it by mutating `build` between the
+        literal and `write_text`. A source-shape check cannot bound runtime behaviour. One
+        equality on the file the command actually produces closes the whole class.
         """
-        source = (PROJECT_DIR / "tools" / "mod_build.py").read_text(encoding="utf-8")
-        values = [
-            value
-            for node in ast.walk(ast.parse(source))
-            if isinstance(node, ast.Dict)
-            for key, value in zip(node.keys, node.values)
-            if isinstance(key, ast.Constant) and key.value == "engine_acceptance"
-        ]
-        self.assertEqual(len(values), 1, "build.json should record engine acceptance exactly once")
-        call = values[0]
-        self.assertIsInstance(call, ast.Call, "the build must write the rendered facts, unwrapped")
-        self.assertEqual(ast.unparse(call), "engine_acceptance.build_metadata()")
-
-    def test_no_engine_acceptance_prose_is_written_by_hand_anywhere_else(self) -> None:
-        """The regression that would undo all of this is someone pasting a sentence back in."""
-        source = (PROJECT_DIR / "tools" / "mod_build.py").read_text(encoding="utf-8")
-        for line in source.splitlines():
-            if line.lstrip().startswith("#"):
-                continue
-            self.assertNotIn(
-                "Not established",
-                line,
-                "engine-acceptance prose belongs in tools/engine_acceptance.py, rendered",
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mod = root / "caveat-probe"
+            (mod / "archives" / "gs.mpq" / "units").mkdir(parents=True)
+            (mod / "mod.toml").write_text(
+                'id = "caveat-probe"\n'
+                'name = "Caveat probe"\n'
+                'version = "0.0.1"\n'
+                'description = "A tree that exists only so the report command can run."\n'
+                'base_profile = "vanilla"\n',
+                encoding="utf-8",
             )
+            member = mod / "archives" / "gs.mpq" / "units" / "orinf.gs"
+            member.write_bytes(b"/hit_points 18 def")
+
+            manifest = root / "gs.tsv"
+            manifest.write_text(
+                "\t".join(MANIFEST_COLUMNS)
+                + "\n"
+                + "\t".join(
+                    [
+                        "units\\orinf.gs",
+                        "3",
+                        "7",
+                        "18",
+                        "18",
+                        "0x80010100",
+                        "0",
+                        "a" * 64,
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            def facts_file(name: str, member: str) -> Path:
+                # `--gs-facts` output: the base file is keyed by member path, the mod file by the
+                # path inside the tree, which is how `build_change_report` looks each of them up.
+                path = root / name
+                path.write_text(
+                    json.dumps(
+                        {
+                            "name": member,
+                            "sha256": "a" * 64,
+                            "token_sha256": "b" * 64,
+                            "token_count": 4,
+                            "parse_error": None,
+                            "scalar_definitions": {"hit_points": "18"},
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                return path
+
+            base_facts = facts_file("base-facts.jsonl", "units\\orinf.gs")
+            mod_facts = facts_file("mod-facts.jsonl", "archives/gs.mpq/units/orinf.gs")
+            symbols = root / "symbols.tsv"
+            symbols.write_text(
+                "name\tkind\tevidence\tprofiles\tmember\tline\n", encoding="utf-8"
+            )
+            output = root / "out"
+            output.mkdir()
+
+            arguments = SimpleNamespace(
+                mod=mod,
+                base_manifest=[("gs.mpq", str(manifest))],
+                base_gs_facts=str(base_facts),
+                mod_gs_facts=str(mod_facts),
+                base_file=[],
+                base_digest=[],
+                tool_digest=[],
+                output_digest=[],
+                symbols=str(symbols),
+                build_id="probe",
+                output_dir=str(output),
+            )
+            # The command prints its change report; this test is about the file it writes.
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_report(arguments), 0)
+            written = json.loads((output / "build.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(written["engine_acceptance"], build_metadata())
 
     def test_a_run_that_cannot_have_happened_is_refused(self) -> None:
         with self.assertRaises(ValueError):
@@ -566,7 +661,7 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
                 members=0,
                 disposition=Disposition.REPLACED,
                 edit_kind=EditKind.LENGTH_PRESERVING,
-                mechanism="x",
+                mechanism=Mechanism.PBM_PATCH,
                 observation="y",
             )
         with self.assertRaises(ValueError):
@@ -575,7 +670,7 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
                 members=1,
                 disposition=Disposition.REPLACED,
                 edit_kind=EditKind.LENGTH_PRESERVING,
-                mechanism="x",
+                mechanism=Mechanism.PBM_PATCH,
                 observation="y",
             )
         with self.assertRaises(ValueError):
@@ -588,7 +683,8 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
             f"attended {run.date} round trip of an `MPQ_FILE_IMPLODE` member of",
             (PROJECT_DIR / "docs" / "build-pipeline.md").read_text(encoding="utf-8"),
         )
-        self.assertIn("0x80010100", ACCEPTANCE["gs.mpq"].storage_class)
+        self.assertIs(ACCEPTANCE["gs.mpq"].storage_class, StorageClass.IMPLODE_PROVED)
+        self.assertIn("0x80010100", ACCEPTANCE["gs.mpq"].storage_class.value)
 
 
 if __name__ == "__main__":

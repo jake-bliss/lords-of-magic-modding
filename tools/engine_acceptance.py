@@ -24,7 +24,17 @@ artifact, the sentences are rendered from them, and the tests assert the facts.
 added, length-preserving or size-changing — and the limits that follow are **derived**, not typed.
 Claiming the engine accepted a size-changing edit means setting `edit_kind` to `SIZE_CHANGING`,
 which changes the rendered roadmap paragraph, which no longer matches `docs/roadmap.md`, which
-fails. There is nowhere to append a sentence, because no sentence is stored.
+fails.
+
+**Every field that reaches the sentence carries a rule, which took two passes to get right.** The
+first version of this module said "there is nowhere to append a sentence, because no sentence is
+stored", and that was false: `mechanism`, `observation` and `storage_class` were all free text,
+and a reviewer shipped the historical bypass verbatim through two of them with the whole suite
+green. `mechanism` and `storage_class` are enums now; `observation` is the one sentence left and
+is doubly constrained — a number it carries has to be the run's own count or date, and the
+sentence has to appear in a marked region of the documentation. A run that derives no limits at
+all is refused outright, because it used to render "Not established: ." and mean the opposite of
+what this module is for.
 """
 
 from __future__ import annotations
@@ -51,6 +61,36 @@ class EditKind(Enum):
     SIZE_CHANGING = "size-changing"
 
 
+class Mechanism(Enum):
+    """What made the edit the engine then read.
+
+    An enum rather than a string because this renders into the sentence, and a field that renders
+    into a claim and accepts any text is the defect this module exists to remove: appending
+    " The engine ALSO accepted a size-changing edit..." to a free-text mechanism shipped that
+    sentence in every `build.json` with the whole suite green.
+    """
+
+    PBM_PATCH = "tools/pbm_patch.py"
+    PIPELINE_WRITER = "the mod pipeline's own writer"
+
+
+class StorageClass(Enum):
+    """The MPQ storage class a run covered, and what that settles.
+
+    Same reasoning as `Mechanism`. The text is fixed here; the only choice a record makes is which
+    of these applies.
+    """
+
+    IMPLODE_PROVED = (
+        "The member carried flags 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), which is the only "
+        "storage class any run has covered."
+    )
+    IMPLODE_BY_CENSUS = (
+        "The compression choice is not Inferred: all 1,071 baseline members carry flags "
+        "0x80010100, the same storage class the gs.mpq run proved."
+    )
+
+
 @dataclass(frozen=True)
 class EngineRun:
     """One attended run in which the engine read something this pipeline wrote."""
@@ -59,7 +99,7 @@ class EngineRun:
     members: int
     disposition: Disposition
     edit_kind: EditKind
-    mechanism: str
+    mechanism: Mechanism
     observation: str
 
     def __post_init__(self) -> None:
@@ -67,15 +107,21 @@ class EngineRun:
             raise ValueError(f"an engine run needs an ISO date, not {self.date!r}")
         if self.members < 1:
             raise ValueError("an engine run that read no member is not an engine run")
-        for name in ("mechanism", "observation"):
-            if not getattr(self, name).strip():
-                raise ValueError(f"an engine run has to say its {name}")
+        if not isinstance(self.mechanism, Mechanism):
+            raise ValueError("a mechanism is one of the recorded ones, not free text")
+        if not self.observation.strip():
+            raise ValueError("an engine run has to say what was observed")
         # `observation` is the one free-text field left, and free text is where a widened claim
         # hides: a reviewer widened it to "Each of the 1,071 members was re-encoded and accepted",
         # which every structural assertion passed. Quantities are fields, so a number that is
         # neither the member count nor part of the date cannot appear in the sentence.
         allowed = {str(self.members)} | set(self.date.split("-"))
-        for number in NUMBER.findall(self.observation):
+        for match in NUMBER.finditer(self.observation):
+            # A hexadecimal flag word is a name, not a quantity: `0x80010100` would otherwise make
+            # a truthful observation about the storage class unrepresentable.
+            if match.start() >= 2 and self.observation[match.start() - 2 : match.start()] == "0x":
+                continue
+            number = match.group()
             if number.replace(",", "") not in allowed and number not in allowed:
                 raise ValueError(
                     f"{number!r} in an observation is a quantity this run does not record; "
@@ -106,7 +152,7 @@ class ArchiveAcceptance:
 
     archive: str
     run: EngineRun | None
-    storage_class: str | None = None
+    storage_class: StorageClass | None = None
     also_untested: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
@@ -116,6 +162,15 @@ class ArchiveAcceptance:
             raise ValueError(
                 f"{self.archive} has no engine run and names no limit; an archive nothing is "
                 "known about still has to say so"
+            )
+        if not self.not_established:
+            # Reachable, and it was: a run recorded as size-changing, added and multi-member
+            # derives no limits at all, and `summary()` then rendered "Not established: ." -- a
+            # build claiming the engine had accepted everything. One attended run never
+            # establishes a whole archive, so an empty list is a defect rather than a boast.
+            raise ValueError(
+                f"{self.archive} claims an engine run with nothing left unestablished; no run "
+                "covers a whole archive, so name what it did not cover"
             )
 
     @property
@@ -135,9 +190,9 @@ class ArchiveAcceptance:
         established = (
             f"Observed {run.date}, once: {run.members} member of {self.archive}, "
             f"{run.disposition.value}, with a {run.edit_kind.value} edit made by "
-            f"{run.mechanism}. {run.observation}"
+            f"{run.mechanism.value}. {run.observation}"
         )
-        storage = f" {self.storage_class}" if self.storage_class else ""
+        storage = f" {self.storage_class.value}" if self.storage_class else ""
         return f"{established} Not established: {limits}.{storage}"
 
     def as_json(self) -> dict:
@@ -154,11 +209,11 @@ class ArchiveAcceptance:
                 "members": self.run.members,
                 "disposition": self.run.disposition.name.lower(),
                 "edit_kind": self.run.edit_kind.name.lower(),
-                "mechanism": self.run.mechanism,
+                "mechanism": self.run.mechanism.value,
                 "observation": self.run.observation,
             }
         if self.storage_class:
-            record["storage_class"] = self.storage_class
+            record["storage_class"] = self.storage_class.value
         return record
 
 
@@ -172,16 +227,13 @@ ACCEPTANCE: dict[str, ArchiveAcceptance] = {
             members=1,
             disposition=Disposition.REPLACED,
             edit_kind=EditKind.LENGTH_PRESERVING,
-            mechanism="the mod pipeline's own writer",
+            mechanism=Mechanism.PIPELINE_WRITER,
             observation=(
                 "The attended 2026-09-16 round trip of an MPQ_FILE_IMPLODE member "
                 "of gs.mpq."
             ),
         ),
-        storage_class=(
-            "The member carried flags 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), which is the "
-            "only storage class any run has covered."
-        ),
+        storage_class=StorageClass.IMPLODE_PROVED,
         also_untested=("any flag combination other than 0x80010100",),
     ),
     "pic.mpq": ArchiveAcceptance(
@@ -191,16 +243,13 @@ ACCEPTANCE: dict[str, ArchiveAcceptance] = {
             members=1,
             disposition=Disposition.REPLACED,
             edit_kind=EditKind.LENGTH_PRESERVING,
-            mechanism="tools/pbm_patch.py",
+            mechanism=Mechanism.PBM_PATCH,
             observation=(
                 "The engine read an archive this pipeline built from pic.mpq, and a human read "
                 "the change off the screen."
             ),
         ),
-        storage_class=(
-            "The compression choice is not Inferred: all 1,071 baseline members carry flags "
-            "0x80010100, the same storage class the gs.mpq run proved."
-        ),
+        storage_class=StorageClass.IMPLODE_BY_CENSUS,
         also_untested=("the full ByteRun1 encoder, which no run has used",),
     ),
     "imp.mpq": ArchiveAcceptance(
@@ -226,11 +275,23 @@ def build_metadata() -> dict:
     return {name: acceptance.as_json() for name, acceptance in sorted(ACCEPTANCE.items())}
 
 
+MARKER = "engine-acceptance"
+
+
+def roadmap_region(archive: str) -> tuple[str, str]:
+    """The HTML comments bracketing this archive's paragraph in `docs/roadmap.md`."""
+    return f"<!-- {MARKER}:{archive} -->", f"<!-- /{MARKER}:{archive} -->"
+
+
 def roadmap_paragraph(archive: str) -> str:
     """The `Not established.` paragraph in `docs/roadmap.md`, rendered from the same facts.
 
     The doc is checked against this rather than the other way round, so a claim can only widen in
-    both places at once and only by editing the data.
+    both places at once and only by editing the data. It carries the observation too, so that
+    sentence -- the one free-text field left -- is pinned to a **marked region** of the document
+    rather than to "appears somewhere in 1,400 lines". The earlier containment rule was blind to
+    polarity and to place: `docs/build-pipeline.md` quotes a refuted claim in order to refute it,
+    and any sub-span of that quotation would have passed.
     """
     acceptance = ACCEPTANCE[archive]
     run = acceptance.run
@@ -240,15 +301,18 @@ def roadmap_paragraph(archive: str) -> str:
             "front of the engine."
         )
     untested = [name for name, other in sorted(ACCEPTANCE.items()) if other.run is None]
-    remainder = (
-        " " + ", ".join(f"`{name}`" for name in untested[:-1])
-        + f" and `{untested[-1]}` remain untested."
-        if untested
-        else ""
-    )
+    remainder = ""
+    if len(untested) == 1:
+        remainder = f" `{untested[0]}` remains untested."
+    elif untested:
+        listed = ", ".join(f"`{name}`" for name in untested[:-1])
+        remainder = f" {listed} and `{untested[-1]}` remain untested."
+    storage = f" {acceptance.storage_class.value}" if acceptance.storage_class else ""
     return (
         f"**Not established.** {run.members} member of one `{archive}`, "
-        f"{run.disposition.value}, with a {run.edit_kind.value} edit. "
+        f"{run.disposition.value}, with a {run.edit_kind.value} edit made by "
+        f"{run.mechanism.value}, {run.date}. {run.observation} "
         + " ".join(f"The engine has not been shown {limit}." for limit in acceptance.not_established)
+        + storage
         + remainder
     )

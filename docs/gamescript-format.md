@@ -421,9 +421,11 @@ against a shuffled baseline on signals the table itself does not contain.
 | Mean run length of dominant caller directory | 1.44 | 1.10 | 1.31x |
 
 Unrounded, because two of these cells are close enough that rounding hides what moves:
-0.31445655255437444 / 0.01332579503380394 = 23.597582865163627; 0.5846702317290553 / 0.1048;
-0.12867443150305047 / 0.00021075984470327234 = 610.5263157894736; 1.4397446129289704 /
-1.0991692916425675 = 1.3098479223136381.
+0.31445655255437444 / 0.01332579503380394 = 23.597582865163627; 0.5846702317290553 / 0.1048 =
+5.578914424857398; 0.12867443150305047 / 0.00021075984470327234 = 610.5263157894736;
+1.4397446129289704 / 1.0991692916425675 = 1.3098479223136381. The displayed cells are rounded to
+two or three places and the ratios to three significant figures; the fourth row's 1.31x is
+1.3098479223136381, not a ratio of the two rounded cells above it.
 
 **Re-measured 2026-09-18, and the re-measurement found a defect in the measurement.** This table is
 computed through `tools/gs_syntax.py`, five of whose rules changed that day, so it was re-run with

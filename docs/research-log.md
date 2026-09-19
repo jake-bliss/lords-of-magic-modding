@@ -5942,8 +5942,14 @@ sentence is now rendered, not written: `tools/engine_acceptance.py` holds the ru
 replaced-or-added, length-preserving-or-size-changing, date, mechanism, observation — and derives
 the limits from it, so "the engine accepted a size-changing edit" cannot be said without recording
 that the run *was* size-changing, which changes the rendered roadmap paragraph, which no longer
-matches `docs/roadmap.md`. `build.json` carries the structure beside the sentence. Six mutations,
-including all three historical bypasses, now fail.
+matches `docs/roadmap.md`. `build.json` carries the structure beside the sentence.
+
+**That claim was checked and was wrong.** The round-four note said six mutations "including all
+three historical bypasses" failed. Two of the three still worked, through fields the module stored
+as free text and never guarded — `mechanism` and `storage_class` — and a third bypass worked at
+the build site, past a check that read the source rather than the output. See the round-five note
+below; the claim is corrected there rather than deleted here, because a repaired guard that still
+claims more than it does is the exact failure this sequence keeps repeating.
 
 Two holes stayed open after the first rewrite and were closed too: a wrapper at the build site
 (`{k: dict(v, summary=v["summary"] + "…")}`) bypassed every assertion about the module's own
@@ -5989,3 +5995,53 @@ when it fails instead of a guessed cause. And the parity measurement now states 
 other half: **0 of 4,692 members produced a parse error**, which matters because `GsFacts::measure`
 returns an empty digest for a member it cannot lex, so an erroring member would have left the
 comparison silently.
+
+## 2026-09-18 — Round five: every field that renders carries a rule, and the test reads the output
+
+Three more bypasses of the engine-acceptance guard, all demonstrated by running them, and all of
+one kind: **the module stored three sentences and guarded one.**
+
+`mechanism` and `storage_class` were free text interpolated straight into the rendered caveat.
+Appending the historical bypass sentence to either shipped it in every `build.json` with the whole
+suite green — and `gs.mpq`'s mechanism was asserted nowhere at all, so nothing even pinned its
+wording. Both are enums now, with fixed text and a name per value; the only choice a record makes
+is which value applies. `observation` is the one sentence left, and it is constrained twice.
+
+**A source-shape check cannot bound runtime behaviour, learned twice in one module.** The
+round-four guard walked `mod_build.py`'s syntax tree and asserted the dict literal held
+`engine_acceptance.build_metadata()`. It says nothing about what happens to that dict afterwards,
+and a reviewer appended to every summary between the literal and `write_text` with the suite still
+green. It is replaced by the obvious thing, which is also one line: run `command_report` in a
+temporary directory and assert `json.loads(build.json)["engine_acceptance"] ==
+build_metadata()`. That closes the class including the sources the AST walk never read. The same
+mistake in miniature had already been made once here — a test that read `docs/roadmap.md` and then
+asserted hardcoded strings — and the lesson is the same both times: **assert the artifact, not the
+recipe.**
+
+**A derivation can derive nothing.** `derived_limits` returns the empty tuple for a run that is
+size-changing, added and multi-member, and nothing required the result to be non-empty — so a
+record could claim 1,071 added members with size-changing edits and render "Not established: ."
+The docstring claiming that could not happen was itself the evidence that nobody had tried it. An
+`ArchiveAcceptance` whose limits are empty is now refused at import: no single attended run
+establishes a whole archive.
+
+**Containment was blind to polarity and to place.** The round-four rule asked whether an
+observation appeared anywhere in two documents — 1,400 lines that include, deliberately, a
+*quotation of a refuted claim* in `build-pipeline.md` ("a rewritten archive has never faced the
+engine and the compression choice is Inferred"), so a sub-span of a sentence the repository exists
+to refute would have passed as evidence. The rule now compares a **marked region** —
+`<!-- engine-acceptance:<archive> -->` — against the render, for **every** archive with a run,
+enumerated from the data rather than hardcoded to `pic.mpq`. `gs.mpq` had no such paragraph at all
+and was therefore coupled to nothing; it has one now. Every rendered field, enums included, is in
+that paragraph, so editing any of them breaks the comparison.
+
+Mutations re-run after all of this, each one previously green: bypass through `pic.mpq`'s
+mechanism, through `gs.mpq`'s mechanism, through `storage_class`, appending inside the renderer,
+appending at the build site, a wrapper between the literal and the write, an em-dash continuation
+inside the clause, a widened observation, a run with no limits, and both directions of the number
+rule. All fail.
+
+Two smaller repairs in the same pass: the tie-break test asserted a mean run length of 2, which
+**both** tie outcomes satisfy, so it now names the winning directory through a new
+`dominant_directories` helper; and the number rule refused a truthful observation citing
+`0x80010100`, because the digit scan did not know hexadecimal.
