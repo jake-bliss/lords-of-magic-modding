@@ -84,6 +84,22 @@ If the game stops opening:
 1. Confirm no stale `lomse.exe`, `wineserver`, or `wineskinlauncher` process is running.
 2. Confirm the app's `Info.plist` points `Program Name and Path` at the installed `English/lomse.exe`.
 3. Confirm `ddraw.dll` and `ddraw.ini` are next to `lomse.exe`.
+
+**`ddraw.ini` is rewritten by the game on exit.** *Observed 2026-09-18*: after an attended run the
+file came back one byte longer, with line 32's `shader=` terminator changed from `\n` to `\r\n`,
+and each profile accumulates its own window geometry besides. Two consequences worth knowing before
+an attended session:
+
+- a "did anything change in this profile?" check will flag `ddraw.ini` every time the game has run,
+  and that is the game working normally, not the experiment leaking;
+- a profile's `ddraw.ini` is **local state, not a clone of the baseline's**. The development profile's
+  differed from the baseline's before any of today's work. Restoring it *from the baseline* therefore
+  discards whatever that profile had, which is easy to do by accident and cannot be undone from a
+  hash-only snapshot. `.lom-pipeline/pristine` holds `gs.mpq` and `pic.mpq` only, by design -- it is
+  not a profile backup.
+
+The general form of that second point: a snapshot that records digests is a **change detector**, not
+a backup. Copy the bytes of anything you might want to put back.
 4. Confirm the Wine DLL override contains `*ddraw = native,builtin`.
 5. Confirm the profile's `dosdevices/d:` symlink points inside the same app, not another clone.
 6. For the baseline build, confirm the 32-bit `Wow6432Node` CD-path entry exists.

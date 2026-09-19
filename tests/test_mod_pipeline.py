@@ -31,6 +31,33 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def game_is_running() -> bool:
+    """True when `lomse.exe` is alive, which these tests cannot run around.
+
+    `scripts/install-dev.sh` and `scripts/restore-dev.sh` refuse while the game is up -- swapping an
+    archive under a live process is a class of corruption no checksum afterwards can undo -- so every
+    test that drives them fails, with a message about the game rather than about the code.
+
+    That is a correct refusal and a useless test result. Skipping names the real reason: measured
+    2026-09-18, opening the Map Editor for an unrelated experiment turned 11 tests red and 3 more
+    into errors, and the suite said nothing about which. A red suite that means "a game is open"
+    teaches people to disbelieve red.
+    """
+    try:
+        return (
+            subprocess.run(
+                ["pgrep", "-f", "lomse.exe"],
+                capture_output=True,
+                check=False,
+            ).returncode
+            == 0
+        )
+    except OSError:
+        # No pgrep: assume clear rather than skip the suite on a machine that cannot answer.
+        return False
+
+
+@unittest.skipIf(game_is_running(), "lomse.exe is running; install/restore refuse while it is up")
 class PipelineTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
