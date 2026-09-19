@@ -2,7 +2,7 @@
 
 ## Outcome
 
-The initial spike succeeded and is now evolving into the Stage 1 native asset layer. A native 64-bit Rust program opens the installed game's MPQs through a narrow read-only StormLib wrapper, loads an external filename catalog, classifies and inspects members, decodes IFF `FORM PBM` images, IMP sprite frames, tile-set definitions, and map records, probes BMP/WAVE metadata, and displays images, animations, and terrain through SDL3.
+The initial spike succeeded and is now evolving into the Stage 1 native asset layer. A native 64-bit Rust program opens the installed game's MPQs through a narrow read-only StormLib wrapper, loads an external filename catalog, classifies and inspects members, decodes IFF `FORM PBM` images, IMP sprite frames, tile-set definitions, map records, RIFF WAVE audio and Smacker containers, probes BMP metadata, and displays images, animations, and terrain through SDL3.
 
 The repository contains no game assets. Commands below require a local, legally obtained installation.
 
@@ -35,6 +35,7 @@ Set paths to local archives without copying them into the repository:
 PIC_MPQ='/path/to/Lords of Magic Special Edition/English/pic.mpq'
 IMP_MPQ='/path/to/Lords of Magic Special Edition/English/imp.mpq'
 GS_MPQ='/path/to/Lords of Magic Special Edition/English/gs.mpq'
+SNDFX_MPQ='/path/to/Lords of Magic Special Edition/English/sndfx.mpq'
 LOMSE_EXE='/path/to/Lords of Magic Special Edition/English/lomse.exe'
 
 cd ../..
@@ -54,6 +55,12 @@ target/release/lom-asset-viewer --describe-imp "$IMP_MPQ" 'units\imp\chcr5a.imp'
 target/release/lom-asset-viewer --view-imp "$IMP_MPQ" 'units\imp\chcr5a.imp' --listfile "$LISTFILE"
 target/release/lom-asset-viewer --export-imp-frame "$IMP_MPQ" 'units\imp\chcr5a.imp' 155 /tmp/chcr5a-frame-155.png --listfile "$LISTFILE"
 target/release/lom-asset-viewer "$PIC_MPQ" 'LBM\ACTIONS5.lbm'
+target/release/lom-asset-viewer --wave-roundtrip "$SNDFX_MPQ"
+target/release/lom-asset-viewer --wave-roundtrip-dir '/path/to/Lords of Magic Special Edition/English/Wav'
+target/release/lom-asset-viewer --export-wave "$SNDFX_MPQ" File00000001.wav /tmp/sound.wav
+target/release/lom-asset-viewer --import-wave /tmp/edited.wav /tmp/template.wav /tmp/new-member.wav
+target/release/lom-asset-viewer --scan-smk-dir '/path/to/Lords of Magic Special Edition/English/smk'
+target/release/lom-asset-viewer --describe-smk '/path/to/Lords of Magic Special Edition/English/smk/Intro.smk'
 target/release/lom-asset-viewer --scan-map-dir '/path/to/Lords of Magic Special Edition/English/map'
 target/release/lom-asset-viewer --inspect-file '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'
 target/release/lom-asset-viewer --describe-map '/path/to/Lords of Magic Special Edition/English/map/URAK.scn'

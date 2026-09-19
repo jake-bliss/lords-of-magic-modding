@@ -4,7 +4,9 @@ use std::fmt;
 use crate::imp::{ImpHeaderStats, ImpSprite};
 use crate::map::MapAsset;
 use crate::pbm::PbmImage;
+use crate::smacker::SmackerFile;
 use crate::tile::TileSetDefinition;
+use crate::wave::WaveFile;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AssetKind {
@@ -91,10 +93,7 @@ pub fn probe(name: &str, bytes: &[u8]) -> Result<AssetInfo, String> {
         return probe_bitmap(bytes);
     }
     if bytes.starts_with(b"SMK2") || bytes.starts_with(b"SMK4") {
-        return Ok(AssetInfo::new(
-            AssetKind::SmackerVideo,
-            format!("version={}", printable_tag(&bytes[0..4])),
-        ));
+        return probe_smacker(bytes);
     }
     if bytes.starts_with(b"MPQ\x1a") {
         return Ok(AssetInfo::new(AssetKind::MpqArchive, ""));
@@ -394,63 +393,55 @@ fn probe_bitmap(bytes: &[u8]) -> Result<AssetInfo, String> {
     ))
 }
 
+/// Classify a WAVE by **decoding it**, not by reading its header.
+///
+/// This used to stop at the `fmt ` chunk, which meant `--scan` reported a clean sweep over 3,098
+/// members it had never read a sample of. Delegating to [`crate::wave`] makes the classification
+/// as strong as the decoder: a member that appears here as `wave-audio` is one whose whole
+/// container was walked and whose sample data was decoded.
 fn probe_wave(bytes: &[u8]) -> Result<AssetInfo, String> {
-    let mut cursor = 12_usize;
-    let mut format = None;
-    let mut data_size = None;
-    while cursor
-        .checked_add(8)
-        .is_some_and(|chunk_header_end| chunk_header_end <= bytes.len())
-    {
-        let chunk_id = &bytes[cursor..cursor + 4];
-        let chunk_size = read_u32_le(bytes, cursor + 4)? as usize;
-        let chunk_start = cursor + 8;
-        let chunk_end = chunk_start
-            .checked_add(chunk_size)
-            .ok_or_else(|| "WAVE chunk size overflow".to_owned())?;
-        if chunk_end > bytes.len() {
-            return Err(format!("truncated WAVE {} chunk", printable_tag(chunk_id)));
-        }
-        if chunk_id == b"fmt " {
-            if chunk_size < 16 {
-                return Err("WAVE fmt chunk is too short".to_owned());
-            }
-            format = Some(WaveFormat {
-                encoding: read_u16_le(bytes, chunk_start)?,
-                channels: read_u16_le(bytes, chunk_start + 2)?,
-                sample_rate: read_u32_le(bytes, chunk_start + 4)?,
-                byte_rate: read_u32_le(bytes, chunk_start + 8)?,
-                bits_per_sample: read_u16_le(bytes, chunk_start + 14)?,
-            });
-        } else if chunk_id == b"data" {
-            data_size = Some(chunk_size);
-        }
-        cursor = chunk_end
-            .checked_add(chunk_size & 1)
-            .ok_or_else(|| "WAVE chunk padding overflow".to_owned())?;
-    }
-
-    let format = format.ok_or_else(|| "WAVE has no fmt chunk".to_owned())?;
-    let data_size = data_size.ok_or_else(|| "WAVE has no data chunk".to_owned())?;
-    if format.channels == 0 || format.sample_rate == 0 || format.byte_rate == 0 {
-        return Err("WAVE format contains a zero channel/rate field".to_owned());
-    }
-    let duration_ms = (data_size as u64 * 1000) / u64::from(format.byte_rate);
+    let file = WaveFile::parse(bytes).map_err(|error| error.to_string())?;
+    let data_bytes = file.samples.interleaved.len()
+        * usize::from(file.format.bits_per_sample / 8).max(1)
+        + file.samples.trailing_partial_frame.len();
     Ok(AssetInfo::new(
         AssetKind::WaveAudio,
         format!(
-            "encoding={};channels={};sample-rate={};bits-per-sample={};data-bytes={data_size};duration-ms={duration_ms}",
-            format.encoding, format.channels, format.sample_rate, format.bits_per_sample
+            "encoding={};channels={};sample-rate={};bits-per-sample={};data-bytes={data_bytes};\
+             frames={};duration-ms={};layout={}",
+            file.format.encoding,
+            file.format.channels,
+            file.format.sample_rate,
+            file.format.bits_per_sample,
+            file.samples.frames(),
+            file.samples.duration_ms(),
+            file.layout(),
         ),
     ))
 }
 
-struct WaveFormat {
-    encoding: u16,
-    channels: u16,
-    sample_rate: u32,
-    byte_rate: u32,
-    bits_per_sample: u16,
+/// Classify a Smacker video by **parsing its container**, not by matching four magic bytes.
+///
+/// The frame tables and per-frame chunk extents are walked; the video codec is not implemented and
+/// no frame is decoded to pixels. See [`crate::smacker`] for exactly where that line falls.
+fn probe_smacker(bytes: &[u8]) -> Result<AssetInfo, String> {
+    let file = SmackerFile::parse(bytes).map_err(|error| error.to_string())?;
+    let tracks = file.audio.iter().filter(|track| track.present()).count();
+    Ok(AssetInfo::new(
+        AssetKind::SmackerVideo,
+        format!(
+            "version={};width={};height={};frames={};interval-us={};duration-ms={};\
+             audio-tracks={tracks};palette-frames={};unaccounted-tail={}",
+            printable_tag(&file.signature),
+            file.width,
+            file.height,
+            file.frame_count,
+            file.frame_interval_us(),
+            file.duration_ms(),
+            file.palette_frames(),
+            file.unaccounted_tail,
+        ),
+    ))
 }
 
 fn text_details(bytes: &[u8]) -> String {
@@ -536,6 +527,8 @@ mod tests {
         assert_eq!(info.kind, AssetKind::WaveAudio);
         assert!(info.details.contains("sample-rate=22050"));
         assert!(info.details.contains("duration-ms=1000"));
+        assert!(info.details.contains("frames=22050"));
+        assert!(info.details.contains("layout=fmt |data"));
     }
 
     #[test]

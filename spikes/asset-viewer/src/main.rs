@@ -33,6 +33,8 @@ use lom_asset_viewer::mpq::{Archive, Entry};
 use lom_asset_viewer::native_table;
 use lom_asset_viewer::paths::paths_are_same_file;
 use lom_asset_viewer::server::{TileSetSource, serve};
+use lom_asset_viewer::smacker::{self, SmackerFile};
+use lom_asset_viewer::wave::{WaveFile, WaveSweep, import_samples};
 use lom_asset_viewer::operator_arity;
 use lom_asset_viewer::pbm::{PbmChunk, PbmFile, PbmImage};
 use lom_asset_viewer::png_export::{
@@ -229,6 +231,27 @@ enum Command {
         frame: usize,
         output: PathBuf,
     },
+    /// Decode and re-encode every WAVE member of an archive, reporting both claims separately.
+    RoundtripWave(Source),
+    /// The same sweep over a directory of loose `.wav` files, for the shipped `Wav/` tree.
+    RoundtripWaveDirectory(PathBuf),
+    /// Write one WAVE member out as a standard `.wav` any audio editor opens.
+    ExportWave {
+        source: Source,
+        member: String,
+        output: PathBuf,
+    },
+    /// Write an edited `.wav` back into a member's container.
+    ImportWave {
+        edited: PathBuf,
+        template: PathBuf,
+        output: PathBuf,
+        allow_format_change: bool,
+    },
+    /// Report the container structure of one Smacker file.
+    DescribeSmacker(PathBuf),
+    /// Parse every `.smk` under a directory and report the structure of each.
+    ScanSmackerDirectory(PathBuf),
     ValidateImp(Source),
     ViewImp {
         source: Source,
@@ -423,6 +446,21 @@ fn run() -> Result<(), String> {
             frame,
             output,
         } => import_png_imp(&png, &template, frame, &output),
+        Command::RoundtripWave(source) => roundtrip_wave(&source),
+        Command::RoundtripWaveDirectory(path) => roundtrip_wave_directory(&path),
+        Command::ExportWave {
+            source,
+            member,
+            output,
+        } => export_wave(&source, &member, &output),
+        Command::ImportWave {
+            edited,
+            template,
+            output,
+            allow_format_change,
+        } => import_wave(&edited, &template, &output, allow_format_change),
+        Command::DescribeSmacker(path) => describe_smacker(&path),
+        Command::ScanSmackerDirectory(path) => scan_smacker_directory(&path),
         Command::ValidateImp(source) => validate_imp_archive(&source),
         Command::ViewImp {
             source,
@@ -442,6 +480,9 @@ fn parse_args() -> Result<Command, String> {
     // hands back a successful exit for a mode that never ran -- `--pbm-roundtrip X --rewrite` used
     // to print a clean sweep and rewrite nothing.
     let rewrite = take_flag(&mut args, "--rewrite")?;
+    // Same treatment as `--rewrite`: taken globally, honoured by exactly one command, and refused
+    // everywhere else rather than silently discarded.
+    let allow_format_change = take_flag(&mut args, "--allow-format-change")?;
     let executable = take_option(&mut args, "--exe")?.map(PathBuf::from);
     let expression = take_option(&mut args, "--eval")?;
     let reports = take_option(&mut args, "--reports")?.map(PathBuf::from);
@@ -479,6 +520,11 @@ fn parse_args() -> Result<Command, String> {
     if rewrite && first != "--imp-roundtrip" {
         return Err(format!(
             "--rewrite is only meaningful with --imp-roundtrip, not {first}"
+        ));
+    }
+    if allow_format_change && first != "--import-wave" {
+        return Err(format!(
+            "--allow-format-change is only meaningful with --import-wave, not {first}"
         ));
     }
     match first {
@@ -735,6 +781,39 @@ fn parse_args() -> Result<Command, String> {
                 atlas: args[3].clone().into(),
                 output: args[4].clone().into(),
             })
+        }
+        "--wave-roundtrip" => {
+            require_len(&args, 2)?;
+            Ok(Command::RoundtripWave(source(&args[1], listfile)))
+        }
+        "--wave-roundtrip-dir" => {
+            require_len(&args, 2)?;
+            Ok(Command::RoundtripWaveDirectory(args[1].clone().into()))
+        }
+        "--export-wave" => {
+            require_len(&args, 4)?;
+            Ok(Command::ExportWave {
+                source: source(&args[1], listfile),
+                member: args[2].clone(),
+                output: args[3].clone().into(),
+            })
+        }
+        "--import-wave" => {
+            require_len(&args, 4)?;
+            Ok(Command::ImportWave {
+                edited: args[1].clone().into(),
+                template: args[2].clone().into(),
+                output: args[3].clone().into(),
+                allow_format_change,
+            })
+        }
+        "--describe-smk" => {
+            require_len(&args, 2)?;
+            Ok(Command::DescribeSmacker(args[1].clone().into()))
+        }
+        "--scan-smk-dir" => {
+            require_len(&args, 2)?;
+            Ok(Command::ScanSmackerDirectory(args[1].clone().into()))
         }
         "--pbm-roundtrip" => {
             require_len(&args, 2)?;
@@ -1057,7 +1136,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --import-png-imp INPUT.png SOURCE.imp FRAME OUTPUT.imp\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --imp-roundtrip ARCHIVE.mpq [--listfile FILE] [--rewrite]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --import-png-imp INPUT.png SOURCE.imp FRAME OUTPUT.imp\n  lom-asset-viewer --wave-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --wave-roundtrip-dir DIRECTORY\n  lom-asset-viewer --export-wave ARCHIVE.mpq MEMBER OUTPUT.wav [--listfile FILE]\n  lom-asset-viewer --import-wave EDITED.wav TEMPLATE.wav OUTPUT.wav [--allow-format-change]\n  lom-asset-viewer --describe-smk FILE.smk\n  lom-asset-viewer --scan-smk-dir DIRECTORY\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --imp-roundtrip ARCHIVE.mpq [--listfile FILE] [--rewrite]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -1171,6 +1250,340 @@ fn export_pbm(source: &Source, member: &str, output: &PathBuf) -> Result<(), Str
         image.height,
         image.palette_entries,
     );
+    Ok(())
+}
+
+/// Decode and re-encode every WAVE member of an archive.
+///
+/// Prints the corpus histogram alongside the two round-trip counts, because the histogram is the
+/// measurement the round-trip numbers only mean something against: "every member re-encodes" is a
+/// much weaker statement when every member turns out to be the same shape.
+fn roundtrip_wave(source: &Source) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let mut sweep = WaveSweep::default();
+    for entry in &entries {
+        let bytes = match archive.read(&entry.name) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                sweep.failures.push((entry.name.clone(), error.to_string()));
+                sweep.checked += 1;
+                continue;
+            }
+        };
+        if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+            continue;
+        }
+        sweep.observe(&entry.name, &bytes);
+    }
+    print!("{}", sweep.report());
+    if sweep.failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{} member(s) failed", sweep.failures.len()))
+    }
+}
+
+/// The same sweep over the loose `Wav/` tree the game ships beside its archives.
+fn roundtrip_wave_directory(directory: &Path) -> Result<(), String> {
+    if !directory.is_dir() {
+        return Err(format!("not a directory: {}", directory.display()));
+    }
+    let mut paths = Vec::new();
+    collect_paths_with_extension(directory, "wav", &mut paths)?;
+    paths.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
+    let mut sweep = WaveSweep::default();
+    for path in &paths {
+        let name = path
+            .strip_prefix(directory)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned();
+        match fs::read(path) {
+            Ok(bytes) => sweep.observe(&name, &bytes),
+            Err(error) => {
+                sweep.checked += 1;
+                sweep.failures.push((name, error.to_string()));
+            }
+        }
+    }
+    print!("{}", sweep.report());
+    if sweep.failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{} file(s) failed", sweep.failures.len()))
+    }
+}
+
+/// Write one WAVE member out as a `.wav` an audio editor opens.
+///
+/// The bytes written are this tool's re-encode, not a copy of the member: the `fmt ` chunk and the
+/// sample data are rebuilt from the decoded structure. That is deliberate. An extraction proves
+/// nothing about the decoder, and a modder who edits the exported file needs the file they edit to
+/// be the file `--import-wave` will compare against.
+fn export_wave(source: &Source, member: &str, output: &PathBuf) -> Result<(), String> {
+    let (archive, entries) = open_archive(source)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name.eq_ignore_ascii_case(member))
+        .ok_or_else(|| format!("archive has no member named {member}"))?;
+    let bytes = archive
+        .read(&entry.name)
+        .map_err(|error| error.to_string())?;
+    let file = WaveFile::parse(&bytes).map_err(|error| error.to_string())?;
+    let encoded = file.encode().map_err(|error| error.to_string())?;
+    if encoded != bytes {
+        return Err(format!(
+            "{member} does not re-encode to its own bytes, so this tool will not claim to export it"
+        ));
+    }
+    let mut handle = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    handle
+        .write_all(&encoded)
+        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+    println!(
+        "wrote\t{}\t{}\t{}\tframes={}\tduration-ms={}",
+        output.display(),
+        encoded.len(),
+        lom_asset_viewer::wave::describe_format(&file.format),
+        file.samples.frames(),
+        file.samples.duration_ms()
+    );
+    Ok(())
+}
+
+/// Put an edited `.wav` back into a member's container.
+///
+/// The template is the shipped member -- extract it with `--extract`, or use the file
+/// `--export-wave` produced. Its ancillary chunks survive; only the audio comes from the edit.
+fn import_wave(
+    edited: &Path,
+    template: &Path,
+    output: &PathBuf,
+    allow_format_change: bool,
+) -> Result<(), String> {
+    for input in [edited, template] {
+        if paths_are_same_file(input, output) {
+            return Err(format!(
+                "refusing to write {} over its own input",
+                output.display()
+            ));
+        }
+    }
+    let edited_bytes =
+        fs::read(edited).map_err(|error| format!("could not read {}: {error}", edited.display()))?;
+    let template_bytes = fs::read(template)
+        .map_err(|error| format!("could not read {}: {error}", template.display()))?;
+    let result = import_samples(&edited_bytes, &template_bytes, allow_format_change)
+        .map_err(|error| error.to_string())?;
+    let parsed = WaveFile::parse(&result).map_err(|error| {
+        format!("the file this tool just wrote does not parse back: {error}")
+    })?;
+    let mut handle = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    handle
+        .write_all(&result)
+        .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+    println!(
+        "wrote\t{}\t{}\t{}\tframes={}\tlayout={}\tidentical-to-template={}",
+        output.display(),
+        result.len(),
+        lom_asset_viewer::wave::describe_format(&parsed.format),
+        parsed.samples.frames(),
+        parsed.layout(),
+        result == template_bytes
+    );
+    Ok(())
+}
+
+fn describe_smacker(path: &Path) -> Result<(), String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let file = SmackerFile::parse(&bytes).map_err(|error| error.to_string())?;
+    println!("file\t{}", path.display());
+    println!("bytes\t{}", bytes.len());
+    println!("signature\t{}", String::from_utf8_lossy(&file.signature));
+    println!("dimensions\t{}x{}", file.width, file.height);
+    println!("frame_count\t{}", file.frame_count);
+    println!("table_entries\t{}", file.frames.len());
+    println!("ring_frame\t{}", file.has_ring_frame());
+    println!("flags\t0x{:08x}", file.flags);
+    println!(
+        "unaccounted_flag_bits\t0x{:08x}",
+        file.unaccounted_flag_bits()
+    );
+    println!("raw_frame_rate\t{}", file.raw_frame_rate);
+    println!("frame_interval_us\t{}", file.frame_interval_us());
+    println!("duration_ms\t{}", file.duration_ms());
+    println!("trees_offset\t{}", file.trees_offset);
+    println!("trees_size\t{}", file.trees_size);
+    println!(
+        "tree_table_sizes\tmmap={};mclr={};full={};type={}",
+        file.mmap_size, file.mclr_size, file.full_size, file.type_size
+    );
+    println!("first_frame_offset\t{}", file.first_frame_offset);
+    println!("keyframes\t{}", file.keyframes());
+    println!("palette_frames\t{}", file.palette_frames());
+    println!("video_bytes\t{}", file.video_bytes());
+    println!("audio_bytes\t{}", file.audio_bytes());
+    println!("unaccounted_tail\t{}", file.unaccounted_tail);
+    println!("unknown_header_word\t0x{:08x}", file.unknown_header_word);
+    for (index, track) in file.audio.iter().enumerate() {
+        if !track.present() {
+            continue;
+        }
+        println!(
+            "audio_track\t{index}\trate={}\tbits={}\tchannels={}\tcompressed={}\tbink={}\t\
+             unpacked-buffer={}\tunaccounted-bits=0x{:08x}",
+            track.sample_rate(),
+            track.bits_per_sample(),
+            track.channels(),
+            track.compressed(),
+            track.bink_audio(),
+            track.unpacked_size,
+            track.unaccounted_bits()
+        );
+        println!(
+            "audio_track_totals\t{index}\tunpacked-from-chunks={}\texpected-from-header={}",
+            file.audio_unpacked_bytes(index),
+            file.audio_expected_bytes(index)
+        );
+    }
+    Ok(())
+}
+
+fn scan_smacker_directory(directory: &Path) -> Result<(), String> {
+    if !directory.is_dir() {
+        return Err(format!("not a directory: {}", directory.display()));
+    }
+    let mut paths = Vec::new();
+    collect_paths_with_extension(directory, "smk", &mut paths)?;
+    paths.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
+
+    let mut parsed = 0_usize;
+    let mut closed = 0_usize;
+    let mut signatures = BTreeMap::<String, usize>::new();
+    let mut unknown_header_words = BTreeSet::<u32>::new();
+    let mut unaccounted_flags = BTreeSet::<u32>::new();
+    let mut unknown_size_flags = 0_usize;
+    // The frame-split control: how far the audio summed out of the chunks lands from the total the
+    // header's rate and running time predict. A wrong split would not land close.
+    let mut worst_audio_drift = 0_i64;
+    let mut failures = Vec::new();
+    for path in &paths {
+        let name = path
+            .strip_prefix(directory)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned();
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                failures.push(format!("{name}: {error}"));
+                continue;
+            }
+        };
+        match SmackerFile::parse(&bytes) {
+            Ok(file) => {
+                parsed += 1;
+                if file.unaccounted_tail == 0 {
+                    closed += 1;
+                }
+                *signatures
+                    .entry(String::from_utf8_lossy(&file.signature).into_owned())
+                    .or_default() += 1;
+                unknown_header_words.insert(file.unknown_header_word);
+                unaccounted_flags.insert(file.unaccounted_flag_bits());
+                unknown_size_flags += file
+                    .frames
+                    .iter()
+                    .filter(|frame| frame.unknown_size_flag)
+                    .count();
+                for track in 0..smacker::AUDIO_TRACKS {
+                    let drift = file.audio_unpacked_bytes(track) as i64
+                        - file.audio_expected_bytes(track) as i64;
+                    worst_audio_drift = worst_audio_drift.max(drift.abs());
+                }
+                println!("{}", smacker::describe(&name, &file));
+            }
+            Err(error) => failures.push(format!("{name}: {error}")),
+        }
+    }
+    println!("files\t{}", paths.len());
+    println!("parsed\t{parsed}");
+    println!("sizes_account_for_every_byte\t{closed}");
+    println!("frames_with_unknown_size_flag\t{unknown_size_flags}");
+    println!("worst_audio_total_drift_bytes\t{worst_audio_drift}");
+    for (signature, count) in &signatures {
+        println!("signature\t{signature}\t{count}");
+    }
+    println!(
+        "unknown_header_word_values\t{}",
+        unknown_header_words
+            .iter()
+            .map(|value| format!("0x{value:08x}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    println!(
+        "unaccounted_flag_bit_values\t{}",
+        unaccounted_flags
+            .iter()
+            .map(|value| format!("0x{value:08x}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    println!("failures\t{}", failures.len());
+    for failure in &failures {
+        println!("failure\t{failure}");
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{} file(s) failed", failures.len()))
+    }
+}
+
+/// Collect every file under `directory` whose extension matches, case-insensitively.
+///
+/// Separate from `collect_map_paths` rather than a generalisation of it: that one filters on
+/// `map_kind`, which is a classification and not an extension, and folding the two would make the
+/// map walk depend on a string it does not use.
+fn collect_paths_with_extension(
+    directory: &Path,
+    extension: &str,
+    paths: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(directory)
+        .map_err(|error| format!("could not read directory {}: {error}", directory.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "could not read directory entry in {}: {error}",
+                directory.display()
+            )
+        })?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("could not inspect {}: {error}", entry.path().display()))?;
+        let path = entry.path();
+        if file_type.is_dir() {
+            collect_paths_with_extension(&path, extension, paths)?;
+        } else if file_type.is_file()
+            && path
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case(extension))
+        {
+            paths.push(path);
+        }
+    }
     Ok(())
 }
 
