@@ -1,0 +1,29 @@
+# Ladder rung 8: rung 7 with the two archives' frequencies EXCHANGED.
+#
+# This mod is the control for rung 7's archive-attribution claim, not a new observation. Rung 7 put
+# 220 Hz into `sndfx.mpq` and 1760 Hz into `special.mpq`, for both `wav\welcome.wav` and
+# `wav\button.wav`, and an attended listen reported a SPLIT: the long menu-open tone read as low
+# (sndfx.mpq) and the short button click read as high (special.mpq). That reading rests entirely on
+# a human distinguishing pitch by ear plus this project's own record of which frequency went into
+# which archive -- see `mods/audio-welcome-tone/mod.toml` and `docs/engine-acceptance-ladder.md`
+# for the rung 7 evidence; it is not repeated here.
+#
+# The only thing this mod changes from rung 7 is which archive gets which frequency: 1760 Hz into
+# `sndfx.mpq`, 220 Hz into `special.mpq`. Same two members, same identical-length constraint,
+# everything else unchanged. If rung 7's attribution is real, the listener's report must FLIP: high
+# at menu open, low on click. If it does not flip, the split rung 7 reported was an artifact of the
+# build or of the pitch judgement, and rung 7's conclusion is void.
+#
+# `scripts/build-acceptance-ladder.sh` also asserts this offline, which an attended listen cannot:
+# rung 8's `sndfx.mpq` tone for each member is byte-identical to rung 7's `special.mpq` tone for
+# that member, and vice versa -- the same tone, in the opposite archive, not a second arbitrary
+# build wearing rung 8's name.
+id = "audio-tone-swapped"
+name = "Welcome sound, tones exchanged between archives"
+version = "0.1.0"
+description = "Rung 8: rung 7 with sndfx.mpq and special.mpq's tones swapped, to control its archive attribution."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false

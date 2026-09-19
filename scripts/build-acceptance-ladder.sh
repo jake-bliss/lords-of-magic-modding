@@ -204,10 +204,13 @@ sys.exit(0 if differing == 0 else 1)
 ' "$1" "$2"
 }
 
+# hertz_for ARCHIVE SNDFX_HZ SPECIAL_HZ -- takes the per-rung assignment as arguments rather than
+# reading a global, because rung 8 assigns the opposite frequency to each archive from rung 7 and a
+# global pair would silently apply to whichever rung ran second.
 hertz_for() {
   case "$1" in
-    sndfx.mpq) echo "${SNDFX_HERTZ}" ;;
-    special.mpq) echo "${SPECIAL_HERTZ}" ;;
+    sndfx.mpq) echo "$2" ;;
+    special.mpq) echo "$3" ;;
     *) die "no tone frequency defined for $1" ;;
   esac
 }
@@ -533,14 +536,14 @@ open(sys.argv[1], "wb").write(b"RIFF" + struct.pack("<I", len(body)) + body)
   cmp -s "${fixture}" "${rebuilt}"
 }
 
-if wants 6 || wants 7; then
+if wants 6 || wants 7 || wants 8; then
   note "== audio rungs: is the writer fit to build them? =="
   if wave_pad_preserved; then
     note "  PASS  --import-wave preserves an odd-chunk pad byte; the audio rungs are buildable"
     audio_writer_ready=1
   else
     note "  FAIL  --import-wave does NOT preserve an odd-chunk pad byte (wave.rs rebuild())."
-    note "        Rungs 6 and 7 are NOT built. Rebuild them from scratch once the fix lands;"
+    note "        Rungs 6, 7 and 8 are NOT built. Rebuild them from scratch once the fix lands;"
     note "        do not patch the artifacts a previous run left behind."
     audio_writer_ready=0
     failures=$(( failures + 1 ))
@@ -617,31 +620,45 @@ if wants 6 && (( audio_writer_ready )); then
 fi
 
 # ------------------------------------------------------------------------------------------------
-# Rung 7: an audible replacement of identical length, different in each archive
+# Rungs 7 and 8: an audible replacement of identical length, different in each archive -- and,
+# for rung 8, the same two frequencies with the archives EXCHANGED.
 # ------------------------------------------------------------------------------------------------
-if wants 7 && (( audio_writer_ready )); then
-  note "== rung 7: audio-welcome-tone =="
-  mod_dir="${project_dir}/mods/audio-welcome-tone"
-  reset_tree audio-welcome-tone
+
+# build_tone_rung RUNG_NUMBER MOD_ID SNDFX_HZ SPECIAL_HZ -- the body shared by rungs 7 and 8. Every
+# check is identical between the two rungs except for the rung number in its label and the two
+# frequencies, both of which are now arguments rather than the module-level SNDFX_HERTZ/
+# SPECIAL_HERTZ pair, so a caller cannot forget which rung it is building. Work files are namespaced
+# by rung number (`rung${rung}.*`) so that rungs 7 and 8 can both run in the same invocation without
+# one overwriting the other's intermediate bytes -- which rung 8's swap-verification check below
+# depends on being able to read back.
+build_tone_rung() {
+  local rung="$1" mod_id="$2" sndfx_hz="$3" special_hz="$4"
+  local mod_dir archive hertz member leaf tree_file
+  note "== rung ${rung}: ${mod_id} =="
+  mod_dir="${project_dir}/mods/${mod_id}"
+  reset_tree "${mod_id}"
   seed_audio_members "${mod_dir}"
   for archive in "${AUDIO_ARCHIVES[@]}"; do
-    hertz="$(hertz_for "${archive}")"
+    hertz="$(hertz_for "${archive}" "${sndfx_hz}" "${special_hz}")"
     for member in "${AUDIO_MEMBERS[@]}"; do
       leaf="${member##*\\}"
       tree_file="${mod_dir}/archives/${archive}/wav/${leaf}"
-      rm -f "${work_dir}/tone.${leaf}.${archive}.wav" "${work_dir}/${leaf}.${archive}.tone.wav"
+      rm -f "${work_dir}/rung${rung}.tone.${leaf}.${archive}.wav" \
+        "${work_dir}/rung${rung}.${leaf}.${archive}.tone.wav"
       PYTHONDONTWRITEBYTECODE=1 python3 "${project_dir}/tools/wav_tone.py" \
-        "${work_dir}/${leaf}.${archive}.pristine.wav" "${work_dir}/tone.${leaf}.${archive}.wav" \
+        "${work_dir}/${leaf}.${archive}.pristine.wav" \
+        "${work_dir}/rung${rung}.tone.${leaf}.${archive}.wav" \
         --hertz "${hertz}" --tone-ms "${TONE_MS}"
-      "${viewer_tool}" --import-wave "${work_dir}/tone.${leaf}.${archive}.wav" \
-        "${work_dir}/${leaf}.${archive}.pristine.wav" "${work_dir}/${leaf}.${archive}.tone.wav" \
+      "${viewer_tool}" --import-wave "${work_dir}/rung${rung}.tone.${leaf}.${archive}.wav" \
+        "${work_dir}/${leaf}.${archive}.pristine.wav" \
+        "${work_dir}/rung${rung}.${leaf}.${archive}.tone.wav" \
         >/dev/null
-      cp "${work_dir}/${leaf}.${archive}.tone.wav" "${tree_file}"
-      check "rung 7: ${archive}:${member} keeps the shipped member's byte count" \
-        test "$(wc -c < "${work_dir}/${leaf}.${archive}.tone.wav")" \
+      cp "${work_dir}/rung${rung}.${leaf}.${archive}.tone.wav" "${tree_file}"
+      check "rung ${rung}: ${archive}:${member} keeps the shipped member's byte count" \
+        test "$(wc -c < "${work_dir}/rung${rung}.${leaf}.${archive}.tone.wav")" \
         -eq "$(wc -c < "${work_dir}/${leaf}.${archive}.pristine.wav")"
-      check "rung 7: ${archive}:${member} really differs from the shipped member" \
-        files_differ "${work_dir}/${leaf}.${archive}.tone.wav" \
+      check "rung ${rung}: ${archive}:${member} really differs from the shipped member" \
+        files_differ "${work_dir}/rung${rung}.${leaf}.${archive}.tone.wav" \
         "${work_dir}/${leaf}.${archive}.pristine.wav"
     done
   done
@@ -649,31 +666,77 @@ if wants 7 && (( audio_writer_ready )); then
   # listen could not name which archive the engine opened.
   for member in "${AUDIO_MEMBERS[@]}"; do
     leaf="${member##*\\}"
-    check "rung 7: the two archives' replacements of ${member} are different sounds" \
-      files_differ "${work_dir}/${leaf}.sndfx.mpq.tone.wav" \
-      "${work_dir}/${leaf}.special.mpq.tone.wav"
+    check "rung ${rung}: the two archives' replacements of ${member} are different sounds" \
+      files_differ "${work_dir}/rung${rung}.${leaf}.sndfx.mpq.tone.wav" \
+      "${work_dir}/rung${rung}.${leaf}.special.mpq.tone.wav"
   done
 
-  build_mod audio-welcome-tone
+  build_mod "${mod_id}"
   note "  build ${build_dir}"
   for archive in "${AUDIO_ARCHIVES[@]}"; do
     for member in "${AUDIO_MEMBERS[@]}"; do
       leaf="${member##*\\}"
-      rm -f "${work_dir}/${leaf}.${archive}.packed.wav"
+      rm -f "${work_dir}/rung${rung}.${leaf}.${archive}.packed.wav"
       export_wave "${build_dir}/${archive}" "${member}" \
-        "${work_dir}/${leaf}.${archive}.packed.wav" "${archive}"
-      check "rung 7: ${archive}:${member} read back out of the packed archive is the tone we wrote" \
-        wave_samples_equal "${work_dir}/${leaf}.${archive}.packed.wav" \
-        "${work_dir}/tone.${leaf}.${archive}.wav"
-      cp "${work_dir}/${leaf}.${archive}.packed.wav" \
-        "$(fresh_output "${out_dir}/rung7-${leaf%.wav}-expected-${archive%.mpq}.wav")"
+        "${work_dir}/rung${rung}.${leaf}.${archive}.packed.wav" "${archive}"
+      check "rung ${rung}: ${archive}:${member} read back out of the packed archive is the tone we wrote" \
+        wave_samples_equal "${work_dir}/rung${rung}.${leaf}.${archive}.packed.wav" \
+        "${work_dir}/rung${rung}.${leaf}.${archive}.tone.wav"
+      cp "${work_dir}/rung${rung}.${leaf}.${archive}.packed.wav" \
+        "$(fresh_output "${out_dir}/rung${rung}-${leaf%.wav}-expected-${archive%.mpq}.wav")"
     done
     note "  ${archive} sha256 $(file_hash "${build_dir}/${archive}")"
   done
-  note "  expected values: ${out_dir}/rung7-welcome-expected-sndfx.wav ($(hertz_for sndfx.mpq) Hz)"
-  note "                   ${out_dir}/rung7-welcome-expected-special.wav ($(hertz_for special.mpq) Hz)"
-  note "                   ${out_dir}/rung7-button-expected-sndfx.wav, -special.wav"
+  note "  expected values: ${out_dir}/rung${rung}-welcome-expected-sndfx.wav ($(hertz_for sndfx.mpq "${sndfx_hz}" "${special_hz}") Hz)"
+  note "                   ${out_dir}/rung${rung}-welcome-expected-special.wav ($(hertz_for special.mpq "${sndfx_hz}" "${special_hz}") Hz)"
+  note "                   ${out_dir}/rung${rung}-button-expected-sndfx.wav, -special.wav"
   note "  build id ${build_id}"
+  note
+}
+
+# reconstruct_tone ARCHIVE HERTZ LEAF OUTPUT -- regenerates, from the ARCHIVE's own pristine bytes
+# (already seeded into work_dir by whichever rung most recently ran seed_audio_members), the exact
+# tone.wav that a rung assigning HERTZ to ARCHIVE would have produced. It exists so that rung 8's
+# swap check does not depend on rung 7 having actually run in this invocation: rung 8 seeds both
+# archives' pristines itself, so it can reconstruct "what rung 7 would have written" locally instead
+# of reading a file rung 7 may never have left behind.
+reconstruct_tone() {
+  local archive="$1" hertz="$2" leaf="$3" output="$4"
+  local raw="${work_dir}/reconstruct.${leaf}.${archive}.${hertz}hz.wav"
+  rm -f "${raw}" "${output}"
+  PYTHONDONTWRITEBYTECODE=1 python3 "${project_dir}/tools/wav_tone.py" \
+    "${work_dir}/${leaf}.${archive}.pristine.wav" "${raw}" \
+    --hertz "${hertz}" --tone-ms "${TONE_MS}"
+  "${viewer_tool}" --import-wave "${raw}" "${work_dir}/${leaf}.${archive}.pristine.wav" \
+    "${output}" >/dev/null
+}
+
+if wants 7 && (( audio_writer_ready )); then
+  build_tone_rung 7 audio-welcome-tone "${SNDFX_HERTZ}" "${SPECIAL_HERTZ}"
+fi
+
+if wants 8 && (( audio_writer_ready )); then
+  build_tone_rung 8 audio-tone-swapped "${SPECIAL_HERTZ}" "${SNDFX_HERTZ}"
+
+  # The check rung 7 does not have: the swap must be a genuine exchange, not a second arbitrary
+  # build. Rung 8's sndfx.mpq now carries the frequency rung 7 gave to special.mpq (1760 Hz) and
+  # vice versa, so the SAME tone must land in the OPPOSITE archive. Reconstructed locally (see
+  # reconstruct_tone above) rather than by reading rung 7's work files, so this holds even when
+  # `--rung 8` is run alone and rung 7 never built anything in this invocation.
+  for member in "${AUDIO_MEMBERS[@]}"; do
+    leaf="${member##*\\}"
+    reconstruct_tone special.mpq "${SPECIAL_HERTZ}" "${leaf}" \
+      "${work_dir}/reconstructed.${leaf}.rung7-special-equivalent.wav"
+    check "rung 8: sndfx.mpq's ${member} tone is byte-identical to rung 7's special.mpq tone (same ${SPECIAL_HERTZ} Hz, opposite archive)" \
+      files_identical "${work_dir}/rung8.${leaf}.sndfx.mpq.tone.wav" \
+      "${work_dir}/reconstructed.${leaf}.rung7-special-equivalent.wav"
+
+    reconstruct_tone sndfx.mpq "${SNDFX_HERTZ}" "${leaf}" \
+      "${work_dir}/reconstructed.${leaf}.rung7-sndfx-equivalent.wav"
+    check "rung 8: special.mpq's ${member} tone is byte-identical to rung 7's sndfx.mpq tone (same ${SNDFX_HERTZ} Hz, opposite archive)" \
+      files_identical "${work_dir}/rung8.${leaf}.special.mpq.tone.wav" \
+      "${work_dir}/reconstructed.${leaf}.rung7-sndfx-equivalent.wav"
+  done
   note
 fi
 
