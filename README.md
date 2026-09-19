@@ -41,7 +41,7 @@ Concretely, today you can **inspect, decode, render, export, measure, validate a
 - [Native preservation engine plan](docs/native-engine-plan.md) — staged Rust/SDL3 candidate with explicit stop/go gates
 - [Native asset layer](docs/native-asset-stage.md) — live Stage 1 evidence, validation gates, and remaining work
 - [Map and scenario format](docs/map-format.md) — cell/terrain lookup, placed-sprite records, corpus measurements, and open variants
-- [Audio and video formats](docs/audio-format.md) — the WAVE encoding histogram, the 3,140-file lossless round trip, the export/import path, and the Smacker container
+- [Audio and video formats](docs/audio-format.md) — the WAVE encoding histogram, what the 3,140-file round trip does and does not cover, the export/import path with its six refusals, and the Smacker container
 - [GameScript language and runtime probe](docs/gamescript-format.md) — corpus-derived lexical model, vocabulary measurements, and the next VM gate
 - [MPQ inventory](docs/mpq-inventory.md) — reproducible extraction and baseline/3.02/GS5R3 findings
 - [Deterministic MPQ repack](docs/repack.md) — the repack command, what its shape check proves, and what it does not guarantee

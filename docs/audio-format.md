@@ -8,6 +8,11 @@ Evidence classes are used throughout, as everywhere in this repository: **Observ
 **Observed in a local binary**, **Documented**, **Inferred**, **Refuted**. An unlabelled assertion
 here is a defect.
 
+**No second party has verified any corpus number on this page.** Two independent reviews were run
+over the branch; neither reviewer had an installed game, so every count below rests on one machine's
+measurement. They are reproducible with the commands given and should be re-run rather than
+inherited.
+
 Corpus, last measured **2026-09-18** on the installed profiles:
 
 | Source | Files | Note |
@@ -26,8 +31,7 @@ four.
 
 ### Encoding histogram
 
-Measured with `--wave-roundtrip`, which classifies by **decoding** each member, not by reading its
-header. **Observed in the corpus:**
+Measured with `--wave-roundtrip`. **Observed in the corpus:**
 
 | Format tag | Channels | Sample rate | Bits | `sndfx.mpq` | `special.mpq` | loose `Wav/` |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -51,8 +55,8 @@ witness — see *what is not determined*.
 **Observed in the corpus:** the 3,098 archived members contain only **1,802 distinct files** by
 SHA-256, and **1,142** of those appear in both `sndfx.mpq` and `special.mpq`. The archives are not
 disjoint sets of sounds; `special.mpq` re-ships a large part of `sndfx.mpq`. Which of the two the
-engine reads a given sound from has **not** been established and is not needed for any measurement
-here — but it matters for modding, because editing one archive may leave the other's copy in place.
+engine reads a given sound from has **not** been established — but it matters for modding, because
+editing one archive may leave the other's copy in place.
 
 ### Container layout
 
@@ -71,42 +75,64 @@ their counts:
 | `fmt \|data\|smpl\|LIST\|cue \|LIST` | 6 | 6 | 0 |
 
 No member has a `fmt ` chunk longer than 16 bytes, and no member's `RIFF` size field disagrees with
-its file length (`riff_size_mismatch 0` on all three sweeps).
+its file length (`riff_size_mismatch 0` on all three sweeps). **Observed in the corpus:** 147 files
+(63 + 62 + 22) carry a `smpl` loop, a `cue ` point, or both — that is the population the
+length-change gate below exists for.
 
 The `LIST INFO` blocks name the authoring tool. **Observed in the corpus:** every one of the 1,678
 `ISFT` fields across both archives reads `Sound Forge 4.0`, and the `ICRD` dates run 1996 (16),
 1997 (1,232) and 1998 (430). One tool cut the entire corpus.
 
-### Round-trip: 3,140 of 3,140 byte-identical
+### Read the round-trip numbers for what they are
 
-`--wave-roundtrip` and `--wave-roundtrip-dir` parse each file, rebuild the `fmt ` chunk from the
-decoded format fields and the `data` chunk from the decoded samples, re-serialise the container, and
-compare with the original. Two counts are reported and must not be conflated — the same distinction
-[the PBM and IMP sweeps](native-asset-stage.md) make:
+`--wave-roundtrip` and `--wave-roundtrip-dir` report several counters, and they are **not** equally
+strong. This section says which is which, because the first version of this page quoted a
+3,140/3,140 result without saying what part of the file it covered.
 
-* **sample-lossless** — decode, re-encode, decode again gives the same samples. This is the
-  correctness claim; anything short of every file is a bug.
-* **byte-identical** — the re-serialised file equals the original byte for byte. This is a
-  *fidelity observation about the original authoring tool*, not a correctness claim.
+`reserialised_identical` compares the original bytes with a re-serialisation of the parsed
+structure. That serialisation is **split**:
+
+* **Reconstructed, and therefore load-bearing.** The `fmt ` chunk is rebuilt field by field from six
+  typed values, and the `data` chunk is regenerated from decoded, sign-centred samples. Break the
+  `fmt ` field offsets, or change the 8-bit conversion from `b - 128` to `b - 127`, and the sweep
+  fails across the whole corpus. This is a real regression guard, and it was mutation-tested in both
+  directions.
+* **Carried verbatim, and therefore proving nothing.** The `RIFF` size field, every chunk id, every
+  declared size, every ancillary chunk body, every pad byte and the trailing bytes are copied out of
+  the parse and copied back in. The comparison cannot disagree about any of them.
+
+`parsed` is the load-bearing number for the container walk itself: the walk is bounded by the file
+length at every step, so a mis-walked chunk boundary lands on a chunk that does not fit and surfaces
+as a parse failure rather than as a wrong-but-quiet result.
+
+`import_verified` is the counter that covers the *carried* half. Every member is put back through
+`--import-wave` with its own audio, which goes through a **different** serialiser — one that
+recomputes every size — and the result is then re-parsed and checked against the template chunk by
+chunk, body by body, pad byte by pad byte. **That check can fail, and it caught a real bug**: the
+rebuilding serialiser wrote a zero pad byte where a template carried `0x20`, so importing a member's
+own unmodified audio came back different with a zero exit status. Nothing in the re-serialisation
+path could have noticed, because that path replays the pad.
 
 **Observed in the corpus:**
 
-| Sweep | Checked | Parsed | Sample-lossless | Byte-identical | Refused | Failures |
-| --- | --- | --- | --- | --- | --- | --- |
-| `sndfx.mpq` | 1,880 | 1,880 | 1,880 | 1,880 | 0 | 0 |
-| `special.mpq` | 1,218 | 1,218 | 1,218 | 1,218 | 0 | 0 |
-| loose `Wav/` | 42 | 42 | 42 | 42 | 0 | 0 |
-| **total** | **3,140** | **3,140** | **3,140** | **3,140** | **0** | **0** |
+| Sweep | Checked | Parsed | Reserialised identical | Import verified | Import identical | Refused | Failures |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sndfx.mpq` | 1,880 | 1,880 | 1,880 | 1,880 | 1,880 | 0 | 0 |
+| `special.mpq` | 1,218 | 1,218 | 1,218 | 1,218 | 1,218 | 0 | 0 |
+| loose `Wav/` | 42 | 42 | 42 | 42 | 42 | 0 | 0 |
+| **total** | **3,140** | **3,140** | **3,140** | **3,140** | **3,140** | **0** | **0** |
 
-**There is no gap between the two counts, and the reason is worth stating rather than celebrating.**
-The PBM corpus reached only 8 of 1,045 byte-identical because IFF `BODY` data is *compressed*, and
-at least two different packers had made different, equally valid choices about run boundaries. WAVE
-`data` is not compressed: there is exactly one byte sequence that encodes a given set of PCM
-samples. The only freedom a WAVE writer has is in the container — chunk order, padding, which
-metadata chunks to emit — and this corpus was cut by a single tool, so there is only one set of
-choices to reproduce. A 100% result here is therefore a much weaker statement about the encoder than
-8/1,045 was about the IMP one. It says the container walk is exact; it does not say this tool would
-reproduce a WAVE some other program wrote.
+`skipped_not_wave` is 0 in all three. It is reported because without it the denominator would be
+chosen by the same magic-byte test being measured, and the archive and directory sweeps would
+quietly report over different populations.
+
+**Why byte-identity is total, and why that is not a boast.** WAVE `data` is not compressed: there is
+exactly one byte sequence that encodes a given set of PCM samples. The only freedom a WAVE writer
+has is in the container, and this corpus was cut by a single tool, so there is one set of choices to
+reproduce. Contrast the PBM corpus, which reached 8 of 1,045 byte-identical because IFF `BODY` data
+*is* compressed and at least two packers had made different, equally valid choices. A 100% result
+here says the container walk is exact; it does not say this tool would reproduce a WAVE some other
+program wrote.
 
 ### Export and import
 
@@ -123,41 +149,76 @@ lom-asset-viewer --import-wave /tmp/edited.wav /tmp/template.wav /tmp/new-member
 
 `--export-wave` writes **this tool's re-encode**, not a copy of the member. That is deliberate: a
 copy proves nothing about the decoder, and the modder needs the file they edit to be the file the
-importer will compare against. It refuses any member that does not re-encode to its own bytes.
+importer will compare against.
 
 `--import-wave` takes the audio from the edited file and **everything else from the template**. An
 editor that drops the Sound Forge `LIST INFO` block on save does not cost you the block — verified
 end to end: a `fmt |data|LIST` member exported, stripped back to a bare 44-byte `fmt |data` file,
-and re-imported reproduces the original member byte for byte. All `data`, `RIFF` and pad sizes are
-recomputed from what is actually written, so an edit that changes the length is written correctly.
+and re-imported reproduces the original member byte for byte.
 
-### What the tool refuses to rewrite, and why
+### Which `fmt ` chunk the output carries
 
-The precedent is the IMP writer, which refuses 3,439 frames whose pixels are shared. The WAVE
-importer has three refusals, each named to the caller rather than silently applied:
+The import replaces the template's whole `fmt ` structure, so the gate has to cover the whole
+structure — not just the four nominal fields. It did not, and an edit declaring PCM/mono/22050/8-bit
+with `block_align = 0` put that zero in the output without needing any flag. The policy now, stated
+rather than implied:
+
+* **Nominal format unchanged** — the *template's* `fmt ` chunk is kept entire, including its
+  `byte_rate`, `block_align` and any extension bytes. The shipped file is the authority on fields
+  the modder did not set out to change; an editor's idea of them is not.
+* **Nominal format changed** (`--allow-format-change`) — the four nominal fields come from the edit
+  and `block_align` and `byte_rate` are **derived** from them rather than copied.
+* **Extension bytes** — no corpus member has a `fmt ` chunk longer than 16 bytes, so there is no
+  evidence for what the engine does with one. An edit carrying extension bytes the template does not
+  have is refused by name; on a format change the template's are dropped, because they describe a
+  format no longer being written.
+
+### What the tool refuses, and why
+
+The precedent is the IMP writer, which refuses 3,439 frames whose pixels are shared.
 
 | Refusal | Condition | Count in the corpus |
 | --- | --- | --- |
-| `container-not-reproducible` | the template does not re-encode to its own bytes, so a rewrite would change bytes the modder never asked to change | **0** |
-| `partial-frame` | the `data` chunk does not hold a whole number of interleaved frames | **0** |
 | `unattested-format` | a format tag, channel count, rate or depth that no shipped file is evidence for | **0** |
+| `partial-frame` | the `data` chunk does not hold a whole number of interleaved frames | **0** |
+| `block-align-disagrees` | `block_align` contradicts the channel count and bit depth in the same `fmt ` chunk | **0** |
+| `byte-rate-disagrees` | `byte_rate` contradicts the sample rate and block alignment | **0** |
+| `dangling-loop-metadata` | a `smpl` loop or `cue ` point would point past the end of the audio being written | **0** on unedited members |
+| `container-changed` | the writer's own output does not carry the container it was told to carry | **0**, and this one has fired on a real bug |
 
-**All 3,140 files are rewritable.** Nothing in this corpus is refused. That is an honest result and
-not a claim that the refusals are decorative — the first two are reachable by any file that is not
-from this corpus, and `unattested-format` is reached by the *incoming edit* rather than by the
-template. The attested sets are:
+All 3,140 corpus files are rewritable; nothing that ships is refused. Four of these six are gates on
+what comes *in* rather than on what ships, and the last is a gate on the tool itself.
 
-* format tag: PCM (1) only;
-* channels: 1 or 2;
-* sample rate: 11025, 22050 or 44100;
-* bit depth: 8 or 16.
+`block-align-disagrees` and `byte-rate-disagrees` exist because both fields are redundant — for PCM,
+`block_align = channels × bits/8` and `byte_rate = sample_rate × block_align`, **Documented** — and
+redundant fields are the ones an editor gets wrong. The decoder computes frame size for itself and
+would otherwise never notice.
 
-An import at, say, 48 kHz is refused by name even with `--allow-format-change`. These sets are
-**Observed in the corpus**, not **Documented**: nothing in `lomse.exe` has been read to establish
-what the engine actually accepts. They are the set for which a shipped file is evidence that the
-game plays it, which is the strongest ground available without an engine probe. Changing the format
-at all — even within the set — requires `--allow-format-change`, because a member's format matching
-its neighbours' is itself evidence and departing from it is a decision, not a default.
+`dangling-loop-metadata` is the gate on the hazard this page previously only described. `smpl` loop
+records and `cue ` points address **sample frames**; shortening the audio under them leaves a loop
+or marker past the end, which plays as a hang or a click. 147 corpus files carry such metadata.
+Refused by name; `--allow-dangling-loops` writes it anyway.
+
+The attested sets are **Observed in the corpus**, not **Documented**: format tag PCM (1) only;
+channels 1 or 2; rate 11025, 22050 or 44100; depth 8 or 16. Nothing in `lomse.exe` has been read to
+establish what the engine actually accepts. An import at 48 kHz is refused by name even with
+`--allow-format-change`.
+
+### Classification is not decodability
+
+`asset::probe` now walks the WAVE container rather than reading the `fmt ` header and stopping, and
+decodes the samples when there is a decoder. The two claims are kept apart:
+
+* a container error means the member is **not classified** — the probe returns an error;
+* a legal WAVE in a format with no decoder here **is** classified, with `undecoded=<reason>` naming
+  what stopped. Reporting it as a probe failure would be the tool mistaking its own reach for the
+  file being broken, and would flip `--scan` to a non-zero exit on a valid file.
+
+**The repository-wide "9,804 members, 0 probe failures" figure was measured against the old probe.**
+It has been **re-measured** against the new one on the GS5R3 profile and still holds:
+`pic.mpq` 1,406, `special.mpq` 1,218, `gs.mpq` 1,700, `imp.mpq` 3,600, `sndfx.mpq` 1,880 —
+**9,804 entries, 0 probe failures**. The corpus is all PCM, so nothing reaches the `undecoded=` path
+today.
 
 ## Smacker
 
@@ -165,14 +226,15 @@ its neighbours' is itself evidence and departing from it is a decision, not a de
 
 **The video codec is not implemented.** No Huffman tree is built and no frame is decoded to pixels.
 What is established is the **container**: the header, both frame tables, the tree-section extent,
-and the palette/audio/video split inside every frame. `docs/` records this as a container result
-and nothing more.
+and the palette/audio/video split inside every frame.
 
 ### Header
 
 104 bytes, little-endian. **Documented** field layout (the format is described by the
 multimedia-format community and implemented in ScummVM and libav), **Observed in the corpus** where
-the installed files bear it out.
+the installed files bear it out. **No one has diffed this layout against ScummVM or libav source**
+— a wrong offset shared by the parser and this table would be invisible to the test suite, which is
+why the arithmetic cross-checks below matter more than the table does.
 
 | Offset | Size | Field | Corpus |
 | --- | --- | --- | --- |
@@ -197,14 +259,12 @@ negative case.
 
 `flags` bit 0 is the ring frame (an extra looping frame beyond `frame_count`, lengthening both
 tables by one entry), bit 1 is Y-interlaced and bit 2 is Y-doubled. **Observed in the corpus:** all
-three are clear in all 23 files, and no bit outside those three is ever set. The ring-frame path is
-therefore implemented and **unexercised by this corpus**.
+three are clear in all 23 files, and no bit outside those three is ever set.
 
 `audio_rate[track]` packs the descriptor into one word: bit 31 present, bit 30 Smacker Huffman
 compression, bit 29 16-bit, bit 28 stereo, bit 27 Bink DCT audio, bits 0–23 the sample rate.
 **Observed in the corpus:** every one of the 23 files has exactly one track, track 0, at **22050 Hz,
-8-bit, stereo, Smacker-Huffman compressed**. No file uses Bink audio, 16-bit audio, or a second
-track. No bit outside the six named above is ever set.
+8-bit, stereo, Smacker-Huffman compressed**. No bit outside the six named above is ever set.
 
 ### Frame tables and frame layout
 
@@ -215,13 +275,19 @@ to back.
 A size word's low two bits are flags — bit 0 keyframe, bit 1 unnamed — so **a frame payload size is
 always a multiple of four**. **Observed in the corpus:** reading it that way makes the header, the
 tables, the tree section and all frame sizes sum to *exactly* the file length for all 23 files
-(`sizes_account_for_every_byte 23`, `tail 0` on every file). That closure is the structural claim.
+(`sizes_account_for_every_byte 23`). That closure is the structural claim, and because it *is* the
+claim, a `.smk` whose sizes do not close is **not classified** as Smacker video and makes
+`--scan-smk-dir` exit non-zero. (The asymmetry with the WAVE probe above is deliberate: there, the
+undecodable case is a limit of this tool; here, a file whose sizes do not close is one this module
+has not understood.)
 
 A type byte's bit 0 says the frame opens with a palette chunk; bits 1–7 say which of the seven audio
 tracks carry data. Inside a frame, in order: the palette chunk if present (a leading byte holding
 the chunk length in units of four, itself included), then one chunk per flagged audio track (a
 leading 4-byte length including itself, and for a compressed track the decompressed length in the
-next four bytes), then the remainder, which is the video data this tool does not read.
+next four bytes), then the remainder, which is the video data this tool does not read. A chunk on a
+compressed track that declares fewer than 8 bytes cannot hold its own decompressed length and is
+rejected rather than read as uncompressed.
 
 **The control on that walk.** Nothing in the walk itself checks that an audio chunk was found in the
 right place — a mis-placed read that happened to fit would pass silently. But each compressed chunk
@@ -230,12 +296,17 @@ rate times the running time, a number derived from `frame_count` and the rate wo
 chunk position. **Observed in the corpus:** the two totals agree for all 23 files, the largest
 disagreement being **36 bytes** against per-file totals of 0.5–4.0 MB — well under one frame's 3,675
 bytes of audio, and explained by the 83,330 µs frame interval not dividing evenly into milliseconds.
-If the split were wrong, lengths would be read out of video data and the totals would not land
-close.
+
+Every factor in that control is a **file-declared** value, so all of it is computed with checked
+arithmetic. A crafted file whose sizes all close can still name a rate, channel count, frame count
+and interval whose product leaves `u64`; the control then reports `unrepresentable` and
+`--scan-smk-dir` exits non-zero, rather than presenting a wrapped number as a measurement. The same
+rule this module already applied to allocation now applies to arithmetic.
 
 ### Measured corpus
 
-`--scan-smk-dir 'English/smk'` — all 23 files, 0 failures. Sample of the result:
+`--scan-smk-dir 'English/smk'` — all 23 files, 0 failures, `worst_audio_total_drift_bytes 36`,
+`unrepresentable_audio_controls 0`. Sample of the result:
 
 | File | Size | Frames | Duration | Palette frames | Tree bytes | Video bytes | Audio bytes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -248,25 +319,22 @@ close.
 unnamed bit 1 is set on zero frames. Both flags are parsed, and this corpus exercises neither in the
 positive direction.
 
-`--inspect-file` and `--scan` now classify a `.smk` by parsing the container rather than by matching
-four magic bytes, so a file reported as `smacker-video` is one whose tables were walked and whose
-sizes closed.
-
 ## Commands
 
 ```sh
 lom-asset-viewer --wave-roundtrip ARCHIVE.mpq [--listfile FILE]
 lom-asset-viewer --wave-roundtrip-dir DIRECTORY
 lom-asset-viewer --export-wave ARCHIVE.mpq MEMBER OUTPUT.wav [--listfile FILE]
-lom-asset-viewer --import-wave EDITED.wav TEMPLATE.wav OUTPUT.wav [--allow-format-change]
+lom-asset-viewer --import-wave EDITED.wav TEMPLATE.wav OUTPUT.wav \
+    [--allow-format-change] [--allow-dangling-loops]
 lom-asset-viewer --describe-smk FILE.smk
 lom-asset-viewer --scan-smk-dir DIRECTORY
 ```
 
-Corpus-gated tests run with
-`LOM_GAME_DIR='.../English' cargo test --release -- --ignored`; they assert the round-trip and
-closure *rules* over whatever the archives hold rather than against a table of expected per-member
-results.
+Corpus-gated tests run with `LOM_GAME_DIR='.../English' cargo test --release -- --ignored`. They
+assert the documented sizes (3,098 archived members, 42 loose, 23 `.smk`) so a corpus that silently
+shrinks is caught, and they assert the round-trip and closure *rules* rather than a table of
+expected per-member results.
 
 ## What is not determined
 
@@ -277,37 +345,39 @@ results.
    by the other's copy. Not measured.
 2. **What the engine actually accepts.** The attested format sets come from what the game ships, not
    from reading `lomse.exe` or from an engine probe. A rate outside them may well work; a rate
-   inside them may fail in a context no shipped file covers. **Inferred**, and deliberately gated
-   conservatively.
+   inside them may fail in a context no shipped file covers. **Inferred**, and gated conservatively.
 3. **The 16-bit path rests on one file.** Exactly one member in the whole game is 16-bit. Its decode
    and re-encode are byte-exact, but "16-bit PCM round-trips" is a claim with a single witness.
 4. **No file was put in front of the engine.** Nothing written by `--import-wave` has been installed
    and played. The claim is that the bytes are a correct WAVE with the template's container, not
    that the game loads it. That is the same gap the map writer had before the `mapload` probe.
-5. **`cue ` and `smpl` chunk contents are not interpreted.** They are carried verbatim through every
-   round trip and reproduce byte-for-byte, but nothing here reads a loop point or a cue position. A
-   modder who shortens a looping sound will preserve a `smpl` chunk that now points past the end.
-   **Not determined, and a real hazard.**
-6. **`byte_rate` and `block_align` are carried, not validated.** They are reproduced exactly and are
-   self-consistent in every shipped file, but the decoder computes frame size from channels and bit
-   depth and never trusts `block_align`. A file where the two disagree would round-trip without
-   comment.
+5. **`cue ` and `smpl` contents are read for extent only.** The highest sample frame each refers to
+   is extracted and gated on; nothing here interprets a loop type, a play count, or a cue's
+   `chunkStart`/`blockStart`. A loop whose *start* still fits but whose semantics the edit breaks is
+   not caught.
+6. **`--allow-dangling-loops` leaves the metadata dangling.** It does not fix, retarget or strip the
+   chunk; it only stops refusing. There is no tool here that rescales loop points to a new length.
+7. **The `fmt ` extension policy is a decision, not a measurement.** No corpus member has extension
+   bytes, so refusing an edit that introduces them is the conservative reading of no evidence —
+   not a finding about the engine.
 
 **Smacker**
 
-7. **The video codec.** Explicitly out of scope. Frame extents are known; frame *contents* are not
+8. **The video codec.** Explicitly out of scope. Frame extents are known; frame *contents* are not
    decoded, and nothing here can render, re-encode or re-time a frame's pixels.
-8. **The tree section is an opaque extent.** `trees_size` bytes are located and their length is
+9. **The tree section is an opaque extent.** `trees_size` bytes are located and their length is
    confirmed by the closure, but the four trees inside are not split apart. `mmap_size`, `mclr_size`,
    `full_size` and `type_size` are **Documented** as decoded-table sizes rather than byte extents
    and are reported without being used.
-9. **Header word at offset 100.** `0x00000000` in all 23 files. One value across 23 files is not
-   evidence of meaning. Carried verbatim, labelled unknown.
-10. **Frame-size bit 1.** Never set in this corpus. Parsed, named `unknown`, never interpreted.
-11. **The keyframe bit is never set here.** The parse of bit 0 is exercised only in the negative
+10. **Header word at offset 100.** `0x00000000` in all 23 files. One value across 23 files is not
+    evidence of meaning. Carried verbatim, labelled unknown.
+11. **Frame-size bit 1.** Never set in this corpus. Parsed, named `unknown`, never interpreted.
+12. **The keyframe bit is never set here.** The parse of bit 0 is exercised only in the negative
     direction by this corpus.
-12. **`SMK4`, ring frames, Y-interlaced and Y-doubled, Bink audio, 16-bit and multi-track audio are
-    all unexercised.** The parser handles them from the documented layout; no installed file tests
-    any of them.
-13. **There is no Smacker writer.** The container is read-only. Nothing in this repository can
-    produce or modify a `.smk`.
+13. **`SMK4`, ring frames, Y-interlaced and Y-doubled, Bink audio, 16-bit and multi-track audio are
+    all unexercised by the corpus.** The parser handles them from the documented layout and the
+    uncompressed-track and ring-frame paths have unit tests, but no installed file tests any of them.
+14. **The header layout has not been checked against an external implementation.** It is
+    **Documented** from community descriptions; ScummVM and libav source were not diffed against it.
+    The size closure and the audio-rate control are what stand behind it.
+15. **There is no Smacker writer.** The container is read-only.

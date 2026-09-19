@@ -44,7 +44,7 @@ Measured on the preserved local GS5R3 profile on 2026-09-11:
 | `sndfx.mpq` | 1,880 | 1,880 WAVE | 0 |
 | **Total** | **9,804** | | **0** |
 
-The 3,098 WAVE members are probed for RIFF chunks, encoding, channels, sample rate, bit depth, data length, and duration. BMP members are probed for dimensions, bit depth, and compression. Full sample/pixel conversion is not yet implemented for those formats because mature platform-independent decoders can likely be reused later.
+The 3,098 WAVE members are now **decoded**, not probed: the container is walked, the `fmt ` chunk is rebuilt from typed fields, and the PCM sample data is converted both ways. See [audio and video formats](audio-format.md) for the encoding histogram, the round-trip counts and what each of them covers, and the export/import path. A legal WAVE in a format this tool has no decoder for is still **classified**, with `undecoded=<reason>`, rather than counted as a probe failure. The table above was re-measured against that changed probe on 2026-09-18 and is unchanged: 9,804 entries, 0 probe failures. BMP members are still probed for dimensions, bit depth, and compression only.
 
 ## IMP findings
 

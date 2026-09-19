@@ -393,53 +393,79 @@ fn probe_bitmap(bytes: &[u8]) -> Result<AssetInfo, String> {
     ))
 }
 
-/// Classify a WAVE by **decoding it**, not by reading its header.
+/// Classify a WAVE by walking its **container**, and decode its samples when there is a decoder.
 ///
-/// This used to stop at the `fmt ` chunk, which meant `--scan` reported a clean sweep over 3,098
-/// members it had never read a sample of. Delegating to [`crate::wave`] makes the classification
-/// as strong as the decoder: a member that appears here as `wave-audio` is one whose whole
-/// container was walked and whose sample data was decoded.
+/// Two claims that must not be collapsed into one another:
+///
+/// * *this is a WAVE* -- the container walked, `fmt ` and `data` found, every chunk inside the
+///   file. A container error is an error and the member is not classified.
+/// * *this tool can decode it* -- a PCM depth [`crate::wave`] implements. A legal WAVE in a format
+///   with no decoder here is still a WAVE, and reporting it as a probe failure would be this tool
+///   confusing its own reach with the file's validity. It is classified, with `undecoded=<reason>`
+///   naming what stopped.
+///
+/// The old probe read the `fmt ` chunk and stopped, so `--scan` reported a clean sweep over 3,098
+/// members it had never read a sample of. **The repository-wide "9,804 members, 0 probe failures"
+/// figure was measured against that old probe and must be re-measured before it is repeated.**
 fn probe_wave(bytes: &[u8]) -> Result<AssetInfo, String> {
-    let file = WaveFile::parse(bytes).map_err(|error| error.to_string())?;
-    let data_bytes = file.samples.interleaved.len()
-        * usize::from(file.format.bits_per_sample / 8).max(1)
-        + file.samples.trailing_partial_frame.len();
-    Ok(AssetInfo::new(
-        AssetKind::WaveAudio,
-        format!(
-            "encoding={};channels={};sample-rate={};bits-per-sample={};data-bytes={data_bytes};\
-             frames={};duration-ms={};layout={}",
-            file.format.encoding,
-            file.format.channels,
-            file.format.sample_rate,
-            file.format.bits_per_sample,
-            file.samples.frames(),
-            file.samples.duration_ms(),
-            file.layout(),
-        ),
-    ))
+    let header = WaveFile::parse_header(bytes).map_err(|error| error.to_string())?;
+    let common = format!(
+        "encoding={};channels={};sample-rate={};bits-per-sample={};data-bytes={};layout={}",
+        header.format.encoding,
+        header.format.channels,
+        header.format.sample_rate,
+        header.format.bits_per_sample,
+        header.data_bytes,
+        header.layout,
+    );
+    match WaveFile::parse(bytes) {
+        Ok(file) => Ok(AssetInfo::new(
+            AssetKind::WaveAudio,
+            format!(
+                "{common};frames={};duration-ms={}",
+                file.samples.frames(),
+                file.samples.duration_ms()
+            ),
+        )),
+        Err(error) => Ok(AssetInfo::new(
+            AssetKind::WaveAudio,
+            format!("{common};undecoded={error}"),
+        )),
+    }
 }
 
 /// Classify a Smacker video by **parsing its container**, not by matching four magic bytes.
 ///
 /// The frame tables and per-frame chunk extents are walked; the video codec is not implemented and
 /// no frame is decoded to pixels. See [`crate::smacker`] for exactly where that line falls.
+///
+/// Unlike the WAVE probe, a file whose declared sizes do not account for every byte is **not**
+/// classified. The asymmetry is deliberate and is the difference between the two formats' claims:
+/// for WAVE the undecodable case is a *format this tool does not implement*, which is a limit of
+/// the tool; for Smacker the whole result this branch reports is that the sizes close, so a file
+/// where they do not is one this module has not understood, not one it merely cannot decode.
 fn probe_smacker(bytes: &[u8]) -> Result<AssetInfo, String> {
     let file = SmackerFile::parse(bytes).map_err(|error| error.to_string())?;
+    if file.unaccounted_tail != 0 {
+        return Err(format!(
+            "Smacker declared sizes leave {} byte(s) unaccounted for",
+            file.unaccounted_tail
+        ));
+    }
     let tracks = file.audio.iter().filter(|track| track.present()).count();
     Ok(AssetInfo::new(
         AssetKind::SmackerVideo,
         format!(
             "version={};width={};height={};frames={};interval-us={};duration-ms={};\
-             audio-tracks={tracks};palette-frames={};unaccounted-tail={}",
+             audio-tracks={tracks};palette-frames={}",
             printable_tag(&file.signature),
             file.width,
             file.height,
             file.frame_count,
             file.frame_interval_us(),
-            file.duration_ms(),
+            file.duration_ms()
+                .map_or_else(|| "unrepresentable".to_owned(), |value| value.to_string()),
             file.palette_frames(),
-            file.unaccounted_tail,
         ),
     ))
 }
@@ -529,6 +555,35 @@ mod tests {
         assert!(info.details.contains("duration-ms=1000"));
         assert!(info.details.contains("frames=22050"));
         assert!(info.details.contains("layout=fmt |data"));
+        assert!(!info.details.contains("undecoded="));
+    }
+
+    /// A legal WAVE in a format this tool has no decoder for is still a WAVE.
+    ///
+    /// Classification and decodability are different claims. Returning `Err` here would flip
+    /// `--scan` to a non-zero exit on a file that is perfectly valid, which is the tool mistaking
+    /// its own reach for the corpus being broken.
+    #[test]
+    fn classifies_a_wave_it_cannot_decode_and_names_what_stopped_it() {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&40_u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&0x0011_u16.to_le_bytes()); // IMA ADPCM
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&11_066_u32.to_le_bytes());
+        bytes.extend_from_slice(&256_u16.to_le_bytes());
+        bytes.extend_from_slice(&4_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&4_u32.to_le_bytes());
+        bytes.extend_from_slice(&[1, 2, 3, 4]);
+
+        let info = probe("adpcm.wav", &bytes).expect("a legal container is still classified");
+        assert_eq!(info.kind, AssetKind::WaveAudio);
+        assert!(info.details.contains("encoding=17"), "{}", info.details);
+        assert!(info.details.contains("undecoded="), "{}", info.details);
+        assert!(!info.details.contains("frames="), "{}", info.details);
     }
 
     #[test]

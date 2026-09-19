@@ -58,7 +58,7 @@ target/release/lom-asset-viewer "$PIC_MPQ" 'LBM\ACTIONS5.lbm'
 target/release/lom-asset-viewer --wave-roundtrip "$SNDFX_MPQ"
 target/release/lom-asset-viewer --wave-roundtrip-dir '/path/to/Lords of Magic Special Edition/English/Wav'
 target/release/lom-asset-viewer --export-wave "$SNDFX_MPQ" File00000001.wav /tmp/sound.wav
-target/release/lom-asset-viewer --import-wave /tmp/edited.wav /tmp/template.wav /tmp/new-member.wav
+target/release/lom-asset-viewer --import-wave /tmp/edited.wav /tmp/template.wav /tmp/new-member.wav  # [--allow-format-change] [--allow-dangling-loops]
 target/release/lom-asset-viewer --scan-smk-dir '/path/to/Lords of Magic Special Edition/English/smk'
 target/release/lom-asset-viewer --describe-smk '/path/to/Lords of Magic Special Edition/English/smk/Intro.smk'
 target/release/lom-asset-viewer --scan-map-dir '/path/to/Lords of Magic Special Edition/English/map'
