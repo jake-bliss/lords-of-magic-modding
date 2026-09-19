@@ -74,6 +74,8 @@ fn main() -> ExitCode {
     // one (717). Only the intersection across files is empty. Reporting it per file would be
     // claiming more than the measurement supports, so it is accumulated and checked once.
     let mut stride_intersection: Option<Vec<usize>> = None;
+    let mut sprite_round_trips = 0_usize;
+    let mut file_round_trips = 0_usize;
 
     for path in &paths {
         let label = display_name(path);
@@ -178,11 +180,46 @@ fn main() -> ExitCode {
         );
         let strides = save.sprites.candidate_fixed_strides(STRIDE_SEARCH_LIMIT);
         println!(
-            "    LS_SPR_  {} records, {} bytes carried undecoded; header sizes 0..={} that divide evenly: {:?}",
+            "    LS_SPR_  {} records over {} bytes; classes {}",
             save.sprites.record_count,
-            save.sprites.records_raw().len(),
-            STRIDE_SEARCH_LIMIT,
-            strides,
+            save.sprites.records_raw().len() + 4,
+            save.sprites
+                .class_histogram()
+                .iter()
+                .map(|(class, count)| format!("{class}:{count}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        // The round trip is printed per file rather than only aggregated, because "31/31" hides
+        // which file broke on the run where it is not 31.
+        let reencoded = save.sprites.encode();
+        let original = {
+            let mut bytes = Vec::with_capacity(4 + save.sprites.records_raw().len());
+            bytes.extend_from_slice(&save.sprites.record_count.to_le_bytes());
+            bytes.extend_from_slice(save.sprites.records_raw());
+            bytes
+        };
+        let round_trips = reencoded == original;
+        if save.reencode_with_sprites(&bytes) == bytes {
+            file_round_trips += 1;
+        }
+        if round_trips {
+            sprite_round_trips += 1;
+        }
+        println!(
+            "             re-encode from the decoded records: {}",
+            if round_trips {
+                "byte-identical".to_string()
+            } else {
+                format!(
+                    "DIFFERS -- {} bytes out vs {} in",
+                    reencoded.len(),
+                    original.len()
+                )
+            }
+        );
+        println!(
+            "             header sizes 0..={STRIDE_SEARCH_LIMIT} that divide evenly: {strides:?}",
         );
         stride_intersection = Some(match stride_intersection {
             None => strides,
@@ -319,7 +356,7 @@ fn main() -> ExitCode {
 
     let strides = stride_intersection.unwrap_or_default();
     println!(
-        "\nLS_SPR_ header sizes 0..={STRIDE_SEARCH_LIMIT} that divide evenly in EVERY file: {strides:?}"
+        "\nLS_SPR_ re-encoded byte-identically from its decoded records in {sprite_round_trips}/{parsed} file(s)\nwhole files reassembled byte-identically with LS_SPR_ regenerated: {file_round_trips}/{parsed}\n\nLS_SPR_ header sizes 0..={STRIDE_SEARCH_LIMIT} that divide evenly in EVERY file: {strides:?}"
     );
     println!(
         "  -> {}",

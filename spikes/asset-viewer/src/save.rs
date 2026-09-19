@@ -9,12 +9,11 @@
 //! its payload** -- the `u32` that follows a tag is already the first field of that section, and it
 //! means something different in each one.
 //!
-//! That design means a section cannot be skipped without decoding it, and two of the nine cannot be
-//! decoded today: [`SpriteSection`] holds polymorphic variable-length records dispatched through a
-//! virtual call, and [`PlayerSection`]'s record size is not established for format version 111.
-//! So this parser does **not** reimplement the loop. It **scans the whole file for the nine tag
+//! That design means a section cannot be skipped without decoding it. All nine now decode, but
+//! this parser still does **not** reimplement the loop: it **scans the whole file for the nine tag
 //! byte-strings** and takes each section's extent as running from its payload to the next tag found,
-//! or to end of file for the last one.
+//! or to end of file for the last one. Scanning is what lets it report on a file one of whose
+//! sections it refuses, which sequential decoding cannot do.
 //!
 //! **That shortcut is only honest with a census**, because a tag byte-string could in principle
 //! occur inside payload data and nothing in the format forbids it. [`SaveContainer::locate`]
@@ -38,7 +37,7 @@
 //! | [`RegionSection`] | header and grid decoded; **tail carried raw**, structure Unknown |
 //! | [`AlarmSection`] | header decoded; **records carried raw**, layout Unknown |
 //! | [`PlayerSection`] | tail decoded from the end; **records carried raw**, size Unknown for v111 |
-//! | [`SpriteSection`] | **count only**; records carried raw, layout Unknown |
+//! | [`SpriteSection`] | fully decoded, through ten class readers; field *meanings* Unknown |
 //!
 //! Everything in the "carried" column is an explicit `raw` field rather than silence. A parser that
 //! drops the bytes it does not understand cannot be grown into a writer.
@@ -951,47 +950,736 @@ pub fn cell_tile_index(cell: &MapCell) -> u16 {
 // LS_SPR_
 // ---------------------------------------------------------------------------
 
-/// The unit, army and hero table. **Only the count is decoded.**
+/// One entry of the `LS_SPR_` class-dispatch table at `0x004F73B8`.
 ///
-/// **Observed in a local binary, 2026-09-18.** The records are polymorphic and variable-length:
-/// each begins with a `u32 class_id`, and the reader makes a virtual call `call dword [eax+0x20]`
-/// dispatched through a 10-entry jump table at `0x004F73B8` bounded by `cmp eax,9 / ja`. Class ids
-/// 5 and 6 abort as invalid. The in-memory object sizes -- 0 to 9: 1500, 96, 148, 844, 120,
-/// invalid, invalid, a factory at `0x0047CBD0`, 88, 328 -- are sizes in RAM, **not on disk**.
+/// **Observed in a local binary, 2026-09-18.** The section's reader at `0x004F7122` reads a
+/// `u32 class_id`, bounds it with `cmp eax,9 / ja`, and jumps through this ten-entry table. Each
+/// arm allocates an object of a class-specific size, runs that class's constructor, stores the
+/// owning table at `object+0x40`, and calls the object's **reader at `vtable+0x24`**. The writer
+/// at `0x004F6BC0` is the mirror image and calls `vtable+0x20`.
 ///
-/// That no fixed stride exists is established from the file side too, independently of the
-/// disassembly: for every candidate header size `0..=1024`, the set of sizes for which
-/// `(payload_len - header) % count == 0` has an **empty intersection** across the eight files, and
-/// three of them admit no solution at all. The section also contains length-prefixed strings
-/// (`u32 len` then `len` raw bytes, no NUL) at irregular offsets, so variable length is directly
-/// visible rather than merely inferred.
+/// `in_memory_size` is the argument to the allocator. It is a size in RAM and is **not** the
+/// on-disk record length -- every record is shorter than its object, and three classes are
+/// variable-length on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpriteClassEntry {
+    pub class_id: u32,
+    /// The jump-table target for this id.
+    pub jump_target: u32,
+    /// The allocation size the arm passes to the allocator, or `None` for the two invalid ids.
+    pub in_memory_size: Option<u32>,
+    /// The constructor the arm calls, or `None` for the two invalid ids.
+    pub constructor: Option<u32>,
+    /// The class's vtable, or `None` for the two invalid ids.
+    pub vtable: Option<u32>,
+    /// `vtable+0x20`, the writer the save writer calls.
+    pub writer: Option<u32>,
+    /// `vtable+0x24`, the reader the save reader calls.
+    pub reader: Option<u32>,
+    /// The on-disk reader the `vtable+0x24` entry point delegates to, when it is a wrapper that
+    /// also does post-load registration. Equal to `reader` when there is no wrapper.
+    pub on_disk_reader: Option<u32>,
+}
+
+/// The ten entries of `0x004F73B8`, in class-id order.
 ///
-/// So: **parse the count and stop.** [`records_raw`](Self::records_raw) carries the rest verbatim.
+/// **Observed in a local binary, 2026-09-18**, read out of `lomse.exe` under
+/// `Lords of Magic Development.app`. Ids **5 and 6 share one target**, `0x004F73A3`, which raises
+/// rather than allocating -- they are not classes. Id **7** is the odd one: its arm calls a
+/// pooled factory at `0x0047CBD0` instead of allocating, so the size below is the pool's block
+/// size taken from `0x0047E9E8`, and its arm skips the exception-state store the other eight do.
+pub const SPRITE_CLASS_DISPATCH: [SpriteClassEntry; 10] = [
+    SpriteClassEntry {
+        class_id: 0,
+        jump_target: 0x004F_71B0,
+        in_memory_size: Some(0x5DC),
+        constructor: Some(0x0041_1610),
+        vtable: Some(0x0054_D3A8),
+        writer: Some(0x0041_2090),
+        reader: Some(0x0041_2590),
+        on_disk_reader: Some(0x0041_22A0),
+    },
+    SpriteClassEntry {
+        class_id: 1,
+        jump_target: 0x004F_71E1,
+        in_memory_size: Some(0x60),
+        constructor: Some(0x0050_C0B0),
+        vtable: Some(0x0054_E910),
+        writer: Some(0x0050_D930),
+        reader: Some(0x0050_DD70),
+        on_disk_reader: Some(0x0050_DA70),
+    },
+    SpriteClassEntry {
+        class_id: 2,
+        jump_target: 0x004F_7213,
+        in_memory_size: Some(0x94),
+        constructor: Some(0x0043_B930),
+        vtable: Some(0x0054_D4D8),
+        writer: Some(0x0043_D000),
+        reader: Some(0x0043_D1A0),
+        on_disk_reader: Some(0x0043_D0A0),
+    },
+    SpriteClassEntry {
+        class_id: 3,
+        jump_target: 0x004F_7248,
+        in_memory_size: Some(0x34C),
+        constructor: Some(0x0044_E850),
+        vtable: Some(0x0054_D630),
+        writer: Some(0x0045_1610),
+        reader: Some(0x0045_17A0),
+        on_disk_reader: Some(0x0045_16A0),
+    },
+    SpriteClassEntry {
+        class_id: 4,
+        jump_target: 0x004F_727D,
+        in_memory_size: Some(0x78),
+        constructor: Some(0x004E_F6F0),
+        vtable: Some(0x0054_DD88),
+        writer: Some(0x004F_0C80),
+        reader: Some(0x004F_0D80),
+        on_disk_reader: Some(0x004F_0D80),
+    },
+    SpriteClassEntry {
+        class_id: 5,
+        jump_target: 0x004F_73A3,
+        in_memory_size: None,
+        constructor: None,
+        vtable: None,
+        writer: None,
+        reader: None,
+        on_disk_reader: None,
+    },
+    SpriteClassEntry {
+        class_id: 6,
+        jump_target: 0x004F_73A3,
+        in_memory_size: None,
+        constructor: None,
+        vtable: None,
+        writer: None,
+        reader: None,
+        on_disk_reader: None,
+    },
+    SpriteClassEntry {
+        class_id: 7,
+        jump_target: 0x004F_72A8,
+        in_memory_size: Some(0xC4),
+        constructor: Some(0x0047_CA70),
+        vtable: Some(0x0054_D968),
+        writer: Some(0x0047_CCD0),
+        reader: Some(0x0047_CDA0),
+        on_disk_reader: Some(0x0047_CDD0),
+    },
+    SpriteClassEntry {
+        class_id: 8,
+        jump_target: 0x004F_72AF,
+        in_memory_size: Some(0x58),
+        constructor: Some(0x004B_A150),
+        vtable: Some(0x0054_DC68),
+        writer: Some(0x004F_6A80),
+        reader: Some(0x004F_6B00),
+        on_disk_reader: Some(0x004F_6B00),
+    },
+    SpriteClassEntry {
+        class_id: 9,
+        jump_target: 0x004F_72DA,
+        in_memory_size: Some(0x148),
+        constructor: Some(0x004A_CF00),
+        vtable: Some(0x0054_DAF8),
+        writer: Some(0x004A_D910),
+        reader: Some(0x004A_DB40),
+        on_disk_reader: Some(0x004A_DA10),
+    },
+];
+
+/// The two class ids the dispatch table routes to the raise at `0x004F73A3`.
+pub const SPRITE_INVALID_CLASS_IDS: [u32; 2] = [5, 6];
+
+/// The highest class id the reader's `cmp eax,9 / ja` bound admits.
+pub const SPRITE_MAX_CLASS_ID: u32 = 9;
+
+/// The six dwords every record begins with, written by the base writer at `0x004F6A80` and read
+/// back by the base reader at `0x004F6B00`.
+///
+/// **Observed in a local binary, 2026-09-18.** The base reader `fread`s four bytes each into
+/// `this+4`, `this+0x1C`, `this+0x20`, `this+0x24`, `this+0x28` and `this+0x30`, in that order and
+/// with no version gate anywhere in it. Twenty-four bytes, always.
+///
+/// **`class_id_echo` is the class id a second time.** The container's loop already consumed a
+/// `u32 class_id` to choose the class; `this+4` is where the class id lives in the object, so the
+/// base reader reads it again. Every record therefore opens with the same dword twice. That is a
+/// prediction of the disassembly and not a pattern noticed in the files, and it holds in all 24
+/// corpus files -- see [`SpriteRecord::class_id_echo_agrees`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpriteBase {
+    /// `this+4`: the class id again.
+    pub class_id_echo: u32,
+    /// `this+0x1C`. Meaning **Unknown**.
+    pub unknown_1c: u32,
+    /// `this+0x20`. Meaning **Unknown**.
+    pub unknown_20: u32,
+    /// `this+0x24`. Meaning **Unknown**.
+    pub unknown_24: u32,
+    /// `this+0x28`. Meaning **Unknown**.
+    pub unknown_28: u32,
+    /// `this+0x30`. A bitfield -- class 0's reader sets and clears bit 3 of it at `0x0041254B`.
+    /// Meaning of the individual bits **Unknown**.
+    pub unknown_30: u32,
+}
+
+impl SpriteBase {
+    /// The bytes this block occupies on disk. A constant in the instruction stream, not a stored
+    /// length.
+    pub const LEN: usize = 24;
+
+    fn to_bytes(self) -> [u8; Self::LEN] {
+        let mut out = [0_u8; Self::LEN];
+        for (slot, word) in out.chunks_exact_mut(4).zip([
+            self.class_id_echo,
+            self.unknown_1c,
+            self.unknown_20,
+            self.unknown_24,
+            self.unknown_28,
+            self.unknown_30,
+        ]) {
+            slot.copy_from_slice(&word.to_le_bytes());
+        }
+        out
+    }
+}
+
+/// One polymorphic `LS_SPR_` record.
+///
+/// The record's **extent** is decoded -- that is the whole difficulty of this section, and it is
+/// what makes the table walkable at all. Its **contents past the base block are carried
+/// verbatim** in [`body`](Self::body), because the readers name offsets into an object and not
+/// meanings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpriteRecord {
+    /// The dword the container's dispatch loop reads at `0x004F7194`.
+    pub class_id: u32,
+    pub base: SpriteBase,
+    /// Every byte the class's own reader consumed after the base block. Layout established;
+    /// field meanings **Unknown**, so the bytes are kept rather than parsed into invented names.
+    pub body: Vec<u8>,
+}
+
+impl SpriteRecord {
+    /// The dispatch entry this record's class id selects.
+    pub fn class_entry(&self) -> Option<&'static SpriteClassEntry> {
+        SPRITE_CLASS_DISPATCH.get(self.class_id as usize)
+    }
+
+    /// Whether the base block's echo of the class id matches the dispatch dword.
+    ///
+    /// A **structural** property: the container writes `[object+4]` at `0x004F6C25` and the base
+    /// writer writes `[this+4]` again at `0x004F6A8B`, so they are the same field written twice.
+    pub fn class_id_echo_agrees(&self) -> bool {
+        self.base.class_id_echo == self.class_id
+    }
+
+    /// The bytes this record occupies on disk.
+    pub fn encoded_len(&self) -> usize {
+        4 + SpriteBase::LEN + self.body.len()
+    }
+
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.class_id.to_le_bytes());
+        out.extend_from_slice(&self.base.to_bytes());
+        out.extend_from_slice(&self.body);
+    }
+}
+
+// The version gates the `LS_SPR_` readers test, as they appear in the instruction stream. Named
+// rather than inlined because a mutation sweep has to be able to move each one independently, and
+// because an unlabelled `0x62` in a reader is indistinguishable from a typo.
+//
+// Every one of these is a signed `jl` / `jge` against `[0x005AA12C]`, exactly like the rest of the
+// format, so the comparison here is on `i32`.
+const SPR_CLASS0_SKIP_FOUR_WORDS_BELOW: i32 = 0x3F;
+const SPR_CLASS0_TAIL_MIN: i32 = 0x33;
+const SPR_CLASS0_TAIL_SECOND_WORD_MIN: i32 = 0x38;
+const SPR_CLASS0_TAIL_SIX_WORDS_MIN: i32 = 0x3D;
+const SPR_CLASS0_TAIL_PAIR_MIN: i32 = 0x42;
+const SPR_CLASS0_TAIL_PAIR_WIDE_MIN: i32 = 0x5D;
+const SPR_CLASS0_TAIL_SPARE_WORD_MIN: i32 = 0x59;
+const SPR_CLASS0_TAIL_SPARE_WORD_MAX: i32 = 0x5B;
+const SPR_CLASS0_TAIL_FINAL_BYTE_MIN: i32 = 0x6A;
+const SPR_CLASS1_BYTE_PAIR_MIN: i32 = 0x62;
+const SPR_CLASS1_NESTED_MIN: i32 = 0x36;
+const SPR_CLASS1_WORD_MIN: i32 = 0x4A;
+const SPR_CLASS1_BYTE_MIN: i32 = 0x60;
+const SPR_CLASS1_ARRAY_MIN: i32 = 0x66;
+const SPR_CLASS2_NESTED_MIN: i32 = 0x3B;
+const SPR_CLASS2_TAIL_WORD_MIN: i32 = 0x5A;
+const SPR_CLASS3_STORED_LEN_MIN: i32 = 0x34;
+const SPR_CLASS3_TAIL_MIN: i32 = 0x53;
+const SPR_ITEM_A_PAIR_MIN: i32 = 0x43;
+const SPR_ITEM_A_WORD_MIN: i32 = 0x51;
+const SPR_ITEM_B_WORD_MIN: i32 = 0x4B;
+const SPR_ITEM_B_SECOND_WORD_MIN: i32 = 0x58;
+const SPR_NESTED_NAME_BELOW: i32 = 0x65;
+const SPR_NESTED_SKIP_EIGHT_BELOW: i32 = 0x3E;
+/// `0x0044B6E0`. **Unreachable in this build**, and the only gate in the section that is: the
+/// field it guards sits behind a second test against the build constant at `0x0055B1B0`, which is
+/// 111 and satisfies `jge 0x48` at compile time. A mutation of this constant is undetectable by
+/// any test, which is why it is called out here rather than left looking like the others.
+const SPR_NESTED_LAST_WORD_MIN: i32 = 0x41;
+const SPR_NESTED0_SKIP_BELOW: i32 = 0x3C;
+const SPR_NESTED0_TRIPLE_MIN: i32 = 0x4F;
+const SPR_NESTED3_STORED_COUNT_MIN: i32 = 0x55;
+const SPR_SLOT_NESTED_MIN: i32 = 0x37;
+const SPR_SLOT_TRAILER_MIN: i32 = 0x3E;
+
+/// The class-3 blob length the reader assumes for saves older than
+/// `SPR_CLASS3_STORED_LEN_MIN`, `0x004516E3`.
+const SPR_CLASS3_LEGACY_BLOB_LEN: usize = 0x2BC;
+
+/// The widths of class 0's per-slot blob, `0x00524E3C`. A five-rung ladder on the save's version.
+const SPR_SLOT_BLOB_WIDTHS: [(i32, usize); 5] = [
+    (0x48, 0x20),
+    (0x49, 0x24),
+    (0x65, 0x28),
+    (0x67, 0x48),
+    (i32::MAX, 0x4C),
+];
+
+/// The width of the per-slot blob at `0x00524E82` for a given format version.
+pub fn sprite_slot_blob_width(version: u32) -> usize {
+    let version = version as i32;
+    for (below, width) in SPR_SLOT_BLOB_WIDTHS {
+        if version < below {
+            return width;
+        }
+    }
+    SPR_SLOT_BLOB_WIDTHS[SPR_SLOT_BLOB_WIDTHS.len() - 1].1
+}
+
+/// The nested class family behind the four-entry factory at `0x0044B4F0`, reached from a class-0
+/// slot. Ids outside `0..=3` are what the factory's own `cmp ecx,3 / ja` rejects.
+pub const SPRITE_NESTED_MAX_TYPE_ID: u32 = 3;
+
+// 0x004F6B00 -- the base reader every class calls first.
+fn spr_read_base(cursor: &mut Cursor<'_>) -> Result<SpriteBase, SaveError> {
+    Ok(SpriteBase {
+        class_id_echo: cursor.u32()?,
+        unknown_1c: cursor.u32()?,
+        unknown_20: cursor.u32()?,
+        unknown_24: cursor.u32()?,
+        unknown_28: cursor.u32()?,
+        unknown_30: cursor.u32()?,
+    })
+}
+
+// 0x00427A40 -- `u32 len` then `len` raw bytes, with no terminator. The engine parks the payload
+// in a pool and never treats it as text; in the corpus the bytes are small integers, so this is
+// deliberately not called a string reader.
+fn spr_skip_counted_bytes(cursor: &mut Cursor<'_>) -> Result<(), SaveError> {
+    let len = cursor.u32()? as usize;
+    cursor.take(len)?;
+    Ok(())
+}
+
+// 0x0044B660 -- the base of the four nested classes reached from a class-0 slot.
+fn spr_nested_base(cursor: &mut Cursor<'_>, version: i32) -> Result<(), SaveError> {
+    cursor.take(4)?;
+    // Two gates in this function test the **build** constant at `0x0055B1B0`, not the save's
+    // version, so they are decided at compile time and are dead in this build. Written out rather
+    // than dropped, because dropping them would silently hard-code one build's behaviour.
+    if (BUILD_FORMAT_VERSION as i32) < 0x47 {
+        cursor.take(4)?;
+    }
+    cursor.take(4)?;
+    if version < SPR_NESTED_NAME_BELOW {
+        cursor.take(0x1F)?;
+    }
+    if version < SPR_NESTED_SKIP_EIGHT_BELOW {
+        cursor.take(8)?;
+    }
+    if version >= SPR_NESTED_LAST_WORD_MIN && (BUILD_FORMAT_VERSION as i32) < 0x48 {
+        cursor.take(4)?;
+    }
+    cursor.take(4)?;
+    Ok(())
+}
+
+// 0x00526C20 -- the list item class 0's slots and nested type 3 both carry.
+fn spr_item_a(cursor: &mut Cursor<'_>, version: i32) -> Result<(), SaveError> {
+    cursor.take(16)?;
+    if version >= SPR_ITEM_A_PAIR_MIN {
+        cursor.take(8)?;
+    }
+    if version >= SPR_ITEM_A_WORD_MIN {
+        cursor.take(4)?;
+    }
+    Ok(())
+}
+
+// 0x00427FA0 -- the second list item a class-0 slot carries.
+fn spr_item_b(cursor: &mut Cursor<'_>, version: i32) -> Result<(), SaveError> {
+    cursor.take(12)?;
+    if version >= SPR_ITEM_B_WORD_MIN {
+        cursor.take(4)?;
+    }
+    if version >= SPR_ITEM_B_SECOND_WORD_MIN {
+        cursor.take(4)?;
+    }
+    Ok(())
+}
+
+// 0x0044B810 / 0x0044B920 / 0x0044BBC0 -- the readers behind the factory at `0x0044B4F0`.
+fn spr_nested(cursor: &mut Cursor<'_>, version: i32, type_id: u32) -> Result<(), SaveError> {
+    match type_id {
+        // 0x0044B810
+        0 => {
+            spr_nested_base(cursor, version)?;
+            if version < SPR_NESTED0_SKIP_BELOW {
+                cursor.take(16)?;
+            }
+            cursor.take(4)?;
+            if version >= SPR_NESTED0_TRIPLE_MIN {
+                cursor.take(12)?;
+            }
+            cursor.take(4)?;
+        }
+        // 0x0044B920, shared by ids 1 and 2 -- the two classes have distinct vtables at
+        // `0x0054D5E0` and `0x0054D5F0` whose reader slots hold the same function.
+        1 | 2 => {
+            spr_nested_base(cursor, version)?;
+            if version < SPR_NESTED0_SKIP_BELOW {
+                cursor.take(4)?;
+            }
+        }
+        // 0x0044BBC0
+        3 => {
+            spr_nested_base(cursor, version)?;
+            let groups = if version >= SPR_NESTED3_STORED_COUNT_MIN {
+                cursor.u32()?
+            } else {
+                6
+            };
+            for _ in 0..groups {
+                cursor.take(4)?;
+                let items = cursor.u32()?;
+                for _ in 0..items {
+                    spr_item_a(cursor, version)?;
+                }
+            }
+        }
+        other => {
+            return Err(SaveError::section(
+                SectionTag::Sprites,
+                format!(
+                    "nested type id {other} at +{} is outside the factory's 0..={} range",
+                    cursor.offset() - 4,
+                    SPRITE_NESTED_MAX_TYPE_ID
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+// 0x00524D70 -- one of class 0's `n` slots.
+fn spr_slot(cursor: &mut Cursor<'_>, version: i32, blob_width: usize) -> Result<(), SaveError> {
+    let blob = cursor.take(blob_width)?;
+    // `0x00524EE0` tests a field **inside the blob just read**, at offset 0x14, and a save older
+    // than `SPR_SLOT_NESTED_MIN` has its own value forced to zero at `0x00524ECF` regardless.
+    let has_nested = version >= SPR_SLOT_NESTED_MIN
+        && blob_width >= 0x18
+        && u32::from_le_bytes(blob[0x14..0x18].try_into().expect("four bytes")) != 0;
+    if has_nested {
+        let type_id = cursor.u32()?;
+        spr_nested(cursor, version, type_id)?;
+    }
+    let items_a = cursor.u32()?;
+    for _ in 0..items_a {
+        spr_item_a(cursor, version)?;
+    }
+    if version >= SPR_SLOT_TRAILER_MIN {
+        let items_b = cursor.u32()?;
+        for _ in 0..items_b {
+            spr_item_b(cursor, version)?;
+        }
+    }
+    Ok(())
+}
+
+// 0x004122A0 -- class 0's on-disk reader, and the one three other classes embed.
+fn spr_class0_body(cursor: &mut Cursor<'_>, version: i32) -> Result<(), SaveError> {
+    cursor.take(8)?;
+    let slots = cursor.u32()?;
+    cursor.take(4)?;
+    let blob_width = sprite_slot_blob_width(version as u32);
+    for _ in 0..slots {
+        spr_slot(cursor, version, blob_width)?;
+    }
+    cursor.take(16)?;
+    spr_skip_counted_bytes(cursor)?;
+    if version < SPR_CLASS0_SKIP_FOUR_WORDS_BELOW {
+        cursor.take(16)?;
+    }
+    cursor.take(12)?;
+    cursor.take(88)?;
+    if version >= SPR_CLASS0_TAIL_MIN {
+        cursor.take(4)?;
+        if version >= SPR_CLASS0_TAIL_SECOND_WORD_MIN {
+            cursor.take(4)?;
+        }
+        if version >= SPR_CLASS0_TAIL_SIX_WORDS_MIN {
+            cursor.take(24)?;
+        }
+        if version >= SPR_CLASS0_TAIL_PAIR_MIN {
+            cursor.take(if version >= SPR_CLASS0_TAIL_PAIR_WIDE_MIN {
+                4
+            } else {
+                1
+            })?;
+            cursor.take(1)?;
+        }
+        if (SPR_CLASS0_TAIL_SPARE_WORD_MIN..=SPR_CLASS0_TAIL_SPARE_WORD_MAX).contains(&version) {
+            cursor.take(4)?;
+        }
+        if version >= SPR_CLASS0_TAIL_FINAL_BYTE_MIN {
+            cursor.take(1)?;
+        }
+    }
+    Ok(())
+}
+
+// The full class-0 record, base block included, as three other classes embed it.
+fn spr_embedded_class0(cursor: &mut Cursor<'_>, version: i32) -> Result<(), SaveError> {
+    spr_read_base(cursor)?;
+    spr_class0_body(cursor, version)
+}
+
+/// Advance `cursor` over one record's class-specific body, the base block already consumed.
+fn spr_class_body(cursor: &mut Cursor<'_>, version: i32, class_id: u32) -> Result<(), SaveError> {
+    match class_id {
+        // 0x004122A0
+        0 => spr_class0_body(cursor, version)?,
+        // 0x0050DA70
+        1 => {
+            cursor.take(4)?;
+            if version >= SPR_CLASS1_BYTE_PAIR_MIN {
+                cursor.take(2)?;
+            } else {
+                cursor.take(8)?;
+            }
+            if version >= SPR_CLASS1_NESTED_MIN {
+                cursor.take(4)?;
+                if cursor.u32()? != 0 {
+                    spr_embedded_class0(cursor, version)?;
+                }
+            }
+            if version >= SPR_CLASS1_WORD_MIN {
+                cursor.take(4)?;
+            }
+            if version >= SPR_CLASS1_BYTE_MIN {
+                cursor.take(1)?;
+            }
+            if version >= SPR_CLASS1_ARRAY_MIN {
+                // A `u16`, not a `u32`: `fread(this+0x4E, 2, 1)` at `0x0050DBD1`, and the loop
+                // bound is re-read as a signed word at `0x0050DD35`.
+                let entries = cursor.u16()?;
+                for _ in 0..entries {
+                    cursor.take(8)?;
+                    if cursor.u32()? != 0 {
+                        spr_embedded_class0(cursor, version)?;
+                    }
+                }
+            }
+        }
+        // 0x0043D0A0
+        2 => {
+            let blob = cursor.u32()? as usize;
+            cursor.take(blob)?;
+            cursor.take(4)?;
+            if version >= SPR_CLASS2_NESTED_MIN && cursor.u32()? != 0 {
+                spr_embedded_class0(cursor, version)?;
+            }
+            if version >= SPR_CLASS2_TAIL_WORD_MIN {
+                cursor.take(4)?;
+            }
+        }
+        // 0x004516A0
+        3 => {
+            let blob = if version >= SPR_CLASS3_STORED_LEN_MIN {
+                cursor.u32()? as usize
+            } else {
+                SPR_CLASS3_LEGACY_BLOB_LEN
+            };
+            cursor.take(blob)?;
+            if cursor.u32()? != 0 {
+                spr_embedded_class0(cursor, version)?;
+            }
+            if version >= SPR_CLASS3_TAIL_MIN {
+                // 0x00452E20, whose per-item reader at 0x00452CE0 is 36 bytes with no gates.
+                let items = cursor.u32()?;
+                for _ in 0..items {
+                    cursor.take(36)?;
+                }
+            }
+        }
+        // 0x004F0D80 -- eleven dwords, no version gate.
+        4 => {
+            cursor.take(44)?;
+        }
+        // Ids 5 and 6 never reach a class body: the dispatch raises first.
+        5 | 6 => {
+            return Err(SaveError::section(
+                SectionTag::Sprites,
+                format!(
+                    "class id {class_id} at +{} is one of the two ids the dispatch table routes \
+                     to the raise at {:#x}",
+                    cursor.offset() - 4 - SpriteBase::LEN,
+                    0x004F_73A3_u32
+                ),
+            ));
+        }
+        // 0x0047CDD0 -- eleven dwords, no version gate.
+        7 => {
+            cursor.take(44)?;
+        }
+        // 0x004F6B00 -- class 8 inherits the base reader unchanged and adds nothing.
+        8 => {}
+        // 0x004ADA10 -- a 92-byte blob and ten dwords, no version gate.
+        9 => {
+            cursor.take(0x5C)?;
+            cursor.take(40)?;
+        }
+        other => {
+            return Err(SaveError::section(
+                SectionTag::Sprites,
+                format!(
+                    "class id {other} at +{} is past the reader's `cmp eax,{}` bound",
+                    cursor.offset() - 4 - SpriteBase::LEN,
+                    SPRITE_MAX_CLASS_ID
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The unit, army and hero table. **Decoded, 2026-09-18.**
+///
+/// **Observed in a local binary, 2026-09-18.** `u32 count`, then `count` polymorphic records. Each
+/// record opens with a `u32 class_id` that the reader at `0x004F7122` bounds with `cmp eax,9 / ja`
+/// and dispatches through the ten-entry table at [`SPRITE_CLASS_DISPATCH`]; the selected class's
+/// reader at `vtable+0x24` then consumes exactly what its own structure needs. Three of the eight
+/// real classes are variable-length on disk, which is why no fixed stride exists -- see
+/// [`candidate_fixed_strides`](Self::candidate_fixed_strides), which still reports the file-side
+/// version of that argument.
+///
+/// Every record begins with the 24-byte [`SpriteBase`] block, and **three of the eight classes
+/// embed a whole class-0 record inside themselves**, so the reader is genuinely recursive rather
+/// than a table of widths.
+///
+/// The model is checked against the files the same way the three sections decoded before it were:
+/// parse `count` records and assert the cursor lands **exactly** on the section end. Nothing in
+/// that check is tunable -- every length here is either a constant in the instruction stream or a
+/// count the file itself stores, so a merely plausible model stops short or overruns. It lands
+/// exactly, with zero slack, in all 24 corpus files across both format versions present.
+///
+/// **What is not determined**: the *meaning* of any field past the class id. The readers name
+/// offsets into an object, not semantics, so each record's bytes past the base block are carried
+/// verbatim in [`SpriteRecord::body`] rather than parsed into invented names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteSection {
     pub record_count: u32,
-    /// Every byte after the count word. Layout **Unknown**.
+    pub records: Vec<SpriteRecord>,
+    /// Every byte after the count word, kept as written. The records above are a view of exactly
+    /// these bytes; keeping both is what lets the round-trip check be a real comparison.
     pub raw: Vec<u8>,
 }
 
 impl SpriteSection {
-    pub fn parse(payload: &[u8]) -> Result<Self, SaveError> {
+    pub fn parse(payload: &[u8], version: &VersionSection) -> Result<Self, SaveError> {
         let tag = SectionTag::Sprites;
         let record_count = read_u32(tag, payload, 0)?;
+        let version_value = version.version as i32;
+
+        let mut cursor = Cursor::new(tag, payload);
+        cursor.u32()?;
+        let mut records = Vec::new();
+        for index in 0..record_count {
+            let record_start = cursor.offset();
+            let class_id = cursor.u32()?;
+            if class_id > SPRITE_MAX_CLASS_ID {
+                return Err(SaveError::section(
+                    tag,
+                    format!(
+                        "record {index} at +{record_start} has class id {class_id}, past the \
+                         reader's `cmp eax,{SPRITE_MAX_CLASS_ID}` bound"
+                    ),
+                ));
+            }
+            let base = spr_read_base(&mut cursor)?;
+            let body_start = cursor.offset();
+            spr_class_body(&mut cursor, version_value, class_id)?;
+            let body = payload
+                .get(body_start..cursor.offset())
+                .expect("the cursor only advances over bytes it has taken")
+                .to_vec();
+            records.push(SpriteRecord {
+                class_id,
+                base,
+                body,
+            });
+        }
+        if cursor.remaining() != 0 {
+            return Err(SaveError::section(
+                tag,
+                format!(
+                    "{record_count} records account for {} of {} payload bytes, leaving {} over",
+                    cursor.offset(),
+                    payload.len(),
+                    cursor.remaining()
+                ),
+            ));
+        }
+
         Ok(Self {
             record_count,
+            records,
             raw: payload[4..].to_vec(),
         })
     }
 
-    /// The undecoded record bytes.
+    /// The undecoded record bytes, exactly as they appear on disk.
     pub fn records_raw(&self) -> &[u8] {
         &self.raw
     }
 
+    /// Re-emit the section payload from the decoded records.
+    ///
+    /// This is the section's half of a round trip: it goes through [`SpriteRecord`] rather than
+    /// copying [`raw`](Self::raw), so a comparison against the source bytes is a real test of the
+    /// decode and not of `Vec::clone`.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + self.raw.len());
+        out.extend_from_slice(&self.record_count.to_le_bytes());
+        for record in &self.records {
+            record.encode_into(&mut out);
+        }
+        out
+    }
+
+    /// How many records of each class id the section holds.
+    pub fn class_histogram(&self) -> BTreeMap<u32, usize> {
+        let mut counts = BTreeMap::new();
+        for record in &self.records {
+            *counts.entry(record.class_id).or_insert(0) += 1;
+        }
+        counts
+    }
+
     /// Every header size in `0..=max_header` for which the remaining bytes divide evenly by the
-    /// record count. Used by the survey to re-run the no-stride argument against live data rather
-    /// than quoting a past result.
+    /// record count.
+    ///
+    /// Kept after the section was decoded, because the survey still reports the file-side argument
+    /// that no common fixed stride exists, and that argument is now **corroborated** by a decode
+    /// rather than standing alone.
     pub fn candidate_fixed_strides(&self, max_header: usize) -> Vec<usize> {
         let count = match usize::try_from(self.record_count) {
             Ok(count) if count > 0 => count,
@@ -1309,6 +1997,11 @@ impl<'a> Cursor<'a> {
 
     fn u8(&mut self) -> Result<u8, SaveError> {
         Ok(self.take(1)?[0])
+    }
+
+    fn u16(&mut self) -> Result<u16, SaveError> {
+        let bytes: [u8; 2] = self.take(2)?.try_into().expect("two bytes");
+        Ok(u16::from_le_bytes(bytes))
     }
 
     fn u32(&mut self) -> Result<u32, SaveError> {
@@ -2294,7 +2987,10 @@ impl SaveFile {
             version,
             multiplayer,
             map: MapSection::parse(container.payload(source, SectionTag::Map)?)?,
-            sprites: SpriteSection::parse(container.payload(source, SectionTag::Sprites)?)?,
+            sprites: SpriteSection::parse(
+                container.payload(source, SectionTag::Sprites)?,
+                &version,
+            )?,
             users: UserSection::parse(container.payload(source, SectionTag::User)?)?,
             game: GameSection::parse(container.payload(source, SectionTag::Game)?)?,
             players: PlayerSection::parse(
@@ -2305,6 +3001,29 @@ impl SaveFile {
             alarms: AlarmSection::parse(container.payload(source, SectionTag::Alarm)?)?,
             container,
         })
+    }
+
+    /// Reassemble the whole file, with `LS_SPR_` regenerated from its decoded records and the
+    /// other eight payloads copied from `source`.
+    ///
+    /// **This is not a savegame writer.** There is no writer in this repository. It is the
+    /// strongest round-trip the one newly decoded section can honestly support: if the record
+    /// model got any record's extent wrong, `LS_SPR_`'s re-encoded payload would be a different
+    /// length and the file would not match byte for byte.
+    ///
+    /// `source` must be the bytes this `SaveFile` was parsed from; passing anything else compares
+    /// two unrelated files.
+    pub fn reencode_with_sprites(&self, source: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(source.len());
+        for location in self.container.locations() {
+            out.extend_from_slice(&source[location.tag_offset..location.payload_offset]);
+            if location.tag == SectionTag::Sprites {
+                out.extend_from_slice(&self.sprites.encode());
+            } else {
+                out.extend_from_slice(&source[location.payload_offset..location.payload_end()]);
+            }
+        }
+        out
     }
 
     /// The three independent turn readings, for a caller that wants to show them rather than a
@@ -2614,8 +3333,10 @@ mod tests {
         alarm_arguments: usize,
         game_live_count: u32,
         game_records: u32,
-        sprite_count: u32,
-        sprite_body: usize,
+        /// One entry per `LS_SPR_` record. The shapes differ on purpose: the records are
+        /// polymorphic and three of the eight classes are variable-length, so a fixture whose
+        /// records were all one class could not fail on a reader that guessed a stride.
+        sprite_records: Vec<SpriteFixture>,
         declared_setup_len: u32,
         lord_codes: [u32; 16],
         lord_names: [&'static str; 16],
@@ -2645,8 +3366,7 @@ mod tests {
                 alarm_arguments: 3,
                 game_live_count: 9,
                 game_records: 80,
-                sprite_count: 5,
-                sprite_body: 123,
+                sprite_records: SpriteFixture::default_set(),
                 declared_setup_len: 164,
                 lord_codes: [
                     1,
@@ -2703,6 +3423,394 @@ mod tests {
         // Literal 32, not a constant shared with the parser.
         let words = (bits as usize).div_ceil(32);
         buffer.extend(std::iter::repeat_n(fill, words * 4));
+    }
+
+    // -- LS_SPR_ fixture builders -------------------------------------------
+    //
+    // A deliberately **second implementation** of the record layouts, written from the
+    // disassembly with literal widths and literal version gates rather than from the parser's
+    // constants. A fixture generated from `SPR_*` would move with any mutation of them and could
+    // not fail on one.
+
+    /// One of the four nested classes the factory at `0x0044B4F0` builds, as a fixture.
+    #[derive(Debug, Clone)]
+    struct NestedFixture {
+        type_id: u32,
+        /// Nested type 3 only: one entry per group, holding that group's item count.
+        groups: Vec<usize>,
+    }
+
+    /// One of class 0's per-slot records.
+    #[derive(Debug, Clone)]
+    struct SlotFixture {
+        nested: Option<NestedFixture>,
+        items_a: usize,
+        items_b: usize,
+    }
+
+    /// The body of a class-0 record, which three other classes also embed whole.
+    #[derive(Debug, Clone, Default)]
+    struct Class0Fixture {
+        slots: Vec<SlotFixture>,
+        /// The counted byte array at `0x00427A40`. Not text: the engine never terminates it and
+        /// the corpus holds small integers there.
+        counted: Vec<u8>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct SpriteFixture {
+        class_id: u32,
+        class0: Class0Fixture,
+        /// Classes 2 and 3: the counted blob each stores before anything else.
+        blob: Vec<u8>,
+        /// Classes 1, 2 and 3: whether the optional embedded class-0 record is present.
+        embed_class0: bool,
+        /// Class 1 only: one entry per array element, holding whether it embeds a class 0.
+        class1_entries: Vec<bool>,
+        /// Class 3 only: the number of 36-byte tail items.
+        class3_tail: usize,
+    }
+
+    impl SpriteFixture {
+        fn bare(class_id: u32) -> Self {
+            Self {
+                class_id,
+                class0: Class0Fixture::default(),
+                blob: Vec::new(),
+                embed_class0: false,
+                class1_entries: Vec::new(),
+                class3_tail: 0,
+            }
+        }
+
+        /// One record of every class that is not one of the two the dispatch table raises on,
+        /// each carrying a different shape.
+        fn default_set() -> Vec<Self> {
+            let rich = Class0Fixture {
+                slots: vec![
+                    SlotFixture {
+                        nested: None,
+                        items_a: 0,
+                        items_b: 0,
+                    },
+                    SlotFixture {
+                        nested: Some(NestedFixture {
+                            type_id: 0,
+                            groups: Vec::new(),
+                        }),
+                        items_a: 2,
+                        items_b: 1,
+                    },
+                    SlotFixture {
+                        nested: Some(NestedFixture {
+                            type_id: 3,
+                            groups: vec![0, 2, 1, 0, 3, 0],
+                        }),
+                        items_a: 1,
+                        items_b: 4,
+                    },
+                ],
+                counted: vec![3, 4, 5, 0, 7, 9],
+            };
+            let mut class0 = Self::bare(0);
+            class0.class0 = rich.clone();
+
+            let mut class1 = Self::bare(1);
+            class1.embed_class0 = true;
+            class1.class0 = rich.clone();
+            class1.class1_entries = vec![false, true, false];
+
+            let mut class2 = Self::bare(2);
+            class2.blob = (0..37_u8).collect();
+            class2.embed_class0 = true;
+
+            let mut class3 = Self::bare(3);
+            class3.blob = vec![0xA5; 700];
+            class3.class3_tail = 2;
+
+            let mut class3_bare = Self::bare(3);
+            class3_bare.blob = vec![0x5A; 12];
+
+            let mut nested_type_two = Self::bare(0);
+            nested_type_two.class0 = Class0Fixture {
+                slots: vec![SlotFixture {
+                    nested: Some(NestedFixture {
+                        type_id: 2,
+                        groups: Vec::new(),
+                    }),
+                    items_a: 3,
+                    items_b: 0,
+                }],
+                counted: Vec::new(),
+            };
+
+            vec![
+                class0,
+                Self::bare(8),
+                class1,
+                class2,
+                Self::bare(4),
+                class3,
+                Self::bare(7),
+                Self::bare(9),
+                class3_bare,
+                nested_type_two,
+            ]
+        }
+
+        fn push(&self, out: &mut Vec<u8>, version: i32) {
+            push_u32(out, self.class_id);
+            push_spr_base(out, self.class_id);
+            match self.class_id {
+                0 => push_spr_class0_body(out, version, &self.class0),
+                1 => {
+                    push_filler(out, 4);
+                    if version >= 0x62 {
+                        push_filler(out, 2);
+                    } else {
+                        push_filler(out, 8);
+                    }
+                    if version >= 0x36 {
+                        push_filler(out, 4);
+                        push_u32(out, u32::from(self.embed_class0));
+                        if self.embed_class0 {
+                            push_spr_embedded_class0(out, version, &self.class0);
+                        }
+                    }
+                    if version >= 0x4A {
+                        push_filler(out, 4);
+                    }
+                    if version >= 0x60 {
+                        push_filler(out, 1);
+                    }
+                    if version >= 0x66 {
+                        out.extend_from_slice(&(self.class1_entries.len() as u16).to_le_bytes());
+                        for entry in &self.class1_entries {
+                            push_filler(out, 8);
+                            push_u32(out, u32::from(*entry));
+                            if *entry {
+                                push_spr_embedded_class0(out, version, &self.class0);
+                            }
+                        }
+                    }
+                }
+                2 => {
+                    push_u32(out, self.blob.len() as u32);
+                    out.extend_from_slice(&self.blob);
+                    push_filler(out, 4);
+                    if version >= 0x3B {
+                        push_u32(out, u32::from(self.embed_class0));
+                        if self.embed_class0 {
+                            push_spr_embedded_class0(out, version, &self.class0);
+                        }
+                    }
+                    if version >= 0x5A {
+                        push_filler(out, 4);
+                    }
+                }
+                3 => {
+                    // Below 0x34 the writer stores no length and the reader assumes 700 bytes, so
+                    // the fixture emits 700 whatever length it was asked for. Padding here rather
+                    // than refusing is what lets the version sweeps drive the same record set
+                    // across the whole ladder.
+                    if version >= 0x34 {
+                        push_u32(out, self.blob.len() as u32);
+                        out.extend_from_slice(&self.blob);
+                    } else {
+                        let mut blob = self.blob.clone();
+                        blob.resize(0x2BC, 0x7E);
+                        out.extend_from_slice(&blob);
+                    }
+                    push_u32(out, u32::from(self.embed_class0));
+                    if self.embed_class0 {
+                        push_spr_embedded_class0(out, version, &self.class0);
+                    }
+                    if version >= 0x53 {
+                        push_u32(out, self.class3_tail as u32);
+                        push_filler(out, 36 * self.class3_tail);
+                    }
+                }
+                4 | 7 => push_filler(out, 44),
+                8 => {}
+                9 => push_filler(out, 92 + 40),
+                other => panic!("no fixture for class id {other}"),
+            }
+        }
+    }
+
+    /// Bytes that are recognisably not zero, so a reader that skips a field instead of consuming
+    /// it lands on something that stands out in a failure message.
+    fn push_filler(out: &mut Vec<u8>, len: usize) {
+        out.extend((0..len).map(|index| (index % 251) as u8 | 0x40));
+    }
+
+    /// The six dwords of the base block, the first of which is the class id a second time.
+    fn push_spr_base(out: &mut Vec<u8>, class_id: u32) {
+        push_u32(out, class_id);
+        push_u32(out, 0x2246);
+        push_u32(out, 0xffff_ffff);
+        push_u32(out, 2);
+        push_u32(out, 0xc8);
+        push_u32(out, 0x2002_1050);
+    }
+
+    /// The per-slot blob width ladder at `0x00524E3C`, written out as literals.
+    fn spr_fixture_slot_width(version: i32) -> usize {
+        if version < 0x48 {
+            0x20
+        } else if version < 0x49 {
+            0x24
+        } else if version < 0x65 {
+            0x28
+        } else if version < 0x67 {
+            0x48
+        } else {
+            0x4C
+        }
+    }
+
+    fn push_spr_item_a(out: &mut Vec<u8>, version: i32) {
+        push_filler(out, 16);
+        if version >= 0x43 {
+            push_filler(out, 8);
+        }
+        if version >= 0x51 {
+            push_filler(out, 4);
+        }
+    }
+
+    fn push_spr_item_b(out: &mut Vec<u8>, version: i32) {
+        push_filler(out, 12);
+        if version >= 0x4B {
+            push_filler(out, 4);
+        }
+        if version >= 0x58 {
+            push_filler(out, 4);
+        }
+    }
+
+    fn push_spr_nested_base(out: &mut Vec<u8>, version: i32) {
+        push_filler(out, 4);
+        // The two gates on the build constant at `0x0055B1B0` are dead in this build; the fixture
+        // says so by not emitting their fields.
+        push_filler(out, 4);
+        if version < 0x65 {
+            push_filler(out, 0x1F);
+        }
+        if version < 0x3E {
+            push_filler(out, 8);
+        }
+        push_filler(out, 4);
+    }
+
+    fn push_spr_nested(out: &mut Vec<u8>, version: i32, nested: &NestedFixture) {
+        push_spr_nested_base(out, version);
+        match nested.type_id {
+            0 => {
+                if version < 0x3C {
+                    push_filler(out, 16);
+                }
+                push_filler(out, 4);
+                if version >= 0x4F {
+                    push_filler(out, 12);
+                }
+                push_filler(out, 4);
+            }
+            1 | 2 => {
+                if version < 0x3C {
+                    push_filler(out, 4);
+                }
+            }
+            3 => {
+                // Below 0x55 the group count is not stored and the loop is a fixed six.
+                let mut groups = nested.groups.clone();
+                if version >= 0x55 {
+                    push_u32(out, groups.len() as u32);
+                } else {
+                    groups.resize(6, 0);
+                    groups.truncate(6);
+                }
+                for items in &groups {
+                    push_filler(out, 4);
+                    push_u32(out, *items as u32);
+                    for _ in 0..*items {
+                        push_spr_item_a(out, version);
+                    }
+                }
+            }
+            other => panic!("no fixture for nested type id {other}"),
+        }
+    }
+
+    fn push_spr_slot(out: &mut Vec<u8>, version: i32, slot: &SlotFixture) {
+        let width = spr_fixture_slot_width(version);
+        let mut blob = vec![0_u8; width];
+        for (index, byte) in blob.iter_mut().enumerate() {
+            *byte = (index % 241) as u8 | 0x20;
+        }
+        // The word at blob offset 0x14 is what `0x00524EE0` tests.
+        let present = u32::from(slot.nested.is_some());
+        blob[0x14..0x18].copy_from_slice(&present.to_le_bytes());
+        out.extend_from_slice(&blob);
+        // A save older than 0x37 has the flag forced to zero, so the nested object is absent even
+        // when the fixture asked for one.
+        if version >= 0x37
+            && let Some(nested) = &slot.nested
+        {
+            push_u32(out, nested.type_id);
+            push_spr_nested(out, version, nested);
+        }
+        push_u32(out, slot.items_a as u32);
+        for _ in 0..slot.items_a {
+            push_spr_item_a(out, version);
+        }
+        if version >= 0x3E {
+            push_u32(out, slot.items_b as u32);
+            for _ in 0..slot.items_b {
+                push_spr_item_b(out, version);
+            }
+        }
+    }
+
+    fn push_spr_class0_body(out: &mut Vec<u8>, version: i32, class0: &Class0Fixture) {
+        push_filler(out, 8);
+        push_u32(out, class0.slots.len() as u32);
+        push_filler(out, 4);
+        for slot in &class0.slots {
+            push_spr_slot(out, version, slot);
+        }
+        push_filler(out, 16);
+        push_u32(out, class0.counted.len() as u32);
+        out.extend_from_slice(&class0.counted);
+        if version < 0x3F {
+            push_filler(out, 16);
+        }
+        push_filler(out, 12);
+        push_filler(out, 88);
+        if version >= 0x33 {
+            push_filler(out, 4);
+            if version >= 0x38 {
+                push_filler(out, 4);
+            }
+            if version >= 0x3D {
+                push_filler(out, 24);
+            }
+            if version >= 0x42 {
+                push_filler(out, if version >= 0x5D { 4 } else { 1 });
+                push_filler(out, 1);
+            }
+            if (0x59..=0x5B).contains(&version) {
+                push_filler(out, 4);
+            }
+            if version >= 0x6A {
+                push_filler(out, 1);
+            }
+        }
+    }
+
+    fn push_spr_embedded_class0(out: &mut Vec<u8>, version: i32, class0: &Class0Fixture) {
+        push_spr_base(out, 0);
+        push_spr_class0_body(out, version, class0);
     }
 
     /// One synthetic `LS_PLR_` record. The shapes are deliberately unequal.
@@ -2873,8 +3981,10 @@ mod tests {
                     push_u32(&mut out, 1);
                 }
                 SectionTag::Sprites => {
-                    push_u32(&mut out, self.sprite_count);
-                    out.extend((0..self.sprite_body).map(|index| (index % 97) as u8 | 0x80));
+                    push_u32(&mut out, self.sprite_records.len() as u32);
+                    for record in &self.sprite_records {
+                        record.push(&mut out, self.version as i32);
+                    }
                 }
                 SectionTag::User => {
                     // Literal 8 and literal 784. Generating this from `UserSection::RECORD_COUNT`
@@ -3087,7 +4197,12 @@ mod tests {
     #[test]
     fn a_section_extends_to_the_next_tag_and_not_to_a_stored_length() {
         let mut grown = Fixture::default();
-        grown.sprite_body += 64;
+        // Grow one existing record rather than adding one: the record count must stay put while
+        // the section's extent moves, which is the whole point of "no length word".
+        grown.sprite_records[0]
+            .class0
+            .counted
+            .extend(std::iter::repeat_n(0x11_u8, 64));
 
         let before = SaveFile::parse(&Fixture::default().build()).unwrap();
         let after = SaveFile::parse(&grown.build()).unwrap();
@@ -3531,12 +4646,12 @@ mod tests {
     #[test]
     fn accepts_a_sprite_section_holding_no_records() {
         let fixture = Fixture {
-            sprite_count: 0,
-            sprite_body: 0,
+            sprite_records: Vec::new(),
             ..Fixture::default()
         };
         let save = SaveFile::parse(&fixture.build()).unwrap();
         assert_eq!(save.sprites.record_count, 0);
+        assert!(save.sprites.records.is_empty());
         assert!(save.sprites.records_raw().is_empty());
         assert!(save.sprites.candidate_fixed_strides(1024).is_empty());
     }
@@ -3544,9 +4659,10 @@ mod tests {
     /// The stride search must be the arithmetic it claims to be, not a table of corpus results.
     #[test]
     fn the_stride_search_returns_exactly_the_headers_that_divide_evenly() {
+        // Seven records of one class, which is the only way to make the stride search find
+        // anything at all -- the real section never does.
         let fixture = Fixture {
-            sprite_count: 7,
-            sprite_body: 100,
+            sprite_records: (0..7).map(|_| SpriteFixture::bare(8)).collect(),
             ..Fixture::default()
         };
         let save = SaveFile::parse(&fixture.build()).unwrap();
@@ -3569,6 +4685,429 @@ mod tests {
             );
         }
         assert!(!found.is_empty(), "this fixture does admit strides");
+    }
+
+    /// The dispatch table itself, as data: ten entries, ids 0..=9, and the two that raise.
+    #[test]
+    fn the_class_dispatch_table_has_ten_entries_and_exactly_two_invalid_ids() {
+        assert_eq!(SPRITE_CLASS_DISPATCH.len(), 10);
+        for (index, entry) in SPRITE_CLASS_DISPATCH.iter().enumerate() {
+            assert_eq!(
+                entry.class_id, index as u32,
+                "entry {index} is out of order"
+            );
+        }
+        let invalid: Vec<u32> = SPRITE_CLASS_DISPATCH
+            .iter()
+            .filter(|entry| entry.reader.is_none())
+            .map(|entry| entry.class_id)
+            .collect();
+        assert_eq!(invalid, SPRITE_INVALID_CLASS_IDS.to_vec());
+        // Ids 5 and 6 share one target, and it is not any real class's arm.
+        assert_eq!(
+            SPRITE_CLASS_DISPATCH[5].jump_target,
+            SPRITE_CLASS_DISPATCH[6].jump_target
+        );
+        for entry in SPRITE_CLASS_DISPATCH.iter().filter(|e| e.reader.is_some()) {
+            assert_ne!(entry.jump_target, SPRITE_CLASS_DISPATCH[5].jump_target);
+        }
+        assert_eq!(SPRITE_MAX_CLASS_ID, 9);
+        // Class 8 is the one class that inherits the base reader unchanged, which is why its
+        // record is the base block and nothing else.
+        assert_eq!(SPRITE_CLASS_DISPATCH[8].on_disk_reader, Some(0x004F_6B00));
+    }
+
+    /// Every record opens with the class id **twice**: once for the container's dispatch and once
+    /// because the base reader puts it back at `this+4`.
+    #[test]
+    fn every_record_echoes_its_class_id_in_the_base_block() {
+        let save = SaveFile::parse(&Fixture::default().build()).unwrap();
+        assert_eq!(
+            save.sprites.records.len(),
+            save.sprites.record_count as usize
+        );
+        for record in &save.sprites.records {
+            assert!(
+                record.class_id_echo_agrees(),
+                "class {} echoed {}",
+                record.class_id,
+                record.base.class_id_echo
+            );
+            assert!(record.class_entry().is_some());
+        }
+    }
+
+    /// Class 8 is the base reader and nothing more, so its record is exactly the dispatch dword
+    /// plus the 24-byte base block. A reader that added any field of its own would fail this.
+    #[test]
+    fn a_class_eight_record_is_exactly_the_dispatch_word_and_the_base_block() {
+        let fixture = Fixture {
+            sprite_records: vec![SpriteFixture::bare(8)],
+            ..Fixture::default()
+        };
+        let save = SaveFile::parse(&fixture.build()).unwrap();
+        let record = &save.sprites.records[0];
+        assert!(record.body.is_empty());
+        // Literal 28, not `4 + SpriteBase::LEN`: the point is the number.
+        assert_eq!(record.encoded_len(), 28);
+        assert_eq!(save.sprites.records_raw().len(), 28);
+    }
+
+    /// The whole model, checked the way the corpus checks it: the records must account for the
+    /// payload **exactly**, and the section must re-emit the same bytes from the decode.
+    #[test]
+    fn the_records_account_for_the_payload_exactly_and_re_encode_byte_for_byte() {
+        let fixture = Fixture::default();
+        let save = SaveFile::parse(&fixture.build()).unwrap();
+
+        let mut original = Vec::new();
+        push_u32(&mut original, save.sprites.record_count);
+        original.extend_from_slice(save.sprites.records_raw());
+        assert_eq!(save.sprites.encode(), original);
+
+        let accounted: usize = save
+            .sprites
+            .records
+            .iter()
+            .map(SpriteRecord::encoded_len)
+            .sum();
+        assert_eq!(accounted, save.sprites.records_raw().len());
+    }
+
+    /// The whole file reassembles byte-identically with `LS_SPR_` regenerated from its records.
+    #[test]
+    fn a_file_reassembles_byte_identically_with_the_sprite_section_regenerated() {
+        let bytes = Fixture::default().build();
+        let save = SaveFile::parse(&bytes).unwrap();
+        assert_eq!(save.reencode_with_sprites(&bytes), bytes);
+    }
+
+    /// A record of every class the dispatch table admits, in one section, in an order that is not
+    /// the class-id order.
+    #[test]
+    fn decodes_a_section_holding_one_record_of_every_valid_class() {
+        let save = SaveFile::parse(&Fixture::default().build()).unwrap();
+        let histogram = save.sprites.class_histogram();
+        for class_id in [0_u32, 1, 2, 3, 4, 7, 8, 9] {
+            assert!(
+                histogram.contains_key(&class_id),
+                "class {class_id} missing from {histogram:?}"
+            );
+        }
+        for class_id in SPRITE_INVALID_CLASS_IDS {
+            assert!(!histogram.contains_key(&class_id));
+        }
+    }
+
+    /// The two ids the dispatch table routes to the raise are refused, and so is anything past
+    /// the reader's own `cmp eax,9` bound.
+    #[test]
+    fn refuses_the_two_invalid_class_ids_and_anything_past_the_bound() {
+        for class_id in [5_u32, 6, 10, 11, u32::MAX] {
+            let mut payload = Vec::new();
+            push_u32(&mut payload, 1);
+            push_u32(&mut payload, class_id);
+            push_spr_base(&mut payload, class_id);
+            let version = VersionSection { version: 111 };
+            let error = SpriteSection::parse(&payload, &version).unwrap_err();
+            let text = error.to_string();
+            assert!(text.starts_with("LS_SPR_:"), "{text}");
+            assert!(text.contains(&class_id.to_string()), "{text}");
+        }
+    }
+
+    /// A count that claims more records than the payload holds must be an error, not a panic and
+    /// not a silent short read.
+    #[test]
+    fn refuses_a_record_count_the_payload_cannot_supply() {
+        let mut payload = Vec::new();
+        push_u32(&mut payload, 4);
+        for _ in 0..2 {
+            push_u32(&mut payload, 8);
+            push_spr_base(&mut payload, 8);
+        }
+        let error = SpriteSection::parse(&payload, &VersionSection { version: 111 }).unwrap_err();
+        assert!(error.to_string().starts_with("LS_SPR_:"), "{error}");
+    }
+
+    /// Trailing bytes the record count does not reach are a refusal, not slack. This is the check
+    /// that makes the whole model falsifiable: a wrong record length leaves a remainder.
+    #[test]
+    fn refuses_a_payload_with_bytes_left_over_after_the_last_record() {
+        let mut payload = Vec::new();
+        push_u32(&mut payload, 1);
+        push_u32(&mut payload, 8);
+        push_spr_base(&mut payload, 8);
+        payload.push(0xEE);
+        let error = SpriteSection::parse(&payload, &VersionSection { version: 111 }).unwrap_err();
+        assert!(error.to_string().contains("leaving 1 over"), "{error}");
+    }
+
+    /// A length a record declares for itself is a file-declared allocation size, and it is
+    /// bounded by the payload rather than trusted.
+    #[test]
+    fn refuses_a_class_two_blob_length_that_runs_past_the_payload() {
+        let mut payload = Vec::new();
+        push_u32(&mut payload, 1);
+        push_u32(&mut payload, 2);
+        push_spr_base(&mut payload, 2);
+        push_u32(&mut payload, 0xffff_fff0);
+        let error = SpriteSection::parse(&payload, &VersionSection { version: 111 }).unwrap_err();
+        assert!(error.to_string().contains("runs past"), "{error}");
+    }
+
+    /// The nested factory at `0x0044B4F0` bounds its type id with `cmp ecx,3 / ja`, and so does
+    /// this reader.
+    #[test]
+    fn refuses_a_nested_type_id_past_the_factorys_bound() {
+        let mut payload = Vec::new();
+        push_u32(&mut payload, 1);
+        push_u32(&mut payload, 0);
+        push_spr_base(&mut payload, 0);
+        push_filler(&mut payload, 8);
+        push_u32(&mut payload, 1); // one slot
+        push_filler(&mut payload, 4);
+        let mut blob = vec![0x33_u8; spr_fixture_slot_width(111)];
+        blob[0x14..0x18].copy_from_slice(&1_u32.to_le_bytes());
+        payload.extend_from_slice(&blob);
+        push_u32(&mut payload, SPRITE_NESTED_MAX_TYPE_ID + 1);
+        let error = SpriteSection::parse(&payload, &VersionSection { version: 111 }).unwrap_err();
+        assert!(error.to_string().contains("nested type id 4"), "{error}");
+    }
+
+    /// The per-slot blob ladder, swept at every rung **and the version immediately below it**, so
+    /// a mutation in either direction is caught.
+    #[test]
+    fn the_slot_blob_width_ladder_moves_at_exactly_its_five_rungs() {
+        // Literals, not `SPR_SLOT_BLOB_WIDTHS`.
+        let expected: [(u32, usize); 10] = [
+            (0x00, 0x20),
+            (0x47, 0x20),
+            (0x48, 0x24),
+            (0x49, 0x28),
+            (0x64, 0x28),
+            (0x65, 0x48),
+            (0x66, 0x48),
+            (0x67, 0x4C),
+            (108, 0x4C),
+            (111, 0x4C),
+        ];
+        for (version, width) in expected {
+            assert_eq!(
+                sprite_slot_blob_width(version),
+                width,
+                "version {version:#x}"
+            );
+        }
+    }
+
+    /// The blob width is not merely reported by a helper: it changes what the parser consumes.
+    /// One slot, one version step, and the record must grow by exactly the ladder's step.
+    #[test]
+    fn a_slot_record_grows_by_the_ladder_step_when_the_version_crosses_a_rung() {
+        let one_slot = |version: u32| {
+            let mut class0 = SpriteFixture::bare(0);
+            class0.class0 = Class0Fixture {
+                slots: vec![SlotFixture {
+                    nested: None,
+                    items_a: 0,
+                    items_b: 0,
+                }],
+                counted: Vec::new(),
+            };
+            let fixture = Fixture {
+                version,
+                sprite_records: vec![class0],
+                ..Fixture::default()
+            };
+            let save = SaveFile::parse(&fixture.build()).unwrap();
+            save.sprites.records[0].encoded_len()
+        };
+        // 0x66 -> 0x67 is the 0x48 -> 0x4C rung: exactly four bytes.
+        assert_eq!(one_slot(0x67), one_slot(0x66) + 4);
+        // 0x64 -> 0x65 is 0x28 -> 0x48: exactly 32 bytes.
+        assert_eq!(one_slot(0x65), one_slot(0x64) + 0x20);
+    }
+
+    /// Every version gate in the section, swept at the gate and one below it. Each pair must
+    /// differ by the width of exactly the field that gate controls -- a gate moved by one in
+    /// either direction changes which pair disagrees.
+    #[test]
+    fn each_version_gate_changes_the_record_length_by_its_own_fields_width() {
+        let measure = |class: u32, version: u32| -> usize {
+            let mut record = SpriteFixture::bare(class);
+            record.embed_class0 = false;
+            record.blob = match class {
+                2 => (0..20_u8).collect(),
+                3 => vec![0x5A; 0x2BC],
+                _ => Vec::new(),
+            };
+            let fixture = Fixture {
+                version,
+                sprite_records: vec![record],
+                ..Fixture::default()
+            };
+            let save = SaveFile::parse(&fixture.build()).unwrap();
+            save.sprites.records[0].encoded_len()
+        };
+
+        // (class, gate, how many bytes appear at the gate). Negative means the field is present
+        // *below* the gate and disappears at it.
+        let cases: [(u32, u32, i64); 13] = [
+            (0, 0x33, 4),
+            (0, 0x38, 4),
+            (0, 0x3D, 24),
+            (0, 0x3F, -16),
+            (0, 0x42, 2),
+            (0, 0x5D, 3),
+            (0, 0x6A, 1),
+            (1, 0x36, 8),
+            (1, 0x4A, 4),
+            (1, 0x60, 1),
+            (1, 0x66, 2),
+            (1, 0x62, -6),
+            (2, 0x5A, 4),
+        ];
+        for (class, gate, delta) in cases {
+            let below = measure(class, gate - 1) as i64;
+            let at = measure(class, gate) as i64;
+            assert_eq!(
+                at - below,
+                delta,
+                "class {class} across gate {gate:#x}: {below} -> {at}"
+            );
+        }
+    }
+
+    /// **Every version gate at once, in both directions.**
+    ///
+    /// The fixture emitters are a second implementation of these layouts written from the
+    /// disassembly with literal gates. So if the parser's gate and the fixture's gate ever
+    /// disagree at any version, the record lengths disagree and the section either overruns or
+    /// leaves bytes over -- both of which `parse` refuses. Sweeping the whole range around the
+    /// ladder is therefore a mutation test of every gate constant in the section, without any
+    /// hand-computed field widths to get wrong.
+    ///
+    /// The range deliberately runs well past the two versions the corpus contains. None of the
+    /// gates below 108 has ever met a real file, and a synthetic fixture cannot confirm that the
+    /// engine's own writer produced what this reader expects -- it can only confirm the reader is
+    /// self-consistent with the instruction stream it was transcribed from.
+    #[test]
+    fn the_whole_record_set_decodes_and_re_encodes_at_every_version_across_the_ladder() {
+        let mut versions: Vec<u32> = (0x30..=0x80).collect();
+        versions.extend([0, 1, 50, 108, 111, 200, 9999, u32::MAX]);
+        for version in versions {
+            let fixture = Fixture {
+                version,
+                ..Fixture::default()
+            };
+            let bytes = fixture.build();
+            let save = match SaveFile::parse(&bytes) {
+                Ok(save) => save,
+                Err(error) => panic!("version {version:#x} ({version}): {error}"),
+            };
+            assert_eq!(
+                save.sprites.records.len(),
+                save.sprites.record_count as usize,
+                "version {version:#x}"
+            );
+            assert_eq!(
+                save.reencode_with_sprites(&bytes),
+                bytes,
+                "version {version:#x} did not round-trip"
+            );
+        }
+    }
+
+    /// The one gate in the section that no test can move, and the reason it cannot.
+    ///
+    /// Recorded as an assertion rather than a comment so that a future build constant which
+    /// *does* reach it makes this test fail and forces the gate back into the sweep.
+    #[test]
+    fn the_nested_last_word_gate_is_dead_because_of_the_build_constant() {
+        // Literal 0x48, not `SPR_NESTED_LAST_WORD_MIN`'s neighbour: this is the build-constant
+        // test at `0x0044B6E9`, a different comparison against a different value.
+        assert!(
+            (BUILD_FORMAT_VERSION as i32) >= 0x48,
+            "the build constant now reaches the gate at 0x0044B6E0; add it to the gate sweep"
+        );
+    }
+
+    /// Class 1's array length is a `u16`, not a `u32`. A reader that read four bytes there would
+    /// consume two bytes too many and land off the end of the record.
+    #[test]
+    fn class_ones_array_length_is_a_sixteen_bit_count() {
+        let entries = |count: usize| {
+            let mut record = SpriteFixture::bare(1);
+            record.class1_entries = vec![false; count];
+            let fixture = Fixture {
+                sprite_records: vec![record],
+                ..Fixture::default()
+            };
+            let save = SaveFile::parse(&fixture.build()).unwrap();
+            save.sprites.records[0].encoded_len()
+        };
+        // Two bytes for the count, then 12 per entry: eight filler bytes and the flag word.
+        assert_eq!(entries(1), entries(0) + 12);
+        assert_eq!(entries(5), entries(0) + 60);
+    }
+
+    /// Three classes embed a whole class-0 record, base block included. The embedded copy is not
+    /// a separate top-level record, so the count must not move.
+    #[test]
+    fn an_embedded_class_zero_lengthens_its_host_without_adding_a_record() {
+        let host = |embed: bool| {
+            let mut record = SpriteFixture::bare(2);
+            record.blob = (0..9_u8).collect();
+            record.embed_class0 = embed;
+            let fixture = Fixture {
+                sprite_records: vec![record],
+                ..Fixture::default()
+            };
+            let save = SaveFile::parse(&fixture.build()).unwrap();
+            assert_eq!(save.sprites.record_count, 1);
+            assert_eq!(save.sprites.records.len(), 1);
+            save.sprites.records[0].encoded_len()
+        };
+        assert!(host(true) > host(false) + 28);
+    }
+
+    /// A slot's nested object is gated on a word **inside the blob the slot just read**, so the
+    /// same fixture with that word cleared is a shorter record.
+    #[test]
+    fn a_slots_nested_object_is_gated_on_a_word_inside_its_own_blob() {
+        let with = |nested: Option<NestedFixture>| {
+            let mut record = SpriteFixture::bare(0);
+            record.class0 = Class0Fixture {
+                slots: vec![SlotFixture {
+                    nested,
+                    items_a: 0,
+                    items_b: 0,
+                }],
+                counted: Vec::new(),
+            };
+            let fixture = Fixture {
+                sprite_records: vec![record],
+                ..Fixture::default()
+            };
+            let save = SaveFile::parse(&fixture.build()).unwrap();
+            save.sprites.records[0].encoded_len()
+        };
+        let bare = with(None);
+        // Nested type 1 is the smallest: the nested base block and nothing else, plus the type id.
+        assert_eq!(
+            with(Some(NestedFixture {
+                type_id: 1,
+                groups: Vec::new(),
+            })),
+            bare + 4 + 12
+        );
+        assert!(
+            with(Some(NestedFixture {
+                type_id: 0,
+                groups: Vec::new(),
+            })) > bare + 4 + 12
+        );
     }
 
     // -- LS_USER ------------------------------------------------------------
