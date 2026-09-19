@@ -5489,7 +5489,9 @@ findings rather than gaps:
   over `code` reads `inf … inf`. This module guards locally — a non-finite number keeps its text but
   is never summarised — and the lexer is left alone because its token counts are load-bearing
   elsewhere. Anything reading `TokenKind::Number` has the same exposure. Evidence class: Observed.
-- **`tools/gs_syntax.py` terminates a `;` comment at `\n` only**, but bare CR is a line ending in
+- **`tools/gs_syntax.py` terminates a `;` comment at `\n` only** *(fixed on 2026-09-18, with three
+  sibling divergences found beside it; see [the entry below](#2026-09-18--four-lexer-divergences-closed-and-what-the-first-one-hid))*,
+  but bare CR is a line ending in
   this corpus and **25 GS5R3 members contain a comment and no LF at all**. In those the first comment
   swallows the file: `gs\dungeons\water\wacave.gs` is 5,347 bytes and normalises to **six tokens**.
   It feeds `compare_trees.py`'s token hash, so the "Layout/comments only" column in
@@ -5774,3 +5776,86 @@ asymmetry already recorded for the visibility level `63`, walked into again in a
 version sweep that samples only the gates cannot fail on a gate moved down.** The fix sweeps each
 gate *and the version immediately below it*, and asserts the per-step size deltas including the
 zeros, since a zero is exactly what a downward gate move destroys.
+
+
+## 2026-09-18 — Four lexer divergences closed, and what the first one hid
+
+The recorded defect was one line: `tools/gs_syntax.py` ended a `;` comment at `\n` only, though
+bare CR is a line ending in this corpus. Fixing it took a line too. **Everything of value in this
+entry came from what happened next** — reading `gs_syntax.py` against
+`spikes/asset-viewer/src/gamescript.rs` statement by statement instead of stopping at the defect
+that had been named.
+
+**The instrument came before the numbers.** A Python port of the Rust lexer's rules was written and
+then validated against the real thing: its NUL-joined token digest equals `--gs-facts`'s
+`token_sha256` on **4,692 of 4,692** members of the three installed profiles, zero parse-error
+disagreements. Only after that was any divergence attributed to `gs_syntax.py`. The port also had
+to decode the way the comparison decodes: the Rust lexer uses `from_utf8_lossy`, so the 17 members
+carrying a byte above 0x7e that is not valid UTF-8 differ in *token text* while agreeing on every
+token *boundary*. Compared naively that is 17 false findings out of 23.
+
+| Divergence | Members changed | Where |
+|---|---:|---|
+| `;` comment ended at `\n` only | 34 | all GS5R3 (25 with no LF at all) |
+| `\` treated as a string escape | 5 | vanilla 1, 3.02 2, GS5R3 2 |
+| `/` did not end a name | 5 | vanilla 1, 3.02 1, GS5R3 3 |
+| `str.isspace()` wider than `is_ascii_whitespace` | 0 | one member has such a byte, inside a string |
+| **after all four** | **0 of 4,692** | |
+
+**The recorded defect was not the worst one.** The comment rule cost `gs\dungeons\water\wacave.gs`
+706 of its 712 tokens, which is the figure this log already carried, and every one of its 34 members
+is in GS5R3. The string rule is in **vanilla**: `gs\Dlg\lib_dlg.gs` holds the punctuation table
+`"@#${}()[]\"`, whose closing quote the escape rule ate, and the member lexed to 3,247 tokens
+against its real 2,324. Two pages here had reasoned from "bare CR is a GS5R3 phenomenon" to "this
+class of defect cannot reach a mod built against vanilla, which is what `mods/orinf-rebalance` is".
+That inference was **Refuted** by a sibling of the defect it was written about. The authority has no
+escape rule at all — `read_string` matches on `"` and takes every other byte verbatim, and its own
+fixture `"path\to\file"` keeps both backslashes — so the escape branch was never anything but a
+Python habit applied to a language that does not have it.
+
+**A divergence with zero corpus reach is still worth closing, and still has to be measured.**
+`str.isspace()` accepts ASCII `\x0b` and `\x1c`-`\x1f` as well as `\x85` and `\xa0`; the
+authority accepts none of them. Exactly one member of the corpus contains such a byte — GS5R3's
+`gs\artifact\_custom\shield_balkoth.gs`, one `\x85` — and it is **inside a string literal**, where
+no layout rule looks, so the reach is zero, not one. An earlier draft of the build-pipeline page
+said that member "trips it", conflating *containing the byte* with *lexing differently because of
+it*, and a test premised on that conflation would have been asserting nothing.
+
+**Two measurements that would have passed while the code was wrong.** A token-count comparison was
+tried first for the whitespace case: `/hit_points\x85 13 def` is three tokens under both rules, one
+of them with the name split and one with it whole, so the count is blind to exactly the mutation it
+was there to catch. It was replaced with a digest comparison that applies only the lossy decoder to
+this side and nothing else. Separately, `test_comment_ends_at_the_carriage_return_of_a_crlf_pair`
+passed under the LF-only rule it was named for — the LF of a CRLF pair had always terminated the
+comment — and is now named `test_crlf_tokenizes_like_lf`, which is what it actually checks. Both are
+the same error: a measurement whose name promises more than its mechanism can deliver.
+
+**What is left, stated rather than implied.** `<` and `>` end a name for the authority and do not
+here, so `x<<y` is three tokens to one lexer and one to the other. **No corpus member reaches it**,
+and closing it needs a decision `gs_syntax.py` cannot make: a single `<` is a parse error to the
+authority and this tokenizer has no error channel, as with an unterminated string and an empty
+literal name. It is named in [gamescript-format.md](gamescript-format.md#lexer-parity-the-two-tokenizers-and-what-still-separates-them)
+and is what the change report's two-lexer check is left watching.
+
+**`reports/gs/summary.md` regenerates byte-identical after all four fixes**, at every step. Token
+hashes moved for the affected members in each comparison and **no member changed status**, so the
+"layout/comments only" column was never wrong in its *classification* for these members even while
+its input was — which is luck, not design, and is why it was checked after each change rather than
+once at the end.
+
+**A stale caveat was being stamped into every build.** `tools/mod_build.py` wrote
+`engine_acceptance["pic.mpq"] = "Never tested. No rewritten pic.mpq has been put in front of the
+engine and the compression choice for one is Inferred."` into `build.json`, deliberately, "so a
+build carries its own caveat". Both halves had been refuted on 2026-09-18 by this repository's own
+roadmap. It now states the measured scope — one member, replaced not added, a length-preserving
+`pbm_patch.py` edit, with the size-changing edit, the added member and the ByteRun1 encoder all
+still untested — and `tests/test_mod_pipeline.py` reads `docs/roadmap.md` and fails if the two
+drift apart again. The `gs.mpq` entry beside it was checked and is accurate, as is
+`mod_validate.py`'s added-member warning; those are the only two places in the repository that
+stamp a caveat into an artifact rather than into prose.
+
+**Left alone, deliberately.** `tools/gs_callsites.py` computes line and column with `\n`
+arithmetic, which looks like the same defect and is **inert**: it reads members through
+`Path.read_text()`, whose universal-newline translation turns every bare CR into `\n` before the
+tokenizer sees it. Recorded here so the next reader does not "fix" it and change what those offsets
+mean.

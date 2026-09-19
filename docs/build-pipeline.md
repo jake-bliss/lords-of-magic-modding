@@ -171,27 +171,56 @@ Validation lexes through `lom-asset-viewer --gs-facts`, which uses
 does not. There is no third lexer. The change report calls `tools/gs_syntax.py` as well, on purpose,
 and **reports when the two disagree** rather than choosing one silently.
 
-**`gs_syntax.py`'s LF-only comment rule is fixed, 2026-09-18.** It ended a `;` comment at `\n`
-alone, but bare CR is a line ending in GameScript, so in a member with no LF the first comment
-swallowed the rest of the file. It now ends a comment at the first of `\r` or `\n`, leaving the
-terminator for the whitespace branch, which is what `skip_layout` in the Rust lexer does. The reach
-was measured before the fix and re-measured after, over all 4,692 `.gs` members of the three
-profiles: **34 members lexed differently under the two rules, every one of them in GS5R3, and zero
-in vanilla or 3.02; after the fix, zero.** The worst was
-`gs\dungeons\water\wacave.gs` — 5,347 bytes, 712 tokens, of which `gs_syntax.py` saw **6** and now
-sees 712, which is the count `--gs-facts` reports for the same member. 25 of the 34 are GS5R3
-members with a comment and no LF at all; the other 9 have some LF and bare CRs as well. Counting
-instead every member containing a bare CR would give 242 and overstate the reach by seven times.
-The `reports/gs/summary.md` classifications did not move: the token hash changed for those 34
-members in both `gs5r3` comparisons, and no member changed status.
+**Four divergences from that lexer were closed in `gs_syntax.py` on 2026-09-18**, all four found
+the same way — by reading the two implementations side by side rather than by a failure — and all
+four measured against the corpus rather than bounded from above. The instrument is a Python port of
+`gamescript.rs`'s rules, validated first: its token digest matches `--gs-facts`'s `token_sha256` on
+**4,692 of 4,692** members, so a disagreement it reports is a disagreement in `gs_syntax.py` and
+not in the port. Both sides decode latin1 for the comparison, which removes the one difference that
+is about decoding rather than about token boundaries (the Rust lexer decodes with
+`from_utf8_lossy`, so a high byte becomes U+FFFD in its token text). Evidence class: Observed,
+2026-09-18, over the three installed profiles; the archives are not in this repository, so this
+measurement is the only evidence for these numbers.
 
-**The disagreement check stays, and its remaining instrument is smaller still.** The two lexers are
-independent implementations of one grammar and are still not identical: Python's `str.isspace()` is
-true for non-ASCII whitespace and the Rust lexer's `is_ascii_whitespace` is not, so a name
-containing byte 0x85 is one token to the engine's lexer and two to Python. Exactly **one** corpus
-member trips it — GS5R3's `shield_balkoth.gs` — and **none at all** in `vanilla`, which is what
-`mods/orinf-rebalance` is built against. A run that reports no disagreement has proved very little,
-and that is the number that says how little.
+| Divergence in `gs_syntax.py` | Members it changed | Where |
+|---|---:|---|
+| A `;` comment ended at `\n` only, but bare CR is a line ending | **34** | all GS5R3; 25 of them have no LF at all |
+| `\` was an escape inside a string, which the authority has no rule for | **5** | vanilla 1, 3.02 2, GS5R3 2 |
+| `/` did not end a name, and `is_separator` says it does | **5** | vanilla 1, 3.02 1, GS5R3 3 |
+| `str.isspace()` is wider than `is_ascii_whitespace` | **0** | 1 member holds such a byte, inside a string |
+| **After all four: members where the two tokenizers disagree** | **0 of 4,692** | |
+
+The rows are not disjoint: `Dlg\lib_dlg.gs` trips both the string rule and the `/` rule, in
+all three profiles, which is why the totals cannot simply be added.
+
+The worst single case was `gs\dungeons\water\wacave.gs` — 5,347 bytes, 712 tokens, of which
+`gs_syntax.py` saw **6**. The most alarming was not in GS5R3 at all: vanilla's `gs\Dlg\lib_dlg.gs`
+holds the punctuation table `"@#${}()[]\"`, whose closing quote the escape rule ate, and that
+member lexed to 3,247 tokens against its real 2,324. `vanilla` is the profile
+`mods/orinf-rebalance` is built against, so the claim that this class of defect could not reach a
+first mod was wrong before it was written here.
+
+The whitespace row is the one to read carefully. It is a real divergence in the code —
+`str.isspace()` accepts ASCII `\x0b` and `\x1c`-`\x1f` as well as `\x85` and `\xa0`, and the
+authority accepts none of them — but its corpus reach is **zero**: exactly one member,
+GS5R3's `gs\artifact\_custom\shield_balkoth.gs`, contains such a byte (one `\x85`) and it sits
+**inside a string literal**, where no layout rule looks. It was fixed for parity, not because it
+was costing anything. An earlier draft of this page said that member "trips it", which confused
+containing the byte with lexing differently because of it.
+
+`reports/gs/summary.md` regenerates **byte-identical** after all four fixes. The token hash moved
+for the affected members in each comparison and **no member changed status**, so no tracked report
+needed regenerating.
+
+**What is still open, and why the disagreement check stays.** `<` and `>` end a name for the
+authority and do not here, so `x<<y` is three tokens to the engine's lexer and one to
+`gs_syntax.py`. **Zero** corpus members reach it — every `<<` and `>>` in the corpus is already
+whitespace-separated or inside a string — and closing it needs a decision this tokenizer cannot
+make: a single `<` not followed by `<` is a *parse error* to the authority, and `gs_syntax.py` has
+no error channel. The same is true of an unterminated string and of an empty literal name. Those
+are named here rather than fixed, and they are what the change report's two-lexer check is left
+watching for. A run of it that reports no disagreement now proves more than it did — the two agree
+on the whole corpus — but it is still a check on two implementations, not on the engine.
 
 ## `build`
 

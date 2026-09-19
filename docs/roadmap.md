@@ -390,19 +390,28 @@ only this page still said otherwise:
   `(cell.tag & CELL_TAG_UPPER_FIELD) | tile_index`, preserving the whole upper field rather than one
   bit of it. Latent either way: across 353 shipped maps and 1,040,384 cells that field takes only
   `0x0000` and `0x0080`.
-- **`tools/gs_syntax.py` ended a `;` comment at `\n` only** — **fixed 2026-09-18.** Bare CR is a
-  line ending in GameScript, so in a member with no LF the first comment swallowed the rest of the
-  file. It now ends a comment at the first of `\r` or `\n` and leaves the terminator to the
-  whitespace branch, matching `skip_layout` in the CR-aware Rust lexer, which remains the lexer
-  validation uses. The reach, measured over all 4,692 `.gs` members of the three profiles before and
-  after: **34 members lexed differently under the two rules, every one in GS5R3 (25 of them the
-  subset with no LF anywhere); after the fix, zero.** `gs\dungeons\water\wacave.gs` is 5,347 bytes
-  and normalised to **six tokens** against its real 712; it now yields 712, the same count
-  `--gs-facts` reports. `reports/gs/summary.md` needed no regeneration: the token hash moved for
-  those 34 members in both `gs5r3` comparisons and **no member changed status**. The change report's
-  two-lexer disagreement check is kept, on a narrower remaining divergence — Python's
-  `str.isspace()` accepts non-ASCII whitespace the Rust lexer does not, which exactly one corpus
-  member, GS5R3's `shield_balkoth.gs`, contains.
+- **`tools/gs_syntax.py` diverged from the authority in four places** — **all four fixed
+  2026-09-18.** Only the first was recorded here; the other three were found by reading the two
+  lexers side by side after it, which is the reason this entry is now a list. (1) A `;` comment
+  ended at `\n` only, though bare CR is a line ending, so in a member with no LF the first comment
+  swallowed the rest of the file: **34 members**, every one in GS5R3, 25 of them with no LF at all,
+  and `gs\dungeons\water\wacave.gs` normalised to **six tokens** against its real 712 (it now
+  yields 712, the count `--gs-facts` reports). (2) `\` was treated as a string escape, which the
+  authority's `read_string` has no rule for, so a string ending in a backslash ate its own closing
+  quote: **5 members**, in **all three profiles** — vanilla's `gs\Dlg\lib_dlg.gs` holds the
+  punctuation table `"@#${}()[]\"` and lexed to 3,247 tokens against its real 2,324. That one
+  refutes the earlier claim on this page that the defect class could not reach a mod built against
+  `vanilla`. (3) `/` did not end a name, though `is_separator` lists it: **5 members**. (4)
+  `str.isspace()` is wider than `is_ascii_whitespace` — it also accepts ASCII `\x0b` and
+  `\x1c`-`\x1f`: **0 members**, and the one member holding such a byte holds it inside a string
+  literal, where no layout rule looks. Measured over all 4,692 `.gs` members of the three profiles
+  before and after, with a port of the Rust rules validated against `--gs-facts` on 4,692 of 4,692
+  first: **after the four fixes, zero members tokenize differently.** `reports/gs/summary.md`
+  regenerates byte-identical throughout — token hashes moved, **no member changed status**. What is
+  left is listed in
+  [the lexer parity section](gamescript-format.md#lexer-parity-the-two-tokenizers-and-what-still-separates-them):
+  `<` and `>` end a name for the authority and not here, which no corpus member reaches and which
+  cannot be closed without an error channel this tokenizer does not have.
 
 **Fixed since:** `gamescript.rs` no longer lexes the shipped infantry unit code `INF` as
 floating-point infinity. Classification was `name.parse::<f64>().is_ok()`, and Rust accepts `inf`,

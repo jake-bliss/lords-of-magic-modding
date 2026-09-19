@@ -7,13 +7,13 @@ difference is whitespace. Three existing pieces are reused rather than rewritten
 
 - `tools/compare_trees.py`'s unchanged / **reformatted** / modified split, which is the repo's
   existing way of saying "layout and comments only";
-- `tools/gs_syntax.py`'s token normalisation, which is what that split is computed from. Its
-  LF-only `;` comment rule was fixed on 2026-09-18, but it is still a second implementation of the
-  same grammar and the two are not identical: Python's `str.isspace()` accepts non-ASCII whitespace
-  where the Rust lexer's `is_ascii_whitespace` does not, and GS5R3's `shield_balkoth.gs` contains
-  byte 0x85, which Python splits a name on and the engine's lexer does not. So this report computes
-  the same split a second time from the Rust lexer and **reports when the two disagree** rather than
-  trusting either silently;
+- `tools/gs_syntax.py`'s token normalisation, which is what that split is computed from. Four
+  divergences from the Rust lexer were closed on 2026-09-18 and the two now agree on every one of
+  the 4,692 `.gs` members of the three installed profiles, but they are still two implementations
+  of one grammar and at least one divergence is left in the grammar's corners (`<` and `>` end a
+  name for the authority and not here). So this report computes the same split a second time from
+  the Rust lexer and **reports when the two disagree** rather than trusting either silently. The
+  live list is in `docs/gamescript-format.md`;
 - `reports/gameplay/symbols.tsv`, the 1,535-symbol gameplay index, to name which gameplay symbol a
   changed member defines.
 
@@ -115,11 +115,12 @@ def describe_gamescript_change(
         )
         if python_identical != token_identical:
             detail.append(
-                "token comparison DISAGREES between the CR-aware Rust lexer "
+                "token comparison DISAGREES between the Rust lexer "
                 f"({'same' if token_identical else 'different'}) and tools/gs_syntax.py "
-                f"({'same' if python_identical else 'different'}). The two are independent "
-                "implementations of the same grammar and gs_syntax.py splits names on non-ASCII "
-                "whitespace the engine's lexer keeps; the Rust answer is the one this report "
+                f"({'same' if python_identical else 'different'}). They are two implementations "
+                "of one grammar, so one of them has mis-lexed one of these two files; which "
+                "divergences are known and which are closed is listed in docs/gamescript-format.md "
+                "under the lexer parity section. The Rust answer is the one this report "
                 "classifies on."
             )
 

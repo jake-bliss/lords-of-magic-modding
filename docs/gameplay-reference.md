@@ -570,14 +570,20 @@ reach. It fed `tools/compare_trees.py`'s token hash, so the **"Layout/comments o
 [`reports/gs/summary.md`](../reports/gs/summary.md) was unreliable for those members: two files
 differing only inside a swallowed region hash equal and are called formatting-only.
 
-**Fixed the same day.** The comment now ends at the first of `\r` or `\n`, with the terminator left
-to the whitespace branch, which is what `skip_layout` in the Rust lexer does. Re-measured over all
-4,692 `.gs` members of the three profiles: **zero** now lex differently under the two rules, against
-34 before, and `wacave.gs` yields 712 tokens — the count `--gs-facts` reports for it. The classified
-output did not move: `reports/gs/summary.md` is byte-identical after regeneration, with the token
-hash changing for those 34 members and no member changing status. The profile diff here is still
-computed from the Rust lexer, which is the one that reports `line` and `column`. Evidence class:
-Observed.
+**Fixed the same day, along with three more.** The comment now ends at the first of `\r` or `\n`,
+with the terminator left to the whitespace branch, which is what `skip_layout` in the Rust lexer
+does. Looking for siblings of it found three: `\` was treated as a string escape the authority has
+no rule for (**5 members, in all three profiles** — vanilla's `Dlg\lib_dlg.gs` lexed to 3,247
+tokens against its real 2,324), `/` did not end a name (**5 members**), and `str.isspace()` is
+wider than `is_ascii_whitespace` (**0 members**). Re-measured over all 4,692 `.gs` members of the
+three profiles: **zero** now tokenize differently, against 34 before for the comment rule alone,
+and `wacave.gs` yields 712 tokens — the count `--gs-facts` reports for it. The classified output
+did not move: `reports/gs/summary.md` is byte-identical after regeneration, with token hashes
+changing and no member changing status. The profile diff here is still computed from the Rust
+lexer, which is the one that reports `line` and `column`, and what is left between the two is
+listed in
+[the lexer parity section](gamescript-format.md#lexer-parity-the-two-tokenizers-and-what-still-separates-them).
+Evidence class: Observed.
 
 ## Tests
 

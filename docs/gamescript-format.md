@@ -583,6 +583,43 @@ now ends at the first of `\r` or `\n` — and the same measurement after the fix
 
 The corpus relies on it. GS5R3's `gs\standard.gs` comments out its inherited `min`/`max` at lines 68 and 70 and redefines them at 73 and 74; reading the commented pair as live would give the wrong bodies.
 
+## Lexer parity: the two tokenizers and what still separates them
+
+This repository has two lexers for one grammar. `spikes/asset-viewer/src/gamescript.rs` is the
+authority — it is what `--gs-facts` runs and what the build pipeline validates with — and
+`tools/gs_syntax.py` is the tokenizer `compare_trees.py` normalises with. Where they disagree, one
+of them is wrong about a shipped member, so the change report prints both and says so
+([build pipeline](build-pipeline.md#why-the-lexer-is-the-rust-one)). This section is the list that
+message points at.
+
+**Closed 2026-09-18** — four divergences, each measured over all 4,692 `.gs` members of the three
+installed profiles before and after. Evidence class: Observed; the archives are not in this
+repository, so this measurement is the evidence.
+
+| Divergence | Members changed | Where |
+|---|---:|---|
+| `;` comment ended at `\n` only, though bare CR is a line ending | 34 | all GS5R3 (25 with no LF at all) |
+| `\` treated as a string escape; the authority has no escape rule | 5 | vanilla 1, 3.02 2, GS5R3 2 |
+| `/` did not end a name, though `is_separator` lists it | 5 | vanilla 1, 3.02 1, GS5R3 3 |
+| `str.isspace()` wider than `is_ascii_whitespace` (`\x0b`, `\x1c`-`\x1f`, `\x85`, `\xa0`) | 0 | one member holds such a byte, inside a string |
+
+After them, **0 of 4,692 members tokenize differently**, measured with a Python port of the Rust
+rules whose token digest first matched `--gs-facts` on 4,692 of 4,692.
+
+**Still open.** `<` and `>` end a name for the authority (`is_separator`) and not for
+`gs_syntax.py`, so `x<<y` is three tokens to one and one token to the other. No corpus member
+reaches it. It is not closed because a single `<` is a *parse error* to the authority and
+`gs_syntax.py` has no error channel; the same holds for an unterminated string and an empty literal
+name after `/`. `tests/test_mod_report.py` uses this divergence as its disagreement fixture, so the
+report's check stays exercised.
+
+**Decoding is not a lexing divergence, and is easy to mistake for one.** The Rust lexer decodes
+member bytes with `from_utf8_lossy`, so a byte above 0x7e that is not valid UTF-8 becomes U+FFFD in
+its token text and in its digest; `gs_syntax.py` decodes latin1 and keeps it. Seventeen corpus
+members contain such a byte. Their token *boundaries* agree — only the text of one token differs —
+so any comparison of the two tokenizers has to decode both sides the same way or it will report
+seventeen false divergences.
+
 ## Procedure locals: `replace` and the slot-zero dictionary
 
 GameScript procedures carry private storage, which PostScript has no equivalent of. Two forms appear, used interchangeably for structurally identical procedures:

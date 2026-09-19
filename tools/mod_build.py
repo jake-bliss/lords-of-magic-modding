@@ -35,6 +35,28 @@ from mod_validate import read_gs_facts  # noqa: E402
 from mpq_shape import Member, read_manifest  # noqa: E402
 
 
+# The caveat a build carries with it. It is deliberately authoritative, which means it goes stale
+# in exactly the way prose does: until 2026-09-18 it said `pic.mpq` was "never tested" and its
+# compression choice "Inferred", and by then both halves were refuted -- the engine had read a
+# rewritten `pic.mpq` and every one of the 1,071 baseline members was known to carry flags
+# `0x80010100`. `tests/test_mod_pipeline.py` now checks this text against `docs/roadmap.md` so the
+# two cannot drift apart again. Each entry states the measured scope, not the optimistic one.
+ENGINE_ACCEPTANCE = {
+    "gs.mpq": (
+        "Observed 2026-09-16, once, for an MPQ_FILE_IMPLODE member. The engine ran a "
+        "gs.mpq this pipeline's writer produced."
+    ),
+    "pic.mpq": (
+        "Observed in gameplay 2026-09-18, once, and narrowly: ONE member of pic.mpq, REPLACED "
+        "rather than added, edited length-preservingly by tools/pbm_patch.py. The engine read the "
+        "rewritten archive and the change was seen on screen. NOT established: a size-changing "
+        "edit, an added member, and the full ByteRun1 encoder have none of them been put in front "
+        "of the engine. The compression choice is not Inferred -- all 1,071 baseline members carry "
+        "flags 0x80010100, the same storage class gs.mpq's 2026-09-16 run proved."
+    ),
+}
+
+
 def resolve_base_members(tree, manifests: dict[str, list[Member]]) -> dict[str, Member]:
     """Tree-relative path -> the base member it replaces.
 
@@ -182,16 +204,7 @@ def command_report(arguments) -> int:
         "output_archive_digests": dict(arguments.output_digest),
         "changed_members": [change.as_row() for change in changes],
         # Recorded in the build rather than only in the docs, so a build carries its own caveat.
-        "engine_acceptance": {
-            "gs.mpq": (
-                "Observed 2026-09-16, once, for an MPQ_FILE_IMPLODE member. The engine ran a "
-                "gs.mpq this pipeline's writer produced."
-            ),
-            "pic.mpq": (
-                "Never tested. No rewritten pic.mpq has been put in front of the engine and the "
-                "compression choice for one is Inferred."
-            ),
-        },
+        "engine_acceptance": ENGINE_ACCEPTANCE,
     }
     (output_dir / "build.json").write_text(
         json.dumps(build, indent=2, sort_keys=True) + "\n", encoding="utf-8"

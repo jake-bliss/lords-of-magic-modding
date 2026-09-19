@@ -19,6 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tools.mod_build import ENGINE_ACCEPTANCE
 from tools.mod_tree import GAME_SUBPATH, PROFILE_APPS
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -350,6 +351,52 @@ class ProfileTableTest(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unknown profile label", result.stderr)
+
+
+class EngineAcceptanceCaveatTest(unittest.TestCase):
+    """`build.json` carries its own engine-acceptance caveat, and it went stale once already.
+
+    Until 2026-09-18 every build asserted that no rewritten `pic.mpq` had faced the engine and that
+    its compression choice was Inferred. Both had been refuted, in this repository's own roadmap,
+    and nothing caught it because the claim lives in code and its evidence lives in prose. These
+    tests tie the two together: they read `docs/roadmap.md` and fail if the caveat and the roadmap
+    disagree about what the engine has accepted.
+    """
+
+    def roadmap(self) -> str:
+        return (PROJECT_DIR / "docs" / "roadmap.md").read_text(encoding="utf-8")
+
+    def test_the_pic_caveat_agrees_with_the_roadmap_about_acceptance(self) -> None:
+        roadmap = self.roadmap()
+        accepted = "- [x] Put a rewritten `pic.mpq` in front of the engine." in roadmap
+        caveat = ENGINE_ACCEPTANCE["pic.mpq"]
+        self.assertTrue(
+            accepted,
+            "the roadmap no longer records pic.mpq acceptance; the build caveat has to follow it",
+        )
+        self.assertNotIn("Never tested", caveat)
+        self.assertIn("2026-09-18", caveat)
+        self.assertIn("2026-09-18", roadmap)
+
+    def test_the_pic_caveat_keeps_every_limit_the_roadmap_states(self) -> None:
+        """The roadmap's "Not established" paragraph is the measured scope. Do not widen it."""
+        roadmap = self.roadmap()
+        self.assertIn(
+            "An edit that changes a member's *size* has not been put in front of the", roadmap
+        )
+        caveat = ENGINE_ACCEPTANCE["pic.mpq"]
+        for limit in ("ONE member", "REPLACED", "size-changing edit", "added member", "encoder"):
+            with self.subTest(limit=limit):
+                self.assertIn(limit, caveat)
+
+    def test_the_gs_caveat_still_matches_the_run_it_cites(self) -> None:
+        caveat = ENGINE_ACCEPTANCE["gs.mpq"]
+        self.assertIn("2026-09-16", caveat)
+        self.assertIn("MPQ_FILE_IMPLODE", caveat)
+        self.assertIn(
+            "attended 2026-09-16 round trip of an `MPQ_FILE_IMPLODE` member of",
+            (PROJECT_DIR / "docs" / "build-pipeline.md").read_text(encoding="utf-8"),
+        )
 
 
 if __name__ == "__main__":
