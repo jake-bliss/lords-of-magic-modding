@@ -419,7 +419,7 @@ fn probe_bitmap(bytes: &[u8]) -> Result<AssetInfo, String> {
     match BitmapImage::decode(bytes) {
         Ok(image) => Ok(AssetInfo::new(
             AssetKind::Bitmap,
-            format!("{common};pixels={}", image.pixels.len()),
+            format!("{common};pixels={}", image.pixels().len()),
         )),
         Err(error) if error.kind() == BmpErrorKind::Unsupported => Ok(AssetInfo::undecoded(
             AssetKind::Bitmap,
@@ -706,11 +706,14 @@ mod tests {
         assert!(info.details.contains("bit depth 24"), "{}", info.details);
     }
 
-    /// A header-only fixture is still described, and is now reported as **undecoded**.
+    /// A header-only fixture is still **described**, and is a probe **failure**, not an `undecoded`.
     ///
-    /// This fixture declares 400x144 and carries no pixel bytes at all, so it never was a decodable
-    /// bitmap; before the decoder existed the probe could not tell. The metadata assertions are
-    /// unchanged, which is the point -- describing a member did not get worse.
+    /// This fixture declares 400x144 and carries no pixel bytes at all. The first version of this
+    /// test asserted the failure was reported as `bottom-up` -- the row order -- and its own doc
+    /// comment said "it never was a decodable bitmap" while the reason given was the height sign.
+    /// A review measured that: every variant refusal ran before the structural check, so a
+    /// truncated member scanned as zero failures with the blame on a format variant. The fixture
+    /// stays; the assertion now points at the truncation, which is what is actually wrong with it.
     #[test]
     fn probes_windows_bitmap_metadata() {
         let mut bytes = vec![0_u8; 54];
@@ -722,6 +725,27 @@ mod tests {
         bytes[22..26].copy_from_slice(&(-144_i32).to_le_bytes());
         bytes[26..28].copy_from_slice(&1_u16.to_le_bytes());
         bytes[28..30].copy_from_slice(&24_u16.to_le_bytes());
+
+        let error = probe("background.bmp", &bytes)
+            .expect_err("a member that cannot hold its own pixels is a probe failure");
+        assert!(error.contains("pixel bytes"), "{error}");
+        assert!(
+            !error.contains("bottom-up"),
+            "the row order is not what is wrong with this member: {error}"
+        );
+    }
+
+    /// The metadata line a member that is merely an **unimplemented variant** still gets.
+    ///
+    /// This one is a complete, well-formed top-down bitmap -- legal, and not something this
+    /// repository decodes. It must be classified with its dimensions and depth rather than failing
+    /// the scan, which is the half of the split that was working before and must keep working.
+    #[test]
+    fn an_unimplemented_bitmap_variant_is_classified_with_its_metadata() {
+        let mut bytes = crate::bmp::BitmapImage::from_pixels(400, 144, vec![[0, 0, 0]; 57_600])
+            .expect("a well-formed fixture")
+            .encode();
+        bytes[22..26].copy_from_slice(&(-144_i32).to_le_bytes());
 
         let info = probe("background.bmp", &bytes).unwrap();
         assert_eq!(info.kind, AssetKind::Bitmap);
