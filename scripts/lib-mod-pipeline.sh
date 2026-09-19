@@ -110,10 +110,25 @@ base_gs_facts() {
 # archive swapped under a live process is a class of corruption no checksum afterwards can undo.
 # The DOS command line the game presents, as an extended regular expression anchored at the start.
 #
-# Derived from `game_subpath` rather than written out, so a change to the install layout cannot
-# leave the guard matching a path the pipeline no longer uses. Everything after `drive_c/` is the
-# Windows-side path; `/` becomes `\`, and the ERE metacharacters in `Program Files (x86)` are
-# bracket-escaped.
+# **The profiles do not agree on it.** Observed 2026-09-19, both live:
+#
+#   Development  c:\program files (x86)\steam\steamapps\common\lords of magic special edition\english\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1
+#   3.02         d:\lomse.exe /*
+#
+# 3.02 runs from the DRIVE ROOT. So the directory part is optional, and a pattern written from
+# either profile alone misses the other -- which is the entire history of this guard:
+#
+#   * `^[A-Za-z]:[\]lomse[.]exe` matched 3.02 and missed Development. It was not invented from a
+#     bad guess; somebody watched a real profile. It was then applied to a profile it had never
+#     been measured against.
+#   * `^[A-Za-z]:[\].*lomse[.]exe` matched both, and also `c:\tools\notlomse.exe` and any command
+#     line mentioning the path in an argument.
+#   * The full path with no optional part matched Development and missed 3.02 -- the first defect
+#     again, with the profiles swapped.
+#
+# Derived from `game_subpath` so a change to the install layout cannot leave the guard matching a
+# path the pipeline no longer uses. Everything after `drive_c/` is the Windows-side path; `/`
+# becomes `\`, and the ERE metacharacters in `Program Files (x86)` are bracket-escaped.
 game_command_pattern() {
   local tail="${game_subpath#*drive_c/}"
   # Bracket-escape every ERE metacharacter. A bracket expression is the one escaping form that
@@ -124,8 +139,10 @@ game_command_pattern() {
   # what lets the test assert the two are byte-identical.
   tail="${tail//\//[\\\\]}"
   # Anchored at the drive letter, and terminated by whitespace or end of line, so a command line
-  # that merely MENTIONS the executable later in its arguments cannot match.
-  printf '^[A-Za-z]:[\\\\]%s[\\\\]lomse[.]exe([[:space:]]|$)' "${tail}"
+  # that merely MENTIONS the executable later in its arguments cannot match. The directory group is
+  # OPTIONAL because 3.02 runs from the drive root; it is a specific path rather than `.*`, so an
+  # unrelated executable under some other directory still cannot match.
+  printf '^[A-Za-z]:[\\\\](%s[\\\\])?lomse[.]exe([[:space:]]|$)' "${tail}"
 }
 
 refuse_if_game_running() {

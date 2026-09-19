@@ -61,7 +61,10 @@ def _game_pattern() -> str:
     tail = GAME_SUBPATH.split("drive_c/", 1)[1]
     escaped = "".join(f"[{c}]" if c in "[](){}.*+?^$|" else c for c in tail)
     escaped = escaped.replace("/", r"[\\]")
-    return rf"^[A-Za-z]:[\\]{escaped}[\\]lomse[.]exe([[:space:]]|$)"
+    # The directory group is OPTIONAL: the 3.02 profile runs `d:\lomse.exe` from the drive root
+    # while Development runs the full path. A pattern written from either profile alone misses the
+    # other, which is this guard's entire defect history.
+    return rf"^[A-Za-z]:[\\]({escaped}[\\])?lomse[.]exe([[:space:]]|$)"
 
 
 GAME_PATTERN = _game_pattern()
@@ -141,6 +144,11 @@ OBSERVED_GAME_ARGV0 = (
     r"c:\program files (x86)\steam\steamapps\common"
     r"\lords of magic special edition\english\lomse.exe"
 )
+
+# The SAME game, from a different profile, observed live on 2026-09-19 as PID 47723: the 3.02
+# profile runs from the DRIVE ROOT. Two profiles, two command lines, and every previous version of
+# this guard was written against exactly one of them.
+OBSERVED_GAME_ARGV0_DRIVE_ROOT = r"d:\lomse.exe"
 
 # What the guard said before 2026-09-19. Kept so the defect has a test that fails if it returns,
 # rather than a comment saying it used to be there.
@@ -232,6 +240,19 @@ class GameGuardPattern(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertNotIn(GAME_IS_UP, completed.stderr)
 
+    def test_the_shipped_guard_refuses_for_the_drive_root_profile_too(self) -> None:
+        r"""The 3.02 profile runs `d:\lomse.exe`, and a guard that misses it is a guard.
+
+        Both observed command lines are the same game. Development runs the full path; 3.02 runs
+        from the drive root. Each previous version of this pattern was written against exactly one
+        profile and silently failed on the other, which is why both are tested here rather than
+        whichever one was in front of us last.
+        """
+        with decoy_process(OBSERVED_GAME_ARGV0_DRIVE_ROOT):
+            completed = self.invoke_shipped_guard()
+        self.assertNotEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(GAME_IS_UP, completed.stderr)
+
     def test_the_shipped_guard_is_quiet_while_a_drive_anchored_decoy_runs(self) -> None:
         r"""Drives the SHIPPED shell function against a false positive, not just the regex.
 
@@ -271,8 +292,13 @@ class GameGuardPattern(unittest.TestCase):
     # which is worse than the red it would replace.
     NOT_THE_GAME = (
         r"c:\tools\notlomse.exe",
+        r"d:\notlomse.exe",
+        # The right name under the WRONG directory. This is why the optional group is a specific
+        # path and not `.*` -- `.*` would admit it.
+        r"c:\games\lomse.exe",
         r"c:\windows\system32\cmd.exe /c dir c:\games\lomse.exe",
         OBSERVED_GAME_ARGV0 + ".bak",
+        OBSERVED_GAME_ARGV0_DRIVE_ROOT + ".bak",
         f"grep --fixed-strings {OBSERVED_GAME_ARGV0}",
     )
 
@@ -300,8 +326,12 @@ class GameGuardPattern(unittest.TestCase):
         two failure classes and this test failed until they were separated, which is what a pinning
         test is for.
         """
-        # Anchored at a drive letter, so only the over-broad `.*` admits them.
-        for line in self.NOT_THE_GAME[:3]:
+        # Anchored at a drive letter, so only the over-broad `.*` admits them. `c:\games\lomse.exe`
+        # is included deliberately: the over-broad pattern admitted it and the current one does not.
+        drive_anchored = [
+            line for line in self.NOT_THE_GAME if not line.startswith("grep ")
+        ]
+        for line in drive_anchored:
             with self.subTest(pattern="overbroad", line=line):
                 self.assertIsNotNone(
                     re.match(OVERBROAD_PATTERN, line, re.IGNORECASE),
@@ -309,7 +339,7 @@ class GameGuardPattern(unittest.TestCase):
                 )
         # Begins with a program name, so the anchor already excluded it; only the bare name admits
         # it. This is the case that skipped three agents' installs in one day.
-        mentions = self.NOT_THE_GAME[3]
+        mentions = next(line for line in self.NOT_THE_GAME if line.startswith("grep "))
         self.assertIsNone(
             re.match(OVERBROAD_PATTERN, mentions, re.IGNORECASE),
             "the anchor should already exclude a command line that begins with a program name",
