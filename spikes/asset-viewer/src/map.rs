@@ -4998,26 +4998,58 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
     // -----------------------------------------------------------------------
     //
     // These two tests are the reason `docs/map-format.md` may quote a number at all. Until they
-    // existed the 365/365 and 21,117 figures were the output of a manual `--map-roundtrip` run
+    // existed, the round-trip and record figures were the output of a manual `--map-roundtrip` run
     // typed into prose, and nothing re-ran them; the same headline had already gone stale twice in
     // `docs/save-format.md` for exactly that reason. `#[ignore]`d rather than skipped at runtime,
     // because a skip that prints `ok` cannot be told apart from a pass.
     //
-    // Run with:
-    //   LOM_GAME_DIR=.../English cargo test --release -- --ignored
+    // Run with EITHER profile -- both are attested, and the guard keys off which one it finds:
+    //   LOM_GAME_DIR='.../Lords of Magic GS5R3.app/.../English'            # 365 files, 21,117 records
+    //   LOM_GAME_DIR='.../Steambuild 32 64bit DXVK.app/.../English'        # 353 files, 13,105 records
 
-    /// **Observed in the corpus.** The installed `map/` directory holds this many parseable map
-    /// files, and the tripwire is not decoration: a sweep that found none would otherwise assert
-    /// `0 == 0` for every property below and report a green run about nothing.
+    /// **Observed in the corpus, 2026-09-19.** The map populations this machine's installs hold,
+    /// as `(profile, map files, placed-sprite records)`.
     ///
-    /// Measured at 365 in all four installs on this machine on 2026-09-19. A mod that adds or
-    /// removes a scenario is expected to fail this line; that is a prompt to re-measure and say so,
-    /// not to widen the constant.
-    const INSTALLED_MAP_FILES: usize = 365;
+    /// **There is more than one, and an earlier revision of this test got that wrong.** It pinned
+    /// 365 and attested it as "measured in all four installs", when only GS5R3 had been run. The
+    /// stock `map/` tree -- Steam build, `Lords of Magic Development`, and 3.02 -- holds **353**
+    /// files and **13,105** records; GS5R3's holds 365 and 21,117. `docs/roadmap.md:216` already
+    /// recorded the split as "maps 354/354/366" across three profiles, which is these counts plus
+    /// the one `.map` file the extension filter excludes.
+    ///
+    /// Two harms followed from the single constant, and both are the reason this is keyed rather
+    /// than widened. A reader hitting `353 != 365` was told by the old comment to "re-measure and
+    /// say so", which on the default install would have silently dropped 8,012 records from the
+    /// guard while contradicting `docs/map-format.md` in twenty places. And
+    /// `docs/audio-format.md:454` tells contributors to run `--include-ignored` over the whole
+    /// library, which the single constant made permanently red on three of the four profiles --
+    /// the same unverified-baseline mechanism `docs/audio-format.md:436` records as having already
+    /// produced one false mutation kill in this repository.
+    ///
+    /// A profile whose counts match no row is a prompt to measure that profile and add it here
+    /// **with its own date**, never to edit an existing row.
+    const ATTESTED_MAP_POPULATIONS: &[(&str, usize, usize)] = &[
+        ("stock map/ (Steam, Development, 3.02)", 353, 13_105),
+        ("GS5R3 map/", 365, 21_117),
+    ];
 
-    /// **Observed in the corpus.** Placed-sprite records across those files, summed over the six
-    /// layouts. Quoted by `docs/map-format.md` and `docs/agent-handoff.md`.
-    const INSTALLED_PLACED_SPRITE_RECORDS: usize = 21_117;
+    /// The row whose file count matches the tree under `LOM_GAME_DIR`.
+    ///
+    /// Keying on the file count is what stops the set-membership form from degrading into "any
+    /// attested number will do": once the row is chosen, the record total is an equality against
+    /// *that* row, so a stock tree cannot satisfy itself with GS5R3's total or the reverse.
+    fn attested_map_population(files: usize) -> (&'static str, usize, usize) {
+        *ATTESTED_MAP_POPULATIONS
+            .iter()
+            .find(|(_, count, _)| *count == files)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the installed map/ tree holds {files} files, which matches no attested \
+                     profile ({ATTESTED_MAP_POPULATIONS:?}) -- measure that profile and add a row \
+                     with its date rather than widening an existing one"
+                )
+            })
+    }
 
     fn game_directory() -> std::path::PathBuf {
         let directory = std::env::var_os("LOM_GAME_DIR")
@@ -5074,11 +5106,9 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
     #[ignore = "needs LOM_GAME_DIR"]
     fn every_installed_map_re_encodes_byte_identically() {
         let files = installed_map_files();
-        assert_eq!(
-            files.len(),
-            INSTALLED_MAP_FILES,
-            "the installed map corpus changed size"
-        );
+        // Panics when the tree matches no attested profile, so an empty or unrecognised sweep
+        // fails here rather than satisfying every assertion below over zero files.
+        let (profile, _, _) = attested_map_population(files.len());
         let mut failures = Vec::new();
         for (name, bytes) in &files {
             let map = match MapAsset::parse(bytes) {
@@ -5104,7 +5134,7 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
                 Err(error) => failures.push(format!("{name}: could not re-encode: {error}")),
             }
         }
-        assert_eq!(failures, Vec::<String>::new());
+        assert_eq!(failures, Vec::<String>::new(), "{profile}");
     }
 
     /// Every placed-sprite record rebuilds its own bytes from its typed fields alone.
@@ -5116,11 +5146,7 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
     #[ignore = "needs LOM_GAME_DIR"]
     fn roundtrips_every_corpus_record() {
         let files = installed_map_files();
-        assert_eq!(
-            files.len(),
-            INSTALLED_MAP_FILES,
-            "the installed map corpus changed size"
-        );
+        let (profile, map_files, expected_records) = attested_map_population(files.len());
         let mut rebuilt = 0_usize;
         let mut files_with_records = 0_usize;
         let mut failures = Vec::new();
@@ -5150,18 +5176,19 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
                 }
             }
         }
-        assert_eq!(failures, Vec::<String>::new());
+        assert_eq!(failures, Vec::<String>::new(), "{profile}");
         assert_eq!(
-            rebuilt, INSTALLED_PLACED_SPRITE_RECORDS,
-            "the placed-sprite record population changed size"
+            rebuilt, expected_records,
+            "{profile}: the placed-sprite record population changed size"
         );
-        // 364 of the 365 hold at least one record; `chbldg01.smp` holds a zero count. Asserted so
-        // that a regression which emptied every section still fails here rather than quietly
-        // reducing the total above to something a future edit might "fix" by adjusting it.
+        // Exactly one file holds a zero record count -- `chbldg01.smp` -- in **both** profiles,
+        // 352 of 353 and 364 of 365. A second axis rather than a restatement: a regression that
+        // emptied every section would still satisfy a total that a future edit had "fixed" by
+        // adjusting it, and would fail here.
         assert_eq!(
             files_with_records,
-            INSTALLED_MAP_FILES - 1,
-            "the number of maps holding at least one record changed"
+            map_files - 1,
+            "{profile}: the number of maps holding at least one record changed"
         );
     }
 }

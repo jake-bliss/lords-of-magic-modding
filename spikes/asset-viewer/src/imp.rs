@@ -4643,6 +4643,16 @@ mod tests {
     /// hard failure.
     const IMP_REWRITE_BYTE_IDENTICAL: usize = 35_840;
 
+    /// **Observed in the corpus, 2026-09-19.** Rewrites refused by name rather than attempted:
+    /// 3,439 frames whose pixels are read by another record, and 4 zero-length payloads.
+    const IMP_REWRITE_REFUSED: usize = 3_443;
+
+    /// **Observed in the corpus, 2026-09-19.** Attempted rewrites whose file changed *only*
+    /// because this encoder's RLE packet boundaries differ from the original packer's. Their
+    /// pixels are unchanged. A rewrite that changed a file whose payload did NOT differ is a
+    /// writer defect and is a hard failure, not a member of this bucket.
+    const IMP_REWRITE_DIFFERS_BY_PAYLOAD: usize = 2_090;
+
     fn game_directory() -> std::path::PathBuf {
         let directory = std::env::var_os("LOM_GAME_DIR")
             .map(std::path::PathBuf::from)
@@ -4868,17 +4878,21 @@ mod tests {
         assert_eq!(byte_identical_payloads, IMP_BYTE_IDENTICAL_PAYLOADS);
         assert_eq!(rewrite_attempted, IMP_REWRITE_ATTEMPTED);
         assert_eq!(rewrite_identical, IMP_REWRITE_BYTE_IDENTICAL);
+        // These two were previously asserted as `rewrite_refused == frames - rewrite_attempted`
+        // and `identical + differs == attempted`. Both were **identities that could not fail**:
+        // every iteration that increments `frames` reaches the `write_frame_pixels` match with no
+        // intervening `continue`, so exactly one of the two counters moves, and the second sum is
+        // already implied by the `failures.is_empty()` assertion above. On a branch whose thesis
+        // is that a guard must be able to fire, a guard that cannot is the wrong signal. They are
+        // replaced by the populations they were standing in front of, which a change really can
+        // move.
         assert_eq!(
-            rewrite_refused,
-            frames - rewrite_attempted,
-            "the refusal population is not the complement of the attempted one"
+            rewrite_refused, IMP_REWRITE_REFUSED,
+            "the refusal population changed"
         );
-        // The accounting closes: every attempted rewrite is either byte-identical or differs only
-        // because its payload does. A rewrite that escaped both arms would already have been a
-        // failure above; asserting the sum keeps the two constants from drifting apart silently.
         assert_eq!(
-            rewrite_identical + rewrite_differs_by_payload,
-            rewrite_attempted
+            rewrite_differs_by_payload, IMP_REWRITE_DIFFERS_BY_PAYLOAD,
+            "the number of rewrites differing only by payload changed"
         );
     }
 }
