@@ -390,7 +390,7 @@ only this page still said otherwise:
   `(cell.tag & CELL_TAG_UPPER_FIELD) | tile_index`, preserving the whole upper field rather than one
   bit of it. Latent either way: across 353 shipped maps and 1,040,384 cells that field takes only
   `0x0000` and `0x0080`.
-- **`tools/gs_syntax.py` diverged from the authority in four places** — **all four fixed
+- **`tools/gs_syntax.py` diverged from the authority in five places** — **all five fixed
   2026-09-18.** Only the first was recorded here; the other three were found by reading the two
   lexers side by side after it, which is the reason this entry is now a list. (1) A `;` comment
   ended at `\n` only, though bare CR is a line ending, so in a member with no LF the first comment
@@ -404,14 +404,20 @@ only this page still said otherwise:
   `vanilla`. (3) `/` did not end a name, though `is_separator` lists it: **5 members**. (4)
   `str.isspace()` is wider than `is_ascii_whitespace` — it also accepts ASCII `\x0b` and
   `\x1c`-`\x1f`: **0 members**, and the one member holding such a byte holds it inside a string
-  literal, where no layout rule looks. Measured over all 4,692 `.gs` members of the three profiles
+  literal, where no layout rule looks. (5) `(` and `)` were delimiters here and are ordinary name
+  bytes to the authority, which lists no parenthesis in `is_separator`, so `foo(1)` was five tokens
+  here and one there: **0 members** — 530 hold a parenthesis and in every one of them it is inside
+  a string or a comment. The last two were fixed despite measuring zero, because a disagreement
+  about the grammar is a defect whether or not the shipped corpus exercises it. Measured over all 4,692 `.gs` members of the three profiles
   before and after, with a port of the Rust rules validated against `--gs-facts` on 4,692 of 4,692
   first: **after the four fixes, zero members tokenize differently.** `reports/gs/summary.md`
   regenerates byte-identical throughout — token hashes moved, **no member changed status**. What is
   left is listed in
   [the lexer parity section](gamescript-format.md#lexer-parity-the-two-tokenizers-and-what-still-separates-them):
   `<` and `>` end a name for the authority and not here, which no corpus member reaches and which
-  cannot be closed without an error channel this tokenizer does not have.
+  cannot be closed without an error channel this tokenizer does not have. That one also retired a
+  "checked, not assumed" claim elsewhere in that document, which had read the corpus's habit of
+  whitespace-separating `<<` as evidence that both lexers treated it as a delimiter.
 
 **Fixed since:** `gamescript.rs` no longer lexes the shipped infantry unit code `INF` as
 floating-point infinity. Classification was `name.parse::<f64>().is_ok()`, and Rust accepts `inf`,

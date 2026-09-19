@@ -1,17 +1,19 @@
 """Tokenizer tests, and a parity check against the authority.
 
 `spikes/asset-viewer/src/gamescript.rs` is the lexer the build pipeline validates with, so it is
-the authority on this grammar and this module is the second implementation. Three divergences from
-it were closed on 2026-09-18 -- the LF-only `;` comment rule, a `\\` escape inside strings, and `/`
-not ending a name -- plus `str.isspace()` being wider than `is_ascii_whitespace`. The
-`AuthorityParityTest` class below asserts agreement with the real Rust lexer rather than with a
-literal written here, so it fails if either implementation moves.
+the authority on this grammar and this module is the second implementation. Five divergences from
+it were closed on 2026-09-18: the LF-only `;` comment rule, a `\\` escape inside strings, `/` not
+ending a name, `str.isspace()` being wider than `is_ascii_whitespace`, and `(`/`)` being delimiters
+here when the authority treats them as ordinary name bytes. The `AuthorityParityTest` class below
+asserts agreement with the real Rust lexer rather than with a literal written here, so it fails if
+either implementation moves -- and it rebuilds that lexer when `gamescript.rs` is newer, because a
+parity test run against a stale binary reports agreement with a lexer nobody is running.
 """
 
 import hashlib
 import json
+import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,7 +21,43 @@ from pathlib import Path
 from tools.gs_syntax import normalized_bytes, tokens
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-VIEWER = PROJECT_DIR / "spikes" / "asset-viewer" / "target" / "release" / "lom-asset-viewer"
+VIEWER_CRATE = PROJECT_DIR / "spikes" / "asset-viewer"
+VIEWER = VIEWER_CRATE / "target" / "release" / "lom-asset-viewer"
+LEXER_SOURCE = VIEWER_CRATE / "src" / "gamescript.rs"
+
+
+def viewer_is_stale() -> bool:
+    """True when the authority's source is newer than the binary these tests would measure.
+
+    A parity test that runs against a months-old build is worse than no parity test: it reports
+    agreement with a lexer nobody is running. Edits to `gamescript.rs` therefore have to reach the
+    binary before these fixtures mean anything.
+    """
+    return (
+        not VIEWER.is_file() or LEXER_SOURCE.stat().st_mtime > VIEWER.stat().st_mtime
+    )
+
+
+def viewer_available() -> bool:
+    """Build the viewer if it is missing or stale, and skip only if the build genuinely fails.
+
+    Same shape as `stormlib_available` in `tests/test_member_names.py`. Guarding on
+    `VIEWER.is_file()` alone would let a fresh checkout report OK with every parity fixture
+    silently skipped -- and those fixtures are the only reproducible evidence in this repository
+    for the five divergences closed on 2026-09-18, since the corpus they were measured over is not
+    in it.
+    """
+    if not viewer_is_stale():
+        return True
+    if shutil.which("cargo") is None:
+        return False
+    subprocess.run(
+        ["cargo", "build", "--release"],
+        capture_output=True,
+        check=False,
+        cwd=VIEWER_CRATE,
+    )
+    return not viewer_is_stale()
 
 
 class GsSyntaxTest(unittest.TestCase):
@@ -104,19 +142,34 @@ class GsSyntaxTest(unittest.TestCase):
             ["/punctuation", '"@#${}()[]\\"', "def"],
         )
 
+    def test_a_parenthesis_is_an_ordinary_name_byte(self) -> None:
+        """`is_separator` in the authority lists no parenthesis, so `foo(1)` is ONE name to it.
+
+        This module used to carry `(` and `)` in `DELIMITERS`, which made the same source five
+        tokens here and one there -- so an edit from `foo(1)` to `foo (1)` read as a real change to
+        the engine's lexer and as layout-only to this one. No shipped member trips it: 530 members
+        contain a parenthesis and in every one of them it is inside a string or a comment.
+        """
+        self.assertEqual(tokens("/a{ foo(1) }def"), ["/a", "{", "foo(1)", "}", "def"])
+
+    def test_a_bare_slash_keeps_its_shape(self) -> None:
+        """Pinned because it is a deliberate departure, not an accident.
+
+        `/a//b` is an *error* to the authority -- the second `/` opens a literal name and the third
+        byte ends it, so the name is empty -- and this tokenizer has no error channel. It keeps the
+        `/` as a token of its own. A later simplification that dropped this would change
+        `compare_trees.py` classifications with nothing else failing.
+        """
+        self.assertEqual(tokens("/a//b def"), ["/a", "/", "/b", "def"])
+        self.assertEqual(tokens("value/ def"), ["value", "/", "def"])
+
     def test_an_unterminated_string_runs_to_end_of_source(self) -> None:
         """The authority calls this a parse error; this tokenizer has no error channel and keeps
         what it has, which is the pre-existing behaviour and is left unchanged."""
         self.assertEqual(tokens('/a "no closing quote'), ["/a", '"no closing quote'])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-@unittest.skipUnless(
-    VIEWER.is_file(), "lom-asset-viewer is not built; run cargo build --release in spikes/asset-viewer"
-)
+@unittest.skipUnless(viewer_available(), "lom-asset-viewer could not be built (SDL3? StormLib?)")
 class AuthorityParityTest(unittest.TestCase):
     """The two implementations tokenize the same bytes the same way.
 
@@ -184,6 +237,9 @@ class AuthorityParityTest(unittest.TestCase):
     def test_a_slash_inside_a_name(self) -> None:
         self.assert_parity(b"/spell{ w/name \"Chain Lightning\" def }def")
 
+    def test_parentheses_inside_a_name(self) -> None:
+        self.assert_parity(b"/a{ foo(1) bar() }def")
+
     def test_control_bytes_str_isspace_accepts_and_the_authority_does_not(self) -> None:
         """`\x0b` and `\x1c`-`\x1f` are whitespace to `str.isspace()` and not to the authority.
 
@@ -214,3 +270,7 @@ class AuthorityParityTest(unittest.TestCase):
         for raw in (b"/hit_points\x85 13 def", b"/hit_points\xa0 13 def"):
             with self.subTest(raw=raw):
                 self.assert_boundary_parity(raw)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -171,12 +171,16 @@ Validation lexes through `lom-asset-viewer --gs-facts`, which uses
 does not. There is no third lexer. The change report calls `tools/gs_syntax.py` as well, on purpose,
 and **reports when the two disagree** rather than choosing one silently.
 
-**Four divergences from that lexer were closed in `gs_syntax.py` on 2026-09-18**, all four found
+**Five divergences from that lexer were closed in `gs_syntax.py` on 2026-09-18**, all five found
 the same way — by reading the two implementations side by side rather than by a failure — and all
-four measured against the corpus rather than bounded from above. The instrument is a Python port of
+five measured against the corpus rather than bounded from above. The instrument is a Python port of
 `gamescript.rs`'s rules, validated first: its token digest matches `--gs-facts`'s `token_sha256` on
 **4,692 of 4,692** members, so a disagreement it reports is a disagreement in `gs_syntax.py` and
-not in the port. Both sides decode latin1 for the comparison, which removes the one difference that
+not in the port. That port is a throwaway instrument and is **not committed**, so this number is
+not reproducible from the repository; what is committed is `AuthorityParityTest` in
+`tests/test_gs_syntax.py`, which measures one fixture per divergence against the real
+`lom-asset-viewer` and rebuilds it when `gamescript.rs` is newer. Both sides decode latin1 for the
+comparison, which removes the one difference that
 is about decoding rather than about token boundaries (the Rust lexer decodes with
 `from_utf8_lossy`, so a high byte becomes U+FFFD in its token text). Evidence class: Observed,
 2026-09-18, over the three installed profiles; the archives are not in this repository, so this
@@ -188,7 +192,8 @@ measurement is the only evidence for these numbers.
 | `\` was an escape inside a string, which the authority has no rule for | **5** | vanilla 1, 3.02 2, GS5R3 2 |
 | `/` did not end a name, and `is_separator` says it does | **5** | vanilla 1, 3.02 1, GS5R3 3 |
 | `str.isspace()` is wider than `is_ascii_whitespace` | **0** | 1 member holds such a byte, inside a string |
-| **After all four: members where the two tokenizers disagree** | **0 of 4,692** | |
+| `(` and `)` were delimiters here; the authority has no parenthesis in `is_separator` | **0** | 530 members hold one, always inside a string or a comment |
+| **After all five: members where the two tokenizers disagree** | **0 of 4,692** | |
 
 The rows are not disjoint: `Dlg\lib_dlg.gs` trips both the string rule and the `/` rule, in
 all three profiles, which is why the totals cannot simply be added.
@@ -200,7 +205,13 @@ member lexed to 3,247 tokens against its real 2,324. `vanilla` is the profile
 `mods/orinf-rebalance` is built against, so the claim that this class of defect could not reach a
 first mod was wrong before it was written here.
 
-The whitespace row is the one to read carefully. It is a real divergence in the code —
+The last two rows are the ones to read carefully, and they were fixed despite measuring zero
+because a disagreement about the grammar is a defect whether or not the shipped corpus exercises
+it. `foo(1)` was five tokens here and one to the engine's lexer, so an edit to `foo (1)` would read
+as a real change to the authority and as layout-only here — in a mod that does not exist yet, which
+is the case this pipeline is for.
+
+The whitespace row is the other one. It is a real divergence in the code —
 `str.isspace()` accepts ASCII `\x0b` and `\x1c`-`\x1f` as well as `\x85` and `\xa0`, and the
 authority accepts none of them — but its corpus reach is **zero**: exactly one member,
 GS5R3's `gs\artifact\_custom\shield_balkoth.gs`, contains such a byte (one `\x85`) and it sits
@@ -208,16 +219,18 @@ GS5R3's `gs\artifact\_custom\shield_balkoth.gs`, contains such a byte (one `\x85
 was costing anything. An earlier draft of this page said that member "trips it", which confused
 containing the byte with lexing differently because of it.
 
-`reports/gs/summary.md` regenerates **byte-identical** after all four fixes. The token hash moved
+`reports/gs/summary.md` regenerates **byte-identical** after all five fixes. The token hash moved
 for the affected members in each comparison and **no member changed status**, so no tracked report
 needed regenerating.
 
-**What is still open, and why the disagreement check stays.** `<` and `>` end a name for the
-authority and do not here, so `x<<y` is three tokens to the engine's lexer and one to
+**What is still open, and why the disagreement check stays.** One divergence: `<` and `>` end a
+name for the authority and do not here, so `x<<y` is three tokens to the engine's lexer and one to
 `gs_syntax.py`. **Zero** corpus members reach it — every `<<` and `>>` in the corpus is already
-whitespace-separated or inside a string — and closing it needs a decision this tokenizer cannot
-make: a single `<` not followed by `<` is a *parse error* to the authority, and `gs_syntax.py` has
-no error channel. The same is true of an unterminated string and of an empty literal name. Those
+whitespace-separated or inside a string, which is also why
+[gamescript-format.md](gamescript-format.md) claimed until 2026-09-18 that both lexers handled
+dictionary delimiters and was wrong. Unlike the parentheses it cannot be closed by editing a set: a
+single `<` not followed by `<` is a *parse error* to the authority, and `gs_syntax.py` has no error
+channel. The same is true of an unterminated string and of an empty literal name. Those
 are named here rather than fixed, and they are what the change report's two-lexer check is left
 watching for. A run of it that reports no disagreement now proves more than it did — the two agree
 on the whole corpus — but it is still a check on two implementations, not on the engine.

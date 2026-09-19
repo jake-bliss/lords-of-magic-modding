@@ -389,9 +389,14 @@ Note the coordinate convention split: these terrain and elevation operators take
 ```
 
 Any lexer or VM for this language has to handle `<<` and `>>` as delimiters, not as shift operators
-and not as ordinary names. Both of ours already do — checked, not assumed: `tools/gs_syntax.py`
-tokenises them separately, and `gamescript_vm.rs` opens and closes a `CollectionKind::Dictionary` on
-them.
+and not as ordinary names. **Corrected 2026-09-18:** this used to say both of ours did, "checked,
+not assumed". `gamescript.rs` and `gamescript_vm.rs` do — the lexer emits
+`Delimiter::DictionaryOpen`/`Close` and the VM opens and closes a `CollectionKind::Dictionary` on
+them. `tools/gs_syntax.py` does **not**: `<` and `>` are ordinary name bytes there, so `x<<y` is
+three tokens to the authority and one to it. It only ever looked right because every `<<` and `>>`
+in the corpus is whitespace-delimited, which is what the original check actually observed. The
+check that was missing is in [lexer parity](#lexer-parity-the-two-tokenizers-and-what-still-separates-them),
+where this is the one divergence still open.
 
 ### Unused engine surface
 
@@ -413,7 +418,17 @@ against a shuffled baseline on signals the table itself does not contain.
 | Adjacent operators' caller-set overlap (mean Jaccard) | 0.3145 | 0.0133 | **23.6x** |
 | Adjacent operators sharing at least one caller file | 58.5% | 10.5% | **5.6x** |
 | Adjacent operators sharing a name stem | 12.87% | 0.021% | **611x** |
-| Mean run length of dominant caller directory | 1.45 | 1.10 | 1.33x |
+| Mean run length of dominant caller directory | 1.44 | 1.10 | 1.32x |
+
+**Re-measured 2026-09-18**, because this table is computed through `tools/gs_syntax.py` and four of
+that tokenizer's rules changed that day. Running the same command with the tokenizer immediately
+before those fixes and immediately after, over the same 1,696-member GS5R3 dump, moves **one
+number**: the fourth row's observed mean run length, 1.45 → 1.44, with its shuffled baseline
+1.09 → 1.10 and its ratio 1.32x either way. The first three rows are byte-identical between the two
+runs, which is a measurement and not an assumption — restoring 706 tokens to `wacave.gs` and
+splitting `w/name`-shaped tokens does grow caller sets, and those rows are computed from caller
+sets, so they had to be re-run rather than argued about. The fourth row's published ratio was
+**1.33x** before this re-run; it is 1.32x now.
 
 The first three say the ordering is real and strong. **The fourth says the obvious labelling axis is
 the wrong one**, and that is worth as much as the positive results.
@@ -455,8 +470,13 @@ conservative measurement.
 
 ```sh
 target/release/lom-asset-viewer --scan-natives '/path/to/English/lomse.exe' > scan.txt
-# extract the .gs members of gs.mpq into a directory first
-python3 -m tools.operator_groups scan.txt /path/to/extracted/scripts
+# Extract gs.mpq first, then FLATTEN its .gs members into one directory, joining path components
+# with `__`: `gs/dlg/lib_dlg.gs` becomes `gs__dlg__lib_dlg.gs`. Both halves matter and neither is
+# optional. `caller_index` uses `Path.iterdir`, so it does not descend into subdirectories and a
+# nested tree yields 30 operators with callers instead of 1,371; and the dominant-caller-directory
+# row recovers the directory by splitting the file *name* on `__`, so the separator is the one the
+# tool reads. Link rather than copy; nothing is written to the dump.
+python3 -m tools.operator_groups scan.txt /path/to/flattened/scripts
 ```
 
 Tokenising uses the project lexer rather than a regex, so a name appearing only inside a `;` comment
@@ -592,9 +612,12 @@ of them is wrong about a shipped member, so the change report prints both and sa
 ([build pipeline](build-pipeline.md#why-the-lexer-is-the-rust-one)). This section is the list that
 message points at.
 
-**Closed 2026-09-18** — four divergences, each measured over all 4,692 `.gs` members of the three
+**Closed 2026-09-18** — five divergences, each measured over all 4,692 `.gs` members of the three
 installed profiles before and after. Evidence class: Observed; the archives are not in this
-repository, so this measurement is the evidence.
+repository, so this measurement is the evidence and no reader can re-derive it from the repository
+alone. The port it was measured with is a throwaway instrument and is **not committed**: what is
+committed instead is `AuthorityParityTest` in `tests/test_gs_syntax.py`, which runs the real
+`lom-asset-viewer` against one fixture per divergence.
 
 | Divergence | Members changed | Where |
 |---|---:|---|
@@ -602,16 +625,25 @@ repository, so this measurement is the evidence.
 | `\` treated as a string escape; the authority has no escape rule | 5 | vanilla 1, 3.02 2, GS5R3 2 |
 | `/` did not end a name, though `is_separator` lists it | 5 | vanilla 1, 3.02 1, GS5R3 3 |
 | `str.isspace()` wider than `is_ascii_whitespace` (`\x0b`, `\x1c`-`\x1f`, `\x85`, `\xa0`) | 0 | one member holds such a byte, inside a string |
+| `(` and `)` were delimiters here and are ordinary name bytes to the authority | 0 | 530 members hold a parenthesis; in every one it is inside a string or a comment |
 
-After them, **0 of 4,692 members tokenize differently**, measured with a Python port of the Rust
-rules whose token digest first matched `--gs-facts` on 4,692 of 4,692.
+After them, **0 of 4,692 members tokenize differently**.
 
-**Still open.** `<` and `>` end a name for the authority (`is_separator`) and not for
-`gs_syntax.py`, so `x<<y` is three tokens to one and one token to the other. No corpus member
-reaches it. It is not closed because a single `<` is a *parse error* to the authority and
-`gs_syntax.py` has no error channel; the same holds for an unterminated string and an empty literal
-name after `/`. `tests/test_mod_report.py` uses this divergence as its disagreement fixture, so the
-report's check stays exercised.
+**Two of the five had zero corpus reach and were fixed anyway.** A divergence about a shipped
+grammar is a defect whether or not the shipped corpus happens to exercise it: `foo(1)` was five
+tokens here and one to the engine's lexer, so an edit to `foo (1)` would have read as a real change
+to the authority and as layout-only here — in a mod nobody has written yet, which is exactly the
+kind of file this pipeline exists to check. Reach decides urgency, not whether something is wrong.
+
+**Still open — one divergence.** `<` and `>` end a name for the authority (`is_separator`) and not
+for `gs_syntax.py`, so `x<<y` is three tokens to one and one token to the other. No corpus member
+reaches it. Unlike the parentheses, it cannot be closed by editing a set: a single `<` not followed
+by `<` is a *parse error* to the authority, and `gs_syntax.py` has no error channel — the same
+holds for an unterminated string and an empty literal name after `/`, both of which this tokenizer
+keeps as tokens rather than inventing an error. `tests/test_mod_report.py` uses this divergence as
+its disagreement fixture, so the change report's check stays exercised, and
+`tests/test_gs_syntax.py` pins the two error-shaped behaviours so a later simplification cannot
+change them silently.
 
 **Decoding is not a lexing divergence, and is easy to mistake for one.** The Rust lexer decodes
 member bytes with `from_utf8_lossy`, so a byte above 0x7e that is not valid UTF-8 becomes U+FFFD in

@@ -129,9 +129,10 @@ class GameScriptChangeTest(unittest.TestCase):
 class PythonLexerDisagreementTest(unittest.TestCase):
     """Two implementations of one grammar. The report says when they disagree.
 
-    Four divergences were closed on 2026-09-18 -- the LF-only `;` comment rule, a `\\` escape
-    inside strings, `/` not ending a name, and `str.isspace()` being wider than the authority's
-    `is_ascii_whitespace`. After them the two tokenizers agree on all 4,692 `.gs` members of the
+    Five divergences were closed on 2026-09-18 -- the LF-only `;` comment rule, a `\\` escape
+    inside strings, `/` not ending a name, `str.isspace()` being wider than the authority's
+    `is_ascii_whitespace`, and `(`/`)` being delimiters here when the authority reads them as
+    ordinary name bytes. After them the two tokenizers agree on all 4,692 `.gs` members of the
     three installed profiles, so no shipped member can trip this branch today and the fixture has
     to be synthetic. It is not arbitrary: `<` and `>` end a name for the authority
     (`is_separator`, `gamescript.rs`) and not for `tools/gs_syntax.py`, which is the divergence

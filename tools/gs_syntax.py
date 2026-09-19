@@ -2,7 +2,7 @@
 
 `spikes/asset-viewer/src/gamescript.rs` is the authority on this grammar -- it is the lexer the
 build pipeline validates with -- and this module is the second implementation of it. Rules here are
-taken from that file rather than from PostScript or from Python habit; four divergences closed on
+taken from that file rather than from PostScript or from Python habit; five divergences closed on
 2026-09-18 were all of the second kind. `docs/gamescript-format.md` lists what is still open
 between the two, and `tests/test_gs_syntax.py` asserts agreement with the real thing.
 """
@@ -10,7 +10,13 @@ between the two, and `tests/test_gs_syntax.py` asserts agreement with the real t
 from __future__ import annotations
 
 
-DELIMITERS = frozenset("{}[]()")
+# What the authority splits on, and nothing more. `is_separator` in
+# `spikes/asset-viewer/src/gamescript.rs` lists `{`, `}`, `[`, `]` (plus `;`, `"`, `/`, `<`, `>`,
+# which this module handles elsewhere) and does NOT list `(` or `)`. Parentheses are ordinary name
+# bytes to the engine's lexer, so `foo(1)` is one token there and used to be five here. That is a
+# real disagreement about a shipped grammar even though no corpus member happens to trip it: an
+# edit from `foo(1)` to `foo (1)` reads as MODIFIED to the authority and as layout-only here.
+DELIMITERS = frozenset("{}[]")
 
 # Every line ending GameScript uses. `gs.mpq` in a GS5R3 install holds CRLF, bare CR and bare LF
 # members, so a rule written around `\n` alone does not see the end of a line in a bare-CR member.

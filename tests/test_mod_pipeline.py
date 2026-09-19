@@ -358,41 +358,99 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
 
     Until 2026-09-18 every build asserted that no rewritten `pic.mpq` had faced the engine and that
     its compression choice was Inferred. Both had been refuted, in this repository's own roadmap,
-    and nothing caught it because the claim lives in code and its evidence lives in prose. These
-    tests tie the two together: they read `docs/roadmap.md` and fail if the caveat and the roadmap
-    disagree about what the engine has accepted.
+    and nothing caught it because the claim lives in code and its evidence lives in prose.
+
+    The first version of these tests checked that five phrases -- "ONE member", "REPLACED",
+    "size-changing edit", "added member", "encoder" -- appeared somewhere in the caveat, and passed
+    happily on a caveat that said the engine HAD accepted all of them. That is the direction that
+    does damage: the stale text it was written against merely understated what had been proved,
+    while its inverse would ship a build claiming acceptance for a size-changing edit and the
+    ByteRun1 encoder, neither of which has ever run. These tests assert the sentence rather than
+    its vocabulary, and take the limits from the roadmap at runtime rather than restating them.
     """
+
+    NEGATION = "NOT established:"
 
     def roadmap(self) -> str:
         return (PROJECT_DIR / "docs" / "roadmap.md").read_text(encoding="utf-8")
 
+    def roadmap_limits_paragraph(self) -> str:
+        """The roadmap's own `Not established.` paragraph, which is the measured scope."""
+        roadmap = self.roadmap()
+        marker = "**Not established.**"
+        self.assertIn(
+            marker,
+            roadmap,
+            "the roadmap no longer states the limits of the pic.mpq run; the build caveat has "
+            "nothing left to agree with",
+        )
+        start = roadmap.index(marker)
+        return roadmap[start : roadmap.index("\n\n", start)]
+
+    def caveat_negation_clause(self) -> str:
+        """The single clause of the caveat that states what has NOT been established."""
+        caveat = ENGINE_ACCEPTANCE["pic.mpq"]
+        self.assertEqual(
+            caveat.count("established"),
+            1,
+            "the caveat should make exactly one establishment claim, and it is a negative one",
+        )
+        self.assertIn(self.NEGATION, caveat)
+        self.assertNotIn("ALSO established", caveat)
+        return caveat[caveat.index(self.NEGATION) :].split(". ")[0]
+
     def test_the_pic_caveat_agrees_with_the_roadmap_about_acceptance(self) -> None:
         roadmap = self.roadmap()
-        accepted = "- [x] Put a rewritten `pic.mpq` in front of the engine." in roadmap
-        caveat = ENGINE_ACCEPTANCE["pic.mpq"]
-        self.assertTrue(
-            accepted,
-            "the roadmap no longer records pic.mpq acceptance; the build caveat has to follow it",
+        accepted = (
+            "- [x] Put a rewritten `pic.mpq` in front of the engine. **Observed in gameplay "
+            "2026-09-18**"
         )
-        self.assertNotIn("Never tested", caveat)
-        self.assertIn("2026-09-18", caveat)
-        self.assertIn("2026-09-18", roadmap)
-
-    def test_the_pic_caveat_keeps_every_limit_the_roadmap_states(self) -> None:
-        """The roadmap's "Not established" paragraph is the measured scope. Do not widen it."""
-        roadmap = self.roadmap()
         self.assertIn(
-            "An edit that changes a member's *size* has not been put in front of the", roadmap
+            accepted,
+            roadmap,
+            "the roadmap no longer records pic.mpq acceptance on that date; the build caveat has "
+            "to follow it rather than lead it",
         )
         caveat = ENGINE_ACCEPTANCE["pic.mpq"]
-        for limit in ("ONE member", "REPLACED", "size-changing edit", "added member", "encoder"):
+        self.assertNotIn("Never tested", caveat)
+        self.assertIn("Observed in gameplay 2026-09-18", caveat)
+
+    def test_the_pic_caveat_negates_every_limit_the_roadmap_negates(self) -> None:
+        """Polarity, not vocabulary: each limit has to sit inside the caveat's negative clause."""
+        paragraph = self.roadmap_limits_paragraph()
+        for phrase in (
+            "An edit that changes a member's *size* has not been put in front of the",
+            "neither has an added member",
+            "replaced rather than added",
+        ):
+            with self.subTest(roadmap=phrase):
+                self.assertIn(phrase, paragraph)
+
+        clause = self.caveat_negation_clause()
+        for limit in ("size-changing edit", "added member", "ByteRun1 encoder"):
             with self.subTest(limit=limit):
-                self.assertIn(limit, caveat)
+                self.assertIn(limit, clause)
+        self.assertIn(
+            "have none of them been put in front of the engine",
+            clause,
+            "the limits have to be negated in the caveat, not merely mentioned in it",
+        )
+
+    def test_the_positive_half_of_the_pic_caveat_stays_as_narrow_as_the_run(self) -> None:
+        caveat = ENGINE_ACCEPTANCE["pic.mpq"]
+        claimed = caveat[: caveat.index(self.NEGATION)]
+        for narrowing in ("ONE member", "REPLACED", "length-preservingly"):
+            with self.subTest(narrowing=narrowing):
+                self.assertIn(narrowing, claimed)
+        for widening in ("every", "all members", "any member", "archives"):
+            with self.subTest(widening=widening):
+                self.assertNotIn(widening, claimed)
 
     def test_the_gs_caveat_still_matches_the_run_it_cites(self) -> None:
         caveat = ENGINE_ACCEPTANCE["gs.mpq"]
         self.assertIn("2026-09-16", caveat)
         self.assertIn("MPQ_FILE_IMPLODE", caveat)
+        self.assertIn("once", caveat)
         self.assertIn(
             "attended 2026-09-16 round trip of an `MPQ_FILE_IMPLODE` member of",
             (PROJECT_DIR / "docs" / "build-pipeline.md").read_text(encoding="utf-8"),

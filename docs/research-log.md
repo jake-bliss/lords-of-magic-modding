@@ -5859,3 +5859,61 @@ arithmetic, which looks like the same defect and is **inert**: it reads members 
 `Path.read_text()`, whose universal-newline translation turns every bare CR into `\n` before the
 tokenizer sees it. Recorded here so the next reader does not "fix" it and change what those offsets
 mean.
+
+### Corrections to the entry above, same day, from two independent reviews
+
+Both reviewers ran over the same diff and found the same two defects, which is the strongest signal
+this process produces. Neither could verify a single corpus number, because the archives are not in
+this repository — the measurements below remain the only evidence for them.
+
+**A fifth divergence, and every "what is still open" list above was wrong.** `DELIMITERS` in
+`gs_syntax.py` was `frozenset("{}[]()")`. The authority's `is_separator` lists no parenthesis: they
+are ordinary name bytes, so `/a{ foo(1) }def` is **5 tokens** to `--gs-facts` and was **8** here.
+It is not in the same class as the `<`/`>` divergence and filing it beside that one would have been
+wrong: `<` needs an error channel this tokenizer does not have, while the parentheses needed
+`frozenset("{}[]")` and nothing else. Corpus reach **0**, measured the same way as the rest: 530
+members contain a parenthesis and in every one of them it is inside a string or a comment. Both
+zero-reach divergences were fixed anyway — a disagreement about a shipped grammar is a defect
+whether or not the shipped corpus exercises it, and the case it would break is an edit from
+`foo(1)` to `foo (1)` in a mod nobody has written yet, which is the case this pipeline exists for.
+
+**A guard that signed off on the direction it existed to block.** `EngineAcceptanceCaveatTest`
+checked that five phrases appeared *somewhere* in the `build.json` caveat. Both reviewers broke it
+the same way: rewrite "NOT established: … have none of them been put in front of the engine" as
+"ALSO established: … have every one of them", and all three tests still reported `ok`. The
+direction it did block — the old "Never tested" — merely *understated* what had been proved; the
+direction it let through would have shipped a build claiming engine acceptance for a size-changing
+edit and the full ByteRun1 encoder, neither of which has run. Vocabulary is not a sentence. The
+tests now take the limits from the roadmap's own `Not established.` paragraph at runtime, assert
+the caveat makes exactly one establishment claim and that it is negative, and assert each limit
+sits inside the negative clause. Four mutations, including the reviewers' exact inversion, all
+fail. The `assertIn("2026-09-18", roadmap)` it also carried is gone: any occurrence of a date
+anywhere in a 400-line document satisfied it.
+
+**The published operator-ordering table had an unrecorded delta, and "those rows cannot have
+moved" was not good enough.** `tools/operator_groups.py` consumes `gs_syntax.tokens`, so the fixes
+changed its inputs; restoring 706 tokens to `wacave.gs` and splitting `w/name`-shaped tokens grows
+caller sets, and three of the four rows are computed from caller sets. Re-run with the tokenizer
+immediately before the fixes and immediately after, over the same 1,696-member GS5R3 dump: the
+first three rows are **identical**, and the fourth moves — observed mean run length 1.45 → 1.44,
+shuffled baseline 1.09 → 1.10, ratio 1.32x either way. The table is republished with that row and
+dated. Its published ratio had been 1.33x. The reproduction recipe was also wrong by omission and
+is now written out: `caller_index` uses `Path.iterdir` and does not descend, and the
+dominant-directory row recovers a directory by splitting the file *name* on `__`, so the dump has
+to be flattened with that separator. Pointed at a nested tree the tool reports 30 operators with
+callers instead of 1,371 and nobody is told.
+
+**A parity test that skips is a parity test that is not run.** The new fixtures guarded on
+`VIEWER.is_file()`, so a fresh checkout would report OK with all of them silently skipped, and an
+edit to `gamescript.rs` without a rebuild would have them agree with a months-old authority. They
+now build the viewer when it is missing *or older than `gamescript.rs`*, and skip only when the
+build genuinely fails — the shape `stormlib_available` already uses in `tests/test_member_names.py`.
+A stranded `unittest.main()` sat above the class, which under direct invocation would have defined
+none of it; it is at the bottom of the file now.
+
+**One claim three sections away was refuted by this work.** `gamescript-format.md` said, of `<<`
+and `>>`, "Both of ours already do — checked, not assumed". `gs_syntax.py` does not: `x<<y` is one
+token here and three to the authority. The original check saw the corpus's habit of
+whitespace-separating `<<` and read it as evidence about the lexer. Corrected in place, with a
+pointer to the parity section. A "checked, not assumed" phrase is worth exactly as much as the
+mechanism behind it, and this one was a corpus coincidence.
