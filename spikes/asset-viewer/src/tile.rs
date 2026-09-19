@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::ops::Range;
 
 /// One of the eight neighbour columns of a `TILE=` line.
 ///
@@ -58,6 +59,17 @@ impl Direction {
         }
     }
 
+    /// The direction a column name names, matched case-insensitively.
+    ///
+    /// The inverse of [`column_name`](Self::column_name), for a caller naming a column on a command
+    /// line. It is deliberately exhaustive over [`ALL`](Self::ALL) rather than a hand-written match,
+    /// so a renamed column cannot be accepted here and rejected there.
+    pub fn from_column_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|direction| direction.column_name().eq_ignore_ascii_case(name))
+    }
+
     /// The column name the `.til` header uses.
     pub const fn column_name(self) -> &'static str {
         match self {
@@ -109,7 +121,40 @@ impl NeighbourConstraint {
         }
     }
 
-    fn parse(field: &str, line: usize) -> Result<Self, TileError> {
+    /// One neighbour column, parsed the way a file's own column is parsed, with no line number.
+    ///
+    /// This is the edit path's entry point, and it is deliberately the **same** function the file
+    /// parser uses rather than a second one that accepts the same syntax: a constraint a caller
+    /// writes and a constraint the file carries have to mean the same thing or an edited tileset
+    /// stops matching its own rows.
+    pub fn parse_column(field: &str) -> Result<Self, TileError> {
+        Self::parse(field, None)
+    }
+
+    /// This constraint written the way a `.til` column writes it.
+    ///
+    /// **Reconstructed, not carried.** Over all 26 shipped tilesets this reproduces the original
+    /// column text for 32,344 of 32,344 neighbour columns -- see
+    /// [`TileSetDocument::field_rebuild_audit`] -- which is what says the set model loses nothing
+    /// the file wrote. It can fail: a column written `9|6`, `6|6` or `06` parses to the same set as
+    /// `6|9`, `6` and `6`, and would come back re-spelled. No shipped column is written that way.
+    pub fn to_column(&self) -> String {
+        match self {
+            Self::Any => "*".to_owned(),
+            Self::OneOf(set) => join_terrain_types(set),
+            Self::NoneOf(set) => format!("~{}", join_terrain_types(set)),
+        }
+    }
+
+    /// Every terrain type this constraint names, in either sense. Empty for [`Any`](Self::Any).
+    pub fn terrain_types(&self) -> Vec<u32> {
+        match self {
+            Self::Any => Vec::new(),
+            Self::OneOf(set) | Self::NoneOf(set) => set.iter().copied().collect(),
+        }
+    }
+
+    fn parse(field: &str, line: Option<usize>) -> Result<Self, TileError> {
         let field = field.trim();
         if field == "*" {
             return Ok(Self::Any);
@@ -124,7 +169,8 @@ impl NeighbourConstraint {
         }
         if set.is_empty() {
             return Err(TileError::new(format!(
-                "empty neighbour constraint on line {line}"
+                "empty neighbour constraint{}",
+                at_line(line)
             )));
         }
         Ok(if negated {
@@ -149,6 +195,19 @@ pub enum Passability {
 }
 
 impl Passability {
+    /// The number a `.til` writes for this passability: the inverse of [`from_value`](Self::from_value).
+    ///
+    /// Round-tripping through [`Unrecognised`](Self::Unrecognised) is why that variant exists rather
+    /// than a parse failure -- a value neither shipped header names still writes back as itself.
+    pub const fn value(self) -> u32 {
+        match self {
+            Self::Land => 0,
+            Self::Water => 1,
+            Self::Impassable => 2,
+            Self::Unrecognised(value) => value,
+        }
+    }
+
     fn from_value(value: u32) -> Self {
         match value {
             0 => Self::Land,
@@ -423,7 +482,16 @@ impl fmt::Display for TileError {
 impl std::error::Error for TileError {}
 
 impl TileSetDefinition {
+    /// Read a `.til`'s values.
+    ///
+    /// A file this cannot read is **refused**, and a refusal whose message names the wrong cause is
+    /// worth little: see [`bare_cr_diagnosis`], which replaces "tile definition has no TILES
+    /// dimensions" on a bare-CR file with a message naming the line endings.
     pub fn parse(source: &[u8]) -> Result<Self, TileError> {
+        Self::parse_records(source).map_err(|error| bare_cr_diagnosis(source).unwrap_or(error))
+    }
+
+    fn parse_records(source: &[u8]) -> Result<Self, TileError> {
         let text = std::str::from_utf8(source)
             .map_err(|error| TileError::new(format!("tile definition is not UTF-8: {error}")))?;
         let mut atlas_member = None;
@@ -432,7 +500,8 @@ impl TileSetDefinition {
         let mut terrain_types = BTreeMap::new();
         let mut tiles = BTreeMap::new();
 
-        for (line_index, original_line) in text.lines().enumerate() {
+        for (line_index, (original_line, _)) in split_terminated_lines(text).into_iter().enumerate()
+        {
             let line_number = line_index + 1;
             let line = original_line
                 .split_once(';')
@@ -448,18 +517,18 @@ impl TileSetDefinition {
             let value = value.trim();
             match key.as_str() {
                 "LBM" => atlas_member = Some(value.to_owned()),
-                "TILES" => dimensions = Some(parse_pair(value, line_number, "TILES")?),
-                "TILESIZE" => tile_size = Some(parse_pair(value, line_number, "TILESIZE")?),
+                "TILES" => dimensions = Some(parse_pair(value, Some(line_number), "TILES")?),
+                "TILESIZE" => tile_size = Some(parse_pair(value, Some(line_number), "TILESIZE")?),
                 "TERRAINTYPE" => {
-                    let fields = csv_fields(value, line_number)?;
+                    let fields = csv_fields(value, Some(line_number))?;
                     if fields.len() < 3 {
                         return Err(TileError::new(format!(
                             "TERRAINTYPE on line {line_number} has fewer than three fields"
                         )));
                     }
-                    let index = parse_u32(&fields[0], line_number, "terrain type index")?;
+                    let index = parse_u32(&fields[0], Some(line_number), "terrain type index")?;
                     let palette_color =
-                        parse_u32(&fields[1], line_number, "terrain palette color")?;
+                        parse_u32(&fields[1], Some(line_number), "terrain palette color")?;
                     // Columns a..h follow the description. Only the four the file's own header
                     // names are given a name here; d, e, g and h are kept as text because the two
                     // shipped tilesets disagree about what d and e mean.
@@ -469,7 +538,7 @@ impl TileSetDefinition {
                         fields
                             .get(position)
                             .filter(|field| !field.is_empty())
-                            .and_then(|field| parse_u32(field, line_number, name).ok())
+                            .and_then(|field| parse_u32(field, Some(line_number), name).ok())
                     };
                     let definition = TerrainTypeDefinition {
                         index,
@@ -492,14 +561,14 @@ impl TileSetDefinition {
                     }
                 }
                 "TILE" => {
-                    let fields = csv_fields(value, line_number)?;
+                    let fields = csv_fields(value, Some(line_number))?;
                     if fields.len() < 2 {
                         return Err(TileError::new(format!(
                             "TILE on line {line_number} has fewer than two fields"
                         )));
                     }
-                    let index = parse_u32(&fields[0], line_number, "tile index")?;
-                    let terrain_type = parse_u32(&fields[1], line_number, "tile terrain type")?;
+                    let index = parse_u32(&fields[0], Some(line_number), "tile index")?;
+                    let terrain_type = parse_u32(&fields[1], Some(line_number), "tile terrain type")?;
                     // A row that stops before the eight neighbour columns is **recorded as
                     // incomplete**, not padded with wildcards. Padding would make the tile match
                     // every neighbourhood and so be selectable everywhere -- the opposite of what a
@@ -525,7 +594,7 @@ impl TileSetDefinition {
                         match fields
                             .get(position)
                             .filter(|field| !field.is_empty())
-                            .map(|field| NeighbourConstraint::parse(field, line_number))
+                            .map(|field| NeighbourConstraint::parse(field, Some(line_number)))
                         {
                             Some(Ok(constraint)) => *slot = constraint,
                             Some(Err(_)) | None => constraints_declared = false,
@@ -536,7 +605,7 @@ impl TileSetDefinition {
                     let pattern_index = fields
                         .get(10)
                         .filter(|field| !field.is_empty())
-                        .and_then(|field| parse_u32(field, line_number, "tile pattern index").ok());
+                        .and_then(|field| parse_u32(field, Some(line_number), "tile pattern index").ok());
                     let definition = TileDefinition {
                         index,
                         terrain_type,
@@ -1272,11 +1341,30 @@ pub fn tileset_mismatch(
     })
 }
 
-fn parse_pair(value: &str, line: usize, name: &str) -> Result<(u32, u32), TileError> {
+/// The `" on line N"` suffix of a parse error, or nothing when the caller has no line number.
+///
+/// The same field parsers serve [`TileSetDefinition::parse`], which reads a whole file and can
+/// always say where, and the edit path, which is handed one field by a caller who cannot. Without
+/// this the edit path would have to either invent a line number or duplicate the parsers, and a
+/// duplicated parser is how a writer and its reader drift apart.
+/// A set of terrain types written as a `.til` alternation, `6|9`.
+fn join_terrain_types(set: &BTreeSet<u32>) -> String {
+    set.iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn at_line(line: Option<usize>) -> String {
+    line.map_or_else(String::new, |line| format!(" on line {line}"))
+}
+
+fn parse_pair(value: &str, line: Option<usize>, name: &str) -> Result<(u32, u32), TileError> {
     let fields = csv_fields(value, line)?;
     if fields.len() != 2 {
         return Err(TileError::new(format!(
-            "{name} on line {line} does not contain two values"
+            "{name}{} does not contain two values",
+            at_line(line)
         )));
     }
     Ok((
@@ -1285,14 +1373,24 @@ fn parse_pair(value: &str, line: usize, name: &str) -> Result<(u32, u32), TileEr
     ))
 }
 
-fn parse_u32(value: &str, line: usize, name: &str) -> Result<u32, TileError> {
+fn parse_u32(value: &str, line: Option<usize>, name: &str) -> Result<u32, TileError> {
     value
         .trim()
         .parse()
-        .map_err(|_| TileError::new(format!("invalid {name} on line {line}: {value}")))
+        .map_err(|_| TileError::new(format!("invalid {name}{}: {value}", at_line(line))))
 }
 
-fn csv_fields(value: &str, line: usize) -> Result<Vec<String>, TileError> {
+/// One past the number of comma-separated fields a record line may carry.
+///
+/// **A guard on an allocation whose size comes from the file.** Every `TERRAINTYPE=` and `TILE=`
+/// row in all 26 shipped tilesets has exactly 11 fields, and this reader names at most eleven
+/// positions; without a bound, a row of ten million commas turns into ten million `String`s in
+/// [`csv_fields`] and ten million `Range`s in [`field_spans`], and `--describe-til` dies in the
+/// allocator instead of refusing. 64 is deliberately far above 11 so a modded file with a few extra
+/// trailing columns still reads, and far below anything that costs memory.
+pub const MAX_RECORD_FIELDS: usize = 64;
+
+fn csv_fields(value: &str, line: Option<usize>) -> Result<Vec<String>, TileError> {
     let mut fields = Vec::new();
     let mut field = String::new();
     let mut quoted = false;
@@ -1302,24 +1400,1272 @@ fn csv_fields(value: &str, line: usize) -> Result<Vec<String>, TileError> {
             ',' if !quoted => {
                 fields.push(field.trim().to_owned());
                 field.clear();
+                // Checked as the fields are produced, not afterwards, so the allocation is bounded
+                // rather than merely reported.
+                if fields.len() >= MAX_RECORD_FIELDS {
+                    return Err(TileError::new(format!(
+                        "comma-separated data{} carries more than {MAX_RECORD_FIELDS} fields; \
+                         every shipped row has 11",
+                        at_line(line)
+                    )));
+                }
             }
             _ => field.push(character),
         }
     }
     if quoted {
         return Err(TileError::new(format!(
-            "unterminated quote in comma-separated data on line {line}"
+            "unterminated quote in comma-separated data{}",
+            at_line(line)
         )));
     }
     fields.push(field.trim().to_owned());
     Ok(fields)
 }
 
+// ---------------------------------------------------------------------------
+// The write path
+// ---------------------------------------------------------------------------
+
+/// How one physical line of a `.til` ended.
+///
+/// **Observed in the corpus, 2026-09-18.** All 26 shipped tilesets are CRLF throughout -- 6,001
+/// CRLF, zero bare LF, zero bare CR -- and all 26 end with one. The other three variants exist
+/// because a modded or hand-edited file may not be, and a writer that normalised line endings
+/// would rewrite every line of such a file while claiming to change one field.
+///
+/// **A bare `\r` is deliberately not a terminator here.** This game's own text data does include a
+/// bare-CR format -- `settings.cfg` separates its records that way -- and it is tempting to accept
+/// one here for symmetry. It is not accepted, for the same reason a `.til` writer does not mint a
+/// field: all 26 shipped tilesets are CRLF, and **nothing establishes that `lomse.exe` would read a
+/// bare-CR `.til` at all**, so accepting one would invent a capability rather than support a
+/// format. Such a file collapses to a single physical line and is **refused**, which is the safe
+/// direction -- and it is explicitly not the `settings.cfg` failure, where a file parsed
+/// "successfully" while silently yielding nothing for 22 of 23 keys. See [`bare_cr_diagnosis`] for
+/// the message it is refused with, which names the cause instead of reporting a missing key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineTerminator {
+    /// `\r\n`, which is every terminator in the shipped corpus.
+    CrLf,
+    /// A bare `\n`.
+    Lf,
+    /// The last line of a file that does not end with a terminator.
+    None,
+}
+
+impl LineTerminator {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::CrLf => "\r\n",
+            Self::Lf => "\n",
+            Self::None => "",
+        }
+    }
+}
+
+/// What one line of a `.til` is, as byte ranges into that line's own text.
+///
+/// Ranges rather than values: an edit replaces the span a field occupies and leaves every other
+/// byte of the line -- the alignment spaces, the tabs, the trailing comment -- exactly where it
+/// was. The values themselves live in the [`TileSetDefinition`], which is the parser's answer, not
+/// a second one kept in step by hand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LineRecord {
+    /// A comment, a blank line, a key this writer does not model, or a record line too malformed
+    /// to locate fields in. Carried byte for byte and never edited.
+    Carried,
+    Atlas { value: Range<usize> },
+    Grid { fields: Vec<Range<usize>> },
+    TileSize { fields: Vec<Range<usize>> },
+    TerrainType { index: u32, fields: Vec<Range<usize>> },
+    Tile { index: u32, fields: Vec<Range<usize>> },
+}
+
+/// One line of a `.til`: its bytes, how it ended, and what parsing made of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DocumentLine {
+    text: String,
+    terminator: LineTerminator,
+    record: LineRecord,
+}
+
+/// A `.til` that can be written back.
+///
+/// # What this is, stated plainly
+///
+/// A `.til` is a **hand-written text file**: CRLF, comments, tab-and-space column alignment that no
+/// two files agree on, `"happy plains" ,` with the space before the comma. None of that layout is
+/// derivable from the values, so this type does not try to derive it. It keeps every line's bytes
+/// and replaces **only the span of a field it is asked to change**.
+///
+/// That has a direct consequence for how strong the round-trip result is, and it should not be
+/// oversold: **an unedited document re-encodes byte-identically by construction**, because
+/// [`to_bytes`](Self::to_bytes) concatenates lines it never altered. 26 of 26 is therefore a check
+/// that the line splitter and its terminators are exact, and nothing more. The claim that the
+/// *field model* is faithful is a different measurement, made by
+/// [`field_rebuild_audit`](Self::field_rebuild_audit), which rebuilds each field's text from the
+/// typed value the parser read and can genuinely fail.
+///
+/// # What it never does
+///
+/// It never mints a line. Every edit addresses a record that is already in the file; an unknown
+/// tile or terrain index is refused by name rather than appended. See the refusals on each setter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TileSetDocument {
+    lines: Vec<DocumentLine>,
+    definition: TileSetDefinition,
+}
+
+/// The largest atlas capacity this writer will declare. **Inclusive**: 1,024 slots are accepted,
+/// 1,025 are not.
+///
+/// A conservative guard, not a field width. The largest shipped tileset is `tilesb01.til` at
+/// 16x39 = 624 slots, and the map writer independently refuses a map cell holding a tile index of
+/// 1,024 or more, so a tileset far above this could declare slots no map this project writes could
+/// address. Nothing observed says the engine has a limit here at all.
+pub const MAX_ATLAS_CAPACITY: u32 = 1 << 10;
+
+/// The largest palette index a `TERRAINTYPE=` colour may name.
+///
+/// **Observed in the corpus.** The game's palettes are 256 entries (`artifacts/zzpal-index-map.txt`)
+/// and every one of the 402 shipped `TERRAINTYPE=` colour fields is in `90..=158`. A value above
+/// 255 cannot name a palette entry under any reading of an 8-bit index.
+pub const MAX_PALETTE_INDEX: u32 = 255;
+
+/// Which column of a `TERRAINTYPE=` line an edit names.
+///
+/// The named columns are the ones **all 26 shipped headers agree about**; the unnamed ones are the
+/// four they do not, and naming them here rather than omitting them is what lets
+/// [`TileSetDocument::set_terrain_field`] refuse them with the disagreement as the reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerrainColumn {
+    /// Column 1, the palette index the map editor draws this terrain with.
+    PaletteColor,
+    /// Column 2, the free text the file calls the terrain.
+    Description,
+    /// Column `a`. 26 of 26 headers call it flags; see [`Passability`].
+    Passability,
+    /// Column `b`. 26 of 26 headers: `minimum elevation (b=1000 = 1.0 in map model)`.
+    MinElevation,
+    /// Column `c`. 26 of 26 headers: `maximum elevation`.
+    MaxElevation,
+    /// Column `f`. 26 of 26 headers: `movement cost`.
+    MovementCost,
+    /// Columns `d`, `e`, `g` and `h` -- always refused. See
+    /// [`set_terrain_field`](TileSetDocument::set_terrain_field).
+    Unnamed(char),
+}
+
+impl TerrainColumn {
+    /// The column a name on a command line means, or `None` for a name no column has.
+    pub fn parse(name: &str) -> Option<Self> {
+        let lowered = name.trim().to_ascii_lowercase();
+        Some(match lowered.as_str() {
+            "color" | "colour" => Self::PaletteColor,
+            "description" => Self::Description,
+            "passability" | "a" => Self::Passability,
+            "min-elevation" | "b" => Self::MinElevation,
+            "max-elevation" | "c" => Self::MaxElevation,
+            "movement-cost" | "f" => Self::MovementCost,
+            "d" => Self::Unnamed('d'),
+            "e" => Self::Unnamed('e'),
+            "g" => Self::Unnamed('g'),
+            "h" => Self::Unnamed('h'),
+            _ => return None,
+        })
+    }
+
+    /// Which comma-separated field of the line this column is.
+    const fn field_position(self) -> usize {
+        match self {
+            Self::PaletteColor => 1,
+            Self::Description => 2,
+            Self::Passability => 3,
+            Self::MinElevation => 4,
+            Self::MaxElevation => 5,
+            Self::Unnamed('d') => 6,
+            Self::Unnamed('e') => 7,
+            Self::MovementCost => 8,
+            Self::Unnamed('g') => 9,
+            // `h`, and any other char, which `parse` cannot produce.
+            Self::Unnamed(_) => 10,
+        }
+    }
+
+    /// The name this column is addressed by, for an error message that can be acted on.
+    pub fn name(self) -> String {
+        match self {
+            Self::PaletteColor => "color".to_owned(),
+            Self::Description => "description".to_owned(),
+            Self::Passability => "passability".to_owned(),
+            Self::MinElevation => "min-elevation".to_owned(),
+            Self::MaxElevation => "max-elevation".to_owned(),
+            Self::MovementCost => "movement-cost".to_owned(),
+            Self::Unnamed(column) => column.to_string(),
+        }
+    }
+
+    /// Every column an edit may name, so a usage message cannot drift from the parser.
+    pub const ALL: [Self; 10] = [
+        Self::PaletteColor,
+        Self::Description,
+        Self::Passability,
+        Self::MinElevation,
+        Self::MaxElevation,
+        Self::MovementCost,
+        Self::Unnamed('d'),
+        Self::Unnamed('e'),
+        Self::Unnamed('g'),
+        Self::Unnamed('h'),
+    ];
+}
+
+/// How many of a document's fields rebuild from the values the parser read out of them.
+///
+/// **This is the measurement that can fail**, and it is the reason the byte-identical round trip is
+/// not presented as the evidence. `values_rebuilt` counts fields whose text is regenerated from a
+/// typed value -- an integer through `to_string`, a neighbour column through
+/// [`NeighbourConstraint::to_column`] -- and compared against the file's own characters. A column
+/// spelled `9|6`, `6|6`, `06` or `+6` parses to the same value and rebuilds differently, so the
+/// count is a real property of the corpus rather than an identity.
+///
+/// `text_fields_carried` counts the fields that carry text and have nothing to rebuild: the `LBM`
+/// value, the terrain description, and the four unnamed columns. Comparing those to themselves
+/// would prove nothing and they are deliberately not in `values_rebuilt`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FieldRebuildAudit {
+    pub values_checked: usize,
+    pub values_rebuilt: usize,
+    pub text_fields_carried: usize,
+    pub mismatches: Vec<String>,
+}
+
+impl FieldRebuildAudit {
+    fn check(&mut self, description: &str, file_text: &str, rebuilt: &str) {
+        self.values_checked += 1;
+        if file_text == rebuilt {
+            self.values_rebuilt += 1;
+        } else {
+            self.mismatches
+                .push(format!("{description}: file `{file_text}`, rebuilt `{rebuilt}`"));
+        }
+    }
+}
+
+impl TileSetDocument {
+    /// Read a `.til` keeping every byte, and the parser's answer beside it.
+    ///
+    /// The values come from [`TileSetDefinition::parse`] -- the same function `--view-map` and the
+    /// map painter already use -- rather than from a second parser written for the writer. What
+    /// this adds is **where** each value is, so one can be replaced in place.
+    pub fn parse(source: &[u8]) -> Result<Self, TileError> {
+        let definition = TileSetDefinition::parse(source)?;
+        let text = std::str::from_utf8(source)
+            .map_err(|error| TileError::new(format!("tile definition is not UTF-8: {error}")))?;
+        let mut lines = Vec::new();
+        for (text, terminator) in split_terminated_lines(text) {
+            lines.push(DocumentLine {
+                record: classify_line(text),
+                text: text.to_owned(),
+                terminator,
+            });
+        }
+        let document = Self { lines, definition };
+        document.check_every_record_was_located()?;
+        Ok(document)
+    }
+
+    /// Every value the parser read has to have been located on exactly one line.
+    ///
+    /// Without this the line model and the value model could disagree silently -- a `TILE=` row the
+    /// span splitter failed on would simply never be editable, and the failure would show up as
+    /// "tile 391 is not declared" on a file that plainly declares it. Here it is a parse error
+    /// naming the count.
+    ///
+    /// **It is a defensive assertion with no known reaching input**, and it is kept rather than
+    /// removed because what it protects is real: `field_rebuild_audit` and the setters index
+    /// `definition.tiles[index]` directly on a line's own index, which would panic rather than
+    /// misreport. Every divergence it describes is currently caught earlier by
+    /// [`TileSetDefinition::parse`] -- duplicate indices, an unparsable index, a row past capacity
+    /// -- so it has no test that reaches it, and saying so is better than implying one exists.
+    fn check_every_record_was_located(&self) -> Result<(), TileError> {
+        let mut tiles = 0_usize;
+        let mut terrain_types = 0_usize;
+        for line in &self.lines {
+            match &line.record {
+                LineRecord::Tile { index, .. } => {
+                    tiles += 1;
+                    if !self.definition.tiles.contains_key(index) {
+                        return Err(TileError::new(format!(
+                            "line model found a TILE= row for tile {index} that the value model \
+                             does not have"
+                        )));
+                    }
+                }
+                LineRecord::TerrainType { index, .. } => {
+                    terrain_types += 1;
+                    if !self.definition.terrain_types.contains_key(index) {
+                        return Err(TileError::new(format!(
+                            "line model found a TERRAINTYPE= row for terrain {index} that the \
+                             value model does not have"
+                        )));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if tiles != self.definition.tiles.len() || terrain_types != self.definition.terrain_types.len()
+        {
+            return Err(TileError::new(format!(
+                "line model located {tiles} tile rows and {terrain_types} terrain rows; the value \
+                 model has {} and {}",
+                self.definition.tiles.len(),
+                self.definition.terrain_types.len()
+            )));
+        }
+        Ok(())
+    }
+
+    /// The values this document declares.
+    pub fn definition(&self) -> &TileSetDefinition {
+        &self.definition
+    }
+
+    /// How many physical lines the file has.
+    pub fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+
+    /// This document as a complete file.
+    ///
+    /// For an unedited document this reproduces the input byte for byte **by construction**: the
+    /// lines were never altered and their terminators were recorded, so there is nothing here that
+    /// could differ. See the type's own documentation for why that is reported separately from the
+    /// field audit.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let capacity = self
+            .lines
+            .iter()
+            .map(|line| line.text.len() + line.terminator.as_str().len())
+            .sum();
+        let mut bytes = Vec::with_capacity(capacity);
+        for line in &self.lines {
+            bytes.extend_from_slice(line.text.as_bytes());
+            bytes.extend_from_slice(line.terminator.as_str().as_bytes());
+        }
+        bytes
+    }
+
+    /// Rebuild every typed field's text from its value and compare it to the file's characters.
+    ///
+    /// **A repeated `TILES=` or `TILESIZE=` line is audited only on its effective occurrence.**
+    /// [`TileSetDefinition::parse`] keeps the *last* assignment of each (see
+    /// [`last_line_matching`](Self::last_line_matching)), so `self.definition.columns` and its
+    /// siblings hold only that final line's values. Comparing an *earlier* occurrence's own text
+    /// against those values reports a mismatch on a line the value model never claimed to
+    /// represent -- a file is not malformed for repeating a key the parser already resolves by
+    /// last-write-wins. Non-effective occurrences are counted as carried text instead, the same
+    /// treatment `LineRecord::Atlas` gets.
+    ///
+    /// See [`FieldRebuildAudit`] for what the two counts mean and why only one of them is evidence.
+    pub fn field_rebuild_audit(&self) -> FieldRebuildAudit {
+        let mut audit = FieldRebuildAudit::default();
+        let last_grid_line = self.last_line_matching(|record| matches!(record, LineRecord::Grid { .. }));
+        let last_tile_size_line =
+            self.last_line_matching(|record| matches!(record, LineRecord::TileSize { .. }));
+        for (line_index, line) in self.lines.iter().enumerate() {
+            match &line.record {
+                LineRecord::Carried => {}
+                LineRecord::Atlas { .. } => audit.text_fields_carried += 1,
+                LineRecord::Grid { fields } => {
+                    if Some(line_index) == last_grid_line {
+                        self.audit_pair(&mut audit, line, fields, "TILES", [
+                            self.definition.columns,
+                            self.definition.rows,
+                        ]);
+                    } else {
+                        audit.text_fields_carried += fields.len();
+                    }
+                }
+                LineRecord::TileSize { fields } => {
+                    if Some(line_index) == last_tile_size_line {
+                        self.audit_pair(&mut audit, line, fields, "TILESIZE", [
+                            self.definition.tile_width,
+                            self.definition.tile_height,
+                        ]);
+                    } else {
+                        audit.text_fields_carried += fields.len();
+                    }
+                }
+                LineRecord::TerrainType { index, fields } => {
+                    let terrain = &self.definition.terrain_types[index];
+                    let label = format!("TERRAINTYPE {index}");
+                    audit_value(&mut audit, line, fields, 0, &label, Some(terrain.index));
+                    audit_value(
+                        &mut audit,
+                        line,
+                        fields,
+                        1,
+                        &label,
+                        Some(terrain.palette_color),
+                    );
+                    audit_value(
+                        &mut audit,
+                        line,
+                        fields,
+                        3,
+                        &label,
+                        terrain.passability.map(Passability::value),
+                    );
+                    audit_value(&mut audit, line, fields, 4, &label, terrain.min_elevation);
+                    audit_value(&mut audit, line, fields, 5, &label, terrain.max_elevation);
+                    audit_value(&mut audit, line, fields, 8, &label, terrain.movement_cost);
+                    // The description and the four columns the shipped headers disagree about are
+                    // text this writer carries; comparing them to themselves would prove nothing.
+                    for position in [2, 6, 7, 9, 10] {
+                        if fields.len() > position {
+                            audit.text_fields_carried += 1;
+                        }
+                    }
+                }
+                LineRecord::Tile { index, fields } => {
+                    let tile = &self.definition.tiles[index];
+                    let label = format!("TILE {index}");
+                    audit_value(&mut audit, line, fields, 0, &label, Some(tile.index));
+                    audit_value(&mut audit, line, fields, 1, &label, Some(tile.terrain_type));
+                    // **Every present column is audited, complete row or not.** Gating this on
+                    // `constraints_declared` skipped all eight columns of a row with one
+                    // unreadable one -- so a file could carry a malformed column and seven good
+                    // ones and be reported with zero failures and eight fewer values checked. A
+                    // denominator that silently shrinks on bad input is the whole defect this
+                    // audit exists to avoid. The unreadable column mismatches against the `*`
+                    // placeholder the parser left, which is the finding, and the seven valid ones
+                    // are checked as normal because the parser did record their values.
+                    for (offset, constraint) in tile.neighbours.iter().enumerate() {
+                        let position = 2 + offset;
+                        if let Some(span) = fields.get(position) {
+                            audit.check(
+                                &format!("{label} column {}", Direction::ALL[offset].column_name()),
+                                &field_value(&line.text, span.clone()),
+                                &constraint.to_column(),
+                            );
+                        }
+                    }
+                    audit_value(&mut audit, line, fields, 10, &label, tile.pattern_index);
+                }
+            }
+        }
+        audit
+    }
+
+    fn audit_pair(
+        &self,
+        audit: &mut FieldRebuildAudit,
+        line: &DocumentLine,
+        fields: &[Range<usize>],
+        label: &str,
+        values: [u32; 2],
+    ) {
+        for (position, value) in values.into_iter().enumerate() {
+            audit_value(audit, line, fields, position, label, Some(value));
+        }
+    }
+
+    /// The effective line for a key that may be written more than once.
+    ///
+    /// **Last assignment wins**, because that is what [`TileSetDefinition::parse`] does -- it
+    /// overwrites `atlas_member`, `dimensions` and `tile_size` each time it sees the key. No
+    /// shipped file writes any of the three twice; a modded one that did would otherwise be edited
+    /// on a line the parser ignores, which is the quiet kind of wrong.
+    fn last_line_matching(&self, matches: impl Fn(&LineRecord) -> bool) -> Option<usize> {
+        self.lines
+            .iter()
+            .rposition(|line| matches(&line.record))
+    }
+
+    fn tile_line(&self, tile_index: u32) -> Option<usize> {
+        self.lines.iter().position(|line| {
+            matches!(&line.record, LineRecord::Tile { index, .. } if *index == tile_index)
+        })
+    }
+
+    fn terrain_line(&self, terrain_index: u32) -> Option<usize> {
+        self.lines.iter().position(|line| {
+            matches!(&line.record, LineRecord::TerrainType { index, .. } if *index == terrain_index)
+        })
+    }
+
+    fn line_fields(&self, line_index: usize) -> &[Range<usize>] {
+        match &self.lines[line_index].record {
+            LineRecord::Grid { fields }
+            | LineRecord::TileSize { fields }
+            | LineRecord::TerrainType { fields, .. }
+            | LineRecord::Tile { fields, .. } => fields,
+            LineRecord::Carried | LineRecord::Atlas { .. } => &[],
+        }
+    }
+
+    /// Replace one line's text, then confirm the change through the parser before keeping it.
+    ///
+    /// **The edit is verified by re-reading the bytes that are about to be written**, the same
+    /// shape `--set-imp-placement` and `--map-*` use. Nothing here trusts that replacing a span did
+    /// what it looked like it did: if the rewritten file fails to parse, or parses to something
+    /// other than what was asked, the original line is put back and the caller is refused. A writer
+    /// that reported success from its own intention rather than from the reader is exactly the
+    /// tautology this project has had to delete tests for.
+    fn apply(
+        &mut self,
+        line_index: usize,
+        new_text: String,
+        what: &str,
+        expected: impl Fn(&TileSetDefinition) -> bool,
+    ) -> Result<(), TileError> {
+        let original = std::mem::replace(&mut self.lines[line_index].text, new_text);
+        let record = classify_line(&self.lines[line_index].text);
+        self.lines[line_index].record = record;
+
+        let outcome = TileSetDefinition::parse(&self.to_bytes());
+        match outcome {
+            Ok(definition) if expected(&definition) => {
+                self.definition = definition;
+                Ok(())
+            }
+            other => {
+                self.lines[line_index].text = original;
+                let record = classify_line(&self.lines[line_index].text);
+                self.lines[line_index].record = record;
+                Err(match other {
+                    Ok(_) => TileError::new(format!(
+                        "{what} did not read back from the bytes it would have written, so the \
+                         file would have reported a change it does not contain; refusing. A value \
+                         the reader normalises does this -- a description with leading or trailing \
+                         spaces comes back trimmed -- so write the value the reader would read"
+                    )),
+                    Err(error) => TileError::new(format!(
+                        "{what} would produce a file that no longer parses: {error}"
+                    )),
+                })
+            }
+        }
+    }
+
+    /// Point this tileset at a different atlas image.
+    ///
+    /// # What it refuses
+    ///
+    /// - a name that is not a `.lbm`, because all 26 shipped tilesets name one and nothing has been
+    ///   observed reading anything else through `LBM=`;
+    /// - a name carrying a character that would change how the line parses -- `,`, `;`, `"`, `=`,
+    ///   whitespace -- or any byte outside printable ASCII;
+    /// - an empty name.
+    ///
+    /// **It does not check that the atlas exists.** The `.lbm` lives in `pic.mpq` and this function
+    /// is handed one file; `--mod-validate` is where cross-member existence is checked.
+    pub fn set_atlas_member(&mut self, member: &str) -> Result<(), TileError> {
+        if member.is_empty() {
+            return Err(TileError::new(
+                "an empty atlas name would leave the tileset with no image; refusing",
+            ));
+        }
+        if let Some(character) = member
+            .chars()
+            .find(|character| !character.is_ascii_graphic() || ",;\"=".contains(*character))
+        {
+            return Err(TileError::new(format!(
+                "atlas name {member:?} contains {character:?}, which would change how the LBM= \
+                 line parses; refusing"
+            )));
+        }
+        if member.eq_ignore_ascii_case(".lbm") {
+            return Err(TileError::new(
+                "atlas name \".lbm\" has no name before its extension; every shipped atlas is a \
+                 named member of pic.mpq",
+            ));
+        }
+        if !member.to_ascii_lowercase().ends_with(".lbm") {
+            return Err(TileError::new(format!(
+                "atlas name {member:?} is not a .lbm; all 26 shipped tilesets name one and nothing \
+                 has been observed reading any other kind of atlas"
+            )));
+        }
+        let line_index = self
+            .last_line_matching(|record| matches!(record, LineRecord::Atlas { .. }))
+            .ok_or_else(|| TileError::new("this tileset has no LBM= line to edit"))?;
+        let LineRecord::Atlas { value } = self.lines[line_index].record.clone() else {
+            unreachable!("the line was selected by its record kind")
+        };
+        let new_text = replace_span(&self.lines[line_index].text, value, member);
+        let wanted = member.to_owned();
+        self.apply(
+            line_index,
+            new_text,
+            &format!("setting the atlas to {member:?}"),
+            move |definition| definition.atlas_member == wanted,
+        )
+    }
+
+    /// Change the atlas grid the slots are counted across.
+    ///
+    /// # What it refuses, and why each refusal is not caution
+    ///
+    /// - **A change to `columns` while any tile is declared.** A slot's picture is
+    ///   `(index % columns, index / columns)` in the atlas, so re-columning silently repaints every
+    ///   declared tile with a different image. That is the same class of edit the IMP writer refuses
+    ///   when frames share pixels: it would change art the caller did not name. The count of tiles
+    ///   that would move is in the message. Changing `rows` alone leaves every slot's picture where
+    ///   it was.
+    /// - **A capacity that would orphan declared tiles**, naming them. The parser rejects a tile at
+    ///   or beyond capacity, so shrinking past one produces a file that no longer loads; the tiles
+    ///   are listed rather than left for the caller to find.
+    /// - Zero sides, an overflowing product, and a capacity **above** [`MAX_ATLAS_CAPACITY`].
+    pub fn set_grid(&mut self, columns: u32, rows: u32) -> Result<(), TileError> {
+        if columns == 0 || rows == 0 {
+            return Err(TileError::new(format!(
+                "atlas grid {columns}x{rows} has a zero side; a tileset with no slots can paint \
+                 nothing"
+            )));
+        }
+        let capacity = columns.checked_mul(rows).ok_or_else(|| {
+            TileError::new(format!("atlas grid {columns}x{rows} overflows a capacity"))
+        })?;
+        if capacity > MAX_ATLAS_CAPACITY {
+            return Err(TileError::new(format!(
+                "atlas grid {columns}x{rows} declares {capacity} slots, past the {MAX_ATLAS_CAPACITY} \
+                 this writer will declare; the largest shipped tileset declares 624"
+            )));
+        }
+        if columns != self.definition.columns && !self.definition.tiles.is_empty() {
+            return Err(TileError::new(format!(
+                "changing the column count from {} to {columns} moves every one of the {} declared \
+                 tiles to a different picture in {}, because a slot is (index % columns, index / \
+                 columns); refusing rather than repainting tiles that were not named. Changing rows \
+                 alone is safe",
+                self.definition.columns,
+                self.definition.tiles.len(),
+                self.definition.atlas_member,
+            )));
+        }
+        let orphaned: Vec<u32> = self
+            .definition
+            .tiles
+            .keys()
+            .copied()
+            .filter(|index| *index >= capacity)
+            .collect();
+        if !orphaned.is_empty() {
+            return Err(TileError::new(format!(
+                "atlas grid {columns}x{rows} holds {capacity} slots, which leaves {} declared \
+                 tile(s) outside it: {}; refusing rather than writing a tileset that no longer \
+                 parses",
+                orphaned.len(),
+                name_list(&orphaned),
+            )));
+        }
+        let line_index = self
+            .last_line_matching(|record| matches!(record, LineRecord::Grid { .. }))
+            .ok_or_else(|| TileError::new("this tileset has no TILES= line to edit"))?;
+        let fields = self.line_fields(line_index).to_vec();
+        let mut new_text = self.lines[line_index].text.clone();
+        // Rightmost field first, so replacing one does not move the span of the other.
+        new_text = replace_span(&new_text, fields[1].clone(), &rows.to_string());
+        new_text = replace_span(&new_text, fields[0].clone(), &columns.to_string());
+        self.apply(
+            line_index,
+            new_text,
+            &format!("setting the atlas grid to {columns}x{rows}"),
+            move |definition| definition.columns == columns && definition.rows == rows,
+        )
+    }
+
+    /// The `self` column: which terrain type a slot belongs to.
+    ///
+    /// # What it refuses
+    ///
+    /// - **A tile the file does not declare**, naming it. There is no `TILE=` row to edit and this
+    ///   writer does not mint one: a minted row would need eight neighbour columns nothing in the
+    ///   file sources.
+    /// - **A terrain type the file does not declare**, listing the ones it does. A tile pointing at
+    ///   an undeclared type can never be selected and its cells read as unknown terrain.
+    /// - **Moving the last tile out of a terrain type**, naming the type and its description. Every
+    ///   map cell holding one of that type's tiles is read through
+    ///   [`terrain_type_of_tile`](TileSetDefinition::terrain_type_of_tile); emptying the type makes
+    ///   those cells unreadable, which is a change to maps the caller did not name.
+    pub fn set_tile_terrain_type(&mut self, tile: u32, terrain: u32) -> Result<(), TileError> {
+        let line_index = self.tile_line(tile).ok_or_else(|| self.no_such_tile(tile))?;
+        self.require_declared_terrain(terrain)?;
+        let previous = self.definition.tiles[&tile].terrain_type;
+        if previous != terrain {
+            let remaining = self
+                .definition
+                .tiles
+                .values()
+                .filter(|other| other.terrain_type == previous && other.index != tile)
+                .count();
+            if remaining == 0 {
+                let description = self
+                    .definition
+                    .terrain_types
+                    .get(&previous)
+                    .map_or("undeclared", |definition| definition.description.as_str());
+                return Err(TileError::new(format!(
+                    "tile {tile} is the only tile of terrain type {previous} ({description:?}); \
+                     moving it would leave that terrain with no tile at all, so every map cell \
+                     holding one would read as unknown terrain. Refusing"
+                )));
+            }
+        }
+        let fields = self.line_fields(line_index).to_vec();
+        let new_text = replace_span(
+            &self.lines[line_index].text,
+            fields[1].clone(),
+            &terrain.to_string(),
+        );
+        self.apply(
+            line_index,
+            new_text,
+            &format!("setting tile {tile} to terrain type {terrain}"),
+            move |definition| {
+                definition
+                    .tiles
+                    .get(&tile)
+                    .is_some_and(|definition| definition.terrain_type == terrain)
+            },
+        )
+    }
+
+    /// One of the eight neighbour columns of one tile.
+    ///
+    /// # What it refuses
+    ///
+    /// - **A tile the file does not declare**, naming it; nothing is minted.
+    /// - **A tile whose row did not declare all eight columns readably**, naming the first column
+    ///   that is missing. Such a tile is already excluded from painting
+    ///   ([`TileDefinition::accepts`]); writing one column of it would produce a row that looks
+    ///   complete and is not.
+    /// - **A constraint naming a terrain type the file does not declare**, naming the types. A
+    ///   constraint can only ever be satisfied by a type some tile belongs to.
+    pub fn set_tile_neighbour(
+        &mut self,
+        tile: u32,
+        direction: Direction,
+        constraint: &NeighbourConstraint,
+    ) -> Result<(), TileError> {
+        let line_index = self.tile_line(tile).ok_or_else(|| self.no_such_tile(tile))?;
+        let definition = &self.definition.tiles[&tile];
+        if !definition.constraints_declared {
+            let fields = self.line_fields(line_index);
+            let missing = (0..8)
+                .find(|offset| {
+                    fields.get(2 + offset).is_none_or(|span| {
+                        let text = field_value(&self.lines[line_index].text, span.clone());
+                        text.is_empty() || NeighbourConstraint::parse_column(&text).is_err()
+                    })
+                })
+                .map_or_else(
+                    || "an unreadable column".to_owned(),
+                    |offset| format!("column {}", Direction::ALL[offset].column_name()),
+                );
+            return Err(TileError::new(format!(
+                "tile {tile} did not declare all eight neighbour columns -- {missing} is missing or \
+                 unreadable -- so it can never be painted; writing one column would make an \
+                 incomplete row look complete. Refusing"
+            )));
+        }
+        let undeclared: Vec<u32> = constraint
+            .terrain_types()
+            .into_iter()
+            .filter(|terrain| !self.definition.terrain_types.contains_key(terrain))
+            .collect();
+        if !undeclared.is_empty() {
+            return Err(TileError::new(format!(
+                "constraint {} names terrain type(s) {} that this tileset does not declare; \
+                 declared: {}. Refusing",
+                constraint.to_column(),
+                name_list(&undeclared),
+                name_list(&self.definition.terrain_types.keys().copied().collect::<Vec<_>>()),
+            )));
+        }
+        let position = Direction::ALL
+            .iter()
+            .position(|candidate| *candidate == direction)
+            .expect("Direction::ALL contains every direction");
+        let fields = self.line_fields(line_index).to_vec();
+        let span = fields.get(2 + position).cloned().ok_or_else(|| {
+            TileError::new(format!(
+                "tile {tile}'s row has no column {}; this writer will not extend a row it did not \
+                 write",
+                direction.column_name()
+            ))
+        })?;
+        let new_text = replace_span(
+            &self.lines[line_index].text,
+            span,
+            &constraint.to_column(),
+        );
+        let wanted = constraint.clone();
+        self.apply(
+            line_index,
+            new_text,
+            &format!(
+                "setting tile {tile} column {} to {}",
+                direction.column_name(),
+                constraint.to_column()
+            ),
+            move |definition| {
+                definition
+                    .tiles
+                    .get(&tile)
+                    .is_some_and(|tile| *tile.neighbour(direction) == wanted)
+            },
+        )
+    }
+
+    /// One named column of one `TERRAINTYPE=` row.
+    ///
+    /// # What it refuses
+    ///
+    /// - **Columns `d`, `e`, `g` and `h`, always, by name.** The shipped headers do not agree what
+    ///   they are: 25 of 26 call `d` food and `e` ore, `tilesb01.til` calls both unused, and all 26
+    ///   call `g` and `h` unused. Writing a number into a column whose meaning is a disagreement
+    ///   would be minting a field, so this refuses and says which file says what.
+    /// - **A terrain type the file does not declare**, naming it; nothing is minted.
+    /// - **A column the row stops before.** Every shipped row has all eleven fields; a shorter one
+    ///   is refused rather than extended, because extending a row means inventing values for the
+    ///   columns in between.
+    /// - A passability outside `0..=2`, a palette index above [`MAX_PALETTE_INDEX`], an elevation
+    ///   pair that would end up with the minimum above the maximum, and a description carrying a
+    ///   character that would change how the line parses.
+    pub fn set_terrain_field(
+        &mut self,
+        terrain: u32,
+        column: TerrainColumn,
+        value: &str,
+    ) -> Result<(), TileError> {
+        if let TerrainColumn::Unnamed(name) = column {
+            let disagreement = match name {
+                'd' => "25 of the 26 shipped headers call column d food; tilesb01.til calls it unused",
+                'e' => "25 of the 26 shipped headers call column e ore; tilesb01.til calls it unused",
+                _ => "all 26 shipped headers call this column unused",
+            };
+            return Err(TileError::new(format!(
+                "column {name} has no sourced meaning -- {disagreement} -- so writing a value into \
+                 it would be minting a field. Refusing"
+            )));
+        }
+        let line_index = self
+            .terrain_line(terrain)
+            .ok_or_else(|| self.no_such_terrain(terrain))?;
+        let fields = self.line_fields(line_index).to_vec();
+        let position = column.field_position();
+        let span = fields.get(position).cloned().ok_or_else(|| {
+            TileError::new(format!(
+                "terrain type {terrain}'s row stops after {} field(s) and has no {} column; this \
+                 writer will not extend a row it did not write",
+                fields.len(),
+                column.name()
+            ))
+        })?;
+
+        let replacement = match column {
+            TerrainColumn::Description => {
+                if value.trim().is_empty() {
+                    return Err(TileError::new(
+                        "an empty description would leave the terrain type unnamed; refusing",
+                    ));
+                }
+                if let Some(character) = value
+                    .chars()
+                    .find(|character| ",;\"".contains(*character) || character.is_control())
+                {
+                    return Err(TileError::new(format!(
+                        "description {value:?} contains {character:?}, which would change how the \
+                         TERRAINTYPE= line parses; refusing"
+                    )));
+                }
+                // Quoting is the file's, not this writer's: every shipped description is quoted,
+                // and a file that wrote one bare keeps it bare.
+                if field_text(&self.lines[line_index].text, span.clone()).starts_with('"') {
+                    format!("\"{value}\"")
+                } else {
+                    value.to_owned()
+                }
+            }
+            _ => {
+                let number = parse_u32(value, None, &column.name())?;
+                self.check_terrain_number(terrain, column, number)?;
+                number.to_string()
+            }
+        };
+
+        let new_text = replace_span(&self.lines[line_index].text, span, &replacement);
+        let wanted = replacement.clone();
+        let column_name = column.name();
+        self.apply(
+            line_index,
+            new_text,
+            &format!("setting terrain type {terrain} {column_name} to {value:?}"),
+            move |definition| {
+                let Some(read_back) = definition.terrain_types.get(&terrain) else {
+                    return false;
+                };
+                match column {
+                    TerrainColumn::PaletteColor => {
+                        read_back.palette_color.to_string() == wanted
+                    }
+                    TerrainColumn::Description => {
+                        read_back.description == wanted.trim_matches('"')
+                    }
+                    TerrainColumn::Passability => read_back
+                        .passability
+                        .is_some_and(|passability| passability.value().to_string() == wanted),
+                    TerrainColumn::MinElevation => read_back
+                        .min_elevation
+                        .is_some_and(|value| value.to_string() == wanted),
+                    TerrainColumn::MaxElevation => read_back
+                        .max_elevation
+                        .is_some_and(|value| value.to_string() == wanted),
+                    TerrainColumn::MovementCost => read_back
+                        .movement_cost
+                        .is_some_and(|value| value.to_string() == wanted),
+                    TerrainColumn::Unnamed(_) => false,
+                }
+            },
+        )
+    }
+
+    /// Always refused, by name: `TILESIZE=`.
+    ///
+    /// **Observed in the corpus:** all 26 shipped tilesets declare `32, 32`, and the tile geometry
+    /// the map renderer and the projection in `tools/map_projection.py` use is 32x32 throughout.
+    /// Nothing in this project has observed the engine read this line at all, so there is no
+    /// evidence that a different value would be honoured rather than ignored or crashed on. A
+    /// writer that emitted `64, 64` would be minting a capability.
+    pub fn set_tile_size(&mut self, width: u32, height: u32) -> Result<(), TileError> {
+        Err(TileError::new(format!(
+            "refusing to declare a {width}x{height} tile: all 26 shipped tilesets declare 32x32 and \
+             no observation in this project says the engine reads TILESIZE= at all, so a different \
+             value would be an invented capability rather than an edit"
+        )))
+    }
+
+    /// Always refused, by name: the trailing `index` column of a `TILE=` row.
+    ///
+    /// The column is a pattern id shared across terrain blocks, and it is **demonstrably not
+    /// reliable** -- tile 2 of `tilesb01.til` carries 6 where its pattern is plainly 2, and water's
+    /// tile 50 carries 1 where tile 2's analogue is 2. Nothing in this project decides anything
+    /// from it. Writing a value into a column whose rule is not known would be minting a field.
+    pub fn set_tile_pattern_index(&mut self, tile: u32, pattern: u32) -> Result<(), TileError> {
+        Err(TileError::new(format!(
+            "refusing to set tile {tile}'s pattern column to {pattern}: the column's rule is not \
+             known -- tilesb01.til's tile 2 carries 6 where its pattern is 2, and its tile 50 \
+             carries 1 -- and nothing in this project reads it"
+        )))
+    }
+
+    /// The bounds each named numeric column is written under, kept out of the setter so each
+    /// refusal reads as its own sentence.
+    fn check_terrain_number(
+        &self,
+        terrain: u32,
+        column: TerrainColumn,
+        number: u32,
+    ) -> Result<(), TileError> {
+        match column {
+            TerrainColumn::Passability if number > 2 => Err(TileError::new(format!(
+                "passability {number} is outside the vocabulary the shipped headers declare -- \
+                 tilesb01.til says 0=land, 1=water, 2=impassable and the other 25 say 0=land, \
+                 1=water -- so its meaning is not sourced. Refusing"
+            ))),
+            TerrainColumn::PaletteColor if number > MAX_PALETTE_INDEX => {
+                Err(TileError::new(format!(
+                    "palette index {number} is past {MAX_PALETTE_INDEX}; the game's palettes hold \
+                     256 entries and every shipped terrain colour is in 90..=158"
+                )))
+            }
+            TerrainColumn::MinElevation | TerrainColumn::MaxElevation => {
+                let definition = &self.definition.terrain_types[&terrain];
+                let (minimum, maximum) = if column == TerrainColumn::MinElevation {
+                    (Some(number), definition.max_elevation)
+                } else {
+                    (definition.min_elevation, Some(number))
+                };
+                match (minimum, maximum) {
+                    (Some(minimum), Some(maximum)) if minimum > maximum => {
+                        Err(TileError::new(format!(
+                            "elevation range {minimum}..{maximum} for terrain type {terrain} is \
+                             inverted; no shipped row writes one and nothing says what the engine \
+                             would do with it. Refusing"
+                        )))
+                    }
+                    _ => Ok(()),
+                }
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn require_declared_terrain(&self, terrain: u32) -> Result<(), TileError> {
+        if self.definition.terrain_types.contains_key(&terrain) {
+            return Ok(());
+        }
+        Err(self.no_such_terrain(terrain))
+    }
+
+    fn no_such_tile(&self, tile: u32) -> TileError {
+        TileError::new(format!(
+            "this tileset declares no TILE= row for slot {tile}, and this writer does not mint one: \
+             a minted row would need eight neighbour columns that nothing in the file sources. \
+             {} tile(s) are declared, from {} to {}",
+            self.definition.tiles.len(),
+            self.definition
+                .tiles
+                .keys()
+                .next()
+                .map_or_else(|| "none".to_owned(), u32::to_string),
+            self.definition
+                .tiles
+                .keys()
+                .next_back()
+                .map_or_else(|| "none".to_owned(), u32::to_string),
+        ))
+    }
+
+    fn no_such_terrain(&self, terrain: u32) -> TileError {
+        TileError::new(format!(
+            "this tileset declares no TERRAINTYPE= row for {terrain}, and this writer does not mint \
+             one; declared: {}",
+            name_list(
+                &self
+                    .definition
+                    .terrain_types
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>()
+            ),
+        ))
+    }
+}
+
+/// One audited integer field, or nothing when the row stops before it.
+///
+/// A field that exists, is non-empty, and whose value the parser recorded as absent is a
+/// **mismatch**, not a skip: it means the parser could not read a column the file wrote, which is
+/// precisely the silent loss this audit exists to find.
+fn audit_value(
+    audit: &mut FieldRebuildAudit,
+    line: &DocumentLine,
+    fields: &[Range<usize>],
+    position: usize,
+    label: &str,
+    value: Option<u32>,
+) {
+    let Some(span) = fields.get(position) else {
+        return;
+    };
+    let text = field_value(&line.text, span.clone());
+    match value {
+        Some(value) => audit.check(&format!("{label} field {position}"), &text, &value.to_string()),
+        None if text.is_empty() => {}
+        None => {
+            audit.values_checked += 1;
+            audit.mismatches.push(format!(
+                "{label} field {position}: file `{text}`, the parser read no value"
+            ));
+        }
+    }
+}
+
+/// A list of numbers for an error message, capped so a refusal stays readable.
+fn name_list(values: &[u32]) -> String {
+    const SHOWN: usize = 12;
+    let shown = values
+        .iter()
+        .take(SHOWN)
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if values.len() > SHOWN {
+        format!("{shown} and {} more", values.len() - SHOWN)
+    } else {
+        shown
+    }
+}
+
+/// A line with one span replaced, every other byte untouched.
+fn replace_span(text: &str, span: Range<usize>, replacement: &str) -> String {
+    let mut edited = text.to_owned();
+    edited.replace_range(span, replacement);
+    edited
+}
+
+/// The characters a field occupies, quotes and all.
+fn field_text(text: &str, span: Range<usize>) -> &str {
+    &text[span]
+}
+
+/// A field's value the way [`csv_fields`] produces it: quote characters dropped, then trimmed.
+fn field_value(text: &str, span: Range<usize>) -> String {
+    text[span]
+        .chars()
+        .filter(|character| *character != '"')
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+/// The refusal a bare-CR file earns, or `None` when its line endings are not the problem.
+///
+/// **Only consulted once parsing has already failed.** A file with a stray `\r` inside a line that
+/// parses anyway is left alone; this exists to replace a misleading message, not to add a rule.
+///
+/// The misleading message is the point. A `.til` whose records are separated by bare `\r` collapses
+/// to one physical line -- `str::lines` splits on `\n` -- so the reader sees `LBM=...` followed by a
+/// `;`-comment and reports "tile definition has no TILES dimensions". That names a key, and the
+/// key is present. Refusing the file is correct (see [`LineTerminator`]); refusing it for a reason
+/// that sends the reader to the wrong line is not.
+fn bare_cr_diagnosis(source: &[u8]) -> Option<TileError> {
+    let bare = source
+        .iter()
+        .enumerate()
+        .filter(|(index, byte)| **byte == b'\r' && source.get(index + 1) != Some(&b'\n'))
+        .count();
+    if bare == 0 {
+        return None;
+    }
+    Some(TileError::new(format!(
+        "this file separates {bare} record(s) with a bare CR and no LF; a .til is read a line at a \
+         time and a bare CR is not a line break, so the whole file reads as one line. All 26 \
+         shipped tilesets are CRLF, and nothing in this project has observed the engine reading any \
+         other layout, so this is refused rather than guessed at"
+    )))
+}
+
+/// Split text into lines, recording how each one ended.
+///
+/// **This is the one splitter, and both readers use it.** [`TileSetDefinition::parse`] iterates it
+/// for the values and [`TileSetDocument::parse`] for the bytes. Two splitters -- `str::lines` for
+/// one and a hand-rolled walk for the other -- is precisely how a file comes to parse and then fail
+/// to round-trip, or to round-trip bytes the value model never saw.
+///
+/// It splits on `\n` and treats one preceding `\r` as part of the terminator, which is exactly
+/// `str::lines`'s rule. That equivalence is deliberate and load-bearing: the values were read with
+/// `str::lines` before this existed, and any divergence would put the line model and the value
+/// model on different ideas of where a line ends. A bare `\r` is therefore **not** a line break --
+/// see [`LineTerminator`] for why accepting one would be minting, and [`bare_cr_diagnosis`] for how
+/// such a file is refused.
+fn split_terminated_lines(text: &str) -> Vec<(&str, LineTerminator)> {
+    let mut lines = Vec::new();
+    let mut rest = text;
+    // `\r` and `\n` are ASCII, so every index here is a character boundary.
+    while let Some(position) = rest.find('\n') {
+        let (line, remainder) = rest.split_at(position);
+        rest = &remainder['\n'.len_utf8()..];
+        match line.strip_suffix('\r') {
+            Some(stripped) => lines.push((stripped, LineTerminator::CrLf)),
+            None => lines.push((line, LineTerminator::Lf)),
+        }
+    }
+    if !rest.is_empty() {
+        lines.push((rest, LineTerminator::None));
+    }
+    lines
+}
+
+/// What one line is, and where its fields are.
+///
+/// Comments are cut at the **first** `;`, including one inside a quoted description -- because that
+/// is what [`TileSetDefinition::parse`] does, and a line model that disagreed with the value model
+/// about where a line ends would edit bytes the parser never read. No shipped description contains
+/// a `;`.
+fn classify_line(text: &str) -> LineRecord {
+    let body_end = text.find(';').unwrap_or(text.len());
+    let Some(equals) = text[..body_end].find('=') else {
+        return LineRecord::Carried;
+    };
+    let key = text[..equals].trim().to_ascii_uppercase();
+    let value = equals + 1..body_end;
+    let index_of = |fields: &[Range<usize>]| -> Option<u32> {
+        let span = fields.first()?;
+        field_value(text, span.clone()).parse().ok()
+    };
+    match key.as_str() {
+        "LBM" => LineRecord::Atlas {
+            value: trimmed_span(text, value),
+        },
+        "TILES" | "TILESIZE" => {
+            let Some(fields) = field_spans(text, value) else {
+                return LineRecord::Carried;
+            };
+            if fields.len() != 2 {
+                return LineRecord::Carried;
+            }
+            if key == "TILES" {
+                LineRecord::Grid { fields }
+            } else {
+                LineRecord::TileSize { fields }
+            }
+        }
+        "TERRAINTYPE" | "TILE" => {
+            let Some(fields) = field_spans(text, value) else {
+                return LineRecord::Carried;
+            };
+            let Some(index) = index_of(&fields) else {
+                return LineRecord::Carried;
+            };
+            if key == "TILE" {
+                LineRecord::Tile { index, fields }
+            } else {
+                LineRecord::TerrainType { index, fields }
+            }
+        }
+        _ => LineRecord::Carried,
+    }
+}
+
+/// The comma-separated fields of a value region, as trimmed spans.
+///
+/// Quote state is tracked so a comma inside a description is not a separator, matching
+/// [`csv_fields`]. An unterminated quote is not an error here: the value model has already rejected
+/// such a line for the two record kinds where it matters.
+fn field_spans(text: &str, value: Range<usize>) -> Option<Vec<Range<usize>>> {
+    let mut spans = Vec::new();
+    let mut start = value.start;
+    let mut quoted = false;
+    for (offset, character) in text[value.clone()].char_indices() {
+        let position = value.start + offset;
+        match character {
+            '"' => quoted = !quoted,
+            ',' if !quoted => {
+                spans.push(trimmed_span(text, start..position));
+                start = position + ','.len_utf8();
+                // The same bound [`csv_fields`] applies, for the same reason and in the same place:
+                // as the spans are produced. A line past it is carried rather than located, which
+                // makes it uneditable -- and the value model has already refused the file anyway.
+                if spans.len() >= MAX_RECORD_FIELDS {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    spans.push(trimmed_span(text, start..value.end));
+    Some(spans)
+}
+
+/// A span narrowed to the non-whitespace it contains.
+fn trimmed_span(text: &str, span: Range<usize>) -> Range<usize> {
+    let slice = &text[span.clone()];
+    let start = span.start + (slice.len() - slice.trim_start().len());
+    let end = span.end - (slice.len() - slice.trim_end().len());
+    start..end.max(start)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Direction, NeighbourConstraint, Neighbourhood, Passability, TileChoice, TileSelector,
-        TileSetDefinition,
+        Direction, MAX_ATLAS_CAPACITY, MAX_PALETTE_INDEX, MAX_RECORD_FIELDS,
+        NeighbourConstraint, Neighbourhood, Passability, TerrainColumn, TileChoice, TileError,
+        TileSelector, TileSetDefinition, TileSetDocument,
     };
     use std::collections::BTreeSet;
 
@@ -2067,4 +3413,664 @@ TILE= 2, 2, 2, 2, 2, 2, 2
         assert!(!is_shipped_tileset("mymod.til"));
         assert!(!is_shipped_tileset("tilesa01"));
     }
+
+    /// A tileset deliberately **unlike** the shipped corpus in every way the writer could get wrong.
+    ///
+    /// The 26 shipped files are uniformly CRLF, uniformly end with a newline, quote every
+    /// description, write every row with all eleven fields, and never repeat a key. A fixture that
+    /// copied those habits could not fail on any of them. So this one mixes CRLF and bare LF, ends
+    /// without a terminator, leaves one description unquoted, pads with tabs in one row and spaces
+    /// in another, carries a trailing comment on a record line, an unknown key, and a `TILE=` row
+    /// that stops early. Tile 2 is deliberately the **only** tile of terrain type 1, so the
+    /// last-tile-of-a-terrain refusal has something to fire on.
+    fn awkward_tileset() -> Vec<u8> {
+        let mut source = String::new();
+        source.push_str("LBM=awkward.lbm\r\n");
+        source.push_str("TILES= 4, 3 \r\n");
+        source.push_str("TILESIZE= 32, 32\r\n");
+        source.push_str("; a=flags\r\n");
+        source.push_str("\r\n");
+        source.push_str("TERRAINTYPE= 0, 137, \"intermediate\",\t0,\t0,\t9999,\t4, 1, 1, 2, 2\r\n");
+        source.push_str("TERRAINTYPE= 1, 112, bare water   ,      1,      0,      1,   4, 15, 1, 2, 2\r\n");
+        source.push_str("PALETTE= not a key this writer models\r\n");
+        source.push_str("TILE=      0, 0,  *,  *,  *,  *,  *,  *,  *,  *,   0 ; the empty slot\n");
+        source.push_str("TILE=      1, 0,  ~1,  *,  1,  *,  ~1,  *,  1,  *,   1\r\n");
+        source.push_str("TILE=      2, 1,  1,  1,  1,  1,  1,  1,  1,  1,   2\r\n");
+        source.push_str("TILE=      5, 0\r\n");
+        source.push_str("TILE=      6, 0,  *,  *,  *,  *,  *,  *,  *,  *,   6");
+        source.into_bytes()
+    }
+
+    /// Mixed terminators, a missing final newline and every oddity above survive a read and write.
+    ///
+    /// This is the weak half of the round-trip claim and is labelled as such on
+    /// [`TileSetDocument`]: the lines are carried, so what it tests is the line splitter and the
+    /// terminators, not the field model. It earns its place because it is exactly what the splitter
+    /// gets wrong -- a normalised `\n`, or a final line silently given a terminator it never had.
+    #[test]
+    fn an_unedited_document_re_encodes_byte_for_byte() {
+        let source = awkward_tileset();
+        let document = TileSetDocument::parse(&source).unwrap();
+
+        assert_eq!(document.to_bytes(), source);
+        assert_eq!(document.definition().atlas_member, "awkward.lbm");
+        assert_eq!(document.definition().tiles.len(), 5);
+    }
+
+    /// The audit is **not** an identity, and this is the test that proves it.
+    ///
+    /// Every field here parses to the same value the corpus's spelling would, and every one is
+    /// spelled differently: `1|1` collapses to a one-element set, `1|0` is out of ascending order,
+    /// and `007` has leading zeros. An audit that compared the parser's answer to itself, or that
+    /// rebuilt from the retained text rather than from the value, would report these as rebuilt.
+    #[test]
+    fn the_field_audit_names_columns_whose_spelling_the_value_model_loses() {
+        let source = b"LBM=a.lbm\r\nTILES= 4, 1\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 007, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TERRAINTYPE= 1, 112, \"b\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TILE= 0, 0, 1|1, 1|0, *, *, *, *, *, *, 0\r\n"
+            .to_vec();
+        let audit = TileSetDocument::parse(&source).unwrap().field_rebuild_audit();
+
+        assert_eq!(audit.values_checked - audit.values_rebuilt, 3);
+        assert_eq!(audit.mismatches.len(), 3);
+        let joined = audit.mismatches.join(" | ");
+        assert!(joined.contains("file `007`, rebuilt `7`"), "{joined}");
+        assert!(joined.contains("file `1|1`, rebuilt `1`"), "{joined}");
+        assert!(joined.contains("file `1|0`, rebuilt `0|1`"), "{joined}");
+    }
+
+    /// An edit replaces one field's characters and leaves every other byte of the file alone.
+    ///
+    /// Asserted line by line rather than on the one line that changed: a writer that re-rendered
+    /// the row it touched would pass a check that only looked at the value, while quietly
+    /// normalising the tabs of a row nobody named.
+    #[test]
+    fn an_edit_changes_one_field_and_leaves_every_other_line_alone() {
+        let source = awkward_tileset();
+        let mut document = TileSetDocument::parse(&source).unwrap();
+
+        document
+            .set_tile_neighbour(1, Direction::East, &NeighbourConstraint::Any)
+            .unwrap();
+        let written = document.to_bytes();
+
+        let before = String::from_utf8(source).unwrap();
+        let after = String::from_utf8(written).unwrap();
+        let changed: Vec<(&str, &str)> = before
+            .split_inclusive('\n')
+            .zip(after.split_inclusive('\n'))
+            .filter(|(before, after)| before != after)
+            .collect();
+        assert_eq!(changed.len(), 1, "{changed:?}");
+        assert_eq!(
+            changed[0].0,
+            "TILE=      1, 0,  ~1,  *,  1,  *,  ~1,  *,  1,  *,   1\r\n"
+        );
+        assert_eq!(
+            changed[0].1,
+            "TILE=      1, 0,  ~1,  *,  *,  *,  ~1,  *,  1,  *,   1\r\n"
+        );
+        assert_eq!(
+            *document.definition().tiles[&1].neighbour(Direction::East),
+            NeighbourConstraint::Any
+        );
+    }
+
+    /// Setting a field to the value it already holds is a no-op at the byte level.
+    ///
+    /// The calibration that has to run before any diff means anything: if the do-nothing case
+    /// already rewrites tabs or re-quotes a description, every later edit reads as noise. Both
+    /// descriptions here are covered, because the quoted and the bare one take different paths.
+    #[test]
+    fn a_no_op_edit_reproduces_the_file_exactly() {
+        let source = awkward_tileset();
+        let mut document = TileSetDocument::parse(&source).unwrap();
+
+        document.set_atlas_member("awkward.lbm").unwrap();
+        document.set_grid(4, 3).unwrap();
+        document.set_tile_terrain_type(1, 0).unwrap();
+        document
+            .set_tile_neighbour(1, Direction::North, &NeighbourConstraint::NoneOf([1].into()))
+            .unwrap();
+        document
+            .set_terrain_field(0, TerrainColumn::Description, "intermediate")
+            .unwrap();
+        document
+            .set_terrain_field(1, TerrainColumn::Description, "bare water")
+            .unwrap();
+        document
+            .set_terrain_field(1, TerrainColumn::MovementCost, "1")
+            .unwrap();
+
+        assert_eq!(document.to_bytes(), source);
+    }
+
+    /// A description that was written without quotes stays without them, and one that had them
+    /// keeps them. The file's quoting is the file's.
+    #[test]
+    fn a_descriptions_quoting_is_carried_rather_than_imposed() {
+        let mut document = TileSetDocument::parse(&awkward_tileset()).unwrap();
+
+        document
+            .set_terrain_field(0, TerrainColumn::Description, "quoted still")
+            .unwrap();
+        document
+            .set_terrain_field(1, TerrainColumn::Description, "bare still")
+            .unwrap();
+        let written = String::from_utf8(document.to_bytes()).unwrap();
+
+        assert!(written.contains("\"quoted still\","), "{written}");
+        assert!(written.contains(" bare still   ,"), "{written}");
+        assert_eq!(document.definition().terrain_types[&1].description, "bare still");
+    }
+
+    /// Where a key is written twice the **last** one decides, because that is what the value
+    /// parser does. Editing the first would change a line the parser ignores and report success.
+    #[test]
+    fn editing_a_repeated_key_hits_the_line_the_parser_honours() {
+        let source = b"LBM=first.lbm\r\nLBM=second.lbm\r\nTILES= 2, 1\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 137, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TILE= 0, 0, *, *, *, *, *, *, *, *, 0\r\n"
+            .to_vec();
+        let mut document = TileSetDocument::parse(&source).unwrap();
+        assert_eq!(document.definition().atlas_member, "second.lbm");
+
+        document.set_atlas_member("third.lbm").unwrap();
+        let written = String::from_utf8(document.to_bytes()).unwrap();
+
+        assert!(written.contains("LBM=first.lbm"), "{written}");
+        assert!(written.contains("LBM=third.lbm"), "{written}");
+        assert_eq!(document.definition().atlas_member, "third.lbm");
+    }
+
+    /// A repeated `TILES=` is not a mismatch, even though the two occurrences carry different
+    /// numbers.
+    ///
+    /// The audit used to rebuild **every** `TILES=` line from `self.definition.columns`/`rows`,
+    /// which are the *last* assignment's values (same last-write-wins rule as `LBM=`, see
+    /// [`editing_a_repeated_key_hits_the_line_the_parser_honours`]). Comparing an earlier
+    /// occurrence's own text against a later line's values reported a mismatch on a line the value
+    /// model never claimed to represent, even though `to_bytes` reproduces both lines unedited and
+    /// byte-identically. Only the effective (last) occurrence is checked; the other is carried
+    /// text, the same treatment a repeated `LBM=` line already gets.
+    #[test]
+    fn a_repeated_tiles_line_is_not_a_field_audit_mismatch() {
+        let source = b"LBM=a.lbm\r\nTILES=2,1\r\nTILES=3,1\r\nTILESIZE=32,32\r\n".to_vec();
+        let document = TileSetDocument::parse(&source).unwrap();
+        assert_eq!((document.definition().columns, document.definition().rows), (3, 1));
+
+        let audit = document.field_rebuild_audit();
+
+        assert!(audit.mismatches.is_empty(), "{:?}", audit.mismatches);
+        // The effective TILES line's two fields (columns, rows) and the file's one TILESIZE
+        // line's two fields (width, height) are checked; the superseded TILES line's two fields
+        // are carried text instead of being rebuilt and compared, alongside the one `LBM=` field.
+        assert_eq!(audit.values_checked, 4);
+        assert_eq!(audit.values_rebuilt, 4);
+        assert_eq!(audit.text_fields_carried, 3);
+        assert_eq!(document.to_bytes(), source);
+    }
+
+    /// The same false mismatch, for a repeated `TILESIZE=` line.
+    #[test]
+    fn a_repeated_tilesize_line_is_not_a_field_audit_mismatch() {
+        let source = b"LBM=a.lbm\r\nTILES=2,1\r\nTILESIZE=32,32\r\nTILESIZE=8,8\r\n".to_vec();
+        let document = TileSetDocument::parse(&source).unwrap();
+        assert_eq!(
+            (document.definition().tile_width, document.definition().tile_height),
+            (8, 8)
+        );
+
+        let audit = document.field_rebuild_audit();
+
+        assert!(audit.mismatches.is_empty(), "{:?}", audit.mismatches);
+        // The file's one TILES line's two fields and the effective TILESIZE line's two fields
+        // are checked; the superseded TILESIZE line's two fields are carried text, alongside the
+        // one `LBM=` field.
+        assert_eq!(audit.values_checked, 4);
+        assert_eq!(audit.values_rebuilt, 4);
+        assert_eq!(audit.text_fields_carried, 3);
+        assert_eq!(document.to_bytes(), source);
+    }
+
+    /// Every refusal, each asserted on its **reason** rather than on `is_err`.
+    ///
+    /// A bare `is_err` would pass if every one of these failed for the same wrong cause -- a
+    /// mis-parsed fixture, say -- which is how a refusal suite ends up proving only that the
+    /// function returns errors.
+    #[test]
+    fn refusals_name_what_they_refuse_and_why() {
+        let source = awkward_tileset();
+        let mut document = TileSetDocument::parse(&source).unwrap();
+
+        let refusal = |result: Result<(), TileError>| result.unwrap_err().to_string();
+
+        // A record that is not in the file is never minted.
+        let message = refusal(document.set_tile_terrain_type(3, 0));
+        assert!(message.contains("no TILE= row for slot 3"), "{message}");
+        assert!(message.contains("does not mint one"), "{message}");
+        let message = refusal(document.set_terrain_field(9, TerrainColumn::PaletteColor, "1"));
+        assert!(message.contains("no TERRAINTYPE= row for 9"), "{message}");
+
+        // A tile pointing at a terrain type the file never declares can never be selected.
+        let message = refusal(document.set_tile_terrain_type(0, 7));
+        assert!(message.contains("no TERRAINTYPE= row for 7"), "{message}");
+
+        // Tile 2 is the only tile of terrain 1; moving it would make every cell holding it
+        // unreadable.
+        let message = refusal(document.set_tile_terrain_type(2, 0));
+        assert!(message.contains("only tile of terrain type 1"), "{message}");
+
+        // Tile 5's row stops after two fields, so it can never be painted; writing one column
+        // would make it look complete.
+        let message = refusal(document.set_tile_neighbour(5, Direction::North, &NeighbourConstraint::Any));
+        assert!(message.contains("did not declare all eight"), "{message}");
+        assert!(message.contains("column n is missing"), "{message}");
+
+        // A constraint may only name terrain types the file declares.
+        let message = refusal(document.set_tile_neighbour(
+            1,
+            Direction::North,
+            &NeighbourConstraint::OneOf([0, 4, 9].into()),
+        ));
+        assert!(message.contains("terrain type(s) 4, 9"), "{message}");
+
+        // The four columns the shipped headers disagree about.
+        for (column, expected) in [
+            ('d', "call column d food"),
+            ('e', "call column e ore"),
+            ('g', "call this column unused"),
+            ('h', "call this column unused"),
+        ] {
+            let message = refusal(document.set_terrain_field(0, TerrainColumn::Unnamed(column), "3"));
+            assert!(message.contains(expected), "{column}: {message}");
+            assert!(message.contains("minting a field"), "{column}: {message}");
+        }
+
+        // Columns whose numeric vocabulary is bounded by what the corpus declares, asserted from
+        // both sides: 2 is what tilesb01.til's header declares and is accepted, 3 is what neither
+        // shipped header declares. A bound tested only from the refusing side cannot fail on being
+        // in the wrong place.
+        {
+            let mut accepted = TileSetDocument::parse(&source).unwrap();
+            accepted
+                .set_terrain_field(0, TerrainColumn::Passability, "2")
+                .unwrap();
+            assert_eq!(
+                accepted.definition().terrain_types[&0].passability,
+                Some(Passability::Impassable)
+            );
+        }
+        let message = refusal(document.set_terrain_field(0, TerrainColumn::Passability, "3"));
+        assert!(message.contains("outside the vocabulary"), "{message}");
+        let message = refusal(document.set_terrain_field(0, TerrainColumn::PaletteColor, "256"));
+        assert!(message.contains("past 255"), "{message}");
+        let message = refusal(document.set_terrain_field(0, TerrainColumn::MinElevation, "10000"));
+        assert!(message.contains("10000..9999"), "{message}");
+        assert!(message.contains("inverted"), "{message}");
+
+        // A description that would change how the line parses.
+        let message = refusal(document.set_terrain_field(0, TerrainColumn::Description, "a,b"));
+        assert!(message.contains("would change how the TERRAINTYPE= line parses"), "{message}");
+        let message = refusal(document.set_terrain_field(0, TerrainColumn::Description, "  "));
+        assert!(message.contains("leave the terrain type unnamed"), "{message}");
+
+        // The atlas name.
+        let message = refusal(document.set_atlas_member("custom.png"));
+        assert!(message.contains("is not a .lbm"), "{message}");
+        let message = refusal(document.set_atlas_member("two words.lbm"));
+        assert!(message.contains("would change how the LBM= line parses"), "{message}");
+        let message = refusal(document.set_atlas_member(""));
+        assert!(message.contains("no image"), "{message}");
+
+        // Re-columning repaints every declared tile with a different picture.
+        let message = refusal(document.set_grid(2, 6));
+        assert!(message.contains("moves every one of the 5 declared tiles"), "{message}");
+        assert!(message.contains("Changing rows alone is safe"), "{message}");
+
+        // Shrinking past a declared tile names the tiles that would be orphaned.
+        let message = refusal(document.set_grid(4, 1));
+        assert!(message.contains("leaves 2 declared tile(s) outside it: 5, 6"), "{message}");
+
+        // The two columns whose meaning nothing sources at all.
+        let message = refusal(document.set_tile_size(64, 64));
+        assert!(message.contains("all 26 shipped tilesets declare 32x32"), "{message}");
+        let message = refusal(document.set_tile_pattern_index(1, 4));
+        assert!(message.contains("the column's rule is not known"), "{message}");
+
+        // Nothing above changed a byte.
+        assert_eq!(document.to_bytes(), source);
+    }
+
+    /// A row shorter than the column an edit names is refused rather than extended.
+    ///
+    /// Extending it would mean inventing values for every column in between, which is minting by
+    /// another route. No shipped row is short, so this is the modded-file case.
+    #[test]
+    fn a_column_the_row_stops_before_is_refused_rather_than_appended() {
+        let source = b"LBM=a.lbm\r\nTILES= 2, 1\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 137, \"a\"\r\n\
+TILE= 0, 0, *, *, *, *, *, *, *, *, 0\r\n"
+            .to_vec();
+        let mut document = TileSetDocument::parse(&source).unwrap();
+
+        let message = document
+            .set_terrain_field(0, TerrainColumn::MovementCost, "3")
+            .unwrap_err()
+            .to_string();
+
+        assert!(message.contains("stops after 3 field(s)"), "{message}");
+        assert!(message.contains("will not extend a row"), "{message}");
+        assert_eq!(document.to_bytes(), source);
+    }
+
+    /// Both sides of the two guards, because a bound tested from one side only cannot fail on
+    /// being in the wrong place.
+    #[test]
+    fn the_capacity_and_palette_guards_hold_at_their_edges() {
+        let source = b"LBM=a.lbm\r\nTILES= 16, 64\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 137, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TILE= 0, 0, *, *, *, *, *, *, *, *, 0\r\n"
+            .to_vec();
+
+        // 16 x 64 is exactly MAX_ATLAS_CAPACITY and is accepted; one row more is not.
+        let mut document = TileSetDocument::parse(&source).unwrap();
+        assert_eq!(document.definition().atlas_capacity(), MAX_ATLAS_CAPACITY);
+        document.set_grid(16, 64).unwrap();
+        let message = document.set_grid(16, 65).unwrap_err().to_string();
+        assert!(message.contains("1040 slots"), "{message}");
+        assert!(message.contains("past the 1024"), "{message}");
+
+        // The palette index at its edge and one past it.
+        document
+            .set_terrain_field(0, TerrainColumn::PaletteColor, &MAX_PALETTE_INDEX.to_string())
+            .unwrap();
+        let message = document
+            .set_terrain_field(0, TerrainColumn::PaletteColor, &(MAX_PALETTE_INDEX + 1).to_string())
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("past 255"), "{message}");
+    }
+
+    /// A column name on a command line resolves to the column it names, in both directions.
+    #[test]
+    fn column_names_resolve_to_the_columns_they_name() {
+        assert_eq!(
+            TerrainColumn::parse("movement-cost"),
+            Some(TerrainColumn::MovementCost)
+        );
+        assert_eq!(TerrainColumn::parse("F"), Some(TerrainColumn::MovementCost));
+        assert_eq!(TerrainColumn::parse("d"), Some(TerrainColumn::Unnamed('d')));
+        assert_eq!(TerrainColumn::parse("food"), None);
+        for column in TerrainColumn::ALL {
+            assert_eq!(TerrainColumn::parse(&column.name()), Some(column));
+        }
+        for direction in Direction::ALL {
+            assert_eq!(
+                Direction::from_column_name(direction.column_name()),
+                Some(direction)
+            );
+            assert_eq!(
+                Direction::from_column_name(&direction.column_name().to_uppercase()),
+                Some(direction)
+            );
+        }
+        assert_eq!(Direction::from_column_name("north"), None);
+    }
+
+    /// Every constraint form a shipped column uses survives a parse and a re-spelling.
+    #[test]
+    fn a_neighbour_column_round_trips_through_its_own_syntax() {
+        for column in ["*", "6", "~6", "6|9", "~6|9", "0|1|2"] {
+            let constraint = NeighbourConstraint::parse_column(column).unwrap();
+            assert_eq!(constraint.to_column(), column);
+        }
+        assert!(NeighbourConstraint::parse_column("").is_err());
+        assert!(NeighbourConstraint::parse_column("~").is_err());
+        assert!(NeighbourConstraint::parse_column("six").is_err());
+    }
+
+    /// Passability survives the trip through the enum, including a value neither header names.
+    #[test]
+    fn passability_keeps_a_value_no_shipped_header_declares() {
+        for value in [0, 1, 2, 7, 4242] {
+            assert_eq!(Passability::from_value(value).value(), value);
+        }
+    }
+
+
+    /// A bare-CR file is refused, and refused with a message that names the line endings.
+    ///
+    /// Two separate claims. **Refusing is correct** and is not a gap: no shipped `.til` uses bare
+    /// CR, and nothing says the engine would read one, so accepting it would invent a capability.
+    /// But the refusal it used to earn was "tile definition has no TILES dimensions" on a file
+    /// whose second record *is* `TILES=`, which sends the reader to the wrong line. The control is
+    /// the same content with CRLF, which must still parse.
+    #[test]
+    fn a_bare_cr_file_is_refused_for_its_line_endings_and_not_for_a_missing_key() {
+        let records = [
+            "LBM=a.lbm",
+            "TILES= 2, 1",
+            "TILESIZE= 32, 32",
+            "TERRAINTYPE= 0, 137, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2",
+            "TILE= 0, 0, *, *, *, *, *, *, *, *, 0",
+        ];
+
+        let control = TileSetDefinition::parse(format!("{}\r\n", records.join("\r\n")).as_bytes());
+        assert!(control.is_ok(), "{control:?}");
+
+        let message = TileSetDefinition::parse(format!("{}\r", records.join("\r")).as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("bare CR"), "{message}");
+        assert!(message.contains("5 record(s)"), "{message}");
+        assert!(!message.contains("no TILES dimensions"), "{message}");
+    }
+
+    /// A row with one unreadable neighbour column has its **other seven** audited.
+    ///
+    /// The audit used to skip all eight whenever `constraints_declared` was false, so a file could
+    /// carry a malformed column and be reported with zero failures and eight fewer values checked.
+    /// A denominator that silently shrinks on bad input undercuts `values-rebuilt`, which is the
+    /// one number in the sweep that is supposed to be able to fail.
+    #[test]
+    fn a_row_with_one_unreadable_column_still_audits_the_other_seven() {
+        let good = b"LBM=a.lbm\r\nTILES= 2, 1\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 137, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TILE= 0, 0, *, *, *, *, *, *, *, *, 0\r\n"
+            .to_vec();
+        let bad = b"LBM=a.lbm\r\nTILES= 2, 1\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 137, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TILE= 0, 0, *, *, bogus, *, *, *, *, *, 0\r\n"
+            .to_vec();
+
+        let good = TileSetDocument::parse(&good).unwrap().field_rebuild_audit();
+        let bad = TileSetDocument::parse(&bad).unwrap().field_rebuild_audit();
+
+        // The malformed row is audited just as widely as the good one: same denominator.
+        assert_eq!(bad.values_checked, good.values_checked);
+        assert_eq!(good.values_checked - good.values_rebuilt, 0);
+        // And the one bad column is the one finding, named by its column.
+        assert_eq!(bad.mismatches.len(), 1, "{:?}", bad.mismatches);
+        assert!(
+            bad.mismatches[0].contains("column e: file `bogus`, rebuilt `*`"),
+            "{:?}",
+            bad.mismatches
+        );
+    }
+
+    /// A row of commas is refused rather than allocated.
+    ///
+    /// Both sides of [`MAX_RECORD_FIELDS`], because a bound tested only from the refusing side
+    /// cannot fail on being in the wrong place. The hostile case is the reason: the field count
+    /// comes from the file, and without a bound a row of ten million commas is ten million
+    /// allocations before anything notices.
+    #[test]
+    fn a_row_carrying_more_fields_than_any_record_has_is_refused() {
+        let header = "LBM=a.lbm\r\nTILES= 2, 1\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 137, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n";
+        let row = |fields: usize| {
+            let mut columns = vec!["0".to_owned(), "0".to_owned()];
+            columns.resize(fields, "*".to_owned());
+            format!("{header}TILE= {}\r\n", columns.join(", "))
+        };
+
+        // At the bound, and one past it.
+        let accepted = TileSetDefinition::parse(row(MAX_RECORD_FIELDS).as_bytes());
+        assert!(accepted.is_ok(), "{accepted:?}");
+        let message = TileSetDefinition::parse(row(MAX_RECORD_FIELDS + 1).as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("more than 64 fields"), "{message}");
+
+        // The hostile input the bound exists for returns rather than allocating per comma.
+        let message = TileSetDefinition::parse(row(200_000).as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("more than 64 fields"), "{message}");
+    }
+
+    /// Replacing the rightmost field first is load-bearing, not tidiness.
+    ///
+    /// `set_grid` rewrites two spans on one line. Doing the **left** one first shortens the line
+    /// under the right one's span, which then points past the end of the string -- a panic, not a
+    /// wrong answer. Two inputs reach it: a file with no `TILE=` rows at all, and a file whose
+    /// grid is spelled wider than its value needs (`016`). Both are here because the second is the
+    /// one a hand-written corpus actually contains.
+    #[test]
+    fn setting_the_grid_replaces_the_rightmost_field_first() {
+        let tileless = b"LBM=a.lbm\r\nTILES= 16, 4\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 137, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n"
+            .to_vec();
+        let mut document = TileSetDocument::parse(&tileless).unwrap();
+        document.set_grid(4, 5).unwrap();
+        assert_eq!(
+            String::from_utf8(document.to_bytes()).unwrap().lines().nth(1),
+            Some("TILES= 4, 5")
+        );
+        assert_eq!(document.definition().columns, 4);
+        assert_eq!(document.definition().rows, 5);
+
+        let padded = b"LBM=a.lbm\r\nTILES= 016, 8\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 137, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TILE= 0, 0, *, *, *, *, *, *, *, *, 0\r\n"
+            .to_vec();
+        let mut document = TileSetDocument::parse(&padded).unwrap();
+        assert_eq!(document.definition().columns, 16);
+        document.set_grid(16, 9).unwrap();
+        assert_eq!(
+            String::from_utf8(document.to_bytes()).unwrap().lines().nth(1),
+            Some("TILES= 16, 9")
+        );
+        assert_eq!(document.definition().rows, 9);
+    }
+
+    /// The edit is verified **through the parser**, and a change that does not read back is
+    /// refused with the original line restored.
+    ///
+    /// This is the headline property, and until now nothing failed when the check was removed.
+    /// `"  padded  "` is the input that reaches it: it passes every guard, is written into the
+    /// line, and comes back from the reader as `padded` -- a different value from the one asked
+    /// for. Without the check the caller is told the edit succeeded and the file says something
+    /// else.
+    ///
+    /// The second half is the restore. After the refusal the bytes must be the original ones
+    /// **and the line's field spans must have been re-derived from them** -- a stale span set left
+    /// over from the rejected text would splice the next edit at the wrong offset, which the
+    /// follow-up edit here would show as a mangled line rather than an error.
+    #[test]
+    fn an_edit_that_does_not_read_back_is_refused_and_the_line_is_restored() {
+        let source = awkward_tileset();
+        let mut document = TileSetDocument::parse(&source).unwrap();
+
+        let message = document
+            .set_terrain_field(0, TerrainColumn::Description, "  padded  ")
+            .unwrap_err()
+            .to_string();
+
+        assert!(message.contains("did not read back"), "{message}");
+        assert!(message.contains("trimmed"), "{message}");
+        assert_eq!(document.to_bytes(), source);
+        assert_eq!(document.definition().terrain_types[&0].description, "intermediate");
+
+        // The spans survived the restore: this lands exactly where the refused one would have.
+        document
+            .set_terrain_field(0, TerrainColumn::Description, "renamed")
+            .unwrap();
+        let written = String::from_utf8(document.to_bytes()).unwrap();
+        assert!(
+            written.contains("TERRAINTYPE= 0, 137, \"renamed\",\t0,\t0,\t9999,\t4, 1, 1, 2, 2"),
+            "{written}"
+        );
+    }
+
+    /// The refusals the first suite left one-sided, each on its own.
+    ///
+    /// Every one of these was removable with the suite still green: the maximum-elevation side of
+    /// the inversion check, the `;` and `"` arms of the description guard, the unreadable-but-
+    /// full-width row, and `TILESIZE=` at the value it already holds. A refusal that is never
+    /// removed is a refusal that is never tested.
+    #[test]
+    fn the_one_sided_refusals_hold_from_their_other_side_too() {
+        let source = awkward_tileset();
+        let mut document = TileSetDocument::parse(&source).unwrap();
+
+        // Inversion, driven from the maximum rather than the minimum. Terrain 1's range is 0..1,
+        // so the minimum is first raised to meet the maximum -- on its own document, since that
+        // part is a real edit and the pristine one is asserted unchanged at the end.
+        let mut elevations = TileSetDocument::parse(&source).unwrap();
+        elevations
+            .set_terrain_field(1, TerrainColumn::MinElevation, "1")
+            .unwrap();
+        let message = elevations
+            .set_terrain_field(1, TerrainColumn::MaxElevation, "0")
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("1..0"), "{message}");
+        assert!(message.contains("inverted"), "{message}");
+
+        // The description guard's other two characters, each alone.
+        for (description, character) in [("a;b", ';'), ("a\"b", '"')] {
+            let message = document
+                .set_terrain_field(0, TerrainColumn::Description, description)
+                .unwrap_err()
+                .to_string();
+            assert!(message.contains(&format!("{character:?}")), "{message}");
+            assert!(
+                message.contains("would change how the TERRAINTYPE= line parses"),
+                "{message}"
+            );
+        }
+
+        // A row that is full width and still unreadable: eleven fields, one of them nonsense. The
+        // truncated-row case is covered elsewhere and reaches the same refusal by a different
+        // route, which is why both are needed.
+        let unreadable = b"LBM=a.lbm\r\nTILES= 2, 1\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 137, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TILE= 0, 0, *, *, *, bogus, *, *, *, *, 0\r\n"
+            .to_vec();
+        let mut full_width = TileSetDocument::parse(&unreadable).unwrap();
+        assert_eq!(full_width.definition().tiles[&0].neighbours.len(), 8);
+        let message = full_width
+            .set_tile_neighbour(0, Direction::North, &NeighbourConstraint::Any)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("did not declare all eight"), "{message}");
+        assert!(message.contains("column se is missing or unreadable"), "{message}");
+        assert_eq!(full_width.to_bytes(), unreadable);
+
+        // TILESIZE= is refused at the value it already holds, not merely at a new one: the reason
+        // is that nothing sources the field, and that does not depend on what is being written.
+        let message = document.set_tile_size(32, 32).unwrap_err().to_string();
+        assert!(message.contains("refusing to declare a 32x32 tile"), "{message}");
+        assert!(message.contains("all 26 shipped tilesets declare 32x32"), "{message}");
+
+        // An atlas name with nothing before its extension.
+        let message = document.set_atlas_member(".lbm").unwrap_err().to_string();
+        assert!(message.contains("no name before its extension"), "{message}");
+
+        assert_eq!(document.to_bytes(), source);
+    }
+
 }

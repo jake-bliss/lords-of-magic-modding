@@ -138,6 +138,49 @@ makes maps from 32 to 1024 in steps of 32, then edit here.
 `TERRAIN` is a number `0..10` or a `gs\maplib.gs` name with or without its `tt_` prefix, so `1`,
 `tt_water` and `water` are the same thing.
 
+## Writing tilesets
+
+```sh
+target/release/lom-asset-viewer --til-roundtrip "$PIC_MPQ" --listfile LISTFILE
+target/release/lom-asset-viewer --describe-til          TILESET.til
+target/release/lom-asset-viewer --til-set-atlas         IN.til ATLAS.lbm             OUT.til
+target/release/lom-asset-viewer --til-set-grid          IN.til COLUMNS ROWS          OUT.til
+target/release/lom-asset-viewer --til-set-tile-terrain  IN.til TILE TERRAIN          OUT.til
+target/release/lom-asset-viewer --til-set-tile-neighbour IN.til TILE n|ne|e|se|s|sw|w|nw CONSTRAINT OUT.til
+target/release/lom-asset-viewer --til-set-terrain       IN.til TERRAIN COLUMN VALUE  OUT.til
+```
+
+A `.til` is **text**, so the writer keeps every line's bytes and replaces only the span of a field it
+is asked to change. That makes the byte-identical round trip — 26 of 26, on all four installed
+profiles — near-tautological, and it is reported as such. The measurement that can fail is
+`values-rebuilt`: 46,989 integers and neighbour columns regenerated from the parsed value and
+compared with the file's own characters, 46,989 matching. The measurement that tests the *edit* path
+is `no-op-edits`: 2,724 edits that set a field to the value it already holds — every span-replacing
+edit the writer offers, including all 402 terrain descriptions, every named numeric `TerrainColumn`
+(palette color, passability, min/max elevation, movement cost) on all 402 terrain types, and all
+eight neighbour columns of each file's first complete tile — all 2,724 byte-identical. The numeric
+columns are corpus-backed rather than merely asserted: `check_terrain_number` refuses any
+passability above 2, and the sweep confirms the shipped corpus never carries one — all 402
+`TERRAINTYPE=` rows read 0, 1, or 2.
+
+Those figures are asserted rather than retyped: `every_shipped_tile_set_round_trips` and
+`the_shipped_tile_sets_declare_the_documented_shape` are `#[ignore]`d corpus tests over `pic.mpq`'s
+26 members. They live in the binary, so reach them with `cargo test --bins -- --ignored` (a
+`--lib` run does not), with `LOM_GAME_DIR` and `LOM_LISTFILE` both set. See
+[docs/til-format.md](../../docs/til-format.md#the-corpus-gated-tests).
+
+Nothing is minted. An unknown tile or terrain index is refused **by name**, as are the four columns
+the shipped headers disagree about, `TILESIZE=`, the pattern column, a `columns` change that would
+repaint every declared tile, and a grid that would orphan one. `--til-set-terrain`'s `COLUMN` is one
+of `color`, `description`, `passability`, `min-elevation`, `max-elevation`, `movement-cost`.
+**Any `--til-set-*` command is also refused if it would not change a byte** — asking for the value a
+file already holds writes nothing and exits non-zero, so a script checking only the exit status can
+tell an applied edit apart from a no-op. This is a CLI-only policy: the library setters underneath
+still accept and byte-identically round-trip a no-op, because that is the calibration the corpus
+sweep's `no-op-edits` count depends on. See
+[tileset definitions](../../docs/til-format.md), which also states what stays undetermined —
+including that **no written `.til` has ever been in front of the engine.**
+
 `SPRITE_TYPE` is likewise **a name or a raw id** — `castle1` works, and a near miss suggests
 alternatives. The names come from the engine's own `terrainsprites` dict, dumped on 2026-09-17, and
 are **profile-specific**: ids are assigned in script execution order, so a different script set
