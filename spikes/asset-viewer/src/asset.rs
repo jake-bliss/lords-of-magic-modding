@@ -4,7 +4,9 @@ use std::fmt;
 use crate::imp::{ImpHeaderStats, ImpSprite};
 use crate::map::MapAsset;
 use crate::pbm::PbmImage;
+use crate::smacker::SmackerFile;
 use crate::tile::TileSetDefinition;
+use crate::wave::{WaveErrorKind, WaveFile};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AssetKind {
@@ -59,6 +61,12 @@ impl fmt::Display for AssetKind {
 pub struct AssetInfo {
     pub kind: AssetKind,
     pub details: String,
+    /// Set when the member was **classified** but this tool has no decoder for its contents.
+    ///
+    /// A typed field rather than a substring of `details`, because `scan_archive` records only the
+    /// kind and throws the details away -- which is how a sweep of 3,098 undecoded WAVEs would
+    /// have reported exactly what a sweep of 3,098 decoded ones does.
+    pub undecoded: Option<String>,
 }
 
 impl AssetInfo {
@@ -66,6 +74,15 @@ impl AssetInfo {
         Self {
             kind,
             details: details.into(),
+            undecoded: None,
+        }
+    }
+
+    fn undecoded(kind: AssetKind, details: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            kind,
+            details: details.into(),
+            undecoded: Some(reason.into()),
         }
     }
 }
@@ -91,10 +108,7 @@ pub fn probe(name: &str, bytes: &[u8]) -> Result<AssetInfo, String> {
         return probe_bitmap(bytes);
     }
     if bytes.starts_with(b"SMK2") || bytes.starts_with(b"SMK4") {
-        return Ok(AssetInfo::new(
-            AssetKind::SmackerVideo,
-            format!("version={}", printable_tag(&bytes[0..4])),
-        ));
+        return probe_smacker(bytes);
     }
     if bytes.starts_with(b"MPQ\x1a") {
         return Ok(AssetInfo::new(AssetKind::MpqArchive, ""));
@@ -394,63 +408,87 @@ fn probe_bitmap(bytes: &[u8]) -> Result<AssetInfo, String> {
     ))
 }
 
+/// Classify a WAVE by walking its **container**, and decode its samples when there is a decoder.
+///
+/// Three outcomes, and the middle one is the whole point:
+///
+/// * a **container** error, or malformed supported PCM -- not classified, the probe returns an
+///   error and `--scan` reports a failure. A PCM member declaring zero channels belongs here.
+/// * a legal WAVE in a format this tool has **no decoder for** -- classified, with `undecoded`
+///   set. Reporting it as a probe failure would be the tool confusing its own reach with the
+///   file's validity.
+/// * decoded -- classified, with frame count and duration.
+///
+/// Only [`WaveErrorKind::Unsupported`] is downgraded. Downgrading every post-header error made the
+/// probe-failure count insensitive: supported PCM could stop decoding and the archive would still
+/// scan clean.
+///
+/// The old probe read the `fmt ` chunk and stopped. The repository-wide "9,804 members, 0 probe
+/// failures" figure was measured against it; it has since been **re-measured against this probe**
+/// and is reported alongside an `undecoded` count -- see `docs/native-asset-stage.md`.
 fn probe_wave(bytes: &[u8]) -> Result<AssetInfo, String> {
-    let mut cursor = 12_usize;
-    let mut format = None;
-    let mut data_size = None;
-    while cursor
-        .checked_add(8)
-        .is_some_and(|chunk_header_end| chunk_header_end <= bytes.len())
-    {
-        let chunk_id = &bytes[cursor..cursor + 4];
-        let chunk_size = read_u32_le(bytes, cursor + 4)? as usize;
-        let chunk_start = cursor + 8;
-        let chunk_end = chunk_start
-            .checked_add(chunk_size)
-            .ok_or_else(|| "WAVE chunk size overflow".to_owned())?;
-        if chunk_end > bytes.len() {
-            return Err(format!("truncated WAVE {} chunk", printable_tag(chunk_id)));
-        }
-        if chunk_id == b"fmt " {
-            if chunk_size < 16 {
-                return Err("WAVE fmt chunk is too short".to_owned());
-            }
-            format = Some(WaveFormat {
-                encoding: read_u16_le(bytes, chunk_start)?,
-                channels: read_u16_le(bytes, chunk_start + 2)?,
-                sample_rate: read_u32_le(bytes, chunk_start + 4)?,
-                byte_rate: read_u32_le(bytes, chunk_start + 8)?,
-                bits_per_sample: read_u16_le(bytes, chunk_start + 14)?,
-            });
-        } else if chunk_id == b"data" {
-            data_size = Some(chunk_size);
-        }
-        cursor = chunk_end
-            .checked_add(chunk_size & 1)
-            .ok_or_else(|| "WAVE chunk padding overflow".to_owned())?;
+    let header = WaveFile::parse_header(bytes).map_err(|error| error.to_string())?;
+    let common = format!(
+        "encoding={};channels={};sample-rate={};bits-per-sample={};data-bytes={};layout={}",
+        header.format.encoding,
+        header.format.channels,
+        header.format.sample_rate,
+        header.format.bits_per_sample,
+        header.data_bytes,
+        header.layout,
+    );
+    match WaveFile::parse(bytes) {
+        Ok(file) => Ok(AssetInfo::new(
+            AssetKind::WaveAudio,
+            format!(
+                "{common};frames={};duration-ms={}",
+                file.samples.frames(),
+                file.samples.duration_ms()
+            ),
+        )),
+        Err(error) if error.kind() == WaveErrorKind::Unsupported => Ok(AssetInfo::undecoded(
+            AssetKind::WaveAudio,
+            format!("{common};undecoded={error}"),
+            error.to_string(),
+        )),
+        Err(error) => Err(error.to_string()),
     }
-
-    let format = format.ok_or_else(|| "WAVE has no fmt chunk".to_owned())?;
-    let data_size = data_size.ok_or_else(|| "WAVE has no data chunk".to_owned())?;
-    if format.channels == 0 || format.sample_rate == 0 || format.byte_rate == 0 {
-        return Err("WAVE format contains a zero channel/rate field".to_owned());
-    }
-    let duration_ms = (data_size as u64 * 1000) / u64::from(format.byte_rate);
-    Ok(AssetInfo::new(
-        AssetKind::WaveAudio,
-        format!(
-            "encoding={};channels={};sample-rate={};bits-per-sample={};data-bytes={data_size};duration-ms={duration_ms}",
-            format.encoding, format.channels, format.sample_rate, format.bits_per_sample
-        ),
-    ))
 }
 
-struct WaveFormat {
-    encoding: u16,
-    channels: u16,
-    sample_rate: u32,
-    byte_rate: u32,
-    bits_per_sample: u16,
+/// Classify a Smacker video by **parsing its container**, not by matching four magic bytes.
+///
+/// The frame tables and per-frame chunk extents are walked; the video codec is not implemented and
+/// no frame is decoded to pixels. See [`crate::smacker`] for exactly where that line falls.
+///
+/// Unlike the WAVE probe, a file whose declared sizes do not account for every byte is **not**
+/// classified. The asymmetry is deliberate and is the difference between the two formats' claims:
+/// for WAVE the undecodable case is a *format this tool does not implement*, which is a limit of
+/// the tool; for Smacker the whole result this branch reports is that the sizes close, so a file
+/// where they do not is one this module has not understood, not one it merely cannot decode.
+fn probe_smacker(bytes: &[u8]) -> Result<AssetInfo, String> {
+    let file = SmackerFile::parse(bytes).map_err(|error| error.to_string())?;
+    if file.unaccounted_tail != 0 {
+        return Err(format!(
+            "Smacker declared sizes leave {} byte(s) unaccounted for",
+            file.unaccounted_tail
+        ));
+    }
+    let tracks = file.audio.iter().filter(|track| track.present()).count();
+    Ok(AssetInfo::new(
+        AssetKind::SmackerVideo,
+        format!(
+            "version={};width={};height={};frames={};interval-us={};duration-ms={};\
+             audio-tracks={tracks};palette-frames={}",
+            printable_tag(&file.signature),
+            file.width,
+            file.height,
+            file.frame_count,
+            file.frame_interval_us(),
+            file.duration_ms()
+                .map_or_else(|| "unrepresentable".to_owned(), |value| value.to_string()),
+            file.palette_frames(),
+        ),
+    ))
 }
 
 fn text_details(bytes: &[u8]) -> String {
@@ -536,6 +574,114 @@ mod tests {
         assert_eq!(info.kind, AssetKind::WaveAudio);
         assert!(info.details.contains("sample-rate=22050"));
         assert!(info.details.contains("duration-ms=1000"));
+        assert!(info.details.contains("frames=22050"));
+        assert!(info.details.contains("layout=fmt |data"));
+        assert!(!info.details.contains("undecoded="));
+    }
+
+    /// A legal WAVE in a format this tool has no decoder for is still a WAVE.
+    ///
+    /// Classification and decodability are different claims. Returning `Err` here would flip
+    /// `--scan` to a non-zero exit on a file that is perfectly valid, which is the tool mistaking
+    /// its own reach for the corpus being broken.
+    #[test]
+    fn classifies_a_wave_it_cannot_decode_and_names_what_stopped_it() {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&40_u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&0x0011_u16.to_le_bytes()); // IMA ADPCM
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&11_066_u32.to_le_bytes());
+        bytes.extend_from_slice(&256_u16.to_le_bytes());
+        bytes.extend_from_slice(&4_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&4_u32.to_le_bytes());
+        bytes.extend_from_slice(&[1, 2, 3, 4]);
+
+        let info = probe("adpcm.wav", &bytes).expect("a legal container is still classified");
+        assert_eq!(info.kind, AssetKind::WaveAudio);
+        assert!(info.details.contains("encoding=17"), "{}", info.details);
+        assert!(info.details.contains("undecoded="), "{}", info.details);
+        assert!(!info.details.contains("frames="), "{}", info.details);
+        assert!(info.undecoded.is_some(), "the flag must be typed, not a substring");
+    }
+
+    /// Malformed **supported** PCM is a failure, not an `undecoded` downgrade.
+    ///
+    /// This is the case that made the probe-failure count insensitive: the container walks, the
+    /// format is PCM at a depth this tool implements, and the file is still broken. Downgrading it
+    /// meant an archive of members that had stopped decoding still scanned with zero failures.
+    #[test]
+    fn refuses_malformed_supported_pcm_rather_than_downgrading_it() {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&40_u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes()); // PCM
+        bytes.extend_from_slice(&0_u16.to_le_bytes()); // zero channels
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&8_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&4_u32.to_le_bytes());
+        bytes.extend_from_slice(&[1, 2, 3, 4]);
+
+        let error = probe("broken.wav", &bytes).expect_err("supported PCM that will not decode");
+        assert!(error.contains("zero channels"), "{error}");
+    }
+
+    /// A zero bit depth is malformed, not "a depth this tool does not implement".
+    ///
+    /// It used to fall through the depth dispatch to the unsupported catch-all, so the member was
+    /// classified and the archive scanned clean. The ordering fix in `PcmSamples::decode` is what
+    /// this pins: `frame_bytes` decides malformedness before any depth is dispatched.
+    #[test]
+    fn refuses_a_zero_bit_depth_rather_than_calling_it_unsupported() {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&40_u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes()); // PCM
+        bytes.extend_from_slice(&1_u16.to_le_bytes()); // one channel
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&0_u16.to_le_bytes()); // zero bits per sample
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&4_u32.to_le_bytes());
+        bytes.extend_from_slice(&[1, 2, 3, 4]);
+
+        let error = probe("zerodepth.wav", &bytes).expect_err("a zero depth is malformed");
+        assert!(error.contains("not a whole number of bytes"), "{error}");
+    }
+
+    /// A 24-bit PCM file is valid and merely unimplemented here, so it stays classified.
+    ///
+    /// The other side of the same ordering: moving `frame_bytes` earlier must not turn a legal
+    /// file into a probe failure.
+    #[test]
+    fn a_valid_twenty_four_bit_file_stays_classified_as_unsupported() {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&40_u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&66_150_u32.to_le_bytes());
+        bytes.extend_from_slice(&3_u16.to_le_bytes());
+        bytes.extend_from_slice(&24_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&3_u32.to_le_bytes());
+        bytes.extend_from_slice(&[1, 2, 3]);
+
+        let info = probe("24bit.wav", &bytes).expect("a valid 24-bit file is still a WAVE");
+        assert_eq!(info.kind, AssetKind::WaveAudio);
+        assert!(info.undecoded.is_some(), "{}", info.details);
+        assert!(info.details.contains("bit depth 24"), "{}", info.details);
     }
 
     #[test]
