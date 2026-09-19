@@ -46,7 +46,11 @@ def game_is_running() -> bool:
     try:
         return (
             subprocess.run(
-                ["pgrep", "-f", "lomse.exe"],
+                # `pgrep -f` matches ANY live command line containing the pattern --
+                # including the shell running this check, and any agent or editor that
+                # merely mentions the name. The game itself runs under Wine and its
+                # command line BEGINS with a DOS drive path, so anchor to the start.
+                ["pgrep", "-f", '^[A-Za-z]:[\\\\]lomse[.]exe'],
                 capture_output=True,
                 check=False,
             ).returncode
