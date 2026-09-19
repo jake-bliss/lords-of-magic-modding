@@ -4,7 +4,8 @@
 hindsight. When the run happens, record the outcome at the top and leave the rest as written — the
 value of a run sheet is that it stated what each outcome *would* mean.
 
-Eight rungs, each one archive installed into the development profile and one look or one listen.
+Seven builds, each installed into the development profile on its own, and one look or one listen
+each.
 macOS will not let this project drive the Wine window, so every keypress here is a request to a
 person; the ladder is ordered and worded to cost as few as possible.
 
@@ -61,7 +62,7 @@ machinery.
 | **3** | `pic-newgame-reencode` | `pic.mpq` | The PBM **encoder**, pixels untouched, member **302,432 → 302,714 bytes**. Corruption control for rung 4, and the first size-changing member. |
 | **4** | `pic-newgame-stripe` | `pic.mpq` | The PBM encoder with a visible change, member **302,432 → 256,996 bytes**. |
 | **5** | `imp-added-member` | `imp.mpq` | A member `imp.mpq` never had, carried alongside rung 2's visible change. |
-| **6** | `audio-welcome-noop` | `sndfx.mpq`, `special.mpq` | Control for the **STORED** class, and our WAVE encoder reproducing a shipped member exactly. One artefact, same as rungs 0+1. |
+| **6** | `audio-welcome-noop` | `sndfx.mpq`, `special.mpq` | Control for the **STORED** class, and our WAVE encoder reproducing two shipped members exactly. One artefact, same as rungs 0+1. |
 | **7** | `audio-welcome-tone` | `sndfx.mpq`, `special.mpq` | An audible replacement of **identical length**, a *different* one in each archive. |
 
 **Rungs 6 and 7 may be run first.** They depend on nothing in 0–5 — different archives, a different
@@ -88,13 +89,16 @@ produced and are here to be compared against, not copied blindly.
 
 | Rung | `scripts/install-dev.sh MOD_ID BUILD_ID` | Archive digest |
 | ---: | --- | --- |
-| 0+1 | `imp-cursor-noop 309a65dca1f1` | `imp.mpq` `fd84136cb54c53a8` |
-| 2 | `imp-cursor-repaint f84b7464cf33` | `imp.mpq` `bc4926290187 0699` |
-| 3 | `pic-newgame-reencode 17fded143d74` | `pic.mpq` `d8d59a106112ef98` |
-| 4 | `pic-newgame-stripe 78dbfe41e8e6` | `pic.mpq` `e78486a2be7170e6` |
-| 5 | `imp-added-member 31d560014561` | `imp.mpq` `ef834c35483471a6` |
-| 6 | `audio-welcome-noop 59cb1f0c0ac2` | `sndfx.mpq` `25de3532c898d8c3`, `special.mpq` `c7ceea10791c7f10` |
-| 7 | `audio-welcome-tone d42b8342d818` | `sndfx.mpq` `b9acef0711efc881`, `special.mpq` `12864a644effb77b` |
+| 0+1 | `imp-cursor-noop 97cbdaa91ce8` | `imp.mpq` `fd84136cb54c53a8` |
+| 2 | `imp-cursor-repaint 662dbe11a111` | `imp.mpq` `bc49262901870699` |
+| 3 | `pic-newgame-reencode b630c5fdf97a` | `pic.mpq` `d8d59a106112ef98` |
+| 4 | `pic-newgame-stripe 677597622f4e` | `pic.mpq` `e78486a2be7170e6` |
+| 5 | `imp-added-member 04999ceaaa69` | `imp.mpq` `ef834c35483471a6` |
+| 6 | `audio-welcome-noop 81389d8b45b0` | `sndfx.mpq` `c82323af22335959`, `special.mpq` `140cef430465ab06` |
+| 7 | `audio-welcome-tone 3a2a6b59ff64` | `sndfx.mpq` `bf7c93ecb9ad46f1`, `special.mpq` `61102efd225d9677` |
+
+The archive digests are a function of the archive bytes alone and did not move when the tools were
+rebuilt; the build ids did. That is the difference the warning above is about.
 
 ## The loop, once per rung
 
@@ -250,70 +254,123 @@ lookup the engine's Storm performs, and the member reads back as the bytes it wa
 
 ## Rung 6 — the STORED class, and the WAVE encoder as a no-op
 
-**Install** `audio-welcome-noop`. **Where to listen:** the moment the main menu opens, after the
-intro videos and the loading bar. Turn the volume up first. No clicks.
+**Install** `audio-welcome-noop`. **Two things to listen for**, both with the volume up:
 
-**Why there.** `START.GS` ends with `soundfxdict begin Welcome_wav playsoundfx end` immediately
-before `newdlg opendialog`, and `gs/soundfx.gs` defines
-`/Welcome_wav "wav/welcome.wav" addsoundfx def`. The member is `wav\welcome.wav`: stereo 8-bit
-22,050 Hz, 125,049 frames, **5.67 seconds**, 250,142 bytes.
+1. **`wav\welcome.wav`** — the moment the main menu opens, after the intro videos and the loading
+   bar. No clicks. `START.GS` ends with `soundfxdict begin Welcome_wav playsoundfx end` immediately
+   before `newdlg opendialog`, and `gs/soundfx.gs` defines
+   `/Welcome_wav "wav/welcome.wav" addsoundfx def`. Stereo 8-bit 22,050 Hz, 125,049 frames,
+   **5.67 seconds**, 250,142 bytes.
+2. **`wav\button.wav`** — click any button on the main menu, as many times as you like.
+   `gs/soundfx.gs` does `/button_sound "wav/button.wav" addsoundfx def button_sound
+   loadstaticsound button_sound setdefaultbuttonsound`, and **no script in the corpus calls
+   `setbuttonsound`**, so every dialog button plays it. Mono 8-bit 22,050 Hz, 915 frames, 41 ms,
+   1,036 bytes.
 
-**Why both archives.** `sndfx.mpq` and `special.mpq` each hold `wav\welcome.wav`, byte-identically
-(digest `3966266dcf504bab`), and nothing known says which one the engine opens. 1,214 member names
-are shared between them. Rewriting one and not the other would make a null result mean either "the
-engine rejected our archive" or "the engine read the other copy" — two answers wearing one
-observation.
+**Why two members.** `welcome.wav` is the observable — long, unattended, impossible to miss — but
+its WAVE layout is the weakest in the archive: `fmt |data` with an **even** data chunk and no
+ancillary chunk at all, so it exercises no pad byte and carries nothing verbatim. `button.wav`
+covers exactly that gap: `fmt |data|LIST` with an **odd** 915-byte data chunk, so a pad byte is
+written *between* two chunks rather than trailing where a reader could skip it, and a 68-byte
+`LIST` that `--import-wave` carries through untouched. It is also repeatable on demand, which
+`welcome.wav` is not.
 
-**Expected value:** `artifacts/engine-acceptance-ladder/rung6-welcome-expected.wav` — the shipped
-sound, playable in any audio player.
+**A bound, stated because it is a real one.** There is **no member of either archive with an
+odd-sized *ancillary* chunk**. Measured 2026-09-18 across all 3,098 members: the only chunk that is
+ever odd is `data` — 1,294 of 1,880 in `sndfx.mpq`, 754 of 1,218 in `special.mpq` — and every one
+of those 2,048 pad bytes is `0x00`. So the corpus cannot exercise a non-zero pad on its own. That
+matters because `wave.rs`'s `rebuild()` briefly wrote `0` for every pad instead of the value it had
+parsed, and a no-op control that "passed" because the corpus happened to agree with a bug would be
+a control that proved nothing. `scripts/build-acceptance-ladder.sh` therefore **gates both audio
+rungs on a fixture** with an odd `LIST` body whose pad is `0x20`: if `--import-wave` does not hand
+that byte back, rungs 6 and 7 are not built at all.
+
+**Why both archives.** `sndfx.mpq` and `special.mpq` each hold both members, byte-identically, and
+nothing known says which one the engine opens — 1,214 member names are shared between them.
+Rewriting one and not the other would make a null result mean either "the engine rejected our
+archive" or "the engine read the other copy": two answers wearing one observation.
+
+**Expected values:** `artifacts/engine-acceptance-ladder/rung6-welcome-expected.wav` and
+`rung6-button-expected.wav` — the shipped sounds, playable in any audio player.
 
 | | |
 | --- | --- |
-| **If it works** | The game starts, and the usual welcome sound plays as the menu opens, unchanged. |
-| **If it fails** | Silence, a burst of noise, a truncated sound, or a failure to start. Not one member's bytes differ from the shipped archives, so that would be the repack breaking a STORED archive. |
+| **If it works** | The game starts; the usual welcome sound plays as the menu opens; a button click makes the usual click. Both unchanged. |
+| **If it fails** | Silence, noise, a truncated sound, or a failure to start. Not one member's bytes differ from the shipped archives, so that would be the repack breaking a STORED archive. |
 
-**Confirm the sound is audible on this rung**, because rung 7 reads a *null* result as meaning
+**Confirm both sounds are audible on this rung**, because rung 7 reads a *null* result as meaning
 something, and "the volume was down" must not be one of the things it could mean.
 
 ---
 
 ## Rung 7 — an audible replacement, and which archive the engine opened
 
-**Install** `audio-welcome-tone`. **Where to listen:** the same moment.
+**Install** `audio-welcome-tone`. **Listen at the same two moments.**
 
-The member keeps its exact length in both archives — 125,049 frames, 250,142 bytes — and each
-archive gets a **different** tone: **220 Hz into `sndfx.mpq`**, **1760 Hz into `special.mpq`**,
-three octaves apart. The first 750 ms is tone and the remaining 4.9 seconds is silence.
+Both members keep their exact lengths in both archives, and each *archive* gets a different tone:
+**220 Hz into `sndfx.mpq`**, **1760 Hz into `special.mpq`**, three octaves apart. The first 750 ms
+is tone and the rest is silence — which, for `button.wav`, means the whole 41 ms is tone.
 
-**Expected values:** `rung7-welcome-expected-sndfx.wav` (low) and
-`rung7-welcome-expected-special.wav` (high), both in
-`artifacts/engine-acceptance-ladder/`. Play them before the run so both are in the ear.
+**Expected values:** `rung7-welcome-expected-sndfx.wav`, `rung7-welcome-expected-special.wav`,
+`rung7-button-expected-sndfx.wav`, `rung7-button-expected-special.wav`, all in
+`artifacts/engine-acceptance-ladder/`. Play all four before the run so they are in the ear.
 
 | Heard | What it means |
 | --- | --- |
-| **A low beep**, then silence where the voice used to be | The engine read our rewritten **`sndfx.mpq`**. A STORED member, rewritten by our WAVE encoder, reached the engine — and `sndfx.mpq` is where sounds come from. |
-| **A high beep**, then silence | The same result, for **`special.mpq`**. |
-| **The shipped voice** | Neither rewritten archive was read. Rung 6 having passed, the archives are not broken, so either the engine rejects a *changed* STORED member or the sound comes from a third place. |
+| **A low beep** where the voice was, and a low blip on a button click | The engine read our rewritten **`sndfx.mpq`**. A STORED member rewritten by our WAVE encoder reached the engine, and `sndfx.mpq` is where sounds come from. |
+| **A high beep**, and a high blip | The same result, for **`special.mpq`**. |
+| **The shipped voice and the shipped click** | Neither rewritten archive was read. Rung 6 having passed, the archives are not broken, so either the engine rejects a *changed* STORED member or the sound comes from a third place. |
+| **One member changed and the other did not** | A finding in itself, and the reason two members are in the build: whatever separates them — the odd data chunk, the `LIST`, the length, the sound's role — is the next thing to chase. |
 | **Silence, or a click and then nothing** | The member was read and mangled. That is the encoder or the length arithmetic, not acceptance. |
 
 **Its own control travels with it.** "A beep, then quiet, for as long as the voice used to last" is
 a different observation from "the sound is broken", and the length being unchanged is what makes
 that distinction available.
 
-**Why same-length, and why this is the first audio rung.** `--import-wave` carries `cue ` and `smpl`
-chunks through verbatim and never interprets them, so a *shortened* looping sound would keep a
-`smpl` chunk pointing past the end of its own data. A length-changing audio rung belongs after this
-one, not instead of it — exactly as the length-preserving `pbm_patch` edit was the right first
-`pic.mpq` test.
+**Why same-length, and why this is the first audio rung.** `--import-wave` now reads loop points and
+cue offsets and **refuses** a length change that would strand them — 147 corpus files carry such
+metadata — with `--allow-dangling-loops` as the deliberate escape. A length-changing audio rung
+belongs after this one, not instead of it, exactly as the length-preserving `pbm_patch` edit was the
+right first `pic.mpq` test.
 
-**Do not read the encoder's corpus result as making this a formality.** 3,140 of 3,140 WAVE files
-re-encode byte-identically, and the author of that measurement said why it is weaker than it looks:
-WAVE `data` is uncompressed, so a sample set has exactly one encoding, and all 1,678 `ISFT` fields
-in the corpus read `Sound Forge 4.0` — one packer. It shows the container walk is exact. It does not
-show the encoder reproduces a WAVE some other program wrote, and it says nothing at all about the
-engine.
+**Do not read the corpus sweep as making this a formality.** 3,140 of 3,140 members parse,
+reserialise identically and pass `verify_import`. That is a strong statement about the **container
+walk** and about the PCM conversion, and a much weaker one about everything else: `encode()` replays
+declared sizes, pads, `Other` chunk bodies and trailing bytes verbatim, so only `fmt ` and `data`
+are genuinely reconstructed. And none of it touches the engine. **This rung is testing more than the
+sweep did, not confirming what it already showed.**
 
 ---
+
+## A candidate rung that is NOT built: `lom.cfg` audio volume
+
+Proposed as the cheapest rung on the ladder. Measuring it first says it is not, and the measurement
+is worth more than the rung would have been.
+
+The proposal was that patching `lom.cfg[0x00]` — the last-music-volume word, config object `+0x18`,
+global `0x5aa144` — reaches the helper `setmusicvolume` calls, via `setlastaudiosettings`, and that
+the path runs because `setlastaudiosettings` is mentioned once in every script corpus.
+
+**Where that mention actually is.** `gs/scenario.gs`, inside a scenario-start sequence:
+
+```
+... processgamemessages initusers 0 setuserforplayer loadconfig setlastaudiosettings
+    togglescrollmusic playterrainambiance gamemode multiplayer_startscenario ...
+```
+
+`START.GS` ends with `loadconfig` and **never calls `setlastaudiosettings`**. So the file is read at
+startup and applied at **scenario start**. The observation costs a full new-game navigation — faith,
+champion type, difficulty, map — which is the most expensive rung on the sheet, not the cheapest.
+
+**And there is a free observation sitting in front of it.** The Development profile's `lom.cfg` is
+the **160-byte** form, and its first sixteen bytes are all zero: all four last-audio words are
+already `0`. If `0` meant silence and that path applied it, in-game music would already be silent
+every time a scenario starts. So whoever picks this up should **start by asking whether music plays
+inside a game at all**, before editing anything — that single answer constrains the result more than
+a patched byte would, and it is free on any session where somebody starts a game for another reason.
+
+Nothing here has been edited. `lom.cfg` in all four profiles is untouched, and this section exists
+so the next attempt starts from the call site rather than from the assumption.
 
 ## What was checked without the engine
 
@@ -334,6 +391,8 @@ passes:
   written. That export *is* the expected-value PNG or WAV the observer uses.
 - **`tools/mod_validate.py` and `tools/asset_validate.py` clean.** Both re-encoded images pass the
   IFF walk, BMHD, CMAP and palette-range checks.
+- **The audio writer is gated on a fixture, not on the corpus.** Rungs 6 and 7 are not built unless
+  `--import-wave` hands back a `0x20` pad byte on a template the corpus could never have supplied.
 - **`--validate-imp` on every packed `imp.mpq`**: 1,798 stem pairs, 0 failures.
 - **Only the intended member moved.** Rung 2 additionally exports frame 112 of the same member —
   which the edit never named — out of the packed archive and compares it with the shipped export.
@@ -352,13 +411,15 @@ Everything the rungs exist to ask. In particular:
 - whether it tolerates an added member, and — untestable by any observation here — whether it could
   read one;
 - **which** of `sndfx.mpq` and `special.mpq` it opens, which only rung 7 can answer;
+- whether `lom.cfg`'s last-audio words reach the applied volume — see the candidate rung above,
+  which is unanswerable offline and costs a full new-game navigation to answer at all;
 - whether the IMP `layout=Tight` reading is the one the engine uses for `iface\cursors.imp` frame
   111. The frame is not in the 45 ambiguous or the 752 unobservable classes, and the importer would
   have warned if it were, so this is not a live worry — but nothing offline can close it.
 
 ## Cost and risk
 
-Eight installs into `Lords of Magic Development.app` and nothing else. The three installed profiles
+Seven installs into `Lords of Magic Development.app` and nothing else. The three installed profiles
 are opened read-only by this pipeline and written by none of it; `~/Applications` is refused as an
 output path by `scripts/repack-archive.sh`, and every write to the development profile is routed
 through `tools/install_guard.py`, an allowlist of exactly one directory. The loose `map/` directory
