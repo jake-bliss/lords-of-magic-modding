@@ -4993,4 +4993,175 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
         assert_eq!(tile_set.terrain_type_of_tile(27), None);
         assert_eq!(tile_set.terrain_type_of_tile(29), None);
     }
+    // -----------------------------------------------------------------------
+    // The installed corpus
+    // -----------------------------------------------------------------------
+    //
+    // These two tests are the reason `docs/map-format.md` may quote a number at all. Until they
+    // existed the 365/365 and 21,117 figures were the output of a manual `--map-roundtrip` run
+    // typed into prose, and nothing re-ran them; the same headline had already gone stale twice in
+    // `docs/save-format.md` for exactly that reason. `#[ignore]`d rather than skipped at runtime,
+    // because a skip that prints `ok` cannot be told apart from a pass.
+    //
+    // Run with:
+    //   LOM_GAME_DIR=.../English cargo test --release -- --ignored
+
+    /// **Observed in the corpus.** The installed `map/` directory holds this many parseable map
+    /// files, and the tripwire is not decoration: a sweep that found none would otherwise assert
+    /// `0 == 0` for every property below and report a green run about nothing.
+    ///
+    /// Measured at 365 in all four installs on this machine on 2026-09-19. A mod that adds or
+    /// removes a scenario is expected to fail this line; that is a prompt to re-measure and say so,
+    /// not to widen the constant.
+    const INSTALLED_MAP_FILES: usize = 365;
+
+    /// **Observed in the corpus.** Placed-sprite records across those files, summed over the six
+    /// layouts. Quoted by `docs/map-format.md` and `docs/agent-handoff.md`.
+    const INSTALLED_PLACED_SPRITE_RECORDS: usize = 21_117;
+
+    fn game_directory() -> std::path::PathBuf {
+        let directory = std::env::var_os("LOM_GAME_DIR")
+            .map(std::path::PathBuf::from)
+            .expect("set LOM_GAME_DIR to the installed English directory");
+        assert!(
+            directory.join("lomse.exe").is_file(),
+            "no lomse.exe under {}",
+            directory.display()
+        );
+        directory
+    }
+
+    /// Every `.lgd`, `.scn` and `.smp` under the installed `map/` tree, sorted for a stable report.
+    ///
+    /// Mirrors `collect_map_paths` in the CLI rather than calling it, because that function lives
+    /// in the binary and a library test cannot reach it. The extension set is the same one.
+    fn installed_map_files() -> Vec<(String, Vec<u8>)> {
+        let mut out = Vec::new();
+        let mut stack = vec![game_directory().join("map")];
+        while let Some(directory) = stack.pop() {
+            let entries = std::fs::read_dir(&directory)
+                .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()));
+            for entry in entries {
+                let path = entry.expect("a directory entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                let is_map = path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| {
+                        ["lgd", "scn", "smp"]
+                            .iter()
+                            .any(|kind| value.eq_ignore_ascii_case(kind))
+                    });
+                if is_map {
+                    let bytes = std::fs::read(&path).expect("read an installed map");
+                    out.push((path.to_string_lossy().into_owned(), bytes));
+                }
+            }
+        }
+        out.sort_by(|left, right| left.0.cmp(&right.0));
+        out
+    }
+
+    /// Every installed map re-encodes to the exact bytes it was read from.
+    ///
+    /// This is the whole-file claim `docs/map-format.md` opens with. It is weaker than the record
+    /// test below on its own -- a file can survive through `trailing_raw` while a typed field is
+    /// written back wrong -- which is why both exist.
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR"]
+    fn every_installed_map_re_encodes_byte_identically() {
+        let files = installed_map_files();
+        assert_eq!(
+            files.len(),
+            INSTALLED_MAP_FILES,
+            "the installed map corpus changed size"
+        );
+        let mut failures = Vec::new();
+        for (name, bytes) in &files {
+            let map = match MapAsset::parse(bytes) {
+                Ok(map) => map,
+                Err(error) => {
+                    failures.push(format!("{name}: {error}"));
+                    continue;
+                }
+            };
+            match map.to_bytes() {
+                Ok(encoded) if &encoded == bytes => {}
+                Ok(encoded) => {
+                    let at = encoded
+                        .iter()
+                        .zip(bytes)
+                        .position(|(wrote, read)| wrote != read);
+                    failures.push(format!(
+                        "{name}: re-encode differs (first differing byte {at:?}; {} bytes in, {} out)",
+                        bytes.len(),
+                        encoded.len(),
+                    ));
+                }
+                Err(error) => failures.push(format!("{name}: could not re-encode: {error}")),
+            }
+        }
+        assert_eq!(failures, Vec::<String>::new());
+    }
+
+    /// Every placed-sprite record rebuilds its own bytes from its typed fields alone.
+    ///
+    /// This is the test [`PlacedSpriteRecord::to_bytes`] cites. It is the stricter of the two and
+    /// it is what makes an *edited* record trustworthy: the file-level check above can pass while a
+    /// field is carried over blindly, and this one cannot.
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR"]
+    fn roundtrips_every_corpus_record() {
+        let files = installed_map_files();
+        assert_eq!(
+            files.len(),
+            INSTALLED_MAP_FILES,
+            "the installed map corpus changed size"
+        );
+        let mut rebuilt = 0_usize;
+        let mut files_with_records = 0_usize;
+        let mut failures = Vec::new();
+        for (name, bytes) in &files {
+            let map = match MapAsset::parse(bytes) {
+                Ok(map) => map,
+                Err(error) => {
+                    failures.push(format!("{name}: {error}"));
+                    continue;
+                }
+            };
+            let Some(section) = &map.placed_sprites else {
+                continue;
+            };
+            if !section.records.is_empty() {
+                files_with_records += 1;
+            }
+            for (index, record) in section.records.iter().enumerate() {
+                match record.to_bytes() {
+                    Ok(encoded) if encoded == record.raw => rebuilt += 1,
+                    Ok(_) => failures.push(format!(
+                        "{name}: record {index} does not rebuild from its fields"
+                    )),
+                    Err(error) => {
+                        failures.push(format!("{name}: record {index}: {error}"));
+                    }
+                }
+            }
+        }
+        assert_eq!(failures, Vec::<String>::new());
+        assert_eq!(
+            rebuilt, INSTALLED_PLACED_SPRITE_RECORDS,
+            "the placed-sprite record population changed size"
+        );
+        // 364 of the 365 hold at least one record; `chbldg01.smp` holds a zero count. Asserted so
+        // that a regression which emptied every section still fails here rather than quietly
+        // reducing the total above to something a future edit might "fix" by adjusting it.
+        assert_eq!(
+            files_with_records,
+            INSTALLED_MAP_FILES - 1,
+            "the number of maps holding at least one record changed"
+        );
+    }
 }

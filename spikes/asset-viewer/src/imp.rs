@@ -4597,4 +4597,288 @@ mod tests {
         let packed = pack_pixels(&frame.palette_indices, 2, 1, 8, 2).unwrap();
         assert_eq!(packed, [0xaa, 0xbb]);
     }
+    // -----------------------------------------------------------------------
+    // The installed corpus
+    // -----------------------------------------------------------------------
+    //
+    // Run with:
+    //   LOM_GAME_DIR=.../English LOM_LISTFILE=.../lords-of-magic.txt \
+    //     cargo test --release -- --ignored
+    //
+    // `LOM_LISTFILE` is not optional here, unlike the PBM sweep. `imp.mpq` carries no listfile and
+    // an IMP is identified by its member name, so with StormLib's synthesised `File%08u.xxx` names
+    // the probe recognises nothing and the sweep sees **zero** members. That is precisely the
+    // silent-empty-run failure the tripwire below exists to catch, and it is reachable by simply
+    // forgetting an environment variable.
+
+    /// **Observed in the corpus, 2026-09-19.** IMP members in `imp.mpq`, identical in the stock
+    /// Steam archive and in GS5R3's.
+    const ARCHIVED_IMP_MEMBERS: usize = 1_800;
+
+    /// **Observed in the corpus, 2026-09-19.** Payload-carrying frames across those members --
+    /// frames that own their pixels, so neither duplicate records nor shared-pixel aliases.
+    const IMP_PAYLOAD_FRAMES: usize = 41_373;
+
+    /// **Observed in the corpus, 2026-09-19.** Records that alias another frame's pixels rather
+    /// than owning any, counted separately because the whole-file rewrite refuses them by name.
+    const IMP_DUPLICATE_FRAMES: usize = 10_293;
+
+    /// **Observed in the corpus, 2026-09-19.** Frames whose own payload re-encodes to the exact
+    /// bytes the archive stores. The remaining `41,373 - 39,108 = 2,265` differ only in this
+    /// encoder's RLE packet boundaries; their pixels are unchanged, which is what
+    /// `pixel_lossless == checked` asserts.
+    const IMP_BYTE_IDENTICAL_PAYLOADS: usize = 39_108;
+
+    /// **Observed in the corpus, 2026-09-19.** Frames the whole-file writer accepts. The
+    /// difference from [`IMP_PAYLOAD_FRAMES`] is 3,443 refusals: 3,439 shared payloads and 4
+    /// zero-length ones, refused and named rather than silently overwritten.
+    const IMP_REWRITE_ATTEMPTED: usize = 37_930;
+
+    /// **Observed in the corpus, 2026-09-19.** Whole-file rewrites that came back byte-identical.
+    ///
+    /// The headline `35,840 of 35,840` means this: of the attempted rewrites, every one whose
+    /// payload re-encoded byte-identically produced a byte-identical *file*. The other
+    /// `37,930 - 35,840 = 2,090` differ only because their payload differs, which the sweep
+    /// separates out -- a file that changed while its payload did not is a writer defect and is a
+    /// hard failure.
+    const IMP_REWRITE_BYTE_IDENTICAL: usize = 35_840;
+
+    fn game_directory() -> std::path::PathBuf {
+        let directory = std::env::var_os("LOM_GAME_DIR")
+            .map(std::path::PathBuf::from)
+            .expect("set LOM_GAME_DIR to the installed English directory");
+        assert!(
+            directory.join("lomse.exe").is_file(),
+            "no lomse.exe under {}",
+            directory.display()
+        );
+        directory
+    }
+
+    fn open_imp_archive() -> crate::mpq::Archive {
+        let archive =
+            crate::mpq::Archive::open(&game_directory().join("imp.mpq")).expect("open imp.mpq");
+        let listfile =
+            std::env::var("LOM_LISTFILE").expect("set LOM_LISTFILE alongside LOM_GAME_DIR");
+        let contents = std::fs::read(&listfile).expect("read the listfile");
+        archive
+            .add_listfile_contents(&contents)
+            .expect("apply the listfile");
+        archive
+    }
+
+    /// Every payload-carrying frame in `imp.mpq` re-encodes losslessly, and every frame the
+    /// whole-file writer accepts rewrites to a byte-identical file unless its payload itself
+    /// differs.
+    ///
+    /// This is the acceptance property `docs/imp-format.md` and the roadmap quote. Nothing
+    /// synthetic reaches this bar: it exercises every record, every absolute pointer and every
+    /// uninitialised leftover byte in 1,800 real files at once.
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR and LOM_LISTFILE"]
+    fn every_archived_imp_frame_round_trips() {
+        let archive = open_imp_archive();
+        let entries = archive.entries().expect("enumerate imp.mpq");
+
+        let mut members = 0_usize;
+        let mut frames = 0_usize;
+        let mut duplicate_frames = 0_usize;
+        let mut empty_frames = 0_usize;
+        let mut pixel_lossless = 0_usize;
+        let mut byte_identical_payloads = 0_usize;
+        let mut rewrite_attempted = 0_usize;
+        let mut rewrite_identical = 0_usize;
+        let mut rewrite_differs_by_payload = 0_usize;
+        let mut rewrite_refused = 0_usize;
+        let mut failures = Vec::new();
+
+        for entry in &entries {
+            let Ok(bytes) = archive.read(&entry.name) else {
+                failures.push(format!("{}: could not read", entry.name));
+                continue;
+            };
+            if !matches!(
+                crate::asset::probe(&entry.name, &bytes).map(|info| info.kind),
+                Ok(crate::asset::AssetKind::ImpSprite)
+            ) {
+                continue;
+            }
+            let sprite = match ImpSprite::parse(&bytes) {
+                Ok(sprite) => sprite,
+                Err(error) => {
+                    failures.push(format!("{}: {error}", entry.name));
+                    continue;
+                }
+            };
+            members += 1;
+
+            for (index, frame) in sprite.frames.iter().enumerate() {
+                let (Some(packed_size), Some(pixels_offset), Some(stored_size)) =
+                    (frame.packed_size, frame.pixels_offset, frame.stored_size)
+                else {
+                    duplicate_frames += 1;
+                    continue;
+                };
+                if frame.width == 0 || frame.height == 0 {
+                    empty_frames += 1;
+                    continue;
+                }
+
+                let packed = match pack_pixels(
+                    &frame.palette_indices,
+                    frame.width,
+                    frame.height,
+                    sprite.bits_per_pixel,
+                    packed_size,
+                ) {
+                    Ok(packed) => packed,
+                    Err(error) => {
+                        failures.push(format!(
+                            "{} frame {index}: could not pack: {error}",
+                            entry.name
+                        ));
+                        continue;
+                    }
+                };
+                let payload = if sprite.compressed {
+                    encode_rle(&packed)
+                } else {
+                    packed
+                };
+
+                // Read our own payload back with the parser's code, standing where the file's
+                // pixel pointer stands. This is what catches a variant-0 stream that halts on the
+                // tight size when the frame is row-padded: the pixels come back rearranged rather
+                // than merely packed differently.
+                let (repacked, consumed) = match read_frame_pixels(
+                    &payload,
+                    0,
+                    frame.width,
+                    frame.height,
+                    sprite.bits_per_pixel,
+                    sprite.compressed,
+                    sprite.record_variant,
+                    payload.len(),
+                ) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        failures.push(format!(
+                            "{} frame {index}: re-encoded payload does not decode: {error}",
+                            entry.name
+                        ));
+                        continue;
+                    }
+                };
+                if consumed != payload.len() || repacked.len() != packed_size {
+                    failures.push(format!(
+                        "{} frame {index}: re-encoded payload is {} bytes decoding to {} packed \
+                         bytes; the parser stops after {consumed} and {packed_size} was stored",
+                        entry.name,
+                        payload.len(),
+                        repacked.len(),
+                    ));
+                    continue;
+                }
+                let indices = match unpack_pixels(
+                    &repacked,
+                    frame.width,
+                    frame.height,
+                    sprite.bits_per_pixel,
+                ) {
+                    Ok(indices) => indices,
+                    Err(error) => {
+                        failures.push(format!(
+                            "{} frame {index}: could not unpack: {error}",
+                            entry.name
+                        ));
+                        continue;
+                    }
+                };
+
+                frames += 1;
+                let frame_pixel_lossless = indices == frame.palette_indices;
+                if frame_pixel_lossless {
+                    pixel_lossless += 1;
+                } else {
+                    let at = indices
+                        .iter()
+                        .zip(&frame.palette_indices)
+                        .position(|(wrote, read)| wrote != read);
+                    failures.push(format!(
+                        "{} frame {index}: pixels changed (first differing pixel {at:?})",
+                        entry.name
+                    ));
+                }
+                let theirs = bytes
+                    .get(pixels_offset..pixels_offset + stored_size)
+                    .unwrap_or_default();
+                let payload_identical = theirs == payload.as_slice();
+                if payload_identical {
+                    byte_identical_payloads += 1;
+                }
+
+                match write_frame_pixels(&bytes, index, &frame.palette_indices) {
+                    Ok(write) => {
+                        rewrite_attempted += 1;
+                        if write.bytes == bytes {
+                            rewrite_identical += 1;
+                        } else if !payload_identical {
+                            rewrite_differs_by_payload += 1;
+                        } else {
+                            // A frame whose payload re-encodes to the original bytes and whose
+                            // file still changed is a defect in the *writer*: the pointer
+                            // rewriting, the alignment padding, or the byte-for-byte preservation.
+                            // Nothing else is left to blame, which is what makes this sharp.
+                            failures.push(format!(
+                                "{} frame {index}: identity rewrite changed the file although its \
+                                 payload is byte-identical (shift={}, stored {}->{}, padding={})",
+                                entry.name,
+                                write.shift,
+                                write.stored_size.0,
+                                write.stored_size.1,
+                                write.alignment_padding,
+                            ));
+                        }
+                    }
+                    Err(_) => rewrite_refused += 1,
+                }
+            }
+        }
+
+        // Report the first few failures rather than only their count: a bare number would make a
+        // regression here as opaque as the prose this test replaced.
+        assert!(
+            failures.is_empty(),
+            "{} frames did not round-trip; first: {:#?}",
+            failures.len(),
+            &failures[..failures.len().min(5)]
+        );
+
+        // The tripwires. Without them every assertion above holds vacuously over zero members,
+        // which is exactly what happens when `LOM_LISTFILE` is unset.
+        assert_eq!(members, ARCHIVED_IMP_MEMBERS, "the IMP corpus changed size");
+        assert_eq!(frames, IMP_PAYLOAD_FRAMES, "the frame population changed");
+        assert_eq!(duplicate_frames, IMP_DUPLICATE_FRAMES);
+        assert_eq!(empty_frames, 0, "a frame with a zero dimension appeared");
+
+        assert_eq!(
+            pixel_lossless, frames,
+            "a frame did not survive pixel-lossless"
+        );
+        assert_eq!(byte_identical_payloads, IMP_BYTE_IDENTICAL_PAYLOADS);
+        assert_eq!(rewrite_attempted, IMP_REWRITE_ATTEMPTED);
+        assert_eq!(rewrite_identical, IMP_REWRITE_BYTE_IDENTICAL);
+        assert_eq!(
+            rewrite_refused,
+            frames - rewrite_attempted,
+            "the refusal population is not the complement of the attempted one"
+        );
+        // The accounting closes: every attempted rewrite is either byte-identical or differs only
+        // because its payload does. A rewrite that escaped both arms would already have been a
+        // failure above; asserting the sum keeps the two constants from drifting apart silently.
+        assert_eq!(
+            rewrite_identical + rewrite_differs_by_payload,
+            rewrite_attempted
+        );
+    }
 }

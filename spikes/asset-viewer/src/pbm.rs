@@ -939,4 +939,188 @@ mod tests {
         let image = PbmImage::decode(&pbm(1, &[3, 0, 1, 1, 0])).unwrap();
         assert_eq!(image.rgba, [10, 20, 30, 255, 40, 50, 60, 255]);
     }
+    // -----------------------------------------------------------------------
+    // The installed corpus
+    // -----------------------------------------------------------------------
+    //
+    // Run with:
+    //   LOM_GAME_DIR=.../English cargo test --release -- --ignored
+    //
+    // `pic.mpq` carries no listfile, but every PBM is identified by content rather than by name,
+    // so the synthesised `File%08u.xxx` names StormLib hands back are enough here. (`imp.mpq` is
+    // not: see the note on the IMP sweep.)
+
+    /// **Observed in the corpus, 2026-09-19.** The PBM populations this machine's installs hold.
+    ///
+    /// There is more than one, and pinning a single number would have been wrong: the stock
+    /// `pic.mpq` in the Steam build and in `Lords of Magic Development` holds 1,045 PBM members,
+    /// while GS5R3's replacement `pic.mpq` holds 1,377. `docs/native-asset-stage.md` quotes the
+    /// first and `docs/agent-handoff.md` the second, and both are right about their own archive.
+    ///
+    /// Listing them rather than asserting `> 0` keeps the tripwire sharp -- an archive that
+    /// yielded nothing, or a decoder regression that stopped recognising a third of the members,
+    /// still fails -- while refusing to pretend the corpus has one shape when it has two. A new
+    /// install with a third population is a prompt to measure it and add it here with a date.
+    const ATTESTED_PBM_POPULATIONS: &[(&str, usize)] =
+        &[("stock pic.mpq", 1_045), ("GS5R3 pic.mpq", 1_377)];
+
+    /// **Observed in the corpus, 2026-09-19.** Members whose re-encoded file is byte-identical to
+    /// the original, in *both* populations.
+    ///
+    /// Low, and that is a finding rather than a shortfall: the shipped art was packed by at least
+    /// two different ByteRun1 packers and this encoder reproduces neither exactly. What the sweep
+    /// gates on is pixel-losslessness and non-`BODY` chunk preservation; this number is asserted so
+    /// that a change in the encoder's packet boundaries is visible rather than silent.
+    const PBM_BYTE_IDENTICAL_FILES: usize = 8;
+
+    /// **Observed in the corpus, 2026-09-19.** Odd-width members, in both populations. These are
+    /// the images that decode only under the "ByteRun1 rows are padded to an even byte count"
+    /// rule, so the count is the standing evidence for it.
+    const PBM_ODD_WIDTH_MEMBERS: usize = 88;
+
+    fn game_directory() -> std::path::PathBuf {
+        let directory = std::env::var_os("LOM_GAME_DIR")
+            .map(std::path::PathBuf::from)
+            .expect("set LOM_GAME_DIR to the installed English directory");
+        assert!(
+            directory.join("lomse.exe").is_file(),
+            "no lomse.exe under {}",
+            directory.display()
+        );
+        directory
+    }
+
+    /// Every PBM member of the installed `pic.mpq` survives a parse/encode/parse round trip with
+    /// its pixels intact and its non-`BODY` chunks untouched.
+    ///
+    /// The pixel assertion is the one that carries the reimport claim. The chunk assertion is the
+    /// one that would have caught a regression the pixel check cannot see: deleting the
+    /// chunk-preserving arm of the encoder outright still leaves every pixel correct while 917
+    /// files silently lose their `CRNG`, `DPPS` and `TINY` chunks.
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR"]
+    fn every_archived_pbm_round_trips() {
+        let archive =
+            crate::mpq::Archive::open(&game_directory().join("pic.mpq")).expect("open pic.mpq");
+        let entries = archive.entries().expect("enumerate pic.mpq");
+        assert!(!entries.is_empty(), "pic.mpq held no members at all");
+
+        let mut checked = 0_usize;
+        let mut pixel_lossless = 0_usize;
+        let mut file_identical = 0_usize;
+        let mut odd_width = 0_usize;
+        let mut failures = Vec::new();
+
+        for entry in &entries {
+            let bytes = match archive.read(&entry.name) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    failures.push(format!("{}: could not read: {error}", entry.name));
+                    continue;
+                }
+            };
+            // ILBM is planar and this encoder does not write it, so skipping is honest. The
+            // population tripwire below is what stops a skip-everything regression passing.
+            if !matches!(
+                crate::asset::probe(&entry.name, &bytes).map(|info| info.kind),
+                Ok(crate::asset::AssetKind::IffPbm)
+            ) {
+                continue;
+            }
+            let file = match PbmFile::parse(&bytes) {
+                Ok(file) => file,
+                Err(error) => {
+                    failures.push(format!("{}: {error}", entry.name));
+                    continue;
+                }
+            };
+            checked += 1;
+            if file.image.width % 2 == 1 {
+                odd_width += 1;
+            }
+
+            let encoded = match file.encode() {
+                Ok(encoded) => encoded,
+                Err(error) => {
+                    failures.push(format!("{}: could not re-encode: {error}", entry.name));
+                    continue;
+                }
+            };
+            let rewritten = match PbmFile::parse(&encoded) {
+                Ok(rewritten) => rewritten,
+                Err(error) => {
+                    failures.push(format!(
+                        "{}: re-encoded file does not parse: {error}",
+                        entry.name
+                    ));
+                    continue;
+                }
+            };
+            if rewritten.image.indices == file.image.indices {
+                pixel_lossless += 1;
+            } else {
+                let at = rewritten
+                    .image
+                    .indices
+                    .iter()
+                    .zip(&file.image.indices)
+                    .position(|(wrote, read)| wrote != read);
+                failures.push(format!(
+                    "{}: pixels changed (first differing pixel {at:?})",
+                    entry.name
+                ));
+            }
+
+            let describe = |file: &PbmFile| -> Vec<(String, usize)> {
+                file.chunks
+                    .iter()
+                    .filter(|chunk| &chunk.id != b"BODY")
+                    .map(|chunk| {
+                        (
+                            String::from_utf8_lossy(&chunk.id).into_owned(),
+                            chunk.data.len(),
+                        )
+                    })
+                    .collect()
+            };
+            let theirs = describe(&file);
+            let ours = describe(&rewritten);
+            if theirs != ours {
+                failures.push(format!(
+                    "{}: non-BODY chunks changed: theirs={theirs:?} ours={ours:?}",
+                    entry.name
+                ));
+            } else if file
+                .chunks
+                .iter()
+                .zip(&rewritten.chunks)
+                .any(|(left, right)| &left.id != b"BODY" && left.data != right.data)
+            {
+                failures.push(format!(
+                    "{}: a non-BODY chunk kept its length but changed its bytes",
+                    entry.name
+                ));
+            }
+
+            if encoded == bytes {
+                file_identical += 1;
+            }
+        }
+
+        assert_eq!(failures, Vec::<String>::new());
+        // The tripwire. A sweep over zero members would satisfy every assertion above.
+        assert!(
+            ATTESTED_PBM_POPULATIONS
+                .iter()
+                .any(|(_, count)| *count == checked),
+            "the PBM corpus holds {checked} members, which matches no attested population \
+             ({ATTESTED_PBM_POPULATIONS:?}) -- re-measure and record it rather than widening this"
+        );
+        assert_eq!(
+            pixel_lossless, checked,
+            "a member did not survive pixel-lossless"
+        );
+        assert_eq!(odd_width, PBM_ODD_WIDTH_MEMBERS);
+        assert_eq!(file_identical, PBM_BYTE_IDENTICAL_FILES);
+    }
 }

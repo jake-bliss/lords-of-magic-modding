@@ -6310,4 +6310,179 @@ mod tests {
             .collect();
         assert_eq!(distinct.len(), SECTION_TAGS.len());
     }
+    // -----------------------------------------------------------------------
+    // The installed corpus
+    // -----------------------------------------------------------------------
+    //
+    // Run with:
+    //   LOM_GAME_DIR=.../English cargo test --release -- --ignored
+    //
+    // and optionally widened to every install on the machine:
+    //   LOM_SAVE_DIRS='/path/one/savegame:/path/two/savegame' ...
+    //
+    // **This corpus is a live directory, and the test is written for that.** The `.lom` family
+    // under GS5R3 was last written by the game on 2026-09-18, after part of `docs/save-format.md`
+    // had been drafted; files appear, disappear and are re-saved between runs. So this asserts a
+    // **pinned required set** plus a **floor**, never a total. The prose figure of "31 of 31" is a
+    // union across four installs and is not reproducible from one directory by construction --
+    // `docs/save-format.md` has already had that headline wrong twice, in opposite directions.
+
+    /// **Observed in the corpus, 2026-09-19.** The saves shipped with the game, present in all four
+    /// installs on this machine. Pinned by name: these do not move, and requiring them is what
+    /// stops a sweep over an empty or wrong directory from passing.
+    const SHIPPED_SAVEGAMES: &[&str] = &[
+        "combat.sav",
+        "experience.sav",
+        "magic.sav",
+        "merc.sav",
+        "quickstart",
+        "temple.sav",
+    ];
+
+    fn game_directory() -> std::path::PathBuf {
+        let directory = std::env::var_os("LOM_GAME_DIR")
+            .map(std::path::PathBuf::from)
+            .expect("set LOM_GAME_DIR to the installed English directory");
+        assert!(
+            directory.join("lomse.exe").is_file(),
+            "no lomse.exe under {}",
+            directory.display()
+        );
+        directory
+    }
+
+    /// Every file in every savegame directory under survey, whatever it is called.
+    ///
+    /// Extension is not filtered on: two corpus files (`quickstart`, `Merlin I`) have none, and a
+    /// sweep that filtered on `.sav` would skip the only mid-game player states in existence here.
+    fn savegame_files() -> Vec<(String, Vec<u8>)> {
+        let mut directories = vec![game_directory().join("savegame")];
+        if let Some(extra) = std::env::var_os("LOM_SAVE_DIRS") {
+            directories.extend(
+                extra
+                    .to_string_lossy()
+                    .split(':')
+                    .filter(|value| !value.is_empty())
+                    .map(std::path::PathBuf::from),
+            );
+        }
+        let mut out = Vec::new();
+        for directory in &directories {
+            let entries = std::fs::read_dir(directory)
+                .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()));
+            for entry in entries {
+                let path = entry.expect("a directory entry").path();
+                if !path.is_file() {
+                    continue;
+                }
+                let bytes = std::fs::read(&path).expect("read a savegame");
+                out.push((path.to_string_lossy().into_owned(), bytes));
+            }
+        }
+        out.sort_by(|left, right| left.0.cmp(&right.0));
+        out
+    }
+
+    /// Every installed savegame parses, satisfies every structural invariant, accounts for its
+    /// bytes with zero slack, and reassembles byte-identically with `LS_SPR_` regenerated.
+    ///
+    /// **What this proves and what it does not.** The byte account is the real content: a section
+    /// model that is merely plausible stops short of its section's end or runs off it, and every
+    /// length in the three writer-derived sections is either a constant in the instruction stream
+    /// or a count the file stores, so there is nothing to tune. The **re-encode** is weaker than it
+    /// looks -- once `parse` succeeds it is an identity, so it establishes lossless preservation
+    /// and correct container splicing and nothing about any record's internal field boundaries. It
+    /// is asserted because a splicing regression is otherwise invisible, not because it falsifies
+    /// the record model. See `docs/save-format.md`.
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR"]
+    fn every_savegame_accounts_for_its_bytes() {
+        let files = savegame_files();
+
+        // The tripwire, in two parts. The floor alone would pass on six copies of the wrong file;
+        // the pinned set alone would pass on a directory that had lost everything else.
+        assert!(
+            files.len() >= SHIPPED_SAVEGAMES.len(),
+            "found {} savegames, fewer than the {} the game ships",
+            files.len(),
+            SHIPPED_SAVEGAMES.len()
+        );
+        for shipped in SHIPPED_SAVEGAMES {
+            assert!(
+                files.iter().any(|(name, _)| std::path::Path::new(name)
+                    .file_name()
+                    .is_some_and(|base| base.eq_ignore_ascii_case(std::ffi::OsStr::new(shipped)))),
+                "the shipped savegame {shipped} is not in the surveyed directories"
+            );
+        }
+
+        let mut failures = Vec::new();
+        for (name, bytes) in &files {
+            let save = match SaveFile::parse(bytes) {
+                Ok(save) => save,
+                Err(error) => {
+                    failures.push(format!("{name}: {error}"));
+                    continue;
+                }
+            };
+
+            // Structural invariants are re-derived from the raw bytes on the container, not read
+            // off the parsed structs, so they are a second implementation that can genuinely
+            // disagree with the first. Corpus regularities are deliberately NOT asserted: a real
+            // save that breaks one is a discovery, and failing on it would train a reader to
+            // ignore the signal worth acting on.
+            for invariant in save.container.structural_checks(bytes) {
+                if !invariant.passed {
+                    failures.push(format!(
+                        "{name}: structural invariant `{}` failed, measured {}",
+                        invariant.name, invariant.measured
+                    ));
+                }
+            }
+
+            // The byte account, section by section, for every section that models its own extent.
+            let accounted = [
+                (SectionTag::Multiplayer, save.multiplayer.accounted_len()),
+                (SectionTag::Map, save.map.accounted_len()),
+                (SectionTag::Game, save.game.accounted_len()),
+            ];
+            for (tag, len) in accounted {
+                let payload = save.container.location(tag).payload_len;
+                if len != payload {
+                    failures.push(format!(
+                        "{name}: {} accounts for {len} bytes of a {payload}-byte payload, a slack \
+                         of {}",
+                        tag.name(),
+                        payload as i64 - len as i64,
+                    ));
+                }
+            }
+
+            // `LS_SPR_` has no `accounted_len`; its account is that the decoded records re-emit
+            // the payload exactly.
+            let sprites_payload = save.container.location(SectionTag::Sprites);
+            let reemitted = save.sprites.encode();
+            let original = &bytes[sprites_payload.payload_offset..sprites_payload.payload_end()];
+            if reemitted != original {
+                failures.push(format!(
+                    "{name}: LS_SPR_ re-emitted {} bytes for a {}-byte payload",
+                    reemitted.len(),
+                    original.len()
+                ));
+            }
+
+            if save.reencode_with_sprites(bytes) != *bytes {
+                failures.push(format!(
+                    "{name}: the whole file did not reassemble byte-identically"
+                ));
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "{} savegame(s) did not account for their bytes: {:#?}",
+            failures.len(),
+            failures
+        );
+    }
 }
