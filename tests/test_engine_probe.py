@@ -1286,6 +1286,145 @@ class TerrainRingProbeTest(unittest.TestCase):
             self.assertNotIn(name, engine_probe.generated_map_inputs())
 
 
+class UnitAnchorProbeTest(unittest.TestCase):
+    """Does the unit draw path apply the same anchor as the terrain-sprite path?
+
+    hotspots.md states its own limit: record 0 was confirmed by placing a unit IMP through the
+    *terrain sprite* path, which does not prove the *unit* draw path computes its anchor the same
+    way. These assertions hold the generated body to the shape the run sheet promises: one shared
+    cell, the shipped sanity control first, the same art through both paths, and a unit placed by a
+    verbatim shipped call site rather than a reconstructed one.
+    """
+
+    def setUp(self) -> None:
+        self.body = engine_probe.unit_anchor_body()
+
+    def _at(self, needle: str) -> int:
+        index = self.body.find(needle)
+        self.assertNotEqual(index, -1, f"{needle!r} missing from the body")
+        return index
+
+    def test_all_three_rungs_place_on_the_one_cell_findemptylocation_returned(self) -> None:
+        """The 2026-09-16 method: one cell, subjects placed and removed in turn.
+
+        Sharing the cell is what makes the rungs comparable without solving for the camera
+        anchor twice -- unknown constants common to all three cancel in the comparison.
+        """
+        self.assertIn("zaloc UNITTYPELAND findemptylocation /zcell exch def", self.body)
+        self.assertIn("zcell xy_to_x_y /zcy exch def /zcx exch def", self.body)
+        # Every placement -- both terrain-sprite rungs and the unit rung -- uses zcx/zcy/zcell,
+        # never a second, independently-derived cell.
+        self.assertEqual(self.body.count("zcx zcy zt0 addterrainsprite"), 1)
+        self.assertEqual(self.body.count("zcx zcy zt1 addterrainsprite"), 1)
+        self.assertIn("0{}0 zcell zowner add_unit_to_location", self.body)
+        self.assertIn("zcx zcy armyat /zarmy exch def", self.body)
+
+    def test_rung_order_is_control_then_same_art_control_then_the_unit(self) -> None:
+        """A failure has to name its own rung, so the shipped sanity control comes first."""
+        rung0 = self._at("zt0 addterrainsprite")
+        rung1 = self._at("zt1 addterrainsprite")
+        rung2 = self._at("add_unit_to_location")
+        self.assertLess(rung0, rung1)
+        self.assertLess(rung1, rung2)
+
+    def test_rung0_is_the_ladder_runs_own_shipped_control(self) -> None:
+        self.assertIn(engine_probe.UNIT_ANCHOR_CONTROL_TYPE, self.body)
+        self.assertIn(f"{engine_probe.UNIT_ANCHOR_CONTROL_TYPE} /zt0 exch def", self.body)
+
+    def test_rung1_places_the_exact_same_art_the_unit_rung_uses(self) -> None:
+        """The whole comparison is void if rung 1's art differs from rung 2's."""
+        self.assertIn(f'["{engine_probe.UNIT_ANCHOR_IMP}"]cvx addterrainspritetype', self.body)
+        self.assertIn(engine_probe.UNIT_ANCHOR_TYPE_SYMBOL, engine_probe.UNIT_ANCHOR_IMP)
+
+    def test_unit_call_is_copied_from_the_shipped_call_site_not_reconstructed(self) -> None:
+        """gs\\PLAYER5.gs:430 verbatim, `start_loc`/`2` swapped for this probe's own cell/owner.
+
+        Operand order for `add_unit_to_location` is TYPE STR ARTLIST NAME LOC OWNER -- the reverse
+        of the pop order in its own definition (`/owner /loc /this_name /this_artlist /this_str
+        /this_type`) -- and this asserts the exact shipped token shape, not a paraphrase of it.
+        """
+        self.assertIn(
+            f"unittypedict begin /{engine_probe.UNIT_ANCHOR_TYPE_SYMBOL} end 0{{}}0 "
+            "zcell zowner add_unit_to_location",
+            self.body,
+        )
+
+    def test_never_forces_or_assumes_a_facing(self) -> None:
+        """Facing is read for information only; identification comes from the frame's own size.
+
+        No shipped call site sets ARMY_FACING, so constructing one would be exactly the
+        reconstruction-from-resemblance the project's rules forbid.
+        """
+        self.assertNotIn("ARMY_FACING", self.body[: self._at("ARMY_FACING getarmydata")])
+        self.assertNotIn("setarmydata", self.body)
+        self.assertIn("zarmy ARMY_FACING getarmydata /zfacing exch def", self.body)
+
+    def test_army_is_found_by_location_never_by_a_fabricated_return_value(self) -> None:
+        """`add_unit_to_location`'s body ends on a boolean branch; it pushes nothing back."""
+        after_call = self.body[self._at("add_unit_to_location") + len("add_unit_to_location") :]
+        immediate = after_call.split("armyat", 1)[0]
+        self.assertNotIn("exch def", immediate, "treats add_unit_to_location as if it returned")
+        self.assertIn("zcx zcy armyat", self.body)
+
+    def test_cleanup_is_the_exact_army_id_never_a_type_or_location_sweep(self) -> None:
+        self.assertIn("zarmy deletearmynow", self.body)
+        # An army has no sprite type, so the terrain-sprite sweep idiom must never apply to it.
+        cleanup_zone = self.body[self._at("add_unit_to_location") :]
+        self.assertNotIn("getterrainspritetype", cleanup_zone)
+
+    def test_rung0_and_rung1_are_matched_by_type_and_cell_before_any_type_only_sweep(self) -> None:
+        """Rung 0 reuses the shipped orchard type; a type-only sweep on it would delete orchards."""
+        rung0_zone = self.body[self._at("zt0 addterrainsprite") : self._at("zt1")]
+        self.assertIn("getterrainspritelocation zcell eq", rung0_zone)
+        self.assertNotIn(
+            "{dup getterrainspritetype zt0 eq{destroyterrainsprite}{pop}ifelse}enumterrainsprites",
+            rung0_zone,
+        )
+        # Rung 1's type was minted this keypress, so it gets the extra type-only sweep the others
+        # in this probe do not.
+        self.assertIn(
+            "{dup getterrainspritetype zt1 eq{destroyterrainsprite}{pop}ifelse}enumterrainsprites",
+            self.body,
+        )
+
+    def test_every_capture_is_uniquely_named_and_this_probes_own(self) -> None:
+        names = re.findall(r'"(z[^"]*\.bmp)"screencapture', self.body)
+        self.assertEqual(names, ["zu0.bmp", "zu1.bmp", "zu2.bmp", "zu3.bmp", "zu4.bmp"])
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_plate_precedes_every_rung_and_final_capture_follows_cleanup(self) -> None:
+        plate = self._at('"zu0.bmp"screencapture')
+        first_rung = self._at("zt0 addterrainsprite")
+        self.assertLess(plate, first_rung)
+        cleanup = self._at("zarmy deletearmynow")
+        final_shot = self._at('"zu4.bmp"screencapture')
+        self.assertLess(cleanup, final_shot)
+
+    def test_frame_size_table_is_internally_consistent_and_every_size_is_distinct(self) -> None:
+        """The whole identification method rests on these six sizes being pairwise distinct."""
+        self.assertEqual(
+            set(engine_probe.UNIT_ANCHOR_FRAME_SIZES),
+            set(engine_probe.UNIT_ANCHOR_FRAME_PLACEMENTS),
+        )
+        sizes = list(engine_probe.UNIT_ANCHOR_FRAME_SIZES.values())
+        self.assertEqual(len(sizes), len(set(sizes)), "two candidate frames share a silhouette size")
+        # STAND: frames 30-34, one per facing; MOVE: frame 0, the frame the terrain-sprite path
+        # (which never animates) always draws.
+        self.assertEqual(set(engine_probe.UNIT_ANCHOR_FRAME_SIZES), {0, 30, 31, 32, 33, 34})
+
+    def test_logs_carry_enough_to_solve_the_rule_backwards_offline(self) -> None:
+        """Every quantity the offline analysis needs is in the log, not just the captures."""
+        for needle in (
+            '"army loc "zaloc" cell "zax0" "zay0" owner "zowner',
+            '"target cell "zcell" "zcx" "zcy',
+            '"rung0 orchard type "zt0" done"',
+            '"rung1 licr2a-as-terrain type "zt1" done"',
+            '"rung2 unit army "zarmy" at "zaloc2" expected "zcell" facing "zfacing',
+            '"rung2 cleanup done"',
+        ):
+            self.assertIn(needle, self.body, needle)
+
+
 class DirectionConventionTest(unittest.TestCase):
     """The analyser's direction labels and the Rust writer's must mean the same thing.
 

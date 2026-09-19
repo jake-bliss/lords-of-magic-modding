@@ -14,9 +14,10 @@ app_dir="${1:-${HOME}/Applications/Lords of Magic GS5R3.app}"
 # Which probe to install: "ladder" (the four-rung compositing diagnostic), "elevation",
 # "mapsize" (the oversized-map ladder, issue #22 -- now closed), "flatground" (the built-mesh
 # probe that closes the map2screen y convention), "maptag" (the cell-tag and trailing-record probe
-# for issue #4), "mapload" (does the engine accept a map THIS PROJECT wrote?), or "terrainrings"
+# for issue #4), "mapload" (does the engine accept a map THIS PROJECT wrote?), "terrainrings"
 # (the full 11x11 setterrain transition matrix, plus the 0x00800000 call isolation and a dump of the
-# script-assigned sprite-type table).
+# script-assigned sprite-type table), or "unitanchor" (does the UNIT draw path apply the same
+# hotspot-record-0 anchor as the terrain-sprite path hotspots.md's own record-0 confirmation used?).
 #
 # "mapload" is the only probe with prerequisites: its rungs 1-6 load files that must already be in
 # the game's map/ directory, built by scripts/build-mapload-inputs.sh. Installing it without them
@@ -239,6 +240,15 @@ elif [[ "${probe}" == "mapsize" ]]; then
   echo "once. It generates and saves a 128, a 256 and a 512 map in turn, which takes a while --"
   echo "512x512 is sixteen times the work of a normal map. Watch zprobe.log for 'gen done' lines."
   echo "It places no sprites and destroys nothing. Do not save the game afterwards."
+elif [[ "${probe}" == "unitanchor" ]]; then
+  echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map"
+  echo "with your starting army visible on screen and NOT adjacent to a hostile stack, and TAP z"
+  echo "once. In order, on one empty cell next to your army: a shipped orchard sprite appears and"
+  echo "is removed, the SAME art the Unicorn uses (units/imp/licr2a.imp) appears as a terrain"
+  echo "sprite and is removed, and then a real Unicorn is recruited to your side, captured, and"
+  echo "deleted. Expect one new unit to flash into existence and vanish next to your army --"
+  echo "that is the probe's own cleanup, not a bug. See docs/unit-anchor-run-sheet.md."
+  echo "Do not save the game afterwards."
 else
   echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map,"
   echo "and TAP z once. The probe now fires only once per launch even if the key repeats."
