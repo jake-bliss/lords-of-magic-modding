@@ -418,20 +418,40 @@ against a shuffled baseline on signals the table itself does not contain.
 | Adjacent operators' caller-set overlap (mean Jaccard) | 0.3145 | 0.0133 | **23.6x** |
 | Adjacent operators sharing at least one caller file | 58.5% | 10.5% | **5.6x** |
 | Adjacent operators sharing a name stem | 12.87% | 0.021% | **611x** |
-| Mean run length of dominant caller directory | 1.44 | 1.10 | 1.32x |
+| Mean run length of dominant caller directory | 1.44 | 1.10 | 1.31x |
 
-**Re-measured 2026-09-18**, because this table is computed through `tools/gs_syntax.py` and four of
-that tokenizer's rules changed that day. Running the same command with the tokenizer immediately
-before those fixes and immediately after, over the same 1,696-member GS5R3 dump, moves **one
-number**: the fourth row's observed mean run length, 1.45 → 1.44, with its shuffled baseline
-1.09 → 1.10 and its ratio 1.32x either way. The first three rows are byte-identical between the two
-runs, which is a measurement and not an assumption — restoring 706 tokens to `wacave.gs` and
-splitting `w/name`-shaped tokens does grow caller sets, and those rows are computed from caller
-sets, so they had to be re-run rather than argued about. The fourth row's published ratio was
-**1.33x** before this re-run; it is 1.32x now.
+Unrounded, because two of these cells are close enough that rounding hides what moves:
+0.31445655255437444 / 0.01332579503380394 = 23.597582865163627; 0.5846702317290553 / 0.1048;
+0.12867443150305047 / 0.00021075984470327234 = 610.5263157894736; 1.4397446129289704 /
+1.0991692916425675 = 1.3098479223136381.
 
-The first three say the ordering is real and strong. **The fourth says the obvious labelling axis is
-the wrong one**, and that is worth as much as the positive results.
+**Re-measured 2026-09-18, and the re-measurement found a defect in the measurement.** This table is
+computed through `tools/gs_syntax.py`, five of whose rules changed that day, so it was re-run with
+the tokenizer immediately before those fixes and immediately after, over one 1,696-member GS5R3
+dump. **All four rows are bit-identical between the two runs** — not approximately, the same
+floats. The fixes restore tokens (706 to `wacave.gs` alone) and split `w/name`-shaped tokens, and
+those changes fall inside members whose caller sets they do not alter for any operator in the
+table.
+
+An earlier version of this note claimed the fourth row moved, 1.45 → 1.44 observed with the ratio
+going 1.33x → 1.32x, and credited the tokenizer. **That was wrong, and the way it was wrong is the
+useful part.** `caller_group_agreement` chose each operator's dominant directory with
+`Counter.most_common`, which breaks a tie by insertion order, and the insertion order came from
+iterating a `set` of file names — so it varied with Python's string hash randomisation between
+*processes*. Five runs over one corpus with one unchanged tokenizer give observed 1.43, 1.44, 1.44,
+1.44, 1.45 and ratio 1.31x-1.32x. The "delta" was noise, and comparing one pre-run against one
+post-run could not have told the difference. The tie is now broken by name, `tests/test_operator_groups.py`
+runs the measurement under eight hash seeds and requires one answer, and the numbers above are from
+the fixed, deterministic version. The published fourth row before all this was 1.45 / 1.10 / 1.33x,
+which is inside the noise band it was measured in.
+
+The first three say the ordering is real and strong — though "three rows" overstates how many
+independent things they are, and this page used to. Rows 1 and 2 are two projections of a single
+`call_site_agreement` computation, mean overlap and share-any, so they cannot disagree with each
+other; row 3 comes from `stem_agreement`, whose only argument is the operator sequence — it never
+touches the caller index and is mathematically incapable of moving when the tokenizer changes. So
+the evidence is one statistic about callers, two ways, plus one constant. **The fourth says the
+obvious labelling axis is the wrong one**, and that is worth as much as the positive results.
 
 #### The negative result
 
@@ -475,7 +495,11 @@ target/release/lom-asset-viewer --scan-natives '/path/to/English/lomse.exe' > sc
 # optional. `caller_index` uses `Path.iterdir`, so it does not descend into subdirectories and a
 # nested tree yields 30 operators with callers instead of 1,371; and the dominant-caller-directory
 # row recovers the directory by splitting the file *name* on `__`, so the separator is the one the
-# tool reads. Link rather than copy; nothing is written to the dump.
+# tool reads. `caller_index` also applies NO suffix filter -- it reads every regular file in the
+# directory -- so a stray `scan.txt` or `.DS_Store` becomes a caller and shifts the caller-set
+# rows. Keep the dump to `.gs` members only. Link rather than copy; nothing is written to it.
+# The measurement is deterministic since 2026-09-18; before that the fourth row varied by hash
+# seed.
 python3 -m tools.operator_groups scan.txt /path/to/flattened/scripts
 ```
 
@@ -630,8 +654,8 @@ committed instead is `AuthorityParityTest` in `tests/test_gs_syntax.py`, which r
 After them, **0 of 4,692 members tokenize differently**.
 
 **Two of the five had zero corpus reach and were fixed anyway.** A divergence about a shipped
-grammar is a defect whether or not the shipped corpus happens to exercise it: `foo(1)` was five
-tokens here and one to the engine's lexer, so an edit to `foo (1)` would have read as a real change
+grammar is a defect whether or not the shipped corpus happens to exercise it: `foo(1)` was four
+tokens here (`foo`, `(`, `1`, `)`) and one to the engine's lexer, so an edit to `foo (1)` would have read as a real change
 to the authority and as layout-only here — in a mod nobody has written yet, which is exactly the
 kind of file this pipeline exists to check. Reach decides urgency, not whether something is wrong.
 

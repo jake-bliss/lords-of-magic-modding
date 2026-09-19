@@ -6,14 +6,15 @@ it were closed on 2026-09-18: the LF-only `;` comment rule, a `\\` escape inside
 ending a name, `str.isspace()` being wider than `is_ascii_whitespace`, and `(`/`)` being delimiters
 here when the authority treats them as ordinary name bytes. The `AuthorityParityTest` class below
 asserts agreement with the real Rust lexer rather than with a literal written here, so it fails if
-either implementation moves -- and it rebuilds that lexer when `gamescript.rs` is newer, because a
-parity test run against a stale binary reports agreement with a lexer nobody is running.
+either implementation moves -- and it builds that lexer first, letting Cargo decide freshness,
+because a parity test run against a stale binary reports agreement with a lexer nobody is running.
 """
 
 import hashlib
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,41 +24,39 @@ from tools.gs_syntax import normalized_bytes, tokens
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 VIEWER_CRATE = PROJECT_DIR / "spikes" / "asset-viewer"
 VIEWER = VIEWER_CRATE / "target" / "release" / "lom-asset-viewer"
-LEXER_SOURCE = VIEWER_CRATE / "src" / "gamescript.rs"
-
-
-def viewer_is_stale() -> bool:
-    """True when the authority's source is newer than the binary these tests would measure.
-
-    A parity test that runs against a months-old build is worse than no parity test: it reports
-    agreement with a lexer nobody is running. Edits to `gamescript.rs` therefore have to reach the
-    binary before these fixtures mean anything.
-    """
-    return (
-        not VIEWER.is_file() or LEXER_SOURCE.stat().st_mtime > VIEWER.stat().st_mtime
-    )
 
 
 def viewer_available() -> bool:
-    """Build the viewer if it is missing or stale, and skip only if the build genuinely fails.
+    """Build the viewer, and skip only if the build genuinely fails.
 
-    Same shape as `stormlib_available` in `tests/test_member_names.py`. Guarding on
-    `VIEWER.is_file()` alone would let a fresh checkout report OK with every parity fixture
-    silently skipped -- and those fixtures are the only reproducible evidence in this repository
-    for the five divergences closed on 2026-09-18, since the corpus they were measured over is not
-    in it.
+    The build is unconditional because Cargo decides freshness better than this file can. An
+    earlier version compared the binary's mtime against `gamescript.rs` alone, which missed
+    `gs_facts.rs` -- and `gs_facts.rs` is where `token_digest` lives, which is the value these
+    tests actually compare against. Any hand-rolled staleness rule has to cover every crate
+    source, `build.rs` and the manifests, which is a worse reimplementation of `cargo build`.
+
+    Guarding on `VIEWER.is_file()` would be worse still: a fresh checkout would report OK with
+    every parity fixture silently skipped, and those fixtures are the only evidence in this
+    repository for the five divergences closed on 2026-09-18 that a reader can re-run -- the
+    corpus they were measured over is not in it.
     """
-    if not viewer_is_stale():
-        return True
     if shutil.which("cargo") is None:
+        print("cargo is not on PATH; the lexer parity fixtures cannot run", file=sys.stderr)
         return False
-    subprocess.run(
+    completed = subprocess.run(
         ["cargo", "build", "--release"],
         capture_output=True,
         check=False,
         cwd=VIEWER_CRATE,
+        text=True,
     )
-    return not viewer_is_stale()
+    if completed.returncode != 0 or not VIEWER.is_file():
+        # A guessed cause ("SDL3? StormLib?") sends the reader to the wrong place. Say what cargo
+        # said instead.
+        tail = "\n".join(completed.stderr.strip().splitlines()[-10:])
+        print(f"cargo build --release failed in {VIEWER_CRATE}:\n{tail}", file=sys.stderr)
+        return False
+    return True
 
 
 class GsSyntaxTest(unittest.TestCase):
@@ -145,9 +144,10 @@ class GsSyntaxTest(unittest.TestCase):
     def test_a_parenthesis_is_an_ordinary_name_byte(self) -> None:
         """`is_separator` in the authority lists no parenthesis, so `foo(1)` is ONE name to it.
 
-        This module used to carry `(` and `)` in `DELIMITERS`, which made the same source five
-        tokens here and one there -- so an edit from `foo(1)` to `foo (1)` read as a real change to
-        the engine's lexer and as layout-only to this one. No shipped member trips it: 530 members
+        This module used to carry `(` and `)` in `DELIMITERS`, so `foo(1)` was four tokens here
+        -- `foo`, `(`, `1`, `)` -- against one there, and the fixture below was 8 against its real
+        5. An edit from `foo(1)` to `foo (1)` therefore read as a real change to the engine's lexer
+        and as layout-only to this one. No shipped member trips it: 530 members
         contain a parenthesis and in every one of them it is inside a string or a comment.
         """
         self.assertEqual(tokens("/a{ foo(1) }def"), ["/a", "{", "foo(1)", "}", "def"])
@@ -169,7 +169,10 @@ class GsSyntaxTest(unittest.TestCase):
         self.assertEqual(tokens('/a "no closing quote'), ["/a", '"no closing quote'])
 
 
-@unittest.skipUnless(viewer_available(), "lom-asset-viewer could not be built (SDL3? StormLib?)")
+@unittest.skipUnless(
+    viewer_available(),
+    "cargo is unavailable or lom-asset-viewer does not build; see the build output above",
+)
 class AuthorityParityTest(unittest.TestCase):
     """The two implementations tokenize the same bytes the same way.
 

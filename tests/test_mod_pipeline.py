@@ -10,6 +10,7 @@ the file is `assert_other_profiles_untouched`, which re-hashes every fabricated 
 operation. It is called by every test that writes anything.
 """
 
+import ast
 import hashlib
 import json
 import os
@@ -17,9 +18,18 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
-from tools.mod_build import ENGINE_ACCEPTANCE
+from tools.engine_acceptance import (
+    ACCEPTANCE,
+    ArchiveAcceptance,
+    Disposition,
+    EditKind,
+    EngineRun,
+    build_metadata,
+    roadmap_paragraph,
+)
 from tools.mod_tree import GAME_SUBPATH, PROFILE_APPS
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -354,107 +364,231 @@ class ProfileTableTest(unittest.TestCase):
 
 
 class EngineAcceptanceCaveatTest(unittest.TestCase):
-    """`build.json` carries its own engine-acceptance caveat, and it went stale once already.
+    """What the engine has accepted is data, and these tests assert the data.
 
-    Until 2026-09-18 every build asserted that no rewritten `pic.mpq` had faced the engine and that
-    its compression choice was Inferred. Both had been refuted, in this repository's own roadmap,
-    and nothing caught it because the claim lives in code and its evidence lives in prose.
+    The history matters more than the tests do. The caveat `build.json` carries was a hand-written
+    sentence; it went stale, claiming no rewritten `pic.mpq` had faced the engine after one had.
+    The repair was a test that grepped that sentence, and review then broke it three times running:
+    `NOT established` became `ALSO established`; then `have none of them` became `have every one of
+    them`; then a new sentence was appended after the clause being asserted -- "In fact, the engine
+    accepted a size-changing edit, an added member, and the full ByteRun1 encoder" -- and every
+    assertion stayed green. Three bypasses, one cause: a finite set of assertions about prose
+    cannot constrain the open set of sentences prose can be.
 
-    The first version of these tests checked that five phrases -- "ONE member", "REPLACED",
-    "size-changing edit", "added member", "encoder" -- appeared somewhere in the caveat, and passed
-    happily on a caveat that said the engine HAD accepted all of them. That is the direction that
-    does damage: the stale text it was written against merely understated what had been proved,
-    while its inverse would ship a build claiming acceptance for a size-changing edit and the
-    ByteRun1 encoder, neither of which has ever run. These tests assert the sentence rather than
-    its vocabulary, and take the limits from the roadmap at runtime rather than restating them.
+    So the sentence is no longer written. `tools/engine_acceptance.py` holds the facts, every
+    sentence is rendered from them, and these tests assert the facts and the rendering. A false
+    claim is now unrepresentable rather than un-greppable: the limits are *derived* from what the
+    run was, so saying the engine accepted a size-changing edit means saying the run was
+    size-changing, which changes the rendered roadmap paragraph, which stops matching
+    `docs/roadmap.md`, which fails here.
     """
-
-    NEGATION = "NOT established:"
 
     def roadmap(self) -> str:
         return (PROJECT_DIR / "docs" / "roadmap.md").read_text(encoding="utf-8")
 
-    def roadmap_limits_paragraph(self) -> str:
-        """The roadmap's own `Not established.` paragraph, which is the measured scope."""
-        roadmap = self.roadmap()
-        marker = "**Not established.**"
+    @staticmethod
+    def flatten(text: str) -> str:
+        """Compare wording, not line breaks: the doc is wrapped and the renderer is not."""
+        return " ".join(text.split())
+
+    def test_the_pic_run_is_recorded_as_the_narrow_thing_it_was(self) -> None:
+        run = ACCEPTANCE["pic.mpq"].run
+        self.assertIsNotNone(run)
+        self.assertEqual(run.date, "2026-09-18")
+        self.assertEqual(run.members, 1)
+        self.assertIs(run.disposition, Disposition.REPLACED)
+        self.assertIs(run.edit_kind, EditKind.LENGTH_PRESERVING)
+        self.assertEqual(run.mechanism, "tools/pbm_patch.py")
+
+    def test_the_limits_are_derived_from_the_run_rather_than_typed_beside_it(self) -> None:
+        """The property that makes the false claim unrepresentable, asserted directly.
+
+        A run that was length-preserving *implies* that a size-changing edit is untested, and a
+        run that replaced a member implies that an added one is. Nobody can delete those limits
+        while leaving the run describing what it describes.
+        """
+        run = ACCEPTANCE["pic.mpq"].run
+        self.assertIn("an edit that changes a member's size", run.derived_limits)
+        self.assertIn("a member added to an archive rather than replaced", run.derived_limits)
+
+        widened = replace(run, edit_kind=EditKind.SIZE_CHANGING, disposition=Disposition.ADDED)
+        self.assertNotIn("an edit that changes a member's size", widened.derived_limits)
+        self.assertNotIn(
+            "a member added to an archive rather than replaced", widened.derived_limits
+        )
+
+    def test_the_roadmap_paragraph_is_the_rendered_one(self) -> None:
+        """The build and the doc cannot drift apart, because both are printed from one record."""
         self.assertIn(
-            marker,
-            roadmap,
-            "the roadmap no longer states the limits of the pic.mpq run; the build caveat has "
-            "nothing left to agree with",
+            self.flatten(roadmap_paragraph("pic.mpq")),
+            self.flatten(self.roadmap()),
+            "docs/roadmap.md no longer matches tools/engine_acceptance.py. Whichever moved, the "
+            "facts are the source: change them there and paste what roadmap_paragraph prints.",
         )
-        start = roadmap.index(marker)
-        return roadmap[start : roadmap.index("\n\n", start)]
 
-    def caveat_negation_clause(self) -> str:
-        """The single clause of the caveat that states what has NOT been established."""
-        caveat = ENGINE_ACCEPTANCE["pic.mpq"]
-        self.assertEqual(
-            caveat.count("established"),
-            1,
-            "the caveat should make exactly one establishment claim, and it is a negative one",
-        )
-        self.assertIn(self.NEGATION, caveat)
-        self.assertNotIn("ALSO established", caveat)
-        return caveat[caveat.index(self.NEGATION) :].split(". ")[0]
-
-    def test_the_pic_caveat_agrees_with_the_roadmap_about_acceptance(self) -> None:
-        roadmap = self.roadmap()
-        accepted = (
+    def test_the_roadmap_still_records_the_acceptance_the_facts_claim(self) -> None:
+        run = ACCEPTANCE["pic.mpq"].run
+        self.assertIn(
             "- [x] Put a rewritten `pic.mpq` in front of the engine. **Observed in gameplay "
-            "2026-09-18**"
-        )
-        self.assertIn(
-            accepted,
-            roadmap,
-            "the roadmap no longer records pic.mpq acceptance on that date; the build caveat has "
-            "to follow it rather than lead it",
-        )
-        caveat = ENGINE_ACCEPTANCE["pic.mpq"]
-        self.assertNotIn("Never tested", caveat)
-        self.assertIn("Observed in gameplay 2026-09-18", caveat)
-
-    def test_the_pic_caveat_negates_every_limit_the_roadmap_negates(self) -> None:
-        """Polarity, not vocabulary: each limit has to sit inside the caveat's negative clause."""
-        paragraph = self.roadmap_limits_paragraph()
-        for phrase in (
-            "An edit that changes a member's *size* has not been put in front of the",
-            "neither has an added member",
-            "replaced rather than added",
-        ):
-            with self.subTest(roadmap=phrase):
-                self.assertIn(phrase, paragraph)
-
-        clause = self.caveat_negation_clause()
-        for limit in ("size-changing edit", "added member", "ByteRun1 encoder"):
-            with self.subTest(limit=limit):
-                self.assertIn(limit, clause)
-        self.assertIn(
-            "have none of them been put in front of the engine",
-            clause,
-            "the limits have to be negated in the caveat, not merely mentioned in it",
+            f"{run.date}**",
+            self.roadmap(),
+            "the facts claim an accepted pic.mpq run on that date and the roadmap does not record "
+            "it; the build caveat follows the roadmap rather than leading it",
         )
 
-    def test_the_positive_half_of_the_pic_caveat_stays_as_narrow_as_the_run(self) -> None:
-        caveat = ENGINE_ACCEPTANCE["pic.mpq"]
-        claimed = caveat[: caveat.index(self.NEGATION)]
-        for narrowing in ("ONE member", "REPLACED", "length-preservingly"):
-            with self.subTest(narrowing=narrowing):
-                self.assertIn(narrowing, claimed)
-        for widening in ("every", "all members", "any member", "archives"):
-            with self.subTest(widening=widening):
-                self.assertNotIn(widening, claimed)
+    def test_the_build_metadata_carries_the_structure_and_not_only_the_sentence(self) -> None:
+        metadata = build_metadata()
+        self.assertEqual(sorted(metadata), sorted(ACCEPTANCE))
+        pic = metadata["pic.mpq"]
+        self.assertEqual(pic["summary"], ACCEPTANCE["pic.mpq"].summary())
+        self.assertEqual(pic["established"]["edit_kind"], "length_preserving")
+        self.assertEqual(pic["established"]["disposition"], "replaced")
+        self.assertEqual(pic["not_established"], list(ACCEPTANCE["pic.mpq"].not_established))
+        for archive in ("imp.mpq", "sndfx.mpq", "special.mpq"):
+            with self.subTest(archive=archive):
+                self.assertIsNone(metadata[archive]["established"])
+                self.assertIn("Never tested", metadata[archive]["summary"])
 
-    def test_the_gs_caveat_still_matches_the_run_it_cites(self) -> None:
-        caveat = ENGINE_ACCEPTANCE["gs.mpq"]
-        self.assertIn("2026-09-16", caveat)
-        self.assertIn("MPQ_FILE_IMPLODE", caveat)
-        self.assertIn("once", caveat)
+    def test_every_observation_is_a_sentence_the_documentation_already_carries(self) -> None:
+        """The last free-text field, tied to prose a human reviewed.
+
+        `observation` is the only sentence in the record, and free text is where a widened claim
+        hides -- a reviewer changed it to "Each of the 1,071 members was re-encoded and accepted"
+        and every structural assertion passed. Two things stop that now: `EngineRun` refuses a
+        number the run does not record, and this test requires the sentence to appear in the
+        documentation, so widening it means also writing the wider claim where a reader will see
+        it.
+        """
+        prose = self.flatten(
+            " ".join(
+                (PROJECT_DIR / "docs" / name).read_text(encoding="utf-8")
+                for name in ("roadmap.md", "build-pipeline.md")
+            )
+        ).replace("`", "")
+        for name, acceptance in sorted(ACCEPTANCE.items()):
+            if acceptance.run is None:
+                continue
+            with self.subTest(archive=name):
+                self.assertIn(
+                    self.flatten(acceptance.run.observation).rstrip(".").lower(),
+                    prose.lower(),
+                    "an observation has to be a claim the documentation makes too",
+                )
+
+    def test_an_observation_may_not_carry_a_quantity_the_run_does_not_record(self) -> None:
+        with self.assertRaises(ValueError):
+            EngineRun(
+                date="2026-09-18",
+                members=1,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism="tools/pbm_patch.py",
+                observation="Each of the 1,071 members was re-encoded and accepted.",
+            )
+        # And the other direction: the run's own count and its date are quantities it records, so
+        # a sentence citing them is allowed. Without this the rule could be narrowed to forbid
+        # every number and no test would notice.
+        EngineRun(
+            date="2026-09-18",
+            members=3,
+            disposition=Disposition.REPLACED,
+            edit_kind=EditKind.LENGTH_PRESERVING,
+            mechanism="tools/pbm_patch.py",
+            observation="The engine read 3 members on 2026-09-18.",
+        )
+
+    def test_the_summary_is_nothing_but_its_facts(self) -> None:
+        """Rebuild every sentence from the record and demand equality. Deliberately brittle.
+
+        Structure alone does not stop a renderer from appending a claim no field holds -- a
+        reviewer demonstrated exactly that, with "In fact, the engine accepted a size-changing
+        edit, an added member, and the full ByteRun1 encoder" added inside `summary()`. Asserting
+        *properties* of the output cannot catch that, because the output is prose again by the time
+        it is a string. So this reconstructs the string from the fields and compares it, which
+        means a reflow of the template fails here and a human re-approves it. Brittle and loud
+        beats permissive and quiet for a claim about what the engine has accepted.
+        """
+        for name, acceptance in sorted(ACCEPTANCE.items()):
+            with self.subTest(archive=name):
+                limits = "; ".join(acceptance.not_established)
+                if acceptance.run is None:
+                    expected = (
+                        f"Never tested. No {name} this pipeline wrote has been put in front of "
+                        f"the engine. Not established: {limits}."
+                    )
+                else:
+                    run = acceptance.run
+                    expected = (
+                        f"Observed {run.date}, once: {run.members} member of {name}, "
+                        f"{run.disposition.value}, with a {run.edit_kind.value} edit made by "
+                        f"{run.mechanism}. {run.observation} Not established: {limits}."
+                    )
+                    if acceptance.storage_class:
+                        expected += f" {acceptance.storage_class}"
+                self.assertEqual(acceptance.summary(), expected)
+
+    def test_the_build_writes_the_rendered_facts_unmodified(self) -> None:
+        """The build's own dict has to be `build_metadata()` and not a transformation of it.
+
+        Checked through the syntax tree rather than the text, because the bypass to catch is a
+        wrapper -- a comprehension appending a sentence to every summary on the way into
+        `build.json` passes every test that only looks at `engine_acceptance`'s own output.
+        """
+        source = (PROJECT_DIR / "tools" / "mod_build.py").read_text(encoding="utf-8")
+        values = [
+            value
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Dict)
+            for key, value in zip(node.keys, node.values)
+            if isinstance(key, ast.Constant) and key.value == "engine_acceptance"
+        ]
+        self.assertEqual(len(values), 1, "build.json should record engine acceptance exactly once")
+        call = values[0]
+        self.assertIsInstance(call, ast.Call, "the build must write the rendered facts, unwrapped")
+        self.assertEqual(ast.unparse(call), "engine_acceptance.build_metadata()")
+
+    def test_no_engine_acceptance_prose_is_written_by_hand_anywhere_else(self) -> None:
+        """The regression that would undo all of this is someone pasting a sentence back in."""
+        source = (PROJECT_DIR / "tools" / "mod_build.py").read_text(encoding="utf-8")
+        for line in source.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            self.assertNotIn(
+                "Not established",
+                line,
+                "engine-acceptance prose belongs in tools/engine_acceptance.py, rendered",
+            )
+
+    def test_a_run_that_cannot_have_happened_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            EngineRun(
+                date="2026-09-18",
+                members=0,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism="x",
+                observation="y",
+            )
+        with self.assertRaises(ValueError):
+            EngineRun(
+                date="last Tuesday",
+                members=1,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism="x",
+                observation="y",
+            )
+        with self.assertRaises(ValueError):
+            ArchiveAcceptance(archive="imp.mpq", run=None)
+
+    def test_the_gs_run_still_matches_the_prose_that_cites_it(self) -> None:
+        run = ACCEPTANCE["gs.mpq"].run
+        self.assertEqual(run.date, "2026-09-16")
         self.assertIn(
-            "attended 2026-09-16 round trip of an `MPQ_FILE_IMPLODE` member of",
+            f"attended {run.date} round trip of an `MPQ_FILE_IMPLODE` member of",
             (PROJECT_DIR / "docs" / "build-pipeline.md").read_text(encoding="utf-8"),
         )
+        self.assertIn("0x80010100", ACCEPTANCE["gs.mpq"].storage_class)
 
 
 if __name__ == "__main__":

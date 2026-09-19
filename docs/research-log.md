@@ -5917,3 +5917,75 @@ token here and three to the authority. The original check saw the corpus's habit
 whitespace-separating `<<` and read it as evidence about the lexer. Corrected in place, with a
 pointer to the parity section. A "checked, not assumed" phrase is worth exactly as much as the
 mechanism behind it, and this one was a corpus coincidence.
+
+### Corrections to the corrections, same day, round four
+
+Three of the five claims the round-three note made about its own work were wrong. They are
+corrected here rather than edited above, because the shape of the errors is the finding.
+
+**The test said it took its limits from the roadmap at runtime. It did not.** The round-three note
+and that test's docstring both claimed the caveat's limits were derived from the roadmap's
+`Not established.` paragraph. The code computed that paragraph and then asserted three *other*
+hardcoded strings into the caveat; nothing flowed from one to the other, one of the three
+("ByteRun1 encoder") does not appear in that paragraph at all, and the whole class passed when the
+roadmap's paragraph was monkeypatched to grow a limit. A test that reads a file and ignores what it
+read is worse than one that never opens it, because the docstring buys trust the mechanism has not
+earned.
+
+**The prose approach was the defect, and the third bypass proved it.** Round one broke the caveat
+test by turning `NOT established` into `ALSO established`; round two by turning `have none of them`
+into `have every one of them`; round three by appending "In fact, the engine accepted a
+size-changing edit, an added member, and the full ByteRun1 encoder" *after* the clause every
+assertion was about. Each repair closed the previous bypass without narrowing the gap, because a
+finite set of assertions about prose cannot constrain the open set of sentences prose can be. The
+sentence is now rendered, not written: `tools/engine_acceptance.py` holds the run as data — count,
+replaced-or-added, length-preserving-or-size-changing, date, mechanism, observation — and derives
+the limits from it, so "the engine accepted a size-changing edit" cannot be said without recording
+that the run *was* size-changing, which changes the rendered roadmap paragraph, which no longer
+matches `docs/roadmap.md`. `build.json` carries the structure beside the sentence. Six mutations,
+including all three historical bypasses, now fail.
+
+Two holes stayed open after the first rewrite and were closed too: a wrapper at the build site
+(`{k: dict(v, summary=v["summary"] + "…")}`) bypassed every assertion about the module's own
+output, so the build's dict is now checked through the syntax tree and must be exactly
+`engine_acceptance.build_metadata()`; and the one free-text field left, `observation`, could still
+be widened to "Each of the 1,071 members was re-encoded and accepted", so a quantity that is not
+the run's own count or date is now refused outright, and every observation has to be a sentence the
+documentation already carries.
+
+**`foo(1)` was four tokens, not five.** The parenthesis note shipped in five files with a wrong
+count — `foo`, `(`, `1`, `)` is four — in a repository whose premise is that a stated count is a
+measurement. The one place that was right used the fuller example (`/a{ foo(1) }def`, 8 against 5),
+which is the lesson: a worked example carries its own check, a bare number does not.
+
+**The operator-ordering table did not move, and the reported movement was hash noise.** Round three
+reported the fourth row going 1.45 → 1.44 observed and 1.33x → 1.32x, and credited the tokenizer.
+Re-running the two tokenizers with a fixed `PYTHONHASHSEED` gives **bit-identical floats on all
+four rows**. The movement came from `caller_group_agreement`, which picked each operator's dominant
+directory with `Counter.most_common` over a `set`, so ties broke by hash order: five runs of one
+unchanged tokenizer give observed 1.43, 1.44, 1.44, 1.44, 1.45. The tie is now broken by name, and
+`tests/test_operator_groups.py` runs the measurement under eight hash seeds and demands one answer.
+**A one-run-against-one-run comparison could not have told a real delta from this**, and the way to
+have known that was to run the do-nothing case first, which is a lesson this repository has already
+written down.
+
+The same page's "three of four rows are computed from caller sets" is also corrected: rows 1 and 2
+are two projections of a single `call_site_agreement` computation and row 3 never touches the
+caller index at all, so the invariance is one statistic plus one constant, not three independent
+confirmations.
+
+**What was re-run rather than reasoned about.** `docs/native-operator-bodies.md`'s operand-count
+table is read through `gs_callsites.py` and so through this tokenizer. All five cited operators,
+plus `launchmissile` and `relative2actual`, produce **byte-identical reports** before and after the
+five fixes. The five members the string fix moved are named there now. One number in that section
+could not be reproduced and predates this work: `launchmissile` has 4 + 7 + 5 = 16 call sites across
+the three profiles against a recorded "twelve".
+
+**Also closed.** `viewer_is_stale` compared the built viewer against `gamescript.rs` only, while
+the value these tests compare is `token_digest` in `gs_facts.rs` — so an edit there would have left
+the fixtures agreeing with a stale binary. The manual staleness rule is gone; `cargo build
+--release` runs unconditionally and Cargo decides freshness, with the build's own stderr printed
+when it fails instead of a guessed cause. And the parity measurement now states its denominator's
+other half: **0 of 4,692 members produced a parse error**, which matters because `GsFacts::measure`
+returns an empty digest for a member it cannot lex, so an erroring member would have left the
+comparison silently.

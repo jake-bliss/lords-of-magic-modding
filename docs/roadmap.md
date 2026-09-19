@@ -342,9 +342,16 @@ new-game setup. The name means "the new-game menu". An instruction to the human 
 reading the image rather than on knowing where the engine draws it was wrong about where to look;
 the observation succeeded anyway because the main menu is the first thing drawn.
 
-**Not established.** One member of one `pic.mpq`, replaced rather than added, with a
-length-preserving edit. An edit that changes a member's *size* has not been put in front of the
-engine, and neither has an added member. `imp.mpq`, `sndfx.mpq` and `special.mpq` remain untested.
+<!-- Rendered from tools/engine_acceptance.py. Do not edit this paragraph by hand: change the
+     facts there and paste what `roadmap_paragraph("pic.mpq")` prints. tests/test_mod_pipeline.py
+     fails when the two differ, which is how a claim here and a claim in every build.json are kept
+     from drifting apart -- the defect this whole arrangement exists for. -->
+
+**Not established.** 1 member of one `pic.mpq`, replaced rather than added, with a length-preserving
+edit. The engine has not been shown an edit that changes a member's size. The engine has not been
+shown a member added to an archive rather than replaced. The engine has not been shown a second
+member of the same archive in one build. The engine has not been shown the full ByteRun1 encoder,
+which no run has used. `imp.mpq`, `sndfx.mpq` and `special.mpq` remain untested.
 
 Note that painting has never been verified by a probe loading a painted map, and the core tile
 family, road in either role, and painting across an existing boundary are refused rather than
@@ -391,7 +398,7 @@ only this page still said otherwise:
   bit of it. Latent either way: across 353 shipped maps and 1,040,384 cells that field takes only
   `0x0000` and `0x0080`.
 - **`tools/gs_syntax.py` diverged from the authority in five places** — **all five fixed
-  2026-09-18.** Only the first was recorded here; the other three were found by reading the two
+  2026-09-18.** Only the first was recorded here; the other four were found by reading the two
   lexers side by side after it, which is the reason this entry is now a list. (1) A `;` comment
   ended at `\n` only, though bare CR is a line ending, so in a member with no LF the first comment
   swallowed the rest of the file: **34 members**, every one in GS5R3, 25 of them with no LF at all,
@@ -405,12 +412,13 @@ only this page still said otherwise:
   `str.isspace()` is wider than `is_ascii_whitespace` — it also accepts ASCII `\x0b` and
   `\x1c`-`\x1f`: **0 members**, and the one member holding such a byte holds it inside a string
   literal, where no layout rule looks. (5) `(` and `)` were delimiters here and are ordinary name
-  bytes to the authority, which lists no parenthesis in `is_separator`, so `foo(1)` was five tokens
+  bytes to the authority, which lists no parenthesis in `is_separator`, so `foo(1)` was four tokens
   here and one there: **0 members** — 530 hold a parenthesis and in every one of them it is inside
   a string or a comment. The last two were fixed despite measuring zero, because a disagreement
   about the grammar is a defect whether or not the shipped corpus exercises it. Measured over all 4,692 `.gs` members of the three profiles
   before and after, with a port of the Rust rules validated against `--gs-facts` on 4,692 of 4,692
-  first: **after the four fixes, zero members tokenize differently.** `reports/gs/summary.md`
+  first: **after the five fixes, zero members tokenize differently.** Zero of the 4,692 produced a
+  parse error, so none dropped out of the comparison unseen. `reports/gs/summary.md`
   regenerates byte-identical throughout — token hashes moved, **no member changed status**. What is
   left is listed in
   [the lexer parity section](gamescript-format.md#lexer-parity-the-two-tokenizers-and-what-still-separates-them):

@@ -13,7 +13,8 @@ from __future__ import annotations
 # What the authority splits on, and nothing more. `is_separator` in
 # `spikes/asset-viewer/src/gamescript.rs` lists `{`, `}`, `[`, `]` (plus `;`, `"`, `/`, `<`, `>`,
 # which this module handles elsewhere) and does NOT list `(` or `)`. Parentheses are ordinary name
-# bytes to the engine's lexer, so `foo(1)` is one token there and used to be five here. That is a
+# bytes to the engine's lexer, so `foo(1)` is one token there and used to be four here -- `foo`,
+# `(`, `1`, `)` -- and `/a{ foo(1) }def` was 8 tokens here against its real 5. That is a
 # real disagreement about a shipped grammar even though no corpus member happens to trip it: an
 # edit from `foo(1)` to `foo (1)` reads as MODIFIED to the authority and as layout-only here.
 DELIMITERS = frozenset("{}[]")

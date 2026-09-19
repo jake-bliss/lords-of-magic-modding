@@ -171,8 +171,13 @@ def caller_group_agreement(
         if not files:
             dominant.append(None)
             continue
-        groups = Counter("\\".join(file.split("__")[:depth]) for file in files)
-        dominant.append(groups.most_common(1)[0][0])
+        # Deterministic tie-break. `files` is a set, so its iteration order varies with Python's
+        # string hash randomisation, and `Counter.most_common` breaks ties by insertion order --
+        # which made this row, and only this row, move between runs of the same corpus with the
+        # same tokenizer: observed 1.43-1.45 and ratio 1.31-1.32x over five runs. A published
+        # measurement a reader cannot reproduce is not a measurement. Measured 2026-09-18.
+        groups = Counter("\\".join(file.split("__")[:depth]) for file in sorted(files))
+        dominant.append(min(groups.items(), key=lambda group: (-group[1], group[0]))[0])
 
     def mean_run(sequence: list[str | None]) -> float:
         runs = []

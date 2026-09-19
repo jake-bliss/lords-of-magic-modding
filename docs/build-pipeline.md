@@ -179,12 +179,20 @@ five measured against the corpus rather than bounded from above. The instrument 
 not in the port. That port is a throwaway instrument and is **not committed**, so this number is
 not reproducible from the repository; what is committed is `AuthorityParityTest` in
 `tests/test_gs_syntax.py`, which measures one fixture per divergence against the real
-`lom-asset-viewer` and rebuilds it when `gamescript.rs` is newer. Both sides decode latin1 for the
-comparison, which removes the one difference that
-is about decoding rather than about token boundaries (the Rust lexer decodes with
-`from_utf8_lossy`, so a high byte becomes U+FFFD in its token text). Evidence class: Observed,
-2026-09-18, over the three installed profiles; the archives are not in this repository, so this
-measurement is the only evidence for these numbers.
+`lom-asset-viewer` and rebuilds it first, letting Cargo decide freshness rather than guessing at
+it. **Zero of the 4,692 produced a parse error**, which is worth stating because
+`GsFacts::measure` returns an empty `token_sha256` for a member the authority refuses to lex: had
+any member errored it would have dropped out of the comparison silently and shrunk the denominator
+with nobody told.
+
+The one difference that is about decoding rather than about token boundaries is handled rather
+than ignored. The Rust lexer decodes with `from_utf8_lossy`, so a byte above 0x7e that is not
+valid UTF-8 becomes U+FFFD in its token text; `gs_syntax.py` decodes latin1 and keeps it. The
+comparison therefore applies the *same* decoder to both sides — either both latin1, or the port's
+own tokens put through `from_utf8_lossy` — and a separator survives either transform, so a moved
+token boundary cannot hide inside it. Compared without that, 17 members read as divergent and
+none of them is. Evidence class: Observed, 2026-09-18, over the three installed profiles; the
+archives are not in this repository, so this measurement is the only evidence for these numbers.
 
 | Divergence in `gs_syntax.py` | Members it changed | Where |
 |---|---:|---|
@@ -207,7 +215,7 @@ first mod was wrong before it was written here.
 
 The last two rows are the ones to read carefully, and they were fixed despite measuring zero
 because a disagreement about the grammar is a defect whether or not the shipped corpus exercises
-it. `foo(1)` was five tokens here and one to the engine's lexer, so an edit to `foo (1)` would read
+it. `foo(1)` was four tokens here (`foo`, `(`, `1`, `)`) and one to the engine's lexer, so an edit to `foo (1)` would read
 as a real change to the authority and as layout-only here — in a mod that does not exist yet, which
 is the case this pipeline is for.
 
