@@ -1,8 +1,76 @@
 # Engine-acceptance ladder run sheet
 
-**Not yet run.** Everything below was written before the game was launched, so none of it is
-hindsight. When the run happens, record the outcome at the top and leave the rest as written — the
-value of a run sheet is that it stated what each outcome *would* mean.
+**Rungs 6 and 7 were run attended on 2026-09-19, and two further rungs were built and run the same
+evening in answer to what they showed. Rungs 0–5 have not been run.** Everything below this outcome
+was written before the game was launched, so none of it is hindsight; rungs 8 and 9 were added
+afterwards, and each states the prediction that was recorded before its own run.
+
+## Outcome, 2026-09-19
+
+**The engine accepts `STORED`-class archives from this pipeline.** That class — `0x80010000`,
+EXISTS with no compression — had never been accepted from this project before. Rung 6's no-op was
+indistinguishable from the shipped game, and rung 7's tones were plainly audible, on two different
+load paths: `playsoundfx` off the sound dictionary, and `loadstaticsound` +
+`setdefaultbuttonsound`.
+
+**`sndfx.mpq` is the archive the engine opens, for both shared members.** 1,214 names are shared
+between `sndfx.mpq` and `special.mpq` carrying byte-identical members, and nothing before this said
+which copy was read.
+
+| Member | Archive the engine read | How it was established |
+| --- | --- | --- |
+| `wav\welcome.wav` | `sndfx.mpq` | Rung 7 gave each archive a different tone and the listener heard `sndfx.mpq`'s; **rung 8 exchanged the two tones and the report flipped**, which is what makes this a measurement rather than a reading. |
+| `wav\button.wav` | `sndfx.mpq` | Rung 9 replaced it with digital silence in `sndfx.mpq` and a 1760 Hz tone in `special.mpq`. The click was silent. |
+
+### The reading that was withdrawn, and why the instrument was at fault
+
+Rung 7 was first reported as a **split** — `welcome.wav` from `sndfx.mpq`, `button.wav` from
+`special.mpq`. That conclusion was wrong and is withdrawn.
+
+`wav\button.wav` is **41 ms**. At 220 Hz that is nine cycles, which the ear receives as a click
+with no perceptible pitch, and in rung 7 it played moments after a 5.67-second low tone, so
+"higher" could as easily have been relative to what had just stopped. Rung 8's report for the
+button — *"still seems high but maybe not as high"* — is neither a flip nor a non-flip; it is the
+listener correctly reporting that **the instrument cannot be read**.
+
+Rung 9 replaced the pitch judgement with a presence judgement, which 41 ms can carry, and answered
+on the first listen. The error inverts
+[[feedback-state-the-expected-value-before-you-look]]: the expected values *were* stated, but for a
+discrimination the human sensor cannot make. Asking for one produces a confident answer either way,
+and that confidence is indistinguishable from a real result.
+
+Rung 9 is also built knowing which of its two readings is weaker. A silent click asks the listener
+to certify an **absence**, so the audible side was made as loud and as many cycles as 41 ms allows —
+1760 Hz, about 75 cycles — rather than the nine that made rung 8 unreadable.
+
+### A third thing, found by accident and worse than either
+
+**`refuse_if_game_running` had never matched the game.** Its pattern,
+`^[A-Za-z]:[\\]lomse[.]exe`, requires `lomse.exe` to follow the drive letter immediately; the
+executable is six directories down. Observed against the live process, PID 77245, during rung 7:
+
+```
+c:\program files (x86)\steam\steamapps\common\lords of magic special edition\english\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1
+```
+
+`install-dev.sh` advertises that it refuses while the game runs, and would instead have swapped
+archives under the live process — the one corruption no checksum afterwards can undo. The guard had
+been "verified in both directions" the previous day against a decoy reading `d:\lomse.exe`, written
+from the same assumption as the pattern: a fixture shaped like the belief under test can only agree
+with it, which is [[feedback-fixture-shaped-like-the-corpus]] landing inside a safety check. Fixed
+on `claude/lomse-guard-pattern`, with tests that spawn the observed command line and drive the
+**shipped** shell function rather than a copy of the regex.
+
+### Corrections to this sheet itself
+
+- The listener was told to expect a tone lasting the member's full **5.67 s**. Only the first
+  **750 ms** is tone; the remaining 4,921 ms is deliberate silence, which rung 7's own mod manifest
+  states and that instruction contradicted. The listener reported the shorter duration and was
+  right. An expected value stated wrongly is worse than none: had they deferred to it, they would
+  have reported a defect that does not exist.
+- `wav\welcome.wav` **does** play at menu open, which rung 6 alone could not establish — a no-op is
+  by construction indistinguishable from silence if nothing plays there at all. Rung 7 settled it.
+
 
 Seven builds, each installed into the development profile on its own, and one look or one listen
 each.
@@ -339,6 +407,55 @@ walk** and about the PCM conversion, and a much weaker one about everything else
 declared sizes, pads, `Other` chunk bodies and trailing bytes verbatim, so only `fmt ` and `data`
 are genuinely reconstructed. And none of it touches the engine. **This rung is testing more than the
 sweep did, not confirming what it already showed.**
+
+---
+
+## Rung 8 — the same two tones, exchanged
+
+**Install** `audio-tone-swapped`. **Same two listens as rung 7**, nothing else.
+
+Rung 8 is rung 7 with the frequencies **exchanged**: 1760 Hz into `sndfx.mpq`, 220 Hz into
+`special.mpq`, both members, identical lengths throughout. The build asserts that each rung 8 tone
+is **byte-identical to rung 7's opposite-archive tone** — the same sound, the other archive — which
+is what makes it a swap rather than a second arbitrary build.
+
+**Prediction, recorded before the run.** If rung 7's archive attribution is real, the report must
+**invert**: high at menu open, low on the click. If it does not invert, the attribution is an
+artifact of the build or of the listening, and rung 7's conclusion is void. Both outcomes are
+results; the rung exists because rung 7 alone could not tell them apart.
+
+**Outcome.** Menu open inverted exactly as predicted — long low on rung 7, high whistle on rung 8,
+both times `sndfx.mpq`'s tone. `wav\welcome.wav` is served from **`sndfx.mpq`**.
+
+The button did not invert and did not fail to invert. The report was *"still seems high but maybe
+not as high and fairly short still"* — an unreadable instrument, not a measurement. See rung 9.
+
+---
+
+## Rung 9 — presence instead of pitch
+
+**Install** `audio-button-silence`. **Listen at menu open, then click a main-menu button several
+times.**
+
+| Member | `sndfx.mpq` | `special.mpq` |
+| --- | --- | --- |
+| `wav\welcome.wav` | 440 Hz | 440 Hz — **byte-identical to the other archive's** |
+| `wav\button.wav` | **every data sample `0x80`**, the zero level | 1760 Hz |
+
+`welcome.wav` carries one variable on purpose: it is the **liveness control**. It fires at menu
+open whichever archive wins, so a silent click is attributable to the archive rather than to "the
+engine rejected the build" — and 440 Hz is neither tone the listener had heard before, so it cannot
+be confused with a previous sitting. The silence is `0x80` throughout, **not** zero bytes: the
+member keeps its 1,036 bytes, its `LIST` chunk and its odd-`data` pad byte, all asserted against
+the shipped member, because silence that shortened the member would be a different experiment.
+
+**Prediction, recorded before the run.** Audible click → the engine reads `button.wav` from
+`special.mpq`, and the two members come from **different** archives. Silent click → it reads
+`sndfx.mpq`, and both come from the same one. No pitch judgement either way.
+
+**Outcome.** The menu tone played; the click was **silent**. `wav\button.wav` is served from
+**`sndfx.mpq`**. There is no split: both members come from the same archive, across two different
+load paths.
 
 ---
 
