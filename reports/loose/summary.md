@@ -10,6 +10,10 @@ Every file under that root that is not inside an `.mpq` is a row. Measured 2026-
 disagreement is visible rather than reconciled. See `docs/loose-files.md` for what each
 column establishes and what it does not.
 
+A file that could not be read is a row carrying its error in `probe_error`, not a missing
+row: the `gs5r3` profile is played while it is measured and its saves move underneath the
+walk. There are currently no such rows.
+
 ## Totals
 
 | profile | app bundle | files | bytes |

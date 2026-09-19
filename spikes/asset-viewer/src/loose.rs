@@ -17,9 +17,14 @@
 //!    writer (see the type's documentation for the evidence).
 //! 3. [`SettingsConfig`] parses `settings.cfg`, which is plain CR-separated `KEY VALUE` text.
 //!
-//! Both parsers round-trip byte-for-byte. Neither invents a field: `lom.cfg`'s trailing word has no
-//! name anywhere in the recovered operator table, so it is carried as
-//! [`LomConfig::unnamed_trailing_word`] and is not given a meaning.
+//! Both parsers round-trip byte-for-byte, but read [`LomConfig::to_bytes`] before treating that as
+//! evidence of anything: for `lom.cfg` the round-trip is a mathematical identity and cannot detect
+//! a field that is correctly *placed* and wrongly *named*. That is not hypothetical -- it is the
+//! defect that put volume names on this file's four head words, and it survived a green suite.
+//!
+//! Neither parser invents a field. Every field is named after the operator that reaches the slot
+//! the engine's own reader writes it to, and where that join returns nothing the field stays
+//! unnamed.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -50,29 +55,46 @@ use crate::asset::{self, AssetKind};
 /// `balkothdeathcounter` writes `0x5aa154`, `set_show_completed_quests` writes `0x5aa258`, and so
 /// on). Where no operator names a global, this type does not name the field either.
 ///
-/// **Not determined.** The four volume words are all zero in every profile examined while
-/// `settings.cfg` simultaneously records `MUSIC_VOLUME 100`; the operators that touch those globals
-/// are named `preset*`/`get*`, so the two files are evidently not storing the same quantity, but
-/// which quantity each stores is not established here.
+/// **A correction worth keeping visible.** The four head words were first written up here as the
+/// *live* volume globals, because the writer sources them from `0x586770..0x58677c` and the
+/// operator table names those `getmusicvolume` and friends. The committed tables refute that
+/// reading of the *field*: `loadconfig`'s recorded globals do not include `0x586770..0x58677c` at
+/// all, and `reports/natives/state/operator-field-access.tsv` shows it reading config-object
+/// `+0x18/+0x1c/+0x20/+0x24` instead. Those four slots are `0x5aa144..0x5aa150`, and the one other
+/// operator in 1,906 that touches them is `setlastaudiosettings`, which copies them into the sound
+/// object. So the file stores the **last audio settings**, a restore-from slot, not the live
+/// volume. Taking the writer's *source* address as the field's name was the mistake; the field is
+/// where the reader puts it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LomConfig {
-    /// File `0x00`. Global `0x586770`, read by `getmusicvolume`, written by `presetmusicvolume`.
-    pub music_volume: u32,
-    /// File `0x04`. Global `0x586774`, read by `getsoundfxvolume`, written by `presetsoundfxvolume`.
-    pub sound_fx_volume: u32,
-    /// File `0x08`. Global `0x586778`, read by `getspeechvolume`, written by `presetspeechvolume`.
-    pub speech_volume: u32,
-    /// File `0x0c`. Global `0x58677c`, read by `getambientvolume`, written by `presetambientvolume`.
-    pub ambient_volume: u32,
-    /// File `0x14`, one word each; the word at `0x10` is this vector's length.
+    /// File `0x00`. Config-object `+0x18` = `0x5aa144`, restored by `setlastaudiosettings`.
+    ///
+    /// The *channel* attribution -- music, then sound effects, then speech, then ambient -- rests
+    /// on two things that agree: the writer emits these four from `0x586770`, `0x586774`,
+    /// `0x586778`, `0x58677c` in that order, and those globals are named by `getmusicvolume`,
+    /// `getsoundfxvolume`, `getspeechvolume` and `getambientvolume`; and `setlastaudiosettings`
+    /// feeds `+0x18..+0x24` to four sound-object slots at `+0x1368..+0x1374`, in the same order.
+    /// The mapping of slot to channel is therefore **Inferred** from the order, not read off a
+    /// name, and that last step is the weakest link in this type.
+    pub last_music_volume: u32,
+    /// File `0x04`. Config-object `+0x1c` = `0x5aa148`. See [`Self::last_music_volume`].
+    pub last_sound_fx_volume: u32,
+    /// File `0x08`. Config-object `+0x20` = `0x5aa14c`. See [`Self::last_music_volume`].
+    pub last_speech_volume: u32,
+    /// File `0x0c`. Config-object `+0x24` = `0x5aa150`. See [`Self::last_music_volume`].
+    pub last_ambient_volume: u32,
+    /// File `0x14`, one word each; the word at `0x10` is this vector's length -- **when the vector
+    /// is present at all**. See [`Self::parse`] for the shorter form in which both are absent.
     ///
     /// The container is the object at `0x5aa1f0` -- `{ capacity, count, records }` with 12-byte
     /// records -- reached by `addhelppanel`, `maxhelppanels`, `togglehelpcheck`,
     /// `getcheckmarkstate` and `uncheckallhelppanels`. Only the record's **second** word is
     /// persisted; `uncheckallhelppanels` sets exactly that word to 1 for every record, and the
     /// reader sets it to 1 for every record the file does not cover, so 1 is the default and the
-    /// value is the panel's check state.
-    pub help_panel_checks: Vec<u32>,
+    /// value is the panel's check state. `onetimeonly` reaches the same container and reads
+    /// `+0x4`/`+0x8`, and its name supports the check-state reading rather than sitting neutral to
+    /// it.
+    pub help_panel_checks: Option<Vec<u32>>,
     /// File `0x14 + 4 * checks`. Object field `+0x28` = global `0x5aa154`, written by
     /// `balkothdeathcounter` and `cheatbalkoth`, read by `getbalkothkillcounter`.
     pub balkoth_kill_counter: u32,
@@ -91,19 +113,27 @@ pub struct LomConfig {
     /// Next word. Object field `+0x12c` = global `0x5aa258`, read by `get_show_completed_quests`,
     /// written by `set_show_completed_quests`.
     pub show_completed_quests: u32,
-    /// Final word. Global `0x5d20bc`.
+    /// Final word. Global `0x5d20bc`, named by `getuseddrawblt` and `setuseddrawblt` -- each of
+    /// which lists that address as its *only* global, which is as clean as this naming rule gets.
     ///
-    /// **Not determined.** No operator in `reports/natives/operator-bodies.tsv` names this global
-    /// other than `loadconfig`/`saveconfig` themselves, so there is nothing to name the field
-    /// after. It is carried verbatim so that a re-encode is lossless, and deliberately left
-    /// uninterpreted. Both the reader and the writer default it to 1 on a short file.
-    pub unnamed_trailing_word: u32,
+    /// Carried as a `u32` because that is the width the reader and writer move. Observed values are
+    /// `1` and `0xffffffff`; `-1` is how this codebase spells true elsewhere, and `settings.cfg`
+    /// ships `USE_DIRECTX_BLIT -1`. **Not determined**: whether this field and that setting are the
+    /// same quantity -- they disagree in two of the four profiles, so they are not simply equal.
+    ///
+    /// The loader defaults it to 1 after a short read. The writer has no short-input path to be
+    /// symmetric with: it always emits four bytes from the global.
+    pub used_drawblt: u32,
 }
 
-/// Bytes before the help-panel vector: four volume words plus the count word.
-const LOM_CONFIG_PREFIX: usize = 20;
+/// The four last-audio words that open every form of the file.
+const LOM_CONFIG_HEAD: usize = 16;
+/// Head plus the help-panel count word, when the vector is present.
+const LOM_CONFIG_PREFIX: usize = LOM_CONFIG_HEAD + 4;
 /// Bytes after the help-panel vector: two words, a 16-byte GUID, then three words.
 const LOM_CONFIG_SUFFIX: usize = 4 + 4 + 16 + 4 + 4 + 4;
+/// The form `saveconfig` emits when the help-panel records pointer is null: head, then suffix.
+const LOM_CONFIG_WITHOUT_VECTOR: usize = LOM_CONFIG_HEAD + LOM_CONFIG_SUFFIX;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LomConfigError(String);
@@ -119,80 +149,111 @@ impl std::error::Error for LomConfigError {}
 impl LomConfig {
     /// Decode a `lom.cfg` image.
     ///
-    /// The length is checked **exactly**, not as a lower bound. The count word drives the rest of
-    /// the layout, so a file whose length disagrees with its own count is not a `lom.cfg` this
-    /// parser understands, and accepting it would mean silently reinterpreting trailing bytes as
-    /// the suffix fields.
+    /// **Two forms, chosen by length.** `saveconfig` branches on the help-panel records pointer at
+    /// config-object `+0xcc`: when it is null it skips *both* the count word and the vector and
+    /// writes the four head words followed immediately by the suffix, giving a
+    /// `LOM_CONFIG_WITHOUT_VECTOR`-byte file. `loadconfig` branches on the same pointer and reads
+    /// the same shorter form back. **Observed in a local binary**; the branch is at `0x00487291`
+    /// in the writer and `0x004873d6` in the reader. **Not observed in the corpus** -- all four
+    /// installed files carry the vector -- so this arm exists because the recovered writer can
+    /// emit it, not because one was found.
+    ///
+    /// The absent vector is `None`, never an empty `Vec`. A file with no count word and a file
+    /// whose count word is zero are different files (`LOM_CONFIG_WITHOUT_VECTOR` against
+    /// `LOM_CONFIG_PREFIX + LOM_CONFIG_SUFFIX` bytes), and collapsing them would make `to_bytes`
+    /// pick one and silently rewrite the other.
+    ///
+    /// **A fragility worth recording**: which form the engine writes depends on *runtime state*,
+    /// not on anything in the file. Nothing in a `lom.cfg` says which shape it is. This parser can
+    /// only tell them apart because the two lengths cannot collide -- `20 + 4N + 36 = 52` has no
+    /// non-negative solution.
+    ///
+    /// The length is otherwise checked **exactly**, not as a lower bound. The count word drives the
+    /// rest of the layout, so a file whose length disagrees with its own count is not a `lom.cfg`
+    /// this parser understands, and accepting it would mean silently reinterpreting trailing bytes
+    /// as the suffix fields.
     pub fn parse(source: &[u8]) -> Result<Self, LomConfigError> {
-        if source.len() < LOM_CONFIG_PREFIX {
-            return Err(LomConfigError(format!(
-                "lom.cfg is {} bytes, shorter than the {LOM_CONFIG_PREFIX}-byte prefix",
-                source.len()
-            )));
-        }
-        let count = read_u32(source, 16) as usize;
-        let expected = LOM_CONFIG_PREFIX
-            .checked_add(count.checked_mul(4).ok_or_else(|| {
-                LomConfigError(format!("help-panel count {count} overflows a byte length"))
-            })?)
-            .and_then(|length| length.checked_add(LOM_CONFIG_SUFFIX))
-            .ok_or_else(|| {
-                LomConfigError(format!("help-panel count {count} overflows a byte length"))
-            })?;
-        if source.len() != expected {
-            return Err(LomConfigError(format!(
-                "lom.cfg is {} bytes but its help-panel count of {count} implies {expected}",
-                source.len()
-            )));
-        }
-        let help_panel_checks = (0..count)
-            .map(|index| read_u32(source, LOM_CONFIG_PREFIX + index * 4))
-            .collect();
-        let suffix = LOM_CONFIG_PREFIX + count * 4;
+        let (help_panel_checks, suffix) = if source.len() == LOM_CONFIG_WITHOUT_VECTOR {
+            (None, LOM_CONFIG_HEAD)
+        } else {
+            if source.len() < LOM_CONFIG_PREFIX {
+                return Err(LomConfigError(format!(
+                    "lom.cfg is {} bytes, shorter than the {LOM_CONFIG_PREFIX}-byte prefix and not \
+                     the {LOM_CONFIG_WITHOUT_VECTOR}-byte form with no help-panel vector",
+                    source.len()
+                )));
+            }
+            let count = read_u32(source, LOM_CONFIG_HEAD) as usize;
+            let expected = LOM_CONFIG_PREFIX
+                .checked_add(count.checked_mul(4).ok_or_else(|| {
+                    LomConfigError(format!("help-panel count {count} overflows a byte length"))
+                })?)
+                .and_then(|length| length.checked_add(LOM_CONFIG_SUFFIX))
+                .ok_or_else(|| {
+                    LomConfigError(format!("help-panel count {count} overflows a byte length"))
+                })?;
+            if source.len() != expected {
+                return Err(LomConfigError(format!(
+                    "lom.cfg is {} bytes but its help-panel count of {count} implies {expected}",
+                    source.len()
+                )));
+            }
+            let checks = (0..count)
+                .map(|index| read_u32(source, LOM_CONFIG_PREFIX + index * 4))
+                .collect();
+            (Some(checks), LOM_CONFIG_PREFIX + count * 4)
+        };
         let mut install_guid = [0_u8; 16];
         install_guid.copy_from_slice(&source[suffix + 8..suffix + 24]);
         Ok(Self {
-            music_volume: read_u32(source, 0),
-            sound_fx_volume: read_u32(source, 4),
-            speech_volume: read_u32(source, 8),
-            ambient_volume: read_u32(source, 12),
+            last_music_volume: read_u32(source, 0),
+            last_sound_fx_volume: read_u32(source, 4),
+            last_speech_volume: read_u32(source, 8),
+            last_ambient_volume: read_u32(source, 12),
             help_panel_checks,
             balkoth_kill_counter: read_u32(source, suffix),
             center_on_movement: read_u32(source, suffix + 4),
             install_guid,
             building_speech_flag: read_u32(source, suffix + 24),
             show_completed_quests: read_u32(source, suffix + 28),
-            unnamed_trailing_word: read_u32(source, suffix + 32),
+            used_drawblt: read_u32(source, suffix + 32),
         })
     }
 
     /// Re-encode in the writer's field order.
     ///
-    /// Exists so that the parse can be checked against the corpus rather than against a table of
-    /// numbers copied out of the parser: `parse` then `to_bytes` must reproduce the installed file
-    /// byte for byte, and any field this type misplaced shows up as a mismatch.
+    /// **This round-trip is not evidence that any field is correctly named, and it was wrong of an
+    /// earlier version of this file to say it was.** `to_bytes` emits in exactly the order `parse`
+    /// reads, and between them they partition every byte with no gap and no overlap, so
+    /// `to_bytes(parse(x)) == x` holds for *every* input `parse` accepts -- including 160 bytes of
+    /// noise with a plausible count planted at offset `0x10`. What it can detect is a gap, an
+    /// overlap, a wrong width or a wrong order. What it is blind to is a permutation of field
+    /// *names* over equal-width slots, which is precisely the defect that put the wrong names on
+    /// the four head words. [`SettingsConfig::round_trips`] is a different matter: there the
+    /// encoder reconstructs separators and spacing that the parser had to get right, so it can
+    /// genuinely fail.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(
-            LOM_CONFIG_PREFIX + self.help_panel_checks.len() * 4 + LOM_CONFIG_SUFFIX,
-        );
+        let mut out = Vec::with_capacity(LOM_CONFIG_WITHOUT_VECTOR);
         for word in [
-            self.music_volume,
-            self.sound_fx_volume,
-            self.speech_volume,
-            self.ambient_volume,
-            self.help_panel_checks.len() as u32,
+            self.last_music_volume,
+            self.last_sound_fx_volume,
+            self.last_speech_volume,
+            self.last_ambient_volume,
         ] {
             out.extend_from_slice(&word.to_le_bytes());
         }
-        for check in &self.help_panel_checks {
-            out.extend_from_slice(&check.to_le_bytes());
+        if let Some(checks) = &self.help_panel_checks {
+            out.extend_from_slice(&(checks.len() as u32).to_le_bytes());
+            for check in checks {
+                out.extend_from_slice(&check.to_le_bytes());
+            }
         }
         out.extend_from_slice(&self.balkoth_kill_counter.to_le_bytes());
         out.extend_from_slice(&self.center_on_movement.to_le_bytes());
         out.extend_from_slice(&self.install_guid);
         out.extend_from_slice(&self.building_speech_flag.to_le_bytes());
         out.extend_from_slice(&self.show_completed_quests.to_le_bytes());
-        out.extend_from_slice(&self.unnamed_trailing_word.to_le_bytes());
+        out.extend_from_slice(&self.used_drawblt.to_le_bytes());
         out
     }
 
@@ -297,7 +358,20 @@ impl SettingsConfig {
                     // A key with no space, or a value containing one, is not the shape every
                     // observed record has. Carrying it in `unparsed` keeps the re-encode lossless
                     // and keeps it visible, instead of dropping it or guessing a split.
-                    Some((key, value)) if !key.is_empty() && !value.contains(' ') => {
+                    //
+                    // The control-byte test is the one that matters in practice. A `CRLF` file --
+                    // what any Windows editor produces from this one -- splits on `CR` into records
+                    // that each begin with a stray `LF`, so `CENTER_MOVE` arrives as
+                    // `"\nCENTER_MOVE"`. That mangling is *lossless*, so the round-trip check says
+                    // the file is fine while `get("CENTER_MOVE")` returns `None` for 22 of the 23
+                    // keys. Requiring a key to be key-shaped is what turns a silent wrong answer
+                    // into a visible `unparsed` record.
+                    Some((key, value))
+                        if !key.is_empty()
+                            && !value.contains(' ')
+                            && !key.chars().any(|character| character.is_control())
+                            && !value.chars().any(|character| character.is_control()) =>
+                    {
                         entries.push(SettingsEntry {
                             key: key.to_owned(),
                             raw_value: value.to_owned(),
@@ -512,7 +586,26 @@ pub fn inventory(root: &Path) -> io::Result<Vec<LooseFile>> {
             .map(|component| component.as_os_str().to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join("/");
-        let bytes = fs::read(&path)?;
+        // A file that vanished or refused to open between the walk and the read is a *row*, not
+        // the end of the sweep. The profile flagged as unstable in `docs/loose-files.md` is being
+        // played while it is measured -- its saves and logs move under the walker -- so aborting on
+        // the first `ErrorKind::NotFound` would throw away 495 good rows to report one race. This
+        // is the same principle as counting unclassifiable files instead of dropping them.
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                rows.push(LooseFile {
+                    relative_path: relative,
+                    size: 0,
+                    sha256: String::new(),
+                    extension: String::new(),
+                    magic: MagicSignature::Unrecognised,
+                    probe_kind: AssetKind::Unknown.to_string(),
+                    probe_error: Some(format!("unreadable: {error}")),
+                });
+                continue;
+            }
+        };
         let extension = path
             .extension()
             .map(|value| value.to_string_lossy().to_ascii_lowercase())
@@ -546,7 +639,16 @@ fn collect(directory: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     for entry in entries {
         // `symlink_metadata` rather than `metadata`: a symlink out of the tree must be recorded as
         // the link it is, not silently followed into another install.
-        let metadata = fs::symlink_metadata(&entry)?;
+        //
+        // An entry that disappeared between `read_dir` and here is skipped rather than fatal, for
+        // the same reason the read below is: a live profile is allowed to move underneath us. Any
+        // other error still stops the sweep, because a sweep that silently walks half a tree and
+        // reports a total is worse than one that fails.
+        let metadata = match fs::symlink_metadata(&entry) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
         if metadata.is_dir() {
             collect(&entry, out)?;
         } else if metadata.is_file() {
@@ -700,6 +802,73 @@ mod tests {
             error.to_string().contains("implies"),
             "the error should name the implied length: {error}"
         );
+    }
+
+    /// The form the recovered writer emits when the help-panel pointer is null.
+    ///
+    /// Not observed in the corpus -- this is a check that the parser accepts what the *binary* can
+    /// produce, which is a different question from what four installs happen to contain.
+    #[test]
+    fn the_form_without_a_help_panel_vector_decodes_and_re_encodes() {
+        let mut source = vec![0_u8; LOM_CONFIG_WITHOUT_VECTOR];
+        // A marker in the last word, so a parser that silently shifted the suffix would be caught.
+        source[LOM_CONFIG_WITHOUT_VECTOR - 4..].copy_from_slice(&0xffff_ffff_u32.to_le_bytes());
+        let parsed = LomConfig::parse(&source).expect("the 52-byte form decodes");
+        assert_eq!(parsed.help_panel_checks, None, "absent, not empty");
+        assert_eq!(parsed.used_drawblt, 0xffff_ffff);
+        assert_eq!(parsed.to_bytes(), source);
+    }
+
+    /// An absent vector and an empty vector are different files.
+    ///
+    /// Collapsing `None` into `Some(vec![])` would make `to_bytes` emit a count word the shorter
+    /// form does not have, quietly rewriting a 52-byte file as a 56-byte one.
+    #[test]
+    fn an_absent_help_panel_vector_is_not_an_empty_one() {
+        let absent = vec![0_u8; LOM_CONFIG_WITHOUT_VECTOR];
+        let empty = vec![0_u8; LOM_CONFIG_PREFIX + LOM_CONFIG_SUFFIX];
+        let absent = LomConfig::parse(&absent).expect("52 bytes decode");
+        let empty = LomConfig::parse(&empty).expect("56 bytes decode");
+        assert_eq!(absent.help_panel_checks, None);
+        assert_eq!(empty.help_panel_checks, Some(Vec::new()));
+        assert_ne!(absent.to_bytes().len(), empty.to_bytes().len());
+    }
+
+    /// The `CRLF` trap: lossless mangling that used to parse "successfully".
+    ///
+    /// A Windows editor rewrites this file's bare `CR` terminators as `CRLF`. Splitting on `CR`
+    /// then leaves a stray `LF` at the head of every record but the first, so the keys become
+    /// `"\nCENTER_MOVE"` and lookups silently miss. Because the mangling is lossless the
+    /// round-trip check cannot see it, which is exactly why the key has to be validated.
+    #[test]
+    fn a_crlf_rewrite_is_reported_rather_than_silently_mis_keyed() {
+        let source = b"GAME_SPEED 66\r\nCENTER_MOVE 0\r\n";
+        let parsed = SettingsConfig::parse(source).expect("still valid text");
+        assert!(
+            parsed.round_trips(source),
+            "the mangling is lossless, so the round-trip still passes -- that is the point"
+        );
+        assert_eq!(
+            parsed.get("CENTER_MOVE"),
+            None,
+            "the key is not reachable, which the parser must not hide"
+        );
+        assert_eq!(
+            parsed.unparsed.len(),
+            2,
+            "the mangled record and the trailing fragment are both surfaced: {:?}",
+            parsed.unparsed
+        );
+        // Only the FIRST record escapes, because only it has no `LF` in front of it. That is what
+        // makes the failure so deceptive in the real file: one key still resolves and 22 do not,
+        // so a caller spot-checking `TOOL_TIP_TRANSLUCENCY` sees a working parser.
+        assert_eq!(
+            parsed.entries.len(),
+            1,
+            "exactly the first record survives: {:?}",
+            parsed.entries
+        );
+        assert_eq!(parsed.get("GAME_SPEED").and_then(|e| e.integer()), Some(66));
     }
 
     #[test]

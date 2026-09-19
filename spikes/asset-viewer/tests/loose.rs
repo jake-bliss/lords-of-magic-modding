@@ -163,14 +163,19 @@ fn equal_digests_across_the_profiles_agree_on_length() {
     }
 }
 
-/// The `lom.cfg` layout equation, checked between two independently produced reports.
+/// The `lom.cfg` size equation, across two reports.
 ///
-/// `20 + 4 * help-panel-count + 36` is the whole structural claim: four volume words and a count
-/// word ahead of the vector (4x4 + 4 = 20), then two words, a 16-byte GUID and three words behind
-/// it (4 + 4 + 16 + 4 + 4 + 4 = 36). Every term is a field the writer emits, in its order; the
-/// total is not sourced as a total. The
-/// inventory measured the file; the parser measured the count. If the layout is wrong the two
-/// numbers stop agreeing, and no amount of the parser agreeing with itself can hide that.
+/// `20 + 4 * help-panel-count + 36`: four head words and a count word ahead of the vector
+/// (4x4 + 4 = 20), then two words, a 16-byte GUID and three words behind it
+/// (4 + 4 + 16 + 4 + 4 + 4 = 36). Every term is a field the writer emits, in its order.
+///
+/// **What this cannot do**, stated because an earlier version of this comment claimed otherwise:
+/// it cannot fail on a wrong layout. `LomConfig::parse` refuses any image whose length disagrees
+/// with its own count, so `config-fields.tsv` can never hold a counter-example -- the producer
+/// enforces the invariant before either number is emitted. It is also blind to a permutation of
+/// equal-width slots. What it does catch is the two reports drifting out of step with each other,
+/// which is worth catching and is all it is here for. The checks that bear on slot *identity* are
+/// the two below.
 #[test]
 fn the_recorded_lom_cfg_size_matches_its_recorded_help_panel_count() {
     let fields = config_fields();
@@ -346,6 +351,163 @@ fn the_digest_in_the_report_is_the_digest_of_the_recorded_length() {
     }
 }
 
+/// Two named `lom.cfg` slots against two independently named `settings.cfg` keys.
+///
+/// This is the first check in the file that bears on *which slot holds what* rather than on how the
+/// bytes divide up. `lom.cfg`'s `building-speech-flag` is named by `getbuildingspeechflag`, read
+/// out of the engine; `settings.cfg`'s `BUILDING_SPEECH` is a literal in a text file that knows
+/// nothing about the engine. Nothing makes them agree except the naming being right.
+///
+/// **It is a weak check and should be read as one.** Both pairs are constant across all four
+/// profiles -- `BUILDING_SPEECH 1` and `CENTER_MOVE 0` everywhere -- so the corpus offers one
+/// value per pair, and any permutation that happens to preserve the value slips through. It binds
+/// names, not values. The corpus cannot currently do better for these two fields.
+#[test]
+fn named_lom_cfg_slots_agree_with_the_independently_named_settings_keys() {
+    let fields = config_fields();
+    for profile in PROFILES {
+        for (slot, key) in [
+            ("building-speech-flag", "BUILDING_SPEECH"),
+            ("center-on-movement", "CENTER_MOVE"),
+        ] {
+            let from_binary = &fields[&(profile.to_owned(), "lom.cfg".to_owned(), slot.to_owned())];
+            let from_text = &fields[&(
+                profile.to_owned(),
+                "settings.cfg".to_owned(),
+                format!("setting:{key}"),
+            )];
+            assert_eq!(
+                from_binary, from_text,
+                "{profile}: lom.cfg {slot} is {from_binary} and settings.cfg {key} is {from_text}"
+            );
+        }
+    }
+}
+
+/// The slots that actually vary across the corpus, pinned against their neighbours.
+///
+/// A permutation of equal-width slots is only detectable where the two slots hold different values
+/// in some profile. Two places in `lom.cfg` qualify, and both are checked here.
+///
+/// The `used-drawblt` word is `1` in two profiles and `-1` in the other two, while both words
+/// beside it -- `show-completed-quests` and `building-speech-flag` -- are `1` everywhere. So a swap
+/// of the final word with either neighbour changes what this test reads, in `gs5r3` and
+/// `patch302`. The `balkoth-kill-counter`/`center-on-movement` pair, by contrast, is `0` in all
+/// four profiles, and no check over this corpus can tell those two apart: that limit is recorded in
+/// `docs/loose-files.md` rather than papered over here.
+///
+/// The GUID pins the 16-byte slot's position: three profiles are clones of one prefix and share a
+/// GUID, `patch302` regenerated and differs. A misplaced 16-byte window would not reproduce that
+/// pattern.
+#[test]
+fn the_slots_that_vary_pin_their_own_position() {
+    let fields = config_fields();
+    let value = |profile: &str, field: &str| {
+        fields[&(profile.to_owned(), "lom.cfg".to_owned(), field.to_owned())].clone()
+    };
+
+    for profile in ["baseline", "development"] {
+        assert_eq!(value(profile, "used-drawblt"), "1", "{profile}");
+    }
+    for profile in ["gs5r3", "patch302"] {
+        let tail = value(profile, "used-drawblt");
+        assert_eq!(tail, "-1", "{profile}");
+        // The discrimination itself: the final word is not either of the words beside it.
+        assert_ne!(
+            tail,
+            value(profile, "show-completed-quests"),
+            "{profile}: the final word reads the same as its left neighbour, so a swap of the two \
+             would be invisible here"
+        );
+        assert_ne!(tail, value(profile, "building-speech-flag"), "{profile}");
+    }
+
+    let baseline = value("baseline", "install-guid");
+    assert_eq!(value("development", "install-guid"), baseline);
+    assert_eq!(value("gs5r3", "install-guid"), baseline);
+    assert_ne!(value("patch302", "install-guid"), baseline);
+    assert_ne!(
+        baseline, "00000000-0000-0000-0000-000000000000",
+        "a nil GUID would mean the 16-byte window landed on padding"
+    );
+}
+
+/// The walker itself, on a tree built for the purpose.
+///
+/// Every other check in this file reads a committed report, which cannot fail when the *walker*
+/// changes -- if it started handing an empty name to `asset::probe` and every `.smp` became
+/// `unknown`, the committed TSVs would still parse and still agree with each other. This runs the
+/// real `loose::inventory`.
+///
+/// The fixture is deliberately **not** shaped like the game corpus, and proves nothing about any
+/// game format. It exercises the plumbing: that the walk recurses, that paths come back relative
+/// and slash-joined, that the digest is of the contents, that the extension is lowercased, that the
+/// filename reaches `probe`, and that an empty file is handled rather than skipped.
+#[test]
+fn the_walker_reports_contents_not_names() {
+    let root = std::env::temp_dir().join(format!(
+        "lom-loose-walker-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("nested/deeper")).expect("the fixture tree is created");
+
+    // A minimal RIFF/WAVE: a header claiming a `fmt ` chunk the probe can read.
+    let mut wave = Vec::new();
+    wave.extend_from_slice(b"RIFF");
+    wave.extend_from_slice(&36_u32.to_le_bytes());
+    wave.extend_from_slice(b"WAVEfmt ");
+    wave.extend_from_slice(&16_u32.to_le_bytes());
+    wave.extend_from_slice(&1_u16.to_le_bytes()); // PCM
+    wave.extend_from_slice(&2_u16.to_le_bytes()); // channels
+    wave.extend_from_slice(&22_050_u32.to_le_bytes());
+    wave.extend_from_slice(&44_100_u32.to_le_bytes());
+    wave.extend_from_slice(&2_u16.to_le_bytes());
+    wave.extend_from_slice(&8_u16.to_le_bytes());
+    wave.extend_from_slice(b"data");
+    wave.extend_from_slice(&0_u32.to_le_bytes());
+    // The extension says `.txt` and the bytes say WAVE. The walker must report the bytes.
+    std::fs::write(root.join("nested/MISLEADING.TXT"), &wave).expect("written");
+    std::fs::write(root.join("nested/deeper/notes.txt"), b"plain text\n").expect("written");
+    std::fs::write(root.join("empty.bin"), b"").expect("written");
+
+    let rows = loose::inventory(&root).expect("the fixture tree walks");
+    let by_path: BTreeMap<String, &loose::LooseFile> = rows
+        .iter()
+        .map(|row| (row.relative_path.clone(), row))
+        .collect();
+    assert_eq!(
+        by_path.keys().cloned().collect::<Vec<_>>(),
+        vec![
+            "empty.bin".to_owned(),
+            "nested/MISLEADING.TXT".to_owned(),
+            "nested/deeper/notes.txt".to_owned(),
+        ],
+        "the walk must recurse and report relative, slash-joined paths"
+    );
+
+    let misleading = by_path["nested/MISLEADING.TXT"];
+    assert_eq!(misleading.magic, MagicSignature::WaveAudio);
+    assert_eq!(misleading.size as usize, wave.len());
+    assert_eq!(misleading.sha256, loose::sha256_hex(&wave));
+    assert_eq!(misleading.extension, "txt", "the extension is lowercased");
+    // `probe` sees the real name; the WAVE magic outranks the `.txt` extension inside it too.
+    assert_eq!(misleading.probe_kind, "wave-audio");
+    assert_eq!(misleading.probe_error, None);
+
+    let empty = by_path["empty.bin"];
+    assert_eq!(empty.size, 0);
+    assert_eq!(empty.sha256, loose::sha256_hex(b""));
+    assert_eq!(empty.probe_kind, "empty");
+
+    let notes = by_path["nested/deeper/notes.txt"];
+    assert_eq!(notes.magic, MagicSignature::AsciiText);
+    assert_eq!(notes.probe_kind, "text");
+
+    std::fs::remove_dir_all(&root).expect("the fixture tree is removed");
+}
+
 // ---------------------------------------------------------------------------------------------
 // Corpus-gated
 // ---------------------------------------------------------------------------------------------
@@ -429,10 +591,49 @@ fn the_committed_inventory_reproduces() {
         let recorded = committed
             .get(&row.relative_path)
             .unwrap_or_else(|| panic!("{} is not in the committed report", row.relative_path));
+        // Every column, not just the digest. Comparing two of eight let a change that broke the
+        // classification of all 337 map components past this check unnoticed.
         assert_eq!(recorded["sha256"], row.sha256, "{}", row.relative_path);
+        assert_eq!(
+            recorded["size"],
+            row.size.to_string(),
+            "{}",
+            row.relative_path
+        );
         assert_eq!(
             recorded["magic"],
             row.magic.to_string(),
+            "{}",
+            row.relative_path
+        );
+        assert_eq!(
+            recorded["probe_kind"], row.probe_kind,
+            "{}",
+            row.relative_path
+        );
+        assert_eq!(
+            recorded["probe_error"],
+            row.probe_error.clone().unwrap_or_else(|| "-".to_owned()),
+            "{}",
+            row.relative_path
+        );
+        assert_eq!(
+            recorded["extension"],
+            if row.extension.is_empty() {
+                "-".to_owned()
+            } else {
+                row.extension.clone()
+            },
+            "{}",
+            row.relative_path
+        );
+        assert_eq!(
+            recorded["extension_disagrees"],
+            if row.extension_disagrees_with_magic() {
+                "yes"
+            } else {
+                "no"
+            },
             "{}",
             row.relative_path
         );

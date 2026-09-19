@@ -2831,39 +2831,63 @@ fn describe_loose_config(path: &Path) -> Result<(), String> {
     match LomConfig::parse(&bytes) {
         Ok(config) => {
             println!("format\tlom.cfg");
+            // Not offered as proof that the fields are correctly named -- see
+            // `LomConfig::to_bytes`. It says the byte partition is total and ordered.
             println!("round-trips\t{}", config.to_bytes() == bytes);
-            println!("music-volume\t{}", config.music_volume);
-            println!("sound-fx-volume\t{}", config.sound_fx_volume);
-            println!("speech-volume\t{}", config.speech_volume);
-            println!("ambient-volume\t{}", config.ambient_volume);
-            println!("help-panel-count\t{}", config.help_panel_checks.len());
-            println!(
-                "help-panel-checks\t{}",
-                config
-                    .help_panel_checks
-                    .iter()
-                    .map(u32::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
+            println!("last-music-volume\t{}", config.last_music_volume);
+            println!("last-sound-fx-volume\t{}", config.last_sound_fx_volume);
+            println!("last-speech-volume\t{}", config.last_speech_volume);
+            println!("last-ambient-volume\t{}", config.last_ambient_volume);
+            // `absent` and `0` are different files, so they print differently.
+            match &config.help_panel_checks {
+                Some(checks) => {
+                    println!("help-panel-count\t{}", checks.len());
+                    println!(
+                        "help-panel-checks\t{}",
+                        checks.iter().map(u32::to_string).collect::<Vec<_>>().join(",")
+                    );
+                }
+                None => {
+                    println!("help-panel-count\tabsent");
+                    println!("help-panel-checks\tabsent");
+                }
+            }
             println!("balkoth-kill-counter\t{}", config.balkoth_kill_counter);
             println!("center-on-movement\t{}", config.center_on_movement);
             println!("install-guid\t{}", config.install_guid_text());
             println!("building-speech-flag\t{}", config.building_speech_flag);
             println!("show-completed-quests\t{}", config.show_completed_quests);
-            println!(
-                "unnamed-trailing-word\t{}",
-                config.unnamed_trailing_word as i32
-            );
+            // Printed signed because both observed values (`1`, `-1`) read as a flag that way, and
+            // `4294967295` reads as neither. The stored width is unsigned; see `LomConfig`.
+            println!("used-drawblt\t{}", config.used_drawblt as i32);
             return Ok(());
         }
         Err(lom_error) => {
-            let settings = SettingsConfig::parse(&bytes).map_err(|settings_error| {
-                format!(
-                    "{} is neither lom.cfg ({lom_error}) nor settings.cfg ({settings_error})",
-                    path.display()
-                )
-            })?;
+            // Valid UTF-8 alone is not a `settings.cfg`. Without the second gate this verb
+            // cheerfully labelled `ddraw.ini` -- 29,828 bytes, and in this tool's own inventory --
+            // as `format settings.cfg`, and did the same for this repository's `README.md`, for
+            // empty files and for NUL-only binaries. A classifier that accepts everything has
+            // classified nothing.
+            let settings = SettingsConfig::parse(&bytes)
+                .map_err(|settings_error| settings_error.to_string())
+                .and_then(|settings| {
+                    if settings.entries.is_empty() {
+                        Err("no KEY VALUE records".to_owned())
+                    } else if !settings.unparsed.is_empty() {
+                        Err(format!(
+                            "{} records are not KEY VALUE",
+                            settings.unparsed.len()
+                        ))
+                    } else {
+                        Ok(settings)
+                    }
+                })
+                .map_err(|settings_error| {
+                    format!(
+                        "{} is neither lom.cfg ({lom_error}) nor settings.cfg ({settings_error})",
+                        path.display()
+                    )
+                })?;
             println!("format\tsettings.cfg");
             println!("round-trips\t{}", settings.round_trips(&bytes));
             println!("records\t{}", settings.entries.len());

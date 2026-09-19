@@ -213,15 +213,37 @@ The keys, in file order: `TOOL_TIP_TRANSLUCENCY`, `TOOL_TIP_DELAY`, `LOCAL_MOUSE
 `loose::SettingsConfig` parses and re-encodes all four installed files byte for byte, with no
 unparsed records.
 
+### The bare-CR trap, which nearly shipped in the parser
+
+Worth recording because it is the **third** format in this work where a bare `CR` was the hazard —
+after `gs5r.cfg` and the `ddraw.ini` rewrite already noted in the macOS runbook.
+
+Open `settings.cfg` in any Windows editor and it comes back `CRLF`. Splitting on `CR` then leaves a
+stray `LF` at the head of every record but the first, so `CENTER_MOVE 0` arrives as the key
+`"\nCENTER_MOVE"`. The first version of this parser accepted that silently: `get` returned `None`
+for 22 of the 23 keys with no error, and — because the mangling is **lossless** — the round-trip
+check still reported success. A detector blind to the failure it was meant to catch.
+
+The remaining detail is what makes it nasty. **Exactly one key still resolves**, the first, because
+only it has no `LF` in front of it. Anyone spot-checking `TOOL_TIP_TRANSLUCENCY` sees a working
+parser.
+
+The parser now requires a key and value to contain no control characters, so a `CRLF` file surfaces
+as `unparsed` records instead of as silently missing keys. `--loose-config` refuses such a file
+outright. Pinned as a test.
+
 ### It is written by something, during play
 
 **Observed in gameplay.** The `patch302` profile's live `settings.cfg` differs from that profile's
 own `_vanilla_backup/settings.cfg` in exactly two records — `KB_MAP_SCROLL_SPEED` 100 → 50 and
-`KB_COMBAT_SCROLL_SPEED` 10 → 135 — and in nothing else. GS5R3 -- the only other profile with a
-`_vanilla_backup/` -- still matches its own backup byte for byte; `baseline` and `development` have
-no backup to compare against. So the running game does write this file, and it writes the whole file rather than patching
-a line: the two edits happen to cancel in length (`100`→`50` loses a character, `10`→`135` gains
-one), which is why the size is still 513.
+`KB_COMBAT_SCROLL_SPEED` 10 → 135 — and in nothing else. GS5R3 — the only other profile with a
+`_vanilla_backup/` — still matches its own backup byte for byte; `baseline` and `development` have
+no backup to compare against. So the running game does write this file.
+
+The file is still 513 bytes because the two edits happen to cancel in length (`100`→`50` loses a
+character, `10`→`135` gains one). An earlier version of this page read that as evidence that the
+writer rewrites the whole file rather than patching a line. It is not: two changed values establish
+the resulting bytes and nothing about how they got there. **The write strategy is not determined.**
 
 ### What is not determined: which component writes it
 
@@ -237,47 +259,139 @@ the 1,071 `pic.mpq` members, the 3,600 `imp.mpq` members and the 1,880 `sndfx.mp
 archives, not searched); the Wine prefix's own DLLs; and any filename or key assembled at run time
 from pieces, which no substring search can find.
 
-One cross-check that does not share that mechanism: the committed GameScript vocabulary
-(`reports/gs/vocabulary-vanilla.tsv`, 14,082 names, built by lexing the script corpus rather than by
-byte search) contains none of the 23 keys either. That narrows it but does not close it, because the
-vocabulary indexes *names* and these keys would appear as string literals.
+The extraction behind that was re-verified rather than trusted: 1,688 members listed, 1,688
+extracted, 0 failures, 4,965,502 bytes. An earlier run left a stale scratch directory and reported a
+member count that did not match what it had extracted, which is exactly how a negative gets
+published from a broken instrument.
 
-A second lead was chased and **refuted**: `lomse.exe` contains a `"%s %d"` format string, the right
+Three cross-checks that do not share the byte-search mechanism:
+
+1. **The GameScript vocabulary** (`reports/gs/vocabulary-vanilla.tsv`, 14,082 names, built by lexing
+   rather than by byte search) contains none of the 23 keys. It indexes *names*, though, and these
+   would be string literals, so this narrows without closing.
+2. **The recovered operator table**, which a substring search structurally cannot exploit. Every one
+   of the 23 keys has a script-callable counterpart: `settooltipdelay`, `setcombatscrollpixels`,
+   `coarsescrollpixels`/`finescrollpixels`/`limitscrollinginpixels`, `setmilitaryselectionmode`,
+   `setmusicvolume`/`setsoundfxvolume`/`setspeechvolume`/`setambientvolume`,
+   `setbuildingspeechflag`, `setcenteronmovement`. So these settings **are** script-reachable, and a
+   script-level writer is mechanically possible: there is a generic `file` operator (`0x004cc0f0`)
+   that calls `fopen`, and `savedefaultarmy` and `trace` demonstrate script-driven file writing.
+3. **The scripts use a different vocabulary for the same options.** The member holding
+   `next_combat_display_option` spells its constants `OPTION_HEALTH_BAR_ALWAYS`,
+   `OPTION_SMALL_HEALTH_BAR_WHEN_ENEMY`, `OPTION_PLAYER_HALO_WHEN_SELECTED` -- not
+   `COMBAT_DISPLAY_HEALTH_BAR`. And the substring `.cfg` appears in **no** `gs.mpq` member at all,
+   so no script names any configuration file.
+
+The lead was followed rather than filed as "not pursued", and it did not close the question. What it
+establishes is narrower and still worth having: the settings are script-reachable, script-level file
+writing exists, and the key strings are in neither the engine image nor the script corpus.
+
+A further lead was chased and **refuted**: `lomse.exe` contains a `"%s %d"` format string, the right
 shape for these records, but its single cross-reference at `0x0049b099` sits in an
 `sscanf("#define %s %d")` loop that reads IMP `.H` headers. It is not the settings writer.
 
 ## `lom.cfg`
 
-**Observed in a local binary** (`lomse.exe`, baseline profile). 160 bytes, binary, little-endian,
-one record, variable length.
+**Observed in a local binary** (`lomse.exe`, baseline profile). Binary, little-endian, one record,
+variable length; 160 bytes in all four installed profiles, though the recovered writer can also emit
+a shorter form (below).
 
 The GameScript operators `saveconfig` (`0x00487570`) and `loadconfig` (`0x00487580`) are
 two-instruction thunks: `mov ecx, 0x5aa12c` and a tail jump to `0x00487220` and `0x00487360`. Those
 two functions are the only code in the image that names the string `"lom.cfg"`. One opens it `"wb"`
 and issues a fixed sequence of `fwrite` calls; the other opens it `"rb"` and issues the matching
-`fread` calls. The layout below is that sequence, and reader and writer agree field for field —
-**two instruments, not one instrument read twice**.
+`fread` calls. The layout below is that sequence.
 
-The *names* come from a third place that never looked at this file: the repository's own
-`reports/natives/operator-bodies.tsv`, recovered by walking operator bodies. Every global the writer
-stores is referenced by an operator whose name states what it holds.
+**Reader/writer agreement is not confirmation, and an earlier version of this page called it "two
+instruments".** It is not: an `fread` sequence and its matching `fwrite` in the same binary *must*
+agree or the game would not load its own file. The agreement establishes the byte partition --
+widths, order, no gaps -- and says nothing whatever about which slot means what. It is also not
+fully independent of my reading: `saveconfig`'s rows in the committed field-access table cover only
+four of the eleven fields (`+0x08`, `+0x28`, `+0xc8`, `+0xcc`), so the writer side rests on a local
+disassembly the repository's own extractor has not reproduced.
 
-| offset | size | field | named by |
-| ---: | ---: | --- | --- |
-| `0x00` | 4 | music volume | global `0x586770`; `getmusicvolume`, `presetmusicvolume` |
-| `0x04` | 4 | sound-fx volume | global `0x586774`; `getsoundfxvolume`, `presetsoundfxvolume` |
-| `0x08` | 4 | speech volume | global `0x586778`; `getspeechvolume`, `presetspeechvolume` |
-| `0x0c` | 4 | ambient volume | global `0x58677c`; `getambientvolume`, `presetambientvolume` |
-| `0x10` | 4 | help-panel count *N* | list object `0x5aa1f0`; `maxhelppanels` |
-| `0x14` | 4×*N* | help-panel check flags | `addhelppanel`, `togglehelpcheck`, `getcheckmarkstate`, `uncheckallhelppanels` |
-| `0x14+4N` | 4 | Balkoth kill counter | global `0x5aa154`; `balkothdeathcounter`, `cheatbalkoth`, `getbalkothkillcounter` |
-| +4 | 4 | centre-on-movement | global `0x5aa254`; `setcenteronmovement` |
-| +4 | 16 | install GUID | `ole32!CoCreateGuid` |
-| +16 | 4 | building-speech flag | global `0x586784`; `getbuildingspeechflag`, `setbuildingspeechflag` |
-| +4 | 4 | show-completed-quests | global `0x5aa258`; `get_show_completed_quests`, `set_show_completed_quests` |
-| +4 | 4 | **unnamed** | global `0x5d20bc` |
+The *names* come from somewhere that never looked at this file: the repository's own
+`reports/natives/operator-bodies.tsv` and `reports/natives/state/operator-field-access.tsv`,
+recovered by walking operator bodies. **The naming rule is: a field is named after the operator that
+reaches the slot the engine's own *reader* writes it to.** Getting that rule slightly wrong --
+naming a field after the address the *writer* reads it *from* -- is what produced the retracted
+volume attribution below, so it is stated explicitly.
+
+| offset | size | field | slot the reader fills | named by |
+| ---: | ---: | --- | --- | --- |
+| `0x00` | 4 | last music volume | `+0x18` = `0x5aa144` | `setlastaudiosettings` |
+| `0x04` | 4 | last sound-fx volume | `+0x1c` = `0x5aa148` | `setlastaudiosettings` |
+| `0x08` | 4 | last speech volume | `+0x20` = `0x5aa14c` | `setlastaudiosettings` |
+| `0x0c` | 4 | last ambient volume | `+0x24` = `0x5aa150` | `setlastaudiosettings` |
+| `0x10` | 4 | help-panel count *N* | `+0xc8` = `0x5aa1f4` | list object `0x5aa1f0`; `maxhelppanels` |
+| `0x14` | 4x*N* | help-panel check flags | `+0xcc` records | `addhelppanel`, `togglehelpcheck`, `getcheckmarkstate`, `uncheckallhelppanels`, `onetimeonly` |
+| `0x14+4N` | 4 | Balkoth kill counter | `+0x28` = `0x5aa154` | `balkothdeathcounter`, `cheatbalkoth`, `getbalkothkillcounter` |
+| +4 | 4 | centre-on-movement | `+0x128` = `0x5aa254` | `setcenteronmovement` |
+| +4 | 16 | install GUID | `+0x08` = `0x5aa134` | `ole32!CoCreateGuid` |
+| +16 | 4 | building-speech flag | global `0x586784` | `getbuildingspeechflag`, `setbuildingspeechflag` |
+| +4 | 4 | show-completed-quests | `+0x12c` = `0x5aa258` | `get_show_completed_quests`, `set_show_completed_quests` |
+| +4 | 4 | used-DrawBlt flag | global `0x5d20bc` | `getuseddrawblt`, `setuseddrawblt` |
 
 With *N* = 26 that is 20 + 104 + 36 = 160, every term sourced as a field the writer emits.
+
+`loadconfig`'s ten recorded field accesses account for that layout exactly: `+0x08`, `+0x18`,
+`+0x1c`, `+0x20`, `+0x24`, `+0x28`, `+0xc8`, `+0xcc`, `+0x128`, `+0x12c`.
+
+### A second form, which the corpus does not contain
+
+**Observed in a local binary.** `saveconfig` branches on the help-panel records pointer at `+0xcc`
+(`test eax,eax; je` at `0x00487291`). When it is null it writes the four head words and then jumps
+straight to the suffix, skipping *both* the count word and the vector -- a **52-byte** file.
+`loadconfig` branches on the same pointer at `0x004873d6` and reads the shorter form back.
+
+**Not observed in the corpus**: all four installed files carry the vector. `LomConfig` accepts both
+and represents the absent vector as `None`, never as an empty one, because a file with no count word
+(52 bytes) and a file whose count word is zero (56 bytes) are different files.
+
+Worth recording as a fragility rather than as a feature: **which form the engine writes depends on
+runtime state, not on anything in the file.** Nothing in a `lom.cfg` says which shape it is. The
+parser can only tell them apart because `20 + 4N + 36 = 52` has no non-negative solution.
+
+### Retracted: the four head words are not the live volumes
+
+This page first named `0x00`-`0x0f` the music, sound-effects, speech and ambient **volumes**, on the
+grounds that `saveconfig` emits them from `0x586770`-`0x58677c` and the operator table names those
+globals `getmusicvolume` and friends. **Refuted by the committed tables.** `loadconfig`'s recorded
+globals are `0x5572ec, 0x586784, 0x5a7d8c, 0x5a8080, 0x5aa12c, 0x5d20bc` -- `0x586770`-`0x58677c` do
+not appear, and the extractor plainly does see direct statics in that body, since it caught
+`0x586784` and `0x5d20bc` in the same 163 instructions. What `loadconfig` does read is config-object
+`+0x18`-`+0x24`, and the one other operator among 1,906 that touches `0x5aa144`-`0x5aa150` is
+`setlastaudiosettings`, which copies them into four consecutive sound-object slots at
+`+0x1368`-`+0x1374`.
+
+So the file stores the **last audio settings** -- a restore-from slot -- and the live volume globals
+are only the writer's *source*. The practical consequence: a modder patching `lom.cfg[0x00]` to
+change music volume changes nothing, because `getmusicvolume` reads `0x586770`, which this file
+never feeds directly.
+
+The channel mapping -- music, sfx, speech, ambient in that order -- is **Inferred** from two
+orderings agreeing, the writer's source order and the sound-object slot order. It is not read off a
+name, and it is the weakest link in the table.
+
+### Resolved: why the audio words are zero
+
+This was listed as an open question: the four words read `0` while `settings.cfg` says
+`MUSIC_VOLUME 100`. The committed vocabulary answers it. **Observed in the corpus:**
+
+| operator | vanilla | 3.02 | GS5R3 |
+| --- | ---: | ---: | ---: |
+| `presetmusicvolume` | 0 | 1 | 0 |
+| `presetsoundfxvolume` | 0 | 1 | 0 |
+| `presetspeechvolume` | 0 | 1 | 0 |
+| `presetambientvolume` | 0 | 1 | 0 |
+| `setlastaudiosettings` | 1 | 1 | 1 |
+
+The operators that populate this quad are mentioned **zero** times in the vanilla and GS5R3 script
+corpora and once each in 3.02; the operator that consumes it is mentioned once everywhere. A pathway
+the scripts essentially never take leaves its slot at its initial value, so **zero is the expected
+reading**, and the disagreement with `settings.cfg` is not a contradiction -- the two files were
+never storing the same quantity. A mention is not an execution, so 3.02 reading zero despite its
+four mentions is consistent with this too.
 
 ### The help-panel vector
 
@@ -303,8 +417,14 @@ Monotone 1 → 0 with play is what a "don't show this again" checkbox does.
 **Not determined: why the count is 26.** Stated before looking: if the count were simply the number
 of `addhelppanel` calls in the scripts, the vanilla corpus should mention `addhelppanel` 26 times.
 It mentions it **40** times (`reports/gs/vocabulary-vanilla.tsv`), and GS5R3's fork mentions it 26.
-The simple explanation is therefore **refuted**; the count is the runtime length of the list, and
-what prunes it is not established.
+The simple explanation is therefore **refuted**, and no replacement is offered: "it is the runtime
+length of the list" would have to explain 26 under two corpora that mention the operator 40 and 26
+times, so that is not an explanation either.
+
+What survives the refutation is the **layout**, which never depended on it. The count word is
+`+0xc8` and the vector is the `+0xcc` records, established from the container's own
+`{ capacity, count, records }` shape; the check-state reading rests on the monotone 1 -> 0 behaviour
+above, not on the number 26.
 
 ### The GUID
 
@@ -327,40 +447,96 @@ the members of the five archives (9,369 of them), the Wine prefix, and any value
 rather than stores. The cross-check that does not share its mechanism is the `CoCreateGuid` call
 site itself, which is a fact about code rather than about bytes on disk.
 
-### The unnamed trailing word
+### The trailing word: the used-DrawBlt flag
 
-Global `0x5d20bc`. No operator in the recovered table names it; `loadconfig` and `saveconfig`
-reference it only as part of this file. Both default it to 1 on a short read. Observed values: `1`
-in `baseline` and `development`, `-1` (`0xffffffff`) in `gs5r3` and `patch302`.
+Also first recorded here as unnamed, and also resolved from artifacts already in the repository.
+Global `0x5d20bc` is named by exactly two operators, `getuseddrawblt` (`0x004da350`) and
+`setuseddrawblt` (`0x004da2a0`), and each lists that address as its **only** global -- which is as
+clean as this naming rule gets. Both are called in all three script corpora (2/5/4 times).
 
-`-1` is how this codebase spells true elsewhere — `settings.cfg` ships `TOOL_TIP_TRANSLUCENCY -1`
-and `USE_DIRECTX_BLIT -1`. That is a shape, not a name, so the field is carried verbatim as
-`LomConfig::unnamed_trailing_word` and given no meaning.
+Observed values: `1` in `baseline` and `development`, `-1` (`0xffffffff`) in `gs5r3` and
+`patch302`. `-1` is how this codebase spells true elsewhere, and `settings.cfg` ships
+`USE_DIRECTX_BLIT -1`. **Not determined**: whether the `lom.cfg` flag and that setting are the same
+quantity. They are not simply equal -- the setting is `-1` in all four profiles and this field is
+not -- so the resemblance is recorded and not acted on. The loader defaults the field to 1 after a
+short read; the writer has no short-input path to be symmetric with.
 
-### The volumes do not agree with `settings.cfg`
+### The method, since it worked twice
 
-**Observed in the corpus.** All four volume words are `0` in all four profiles, while every
-profile's `settings.cfg` simultaneously records `MUSIC_VOLUME 100`, `SOUND_FX_VOLUME 100`,
-`SPEECH_VOLUME 100`, `AMBIENT_VOLUME 100`. The operators that write these globals are named
-`preset*` and the ones that read them `get*`, so the two files are evidently not storing the same
-quantity. **Not determined**: which quantity either stores.
+Both fields this page originally left unnamed were named without touching the game again, by joining
+the file layout against `reports/natives/operator-bodies.tsv` on the global address. The file itself
+can never say what a slot means; the operator table can, because someone already paid the cost of
+walking 1,906 bodies. Where the join returns nothing, the field stays unnamed -- that is the rule
+working, not the rule failing.
+
+### Where `lom.cfg` and `settings.cfg` agree, and what that can and cannot prove
+
+The volume disagreement is resolved above. Its other half was missing from this page: two settings
+appear in **both** files, and in both cases they agree across all four profiles.
+
+| `lom.cfg` field | `settings.cfg` key | all four profiles |
+| --- | --- | --- |
+| building-speech flag | `BUILDING_SPEECH` | `1` |
+| centre-on-movement | `CENTER_MOVE` | `0` |
+
+That agreement is the only check in this work bearing on **which slot holds what** rather than on
+how the bytes divide up: one side is named by an operator recovered from the binary, the other by a
+literal in a text file that knows nothing about the binary. It is pinned as a test.
+
+**It is weak, and the limit is worth stating precisely.** Both pairs are constant across the corpus,
+so each offers exactly one value. More generally, **six of the eleven `lom.cfg` fields read `0` in
+all four profiles** -- the four audio words, the Balkoth counter and centre-on-movement -- and no
+value-based check over this corpus can distinguish any of them from any other. That was measured,
+not assumed: consistently swapping `balkoth_kill_counter` with `center_on_movement` in the parser
+leaves the whole suite green, while swapping the used-DrawBlt word with either of its neighbours
+fails, because that one varies between profiles. The tests say which of the two they are.
+
+Round-tripping cannot help here either. For `lom.cfg` the round-trip is a mathematical identity --
+`to_bytes` emits in exactly the order `parse` reads -- so it holds for any input `parse` accepts,
+including noise with a plausible count planted at offset `0x10`. It proves the byte partition is
+total and ordered; it is blind to a permutation of names over equal-width slots, which is exactly
+the defect that produced the retracted volume attribution. `SettingsConfig::round_trips` is a
+different matter and can genuinely fail, because its encoder has to reconstruct separators.
+
+## Resolved since the first draft
+
+Recorded rather than quietly edited away. All three were closed from artifacts already committed in
+this repository, without touching the game again, and the method is reusable.
+
+- **What the four head words hold.** They are the *last audio settings*, not the live volumes; the
+  first attribution was refuted by `loadconfig`'s own recorded globals.
+- **Why they read zero.** The `preset*volume` operators that populate the quad are mentioned zero
+  times in two of the three script corpora. Zero is the expected value.
+- **The trailing word.** `getuseddrawblt`/`setuseddrawblt` name global `0x5d20bc` and nothing else.
 
 ## What is not determined
 
 Collected, so that nothing here reads as settled when it is not.
 
-1. **What writes `settings.cfg`.** Established that something does, during play. Not established
-   what, after searching 3,373 objects; three media archives and the prefix DLLs were out of reach.
-2. **The meaning of `lom.cfg`'s trailing word** (global `0x5d20bc`).
-3. **Why `lom.cfg` holds 26 help panels**, given 40 script mentions of `addhelppanel`.
-4. **Why the 3.02 profile regenerated its GUID.**
-5. **What the four `lom.cfg` volume words hold**, given they disagree with `settings.cfg`.
-6. **`English/map/e3map2.map`** beyond its size equation. Not decoded, and one file is not a format.
-7. **`English/custldr/0templdr.ldr`** (GS5R3) — nothing at all beyond its byte histogram.
-8. **The Asura container** beyond two exact length equations: two header words, the hash function,
-   and the trailing NUL run are all unexplained, and no parser exists.
-9. **Whether the German audio in `Wav/lou_scenarios/` is reachable** from an English install.
-10. **Anything above the game-tree root.** ~16,760 files per bundle were excluded by boundary, not
+1. **What writes `settings.cfg`.** Established that something does, during play; that all 23 keys
+   have script-callable operator counterparts; and that script-level file writing exists. Not
+   established what writes it, after searching 3,373 objects by bytes and cross-checking with the
+   vocabulary and the operator table. Three media archives and the prefix DLLs remain out of reach,
+   as does any string assembled at run time.
+2. **How `settings.cfg` is written** — whole-file or in place. The size coincidence says nothing.
+3. **Which slot is which, for six of the eleven `lom.cfg` fields.** The four audio words, the
+   Balkoth counter and centre-on-movement all read `0` in all four profiles, so no value-based check
+   over this corpus can tell them apart. Measured by mutation, not assumed.
+4. **The channel order of the four audio words**, which is inferred from two agreeing orderings
+   rather than read off a name.
+5. **Why `lom.cfg` holds 26 help panels**, given 40 script mentions of `addhelppanel`. The obvious
+   explanation is refuted and no replacement is offered.
+6. **Whether the used-DrawBlt flag and `settings.cfg`'s `USE_DIRECTX_BLIT` are the same quantity.**
+   They are not equal across the corpus.
+7. **Why the 3.02 profile regenerated its GUID**, given its file is the full 160 bytes and the
+   observed regeneration path is a short read.
+8. **`English/map/e3map2.map`** beyond its size equation. Not decoded, and one file is not a format.
+9. **`English/custldr/0templdr.ldr`** (GS5R3) — nothing at all beyond its byte histogram.
+10. **The Asura container** beyond its magic and two length equations: two header words, the hash
+    function, and the trailing NUL run are all unexplained, and no parser exists. The
+    `LOMLauncher.exe` attribution is inferred from contents, not from reading that binary.
+11. **Whether the German audio in `Wav/lou_scenarios/` is reachable** from an English install.
+12. **Anything above the game-tree root.** ~16,760 files per bundle were excluded by boundary, not
     examined. If the game writes state into the Wine prefix — registry hives, `users/` — this sweep
     did not look.
 
@@ -369,3 +545,9 @@ Collected, so that nothing here reads as settled when it is not.
 The sweep is read-only and this work never wrote inside `~/Applications`. `English/map/` has no
 backup; `loose::inventory` opens files for reading only and follows no symlinks out of the tree
 (`symlink_metadata`, not `metadata`).
+
+It also tolerates a tree that moves underneath it. The GS5R3 profile is played while it is measured,
+so its saves and logs can vanish between the directory walk and the read; an unreadable file becomes
+a row carrying its error, and a vanished directory entry is skipped, rather than aborting a sweep
+that had already classified 495 files. Any other I/O error still stops the run, because a sweep that
+silently walks half a tree and reports a total is worse than one that fails.
