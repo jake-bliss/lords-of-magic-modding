@@ -20,6 +20,18 @@ Measured **2026-09-18** on the four installed profiles. Reports:
 ## Reproducing it
 
 ```sh
+scripts/loose-file-reports.sh            # every report, then every corpus-gated check
+```
+
+That is the tracked command, and it is the one to run whenever the reports are regenerated or
+`src/loose.rs` changes. **Run it rather than the individual verbs.** Half the checks behind these
+reports need the proprietary tree, so they are `#[ignore]`d and an ordinary `cargo test` skips
+them; consistently permuting two `LomConfig` fields left `cargo test` green for exactly that
+reason. An `#[ignore]`d guard that no tracked command invokes is not a guard.
+
+The individual verbs, for one-off inspection:
+
+```sh
 ROOT="$HOME/Applications/Steambuild 32 64bit DXVK.app/Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition"
 lom-asset-viewer --loose-inventory "$ROOT" baseline > reports/loose/inventory-baseline.tsv
 lom-asset-viewer --loose-config "$ROOT/English/lom.cfg"
@@ -391,10 +403,14 @@ Scoped and graded properly:
   `setlastaudiosettings` is mentioned once in each of the three script corpora, so it is reachable.
   This has **not** been tested in a running engine, and it is cheap to test.
 
-### The channel mapping is observed, not inferred
+### The channel mapping, and exactly what grades it
 
-An earlier version of this section retracted this too far, calling the slot-to-channel mapping an
-inference from two agreeing orderings. It is read off names, and the evidence was already committed:
+The chain is: file word -> config-object slot -> one of `setlastaudiosettings`'s four calls -> a
+`set*volume` helper. The two links grade differently, and this section has now been wrong in both
+directions, so both are spelled out.
+
+**The last link is Observed in the corpus.** Each `set*volume` operator's own row names both a
+distinguishing call target and a sound-object write:
 
 | operator | distinguishing call target | sound-object slot written |
 | --- | --- | --- |
@@ -402,14 +418,36 @@ inference from two agreeing orderings. It is read off names, and the evidence wa
 | `setsoundfxvolume` | `0x479b40` | `+0x136c` |
 | `setspeechvolume` | `0x479c30` | `+0x1370` |
 | `setambientvolume` | `0x479d10` | `+0x1374` |
-| `setlastaudiosettings` | all four, in that order | all four |
 
-The other targets those four operators share (`0x4d4550`, `0x5394a0`) are boilerplate. Two
-independent columns agree, and both are names rather than orderings. **Observed in the corpus.**
+(The targets those four share, `0x4d4550` and `0x5394a0`, are boilerplate.) So `0x479a00` is the
+music helper, on committed evidence.
 
-What does remain local-disassembly-only is the narrow pairing: which of `0x5aa144`--`0x5aa150` feeds
-which of those four calls. That comes from reading `setlastaudiosettings` by hand and has not been
-reproduced by this repository's extractor.
+**The middle link is Observed in a local binary, and the committed tables cannot supply it.** A
+previous version of this page called the call-target column and the field-access column "two
+independent columns" agreeing. They are not independent: `operator-field-access.tsv` is produced by
+*walking into the callees listed in* `operator-bodies.tsv`, so `setlastaudiosettings`'s four
+recorded destination slots are just the union of what its four callees write. Both tables record
+the **set** of four globals and the **set** of four call targets; neither records which global was
+pushed before which call. Exchanging the loads of `0x5aa144` and `0x5aa148` would leave every
+committed table byte-identical while swapping the meanings of `lom.cfg[0x00]` and `[0x04]`.
+
+That hop is now pinned by
+`each_audio_word_reaches_the_helper_its_channel_is_named_after`, which decodes
+`setlastaudiosettings` from the installed image and asserts the ordered pairing, so it is
+reproducible rather than resting on a hand disassembly. It is corpus-gated, and it fails if the
+pairing is stated wrongly.
+
+> **The rule this cost three attempts to learn.** Two reports derived from one extraction pass are
+> **one instrument**, however many columns they have and however independent the columns look. This
+> branch got it wrong three times: the `lom.cfg` reader and writer agreeing (forced -- the game
+> would not load its own file otherwise), and then these two tables twice over. Before calling
+> something corroborated, ask what *produced* each reading, not what each reading says.
+
+**Not done, and worth doing.** The general fix is to make the extractor emit ordered call-site facts
+-- argument source, call target, object base -- so this pairing becomes reproducible for every
+operator rather than for the one this work needed. That touches a core analysis module whose output
+several committed reports and test suites assert against, so it is recorded here as a
+recommendation rather than attempted as a side effect of a file-format sweep.
 
 ### Resolved: why the audio words are zero
 
@@ -582,8 +620,9 @@ Collected, so that nothing here reads as settled when it is not.
    is named above.
 4. **Whether patching `lom.cfg`'s audio words changes the applied volume.** The path reaches the
    same mixer helper `setmusicvolume` uses; it has not been tried in a running engine.
-5. **Which of `0x5aa144`--`0x5aa150` feeds which of `setlastaudiosettings`'s four calls** -- local
-   disassembly only, not reproduced by this repository's extractor.
+5. **Nothing in the committed operator tables can express which argument reaches which call.** The
+   `lom.cfg` audio pairing is pinned by a test that decodes the image directly, but the general
+   capability is missing from the extractor and every similar question will hit it again.
 6. **Why `lom.cfg` holds 26 help panels**, given 40 script mentions of `addhelppanel`. The obvious
    explanation is refuted and no replacement is offered.
 7. **Whether the used-DrawBlt flag and `settings.cfg`'s `USE_DIRECTX_BLIT` are the same quantity.**

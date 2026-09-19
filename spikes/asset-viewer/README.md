@@ -78,7 +78,11 @@ sweep looking for what nobody named cannot let the extension decide the answer. 
 cannot classify are counted in the report, not dropped from it.
 
 `--loose-config` dispatches on content rather than on the file name and prints `round-trips`, so a
-partial read shows up instead of passing as a clean parse. See
+partial read shows up instead of passing as a clean parse.
+
+Regenerate both reports and run every corpus-gated check behind them with
+`scripts/loose-file-reports.sh`, not by hand: the checks that re-derive the reports from the
+installed game are `#[ignore]`d, so an ordinary `cargo test` skips them. See
 [loose files](../../docs/loose-files.md) for the recovered `lom.cfg` layout, what names each field,
 and the list of what is still undetermined.
 

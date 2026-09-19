@@ -94,13 +94,18 @@ fn config_fields() -> BTreeMap<(String, String, String), String> {
     for line in lines {
         let fields: Vec<&str> = line.split('\t').collect();
         assert_eq!(fields.len(), 4, "row {line:?} does not have four fields");
-        rows.insert(
-            (
-                fields[0].to_owned(),
-                fields[1].to_owned(),
-                fields[2].to_owned(),
-            ),
-            fields[3].to_owned(),
+        let key = (
+            fields[0].to_owned(),
+            fields[1].to_owned(),
+            fields[2].to_owned(),
+        );
+        // A duplicate key used to overwrite silently, which would let a report carrying two
+        // different values for one field look consistent to every check that reads it.
+        assert!(
+            rows.insert(key.clone(), fields[3].to_owned()).is_none(),
+            "{:?} appears twice in {}",
+            key,
+            path.display()
         );
     }
     rows
@@ -707,94 +712,259 @@ fn the_committed_inventory_reproduces() {
     }
 }
 
-/// The committed configuration report, re-derived from the installed files field by field.
+/// The committed configuration report, re-derived from the installed files -- **every row**.
 ///
-/// This is the check the previous commit left missing. `the_committed_inventory_reproduces` does
-/// this for the inventory, but nothing did it for `config-fields.tsv`, so the two report-backed
-/// identity tests read a table that no test re-derived: consistently permuting two fields in
-/// `LomConfig` left the suite green while the committed report went stale against the code that
-/// produced it. Comparing *parsed fields* rather than the digest of the input bytes is what closes
-/// that -- a digest check passes however the bytes are interpreted.
+/// This is the check the first version of this work left missing, and the second version left
+/// incomplete. `the_committed_inventory_reproduces` does this for the inventory; nothing did it for
+/// `config-fields.tsv`, so the two report-backed identity tests read a table no test re-derived.
+///
+/// The comparison is for **exact equality of the whole field map**, not a spot-check of the fields
+/// that looked interesting. A subset check passed while `format`, `round-trips`,
+/// `unparsed-records` and `terminated` went unverified -- so a parser that reported
+/// `terminated = false` while preserving all 23 entries, or one whose round-trip broke, would have
+/// slipped through. Extra stale rows are rejected for the same reason: a report may not carry a
+/// field the parser no longer produces.
 #[test]
 #[ignore = "needs LOM_GAME_DIR and LOM_PROFILE"]
 fn the_committed_configuration_report_reproduces() {
     let directory = game_directory();
     let profile = std::env::var("LOM_PROFILE").expect("set LOM_PROFILE alongside LOM_GAME_DIR");
-    let fields = config_fields();
-    let expect = |file: &str, field: &str| -> String {
-        fields
-            .get(&(profile.clone(), file.to_owned(), field.to_owned()))
-            .unwrap_or_else(|| panic!("{profile}/{file}/{field} is in the committed report"))
-            .clone()
+    let committed = config_fields();
+
+    // Built to mirror `describe_loose_config`'s output exactly, field for field.
+    let mut actual: BTreeMap<(String, String), String> = BTreeMap::new();
+    let mut put = |file: &str, field: &str, value: String| {
+        assert!(
+            actual
+                .insert((file.to_owned(), field.to_owned()), value)
+                .is_none(),
+            "{file}/{field} was derived twice"
+        );
     };
 
     let bytes = std::fs::read(directory.join("lom.cfg")).expect("lom.cfg is installed");
     let config = LomConfig::parse(&bytes).expect("lom.cfg parses");
-    let checks = config
-        .help_panel_checks
-        .as_ref()
-        .expect("every installed profile carries the help-panel vector");
-    for (field, value) in [
-        ("size", bytes.len().to_string()),
-        ("sha256", loose::sha256_hex(&bytes)),
-        ("last-music-volume", config.last_music_volume.to_string()),
-        (
-            "last-sound-fx-volume",
-            config.last_sound_fx_volume.to_string(),
-        ),
-        ("last-speech-volume", config.last_speech_volume.to_string()),
-        (
-            "last-ambient-volume",
-            config.last_ambient_volume.to_string(),
-        ),
-        ("help-panel-count", checks.len().to_string()),
-        (
-            "help-panel-checks",
-            checks
-                .iter()
-                .map(u32::to_string)
-                .collect::<Vec<_>>()
-                .join(","),
-        ),
-        (
-            "balkoth-kill-counter",
-            config.balkoth_kill_counter.to_string(),
-        ),
-        ("center-on-movement", config.center_on_movement.to_string()),
-        ("install-guid", config.install_guid_text()),
-        (
-            "building-speech-flag",
-            config.building_speech_flag.to_string(),
-        ),
-        (
-            "show-completed-quests",
-            config.show_completed_quests.to_string(),
-        ),
-        ("used-drawblt", (config.used_drawblt as i32).to_string()),
-    ] {
-        assert_eq!(
-            expect("lom.cfg", field),
-            value,
-            "{profile}: lom.cfg {field} was re-derived as {value}"
-        );
+    put("lom.cfg", "size", bytes.len().to_string());
+    put("lom.cfg", "sha256", loose::sha256_hex(&bytes));
+    put("lom.cfg", "format", "lom.cfg".to_owned());
+    put(
+        "lom.cfg",
+        "round-trips",
+        (config.to_bytes() == bytes).to_string(),
+    );
+    put(
+        "lom.cfg",
+        "last-music-volume",
+        config.last_music_volume.to_string(),
+    );
+    put(
+        "lom.cfg",
+        "last-sound-fx-volume",
+        config.last_sound_fx_volume.to_string(),
+    );
+    put(
+        "lom.cfg",
+        "last-speech-volume",
+        config.last_speech_volume.to_string(),
+    );
+    put(
+        "lom.cfg",
+        "last-ambient-volume",
+        config.last_ambient_volume.to_string(),
+    );
+    match &config.help_panel_checks {
+        Some(checks) => {
+            put("lom.cfg", "help-panel-count", checks.len().to_string());
+            put(
+                "lom.cfg",
+                "help-panel-checks",
+                checks
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+        }
+        None => {
+            put("lom.cfg", "help-panel-count", "absent".to_owned());
+            put("lom.cfg", "help-panel-checks", "absent".to_owned());
+        }
     }
+    put(
+        "lom.cfg",
+        "balkoth-kill-counter",
+        config.balkoth_kill_counter.to_string(),
+    );
+    put(
+        "lom.cfg",
+        "center-on-movement",
+        config.center_on_movement.to_string(),
+    );
+    put("lom.cfg", "install-guid", config.install_guid_text());
+    put(
+        "lom.cfg",
+        "building-speech-flag",
+        config.building_speech_flag.to_string(),
+    );
+    put(
+        "lom.cfg",
+        "show-completed-quests",
+        config.show_completed_quests.to_string(),
+    );
+    put(
+        "lom.cfg",
+        "used-drawblt",
+        (config.used_drawblt as i32).to_string(),
+    );
 
     let bytes = std::fs::read(directory.join("settings.cfg")).expect("settings.cfg is installed");
     let settings = SettingsConfig::parse(&bytes).expect("settings.cfg parses");
-    assert_eq!(expect("settings.cfg", "size"), bytes.len().to_string());
-    assert_eq!(expect("settings.cfg", "sha256"), loose::sha256_hex(&bytes));
-    assert_eq!(
-        expect("settings.cfg", "records"),
-        settings.entries.len().to_string()
+    put("settings.cfg", "size", bytes.len().to_string());
+    put("settings.cfg", "sha256", loose::sha256_hex(&bytes));
+    put("settings.cfg", "format", "settings.cfg".to_owned());
+    put(
+        "settings.cfg",
+        "round-trips",
+        settings.round_trips(&bytes).to_string(),
+    );
+    put(
+        "settings.cfg",
+        "records",
+        settings.entries.len().to_string(),
+    );
+    put(
+        "settings.cfg",
+        "unparsed-records",
+        settings.unparsed.len().to_string(),
+    );
+    put(
+        "settings.cfg",
+        "terminated",
+        settings.terminated.to_string(),
     );
     for entry in &settings.entries {
-        assert_eq!(
-            expect("settings.cfg", &format!("setting:{}", entry.key)),
-            entry.raw_value,
-            "{profile}: settings.cfg {}",
-            entry.key
+        put(
+            "settings.cfg",
+            &format!("setting:{}", entry.key),
+            entry.raw_value.clone(),
         );
     }
+
+    let recorded: BTreeMap<(String, String), String> = committed
+        .iter()
+        .filter(|((row_profile, _, _), _)| row_profile == &profile)
+        .map(|((_, file, field), value)| ((file.clone(), field.clone()), value.clone()))
+        .collect();
+
+    for (key, value) in &actual {
+        let Some(found) = recorded.get(key) else {
+            panic!(
+                "{profile}: {}/{} is not in the committed report",
+                key.0, key.1
+            );
+        };
+        assert_eq!(
+            found, value,
+            "{profile}: {}/{} was re-derived as {value}",
+            key.0, key.1
+        );
+    }
+    for key in recorded.keys() {
+        assert!(
+            actual.contains_key(key),
+            "{profile}: the committed report carries {}/{}, which the parsers no longer produce",
+            key.0,
+            key.1
+        );
+    }
+}
+
+/// The one hop the committed tables cannot preserve, read from the image instead.
+///
+/// `docs/loose-files.md` pairs each `lom.cfg` audio word with a channel. The chain is: file word ->
+/// config-object slot `0x5aa144..0x5aa150` -> one of `setlastaudiosettings`'s four calls -> a
+/// `set*volume` helper. Only the **last** link is in the committed tables, and it is solid:
+/// `setmusicvolume`'s own row lists call target `0x479a00` and a write to sound-object `+0x1368`.
+///
+/// The middle link is not, and cannot be. `operator-field-access.tsv` is produced by walking into
+/// the callees listed in `operator-bodies.tsv`, so the two tables are **one extraction pass read
+/// twice**: both record the *set* of four globals and the *set* of four call targets, and neither
+/// records which global was pushed before which call. Exchanging the loads of `0x5aa144` and
+/// `0x5aa148` would leave every committed table byte-identical while swapping the meanings of
+/// `lom.cfg[0x00]` and `[0x04]`.
+///
+/// So this decodes `setlastaudiosettings` and asserts the ordered pairing directly. It replaces a
+/// hand disassembly that nothing could re-run.
+#[test]
+#[ignore = "needs LOM_GAME_DIR"]
+fn each_audio_word_reaches_the_helper_its_channel_is_named_after() {
+    use iced_x86::{Decoder, DecoderOptions, Mnemonic, OpKind};
+    use lom_asset_viewer::native_table::PeImage;
+
+    // Global -> the helper the file word is claimed to reach, in file order.
+    const EXPECTED: [(u32, u32, &str); 4] = [
+        (0x005a_a144, 0x0047_9a00, "music"),
+        (0x005a_a148, 0x0047_9b40, "sound effects"),
+        (0x005a_a14c, 0x0047_9c30, "speech"),
+        (0x005a_a150, 0x0047_9d10, "ambient"),
+    ];
+    const SET_LAST_AUDIO_SETTINGS: u32 = 0x0048_7520;
+
+    let bytes = std::fs::read(game_directory().join("lomse.exe")).expect("lomse.exe is installed");
+    let image = PeImage::parse(&bytes).expect("lomse.exe is a 32-bit PE");
+    let start = image
+        .file_offset(SET_LAST_AUDIO_SETTINGS)
+        .expect("setlastaudiosettings is inside a mapped section");
+    // The body is 79 bytes to its `ret`; 0x60 covers it without running into the next function.
+    let mut decoder = Decoder::with_ip(
+        32,
+        &image.bytes()[start..start + 0x60],
+        u64::from(SET_LAST_AUDIO_SETTINGS),
+        DecoderOptions::NONE,
+    );
+
+    let globals: Vec<u32> = EXPECTED.iter().map(|(global, _, _)| *global).collect();
+    let mut pending: Option<u32> = None;
+    let mut observed: Vec<(u32, u32)> = Vec::new();
+    for instruction in decoder.iter() {
+        match instruction.mnemonic() {
+            // `mov r32, [imm32]` -- the load of one persisted word.
+            Mnemonic::Mov if instruction.op1_kind() == OpKind::Memory => {
+                let address = instruction.memory_displacement32();
+                if globals.contains(&address) {
+                    assert!(
+                        pending.is_none(),
+                        "two audio words were loaded with no call between them, so the pairing \
+                         cannot be read off the order"
+                    );
+                    pending = Some(address);
+                }
+            }
+            Mnemonic::Call => {
+                if let Some(global) = pending.take() {
+                    observed.push((global, instruction.near_branch32()));
+                }
+            }
+            Mnemonic::Ret => break,
+            _ => {}
+        }
+    }
+
+    let expected: Vec<(u32, u32)> = EXPECTED
+        .iter()
+        .map(|(global, helper, _)| (*global, *helper))
+        .collect();
+    assert_eq!(
+        observed,
+        expected,
+        "the audio words do not reach the helpers this repository says they do; \
+         expected {}",
+        EXPECTED
+            .iter()
+            .map(|(global, helper, channel)| format!("{global:#010x}->{helper:#010x} ({channel})"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 }
 
 /// Every `.wav` and `.smk` really is what its extension says.
