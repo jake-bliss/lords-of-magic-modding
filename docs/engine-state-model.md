@@ -262,11 +262,18 @@ two structures into one. So the entity records are exactly the thing the instrum
 guess at.
 
 `docs/save-format.md` independently reports the same shape from the other side: `LS_SPR_` — units,
-armies and heroes — is **polymorphic, variable-length, dispatched through a 10-entry vtable at
-`0x004F73B8`**, and is the section that does not decode. Two instruments agreeing that the entity
-records are behind virtual dispatch is not a recovery, but it does say where the next pass must go:
-**reverse the ten class readers at `0x004F73B8`'s targets**, which is also what the save work
-concluded.
+armies and heroes — is **polymorphic, variable-length, dispatched through the 10-entry table at
+`0x004F73B8`**. Two instruments agreeing that the entity records are behind virtual dispatch was
+not a recovery, but it did say where the next pass had to go — **reverse the ten class readers at
+`0x004F73B8`'s targets** — and later on 2026-09-18 that is what the save work did.
+
+**Updated, 2026-09-18.** The ten readers are walked and `LS_SPR_` now decodes. That gives the
+entity records their **extents and their class partition** — eight classes, their allocation sizes,
+their constructors, their vtables, and every field boundary inside each record — but it does **not**
+give the instrument what it closes the taint chain to avoid: the readers name offsets into an
+object, not meanings, and the binary has no RTTI, so not one of the eight classes can be named. The
+save work bounds the entity structures from outside; this instrument still declines to guess at
+what is inside them, and the 25% ceiling below is unchanged by it.
 
 `no_entity_subject_converges_the_way_the_network_one_does` pins the ceiling at 25%, so a future
 change that *does* recover an entity record fails the test. It is written to be falsified.
