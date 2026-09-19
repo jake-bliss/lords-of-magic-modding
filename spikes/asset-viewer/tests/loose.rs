@@ -115,6 +115,18 @@ fn every_inventory_row_carries_a_usable_digest_and_size() {
             "the {profile} inventory has no rows at all"
         );
         for (path, row) in &rows {
+            // A row for a file that could not be read carries no digest by design; asserting the
+            // digest shape on it would fail the suite for a filesystem race with a message naming
+            // neither the race nor the file.
+            if row["probe_error"].starts_with(loose::UNREADABLE_PREFIX) {
+                assert_eq!(
+                    row["sha256"],
+                    loose::UNREADABLE_DIGEST,
+                    "{profile}:{path} is unreadable and must carry no digest"
+                );
+                assert_eq!(row["size"], "0", "{profile}:{path}");
+                continue;
+            }
             let digest = &row["sha256"];
             assert_eq!(
                 digest.len(),
@@ -339,6 +351,9 @@ fn the_digest_in_the_report_is_the_digest_of_the_recorded_length() {
     let empty = loose::sha256_hex(b"");
     for profile in PROFILES {
         for (path, row) in inventory_rows(profile) {
+            if row["probe_error"].starts_with(loose::UNREADABLE_PREFIX) {
+                continue;
+            }
             if row["size"] == "0" {
                 assert_eq!(row["sha256"], empty, "{profile}:{path} is empty");
             } else {
@@ -349,6 +364,58 @@ fn the_digest_in_the_report_is_the_digest_of_the_recorded_length() {
             }
         }
     }
+}
+
+/// The branch that turns an unreadable file into a row.
+///
+/// Nothing else in the suite runs it. The sweep is supposed to survive a profile being played
+/// underneath it, and a tolerance nobody exercises is a tolerance that works until the day it is
+/// needed. Uses a `chmod 000` file, which is the reachable half of the race -- the other half, a
+/// file that vanishes between the walk and the read, cannot be provoked deterministically here.
+#[test]
+#[cfg(unix)]
+fn an_unreadable_file_becomes_a_row_rather_than_ending_the_sweep() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = std::env::temp_dir().join(format!(
+        "lom-loose-unreadable-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("the fixture tree is created");
+    std::fs::write(root.join("readable.txt"), b"fine\n").expect("written");
+    let locked = root.join("locked.bin");
+    std::fs::write(&locked, b"secret").expect("written");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+
+    let result = loose::inventory(&root);
+    // Restore before asserting, so a failure does not leave an undeletable fixture behind.
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).expect("chmod back");
+    let rows = result.expect("one unreadable file must not end the sweep");
+    std::fs::remove_dir_all(&root).expect("the fixture tree is removed");
+
+    assert_eq!(rows.len(), 2, "both files are rows");
+    let locked_row = rows
+        .iter()
+        .find(|row| row.relative_path == "locked.bin")
+        .expect("the unreadable file is still a row");
+    assert_eq!(locked_row.sha256, loose::UNREADABLE_DIGEST);
+    assert_eq!(locked_row.size, 0);
+    assert!(
+        locked_row
+            .probe_error
+            .as_deref()
+            .is_some_and(|error| error.starts_with(loose::UNREADABLE_PREFIX)),
+        "the row must say why it has no digest: {:?}",
+        locked_row.probe_error
+    );
+    // And the good file is unaffected, which is the whole point of not aborting.
+    let readable = rows
+        .iter()
+        .find(|row| row.relative_path == "readable.txt")
+        .expect("the readable file is a row");
+    assert_eq!(readable.sha256, loose::sha256_hex(b"fine\n"));
 }
 
 /// Two named `lom.cfg` slots against two independently named `settings.cfg` keys.
@@ -636,6 +703,96 @@ fn the_committed_inventory_reproduces() {
             },
             "{}",
             row.relative_path
+        );
+    }
+}
+
+/// The committed configuration report, re-derived from the installed files field by field.
+///
+/// This is the check the previous commit left missing. `the_committed_inventory_reproduces` does
+/// this for the inventory, but nothing did it for `config-fields.tsv`, so the two report-backed
+/// identity tests read a table that no test re-derived: consistently permuting two fields in
+/// `LomConfig` left the suite green while the committed report went stale against the code that
+/// produced it. Comparing *parsed fields* rather than the digest of the input bytes is what closes
+/// that -- a digest check passes however the bytes are interpreted.
+#[test]
+#[ignore = "needs LOM_GAME_DIR and LOM_PROFILE"]
+fn the_committed_configuration_report_reproduces() {
+    let directory = game_directory();
+    let profile = std::env::var("LOM_PROFILE").expect("set LOM_PROFILE alongside LOM_GAME_DIR");
+    let fields = config_fields();
+    let expect = |file: &str, field: &str| -> String {
+        fields
+            .get(&(profile.clone(), file.to_owned(), field.to_owned()))
+            .unwrap_or_else(|| panic!("{profile}/{file}/{field} is in the committed report"))
+            .clone()
+    };
+
+    let bytes = std::fs::read(directory.join("lom.cfg")).expect("lom.cfg is installed");
+    let config = LomConfig::parse(&bytes).expect("lom.cfg parses");
+    let checks = config
+        .help_panel_checks
+        .as_ref()
+        .expect("every installed profile carries the help-panel vector");
+    for (field, value) in [
+        ("size", bytes.len().to_string()),
+        ("sha256", loose::sha256_hex(&bytes)),
+        ("last-music-volume", config.last_music_volume.to_string()),
+        (
+            "last-sound-fx-volume",
+            config.last_sound_fx_volume.to_string(),
+        ),
+        ("last-speech-volume", config.last_speech_volume.to_string()),
+        (
+            "last-ambient-volume",
+            config.last_ambient_volume.to_string(),
+        ),
+        ("help-panel-count", checks.len().to_string()),
+        (
+            "help-panel-checks",
+            checks
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        (
+            "balkoth-kill-counter",
+            config.balkoth_kill_counter.to_string(),
+        ),
+        ("center-on-movement", config.center_on_movement.to_string()),
+        ("install-guid", config.install_guid_text()),
+        (
+            "building-speech-flag",
+            config.building_speech_flag.to_string(),
+        ),
+        (
+            "show-completed-quests",
+            config.show_completed_quests.to_string(),
+        ),
+        ("used-drawblt", (config.used_drawblt as i32).to_string()),
+    ] {
+        assert_eq!(
+            expect("lom.cfg", field),
+            value,
+            "{profile}: lom.cfg {field} was re-derived as {value}"
+        );
+    }
+
+    let bytes = std::fs::read(directory.join("settings.cfg")).expect("settings.cfg is installed");
+    let settings = SettingsConfig::parse(&bytes).expect("settings.cfg parses");
+    assert_eq!(expect("settings.cfg", "size"), bytes.len().to_string());
+    assert_eq!(expect("settings.cfg", "sha256"), loose::sha256_hex(&bytes));
+    assert_eq!(
+        expect("settings.cfg", "records"),
+        settings.entries.len().to_string()
+    );
+    for entry in &settings.entries {
+        assert_eq!(
+            expect("settings.cfg", &format!("setting:{}", entry.key)),
+            entry.raw_value,
+            "{profile}: settings.cfg {}",
+            entry.key
         );
     }
 }

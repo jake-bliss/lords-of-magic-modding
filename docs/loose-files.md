@@ -147,6 +147,11 @@ parser is written for this; it is documented, not implemented.
 It is therefore outside the "all 365 installed map/scenario/component files parse" claim, which
 counts 337 `.smp` + 20 `.scn` + 8 `.lgd` in the GS5R3 profile.
 
+The count is profile-dependent and the qualification has to say which: GS5R3's `English/map/` holds
+**366** files, and the other three profiles hold **354** (they have 8 `.scn` rather than 20). The
+profile-independent statement is the useful one -- **every profile holds exactly one file in
+`English/map/` that the map pass never offers to the parser**, and it is this one.
+
 Its first three words are `64`, `64`, `8`. A `.smp` opens with a **version** word (`0x6f` in
 `91gauntlet.smp`) and then width, height, depth — the same three fields, one word later.
 `12 + 64 × 64 × 8 = 32,780` accounts for the file exactly, sourced as three terms and not as a
@@ -365,13 +370,46 @@ not appear, and the extractor plainly does see direct statics in that body, sinc
 `+0x1368`-`+0x1374`.
 
 So the file stores the **last audio settings** -- a restore-from slot -- and the live volume globals
-are only the writer's *source*. The practical consequence: a modder patching `lom.cfg[0x00]` to
-change music volume changes nothing, because `getmusicvolume` reads `0x586770`, which this file
-never feeds directly.
+are only the writer's *source*.
 
-The channel mapping -- music, sfx, speech, ambient in that order -- is **Inferred** from two
-orderings agreeing, the writer's source order and the sound-object slot order. It is not read off a
-name, and it is the weakest link in the table.
+### What that does and does not mean for a modder
+
+The first version of this retraction said a modder patching `lom.cfg[0x00]` to change music volume
+"changes nothing". **That is false, and it was the one sentence here anybody would have acted on.**
+It also carried no evidence grade while every claim around it did. A wrong "changes nothing" is
+worse than the wrong attribution it replaced, because the attribution was falsifiable by trying it
+and the "changes nothing" tells you not to.
+
+Scoped and graded properly:
+
+- **Observed in the corpus.** Patching `lom.cfg[0x00]` does not change what `getmusicvolume`
+  returns. That operator reads `0x586770`, and the loader never writes it -- `loadconfig`'s recorded
+  globals do not include it.
+- **Not determined.** Whether it changes the *applied* volume. `setlastaudiosettings` passes
+  `0x5aa144` to `0x479a00`, which is the same helper `setmusicvolume` calls on the same sound
+  object, writing the same slot `+0x1368`. So the path plausibly reaches the mixer, and
+  `setlastaudiosettings` is mentioned once in each of the three script corpora, so it is reachable.
+  This has **not** been tested in a running engine, and it is cheap to test.
+
+### The channel mapping is observed, not inferred
+
+An earlier version of this section retracted this too far, calling the slot-to-channel mapping an
+inference from two agreeing orderings. It is read off names, and the evidence was already committed:
+
+| operator | distinguishing call target | sound-object slot written |
+| --- | --- | --- |
+| `setmusicvolume` | `0x479a00` | `+0x1368` |
+| `setsoundfxvolume` | `0x479b40` | `+0x136c` |
+| `setspeechvolume` | `0x479c30` | `+0x1370` |
+| `setambientvolume` | `0x479d10` | `+0x1374` |
+| `setlastaudiosettings` | all four, in that order | all four |
+
+The other targets those four operators share (`0x4d4550`, `0x5394a0`) are boilerplate. Two
+independent columns agree, and both are names rather than orderings. **Observed in the corpus.**
+
+What does remain local-disassembly-only is the narrow pairing: which of `0x5aa144`--`0x5aa150` feeds
+which of those four calls. That comes from reading `setlastaudiosettings` by hand and has not been
+reproduced by this repository's extractor.
 
 ### Resolved: why the audio words are zero
 
@@ -487,9 +525,22 @@ literal in a text file that knows nothing about the binary. It is pinned as a te
 so each offers exactly one value. More generally, **six of the eleven `lom.cfg` fields read `0` in
 all four profiles** -- the four audio words, the Balkoth counter and centre-on-movement -- and no
 value-based check over this corpus can distinguish any of them from any other. That was measured,
-not assumed: consistently swapping `balkoth_kill_counter` with `center_on_movement` in the parser
-leaves the whole suite green, while swapping the used-DrawBlt word with either of its neighbours
-fails, because that one varies between profiles. The tests say which of the two they are.
+not assumed, and the attribution matters:
+
+- Swapping the used-DrawBlt word with `show_completed_quests` is caught by
+  `the_committed_configuration_report_reproduces`, which re-derives every field from the installed
+  file and names the one that moved (verified on `patch302`). An earlier version of this page
+  credited the report-backed identity checks instead; those only notice once the report has been
+  regenerated from the mutated parser, so the credit was misplaced.
+- Swapping `balkoth_kill_counter` with `center_on_movement` is caught by **nothing**, and cannot be
+  by any value comparison: both read `0` in all four profiles, so the re-derivation is `0 == 0`.
+
+There is an untried instrument that would separate that pair, and it is not a value comparison. The
+reader's two `fread`s are asymmetric: the Balkoth one is followed by a zero-on-short-read fixup at
+`0x487455`, and the centre-on-movement one by a mirror write to the indexed global
+`0x5a8080 + ([0x5a7d8c] << 10)` at `0x487480`. The writer is asymmetric the same way. That
+distinguishes the two slots structurally rather than by what they happen to hold, and it is not
+pinned by any test here.
 
 Round-tripping cannot help here either. For `lom.cfg` the round-trip is a mathematical identity --
 `to_bytes` emits in exactly the order `parse` reads -- so it holds for any input `parse` accepts,
@@ -508,6 +559,10 @@ this repository, without touching the game again, and the method is reusable.
 - **Why they read zero.** The `preset*volume` operators that populate the quad are mentioned zero
   times in two of the three script corpora. Zero is the expected value.
 - **The trailing word.** `getuseddrawblt`/`setuseddrawblt` name global `0x5d20bc` and nothing else.
+- **Which audio word is which channel.** `setlastaudiosettings`'s four call targets are the
+  distinguishing targets of the four `set*volume` operators, in order, and the sound-object slots
+  they write corroborate it. Filed as an open question for one commit by over-retracting; it was
+  answerable from the committed tables all along.
 
 ## What is not determined
 
@@ -519,24 +574,29 @@ Collected, so that nothing here reads as settled when it is not.
    vocabulary and the operator table. Three media archives and the prefix DLLs remain out of reach,
    as does any string assembled at run time.
 2. **How `settings.cfg` is written** — whole-file or in place. The size coincidence says nothing.
-3. **Which slot is which, for six of the eleven `lom.cfg` fields.** The four audio words, the
-   Balkoth counter and centre-on-movement all read `0` in all four profiles, so no value-based check
-   over this corpus can tell them apart. Measured by mutation, not assumed.
-4. **The channel order of the four audio words**, which is inferred from two agreeing orderings
-   rather than read off a name.
-5. **Why `lom.cfg` holds 26 help panels**, given 40 script mentions of `addhelppanel`. The obvious
+3. **Test coverage, not format knowledge, for six of the eleven `lom.cfg` fields.** Their identity
+   is established from `loadconfig`'s `fread` destinations. What is undetermined is only that no
+   value-based check over this corpus verifies the parser's *ordering* of them, because the four
+   audio words, the Balkoth counter and centre-on-movement all read `0` in all four profiles.
+   Measured by mutation. An untried non-value instrument that would separate the Balkoth/centre pair
+   is named above.
+4. **Whether patching `lom.cfg`'s audio words changes the applied volume.** The path reaches the
+   same mixer helper `setmusicvolume` uses; it has not been tried in a running engine.
+5. **Which of `0x5aa144`--`0x5aa150` feeds which of `setlastaudiosettings`'s four calls** -- local
+   disassembly only, not reproduced by this repository's extractor.
+6. **Why `lom.cfg` holds 26 help panels**, given 40 script mentions of `addhelppanel`. The obvious
    explanation is refuted and no replacement is offered.
-6. **Whether the used-DrawBlt flag and `settings.cfg`'s `USE_DIRECTX_BLIT` are the same quantity.**
+7. **Whether the used-DrawBlt flag and `settings.cfg`'s `USE_DIRECTX_BLIT` are the same quantity.**
    They are not equal across the corpus.
-7. **Why the 3.02 profile regenerated its GUID**, given its file is the full 160 bytes and the
+8. **Why the 3.02 profile regenerated its GUID**, given its file is the full 160 bytes and the
    observed regeneration path is a short read.
-8. **`English/map/e3map2.map`** beyond its size equation. Not decoded, and one file is not a format.
-9. **`English/custldr/0templdr.ldr`** (GS5R3) — nothing at all beyond its byte histogram.
-10. **The Asura container** beyond its magic and two length equations: two header words, the hash
+9. **`English/map/e3map2.map`** beyond its size equation. Not decoded, and one file is not a format.
+10. **`English/custldr/0templdr.ldr`** (GS5R3) — nothing at all beyond its byte histogram.
+11. **The Asura container** beyond its magic and two length equations: two header words, the hash
     function, and the trailing NUL run are all unexplained, and no parser exists. The
     `LOMLauncher.exe` attribution is inferred from contents, not from reading that binary.
-11. **Whether the German audio in `Wav/lou_scenarios/` is reachable** from an English install.
-12. **Anything above the game-tree root.** ~16,760 files per bundle were excluded by boundary, not
+12. **Whether the German audio in `Wav/lou_scenarios/` is reachable** from an English install.
+13. **Anything above the game-tree root.** ~16,760 files per bundle were excluded by boundary, not
     examined. If the game writes state into the Wine prefix — registry hives, `users/` — this sweep
     did not look.
 

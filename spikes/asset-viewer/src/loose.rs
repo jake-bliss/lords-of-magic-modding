@@ -69,13 +69,17 @@ use crate::asset::{self, AssetKind};
 pub struct LomConfig {
     /// File `0x00`. Config-object `+0x18` = `0x5aa144`, restored by `setlastaudiosettings`.
     ///
-    /// The *channel* attribution -- music, then sound effects, then speech, then ambient -- rests
-    /// on two things that agree: the writer emits these four from `0x586770`, `0x586774`,
-    /// `0x586778`, `0x58677c` in that order, and those globals are named by `getmusicvolume`,
-    /// `getsoundfxvolume`, `getspeechvolume` and `getambientvolume`; and `setlastaudiosettings`
-    /// feeds `+0x18..+0x24` to four sound-object slots at `+0x1368..+0x1374`, in the same order.
-    /// The mapping of slot to channel is therefore **Inferred** from the order, not read off a
-    /// name, and that last step is the weakest link in this type.
+    /// The *channel* attribution is **Observed in the corpus**, and read off names rather than off
+    /// an ordering -- an earlier version of this comment retracted too far and called it inferred.
+    /// `setlastaudiosettings` calls `0x479a00`, `0x479b40`, `0x479c30`, `0x479d10`, which are the
+    /// distinguishing call targets of `setmusicvolume`, `setsoundfxvolume`, `setspeechvolume` and
+    /// `setambientvolume` respectively -- the other targets those four share are boilerplate. The
+    /// destinations corroborate it independently: each `set*volume` writes one sound-object slot in
+    /// `+0x1368`, `+0x136c`, `+0x1370`, `+0x1374`, and `setlastaudiosettings` writes all four.
+    ///
+    /// What is *not* established from the committed tables is which of `0x5aa144..0x5aa150` feeds
+    /// which of those four calls. That pairing is read off a local disassembly of
+    /// `setlastaudiosettings` and has not been reproduced by this repository's extractor.
     pub last_music_volume: u32,
     /// File `0x04`. Config-object `+0x1c` = `0x5aa148`. See [`Self::last_music_volume`].
     pub last_sound_fx_volume: u32,
@@ -233,7 +237,15 @@ impl LomConfig {
     /// encoder reconstructs separators and spacing that the parser had to get right, so it can
     /// genuinely fail.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(LOM_CONFIG_WITHOUT_VECTOR);
+        // Sized for the form actually in hand. `LOM_CONFIG_WITHOUT_VECTOR` is the *shorter* form,
+        // so using it unconditionally made every real 160-byte file reallocate.
+        let mut out = Vec::with_capacity(
+            LOM_CONFIG_WITHOUT_VECTOR
+                + self
+                    .help_panel_checks
+                    .as_ref()
+                    .map_or(0, |checks| 4 + checks.len() * 4),
+        );
         for word in [
             self.last_music_volume,
             self.last_sound_fx_volume,
@@ -528,6 +540,18 @@ pub fn magic_signature(bytes: &[u8]) -> MagicSignature {
 // the sweep
 // ---------------------------------------------------------------------------------------------
 
+/// What the `sha256` column holds for a file that could not be read.
+///
+/// Deliberately the same `-` the report uses for every other absent value, rather than an empty
+/// column, so that a row which carries no digest is visibly a row which carries no digest.
+pub const UNREADABLE_DIGEST: &str = "-";
+
+/// The prefix `probe_error` carries when the file could not be read at all.
+///
+/// Public because the report's validators have to be able to tell "this row has no digest because
+/// the file was unreadable" from "this row has no digest because the walker is broken".
+pub const UNREADABLE_PREFIX: &str = "unreadable: ";
+
 /// One row of the loose inventory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LooseFile {
@@ -597,11 +621,14 @@ pub fn inventory(root: &Path) -> io::Result<Vec<LooseFile>> {
                 rows.push(LooseFile {
                     relative_path: relative,
                     size: 0,
-                    sha256: String::new(),
+                    // `-`, not empty. Every other absent value in the report prints `-`, an empty
+                    // TSV column is the one value a careless re-split loses silently, and the
+                    // report's own validators assert that a digest is 64 hex characters.
+                    sha256: UNREADABLE_DIGEST.to_owned(),
                     extension: String::new(),
                     magic: MagicSignature::Unrecognised,
                     probe_kind: AssetKind::Unknown.to_string(),
-                    probe_error: Some(format!("unreadable: {error}")),
+                    probe_error: Some(format!("{UNREADABLE_PREFIX}{error}")),
                 });
                 continue;
             }
@@ -650,7 +677,14 @@ fn collect(directory: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
             Err(error) => return Err(error),
         };
         if metadata.is_dir() {
-            collect(&entry, out)?;
+            // And the same for the directory itself: a temporary save directory that disappears
+            // mid-walk must not abort a sweep that has already classified several hundred files,
+            // which is exactly what recursing with `?` did.
+            match collect(&entry, out) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            }
         } else if metadata.is_file() {
             out.push(entry);
         }
