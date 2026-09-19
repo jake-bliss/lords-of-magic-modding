@@ -10,11 +10,12 @@
 # So: this is the tracked command. Run it whenever the reports are regenerated, and whenever
 # `src/loose.rs` changes. It is READ-ONLY on ~/Applications -- it only writes under reports/.
 #
-# Do NOT run it concurrently with `python3 -m unittest discover -s tests`. The mod pipeline guards
-# on `pgrep -f 'lomse.exe'`, which matches any live command line containing that string rather than
-# the running game, so those tests can go red -- or skip all 16 -- for reasons that have nothing to
-# do with the code. Known flake, not fixed here because the files involved are being edited on other
-# branches; see docs/loose-files.md for the captured evidence and the proposed pattern.
+# Fine to run concurrently with `python3 -m unittest discover -s tests`. That used to not be true:
+# the mod pipeline's guard was a bare `pgrep -f 'lomse.exe'`, which matched any live command line
+# merely containing that string -- including this project's own tooling and this very script's
+# shell -- so the Python suite could go red, or skip every test in the file, for reasons that had
+# nothing to do with either script. The guard is anchored now; see `game_command_pattern` in
+# `scripts/lib-mod-pipeline.sh`.
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

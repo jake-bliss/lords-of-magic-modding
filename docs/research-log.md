@@ -6091,3 +6091,36 @@ Sampling `ps` through a failing run caught zero matching command lines: some mat
 that exit within milliseconds, so no pattern can close the race by itself. Anchoring shrinks the
 false-positive population; the retry survives the ones that are already gone by the time anything
 can look.
+
+## 2026-09-19 — The game-running guard: two more real command lines, then a widened pattern still short of two profiles
+
+The 2026-09-18 entry above ends on `^[A-Za-z]:[\\]lomse[.]exe`, anchored but pinned to the
+executable sitting immediately at the drive root. **Observed in gameplay, PID 77245**: the
+Development profile's real command line is six directories deeper --
+
+    c:\program files (x86)\steam\steamapps\common\lords of magic special edition\english\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1
+
+-- so that pattern matched nothing for a full day and the guard was dead. **Observed in gameplay,
+PID 47723**: the 3.02 profile really does run from the drive root, `d:\lomse.exe /*`, so a pattern
+written to fit Development alone would have missed 3.02 the same way. Both are now required
+fixtures (`OBSERVED_GAME_ARGV0`, `OBSERVED_GAME_ARGV0_DRIVE_ROOT` in `tests/test_mod_pipeline.py`),
+and the pattern's directory component is optional rather than a specific path for exactly this
+reason -- see `game_command_pattern` in `scripts/lib-mod-pipeline.sh` for the full ladder, which
+this entry does not re-derive.
+
+The pattern was then widened twice more, both times for launch layouts nobody has watched live:
+a 64-bit Wineskin bottle (`Program Files`, no `(x86)`), a Wineskin profile mapping its game drive
+off `c:`/`d:`, a forward-slash drive path, a UNC path with no drive letter at all, and a quoted
+argv0. None of these is **Observed**; each is **Inferred** from how Wine and `CreateProcess` are
+documented to behave, adopted because the guard's own asymmetry (a false negative can corrupt an
+archive under a live process; a false positive only costs a re-run) argues for covering a plausible
+shape rather than waiting to observe it. `game_command_pattern`'s comment names, for each one,
+whether it costs anything against the existing decoys -- none of them do.
+
+**Still not established: GS5R3 and vanilla.** Both real command lines above are Development and
+3.02. `scripts/restore-game-archives.sh` -- which now shares this guard -- targets GS5R3
+specifically, and nobody has run `ps -o command=` against a live GS5R3 or vanilla process. The
+anchor's whole safety argument depends on the game's own command line beginning with the DOS path,
+which is exactly the fact that is unmeasured for these two. An attended `ps -o command=` capture
+against both, while each is running, is the next thing this guard needs and is not something a
+closed-game measurement can substitute for.
