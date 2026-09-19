@@ -42,8 +42,9 @@ use lom_asset_viewer::png_export::{
     read_indexed_png, write_imp_frame_png, write_pbm_png, write_rgba_png,
 };
 use lom_asset_viewer::tile::{
-    Direction, MapClass, TileChoice, TileSelector, TileSetDefinition, TileSetResolution,
-    combat_tileset_array_candidates, resolve_tileset, tileset_mismatch,
+    Direction, MapClass, NeighbourConstraint, TerrainColumn, TileChoice, TileSelector,
+    TileSetDefinition, TileSetDocument, TileSetResolution, combat_tileset_array_candidates,
+    resolve_tileset, tileset_mismatch,
 };
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
@@ -111,6 +112,16 @@ enum Command {
         right: PathBuf,
     },
     RoundtripMaps(PathBuf),
+    /// Re-encode every `.til` in an archive, a directory, or one file, and compare the bytes.
+    RoundtripTileSets(TileSetCorpus),
+    /// Print what one `.til` declares and how much of it rebuilds from its own values.
+    DescribeTileSet(PathBuf),
+    /// Apply one edit to a `.til` and write a new file.
+    EditTileSet {
+        input: PathBuf,
+        edit: TileSetEdit,
+        output: PathBuf,
+    },
     SpriteTypes,
     TransitionRings,
     CreateMap {
@@ -360,6 +371,13 @@ fn run() -> Result<(), String> {
         Command::DumpMapCells { path, rect } => dump_map_cells(&path, rect),
         Command::DiffMaps { left, right } => diff_maps(&left, &right),
         Command::RoundtripMaps(path) => roundtrip_maps(&path),
+        Command::RoundtripTileSets(corpus) => roundtrip_tile_sets(&corpus).map(|_| ()),
+        Command::DescribeTileSet(path) => describe_tile_set(&path),
+        Command::EditTileSet {
+            input,
+            edit,
+            output,
+        } => edit_tile_set(&input, &edit, &output),
         Command::SpriteTypes => sprite_types(),
         Command::TransitionRings => transition_rings(),
         Command::CreateMap {
@@ -580,6 +598,109 @@ fn parse_args() -> Result<Command, String> {
         "--map-roundtrip" => {
             require_len(&args, 2)?;
             Ok(Command::RoundtripMaps(args[1].clone().into()))
+        }
+        "--til-roundtrip" => {
+            require_len(&args, 2)?;
+            let path = PathBuf::from(args[1].clone());
+            // An `.mpq` is opened as an archive, because that is where the 26 shipped tilesets
+            // live and `--listfile` is the only thing that names them there. Anything else is a
+            // path on disk, and a `--listfile` handed to that form is a mistake worth naming
+            // rather than swallowing.
+            let is_archive = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("mpq"));
+            if !is_archive && listfile.is_some() {
+                return Err(format!(
+                    "--listfile names members of an archive; {} is not one",
+                    path.display()
+                ));
+            }
+            Ok(Command::RoundtripTileSets(if is_archive {
+                TileSetCorpus::Archive(source(&args[1], listfile))
+            } else {
+                TileSetCorpus::Path(path)
+            }))
+        }
+        "--describe-til" => {
+            require_len(&args, 2)?;
+            Ok(Command::DescribeTileSet(args[1].clone().into()))
+        }
+        "--til-set-atlas" => {
+            require_len(&args, 4)?;
+            Ok(Command::EditTileSet {
+                input: args[1].clone().into(),
+                edit: TileSetEdit::Atlas(args[2].clone()),
+                output: args[3].clone().into(),
+            })
+        }
+        "--til-set-grid" => {
+            require_len(&args, 5)?;
+            Ok(Command::EditTileSet {
+                input: args[1].clone().into(),
+                edit: TileSetEdit::Grid {
+                    columns: parse_u32(&args[2])?,
+                    rows: parse_u32(&args[3])?,
+                },
+                output: args[4].clone().into(),
+            })
+        }
+        "--til-set-tile-terrain" => {
+            require_len(&args, 5)?;
+            Ok(Command::EditTileSet {
+                input: args[1].clone().into(),
+                edit: TileSetEdit::TileTerrain {
+                    tile: parse_u32(&args[2])?,
+                    terrain: parse_u32(&args[3])?,
+                },
+                output: args[4].clone().into(),
+            })
+        }
+        "--til-set-tile-neighbour" => {
+            require_len(&args, 6)?;
+            let direction = Direction::from_column_name(&args[3]).ok_or_else(|| {
+                format!(
+                    "{} is not a neighbour column; the eight are {}",
+                    args[3],
+                    Direction::ALL
+                        .iter()
+                        .map(|direction| direction.column_name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
+            Ok(Command::EditTileSet {
+                input: args[1].clone().into(),
+                edit: TileSetEdit::TileNeighbour {
+                    tile: parse_u32(&args[2])?,
+                    direction,
+                    constraint: args[4].clone(),
+                },
+                output: args[5].clone().into(),
+            })
+        }
+        "--til-set-terrain" => {
+            require_len(&args, 6)?;
+            let column = TerrainColumn::parse(&args[3]).ok_or_else(|| {
+                format!(
+                    "{} is not a TERRAINTYPE= column; the ones an edit may name are {}",
+                    args[3],
+                    TerrainColumn::ALL
+                        .iter()
+                        .map(|column| column.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
+            Ok(Command::EditTileSet {
+                input: args[1].clone().into(),
+                edit: TileSetEdit::TerrainField {
+                    terrain: parse_u32(&args[2])?,
+                    column,
+                    value: args[4].clone(),
+                },
+                output: args[5].clone().into(),
+            })
         }
         "--map-sprite-types" => {
             require_len(&args, 1)?;
@@ -1160,8 +1281,103 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
     }
 }
 
+/// Usage text, grouped by subsystem so a new command's line lands next to its siblings
+/// instead of inside one archive-wide string literal that every branch touches.
+const USAGE_ARCHIVE_INSPECTION: &[&str] = &[
+    "lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]",
+    "lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]",
+    "lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]",
+    "lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]",
+    "lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]",
+    "lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]",
+    "lom-asset-viewer --gs-facts FILE-OR-DIRECTORY",
+    "lom-asset-viewer --gameplay-symbol NAME [--reports DIR]",
+    "lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]",
+    "lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...",
+];
+const USAGE_LOOSE_FILES: &[&str] = &[
+    "lom-asset-viewer --loose-inventory INSTALL_ROOT PROFILE_LABEL",
+    "lom-asset-viewer --loose-config FILE",
+];
+const USAGE_MAP: &[&str] = &[
+    "lom-asset-viewer --scan-map-dir DIRECTORY",
+    "lom-asset-viewer --describe-map FILE",
+    "lom-asset-viewer --map-tileset-for FILE",
+    "lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]",
+    "lom-asset-viewer --diff-maps LEFT RIGHT",
+    "lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY",
+    "lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT",
+    "lom-asset-viewer --map-sprite-types",
+    "lom-asset-viewer --map-transition-rings",
+    "lom-asset-viewer --map-rewrite IN OUT",
+    "lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT",
+    "lom-asset-viewer --map-flag-border IN OUT",
+    "lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT",
+    "lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT",
+    "lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT",
+    "lom-asset-viewer --map-set-elevation IN X Y VALUE OUT",
+    "lom-asset-viewer --map-fill-terrain IN TERRAIN OUT",
+    "lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]",
+    "lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT",
+    "lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT",
+];
+const USAGE_TIL: &[&str] = &[
+    "lom-asset-viewer --til-roundtrip ARCHIVE.mpq|FILE-OR-DIRECTORY [--listfile FILE]",
+    "lom-asset-viewer --describe-til FILE.til",
+    "lom-asset-viewer --til-set-atlas IN.til ATLAS.lbm OUT.til",
+    "lom-asset-viewer --til-set-grid IN.til COLUMNS ROWS OUT.til",
+    "lom-asset-viewer --til-set-tile-terrain IN.til TILE TERRAIN OUT.til",
+    "lom-asset-viewer --til-set-tile-neighbour IN.til TILE n|ne|e|se|s|sw|w|nw CONSTRAINT OUT.til",
+    "lom-asset-viewer --til-set-terrain IN.til TERRAIN COLUMN VALUE OUT.til",
+];
+const USAGE_IMP: &[&str] = &[
+    "lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]",
+    "lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]",
+    "lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]",
+    "lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]",
+    "lom-asset-viewer --serve --pic PIC.MPQ [--port N]",
+    "lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]",
+    "lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]",
+    "lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y",
+    "lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png",
+    "lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]",
+    "lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]",
+    "lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm",
+    "lom-asset-viewer --import-png-imp INPUT.png SOURCE.imp FRAME OUTPUT.imp",
+];
+const USAGE_AUDIO_VIDEO: &[&str] = &[
+    "lom-asset-viewer --wave-roundtrip ARCHIVE.mpq [--listfile FILE]",
+    "lom-asset-viewer --wave-roundtrip-dir DIRECTORY",
+    "lom-asset-viewer --export-wave ARCHIVE.mpq MEMBER OUTPUT.wav [--listfile FILE]",
+    "lom-asset-viewer --import-wave EDITED.wav TEMPLATE.wav OUTPUT.wav [--allow-format-change] [--allow-dangling-loops]",
+    "lom-asset-viewer --describe-smk FILE.smk",
+    "lom-asset-viewer --scan-smk-dir DIRECTORY",
+];
+const USAGE_MISC: &[&str] = &[
+    "lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]",
+    "lom-asset-viewer --imp-roundtrip ARCHIVE.mpq [--listfile FILE] [--rewrite]",
+    "lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]",
+    "lom-asset-viewer --inspect-file FILE",
+    "lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]",
+    "lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]",
+];
+
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --loose-inventory INSTALL_ROOT PROFILE_LABEL\n  lom-asset-viewer --loose-config FILE\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --import-png-imp INPUT.png SOURCE.imp FRAME OUTPUT.imp\n  lom-asset-viewer --wave-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --wave-roundtrip-dir DIRECTORY\n  lom-asset-viewer --export-wave ARCHIVE.mpq MEMBER OUTPUT.wav [--listfile FILE]\n  lom-asset-viewer --import-wave EDITED.wav TEMPLATE.wav OUTPUT.wav [--allow-format-change] [--allow-dangling-loops]\n  lom-asset-viewer --describe-smk FILE.smk\n  lom-asset-viewer --scan-smk-dir DIRECTORY\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --imp-roundtrip ARCHIVE.mpq [--listfile FILE] [--rewrite]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    let mut lines = vec!["usage:".to_owned()];
+    for group in [
+        USAGE_ARCHIVE_INSPECTION,
+        USAGE_LOOSE_FILES,
+        USAGE_MAP,
+        USAGE_TIL,
+        USAGE_IMP,
+        USAGE_AUDIO_VIDEO,
+        USAGE_MISC,
+    ] {
+        for line in group {
+            lines.push(format!("  {line}"));
+        }
+    }
+    lines.join("\n")
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -6770,6 +6986,503 @@ fn gameplay_symbols_like(pattern: &str, reports: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Where a `.til` sweep reads its files from.
+///
+/// An archive is the honest default: `pic.mpq` is where the 26 shipped tilesets live, and it has no
+/// internal listfile, so the sweep needs `--listfile` to name them. A directory or a single file is
+/// for files already on disk -- a mod source tree, or one extracted tileset.
+enum TileSetCorpus {
+    Archive(Source),
+    Path(PathBuf),
+}
+
+/// One edit to one `.til`.
+///
+/// Every variant names a record that must already exist. Nothing here appends a row: see the
+/// refusals on [`TileSetDocument`].
+#[derive(Debug, Clone)]
+enum TileSetEdit {
+    Atlas(String),
+    Grid {
+        columns: u32,
+        rows: u32,
+    },
+    TileTerrain {
+        tile: u32,
+        terrain: u32,
+    },
+    TileNeighbour {
+        tile: u32,
+        direction: Direction,
+        constraint: String,
+    },
+    TerrainField {
+        terrain: u32,
+        column: TerrainColumn,
+        value: String,
+    },
+}
+
+/// What a `.til` sweep counted, so a test can assert the tallies rather than watch them go to
+/// stdout.
+///
+/// Returned rather than printed-and-forgotten: a sweep test whose body is a bare `.unwrap()` would
+/// pass with `values_rebuilt` wired straight to `values_checked`, which is the one number the whole
+/// command exists to produce honestly.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct TileSetSweep {
+    checked: usize,
+    identical: usize,
+    values_checked: usize,
+    values_rebuilt: usize,
+    text_fields_carried: usize,
+    no_op_edits: usize,
+    no_op_identical: usize,
+}
+
+/// Re-encode every `.til` in the corpus and compare the result with the bytes it was read from.
+///
+/// **Read the two halves of this report differently.** `byte-identical` is near-tautological and is
+/// printed for completeness: [`TileSetDocument`] keeps each line's bytes and re-emits them, so an
+/// unedited file can only differ if the line splitter or a terminator is wrong. `values-rebuilt` is
+/// the measurement that can fail -- each integer and each neighbour column is regenerated from the
+/// value the parser read and compared with the file's own characters. `no-op-edits` is the third
+/// leg and the one that tests the *edit* path: five edits per file that set a field to the value it
+/// already holds, each of which must leave the file byte-identical. A span replacement off by one
+/// character fails there and nowhere else.
+fn roundtrip_tile_sets(corpus: &TileSetCorpus) -> Result<TileSetSweep, String> {
+    let files = collect_tile_sets(corpus)?;
+
+    let mut sweep = TileSetSweep::default();
+    let mut failures = Vec::new();
+
+    for (name, bytes) in &files {
+        let document = match TileSetDocument::parse(bytes) {
+            Ok(document) => document,
+            Err(error) => {
+                failures.push(format!("{name}: {error}"));
+                continue;
+            }
+        };
+        sweep.checked += 1;
+
+        let encoded = document.to_bytes();
+        match first_difference(bytes, &encoded) {
+            None => sweep.identical += 1,
+            Some(at) => failures.push(format!(
+                "{name}: byte {at} differs (read {}, wrote {}; {} bytes in, {} bytes out)",
+                describe_optional_byte(bytes, at),
+                describe_optional_byte(&encoded, at),
+                bytes.len(),
+                encoded.len(),
+            )),
+        }
+
+        let audit = document.field_rebuild_audit();
+        sweep.values_checked += audit.values_checked;
+        sweep.values_rebuilt += audit.values_rebuilt;
+        sweep.text_fields_carried += audit.text_fields_carried;
+        for mismatch in &audit.mismatches {
+            failures.push(format!("{name}: {mismatch}"));
+        }
+
+        for (description, outcome) in no_op_edits_of(&document) {
+            sweep.no_op_edits += 1;
+            match outcome {
+                Ok(edited) if edited.to_bytes() == *bytes => sweep.no_op_identical += 1,
+                Ok(edited) => failures.push(format!(
+                    "{name}: the no-op edit {description} changed the file ({} bytes in, {} out)",
+                    bytes.len(),
+                    edited.to_bytes().len()
+                )),
+                Err(error) => {
+                    failures.push(format!("{name}: the no-op edit {description} was refused: {error}"))
+                }
+            }
+        }
+    }
+
+    println!("checked\t{}", sweep.checked);
+    println!("byte-identical\t{}", sweep.identical);
+    println!("values-checked\t{}", sweep.values_checked);
+    println!("values-rebuilt\t{}", sweep.values_rebuilt);
+    println!("text-fields-carried\t{}", sweep.text_fields_carried);
+    println!("no-op-edits\t{}", sweep.no_op_edits);
+    println!("no-op-edits-byte-identical\t{}", sweep.no_op_identical);
+    println!("failures\t{}", failures.len());
+    for failure in &failures {
+        println!("failure\t{}", clean_field(failure));
+    }
+    if !failures.is_empty() {
+        return Err(format!(
+            "{} tileset check(s) failed",
+            failures.len()
+        ));
+    }
+    // Zero files checked is not a pass, for the same reason `--map-roundtrip` and `--pbm-roundtrip`
+    // refuse an empty sweep: a mistyped path, or an archive whose names were never supplied, would
+    // otherwise print a green report about nothing.
+    if sweep.checked == 0 {
+        return Err(match corpus {
+            TileSetCorpus::Archive(source) => format!(
+                "no .til members were checked in {}; pic.mpq carries no internal listfile, so \
+                 --listfile is what names them",
+                source.archive.display()
+            ),
+            TileSetCorpus::Path(path) => {
+                format!("no .til files were checked under {}", path.display())
+            }
+        });
+    }
+    Ok(sweep)
+}
+
+/// Five edits per file that ask for the value the file already holds.
+///
+/// **This is the no-op calibration, and it runs before any real edit is trusted.** Each one goes
+/// through the same span replacement, re-parse and verification a genuine edit does; each one must
+/// come back byte-identical. An edit path that trims whitespace, re-quotes a description, or
+/// mis-locates a span by one character produces a diff here on a file nobody meant to change.
+///
+/// They touch **every span-replacing edit the writer offers**: the atlas name, the grid, both ends
+/// of the tile table, the first terrain type's colour, **every** terrain description, and **all
+/// eight** neighbour columns of the first complete tile.
+///
+/// The descriptions and the neighbour columns were added after a review pointed out that the docs
+/// claimed "a re-quoted description shows up here and nowhere else" while no description was ever
+/// edited, and that the corpus's 32,344 neighbour columns were rebuild-audited but never
+/// span-replacement-audited. **Every** description is done rather than the first, because the
+/// awkward one is not the first: `tilesb01.til`'s terrain 4 is written `"happy plains" ,` with a
+/// space between the closing quote and the comma, and a writer that re-rendered the field instead
+/// of replacing its span would lose that space on a file nobody meant to change. All eight columns
+/// are done for the same reason a symmetric fixture proves nothing: a span offset that is wrong
+/// only for column `nw` is caught by column `nw` and by nothing else.
+fn no_op_edits_of(
+    document: &TileSetDocument,
+) -> Vec<(String, Result<TileSetDocument, lom_asset_viewer::tile::TileError>)> {
+    let definition = document.definition();
+    let mut edits: Vec<(String, Result<TileSetDocument, _>)> = Vec::new();
+
+    let mut atlas = document.clone();
+    let atlas_member = definition.atlas_member.clone();
+    edits.push((
+        format!("LBM={atlas_member}"),
+        atlas.set_atlas_member(&atlas_member).map(|()| atlas),
+    ));
+
+    let mut grid = document.clone();
+    let (columns, rows) = (definition.columns, definition.rows);
+    edits.push((
+        format!("TILES={columns},{rows}"),
+        grid.set_grid(columns, rows).map(|()| grid),
+    ));
+
+    for tile in [
+        definition.tiles.values().next(),
+        definition.tiles.values().next_back(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let mut edited = document.clone();
+        let (index, terrain) = (tile.index, tile.terrain_type);
+        edits.push((
+            format!("TILE {index} self={terrain}"),
+            edited
+                .set_tile_terrain_type(index, terrain)
+                .map(|()| edited),
+        ));
+    }
+
+    if let Some(terrain) = definition.terrain_types.values().next() {
+        let mut edited = document.clone();
+        let (index, color) = (terrain.index, terrain.palette_color);
+        edits.push((
+            format!("TERRAINTYPE {index} color={color}"),
+            edited
+                .set_terrain_field(index, TerrainColumn::PaletteColor, &color.to_string())
+                .map(|()| edited),
+        ));
+
+    }
+
+    for terrain in definition.terrain_types.values() {
+        let mut edited = document.clone();
+        let (index, description) = (terrain.index, terrain.description.clone());
+        edits.push((
+            format!("TERRAINTYPE {index} description={description:?}"),
+            edited
+                .set_terrain_field(index, TerrainColumn::Description, &description)
+                .map(|()| edited),
+        ));
+    }
+
+    // The first tile whose row declared all eight columns: an incomplete row is refused by design,
+    // and a no-op that is *expected* to be refused would measure nothing.
+    if let Some(tile) = definition
+        .tiles
+        .values()
+        .find(|tile| tile.constraints_are_complete())
+    {
+        for direction in Direction::ALL {
+            let mut edited = document.clone();
+            let index = tile.index;
+            let constraint = tile.neighbour(direction).clone();
+            edits.push((
+                format!("TILE {index} {}={}", direction.column_name(), constraint.to_column()),
+                edited
+                    .set_tile_neighbour(index, direction, &constraint)
+                    .map(|()| edited),
+            ));
+        }
+    }
+
+    edits
+}
+
+/// Every `(name, bytes)` a sweep covers, in a stable order.
+fn collect_tile_sets(corpus: &TileSetCorpus) -> Result<Vec<(String, Vec<u8>)>, String> {
+    match corpus {
+        TileSetCorpus::Archive(source) => {
+            let (archive, entries) = open_archive(source)?;
+            let mut files = Vec::new();
+            for entry in &entries {
+                if !entry.name.to_ascii_lowercase().ends_with(".til") {
+                    continue;
+                }
+                let bytes = archive
+                    .read(&entry.name)
+                    .map_err(|error| format!("could not read {}: {error}", entry.name))?;
+                files.push((entry.name.clone(), bytes));
+            }
+            files.sort_by(|left, right| left.0.cmp(&right.0));
+            Ok(files)
+        }
+        TileSetCorpus::Path(path) => {
+            let mut paths = Vec::new();
+            if path.is_dir() {
+                collect_tile_set_paths(path, &mut paths)?;
+                paths.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
+            } else {
+                // A path given explicitly is read whatever it is called, the same latitude
+                // `--map-roundtrip` gives a single file.
+                paths.push(path.clone());
+            }
+            paths
+                .into_iter()
+                .map(|path| {
+                    fs::read(&path)
+                        .map_err(|error| format!("could not read {}: {error}", path.display()))
+                        .map(|bytes| (path.display().to_string(), bytes))
+                })
+                .collect()
+        }
+    }
+}
+
+fn collect_tile_set_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = fs::read_dir(directory)
+        .map_err(|error| format!("could not read directory {}: {error}", directory.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "could not read directory entry in {}: {error}",
+                directory.display()
+            )
+        })?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("could not inspect {}: {error}", entry.path().display()))?;
+        if file_type.is_dir() {
+            collect_tile_set_paths(&entry.path(), paths)?;
+        } else if file_type.is_file()
+            && entry
+                .path()
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("til"))
+        {
+            paths.push(entry.path());
+        }
+    }
+    Ok(())
+}
+
+/// The first index at which two byte strings differ, or the shorter length when one ends first.
+fn first_difference(left: &[u8], right: &[u8]) -> Option<usize> {
+    left.iter()
+        .zip(right)
+        .position(|(left, right)| left != right)
+        .or_else(|| (left.len() != right.len()).then(|| left.len().min(right.len())))
+}
+
+/// A byte for an error message, distinguishing "this byte differs" from "this file ended here".
+fn describe_optional_byte(source: &[u8], at: usize) -> String {
+    source
+        .get(at)
+        .map_or_else(|| "end-of-file".to_owned(), |byte| format!("0x{byte:02x}"))
+}
+
+/// Print what one `.til` declares, and how much of it rebuilds from its own values.
+fn describe_tile_set(path: &Path) -> Result<(), String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let document = TileSetDocument::parse(&bytes).map_err(|error| {
+        format!("could not parse tile definition {}: {error}", path.display())
+    })?;
+    let definition = document.definition();
+    let audit = document.field_rebuild_audit();
+
+    println!("file\t{}", path.display());
+    println!("bytes\t{}", bytes.len());
+    println!("lines\t{}", document.line_count());
+    println!("atlas\t{}", definition.atlas_member);
+    println!("grid\t{}x{}", definition.columns, definition.rows);
+    println!(
+        "tile-size\t{}x{}",
+        definition.tile_width, definition.tile_height
+    );
+    println!("capacity\t{}", definition.atlas_capacity());
+    println!("terrain-types\t{}", definition.terrain_types.len());
+    println!("tiles\t{}", definition.tiles.len());
+    println!(
+        "tiles-with-all-eight-columns\t{}",
+        definition
+            .tiles
+            .values()
+            .filter(|tile| tile.constraints_are_complete())
+            .count()
+    );
+    println!(
+        "byte-identical\t{}",
+        if document.to_bytes() == bytes {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    println!("values-checked\t{}", audit.values_checked);
+    println!("values-rebuilt\t{}", audit.values_rebuilt);
+    println!("text-fields-carried\t{}", audit.text_fields_carried);
+    for mismatch in &audit.mismatches {
+        println!("mismatch\t{}", clean_field(mismatch));
+    }
+    for terrain in definition.terrain_types.values() {
+        println!(
+            "terrain-type\t{}\t{}\t{}",
+            terrain.index,
+            terrain.palette_color,
+            clean_field(&terrain.description)
+        );
+    }
+    Ok(())
+}
+
+/// Apply one edit to a `.til` and write a **new** file.
+///
+/// The shape matches `--map-*` and `--set-imp-placement`: apply, let the library verify the change
+/// through the parser on the bytes it is about to write, then `create_new`. A refused edit leaves no
+/// file behind, and nothing is ever written in place -- the shipped tilesets live inside `pic.mpq`
+/// and a mod tree's copy is the only writable one.
+fn edit_tile_set(input: &Path, edit: &TileSetEdit, output: &Path) -> Result<(), String> {
+    if paths_are_same_file(input, output) {
+        return Err(format!(
+            "refusing to write {} over its own input; name a different output",
+            output.display()
+        ));
+    }
+    let bytes =
+        fs::read(input).map_err(|error| format!("could not read {}: {error}", input.display()))?;
+    let mut document = TileSetDocument::parse(&bytes).map_err(|error| {
+        format!("could not parse tile definition {}: {error}", input.display())
+    })?;
+
+    let note = match edit {
+        TileSetEdit::Atlas(member) => {
+            let previous = document.definition().atlas_member.clone();
+            document
+                .set_atlas_member(member)
+                .map_err(|error| error.to_string())?;
+            format!("atlas\t{previous}\t->\t{member}")
+        }
+        TileSetEdit::Grid { columns, rows } => {
+            let previous = format!(
+                "{}x{}",
+                document.definition().columns,
+                document.definition().rows
+            );
+            document
+                .set_grid(*columns, *rows)
+                .map_err(|error| error.to_string())?;
+            format!("grid\t{previous}\t->\t{columns}x{rows}")
+        }
+        TileSetEdit::TileTerrain { tile, terrain } => {
+            let previous = document
+                .definition()
+                .terrain_type_of_tile(*tile)
+                .map_or_else(|| "undeclared".to_owned(), |terrain| terrain.to_string());
+            document
+                .set_tile_terrain_type(*tile, *terrain)
+                .map_err(|error| error.to_string())?;
+            format!("tile\t{tile}\tself\t{previous}\t->\t{terrain}")
+        }
+        TileSetEdit::TileNeighbour {
+            tile,
+            direction,
+            constraint,
+        } => {
+            let parsed =
+                NeighbourConstraint::parse_column(constraint).map_err(|error| error.to_string())?;
+            let previous = document
+                .definition()
+                .tiles
+                .get(tile)
+                .map_or_else(|| "undeclared".to_owned(), |tile| {
+                    tile.neighbour(*direction).to_column()
+                });
+            document
+                .set_tile_neighbour(*tile, *direction, &parsed)
+                .map_err(|error| error.to_string())?;
+            format!(
+                "tile\t{tile}\t{}\t{previous}\t->\t{}",
+                direction.column_name(),
+                parsed.to_column()
+            )
+        }
+        TileSetEdit::TerrainField {
+            terrain,
+            column,
+            value,
+        } => {
+            document
+                .set_terrain_field(*terrain, *column, value)
+                .map_err(|error| error.to_string())?;
+            format!("terrain-type\t{terrain}\t{}\t->\t{value}", column.name())
+        }
+    };
+
+    let encoded = document.to_bytes();
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
+    if let Err(error) = file.write_all(&encoded) {
+        // A short write leaves a truncated tileset behind, which "a refused edit leaves no partial
+        // file" does not allow. Drop the handle before removing it.
+        drop(file);
+        let _ = fs::remove_file(output);
+        return Err(format!("could not write {}: {error}", output.display()));
+    }
+    println!("wrote\t{}\t{} bytes", output.display(), encoded.len());
+    println!(
+        "bytes-changed\t{}",
+        if encoded == bytes { "no" } else { "yes" }
+    );
+    println!("{note}");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -6777,9 +7490,10 @@ mod tests {
         TRANSITION_RING_OFFSETS,
         create_map, edit_map, import_png_imp, import_png_pbm, parse_coordinate, parse_dimension,
         parse_elevation, parse_native_stub, parse_offset, parse_sprite_type, parse_terrain_type,
-        refusal_class, roundtrip_maps, set_imp_placement, sprite_types, terrain_sprite_name,
-        transition_rings,
+        refusal_class, roundtrip_maps, roundtrip_tile_sets, set_imp_placement, sprite_types,
+        terrain_sprite_name, transition_rings,
     };
+    use super::{TerrainColumn, TileSetCorpus, TileSetEdit, edit_tile_set};
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
     use std::fs;
@@ -7850,6 +8564,145 @@ mod tests {
         assert!(error.contains("the IMP frame record"), "{error}");
         assert!(!error.contains("PBM"), "{error}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+
+    /// A `.til` for the command-level tests. The library's fixtures are not visible to this binary.
+    fn minimal_tile_set() -> Vec<u8> {
+        b"LBM=a.lbm\r\nTILES= 2, 1\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 137, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TERRAINTYPE= 1, 112, \"b\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TILE= 0, 0, *, *, *, *, *, *, *, *, 0\r\n\
+TILE= 1, 1, *, *, *, *, *, *, *, *, 1\r\n"
+            .to_vec()
+    }
+
+    /// The shipped tilesets live in `pic.mpq` and a mod tree's copy is the only writable one, so
+    /// no `.til` edit may ever land on a file that already exists.
+    #[test]
+    fn editing_a_tile_set_refuses_to_overwrite_an_existing_output() {
+        let dir = scratch_dir("til-overwrite");
+        let input = dir.join("in.til");
+        let output = dir.join("out.til");
+        fs::write(&input, minimal_tile_set()).unwrap();
+        fs::write(&output, b"precious").unwrap();
+
+        let error = edit_tile_set(
+            &input,
+            &TileSetEdit::Atlas("b.lbm".to_owned()),
+            &output,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("could not create"), "{error}");
+        assert_eq!(fs::read(&output).unwrap(), b"precious");
+    }
+
+    /// Naming the input as the output is the same destruction by another spelling: `create_new`
+    /// would refuse it here, but with "file exists", which reads like a stale leftover rather than
+    /// the mistake it is.
+    #[test]
+    fn editing_a_tile_set_refuses_to_write_over_its_own_input() {
+        let dir = scratch_dir("til-self");
+        let input = dir.join("in.til");
+        let source = minimal_tile_set();
+        fs::write(&input, &source).unwrap();
+
+        let error =
+            edit_tile_set(&input, &TileSetEdit::Atlas("b.lbm".to_owned()), &input).unwrap_err();
+
+        assert!(error.contains("over its own input"), "{error}");
+        assert_eq!(fs::read(&input).unwrap(), source);
+    }
+
+    /// A refused edit leaves **no** file behind, not an empty one. The refusal has to happen before
+    /// the output is created or a failed run litters a mod tree with zero-byte tilesets.
+    #[test]
+    fn a_refused_tile_set_edit_leaves_no_output_file() {
+        let dir = scratch_dir("til-refused");
+        let input = dir.join("in.til");
+        let output = dir.join("out.til");
+        fs::write(&input, minimal_tile_set()).unwrap();
+
+        let error = edit_tile_set(
+            &input,
+            &TileSetEdit::TileTerrain {
+                tile: 7,
+                terrain: 0,
+            },
+            &output,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("no TILE= row for slot 7"), "{error}");
+        assert!(!output.exists(), "a refused edit created {}", output.display());
+    }
+
+    /// An edit writes a file that is still a readable tileset, and says what changed.
+    #[test]
+    fn editing_a_tile_set_writes_a_file_that_reads_back() {
+        let dir = scratch_dir("til-edit");
+        let input = dir.join("in.til");
+        let output = dir.join("out.til");
+        fs::write(&input, minimal_tile_set()).unwrap();
+
+        edit_tile_set(
+            &input,
+            &TileSetEdit::TerrainField {
+                terrain: 1,
+                column: TerrainColumn::MovementCost,
+                value: "4".to_owned(),
+            },
+            &output,
+        )
+        .unwrap();
+
+        let written = fs::read(&output).unwrap();
+        let definition = TileSetDefinition::parse(&written).unwrap();
+        assert_eq!(definition.terrain_types[&1].movement_cost, Some(4));
+        assert_eq!(definition.terrain_types[&0].movement_cost, Some(1));
+        assert_eq!(fs::read(&input).unwrap(), minimal_tile_set());
+    }
+
+    /// A sweep that checks nothing is not a pass. A mistyped directory would otherwise print
+    /// `failures 0` and exit 0 -- a green corpus check that checked nothing.
+    #[test]
+    fn a_tile_set_sweep_over_nothing_is_a_failure() {
+        let dir = scratch_dir("til-empty-sweep");
+
+        let error = roundtrip_tile_sets(&TileSetCorpus::Path(dir.clone())).unwrap_err();
+
+        assert!(error.contains("no .til files were checked"), "{error}");
+    }
+
+    /// The sweep's three counts are **asserted**, and they are independent of one another.
+    ///
+    /// The body used to be a bare `.unwrap()` with the tallies going to stdout uninspected, which
+    /// would have passed with `values_rebuilt` wired straight to `values_checked` -- the one number
+    /// the command exists to produce honestly. Each figure here is derived by hand from the fixture
+    /// rather than read back from the code: two files, each with 2 terrain rows (6 typed fields
+    /// apiece), 2 tile rows (11 apiece), and the grid and tile-size pairs.
+    #[test]
+    fn a_tile_set_sweep_reports_bytes_values_and_no_op_edits_separately() {
+        let dir = scratch_dir("til-sweep");
+        fs::write(dir.join("one.til"), minimal_tile_set()).unwrap();
+        fs::write(dir.join("two.TIL"), minimal_tile_set()).unwrap();
+        // Not a tileset, and not named like one: a directory walk must not try to parse it.
+        fs::write(dir.join("notes.txt"), b"ignore me").unwrap();
+
+        let sweep = roundtrip_tile_sets(&TileSetCorpus::Path(dir)).unwrap();
+
+        assert_eq!(sweep.checked, 2);
+        assert_eq!(sweep.identical, 2);
+        // Per file: 2 terrain rows x 6 + 2 tile rows x 11 + TILES 2 + TILESIZE 2 = 38.
+        assert_eq!(sweep.values_checked, 2 * 38);
+        assert_eq!(sweep.values_rebuilt, sweep.values_checked);
+        // Per file: the LBM value + 2 terrain rows x (description + four unnamed columns) = 11.
+        assert_eq!(sweep.text_fields_carried, 2 * 11);
+        // Per file: atlas, grid, first and last tile self, the first terrain's colour, one
+        // description per terrain type (2), and all eight columns of the first complete tile.
+        assert_eq!(sweep.no_op_edits, 2 * (1 + 1 + 2 + 1 + 2 + 8));
+        assert_eq!(sweep.no_op_identical, sweep.no_op_edits);
     }
 
     fn scratch_dir(name: &str) -> PathBuf {

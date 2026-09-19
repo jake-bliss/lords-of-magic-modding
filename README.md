@@ -42,6 +42,7 @@ Concretely, today you can **inspect, decode, render, export, measure, validate a
 - [Agent handoff](docs/agent-handoff.md) — current state, local setup, reproducibility, and next bounded work
 - [Native preservation engine plan](docs/native-engine-plan.md) — staged Rust/SDL3 candidate with explicit stop/go gates
 - [Native asset layer](docs/native-asset-stage.md) — live Stage 1 evidence, validation gates, and remaining work
+- [Tileset definitions and the `.til` write path](docs/til-format.md) — what a tileset edit can and cannot safely change, the refusals, and what stays undetermined
 - [Map and scenario format](docs/map-format.md) — cell/terrain lookup, placed-sprite records, corpus measurements, and open variants
 - [Audio and video formats](docs/audio-format.md) — the WAVE encoding histogram, what the 3,140-file round trip does and does not cover, the export/import path with its six refusals, and the Smacker container
 - [GameScript language and runtime probe](docs/gamescript-format.md) — corpus-derived lexical model, vocabulary measurements, and the next VM gate

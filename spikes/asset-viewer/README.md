@@ -138,6 +138,34 @@ makes maps from 32 to 1024 in steps of 32, then edit here.
 `TERRAIN` is a number `0..10` or a `gs\maplib.gs` name with or without its `tt_` prefix, so `1`,
 `tt_water` and `water` are the same thing.
 
+## Writing tilesets
+
+```sh
+target/release/lom-asset-viewer --til-roundtrip "$PIC_MPQ" --listfile LISTFILE
+target/release/lom-asset-viewer --describe-til          TILESET.til
+target/release/lom-asset-viewer --til-set-atlas         IN.til ATLAS.lbm             OUT.til
+target/release/lom-asset-viewer --til-set-grid          IN.til COLUMNS ROWS          OUT.til
+target/release/lom-asset-viewer --til-set-tile-terrain  IN.til TILE TERRAIN          OUT.til
+target/release/lom-asset-viewer --til-set-tile-neighbour IN.til TILE n|ne|e|se|s|sw|w|nw CONSTRAINT OUT.til
+target/release/lom-asset-viewer --til-set-terrain       IN.til TERRAIN COLUMN VALUE  OUT.til
+```
+
+A `.til` is **text**, so the writer keeps every line's bytes and replaces only the span of a field it
+is asked to change. That makes the byte-identical round trip — 26 of 26, on all four installed
+profiles — near-tautological, and it is reported as such. The measurement that can fail is
+`values-rebuilt`: 46,989 integers and neighbour columns regenerated from the parsed value and
+compared with the file's own characters, 46,989 matching. The measurement that tests the *edit* path
+is `no-op-edits`: 740 edits that set a field to the value it already holds — every span-replacing
+edit the writer offers, including all 402 terrain descriptions and all eight neighbour columns of
+each file's first complete tile — all 740 byte-identical.
+
+Nothing is minted. An unknown tile or terrain index is refused **by name**, as are the four columns
+the shipped headers disagree about, `TILESIZE=`, the pattern column, a `columns` change that would
+repaint every declared tile, and a grid that would orphan one. `--til-set-terrain`'s `COLUMN` is one
+of `color`, `description`, `passability`, `min-elevation`, `max-elevation`, `movement-cost`. See
+[tileset definitions](../../docs/til-format.md), which also states what stays undetermined —
+including that **no written `.til` has ever been in front of the engine.**
+
 `SPRITE_TYPE` is likewise **a name or a raw id** — `castle1` works, and a near miss suggests
 alternatives. The names come from the engine's own `terrainsprites` dict, dumped on 2026-09-17, and
 are **profile-specific**: ids are assigned in script execution order, so a different script set
