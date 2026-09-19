@@ -429,6 +429,34 @@ assert the documented sizes (3,098 archived members, 42 loose, 23 `.smk`) so a c
 shrinks is caught, and they assert the round-trip and closure *rules* rather than a table of
 expected per-member results.
 
+### Mutation-testing these guards, and how it went wrong once
+
+Every constant and every refusal on this page was mutation-tested in both directions. Two things
+about *how* are worth carrying to the next person, because both were learned by getting them wrong.
+
+**A mutation sweep against an unverified baseline measures nothing.** One sweep here was run without
+`LOM_LISTFILE` set, so an unrelated `imp_anim` corpus test failed in every run — *including the
+baseline*. Each mutant then reported "1 failed", which looked like a kill and was the baseline
+alone. A mutant that had survived was reported dead, and the policy it covered stayed unpinned for
+three commits. Print the baseline, confirm it is zero, and have the harness emit an explicit
+`KILLED` / `SURVIVED` verdict per mutant. An instrument that needs interpreting will eventually be
+misinterpreted.
+
+**The corpus is not a substitute for a fixture, and it can be silent for a structural reason.**
+`SMPL_LOOP_BYTES` survived both `24 → 20` and `24 → 28` against the full corpus, and no amount of
+additional corpus data could have killed it: every `smpl` chunk in the game declares at most one
+loop, and at index 0 a record stride multiplies nothing. `cue ` chunks carry 2, 3 and 4 points, so
+the *same* mutation on `CUE_POINT_BYTES` dies against the shipped files. When a corpus assertion
+cannot fail, say why — the reason is usually a fact about the corpus worth recording in its own
+right.
+
+Run with a checked baseline:
+
+```sh
+LOM_GAME_DIR='.../English' LOM_LISTFILE='.../lords-of-magic.txt' \
+  cargo test --release --lib -- --include-ignored
+```
+
 ## What is not determined
 
 **WAVE**
