@@ -389,6 +389,194 @@ class RepackPipelineTest(unittest.TestCase):
         self.assertIn("declared_change_not_applied", result.stdout)
         self.assertFalse(output.exists(), "a refused archive was left on disk")
 
+    # -- a repack that is meant to change nothing ---------------------------------
+
+    def test_driver_accepts_a_declared_no_op_and_says_so(self) -> None:
+        """Rung 0 of the engine ladder: rewrite a member to the bytes it already had.
+
+        Without `--expect-unchanged` this is exactly the archive the driver deletes in
+        `test_driver_deletes_an_archive_that_fails_its_shape_check`, and the two tests are kept
+        beside each other for that reason.
+        """
+        archive = self.create_archive("source.mpq", {"keep.gs": b"keep", "swap.gs": b"same"})
+        replacement = self.local_file("new.gs", b"same")
+        output = self.root / "output.mpq"
+
+        result = subprocess.run(
+            [
+                str(REPACK_SCRIPT), str(archive), str(output),
+                "--expect-unchanged", "swap.gs", f"swap.gs={replacement}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("member_rewritten_unchanged", result.stdout)
+        self.assertIn("shape preserved", result.stdout)
+        self.assertTrue(output.exists())
+
+    def test_driver_deletes_an_archive_whose_declared_no_op_moved(self) -> None:
+        archive = self.create_archive("source.mpq", {"swap.gs": b"before"})
+        replacement = self.local_file("new.gs", b"after")
+        output = self.root / "output.mpq"
+
+        result = subprocess.run(
+            [
+                str(REPACK_SCRIPT), str(archive), str(output),
+                "--expect-unchanged", "swap.gs", f"swap.gs={replacement}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("declared_no_op_changed_content", result.stdout)
+        self.assertFalse(output.exists())
+
+    def test_driver_refuses_an_expect_unchanged_that_names_no_replacement(self) -> None:
+        # A typo here would not fail loudly: the member would simply be compared as an undeclared
+        # one, which is a weaker check wearing the same exit code.
+        archive = self.create_archive("source.mpq", {"swap.gs": b"before"})
+        replacement = self.local_file("new.gs", b"after")
+        output = self.root / "output.mpq"
+
+        result = subprocess.run(
+            [
+                str(REPACK_SCRIPT), str(archive), str(output),
+                "--expect-unchanged", "swpa.gs", f"swap.gs={replacement}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("names no replacement", result.stderr)
+
+    # -- adding a member ----------------------------------------------------------
+
+    def test_repack_adds_a_member_the_source_did_not_have(self) -> None:
+        archive = self.create_archive("source.mpq", {"keep.gs": b"keep"})
+        addition = self.local_file("added.gs", b"brand new")
+        output = self.root / "output.mpq"
+
+        result = self.run_tool(
+            "repack", str(archive), str(output), "--add", f"new.gs={addition}"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("0 replaced and 1 added", result.stdout)
+        rows = self.manifest(output, "output.tsv").read_text().splitlines()[1:]
+        names = [row.split("\t")[0] for row in rows]
+        self.assertIn("new.gs", names)
+        self.assertIn("keep.gs", names)
+
+    def test_an_added_member_inherits_the_archives_storage_flags(self) -> None:
+        archive = self.create_archive("source.mpq", {"keep.gs": b"keep"})
+        addition = self.local_file("added.gs", b"brand new")
+        output = self.root / "output.mpq"
+        self.run_tool("repack", str(archive), str(output), "--add", f"new.gs={addition}")
+
+        rows = self.manifest(output, "output.tsv").read_text().splitlines()[1:]
+        flags = {row.split("\t")[0]: row.split("\t")[5] for row in rows}
+
+        self.assertEqual(flags["new.gs"], flags["keep.gs"])
+
+    def test_repack_refuses_to_add_a_member_the_source_already_has(self) -> None:
+        archive = self.create_archive("source.mpq", {"keep.gs": b"keep"})
+        addition = self.local_file("added.gs", b"brand new")
+        output = self.root / "output.mpq"
+
+        result = self.run_tool(
+            "repack", str(archive), str(output), "--add", f"keep.gs={addition}"
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("use --replace, not --add", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_repack_refuses_to_add_when_the_archive_stores_members_two_ways(self) -> None:
+        # There is no storage class to inherit, and choosing one silently is how an added member
+        # ends up stored in a way no member of the archive is.
+        archive = self.root / "mixed.mpq"
+        stored = self.local_file("stored.bin", b"stored member")
+        imploded = self.local_file("imploded.bin", b"imploded member" * 40)
+        self.assertEqual(
+            self.run_tool(
+                "create", str(archive),
+                "--store", "--add", f"stored.bin={stored}",
+                "--implode", "--add", f"imploded.bin={imploded}",
+            ).returncode,
+            0,
+        )
+        addition = self.local_file("third.bin", b"third")
+        output = self.root / "output.mpq"
+
+        result = self.run_tool(
+            "repack", str(archive), str(output), "--add", f"third.bin={addition}"
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not store all its members the same way", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_an_archives_own_listfile_does_not_make_it_look_mixed(self) -> None:
+        """The negative control for the refusal above.
+
+        StormLib writes `(listfile)` uncompressed into an archive whose every real member is
+        imploded. Counting it would refuse EVERY addition to EVERY archive carrying one -- which
+        is every archive `create` makes by default, and `gs.mpq` -- for a reason that has nothing
+        to do with how the content is stored.
+        """
+        archive = self.create_archive("listed.mpq", {"keep.gs": b"keep" * 40})
+        rows = self.manifest(archive, "listed.tsv").read_text().splitlines()[1:]
+        flags = {row.split("\t")[0]: row.split("\t")[5] for row in rows}
+        self.assertIn("(listfile)", flags)
+        self.assertNotEqual(
+            flags["(listfile)"], flags["keep.gs"], "the fixture is not mixed at all"
+        )
+
+        addition = self.local_file("added.gs", b"brand new")
+        output = self.root / "output.mpq"
+        result = self.run_tool(
+            "repack", str(archive), str(output), "--add", f"new.gs={addition}"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_driver_reports_an_added_member_by_name_in_the_shape_check(self) -> None:
+        archive = self.create_archive("source.mpq", {"keep.gs": b"keep"})
+        addition = self.local_file("added.gs", b"brand new")
+        output = self.root / "output.mpq"
+
+        result = subprocess.run(
+            [str(REPACK_SCRIPT), str(archive), str(output), "--add", f"new.gs={addition}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("member_added_as_declared new.gs", result.stdout)
+        self.assertIn("shape preserved", result.stdout)
+
+    def test_driver_refuses_a_repack_with_nothing_to_do(self) -> None:
+        archive = self.create_archive("source.mpq", {"keep.gs": b"keep"})
+        output = self.root / "output.mpq"
+
+        result = subprocess.run(
+            [str(REPACK_SCRIPT), str(archive), str(output)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("at least one replacement or one --add", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

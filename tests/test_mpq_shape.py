@@ -473,5 +473,107 @@ class UnnamedMemberTest(unittest.TestCase):
         )
 
 
+class DeclaredNoOpTest(unittest.TestCase):
+    """`--expect-unchanged`: a replacement whose content is expected NOT to move.
+
+    The rule it inverts is the one that catches a repack that silently did nothing. Inverting it
+    without weakening it means the *opposite* failure has to be real: content that moved under a
+    no-op declaration must be refused, or the ladder's rung 0 could pass on an archive that had
+    quietly been edited.
+    """
+
+    def test_a_declared_no_op_that_kept_its_bytes_passes(self) -> None:
+        members = [member("START.GS", ALPHA_SHA), member("gs\\a.gs", BRAVO_SHA)]
+        report = compare(members, list(members), expected_unchanged={"START.GS"})
+
+        self.assertTrue(report.ok)
+        self.assertEqual(kinds(report), ["member_rewritten_unchanged"])
+        # The declared member is named by its finding, not counted among the members that were
+        # never declared at all.
+        self.assertEqual(report.unchanged_members, 1)
+
+    def test_a_declared_no_op_whose_content_moved_is_refused(self) -> None:
+        source = [member("START.GS", ALPHA_SHA)]
+        output = [member("START.GS", BRAVO_SHA)]
+        report = compare(source, output, expected_unchanged={"START.GS"})
+
+        self.assertFalse(report.ok)
+        self.assertEqual(failure_kinds(report), ["declared_no_op_changed_content"])
+
+    def test_a_declared_no_op_whose_storage_moved_is_refused(self) -> None:
+        source = [member("START.GS", ALPHA_SHA, flags="0x80010100")]
+        output = [member("START.GS", ALPHA_SHA, flags="0x80010000")]
+        report = compare(source, output, expected_unchanged={"START.GS"})
+
+        self.assertFalse(report.ok)
+        self.assertEqual(failure_kinds(report), ["declared_no_op_altered_storage"])
+
+    def test_a_declared_no_op_for_a_member_the_source_lacks_is_refused(self) -> None:
+        report = compare([member("START.GS", ALPHA_SHA)], [member("START.GS", ALPHA_SHA)],
+                         expected_unchanged={"gs\\absent.gs"})
+
+        self.assertFalse(report.ok)
+        self.assertIn("declared_change_not_in_source", failure_kinds(report))
+
+    def test_declaring_one_member_both_changed_and_unchanged_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            compare(
+                [member("START.GS", ALPHA_SHA)],
+                [member("START.GS", BRAVO_SHA)],
+                expected_changes={"START.GS"},
+                expected_unchanged={"START.GS"},
+            )
+
+
+class DeclaredAdditionTest(unittest.TestCase):
+    """`--expect-added`: the only way an added member is not a failure."""
+
+    def test_an_undeclared_addition_is_still_refused(self) -> None:
+        source = [member("START.GS", ALPHA_SHA)]
+        output = [member("START.GS", ALPHA_SHA), member("gs\\new.gs", BRAVO_SHA)]
+        report = compare(source, output)
+
+        self.assertFalse(report.ok)
+        self.assertEqual(failure_kinds(report), ["member_added"])
+
+    def test_a_declared_addition_passes_and_is_reported_by_name(self) -> None:
+        source = [member("START.GS", ALPHA_SHA)]
+        output = [member("START.GS", ALPHA_SHA), member("gs\\new.gs", BRAVO_SHA)]
+        report = compare(source, output, expected_additions={"gs\\new.gs"})
+
+        self.assertTrue(report.ok)
+        self.assertIn("member_added_as_declared", kinds(report))
+        self.assertEqual(report.unchanged_members, 1)
+
+    def test_a_declared_addition_that_did_not_appear_is_refused(self) -> None:
+        members = [member("START.GS", ALPHA_SHA)]
+        report = compare(members, list(members), expected_additions={"gs\\new.gs"})
+
+        self.assertFalse(report.ok)
+        self.assertEqual(failure_kinds(report), ["declared_addition_not_applied"])
+
+    def test_declaring_an_addition_for_an_existing_member_is_refused(self) -> None:
+        members = [member("START.GS", ALPHA_SHA)]
+        report = compare(members, list(members), expected_additions={"START.GS"})
+
+        self.assertFalse(report.ok)
+        self.assertEqual(failure_kinds(report), ["declared_addition_already_in_source"])
+
+    def test_a_declared_addition_does_not_excuse_a_different_added_member(self) -> None:
+        source = [member("START.GS", ALPHA_SHA)]
+        output = [
+            member("START.GS", ALPHA_SHA),
+            member("gs\\new.gs", BRAVO_SHA),
+            member("gs\\sneaked.gs", EMPTY_SHA),
+        ]
+        report = compare(source, output, expected_additions={"gs\\new.gs"})
+
+        self.assertFalse(report.ok)
+        self.assertEqual(failure_kinds(report), ["member_added"])
+        self.assertEqual(
+            [finding.path for finding in report.failures], ["gs\\sneaked.gs"]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

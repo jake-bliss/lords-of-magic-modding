@@ -45,10 +45,17 @@ GAME_SUBPATH = (
 
 # The archives this pipeline is willing to repack.
 #
-# `gs.mpq` and `pic.mpq` only. `imp.mpq` is byte-identical across all three profiles, so a change
-# to it cannot be validated against a profile difference, and nothing in the corpus work has ever
-# needed to write it. Widening this set is a deliberate act, not a default.
-SUPPORTED_ARCHIVES = ("gs.mpq", "pic.mpq")
+# `imp.mpq`, `sndfx.mpq` and `special.mpq` were added 2026-09-18 for the engine-acceptance ladder.
+# All three are byte-identical across the installed profiles, so a change to one still cannot be
+# validated against a profile difference -- but that was never the reason to keep them out. For
+# `imp.mpq` the reason was that no IMP this repository writes had ever been inside an archive:
+# every one landed in a loose `.imp`, and loose files do not override MPQ members. For the two
+# audio archives it is a storage class: every member is 0x80010000, STORED, where every archive
+# acceptance this project has proven was 0x80010100, IMPLODE.
+#
+# Widening this set stays a deliberate act, not a default. Note what it costs: `PIPELINE_ARCHIVES`
+# manifests every archive here on every validate and every build, whether or not a mod touches it.
+SUPPORTED_ARCHIVES = ("gs.mpq", "pic.mpq", "imp.mpq", "sndfx.mpq", "special.mpq")
 
 MOD_ID_PATTERN = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z")
 
@@ -88,6 +95,13 @@ class ModManifest:
     #: Adding a member has no engine evidence behind it, so it needs two acts: naming the member
     #: and setting this. See `docs/build-pipeline.md`, "what this does not guarantee".
     allow_new_members: bool = False
+    #: Members the mod declares it is rewriting to the SAME bytes, spelled as member names --
+    #: e.g. a codec proving it can reproduce a shipped member byte for byte. Only a name on this
+    #: list may be classified `unchanged` by `tools/mod_build.py`'s `entry_kind`; every other
+    #: byte-identical rewrite is a declared `replace` that did nothing, and
+    #: `tools/mpq_shape.py`'s `declared_change_not_applied` exists to refuse exactly that. See
+    #: `docs/repack.md`.
+    expect_unchanged: tuple[str, ...] = ()
 
 
 @dataclass
@@ -153,6 +167,12 @@ def read_manifest(path: Path) -> ModManifest:
     if not isinstance(allow_new, bool):
         raise ModTreeError(f"{path}: allow_new_members must be true or false")
 
+    expect_unchanged = raw.get("expect_unchanged", [])
+    if not isinstance(expect_unchanged, list) or not all(
+        isinstance(entry, str) for entry in expect_unchanged
+    ):
+        raise ModTreeError(f"{path}: expect_unchanged must be a list of member-name strings")
+
     unknown = set(raw) - {
         "id",
         "name",
@@ -160,6 +180,7 @@ def read_manifest(path: Path) -> ModManifest:
         "base_profile",
         "new_members",
         "allow_new_members",
+        "expect_unchanged",
         "description",
     }
     if unknown:
@@ -176,6 +197,7 @@ def read_manifest(path: Path) -> ModManifest:
         base_profile=raw["base_profile"],
         new_members=tuple(new_members),
         allow_new_members=allow_new,
+        expect_unchanged=tuple(expect_unchanged),
     )
 
 

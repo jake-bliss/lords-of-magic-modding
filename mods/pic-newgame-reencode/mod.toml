@@ -1,0 +1,27 @@
+# Ladder rung 3: the ByteRun1 PBM ENCODER, and a member whose size changes.
+#
+# `lbm\newgame.lbm` -- the main menu, despite the name -- re-encoded through
+# `spikes/asset-viewer/src/pbm.rs` with its pixels untouched. Two things change at once and both
+# are deliberate, because for this member they cannot be separated: the encoder repacks every
+# ByteRun1 packet, and the result is 302,714 bytes where the shipped member is 302,432. Only 8 of
+# the 1,045 shipped PBMs re-encode byte-identically, so "re-encode without changing the length" is
+# not an option this member offers.
+#
+# The accepted `mods/newgame-picslice` run on 2026-09-18 changed this same member with
+# `tools/pbm_patch.py`, which cannot change a file's length and never touches a literal packet. So
+# the ONLY variables between that accepted run and this one are the encoder and the length. That is
+# what makes this a rung rather than a fresh experiment.
+#
+# The expected observation is that the main menu is EXACTLY as shipped. A rung whose expected
+# picture is the shipped picture cannot, on its own, tell "the engine read our file" from "the
+# engine ignored it" -- it is a corruption control, and it is read together with rung 4, which uses
+# the same encoder on the same member and changes something visible.
+id = "pic-newgame-reencode"
+name = "Main menu, re-encoded"
+version = "0.1.0"
+description = "Rung 3: re-encode lbm\\newgame.lbm through pbm.rs with identical pixels and a different length."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false

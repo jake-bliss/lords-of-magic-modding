@@ -1,0 +1,36 @@
+# Ladder rung 8: rung 7 with the two archives' frequencies EXCHANGED.
+#
+# This mod was the control for rung 7's archive-attribution claim, not a new observation. Rung 7
+# put 220 Hz into `sndfx.mpq` and 1760 Hz into `special.mpq`, for both `wav\welcome.wav` and
+# `wav\button.wav`, and an attended listen first reported a SPLIT: the long menu-open tone read as
+# low (sndfx.mpq) and the short button click read as high (special.mpq). See
+# `mods/audio-welcome-tone/mod.toml` and `docs/engine-acceptance-ladder.md` for the rung 7 evidence;
+# it is not repeated here.
+#
+# The only thing this mod changed from rung 7 is which archive gets which frequency: 1760 Hz into
+# `sndfx.mpq`, 220 Hz into `special.mpq`. Same two members, same identical-length constraint,
+# everything else unchanged.
+#
+# **Run 2026-09-19. There is no split.** `wav\welcome.wav` inverted exactly as predicted -- long low
+# on rung 7, high whistle on rung 8, both times `sndfx.mpq`'s tone -- so `wav\welcome.wav` is served
+# from `sndfx.mpq`. `wav\button.wav` did NOT invert and did not fail to invert: at 41 ms and 220 Hz
+# that is nine cycles with no perceptible pitch, played moments after a 5.67-second tone at the
+# other frequency, so rung 7's "high" reading for it was an unreadable instrument, not a
+# measurement. Rung 7's split conclusion for `button.wav` is WITHDRAWN, not confirmed or refuted by
+# this rung; rung 9 (`mods/audio-button-silence/mod.toml`) replaced the pitch judgement with a
+# presence judgement and found `wav\button.wav` also comes from `sndfx.mpq` -- both members come
+# from `sndfx.mpq`. See `docs/engine-acceptance-ladder.md` for the full attended record.
+#
+# `scripts/build-acceptance-ladder.sh` also asserts this offline, which an attended listen cannot:
+# rung 8's `sndfx.mpq` tone for each member is byte-identical to rung 7's `special.mpq` tone for
+# that member, and vice versa -- the same tone, in the opposite archive, not a second arbitrary
+# build wearing rung 8's name.
+id = "audio-tone-swapped"
+name = "Welcome sound, tones exchanged between archives"
+version = "0.1.0"
+description = "Rung 8: rung 7 with sndfx.mpq and special.mpq's tones swapped, to control its archive attribution."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false

@@ -397,23 +397,37 @@ void add_member(HANDLE archive, const std::string &archived_name,
 // hash-table entry, which is what makes the replacement a replacement rather
 // than an addition.
 int repack_archive(const fs::path &source_path, const fs::path &output_path,
-                   const std::vector<std::string> &assignments, bool compact,
+                   const std::vector<std::string> &assignments,
+                   const std::vector<std::string> &additions, bool compact,
                    const fs::path &extra_listfile) {
   if (fs::exists(output_path)) {
     throw std::runtime_error("output archive already exists: " +
                              output_path.string());
   }
-  if (assignments.empty()) {
-    throw std::runtime_error("repack requires at least one --replace");
+  if (assignments.empty() && additions.empty()) {
+    throw std::runtime_error("repack requires at least one --replace or --add");
   }
 
   std::map<std::string, std::uint32_t> storage_flags;
+  std::map<std::uint32_t, std::size_t> flag_histogram;
   {
     Archive source(source_path);
     for (const auto &entry : list_entries(source.handle, extra_listfile)) {
+      const std::uint32_t preserved = entry.flags & kPreservedStorageFlags;
       // Keep the FIRST entry for a duplicated name, matching the entry that
       // StormLib resolves that name to.
-      storage_flags.emplace(entry.name, entry.flags & kPreservedStorageFlags);
+      storage_flags.emplace(entry.name, preserved);
+      // StormLib's own internal members -- `(listfile)`, `(attributes)`,
+      // `(signature)` -- are excluded from the histogram below. They are
+      // written by the library with flags of its choosing, not by whoever
+      // packed the content: `(listfile)` comes back uncompressed in an archive
+      // whose every real member is imploded, and counting it would make every
+      // archive that carries one look mixed and refuse every addition for a
+      // reason that has nothing to do with the members.
+      if (!entry.name.empty() && entry.name.front() == '(') {
+        continue;
+      }
+      ++flag_histogram[preserved];
     }
   }
 
@@ -430,6 +444,46 @@ int repack_archive(const fs::path &source_path, const fs::path &output_path,
                                parsed.second.string());
     }
     replacements.push_back(std::move(parsed));
+  }
+
+  // An ADDED member has no member of its own to take storage flags from, and
+  // this verb will not invent them. It uses the archive's flags only when every
+  // member already agrees on them -- true of `imp.mpq` and `pic.mpq`, where all
+  // 3,600 and all 1,071 members are 0x80010100 -- and refuses otherwise rather
+  // than picking a modal value that no member of the caller's mind ever named.
+  // The chosen flags are printed, because a storage class decided by the tool
+  // and not by the caller is exactly the sort of thing a later run should be
+  // able to read back rather than re-derive.
+  for (const auto &addition : additions) {
+    auto parsed = parse_assignment(addition);
+    if (storage_flags.find(parsed.first) != storage_flags.end()) {
+      throw std::runtime_error(
+          "refusing to repack: source archive already has a member named " +
+          parsed.first + "; use --replace, not --add");
+    }
+    if (!fs::is_regular_file(parsed.second)) {
+      throw std::runtime_error("added file is not a regular file: " +
+                               parsed.second.string());
+    }
+    if (flag_histogram.size() != 1) {
+      std::string observed;
+      for (const auto &entry : flag_histogram) {
+        observed += (observed.empty() ? "" : ", ") + std::to_string(entry.second) +
+                    " member(s) with storage flags " + std::to_string(entry.first);
+      }
+      throw std::runtime_error(
+          "refusing to add " + parsed.first +
+          ": the source archive does not store all its members the same way (" +
+          observed +
+          "), so there is no storage class an added member could inherit "
+          "without this tool choosing one for you");
+    }
+    replacements.emplace_back(parsed.first, parsed.second);
+    storage_flags.emplace(parsed.first, flag_histogram.begin()->first);
+    std::cout << "Adding " << parsed.first << " with storage flags 0x"
+              << std::hex << std::setw(8) << std::setfill('0')
+              << flag_histogram.begin()->first << std::dec
+              << ", inherited from every member of the source archive\n";
   }
   // Applying replacements in a fixed order keeps repeated runs comparable.
   std::sort(replacements.begin(), replacements.end());
@@ -470,8 +524,9 @@ int repack_archive(const fs::path &source_path, const fs::path &output_path,
 
   fs::rename(staging_path, output_path);
   std::cout << "Repacked " << source_path.filename().string() << " -> "
-            << output_path.string() << " with " << replacements.size()
-            << " replaced member(s)\n";
+            << output_path.string() << " with "
+            << (replacements.size() - additions.size())
+            << " replaced and " << additions.size() << " added member(s)\n";
   for (const auto &replacement : replacements) {
     std::cout << "  " << replacement.first << " <- "
               << replacement.second.string() << '\n';
@@ -484,9 +539,10 @@ int repack_archive(const fs::path &source_path, const fs::path &output_path,
 // Archive creation exists so the repack pipeline can be tested on archives that
 // look nothing like the shipped corpus -- an empty archive, a zero-byte member,
 // names differing only in case. It is not a mod packaging command.
-int create_archive(const fs::path &output_path,
-                   const std::vector<std::string> &assignments,
-                   std::uint32_t storage_flags, bool with_listfile) {
+int create_archive(
+    const fs::path &output_path,
+    const std::vector<std::pair<std::string, std::uint32_t>> &assignments,
+    bool with_listfile) {
   if (fs::exists(output_path)) {
     throw std::runtime_error("output archive already exists: " +
                              output_path.string());
@@ -495,14 +551,19 @@ int create_archive(const fs::path &output_path,
     fs::create_directories(output_path.parent_path());
   }
 
-  std::vector<std::pair<std::string, fs::path>> members;
+  // Each member carries the storage class that was in effect where it appeared
+  // on the command line. One class per archive would be simpler, and was what
+  // this took until 2026-09-18 -- but then no fixture could be built that
+  // stores two members two ways, and the repack's refusal to ADD a member to
+  // such an archive had no test that ran.
+  std::vector<std::pair<std::pair<std::string, fs::path>, std::uint32_t>> members;
   for (const auto &assignment : assignments) {
-    auto parsed = parse_assignment(assignment);
+    auto parsed = parse_assignment(assignment.first);
     if (!fs::is_regular_file(parsed.second)) {
       throw std::runtime_error("member source is not a regular file: " +
                                parsed.second.string());
     }
-    members.push_back(std::move(parsed));
+    members.emplace_back(std::move(parsed), assignment.second);
   }
   std::sort(members.begin(), members.end());
 
@@ -547,7 +608,8 @@ int create_archive(const fs::path &output_path,
   created.handle = handle;
 
   for (const auto &member : members) {
-    add_member(created.handle, member.first, member.second, storage_flags);
+    add_member(created.handle, member.first.first, member.first.second,
+               member.second);
   }
   std::cout << "Created " << output_path.string() << " with " << members.size()
             << " member(s)\n";
@@ -562,7 +624,8 @@ void print_usage(const char *program) {
             << "  " << program << " manifest ARCHIVE.mpq [--listfile NAMES.txt]\n"
             << "  " << program
             << " repack SOURCE.mpq OUTPUT.mpq [--compact] "
-               "[--listfile NAMES.txt] --replace 'NAME=LOCAL' ...\n"
+               "[--listfile NAMES.txt] [--replace 'NAME=LOCAL'] "
+               "[--add 'NAME=LOCAL'] ...\n"
             << "  " << program
             << " create OUTPUT.mpq [--implode|--compress|--store] "
                "[--no-listfile] [--add 'NAME=LOCAL'] "
@@ -659,6 +722,7 @@ int main(int argc, char **argv) {
     }
     if (argc >= 5 && std::string(argv[1]) == "repack") {
       std::vector<std::string> assignments;
+      std::vector<std::string> additions;
       bool compact = false;
       fs::path repack_listfile;
       for (int index = 4; index < argc; ++index) {
@@ -667,6 +731,8 @@ int main(int argc, char **argv) {
           compact = true;
         } else if (option == "--replace" && index + 1 < argc) {
           assignments.emplace_back(argv[++index]);
+        } else if (option == "--add" && index + 1 < argc) {
+          additions.emplace_back(argv[++index]);
         } else if (option == "--listfile" && index + 1 < argc) {
           repack_listfile = argv[++index];
         } else {
@@ -674,11 +740,13 @@ int main(int argc, char **argv) {
           return 2;
         }
       }
-      return repack_archive(argv[2], argv[3], assignments, compact,
+      return repack_archive(argv[2], argv[3], assignments, additions, compact,
                             repack_listfile);
     }
     if (argc >= 3 && std::string(argv[1]) == "create") {
-      std::vector<std::string> assignments;
+      std::vector<std::pair<std::string, std::uint32_t>> assignments;
+      // The storage class applies to every --add AFTER it, so a command line
+      // may change class part way through and produce a mixed archive.
       std::uint32_t storage_flags = MPQ_FILE_IMPLODE;
       bool with_listfile = true;
       for (int index = 3; index < argc; ++index) {
@@ -692,13 +760,13 @@ int main(int argc, char **argv) {
         } else if (option == "--implode") {
           storage_flags = MPQ_FILE_IMPLODE;
         } else if (option == "--add" && index + 1 < argc) {
-          assignments.emplace_back(argv[++index]);
+          assignments.emplace_back(argv[++index], storage_flags);
         } else {
           print_usage(argv[0]);
           return 2;
         }
       }
-      return create_archive(argv[2], assignments, storage_flags, with_listfile);
+      return create_archive(argv[2], assignments, with_listfile);
     }
     print_usage(argv[0]);
     return 2;

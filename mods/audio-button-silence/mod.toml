@@ -1,0 +1,44 @@
+# Ladder rung 9: a presence judgement instead of a pitch judgement.
+#
+# Rung 8 (`mods/audio-tone-swapped/mod.toml`) flipped `wav\welcome.wav` exactly as predicted, so
+# `wav\welcome.wav` is served from `sndfx.mpq` -- measured, not inferred. `wav\button.wav` did not
+# read: it is 41 ms, which at 220 Hz is nine cycles the ear receives as an unpitched click, and in
+# rung 7 it played moments after 5.67 seconds of the OTHER frequency, so any impression of "higher"
+# may have been relative to what had just stopped. Rung 7's split conclusion is WITHDRAWN for
+# `button.wav`; see `docs/engine-acceptance-ladder.md` for the attended record.
+#
+# This mod replaces the pitch judgement with a presence judgement. `wav\button.wav` in `sndfx.mpq`
+# becomes digital silence: every 8-bit sample at 0x80, the zero level, at the shipped byte length,
+# with every ancillary chunk and the odd `data` chunk's pad byte carried through verbatim -- silence
+# is the only thing that changed. `wav\button.wav` in `special.mpq` is untouched from RUNG 7, at
+# 1760 Hz: this rung moves `sndfx.mpq` alone. `wav\welcome.wav` gets the SAME 440 Hz tone in BOTH
+# archives -- a frequency distinct from rung 7/8's 220 and 1760 so it cannot be confused with a
+# previous sitting, and identical between archives so it is a liveness control: it fires at menu
+# open regardless of which archive the engine reads, so a silent button click is attributable to
+# the archive rather than to the build having failed.
+#
+# The observation this makes possible: click a main-menu button. Sound means the engine read
+# `special.mpq` for `button.wav`, and the two members come from different archives. Silence means it
+# read `sndfx.mpq`, and both members share one archive. Either answer is a result, and neither needs
+# a listener to discriminate pitch.
+#
+# `special.mpq`'s tone is tied to RUNG 7, not rung 8, and that choice is deliberate rather than
+# incidental. Rung 8's `special.mpq` value is 220 Hz, which at 41 ms is nine cycles -- the same
+# shortness that made rung 8's button half unreadable -- and here that frequency would carry the
+# entire result rather than one half of a comparison. A `special.mpq` hit too faint to register
+# would read as silence, and the rung would conclude `sndfx.mpq` with no symptom of the mistake: a
+# clean, confident, wrong answer. 1760 Hz gives roughly 75 cycles in the same 41 ms, is a sound the
+# engine has already demonstrably played (rung 7's listen), and is chosen to be as audible as 41 ms
+# allows -- because the SILENT side of this rung is the ambiguous reading (a listener who hears
+# nothing is certifying an absence, always the weaker report) and the AUDIBLE side is the
+# unambiguous one. Only the side that can already carry an unambiguous signal is worth strengthening
+# further; making the silent side louder would not make an absence any easier to certify.
+id = "audio-button-silence"
+name = "Button click silenced in one archive, welcome tone shared by both"
+version = "0.1.0"
+description = "Rung 9: sndfx.mpq's button.wav goes silent, special.mpq's is unchanged from rung 7 (1760 Hz), welcome.wav gets one shared 440 Hz tone in both archives."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false

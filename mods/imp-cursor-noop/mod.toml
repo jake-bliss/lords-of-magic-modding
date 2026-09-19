@@ -1,0 +1,29 @@
+# Ladder rungs 0 and 1: the repack control, and the IMP encoder proving it can be a no-op.
+#
+# Rung 0 asks whether repacking `imp.mpq` at all disturbs the engine, and rung 1 asks whether our
+# IMP pixel encoder can reproduce a shipped frame exactly. They share one artefact because the
+# answer to rung 1 makes them the same bytes: frame 111 of `iface\cursors.imp` is one of the
+# 35,840 frames that rewrite BYTE-IDENTICALLY through `write_frame_pixels`, so the member this mod
+# packs is the member the archive already held. `scripts/build-acceptance-ladder.sh` asserts that
+# equality; if it ever stops holding, these become two rungs again and the build fails rather than
+# quietly conflating them.
+#
+# The member is `iface\cursors.imp` because `gs/cursor.gs` opens with
+# `"iface/cursors.imp" loadcursorimp CURSORS_POINTER setcursortype`, and `START.GS` runs
+# `gs/cursor.gs` before it opens the main menu. The mouse pointer is therefore on screen the moment
+# the game finishes loading, with no navigation at all -- and every keypress in this experiment is
+# a request to a person, because macOS will not let this project drive the Wine window itself.
+id = "imp-cursor-noop"
+name = "Cursor sprite, repacked unchanged"
+version = "0.1.0"
+description = "Rungs 0 and 1: repack imp.mpq with a member our own IMP encoder rewrote byte-identically."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false
+# Declared, not inferred: `entry_kind` only classifies a member `unchanged` when it is named
+# here. Leaving this empty would reclassify the encoder's byte-identical output as a `replace`
+# that did nothing, and `declared_change_not_applied` would refuse this build for the exact
+# thing it is meant to prove.
+expect_unchanged = ["iface\\cursors.imp"]

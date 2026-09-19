@@ -92,16 +92,31 @@ mapfile -t built_archives < <(PYTHONPATH="${project_dir}/tools" python3 -c \
 
 for archive in "${built_archives[@]}"; do
   replacements=()
-  while IFS=$'\t' read -r member file; do
-    replacements+=("${member}=${file}")
+  member_options=()
+  while IFS=$'\t' read -r kind member file; do
+    case "${kind}" in
+      add)
+        # An addition is not a positional replacement; repack-archive.sh takes it as its own
+        # option so that both the packer and the shape check see it as an addition.
+        member_options+=(--add "${member}=${file}")
+        ;;
+      unchanged)
+        replacements+=("${member}=${file}")
+        member_options+=(--expect-unchanged "${member}")
+        ;;
+      replace)
+        replacements+=("${member}=${file}")
+        ;;
+      *) die "unknown plan entry kind: ${kind}" ;;
+    esac
   done < <(PYTHONPATH="${project_dir}/tools" python3 -c '
 import json, sys
 plan = json.load(open(sys.argv[1]))
 for entry in plan["archives"][sys.argv[2]]:
-    print(entry["member"], entry["file"], sep="\t")
+    print(entry["kind"], entry["member"], entry["file"], sep="\t")
 ' "${work_dir}/plan.json" "${archive}")
 
-  repack_options=()
+  repack_options=("${member_options[@]+${member_options[@]}}")
   archive_listfile="$(profile_listfile "${base_profile}" "${archive}")"
   [[ -n "${archive_listfile}" ]] && repack_options+=(--listfile "${archive_listfile}")
   (( determinism_runs > 0 )) && repack_options+=(--determinism-runs "${determinism_runs}")
@@ -109,7 +124,7 @@ for entry in plan["archives"][sys.argv[2]]:
     "${game_dir}/${archive}" \
     "${output_dir}/${archive}" \
     "${repack_options[@]}" \
-    "${replacements[@]}"
+    ${replacements[@]+"${replacements[@]}"}
   output_digest_arguments+=(--output-digest "${archive}=$(file_hash "${output_dir}/${archive}")")
 done
 echo

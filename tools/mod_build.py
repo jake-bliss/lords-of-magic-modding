@@ -32,7 +32,7 @@ from mod_report import (  # noqa: E402
 )
 from mod_tree import ModTreeError, source_digest  # noqa: E402
 from mod_tree import load as load_mod_tree  # noqa: E402
-from mod_validate import read_gs_facts  # noqa: E402
+from mod_validate import normalise_member, read_gs_facts  # noqa: E402
 from mpq_shape import Member, read_manifest  # noqa: E402
 
 
@@ -59,6 +59,41 @@ def resolve_base_members(tree, manifests: dict[str, list[Member]]) -> dict[str, 
         if members:
             resolved[source.relative] = members[0]
     return resolved
+
+
+def entry_kind(
+    source, base: Member | None, expect_unchanged: frozenset[str] = frozenset()
+) -> str:
+    """What the repack is being asked to do with one source file.
+
+    Three answers, and the repack has to be told which because the shape check's expectation is
+    different for each:
+
+    ``add``       the base archive has no such member. Validation has already insisted the mod
+                  declare it in `new_members` and set `allow_new_members`.
+    ``unchanged`` the member is named in the mod's `expect_unchanged` list (`mod.toml`): a
+                  DECLARED no-op, such as a codec proving it can reproduce a shipped member byte
+                  for byte. It is still written -- that is the point of a no-op repack -- and the
+                  shape check is told to fail if the content moves rather than if it does not.
+    ``replace``   everything else -- INCLUDING a file that happens to be byte-identical to the
+                  member it replaces. An undeclared no-op is not this classification's business
+                  to excuse: `tools/mpq_shape.py`'s `declared_change_not_applied` exists so that a
+                  repack that silently changed nothing is refused rather than shipped, and that
+                  rule can only fire while an UNDECLARED no-op is still classified as a declared
+                  change.
+
+    This never reads the file's bytes. Whether a member came back changed is a question
+    `mpq_shape.compare` answers against the packed archive, checked against whichever
+    expectation this function handed it; folding that answer into the classification itself is
+    exactly how an unedited member once passed as a successful repack -- `entry_kind` computed
+    "unchanged" from the file's own digest before the expectation existed to be checked against,
+    so `declared_change_not_applied` could never fire.
+    """
+    if base is None:
+        return "add"
+    if normalise_member(source.member) in expect_unchanged:
+        return "unchanged"
+    return "replace"
 
 
 def derive_build_id(
@@ -109,6 +144,9 @@ def command_plan(arguments) -> int:
         label: read_manifest(Path(path)) for label, path in arguments.base_manifest
     }
     resolved = resolve_base_members(tree, manifests)
+    expect_unchanged = frozenset(
+        normalise_member(name) for name in tree.manifest.expect_unchanged
+    )
     base_digests = dict(arguments.base_digest)
     tool_digests = dict(arguments.tool_digest)
     build_id = derive_build_id(
@@ -131,6 +169,9 @@ def command_plan(arguments) -> int:
                         resolved[source.relative].block_index
                         if source.relative in resolved
                         else None
+                    ),
+                    "kind": entry_kind(
+                        source, resolved.get(source.relative), expect_unchanged
                     ),
                 }
                 for source in tree.members_for(archive)

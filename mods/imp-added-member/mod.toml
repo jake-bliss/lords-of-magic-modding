@@ -1,0 +1,26 @@
+# Ladder rung 5: a member ADDED to a shipped archive.
+#
+# `iface\ladder.imp` is a name no shipped archive holds, and nothing in the game will ever ask for
+# it. That is deliberate, and it is also the limit of what this rung can prove: it tests whether
+# the engine TOLERATES an archive that has grown a member, not whether it can READ one. Nothing
+# observable on screen could distinguish an added member that was read from one that was never
+# asked for, so no observation is claimed for it.
+#
+# What makes the rung observable at all is that it also carries rung 2's repainted cursor. By the
+# time this is installed, rung 2 has already been seen, so the white gauntlet is a known-good
+# signal travelling through an archive with one extra member in it. If it still appears, the hash
+# table, block table and every other member survived the addition; if the game instead fails to
+# start, or the cursor reverts to the shipped green, the addition broke something.
+#
+# The addition is checked off the screen as well: the build reopens the packed archive with
+# StormLib and resolves `iface\ladder.imp` BY NAME through the hash table, which is the same lookup
+# the engine's own Storm does.
+id = "imp-added-member"
+name = "Cursor sprite, plus an added member"
+version = "0.1.0"
+description = "Rung 5: add a member imp.mpq never had, alongside rung 2's visible cursor change."
+
+base_profile = "vanilla"
+
+new_members = ["iface\\ladder.imp"]
+allow_new_members = true

@@ -18,7 +18,7 @@ applications_dir="${LOM_APPLICATIONS_DIR:-${HOME}/Applications}"
 game_subpath='Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition/English'
 
 # The archives this pipeline packs. Kept in step with tools/mod_tree.py's SUPPORTED_ARCHIVES.
-PIPELINE_ARCHIVES=(gs.mpq pic.mpq)
+PIPELINE_ARCHIVES=(gs.mpq pic.mpq imp.mpq sndfx.mpq special.mpq)
 
 file_hash() {
   shasum -a 256 "$1" | cut -d' ' -f1
@@ -57,6 +57,11 @@ profile_game_dir() {
 # under a `File%08u.xxx` pseudo-name and cannot be written: **Observed 2026-09-18**, StormLib
 # refuses SFileAddFileEx on a pseudo-name with error 22, and a real name is refused earlier for not
 # being in the archive's own catalogue.
+# `imp.mpq`, `sndfx.mpq` and `special.mpq` are all in the same position as `pic.mpq`: no
+# `(listfile)`, no self-named member, every entry listing as `File%08u.xxx` without this. Measured
+# 2026-09-18, the recovered lists name every entry of each -- 3,600 of 3,600, 1,880 of 1,880 and
+# 1,218 of 1,218 -- and all three archives are byte-identical across the installed profiles, so one
+# file serves each profile.
 profile_listfile() {
   local profile="$1" archive="$2" names="${project_dir}/reports/member-names"
   case "${archive}" in
@@ -66,6 +71,9 @@ profile_listfile() {
         gs5r3) echo "${names}/gs5r3-pic-recovered.txt" ;;
       esac
       ;;
+    imp.mpq) echo "${names}/all-profiles-imp-recovered.txt" ;;
+    sndfx.mpq) echo "${names}/all-profiles-sndfx-recovered.txt" ;;
+    special.mpq) echo "${names}/all-profiles-special-recovered.txt" ;;
     *) echo "" ;;
   esac
 }

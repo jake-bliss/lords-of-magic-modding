@@ -148,14 +148,36 @@ def compare(
     source: list[Member],
     output: list[Member],
     expected_changes: set[str] | None = None,
+    expected_unchanged: set[str] | None = None,
+    expected_additions: set[str] | None = None,
 ) -> ShapeReport:
     """Decide whether `output` has the same shape as `source`.
 
     `expected_changes` names the members a repack declared it would replace.
     A declared member whose content did not actually change is a failure: a
     repack that silently did nothing must not pass as a successful repack.
+
+    `expected_unchanged` names members the repack declared it would rewrite
+    **to the same bytes**. That is not a contradiction and it is not a way round
+    the rule above: it is the ladder's rung 0, where the whole question is
+    whether running a member back through `SFileAddFileEx` at all disturbs the
+    archive. The expectation is inverted rather than dropped -- content that
+    *did* change is the failure here -- so the declaration is still checked, and
+    a caller cannot use it to mean "whatever happened is fine".
+
+    `expected_additions` names members the repack declared it would ADD. An
+    added member is otherwise a failure, and remains one for every name not on
+    this list; a name on the list that did not appear is a failure too.
     """
     expected_changes = set(expected_changes or ())
+    expected_unchanged = set(expected_unchanged or ())
+    expected_additions = set(expected_additions or ())
+    both = expected_changes & expected_unchanged
+    if both:
+        raise ValueError(
+            "a member cannot be declared both changed and unchanged: "
+            + ", ".join(sorted(both))
+        )
     named_source = [member for member in source if not is_unnamed(member)]
     named_output = [member for member in output if not is_unnamed(member)]
     source_groups = group_by_path(named_source)
@@ -180,7 +202,7 @@ def compare(
             )
         )
 
-    for name in sorted(expected_changes):
+    for name in sorted(expected_changes | expected_unchanged):
         if name not in source_groups:
             findings.append(
                 Finding(
@@ -191,11 +213,46 @@ def compare(
                 )
             )
 
+    for name in sorted(expected_additions):
+        if name in source_groups:
+            findings.append(
+                Finding(
+                    "declared_addition_already_in_source",
+                    name,
+                    "an addition was declared for a member the source already has; that is a "
+                    "replacement, not an addition",
+                    True,
+                )
+            )
+        elif name not in output_groups:
+            findings.append(
+                Finding(
+                    "declared_addition_not_applied",
+                    name,
+                    "an addition was declared but the output does not have the member",
+                    True,
+                )
+            )
+
     for name in sorted(source_groups.keys() | output_groups.keys()):
         in_source = source_groups.get(name, [])
         in_output = output_groups.get(name, [])
         source_count = len(in_source)
         output_count = len(in_output)
+
+        if source_count == 0 and name in expected_additions:
+            # Reported, never silent: an addition is the least evidenced thing this pipeline can
+            # do, and a build that made one must say so in its own shape check.
+            findings.append(
+                Finding(
+                    "member_added_as_declared",
+                    name,
+                    f"absent from the source, present in the output ({output_count}): "
+                    f"{_describe(in_output)}",
+                    False,
+                )
+            )
+            continue
 
         if source_count != output_count:
             if output_count == 0:
@@ -248,6 +305,43 @@ def compare(
                         "member_changed",
                         name,
                         f"{_describe(in_source)} -> {_describe(in_output)}",
+                        False,
+                    )
+                )
+            continue
+
+        if name in expected_unchanged:
+            # Same storage rule as a declared change -- a member that came back uncompressed is
+            # not the member the engine expects, however identical its plaintext -- and the
+            # opposite content rule.
+            if Counter((item.flags, item.locale) for item in in_source) != Counter(
+                (item.flags, item.locale) for item in in_output
+            ):
+                findings.append(
+                    Finding(
+                        "declared_no_op_altered_storage",
+                        name,
+                        f"{_describe(in_source)} -> {_describe(in_output)}",
+                        True,
+                    )
+                )
+            elif Counter(member.sha256 for member in in_source) != Counter(
+                member.sha256 for member in in_output
+            ):
+                findings.append(
+                    Finding(
+                        "declared_no_op_changed_content",
+                        name,
+                        f"{_describe(in_source)} -> {_describe(in_output)}",
+                        True,
+                    )
+                )
+            else:
+                findings.append(
+                    Finding(
+                        "member_rewritten_unchanged",
+                        name,
+                        f"rewritten through the packer and byte-identical: {_describe(in_source)}",
                         False,
                     )
                 )
@@ -445,13 +539,36 @@ def main(argv: list[str] | None = None) -> int:
         metavar="ARCHIVE_NAME",
         help="a member the repack declared it replaced; may be repeated",
     )
+    parser.add_argument(
+        "--expect-unchanged",
+        action="append",
+        default=[],
+        metavar="ARCHIVE_NAME",
+        help=(
+            "a member the repack rewrote to the same bytes on purpose; its content changing is "
+            "the failure. May be repeated"
+        ),
+    )
+    parser.add_argument(
+        "--expect-added",
+        action="append",
+        default=[],
+        metavar="ARCHIVE_NAME",
+        help="a member the repack declared it added to the archive; may be repeated",
+    )
     arguments = parser.parse_args(argv)
 
-    report = compare(
-        read_manifest(arguments.source),
-        read_manifest(arguments.output),
-        set(arguments.expect_changed),
-    )
+    try:
+        report = compare(
+            read_manifest(arguments.source),
+            read_manifest(arguments.output),
+            set(arguments.expect_changed),
+            set(arguments.expect_unchanged),
+            set(arguments.expect_added),
+        )
+    except ValueError as error:
+        print(f"refusing to compare: {error}", file=sys.stderr)
+        return 2
     print(format_report(report))
     return 0 if report.ok else 1
 
