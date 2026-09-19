@@ -120,8 +120,15 @@ compatibility story between profiles.
 
 ## Phase 3 — Build and validation pipeline
 
-All four commands exist ([build pipeline](build-pipeline.md)). **No `Lords of Magic Development.app`
-has been created**, so the two install boxes are ticked for the command and not for the act.
+All four commands exist ([build pipeline](build-pipeline.md)). The two install boxes are ticked for
+the **act** as of 2026-09-18, not merely for the command: `Lords of Magic Development.app` exists
+and the engine has loaded archives this pipeline built. Read the Phase 4 and Phase 5 sections below
+for what those runs did and did not establish — each acceptance so far is **one member, replaced
+rather than added, length-preserving**, in storage class `0x80010100` (`gs.mpq`, `pic.mpq`), plus
+the `0x80010000` STORED class proven on 2026-09-19 (`sndfx.mpq`, `special.mpq`).
+
+*(This paragraph asserted the opposite until 2026-09-19, contradicting both line 17 and the Phase 4
+section of this same file. The profile's existence was verified directly before correcting it.)*
 
 - [x] Create a clean source tree for our mod. `mods/<mod-id>/` with `mod.toml` and
       `archives/<archive>/…`; the path below the archive directory is the member name with `/`
