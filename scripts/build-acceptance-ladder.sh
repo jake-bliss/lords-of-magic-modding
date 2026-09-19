@@ -817,7 +817,16 @@ fi
 #
 # Rung 9 replaces the pitch judgement with a presence judgement. `button.wav` in `sndfx.mpq` becomes
 # digital silence -- 0x80 for every 8-bit sample, the zero level, not zero bytes -- while
-# `special.mpq` keeps rung 8's own tone there unchanged; this rung only moves `sndfx.mpq`.
+# `special.mpq` keeps rung 7's 1760 Hz tone there unchanged; this rung only moves `sndfx.mpq`.
+# `special.mpq` is tied to rung 7 rather than rung 8 deliberately: rung 8's special.mpq value is
+# 220 Hz, and this rung's whole observation is presence versus absence on a 41 ms member, where
+# 220 Hz is the same nine-cycle shortness that made rung 8 unreadable -- now carrying the entire
+# result, and a hit too faint to register would read as silence with no symptom of the mistake.
+# 1760 Hz gives ~75 cycles in the same 41 ms and is a sound the engine has already demonstrably
+# played, so the audible side is made as hard to miss as 41 ms allows; the silent side stays the
+# ambiguous reading (a listener who hears nothing is certifying an absence, always the weaker
+# report), so the only side worth strengthening is the one that already carries an unambiguous
+# signal.
 # `welcome.wav` gets the SAME tone, 440 Hz, in BOTH archives: distinct from 220 and 1760 so it
 # cannot be confused with a previous sitting, and identical between archives so it fires
 # unconditionally as the liveness control -- a silent button click is then attributable to which
@@ -886,13 +895,16 @@ if wants 9 && (( audio_writer_ready )); then
     files_differ "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav" \
     "${work_dir}/${leaf}.sndfx.mpq.pristine.wav"
 
-  # special.mpq: rung 8's own special.mpq button tone, unchanged -- reconstructed from this rung's
-  # own seeded pristine (see reconstruct_tone), so it holds even when `--rung 9` runs without rung 8
-  # in the same invocation. Rung 8 assigned special.mpq the SNDFX_HERTZ value (its sndfx.mpq and
-  # special.mpq frequencies are exchanged relative to rung 7); that is the value used here, whatever
-  # it is, because the requirement is "unchanged from rung 8's special.mpq button tone", not a
-  # restated frequency.
-  reconstruct_tone special.mpq "${SNDFX_HERTZ}" "${leaf}" \
+  # special.mpq: rung 7's own special.mpq button tone (1760 Hz), unchanged -- reconstructed from
+  # this rung's own seeded pristine (see reconstruct_tone), so it holds even when `--rung 9` runs
+  # without rung 7 in the same invocation. Tied to rung 7 rather than rung 8 deliberately: rung 9's
+  # entire observation is presence versus absence on a 41 ms member, and at 220 Hz (rung 8's
+  # special.mpq value) that is nine cycles -- the same shortness that made rung 8 unreadable, now
+  # carrying the whole result. A special.mpq hit too faint to register reads as silence and the
+  # rung concludes sndfx.mpq with no symptom of the mistake. 1760 Hz gives ~75 cycles in the same
+  # 41 ms and is a sound the engine has already demonstrably played (rung 7's listen), so the
+  # audible side is made as hard to miss as 41 ms allows.
+  reconstruct_tone special.mpq "${SPECIAL_HERTZ}" "${leaf}" \
     "${work_dir}/rung9.${leaf}.special.mpq.tone.wav"
   cp "${work_dir}/rung9.${leaf}.special.mpq.tone.wav" "${mod_dir}/archives/special.mpq/wav/${leaf}"
   check "rung 9: special.mpq:wav\\${leaf} keeps the shipped member's byte count" \
@@ -936,15 +948,15 @@ if wants 9 && (( audio_writer_ready )); then
     wav_ancillary_identical "${work_dir}/button.wav.sndfx.mpq.pristine.wav" \
     "${work_dir}/rung9.button.wav.sndfx.mpq.packed.wav"
 
-  # Check 3: special.mpq's button.wav, read back out of the packed archive, is rung 8's special.mpq
+  # Check 3: special.mpq's button.wav, read back out of the packed archive, is rung 7's special.mpq
   # button tone.
-  check "rung 9: special.mpq's wav\\button.wav read back out of the packed archive is byte-identical to rung 8's special.mpq button tone" \
+  check "rung 9: special.mpq's wav\\button.wav read back out of the packed archive is byte-identical to rung 7's special.mpq button tone" \
     files_identical "${work_dir}/rung9.button.wav.special.mpq.packed.wav" \
     "${work_dir}/rung9.button.wav.special.mpq.tone.wav"
 
   note "  expected values: ${out_dir}/rung9-welcome-expected-sndfx.wav, -special.wav (${WELCOME_HERTZ} Hz, both archives)"
   note "                   ${out_dir}/rung9-button-expected-sndfx.wav (digital silence)"
-  note "                   ${out_dir}/rung9-button-expected-special.wav (rung 8's special.mpq tone, unchanged)"
+  note "                   ${out_dir}/rung9-button-expected-special.wav (rung 7's special.mpq tone, unchanged, ${SPECIAL_HERTZ} Hz)"
   note "  build id ${build_id}"
   note
 fi
