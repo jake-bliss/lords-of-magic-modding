@@ -11,13 +11,43 @@ observation, in the style of [`docs/engine-acceptance-ladder.md`](engine-accepta
 | Rung | `gs.mpq` | Observed |
 | --- | --- | --- |
 | A, `cheat_keys false`, member byte-identical | `cea24b878bb41b40` | Main menu, music and sound normal. **Delete on the world map: nothing moved, no balloon.** |
-| B, `cheat_keys true`, one token | `94ba04db6b5c6bc1` | **Delete on the world map: the sprites all shifted** — `getxrot 1 add rotatex rendermap`. |
+| B, `cheat_keys true`, one token | `94ba04db6b5c6bc1` | **`*` on a selected army: the Paladin Lord went from level 1 to LVL 9**, attack 24, armour 15, mana 10/20. Repeated `Delete` visibly rotated the map. |
 
 **The debug tier is reachable by flipping one GameScript token in `gs.mpq`.** That is the cheapest
 attended-test harness this project has: `*` sets every unit in the current army to 10,000 experience,
 runs `set_level_modifications` and sets 1,000 move points; `K` grants all 160 spells; `k` fills wizard
 mana. A future run that needs a levelled army in a particular state can press one key instead of
 playing to it.
+
+### `Delete` was the wrong instrument, and nearly cost the whole result
+
+The first reading of rung B was *"a bunch of sprites moved"* after one press of `Delete`. That was
+recorded as a confirmation. It should not have been:
+
+- **A single `rotatex` step is below the threshold of visibility.** One press moves the camera by
+  one increment and the screen looks the same. Pressing it repeatedly does move the terrain
+  unmistakably — tower, huts and coastline all shift — but the run sheet asked for one press.
+- **The world map animates on its own.** Creatures wander and idle frames cycle, so "sprites moved"
+  is what an *inert* key looks like too. Two screenshots a few seconds apart differ either way.
+
+The reading was withdrawn on that basis and then re-established by a different instrument entirely:
+`*`, whose effect is a **number on a panel** rather than a change in a picture. Level 1 to LVL 9 is
+not a judgement call.
+
+This is [[feedback-ask-only-what-the-sensor-can-report]] for the third time in one evening. The
+lesson that generalises: when an observation can be made either as a *quantity* or as an *image*,
+take the quantity. A number needs no repetition, no threshold, and no comparison against a
+background that is moving by itself.
+
+### `set_level_modifications` raises MAX hit points and not current ones
+
+**Observed in gameplay 2026-09-19.** After `*`, the Paladin Lord read **26/44** hit points. The
+hotkey body does exactly three things — `UNIT_EXPERIENCE_POINTS 10000 setunitdata`,
+`set_level_modifications`, `UNIT_MPS 1000 setunitdata` — and **none of them writes current hit
+points**. So the maximum moves with the new level and the current value stays where it was.
+
+Stated here because a levelled army *looks wounded*, and the next person to use this harness will
+otherwise read it as damage caused by the modified archive.
 
 ### The control was added mid-run, and it was necessary
 
