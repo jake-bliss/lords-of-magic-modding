@@ -90,6 +90,34 @@ So there are two lessons here, not one:
    whatever that path held at the time. Anything that must not move belongs in a synthetic
    fixture — which is where every test already is.
 
+### The runnable recipe for "31 of 31"
+
+**Added 2026-09-19.** Until now the union of 31 was reproducible only from the prose above: no
+committed command named the four directories, so re-deriving the headline meant retyping four
+paths. It is now a corpus-gated test, `save::tests::every_savegame_accounts_for_its_bytes`, and
+this is the invocation that reaches the whole union. Every path is read-only.
+
+```sh
+cd spikes/asset-viewer
+APPS="$HOME/Applications"
+SUB="Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition/English"
+LOM_GAME_DIR="$APPS/Lords of Magic GS5R3.app/$SUB" \
+LOM_SAVE_DIRS="$APPS/Steambuild 32 64bit DXVK.app/$SUB/savegame:$APPS/Lords of Magic Development.app/$SUB/savegame:$APPS/Lords of Magic 3.02.app/$SUB/savegame" \
+  cargo test --release --lib save::tests::every_savegame_accounts_for_its_bytes -- --ignored
+```
+
+`LOM_GAME_DIR` alone surveys that install's `savegame/` only — 11 files under GS5R3, 8 under 3.02,
+6 under either stock install. `LOM_SAVE_DIRS` adds the rest; the two together were measured at
+**31 on 2026-09-19**, unchanged from the 2026-09-18 count.
+
+**The test does not assert 31, and deliberately so.** This is a live directory: asserting a total
+is what made this headline wrong twice. It asserts a **floor**, the six shipped saves **pinned by
+name**, and — in any directory holding a `.lom` at all — the mid-game states `lastsave.lom` and
+`Merlin I`, so the class that carries the real evidence cannot go uncovered on a stock install
+where only the six authored demos exist. Files that do not open with the `LS_VER_` container magic
+(a `.DS_Store`, a note left in the folder) are skipped and **reported**, never silently dropped;
+anything that does carry the magic and fails to parse is a hard failure.
+
 **The caution the previous passes wrote still stands.** Six of the eleven states are authored demo
 scenarios shipped together and may share a generator; their agreement is weaker evidence than its
 count suggests. Five states are genuine play — the turn-315 state under 3.02 and the four GS5R3

@@ -6310,4 +6310,286 @@ mod tests {
             .collect();
         assert_eq!(distinct.len(), SECTION_TAGS.len());
     }
+    // -----------------------------------------------------------------------
+    // The installed corpus
+    // -----------------------------------------------------------------------
+    //
+    // Run with:
+    //   LOM_GAME_DIR=.../English cargo test --release -- --ignored
+    //
+    // and optionally widened to every install on the machine:
+    //   LOM_SAVE_DIRS='/path/one/savegame:/path/two/savegame' ...
+    //
+    // **This corpus is a live directory, and the test is written for that.** The `.lom` family
+    // under GS5R3 was last written by the game on 2026-09-18, after part of `docs/save-format.md`
+    // had been drafted; files appear, disappear and are re-saved between runs. So this asserts a
+    // **pinned required set** plus a **floor**, never a total. The prose figure of "31 of 31" is a
+    // union across four installs and is not reproducible from one directory by construction --
+    // `docs/save-format.md` has already had that headline wrong twice, in opposite directions.
+
+    /// **Observed in the corpus, 2026-09-19.** The saves shipped with the game, present in all
+    /// four installs on this machine. Pinned by name: these do not move, and requiring them is
+    /// what stops a sweep over an empty or wrong directory from passing.
+    const SHIPPED_SAVEGAMES: &[&str] = &[
+        "combat.sav",
+        "experience.sav",
+        "magic.sav",
+        "merc.sav",
+        "quickstart",
+        "temple.sav",
+    ];
+
+    /// **Observed in the corpus, 2026-09-19.** Mid-game player states, required of any directory
+    /// that holds one at all.
+    ///
+    /// The shipped six are authored demo scenarios that may share a generator, and two of the four
+    /// installs hold nothing else -- so a floor of six covers **no mid-game save**, which is the
+    /// exact class `docs/save-format.md`'s headline went wrong on twice. A regression in a section
+    /// length or an `LS_SPR_` record class would pass green on the Steam build.
+    ///
+    /// The condition is "this directory has at least one `.lom`", which is true of the GS5R3 and
+    /// 3.02 savegame directories and false of the other two. Both files below are present in both
+    /// of those, and `save_survey` classifies them together as one distinct state per install.
+    const MID_GAME_SAVEGAMES: &[&str] = &["lastsave.lom", "Merlin I"];
+
+    /// **Observed in the corpus, 2026-09-19.** Every container in this corpus opens with this
+    /// tag. Used to decide whether an unparseable file is a defect or simply not a savegame --
+    /// the directory is the user's live one, and Finder writes `.DS_Store` into it the moment
+    /// somebody opens the folder, which this project's attended runs do routinely.
+    const SAVE_CONTAINER_MAGIC: &[u8; 8] = b"LS_VER_\0";
+
+    fn game_directory() -> std::path::PathBuf {
+        let directory = std::env::var_os("LOM_GAME_DIR")
+            .map(std::path::PathBuf::from)
+            .expect("set LOM_GAME_DIR to the installed English directory");
+        assert!(
+            directory.join("lomse.exe").is_file(),
+            "no lomse.exe under {}",
+            directory.display()
+        );
+        directory
+    }
+
+    /// The two pinned sets are the size they were measured at.
+    ///
+    /// **This is a tamper guard on the guard's own scope, and nothing more.** It cannot tell you
+    /// the names are *correct* -- the corpus test does that, by requiring each one to be present
+    /// and to parse. What it catches is the one failure mode the corpus test structurally cannot:
+    /// **shrinking a pinned set**. A smaller set still satisfies "every member is present", so
+    /// deleting `combat.sav` or emptying [`MID_GAME_SAVEGAMES`] left the corpus test green while
+    /// silently narrowing what it covered. Both mutants survived the 2026-09-19 sweep until this
+    /// existed; both die on it now.
+    ///
+    /// Not `#[ignore]`d: it reads no corpus and must run in the default `cargo test`, which is
+    /// where a set would be quietly trimmed.
+    #[test]
+    fn the_pinned_savegame_sets_have_not_been_narrowed() {
+        assert_eq!(
+            SHIPPED_SAVEGAMES,
+            [
+                "combat.sav",
+                "experience.sav",
+                "magic.sav",
+                "merc.sav",
+                "quickstart",
+                "temple.sav"
+            ],
+            "the shipped-save pin changed; re-measure the installs before editing it"
+        );
+        assert_eq!(
+            MID_GAME_SAVEGAMES,
+            ["lastsave.lom", "Merlin I"],
+            "the mid-game pin changed; this is the only class covering real play"
+        );
+    }
+
+    fn base_name(path: &std::path::Path) -> String {
+        path.file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Every file in every savegame directory under survey, whatever it is called.
+    ///
+    /// Extension is not filtered on: two corpus files (`quickstart`, `Merlin I`) have none, and a
+    /// sweep that filtered on `.sav` would skip the only mid-game player states in existence here.
+    fn savegame_files() -> Vec<(String, Vec<u8>)> {
+        let mut directories = vec![game_directory().join("savegame")];
+        if let Some(extra) = std::env::var_os("LOM_SAVE_DIRS") {
+            directories.extend(
+                extra
+                    .to_string_lossy()
+                    .split(':')
+                    .filter(|value| !value.is_empty())
+                    .map(std::path::PathBuf::from),
+            );
+        }
+        let mut out = Vec::new();
+        for directory in &directories {
+            let entries = std::fs::read_dir(directory)
+                .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()));
+            for entry in entries {
+                let path = entry.expect("a directory entry").path();
+                if !path.is_file() {
+                    continue;
+                }
+                // Dotfiles are never savegames and are not the user's doing. `.DS_Store` alone
+                // failed this test with "0 of 9 tags occur exactly once" -- a true statement about
+                // a file that has nothing to do with the format.
+                if base_name(&path).starts_with('.') {
+                    continue;
+                }
+                let bytes = std::fs::read(&path).expect("read a savegame");
+                out.push((path.to_string_lossy().into_owned(), bytes));
+            }
+        }
+        out.sort_by(|left, right| left.0.cmp(&right.0));
+        out
+    }
+
+    /// Every installed savegame parses, satisfies every structural invariant, accounts for its
+    /// bytes with zero slack, and reassembles byte-identically with `LS_SPR_` regenerated.
+    ///
+    /// **What this proves and what it does not.** The byte account is the real content: a section
+    /// model that is merely plausible stops short of its section's end or runs off it, and every
+    /// length in the three writer-derived sections is either a constant in the instruction stream
+    /// or a count the file stores, so there is nothing to tune. The **re-encode** is weaker than it
+    /// looks -- once `parse` succeeds it is an identity, so it establishes lossless preservation
+    /// and correct container splicing and nothing about any record's internal field boundaries. It
+    /// is asserted because a splicing regression is otherwise invisible, not because it falsifies
+    /// the record model. See `docs/save-format.md`.
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR"]
+    fn every_savegame_accounts_for_its_bytes() {
+        let files = savegame_files();
+
+        // The tripwire, in three parts. The floor alone would pass on six copies of the wrong
+        // file; the shipped set alone would pass on a directory that had lost everything else;
+        // and both together still cover no mid-game state on a stock install.
+        assert!(
+            files.len() >= SHIPPED_SAVEGAMES.len(),
+            "found {} savegames, fewer than the {} the game ships",
+            files.len(),
+            SHIPPED_SAVEGAMES.len()
+        );
+        let present = |wanted: &str| {
+            files
+                .iter()
+                .any(|(name, _)| base_name(std::path::Path::new(name)).eq_ignore_ascii_case(wanted))
+        };
+        for shipped in SHIPPED_SAVEGAMES {
+            assert!(
+                present(shipped),
+                "the shipped savegame {shipped} is not in the surveyed directories"
+            );
+        }
+        // Conditional, because two of the four installs legitimately hold no mid-game save. Where
+        // one exists the class must be covered, so a `.lom` regression cannot hide behind the six
+        // authored demos.
+        let holds_mid_game = files.iter().any(|(name, _)| {
+            std::path::Path::new(name)
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("lom"))
+        });
+        if holds_mid_game {
+            for mid_game in MID_GAME_SAVEGAMES {
+                assert!(
+                    present(mid_game),
+                    "a surveyed directory holds a .lom save, so the mid-game state {mid_game} is \
+                     expected beside it and is missing"
+                );
+            }
+        }
+
+        let mut failures = Vec::new();
+        let mut skipped = Vec::new();
+        let mut surveyed = 0_usize;
+        for (name, bytes) in &files {
+            // A file that does not open with the container magic is not a savegame, and this is a
+            // live directory that collects other things. Skipping it is honest; skipping it
+            // SILENTLY would not be, so the bucket is reported beside the result. A file that does
+            // carry the magic and still fails to parse is a hard failure, which is what keeps the
+            // skip from becoming an escape hatch for a parser regression.
+            if bytes.get(..SAVE_CONTAINER_MAGIC.len()) != Some(SAVE_CONTAINER_MAGIC.as_slice()) {
+                skipped.push(base_name(std::path::Path::new(name)));
+                continue;
+            }
+            surveyed += 1;
+            let save = match SaveFile::parse(bytes) {
+                Ok(save) => save,
+                Err(error) => {
+                    failures.push(format!("{name}: {error}"));
+                    continue;
+                }
+            };
+
+            // Structural invariants are re-derived from the raw bytes on the container, not read
+            // off the parsed structs, so they are a second implementation that can genuinely
+            // disagree with the first. Corpus regularities are deliberately NOT asserted: a real
+            // save that breaks one is a discovery, and failing on it would train a reader to
+            // ignore the signal worth acting on.
+            for invariant in save.container.structural_checks(bytes) {
+                if !invariant.passed {
+                    failures.push(format!(
+                        "{name}: structural invariant `{}` failed, measured {}",
+                        invariant.name, invariant.measured
+                    ));
+                }
+            }
+
+            // The byte account, section by section, for every section that models its own extent.
+            let accounted = [
+                (SectionTag::Multiplayer, save.multiplayer.accounted_len()),
+                (SectionTag::Map, save.map.accounted_len()),
+                (SectionTag::Game, save.game.accounted_len()),
+            ];
+            for (tag, len) in accounted {
+                let payload = save.container.location(tag).payload_len;
+                if len != payload {
+                    failures.push(format!(
+                        "{name}: {} accounts for {len} bytes of a {payload}-byte payload, a slack \
+                         of {}",
+                        tag.name(),
+                        payload as i64 - len as i64,
+                    ));
+                }
+            }
+
+            // `LS_SPR_` has no `accounted_len`; its account is that the decoded records re-emit
+            // the payload exactly.
+            let sprites_payload = save.container.location(SectionTag::Sprites);
+            let reemitted = save.sprites.encode();
+            let original = &bytes[sprites_payload.payload_offset..sprites_payload.payload_end()];
+            if reemitted != original {
+                failures.push(format!(
+                    "{name}: LS_SPR_ re-emitted {} bytes for a {}-byte payload",
+                    reemitted.len(),
+                    original.len()
+                ));
+            }
+
+            if save.reencode_with_sprites(bytes) != *bytes {
+                failures.push(format!(
+                    "{name}: the whole file did not reassemble byte-identically"
+                ));
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "{} of {surveyed} surveyed savegame(s) did not account for their bytes \
+             (skipped as non-containers: {skipped:?}): {:#?}",
+            failures.len(),
+            failures
+        );
+        // The skip bucket cannot swallow the corpus: every pinned file must have been surveyed,
+        // and each carries the magic, so this fails if the magic test ever starts rejecting one.
+        assert!(
+            surveyed >= SHIPPED_SAVEGAMES.len(),
+            "only {surveyed} file(s) carried the container magic, fewer than the {} pinned \
+             shipped saves; skipped: {skipped:?}",
+            SHIPPED_SAVEGAMES.len()
+        );
+    }
 }

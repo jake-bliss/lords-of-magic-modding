@@ -939,4 +939,290 @@ mod tests {
         let image = PbmImage::decode(&pbm(1, &[3, 0, 1, 1, 0])).unwrap();
         assert_eq!(image.rgba, [10, 20, 30, 255, 40, 50, 60, 255]);
     }
+    // -----------------------------------------------------------------------
+    // The installed corpus
+    // -----------------------------------------------------------------------
+    //
+    // Run with:
+    //   LOM_GAME_DIR=.../English cargo test --release -- --ignored
+    //
+    // `pic.mpq` carries no listfile, but every PBM is identified by content rather than by name,
+    // so the synthesised `File%08u.xxx` names StormLib hands back are enough here. (`imp.mpq` is
+    // not: see the note on the IMP sweep.)
+
+    /// **Observed in the corpus, 2026-09-19.** The PBM populations this machine's installs hold,
+    /// as `(archive, total members, PBM members, non-PBM members skipped, byte-identical files,
+    /// odd-width members)`.
+    ///
+    /// There is more than one, and pinning a single number would have been wrong: the stock
+    /// `pic.mpq` in the Steam build and in `Lords of Magic Development` holds 1,045 PBM members,
+    /// while GS5R3's replacement `pic.mpq` holds 1,377. `docs/native-asset-stage.md` quotes the
+    /// first and `docs/agent-handoff.md` the second, and both are right about their own archive.
+    ///
+    /// **Keyed on the archive's total member count, not on the PBM count, and that distinction is
+    /// the whole point.** An earlier revision asserted only that the PBM count was *one of* the
+    /// attested values, which accepts a degraded corpus: with `LOM_GAME_DIR` on GS5R3, a
+    /// tightening of [`crate::asset::probe`] or [`PbmFile::parse`] that rejected GS5R3's 332
+    /// exclusive members would drop `checked` to exactly 1,045 -- matching the stock row -- and
+    /// every other assertion would still hold, because the survivors *are* the stock set. That is
+    /// not hypothetical: `docs/roadmap.md:302` records GS5R3's `PORTRAIT/decr5p00.lbm` as shipped
+    /// art whose packets overrun their rows, which is precisely what a stricter parse would refuse.
+    /// `entries.len()` is 1,071 versus 1,406 and separates the two archives cleanly, so the row is
+    /// chosen before any decoding happens and `checked` is then an equality against that row.
+    ///
+    /// A third archive is a prompt to measure it and add a row **with its own date**.
+    const ATTESTED_PBM_POPULATIONS: &[AttestedPbmArchive] = &[
+        AttestedPbmArchive {
+            name: "stock pic.mpq",
+            members: 1_071,
+            pbm_members: 1_045,
+            skipped: 26,
+            byte_identical_files: 8,
+            odd_width: 88,
+        },
+        AttestedPbmArchive {
+            name: "GS5R3 pic.mpq",
+            members: 1_406,
+            pbm_members: 1_377,
+            skipped: 29,
+            byte_identical_files: 8,
+            odd_width: 88,
+        },
+    ];
+
+    /// One attested `pic.mpq`.
+    ///
+    /// `byte_identical_files` is low, and that is a finding rather than a shortfall: the shipped
+    /// art was packed by at least two different ByteRun1 packers and this encoder reproduces
+    /// neither exactly. What the sweep gates on is pixel-losslessness and non-`BODY` chunk
+    /// preservation; this number is pinned so a change in the encoder's packet boundaries is
+    /// visible rather than silent. `odd_width` is the standing evidence for the "ByteRun1 rows are
+    /// padded to an even byte count" rule -- those images decode only under it. Both happen to
+    /// coincide across the two archives today; they are carried per row anyway so that a third
+    /// archive cannot break them without a place to record why.
+    ///
+    /// `skipped` is arithmetically `members - pbm_members`, so it cannot fail on its own. It is
+    /// carried and asserted because that bucket is where a silently rejected member *goes*, and a
+    /// failure that names it reads very differently from one that only says a total moved.
+    #[derive(Debug)]
+    struct AttestedPbmArchive {
+        name: &'static str,
+        members: usize,
+        pbm_members: usize,
+        skipped: usize,
+        byte_identical_files: usize,
+        odd_width: usize,
+    }
+
+    /// The attested archives are told apart by their member count, and that key is unambiguous.
+    ///
+    /// **Why this is a separate test.** The corpus sweep picks its row with
+    /// `archive.members == entries.len()`. Mutating that lookup to also accept
+    /// `archive.pbm_members == entries.len()` **survived** the 2026-09-19 mutation sweep -- not
+    /// because the guard is weak, but because the two key spaces happen to be disjoint today:
+    /// `{1_071, 1_406}` against `{1_045, 1_377}`. No corpus that exists can distinguish them, so
+    /// the corpus cannot kill that mutant and saying so is more useful than pretending otherwise.
+    ///
+    /// That disjointness is a fact about the archives worth pinning in its own right, because a
+    /// third archive whose PBM count collided with another archive's member count would make the
+    /// keying genuinely ambiguous -- and would do it silently. This fails instead.
+    #[test]
+    fn the_attested_pbm_archives_are_distinguishable_by_member_count() {
+        let members: Vec<usize> = ATTESTED_PBM_POPULATIONS
+            .iter()
+            .map(|archive| archive.members)
+            .collect();
+        let mut unique = members.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            members.len(),
+            "two attested archives share a member count, so the row lookup is ambiguous"
+        );
+        for archive in ATTESTED_PBM_POPULATIONS {
+            assert!(
+                !members.contains(&archive.pbm_members),
+                "{}'s PBM count {} equals some archive's member count, so a decoder regression \
+                 could move one archive onto another's row",
+                archive.name,
+                archive.pbm_members
+            );
+            assert_eq!(
+                archive.skipped,
+                archive.members - archive.pbm_members,
+                "{}: the skipped bucket does not close the arithmetic",
+                archive.name
+            );
+        }
+    }
+
+    fn game_directory() -> std::path::PathBuf {
+        let directory = std::env::var_os("LOM_GAME_DIR")
+            .map(std::path::PathBuf::from)
+            .expect("set LOM_GAME_DIR to the installed English directory");
+        assert!(
+            directory.join("lomse.exe").is_file(),
+            "no lomse.exe under {}",
+            directory.display()
+        );
+        directory
+    }
+
+    /// Every PBM member of the installed `pic.mpq` survives a parse/encode/parse round trip with
+    /// its pixels intact and its non-`BODY` chunks untouched.
+    ///
+    /// The pixel assertion is the one that carries the reimport claim. The chunk assertion is the
+    /// one that would have caught a regression the pixel check cannot see: deleting the
+    /// chunk-preserving arm of the encoder outright still leaves every pixel correct while 917
+    /// files silently lose their `CRNG`, `DPPS` and `TINY` chunks.
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR"]
+    fn every_archived_pbm_round_trips() {
+        let archive =
+            crate::mpq::Archive::open(&game_directory().join("pic.mpq")).expect("open pic.mpq");
+        let entries = archive.entries().expect("enumerate pic.mpq");
+
+        // The row is chosen from the archive's own member count, BEFORE anything is decoded, so a
+        // decoder regression cannot move the corpus onto a different row's expectations.
+        let attested = ATTESTED_PBM_POPULATIONS
+            .iter()
+            .find(|archive| archive.members == entries.len())
+            .unwrap_or_else(|| {
+                panic!(
+                    "pic.mpq holds {} members, which matches no attested archive \
+                     ({ATTESTED_PBM_POPULATIONS:?}) -- measure it and add a row with its date",
+                    entries.len()
+                )
+            });
+
+        let mut checked = 0_usize;
+        let mut skipped = 0_usize;
+        let mut pixel_lossless = 0_usize;
+        let mut file_identical = 0_usize;
+        let mut odd_width = 0_usize;
+        let mut failures = Vec::new();
+
+        for entry in &entries {
+            let bytes = match archive.read(&entry.name) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    failures.push(format!("{}: could not read: {error}", entry.name));
+                    continue;
+                }
+            };
+            if !matches!(
+                crate::asset::probe(&entry.name, &bytes).map(|info| info.kind),
+                Ok(crate::asset::AssetKind::IffPbm)
+            ) {
+                // ILBM is planar and this encoder does not write it, so skipping is honest -- but
+                // the bucket is counted and pinned, because it is also where a member that this
+                // decoder newly *refuses* would silently land.
+                skipped += 1;
+                continue;
+            }
+            let file = match PbmFile::parse(&bytes) {
+                Ok(file) => file,
+                Err(error) => {
+                    failures.push(format!("{}: {error}", entry.name));
+                    continue;
+                }
+            };
+            checked += 1;
+            if file.image.width % 2 == 1 {
+                odd_width += 1;
+            }
+
+            let encoded = match file.encode() {
+                Ok(encoded) => encoded,
+                Err(error) => {
+                    failures.push(format!("{}: could not re-encode: {error}", entry.name));
+                    continue;
+                }
+            };
+            let rewritten = match PbmFile::parse(&encoded) {
+                Ok(rewritten) => rewritten,
+                Err(error) => {
+                    failures.push(format!(
+                        "{}: re-encoded file does not parse: {error}",
+                        entry.name
+                    ));
+                    continue;
+                }
+            };
+            if rewritten.image.indices == file.image.indices {
+                pixel_lossless += 1;
+            } else {
+                let at = rewritten
+                    .image
+                    .indices
+                    .iter()
+                    .zip(&file.image.indices)
+                    .position(|(wrote, read)| wrote != read);
+                failures.push(format!(
+                    "{}: pixels changed (first differing pixel {at:?})",
+                    entry.name
+                ));
+            }
+
+            let describe = |file: &PbmFile| -> Vec<(String, usize)> {
+                file.chunks
+                    .iter()
+                    .filter(|chunk| &chunk.id != b"BODY")
+                    .map(|chunk| {
+                        (
+                            String::from_utf8_lossy(&chunk.id).into_owned(),
+                            chunk.data.len(),
+                        )
+                    })
+                    .collect()
+            };
+            let theirs = describe(&file);
+            let ours = describe(&rewritten);
+            if theirs != ours {
+                failures.push(format!(
+                    "{}: non-BODY chunks changed: theirs={theirs:?} ours={ours:?}",
+                    entry.name
+                ));
+            } else if file
+                .chunks
+                .iter()
+                .zip(&rewritten.chunks)
+                .any(|(left, right)| &left.id != b"BODY" && left.data != right.data)
+            {
+                failures.push(format!(
+                    "{}: a non-BODY chunk kept its length but changed its bytes",
+                    entry.name
+                ));
+            }
+
+            if encoded == bytes {
+                file_identical += 1;
+            }
+        }
+
+        assert_eq!(failures, Vec::<String>::new(), "{}", attested.name);
+        assert_eq!(
+            checked, attested.pbm_members,
+            "{}: the PBM population changed; {skipped} of {} members were skipped as non-PBM",
+            attested.name, attested.members
+        );
+        assert_eq!(
+            skipped, attested.skipped,
+            "{}: the non-PBM bucket changed -- a member this decoder used to accept may have been \
+             silently rejected into it",
+            attested.name
+        );
+        assert_eq!(
+            pixel_lossless, checked,
+            "{}: a member did not survive pixel-lossless",
+            attested.name
+        );
+        assert_eq!(odd_width, attested.odd_width, "{}", attested.name);
+        assert_eq!(
+            file_identical, attested.byte_identical_files,
+            "{}",
+            attested.name
+        );
+    }
 }
