@@ -45,10 +45,17 @@ GAME_SUBPATH = (
 
 # The archives this pipeline is willing to repack.
 #
-# `gs.mpq` and `pic.mpq` only. `imp.mpq` is byte-identical across all three profiles, so a change
-# to it cannot be validated against a profile difference, and nothing in the corpus work has ever
-# needed to write it. Widening this set is a deliberate act, not a default.
-SUPPORTED_ARCHIVES = ("gs.mpq", "pic.mpq")
+# `imp.mpq`, `sndfx.mpq` and `special.mpq` were added 2026-09-18 for the engine-acceptance ladder.
+# All three are byte-identical across the installed profiles, so a change to one still cannot be
+# validated against a profile difference -- but that was never the reason to keep them out. For
+# `imp.mpq` the reason was that no IMP this repository writes had ever been inside an archive:
+# every one landed in a loose `.imp`, and loose files do not override MPQ members. For the two
+# audio archives it is a storage class: every member is 0x80010000, STORED, where every archive
+# acceptance this project has proven was 0x80010100, IMPLODE.
+#
+# Widening this set stays a deliberate act, not a default. Note what it costs: `PIPELINE_ARCHIVES`
+# manifests every archive here on every validate and every build, whether or not a mod touches it.
+SUPPORTED_ARCHIVES = ("gs.mpq", "pic.mpq", "imp.mpq", "sndfx.mpq", "special.mpq")
 
 MOD_ID_PATTERN = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z")
 

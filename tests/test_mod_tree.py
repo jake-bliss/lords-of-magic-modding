@@ -120,13 +120,32 @@ class LoadTest(unittest.TestCase):
         self.assertIn("no archive to belong to", loaded.rejected[0][1])
 
     def test_an_unsupported_archive_directory_is_rejected(self) -> None:
+        # `sndfx.mpq` and `imp.mpq` were both once the example here and both are now supported.
+        # The name is taken from the set's complement rather than written in, so widening the set
+        # again cannot leave this test asserting a refusal of something the pipeline now accepts.
+        unsupported = next(
+            name
+            for name in ("attr.mpq", "smk.mpq", "speech.mpq")
+            if name not in SUPPORTED_ARCHIVES
+        )
         tree = self.fixture()
-        tree.add("imp.mpq/a.imp", b"\x00")
+        tree.add(f"{unsupported}/a.bin", b"\x00")
         loaded = load(tree.root)
 
         self.assertEqual(loaded.members, [])
         self.assertIn("unsupported archive", loaded.rejected[0][1])
-        self.assertNotIn("imp.mpq", SUPPORTED_ARCHIVES)
+
+    def test_every_supported_archive_directory_is_accepted(self) -> None:
+        # The other half: a set that only ever refuses is a set nobody notices has gone empty.
+        tree = self.fixture()
+        for index, archive in enumerate(SUPPORTED_ARCHIVES):
+            tree.add(f"{archive}/member{index}.bin", bytes((index,)))
+        loaded = load(tree.root)
+
+        self.assertEqual(loaded.rejected, [])
+        self.assertEqual(
+            sorted(loaded.archives()), sorted(SUPPORTED_ARCHIVES)
+        )
 
     def test_finder_litter_is_rejected_by_name(self) -> None:
         """`.DS_Store` would otherwise be inferred as a member and reported as a puzzling miss."""

@@ -19,12 +19,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.mod_tree import GAME_SUBPATH, PROFILE_APPS
+from tools.mod_tree import GAME_SUBPATH, PROFILE_APPS, SUPPORTED_ARCHIVES
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 DEV_PROFILE_NAME = "Lords of Magic Development.app"
 BASELINE = PROFILE_APPS["vanilla"]
-ARCHIVES = ("gs.mpq", "pic.mpq")
+# Taken from the set the pipeline actually packs rather than written out. When `imp.mpq`,
+# `sndfx.mpq` and `special.mpq` were added on 2026-09-18, a hardcoded pair here turned into seven
+# red tests that all said "MANIFEST.sha256 records no hash for pristine/imp.mpq" -- correct
+# behaviour reported as a defect.
+ARCHIVES = SUPPORTED_ARCHIVES
 
 
 def digest(path: Path) -> str:
@@ -322,6 +326,62 @@ class RestoreTest(PipelineTestCase):
         self.assert_other_profiles_untouched()
 
 
+@unittest.skipIf(game_is_running(), "lomse.exe is running; install/restore refuse while it is up")
+class RecordPristineTest(PipelineTestCase):
+    """`--record-pristine`, the cheap path for a profile that predates a widened archive set."""
+
+    def test_record_pristine_adds_a_missing_archive_without_disturbing_the_rest(self) -> None:
+        """Widening PIPELINE_ARCHIVES must not force `--recreate` on a good profile.
+
+        `--recreate` discards every install in it, so the cheap path has to exist -- and it has to
+        refuse to record an archive that is no longer pristine, which the next test covers.
+        """
+        self.create_profile()
+        manifest = self.metadata / "MANIFEST.sha256"
+        recorded = manifest.read_text()
+        # Take one archive back out of the record, as a profile created before it was supported
+        # would be.
+        lines = [line for line in recorded.splitlines() if "pristine/pic.mpq" not in line]
+        manifest.write_text("\n".join(lines) + "\n")
+        (self.metadata / "pristine" / "pic.mpq").unlink()
+
+        result = self.run_script("install-dev.sh", "--record-pristine")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pic.mpq", result.stdout)
+        self.assertIn("recorded", result.stdout)
+        self.assertEqual(manifest.read_text().count("pristine/"), len(ARCHIVES))
+        self.assert_other_profiles_untouched()
+
+    def test_record_pristine_refuses_an_archive_that_is_already_modified(self) -> None:
+        self.create_profile()
+        manifest = self.metadata / "MANIFEST.sha256"
+        lines = [line for line in manifest.read_text().splitlines() if "pristine/pic.mpq" not in line]
+        manifest.write_text("\n".join(lines) + "\n")
+        (self.metadata / "pristine" / "pic.mpq").unlink()
+        dev_game = self.applications / DEV_PROFILE_NAME / GAME_SUBPATH
+        dev_game.joinpath("pic.mpq").write_bytes(b"a mod put this here")
+
+        result = self.run_script("install-dev.sh", "--record-pristine")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match the baseline", result.stderr)
+        self.assertFalse((self.metadata / "pristine" / "pic.mpq").exists())
+        self.assert_other_profiles_untouched()
+
+    def test_record_pristine_leaves_an_already_recorded_archive_alone(self) -> None:
+        self.create_profile()
+        pristine = self.metadata / "pristine" / "pic.mpq"
+        before = digest(pristine)
+
+        result = self.run_script("install-dev.sh", "--record-pristine")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already recorded", result.stdout)
+        self.assertEqual(digest(pristine), before)
+        self.assert_other_profiles_untouched()
+
+
 class ProfileTableTest(unittest.TestCase):
     def test_the_bash_and_python_profile_tables_agree(self) -> None:
         """`scripts/lib-mod-pipeline.sh` duplicates `mod_tree.PROFILE_APPS`. Keep them equal."""
@@ -337,6 +397,56 @@ class ProfileTableTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), app)
+
+    def test_the_bash_and_python_archive_lists_agree(self) -> None:
+        """`PIPELINE_ARCHIVES` duplicates `mod_tree.SUPPORTED_ARCHIVES`. Keep them equal.
+
+        They are not merely both lists of archives: `PIPELINE_ARCHIVES` decides which archives get
+        a pristine copy in the development profile, and `SUPPORTED_ARCHIVES` decides which a mod
+        tree may name. An archive in the second and not the first is a mod that can be built and
+        never rolled back.
+        """
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f'source "{PROJECT_DIR}/scripts/lib-mod-pipeline.sh"; '
+                'printf "%s\n" "${PIPELINE_ARCHIVES[@]}"',
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            sorted(result.stdout.split()), sorted(SUPPORTED_ARCHIVES)
+        )
+
+    def test_every_pipeline_archive_has_a_listfile_rule(self) -> None:
+        """Each archive either names its own members or has a recovered list. No third case.
+
+        `pic.mpq`, `imp.mpq`, `sndfx.mpq` and `special.mpq` carry no `(listfile)`, so without a
+        recovered list every member of them lists as `File%08u.xxx` and cannot be written at all.
+        An archive added to the pipeline without one would fail at pack time with StormLib error
+        22, which names the symptom and not the omission.
+        """
+        for archive in SUPPORTED_ARCHIVES:
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f'source "{PROJECT_DIR}/scripts/lib-mod-pipeline.sh"; '
+                    f'profile_listfile vanilla {archive}',
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            path = result.stdout.strip()
+            if archive == "gs.mpq":
+                self.assertEqual(path, "", "gs.mpq carries its own (listfile)")
+            else:
+                self.assertTrue(path, f"{archive} has no recovered name list")
+                self.assertTrue(Path(path).is_file(), f"{path} does not exist")
 
     def test_an_unknown_profile_label_is_refused_by_bash_too(self) -> None:
         result = subprocess.run(

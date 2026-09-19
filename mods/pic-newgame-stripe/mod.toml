@@ -1,0 +1,23 @@
+# Ladder rung 4: the PBM encoder with a visible change, at a changed length.
+#
+# The same member as rung 3, with a clean rectangle -- x 260..380, y 60..420 -- filled with palette
+# index 1. In this member's own CMAP index 1 is pure red (255, 0, 0), and the engine has already
+# been observed rendering that index as red from this very member (mods/newgame-picslice,
+# 2026-09-18), so the colour is not a fresh assumption.
+#
+# Two differences from that earlier run are the point. It is a FILL, so it merges runs and the
+# member's length moves again; and its edges are straight, because a real encoder can end a run
+# anywhere, whereas `tools/pbm_patch.py` could only repaint whole runs and left a ragged edge. A
+# clean-edged stripe is therefore a thing the old mechanism could not have produced.
+#
+# The control is the rest of the screen: everything outside the stripe, including all four edges of
+# the image, must render exactly as shipped.
+id = "pic-newgame-stripe"
+name = "Main menu, striped"
+version = "0.1.0"
+description = "Rung 4: a clean filled rectangle written through pbm.rs, changing the member's length."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false

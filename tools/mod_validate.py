@@ -699,6 +699,41 @@ def check_unvalidatable_content(tree: ModTree, report: ValidationReport) -> None
         "inspects them: .lbm images are decoded and palette-checked, but sprite (.imp), map "
         "(.scn/.smp/.lgd), tileset (.til) and audio members are not",
     )
+    audio_members = [
+        source for source in tree.members if source.archive in ("sndfx.mpq", "special.mpq")
+    ]
+    if audio_members:
+        report.add(
+            WARNING,
+            "engine-acceptance",
+            str(tree.root),
+            f"{len(audio_members)} member(s) target sndfx.mpq or special.mpq. Every member of "
+            "both is stored 0x80010000 (EXISTS | ENCRYPTED, STORED), and every archive the engine "
+            "has been observed accepting from this pipeline -- gs.mpq 2026-09-16, pic.mpq "
+            "2026-09-18 -- was 0x80010100, IMPLODE. This is a storage class the engine has never "
+            "been asked to accept from us, so it is a different question from another image "
+            "member rather than a repeat of one. A further trap: 1,214 member NAMES are held by "
+            "BOTH archives, and nothing known says which one the engine opens, so a change to "
+            "one of them alone has no unambiguous null result. See "
+            "docs/engine-acceptance-ladder.md.",
+        )
+
+    imp_members = [source for source in tree.members if source.archive == "imp.mpq"]
+    if imp_members:
+        report.add(
+            WARNING,
+            "engine-acceptance",
+            str(tree.root),
+            f"{len(imp_members)} member(s) target imp.mpq. NO rewritten imp.mpq has ever been in "
+            "front of the engine, and no IMP this repository wrote has ever been read by it: "
+            "every one landed in a loose `.imp`, and loose files do not override MPQ members "
+            "(measured 2026-09-16). The archive's storage class is not the open question -- all "
+            "3,600 members are 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), the class the engine "
+            "accepted on 2026-09-16 -- and neither is addressing, since every member resolves "
+            "under reports/member-names/all-profiles-imp-recovered.txt. What is open is whether "
+            "the engine reads the result. See docs/engine-acceptance-ladder.md.",
+        )
+
     pic_members = [source for source in tree.members if source.archive == "pic.mpq"]
     if pic_members:
         report.add(

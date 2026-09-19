@@ -1,0 +1,24 @@
+# Ladder rung 2: an IMP pixel change the engine cannot hide.
+#
+# The same member and frame as rung 0/1 -- `iface\cursors.imp` frame 111, the `POINTER` sequence --
+# with its gauntlet repainted from green to white. Because rungs 0 and 1 already put the unchanged
+# member in front of the engine, anything that differs here is the pixel edit and nothing else.
+#
+# The edit is a set of disjoint palette-index SWAPS, not a fill, and that is load-bearing: a
+# permutation of the index alphabet maps equal neighbours to equal neighbours, so the IMP run-length
+# encoder produces a payload of exactly the same length and no absolute pointer inside the file
+# moves. The build asserts `shift=0` and a 90,000-byte member. A size change is rung 3's variable,
+# and a rung that moved two things at once could not say which one the engine objected to.
+#
+# The frame's own control travels with it: the dark outline and the transparent silhouette are not
+# in the swap set, so "a white gauntlet of exactly the shipped shape" and "the cursor is broken"
+# are different observations.
+id = "imp-cursor-repaint"
+name = "Cursor sprite, repainted"
+version = "0.1.0"
+description = "Rung 2: repaint the POINTER frame of iface\\cursors.imp through the IMP encoder, at identical length."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false

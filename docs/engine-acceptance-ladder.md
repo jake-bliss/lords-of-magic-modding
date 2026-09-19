@@ -1,0 +1,366 @@
+# Engine-acceptance ladder run sheet
+
+**Not yet run.** Everything below was written before the game was launched, so none of it is
+hindsight. When the run happens, record the outcome at the top and leave the rest as written — the
+value of a run sheet is that it stated what each outcome *would* mean.
+
+Eight rungs, each one archive installed into the development profile and one look or one listen.
+macOS will not let this project drive the Wine window, so every keypress here is a request to a
+person; the ladder is ordered and worded to cost as few as possible.
+
+## The four questions, and the fifth that arrived late
+
+1. **Does our IMP pixel encoder survive the engine?** Every IMP this repository has ever written
+   landed in a loose `.imp`, and loose files were measured on 2026-09-16 not to override MPQ
+   members. So **no IMP we ever wrote has been read by the engine.**
+2. **Does the full ByteRun1 PBM *encoder* survive the engine?** The one accepted `pic.mpq` change
+   used `tools/pbm_patch.py`, which rewrites the second byte of a repeat packet and therefore
+   cannot change a file's length. The encoder in `spikes/asset-viewer/src/pbm.rs` is unproven.
+3. **Does a size-changing member edit survive?**
+4. **Does an *added* member survive?**
+5. **Does a STORED member survive?** Added 2026-09-18 with the WAVE encoder. Every archive
+   acceptance this project has proven — `gs.mpq` on 2026-09-16, `pic.mpq` on 2026-09-18 — was on
+   members stored `0x80010100`, IMPLODE. Every member of `sndfx.mpq` and `special.mpq` is
+   `0x80010000`, **STORED**. That is a storage class the engine has never been asked to accept from
+   us, and it is a different question from another image member rather than a repeat of one.
+
+## The blocker, and how it was cleared
+
+`imp.mpq` has no `(listfile)` and no self-named member — and neither, it turns out, do `sndfx.mpq`
+or `special.mpq`. Without names, every member of each lists under a `File%08u.xxx` pseudo-name, and
+**Observed 2026-09-18** both ways round that fail: a real name is refused for not being in the
+archive's catalogue, and the pseudo-name reaches `SFileAddFileEx` and comes back with StormLib
+error 22, because it resolves by block position and is never hashed into the hash table. Until the
+recovered names were threaded through, `pic.mpq` could not be packed at all, and neither could
+these three.
+
+`profile_listfile()` in `scripts/lib-mod-pipeline.sh` now supplies
+`reports/member-names/all-profiles-imp-recovered.txt` (3,600 names),
+`all-profiles-sndfx-recovered.txt` (1,880) and `all-profiles-special-recovered.txt` (1,218), and
+`scripts/repack-archive.sh` hands the same file to the repack **and to both manifests** — a shape
+check that named one side and not the other would be comparing two different addressings of one
+archive. With that in place all three pack, deterministically, with their member sets intact.
+
+**`gs.mpq` is deliberately left alone.** It carries its own `(listfile)`, and supplying recovered
+names for its 372 unnamed entries would re-address them from an unnamed multiset to per-block named
+members *inside the shape check* — a change to the exact path Phase 4 proved against the engine.
+
+## The ladder
+
+A failure has to name the step that failed, or the run is unreadable. Read the "if it fails" column
+as strictly as the "if it works" one: two of these rungs expect the screen to look **exactly as
+shipped**, and a rung whose expected picture is the shipped picture cannot, on its own, tell "the
+engine read our file" from "the engine ignored it". Those are **corruption controls**, and each one
+is read together with the rung after it, which changes something unmissable through the same
+machinery.
+
+| Rung | Mod | Archive(s) | New variable |
+| ---: | --- | --- | --- |
+| **0+1** | `imp-cursor-noop` | `imp.mpq` | Control. Repacking `imp.mpq` at all, and our IMP encoder reproducing a shipped frame exactly. **One artefact**, because the encoder's output is byte-identical to the member — asserted, not assumed. |
+| **2** | `imp-cursor-repaint` | `imp.mpq` | An IMP pixel change, at **identical length** (`shift=0`, member still 90,000 bytes). |
+| **3** | `pic-newgame-reencode` | `pic.mpq` | The PBM **encoder**, pixels untouched, member **302,432 → 302,714 bytes**. Corruption control for rung 4, and the first size-changing member. |
+| **4** | `pic-newgame-stripe` | `pic.mpq` | The PBM encoder with a visible change, member **302,432 → 256,996 bytes**. |
+| **5** | `imp-added-member` | `imp.mpq` | A member `imp.mpq` never had, carried alongside rung 2's visible change. |
+| **6** | `audio-welcome-noop` | `sndfx.mpq`, `special.mpq` | Control for the **STORED** class, and our WAVE encoder reproducing a shipped member exactly. One artefact, same as rungs 0+1. |
+| **7** | `audio-welcome-tone` | `sndfx.mpq`, `special.mpq` | An audible replacement of **identical length**, a *different* one in each archive. |
+
+**Rungs 6 and 7 may be run first.** They depend on nothing in 0–5 — different archives, a different
+storage class, a different decoder — and they are by some distance the cheapest observation on the
+sheet: no navigation, no picture to compare, the sound either fires or it does not. If only one
+sitting is available, do 6 then 7.
+
+## Before the run
+
+```sh
+# 1. Build every rung. Installs nothing, launches nothing. Takes a few minutes.
+scripts/build-acceptance-ladder.sh
+
+# 2. Record a pristine copy of the three archives the development profile predates.
+#    Adds only what is missing, refuses an archive that is already modified, and writes
+#    nothing into the game directory. Without it, rollback for those archives does not exist.
+scripts/install-dev.sh --record-pristine
+```
+
+Step 1 writes `artifacts/engine-acceptance-ladder/offline-checks.txt`. **Read the build ids out of
+that file**, not out of this one: a build id is a digest of the mod tree, the base archives *and the
+tool binaries*, so recompiling the tools changes it. The ids below are what the 2026-09-18 build
+produced and are here to be compared against, not copied blindly.
+
+| Rung | `scripts/install-dev.sh MOD_ID BUILD_ID` | Archive digest |
+| ---: | --- | --- |
+| 0+1 | `imp-cursor-noop 309a65dca1f1` | `imp.mpq` `fd84136cb54c53a8` |
+| 2 | `imp-cursor-repaint f84b7464cf33` | `imp.mpq` `bc4926290187 0699` |
+| 3 | `pic-newgame-reencode 17fded143d74` | `pic.mpq` `d8d59a106112ef98` |
+| 4 | `pic-newgame-stripe 78dbfe41e8e6` | `pic.mpq` `e78486a2be7170e6` |
+| 5 | `imp-added-member 31d560014561` | `imp.mpq` `ef834c35483471a6` |
+| 6 | `audio-welcome-noop 59cb1f0c0ac2` | `sndfx.mpq` `25de3532c898d8c3`, `special.mpq` `c7ceea10791c7f10` |
+| 7 | `audio-welcome-tone d42b8342d818` | `sndfx.mpq` `b9acef0711efc881`, `special.mpq` `12864a644effb77b` |
+
+## The loop, once per rung
+
+```sh
+scripts/install-dev.sh MOD_ID BUILD_ID     # refuses while lomse.exe is running
+```
+
+1. Open **`Lords of Magic Development.app`** from `~/Applications/`. Nothing else: the three other
+   profiles are the recovery baseline and `tools/install_guard.py` will not let this pipeline write
+   to them.
+2. Make the observation for the rung, below.
+3. Quit the game.
+
+```sh
+scripts/restore-dev.sh                     # back to pristine, verified against MANIFEST.sha256
+```
+
+`restore-dev.sh` restores **every** archive in the pipeline, so one call undoes any rung. It checks
+each source against the record written when the profile was created — never against the file it was
+copied from, which would prove the copy succeeded and nothing else.
+
+---
+
+## Rung 0+1 — the repack control, and the IMP encoder as a no-op
+
+**Install** `imp-cursor-noop`. **Where to look:** the mouse pointer, the moment the main menu
+appears. No clicks.
+
+**Why there.** `gs/cursor.gs` opens with
+`"iface/cursors.imp" loadcursorimp CURSORS_POINTER setcursortype`, and `START.GS` runs
+`"gs/cursor.gs"` and then `showcursor` before `newdlg opendialog`. The member is
+`iface\cursors.imp`; the `POINTER` sequence is frame **111**, 31×28, a `direct` record with a
+payload of its own.
+
+**Expected value:** `artifacts/engine-acceptance-ladder/rung0-1-pointer-expected.png` — the shipped
+green-gauntlet pointer, exported by our decoder from the archive that is being installed.
+
+| | |
+| --- | --- |
+| **If it works** | The game starts and the pointer is the usual green gauntlet, matching the PNG. |
+| **If it fails** | No cursor at all; a garbled or mis-coloured cursor; or the game fails to start. Any of those is the *repack* breaking `imp.mpq`, because not one member's bytes differ from the shipped archive. |
+
+**What it proves.** That StormLib rewriting `imp.mpq` under our recovered names leaves an archive
+the engine can still read. Rung 1 rides along: the member packed here came out of
+`write_frame_pixels`, and the build asserts it is byte-identical to the shipped member — so the
+engine is reading our encoder's output even though nothing looks different.
+
+**What it does not prove.** That the engine read *this* archive rather than falling back to
+something else. It cannot: the expected picture is the shipped picture. Rung 2 is what closes that.
+
+---
+
+## Rung 2 — an IMP pixel change the engine cannot hide
+
+**Install** `imp-cursor-repaint`. **Where to look:** the same mouse pointer, same moment.
+
+**Expected value:** `artifacts/engine-acceptance-ladder/rung2-pointer-expected.png` — the same
+gauntlet with its body repainted **white/ivory**, its dark outline and its silhouette unchanged.
+
+| | |
+| --- | --- |
+| **If it works** | The pointer is a white gauntlet of exactly the shipped shape. |
+| **If it fails, one way** | The pointer is the shipped **green** gauntlet. The engine did not read the member we wrote — rung 0+1 having passed, that is the engine ignoring a changed `imp.mpq`, not a broken one. |
+| **If it fails, the other way** | The pointer's *shape* is wrong — torn, shifted, half-missing. That is the IMP encoder or the frame writer, not archive acceptance. |
+
+The three outcomes are different observations and cannot be confused, which is the point of leaving
+the outline and silhouette out of the edit.
+
+**Why the edit is shaped like that.** Eight **disjoint palette-index swaps**, whole-frame. A set of
+disjoint swaps is a permutation of the index alphabet, and a permutation maps equal neighbours to
+equal neighbours and unequal to unequal — so the IMP run-length encoder emits the same packets at
+the same lengths, the payload keeps its byte count (`stored=530->530`, `shift=0`) and not one
+absolute pointer inside the file moves. Size is rung 3's variable. `tests/test_png_index_patch.py`
+asserts this against the real encoder on this exact member, with a fill as the negative control.
+
+---
+
+## Rung 3 — the PBM encoder, and a member that changed size
+
+**Install** `pic-newgame-reencode`. **Where to look:** the main menu itself, as soon as it appears.
+
+**Why there.** `gs/dlg/newdlg.gs` builds the main menu with
+`/newgame_page "lbm/newgame.lbm" lbm def /newgame_backdrop newgame_page 0 0 640 480 doodad def`.
+Despite its name, `lbm\newgame.lbm` is the **main menu backdrop** — the doors image — not a screen
+shown during new-game setup. That mistake cost an observer a wrong instruction on 2026-09-18 and is
+written down here so it is not made twice.
+
+**Expected value:** `artifacts/engine-acceptance-ladder/rung3-menu-expected.png` — pixel for pixel
+the shipped menu. The member's *bytes* changed (302,432 → 302,714, every ByteRun1 packet repacked by
+`pbm.rs`); its *pixels* did not, and the build asserts that by exporting the image back out of the
+packed archive and comparing it with the shipped export.
+
+| | |
+| --- | --- |
+| **If it works** | The main menu is exactly as it has always been. |
+| **If it fails** | Torn, smeared, colour-shifted or shifted-by-rows artwork; a black screen; or a failure to start. Any of those means the engine read a re-encoded, longer member and could not make sense of it. |
+
+**What it proves and does not.** A clean result proves the engine is not *broken* by a re-encoded,
+size-changed member. It cannot prove the engine read it, for the same reason as rung 0+1. Rung 4 is
+the pair to this one and must be run second.
+
+Only 8 of the 1,045 shipped PBMs re-encode byte-identically, so "re-encode without changing the
+length" is not an option this member offers. That is why encoder and size change share a rung here
+and are separated by comparing rung 3 against the already-accepted `pbm_patch` run instead.
+
+---
+
+## Rung 4 — the PBM encoder with something to see
+
+**Install** `pic-newgame-stripe`. **Where to look:** the main menu.
+
+**Expected value:** `artifacts/engine-acceptance-ladder/rung4-menu-expected.png` — the doors image
+with a solid **red vertical stripe**, x 260–380, y 60–420, straight-edged, and every one of the four
+screen edges untouched.
+
+| | |
+| --- | --- |
+| **If it works** | A clean red stripe down the middle of the doors, with the surrounding artwork exactly as shipped. |
+| **If it fails, one way** | The shipped menu, no stripe. The engine did not read the member — and rung 3 having passed rules out "the archive is broken". |
+| **If it fails, the other way** | The stripe is there but the rest of the image is damaged. That is the encoder, not acceptance. |
+
+**Two things make this more than a repeat of the 2026-09-18 run.** The member's length moves again
+(302,432 → 256,996 — a fill merges runs, so the file *shrinks*). And the edges are **straight**:
+`pbm_patch.py` could only repaint whole runs and left a ragged edge, so a clean-edged rectangle is
+a thing the old mechanism could not have produced. The colour is not a new assumption — palette
+index 1 is pure red in this member's own CMAP and the engine was seen rendering it as red from this
+very member.
+
+---
+
+## Rung 5 — a member the archive never had
+
+**Install** `imp-added-member`. **Where to look:** the mouse pointer again.
+
+This build carries **two** changes: `iface\cursors.imp` repainted exactly as in rung 2, and a new
+member `iface\ladder.imp` that no shipped archive holds and nothing in the game will ever ask for.
+
+**Expected value:** `artifacts/engine-acceptance-ladder/rung5-pointer-expected.png` — identical to
+rung 2's.
+
+| | |
+| --- | --- |
+| **If it works** | The white gauntlet, exactly as in rung 2. The hash table, the block table and all 3,600 original members survived the archive growing by one. |
+| **If it fails** | The game fails to start, or the pointer reverts to green, or another part of the interface is wrong. Rung 2 having passed with the same visible change, the added member is the only new variable. |
+
+**The limit, stated plainly.** This tests whether the engine **tolerates** an archive that grew a
+member. It does not test whether it can **read** one, and no observation on screen could — nothing
+asks for `iface\ladder.imp`. What *is* established, offline: `lom-mpq probe-names` reopens the
+packed archive and resolves that name **through the archive's own hash table**, which is the same
+lookup the engine's Storm performs, and the member reads back as the bytes it was added from.
+
+---
+
+## Rung 6 — the STORED class, and the WAVE encoder as a no-op
+
+**Install** `audio-welcome-noop`. **Where to listen:** the moment the main menu opens, after the
+intro videos and the loading bar. Turn the volume up first. No clicks.
+
+**Why there.** `START.GS` ends with `soundfxdict begin Welcome_wav playsoundfx end` immediately
+before `newdlg opendialog`, and `gs/soundfx.gs` defines
+`/Welcome_wav "wav/welcome.wav" addsoundfx def`. The member is `wav\welcome.wav`: stereo 8-bit
+22,050 Hz, 125,049 frames, **5.67 seconds**, 250,142 bytes.
+
+**Why both archives.** `sndfx.mpq` and `special.mpq` each hold `wav\welcome.wav`, byte-identically
+(digest `3966266dcf504bab`), and nothing known says which one the engine opens. 1,214 member names
+are shared between them. Rewriting one and not the other would make a null result mean either "the
+engine rejected our archive" or "the engine read the other copy" — two answers wearing one
+observation.
+
+**Expected value:** `artifacts/engine-acceptance-ladder/rung6-welcome-expected.wav` — the shipped
+sound, playable in any audio player.
+
+| | |
+| --- | --- |
+| **If it works** | The game starts, and the usual welcome sound plays as the menu opens, unchanged. |
+| **If it fails** | Silence, a burst of noise, a truncated sound, or a failure to start. Not one member's bytes differ from the shipped archives, so that would be the repack breaking a STORED archive. |
+
+**Confirm the sound is audible on this rung**, because rung 7 reads a *null* result as meaning
+something, and "the volume was down" must not be one of the things it could mean.
+
+---
+
+## Rung 7 — an audible replacement, and which archive the engine opened
+
+**Install** `audio-welcome-tone`. **Where to listen:** the same moment.
+
+The member keeps its exact length in both archives — 125,049 frames, 250,142 bytes — and each
+archive gets a **different** tone: **220 Hz into `sndfx.mpq`**, **1760 Hz into `special.mpq`**,
+three octaves apart. The first 750 ms is tone and the remaining 4.9 seconds is silence.
+
+**Expected values:** `rung7-welcome-expected-sndfx.wav` (low) and
+`rung7-welcome-expected-special.wav` (high), both in
+`artifacts/engine-acceptance-ladder/`. Play them before the run so both are in the ear.
+
+| Heard | What it means |
+| --- | --- |
+| **A low beep**, then silence where the voice used to be | The engine read our rewritten **`sndfx.mpq`**. A STORED member, rewritten by our WAVE encoder, reached the engine — and `sndfx.mpq` is where sounds come from. |
+| **A high beep**, then silence | The same result, for **`special.mpq`**. |
+| **The shipped voice** | Neither rewritten archive was read. Rung 6 having passed, the archives are not broken, so either the engine rejects a *changed* STORED member or the sound comes from a third place. |
+| **Silence, or a click and then nothing** | The member was read and mangled. That is the encoder or the length arithmetic, not acceptance. |
+
+**Its own control travels with it.** "A beep, then quiet, for as long as the voice used to last" is
+a different observation from "the sound is broken", and the length being unchanged is what makes
+that distinction available.
+
+**Why same-length, and why this is the first audio rung.** `--import-wave` carries `cue ` and `smpl`
+chunks through verbatim and never interprets them, so a *shortened* looping sound would keep a
+`smpl` chunk pointing past the end of its own data. A length-changing audio rung belongs after this
+one, not instead of it — exactly as the length-preserving `pbm_patch` edit was the right first
+`pic.mpq` test.
+
+**Do not read the encoder's corpus result as making this a formality.** 3,140 of 3,140 WAVE files
+re-encode byte-identically, and the author of that measurement said why it is weaker than it looks:
+WAVE `data` is uncompressed, so a sample set has exactly one encoding, and all 1,678 `ISFT` fields
+in the corpus read `Sound Forge 4.0` — one packer. It shows the container walk is exact. It does not
+show the encoder reproduces a WAVE some other program wrote, and it says nothing at all about the
+engine.
+
+---
+
+## What was checked without the engine
+
+`scripts/build-acceptance-ladder.sh` re-derives every edit from the installed baseline on each run
+and writes `artifacts/engine-acceptance-ladder/offline-checks.txt`. As of 2026-09-18 every check
+passes:
+
+- **Reproducible.** Each archive is repacked three times and all three runs are byte-identical.
+- **Shape preserved.** Every rung's shape check accounts for every member: 3,599 of 3,600 `imp.mpq`
+  members proven unchanged with exactly one declared change; 1,879 of 1,880 and 1,217 of 1,218 for
+  the audio archives. Rung 5 additionally reports `member_added_as_declared iface\ladder.imp`, which
+  is the only way an added member is not a failure.
+- **The no-op rungs are checked as no-ops, not waved through.** `--expect-unchanged` inverts the
+  rule that catches a repack which silently did nothing: for rungs 0+1 and 6, content that *moved*
+  is the failure.
+- **Read back from the packed archive**, never from the loose file that went in: each changed
+  member is exported out of the built MPQ by our own decoder and compared with what was drawn or
+  written. That export *is* the expected-value PNG or WAV the observer uses.
+- **`tools/mod_validate.py` and `tools/asset_validate.py` clean.** Both re-encoded images pass the
+  IFF walk, BMHD, CMAP and palette-range checks.
+- **`--validate-imp` on every packed `imp.mpq`**: 1,798 stem pairs, 0 failures.
+- **Only the intended member moved.** Rung 2 additionally exports frame 112 of the same member —
+  which the edit never named — out of the packed archive and compares it with the shipped export.
+- **Rollback verified by bytes.** Each pristine copy in the development profile is compared with the
+  baseline archive using `cmp`, not against a digest this project recorded. A digest snapshot
+  detects a change; it cannot undo one, and it cannot notice that the copy it describes was itself
+  overwritten.
+- **The other profiles are untouched.** Every archive of all three installed profiles is hashed
+  before and after the whole run and compared.
+
+## What could not be checked without the engine
+
+Everything the rungs exist to ask. In particular:
+
+- whether the engine reads a rewritten `imp.mpq`, `sndfx.mpq` or `special.mpq` at all;
+- whether it tolerates an added member, and — untestable by any observation here — whether it could
+  read one;
+- **which** of `sndfx.mpq` and `special.mpq` it opens, which only rung 7 can answer;
+- whether the IMP `layout=Tight` reading is the one the engine uses for `iface\cursors.imp` frame
+  111. The frame is not in the 45 ambiguous or the 752 unobservable classes, and the importer would
+  have warned if it were, so this is not a live worry — but nothing offline can close it.
+
+## Cost and risk
+
+Eight installs into `Lords of Magic Development.app` and nothing else. The three installed profiles
+are opened read-only by this pipeline and written by none of it; `~/Applications` is refused as an
+output path by `scripts/repack-archive.sh`, and every write to the development profile is routed
+through `tools/install_guard.py`, an allowlist of exactly one directory. The loose `map/` directory
+— which has no backup anywhere — is never touched. Rollback is one command and is verified against
+a record written when the profile was created.

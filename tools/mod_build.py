@@ -60,6 +60,29 @@ def resolve_base_members(tree, manifests: dict[str, list[Member]]) -> dict[str, 
     return resolved
 
 
+def entry_kind(source, base: Member | None) -> str:
+    """What the repack is being asked to do with one source file.
+
+    Three answers, and the repack has to be told which because the shape check's expectation is
+    different for each:
+
+    ``add``       the base archive has no such member. Validation has already insisted the mod
+                  declare it in `new_members` and set `allow_new_members`.
+    ``unchanged`` the file is byte-identical to the member it replaces. It is still written --
+                  that is the point of a no-op repack -- and the shape check is told to fail if
+                  the content moves rather than if it does not.
+    ``replace``   everything else.
+
+    The digest is taken from the file on disk rather than from anything recorded earlier. A build
+    that decided "unchanged" from a stale note would hand the shape check an expectation about
+    bytes it is not packing, which is the one thing this classification must not do.
+    """
+    if base is None:
+        return "add"
+    digest = hashlib.sha256(Path(source.path).read_bytes()).hexdigest()
+    return "unchanged" if digest == base.sha256 else "replace"
+
+
 def derive_build_id(
     *,
     tree_digest: str,
@@ -131,6 +154,7 @@ def command_plan(arguments) -> int:
                         if source.relative in resolved
                         else None
                     ),
+                    "kind": entry_kind(source, resolved.get(source.relative)),
                 }
                 for source in tree.members_for(archive)
             ]

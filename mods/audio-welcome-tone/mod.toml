@@ -1,0 +1,31 @@
+# Ladder rung 7: an audible replacement -- and the one rung that names WHICH archive was read.
+#
+# `wav\welcome.wav` plays once, unattended, as the main menu opens. `START.GS` ends with
+# `soundfxdict begin Welcome_wav playsoundfx end` immediately before `newdlg opendialog`, and
+# `gs/soundfx.gs` defines `/Welcome_wav "wav/welcome.wav" addsoundfx def`. No click, no navigation,
+# and nothing to compare pixel by pixel: the listener either hears the shipped voice or does not.
+#
+# Both archives hold that member byte-identically, so each gets a DIFFERENT tone: 220 Hz into
+# `sndfx.mpq` and 1760 Hz into `special.mpq`, three octaves apart. One listen therefore separates
+# three hypotheses instead of two -- low tone means the engine read sndfx.mpq, high tone means it
+# read special.mpq, and the shipped voice means it read neither.
+#
+# The replacement keeps the member's exact length: 125,049 frames of stereo 8-bit 22,050 Hz, 250,142
+# bytes, the same as shipped. That is deliberate and it is the first audio test for the same reason
+# the length-preserving `pbm_patch.py` edit was the right first `pic.mpq` test. `cue ` and `smpl`
+# chunks are carried verbatim by `--import-wave` and never interpreted, so a shortened looping sound
+# would leave a `smpl` chunk pointing past the end of its own data. A length-changing audio rung
+# belongs after this one, not instead of it.
+#
+# Its own control travels with it: only the first 750 ms is tone and the remaining 4.9 seconds is
+# silence, at the shipped length. "A beep then quiet, for as long as the voice used to last" is a
+# different observation from "the sound is broken".
+id = "audio-welcome-tone"
+name = "Welcome sound, replaced by a tone"
+version = "0.1.0"
+description = "Rung 7: replace wav\\welcome.wav with a tone of identical length, a different one in each archive."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false

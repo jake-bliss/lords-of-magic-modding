@@ -1,0 +1,26 @@
+# Ladder rung 6: the STORED storage class, and the WAVE encoder proving it can be a no-op.
+#
+# Every archive acceptance this project has ever proven -- `gs.mpq` on 2026-09-16, `pic.mpq` on
+# 2026-09-18 -- was on members stored `0x80010100`, EXISTS | ENCRYPTED | IMPLODE. Every member of
+# `sndfx.mpq` (1,880 of 1,880) and `special.mpq` (1,218 of 1,218) is `0x80010000`: STORED, not
+# imploded. So this is not another image member. It is a storage class the engine has never been
+# asked to accept from us.
+#
+# `wav\welcome.wav` is rewritten in BOTH archives, because both hold it and they hold it
+# byte-identically -- digest 3966266dcf504bab, 250,142 bytes, measured 2026-09-18 -- and nothing
+# known says which one the engine opens. Rewriting one and not the other would make a null result
+# mean either "the engine rejected our archive" or "the engine read the other copy", which is two
+# answers wearing one observation.
+#
+# The rewrite goes through `--import-wave`, whose output measured byte-identical to the shipped
+# member for all 3,140 files of the corpus. So, exactly as with rungs 0 and 1, the control and the
+# encoder share one artefact and the build asserts the equality rather than assuming it.
+id = "audio-welcome-noop"
+name = "Welcome sound, repacked unchanged"
+version = "0.1.0"
+description = "Rung 6: repack both audio archives with a member our own WAVE encoder rewrote byte-identically."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false

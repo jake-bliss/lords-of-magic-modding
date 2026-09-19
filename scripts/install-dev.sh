@@ -2,7 +2,15 @@
 # Install a build into the development profile -- and into nothing else, ever.
 #
 #   scripts/install-dev.sh --create-profile [--recreate]
+#   scripts/install-dev.sh --record-pristine
 #   scripts/install-dev.sh MOD_ID BUILD_ID
+#
+# --record-pristine adds a pristine copy and a manifest line for any archive in PIPELINE_ARCHIVES
+# the existing development profile has no record of. It exists because widening that list --
+# `imp.mpq` was added on 2026-09-18 -- would otherwise force `--recreate` on a profile that is
+# perfectly good, and `--recreate` throws away every install in it. It refuses to touch an archive
+# already recorded, so it can never overwrite a pristine copy with a modded one; the way to
+# re-record an archive is still to recreate the profile.
 #
 # Creating the profile is a separate, attended step. It is not done implicitly by an install,
 # because creating it is the one moment the pipeline reads the preserved baseline, and that should
@@ -22,15 +30,17 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-mod-pipeline.sh"
 BASELINE_PROFILE=vanilla
 
 usage() {
-  sed -n '2,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
 }
 
 create_profile=0
+record_pristine=0
 recreate=0
 positional=()
 while (( $# )); do
   case "$1" in
     --create-profile) create_profile=1; shift ;;
+    --record-pristine) record_pristine=1; shift ;;
     --recreate) recreate=1; shift ;;
     --help|-h) usage; exit 0 ;;
     *) positional+=("$1"); shift ;;
@@ -162,6 +172,61 @@ PROFILE_JSON
   echo "  ${dev_root}"
   echo "  pristine manifest: ${manifest}"
   echo "  Nothing has been installed into it. It is a clean copy of the ${BASELINE_PROFILE} profile."
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------------------------
+# Recording a pristine copy for an archive the profile predates
+# ---------------------------------------------------------------------------------------------
+if (( record_pristine )); then
+  (( ${#positional[@]} == 0 )) || die "--record-pristine takes no other arguments"
+  refuse_if_game_running
+
+  manifest="${metadata_dir}/MANIFEST.sha256"
+  [[ -f "${manifest}" ]] || die "no development profile with a pristine manifest at ${manifest}.
+Create it first: scripts/install-dev.sh --create-profile"
+
+  baseline_game_dir="$(profile_game_dir "${BASELINE_PROFILE}")"
+  dev_game_dir="${dev_root}/${game_subpath}"
+  recorded=0
+
+  for archive in "${PIPELINE_ARCHIVES[@]}"; do
+    if grep -q "  pristine/${archive}\$" "${manifest}"; then
+      echo "  ${archive} already recorded; leaving it alone"
+      continue
+    fi
+    [[ -f "${baseline_game_dir}/${archive}" ]] || die "the baseline has no ${archive}"
+    [[ -f "${dev_game_dir}/${archive}" ]] || die "the development profile has no ${archive}"
+
+    baseline_hash="$(file_hash "${baseline_game_dir}/${archive}")"
+    profile_hash="$(file_hash "${dev_game_dir}/${archive}")"
+    # The profile's own copy is only a legitimate pristine seed if it still matches the baseline.
+    # If it does not, something installed it, and recording it would enshrine a mod as the thing
+    # every later rollback returns to.
+    [[ "${baseline_hash}" == "${profile_hash}" ]] || die \
+      "the development profile's ${archive} does not match the baseline:
+  baseline ${baseline_hash}
+  profile  ${profile_hash}
+Refusing to record a pristine copy of an archive that is already modified. Restore it from the
+baseline by hand, or recreate the profile."
+
+    approved="$(approve_dev_path "${metadata_dir}/pristine/${archive}")"
+    [[ -e "${approved}" ]] && die "a pristine copy already exists without a manifest line:
+  ${approved}
+Refusing to overwrite it."
+    cp -c "${baseline_game_dir}/${archive}" "${approved}"
+    stored_hash="$(file_hash "${approved}")"
+    [[ "${stored_hash}" == "${baseline_hash}" ]] \
+      || die "the pristine copy of ${archive} does not match the baseline it was copied from"
+    echo "${baseline_hash}  pristine/${archive}" >> "${manifest}"
+    echo "  ${archive} ${baseline_hash}  recorded"
+    recorded=$(( recorded + 1 ))
+  done
+
+  echo
+  echo "== result =="
+  echo "  ${recorded} archive(s) newly recorded in ${manifest}"
+  echo "  Nothing in the game directory was written."
   exit 0
 fi
 
