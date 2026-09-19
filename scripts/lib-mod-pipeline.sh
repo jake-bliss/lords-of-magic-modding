@@ -112,7 +112,17 @@ refuse_if_game_running() {
   # `pgrep -f` matches ANY live command line containing the pattern -- including this
   # script's own shell and anything that merely mentions the name. The game runs under
   # Wine and its command line BEGINS with a DOS drive path, so anchor to the start.
-  if pgrep -f '^[A-Za-z]:[\\]lomse[.]exe' >/dev/null 2>&1; then
+  #
+  # The anchor is followed by `.*` because the executable is NOT at the drive root. Observed
+  # 2026-09-19 against the live process, PID 77245:
+  #
+  #   c:\program files (x86)\steam\steamapps\common\lords of magic special edition\english\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1
+  #
+  # The previous pattern demanded `lomse.exe` immediately after the drive letter and so could
+  # never match anything. It was "verified" against a decoy this project wrote to its own
+  # assumption; `tests/test_mod_pipeline.py` now spawns the command line above instead.
+  # `-i` because the drive letter and the name both arrive lower-case from Wine.
+  if pgrep -if '^[A-Za-z]:[\\].*lomse[.]exe' >/dev/null 2>&1; then
     die "lomse.exe is running; quit the game first."
   fi
 }

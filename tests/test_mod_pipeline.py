@@ -15,9 +15,11 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -50,7 +52,7 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-GAME_PATTERN = r"^[A-Za-z]:[\\]lomse[.]exe"
+GAME_PATTERN = r"^[A-Za-z]:[\\].*lomse[.]exe"
 BROAD_PATTERN = r"lomse\.exe"
 
 
@@ -62,7 +64,7 @@ def matching_processes(pattern: str) -> list[str]:
     """
     try:
         found = subprocess.run(
-            ["pgrep", "-f", pattern], capture_output=True, check=False, text=True
+            ["pgrep", "-i", "-f", pattern], capture_output=True, check=False, text=True
         )
     except OSError:
         # No pgrep: assume clear rather than skip the suite on a machine that cannot answer.
@@ -92,9 +94,20 @@ def game_processes() -> list[str]:
 
     Merely requiring the backslash form is not enough for the same reason -- it still matches
     anything that *quotes* a Wine path. The game's own command line **begins** with a DOS drive
-    path, `d:\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1`, so the pattern is anchored to a
-    leading drive letter. Verified in both directions rather than only the quiet one: with the game
-    closed it does not match, and a decoy process carrying a game-shaped command line does.
+    path, so the pattern is anchored to a leading drive letter.
+
+    **The executable is not at the drive root, and assuming it was cost this guard its whole
+    purpose.** The first version of this pattern read `^[A-Za-z]:[\\]lomse[.]exe`, which can only
+    match a command line where `lomse.exe` follows the drive letter immediately. The real one,
+    observed 2026-09-19 against the live process, PID 77245, is:
+
+        c:\program files (x86)\steam\steamapps\common\lords of magic special edition\english\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1
+
+    So the guard matched nothing for a full day, and `install-dev.sh` would have overwritten
+    archives under a live process -- the exact corruption it exists to prevent. It was "verified in
+    both directions" at the time, but the decoy was `d:\lomse.exe`, written from the same wrong
+    assumption as the pattern: a fixture shaped like the belief under test cannot refute it.
+    `GameGuardPattern` below now spawns the command line above, verbatim.
 
     **No pattern is sufficient on its own**, which is why `run_script` retries rather than trusting
     this. Sampling `ps` continuously through a failing run caught **zero** matching command lines,
@@ -107,6 +120,122 @@ def game_processes() -> list[str]:
     neighbours have spent several rounds removing.
     """
     return matching_processes(GAME_PATTERN)
+
+
+# The command line the game really presents, observed 2026-09-19 against the live process, PID
+# 77245, while rung 7 of the engine-acceptance ladder was being listened to. Copied verbatim: the
+# point of these tests is that a decoy invented from what we expected to see proved nothing.
+OBSERVED_GAME_ARGV0 = (
+    r"c:\program files (x86)\steam\steamapps\common"
+    r"\lords of magic special edition\english\lomse.exe"
+)
+
+# What the guard said before 2026-09-19. Kept so the defect has a test that fails if it returns,
+# rather than a comment saying it used to be there.
+RETIRED_PATTERN = r"^[A-Za-z]:[\\]lomse[.]exe"
+
+
+@contextlib.contextmanager
+def decoy_process(argv0: str):
+    """Run a harmless process presenting `argv0` as its command line, and wait until `ps` shows it.
+
+    `exec -a` is the only portable way to put an arbitrary string, spaces and backslashes included,
+    where `pgrep -f` will read it. The process is `sleep`, so a leak costs nothing and dies on its
+    own; it is killed and reaped here regardless.
+
+    Waiting is not politeness. Spawning is asynchronous, and asserting "no match" against a process
+    that has not appeared yet passes for the wrong reason -- the failure mode that makes a negative
+    result worthless.
+    """
+    spawned = subprocess.Popen(
+        ["bash", "-c", 'exec -a "$1" sleep 30', "decoy", argv0],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            listed = subprocess.run(
+                ["ps", "-p", str(spawned.pid), "-o", "command="],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+            if argv0[:40] in listed.stdout:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(
+                f"the decoy never presented its command line to ps: {argv0!r}"
+            )
+        yield spawned
+    finally:
+        spawned.kill()
+        spawned.wait()
+
+
+class GameGuardPattern(unittest.TestCase):
+    r"""Does the guard fire on the command line the game actually has?
+
+    It did not. From 2026-09-18 to 2026-09-19 `refuse_if_game_running` matched nothing at all,
+    because its pattern required `lomse.exe` to sit immediately after the drive letter and the
+    executable is six directories down. `install-dev.sh` advertises that it "refuses while
+    lomse.exe is running" and would instead have swapped archives under the live process.
+
+    It had been checked in both directions and passed both. The decoy was `d:\lomse.exe` -- built
+    from the same assumption as the pattern, so the check could only ever agree with it. These
+    tests use the observed string instead, and drive the **shipped** shell function rather than a
+    copy of the regex, so a future edit to `scripts/lib-mod-pipeline.sh` alone cannot pass them.
+    """
+
+    def invoke_shipped_guard(self) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [
+                "bash",
+                "-c",
+                'source "$1"/scripts/lib-mod-pipeline.sh; refuse_if_game_running',
+                "bash",
+                str(PROJECT_DIR),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+
+    def test_the_shipped_guard_refuses_while_the_real_command_line_is_up(self) -> None:
+        with decoy_process(OBSERVED_GAME_ARGV0):
+            completed = self.invoke_shipped_guard()
+        self.assertNotEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(GAME_IS_UP, completed.stderr)
+
+    def test_the_shipped_guard_is_quiet_when_a_process_merely_mentions_the_path(self) -> None:
+        """The anchor's whole job. This project's own tools take that path as an argument."""
+        with decoy_process(f"grep --fixed-strings {OBSERVED_GAME_ARGV0}"):
+            completed = self.invoke_shipped_guard()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertNotIn(GAME_IS_UP, completed.stderr)
+
+    def test_the_retired_pattern_could_not_have_matched_the_real_command_line(self) -> None:
+        """The defect, pinned. If this ever passes a match, the old pattern is back."""
+        self.assertIsNone(
+            re.match(RETIRED_PATTERN, OBSERVED_GAME_ARGV0, re.IGNORECASE),
+            "the retired pattern matched the observed command line, so this test no longer "
+            "describes the defect it was written for",
+        )
+        self.assertIsNotNone(
+            re.match(GAME_PATTERN, OBSERVED_GAME_ARGV0, re.IGNORECASE),
+            f"{GAME_PATTERN!r} does not match the command line the game really has",
+        )
+
+    def test_game_processes_names_the_decoy(self) -> None:
+        """The Python side and the shell side must agree, or the suite's skip is wrong."""
+        with decoy_process(OBSERVED_GAME_ARGV0):
+            found = game_processes()
+        self.assertTrue(found, "game_processes() missed a process presenting the game's own name")
+        self.assertTrue(
+            any("lomse.exe" in line for line in found),
+            f"game_processes() matched something that is not the decoy: {found}",
+        )
 
 
 GAME_PROCESSES = game_processes()
@@ -181,7 +310,7 @@ class PipelineTestCase(unittest.TestCase):
         install, profile-creation and restore coverage silently, at exactly the moment the corpus
         tooling runs. So:
 
-        - a process that really is the game (Wine's `d:\lomse.exe`, backslash) -> skip, naming it;
+        - a process that really is the game (Wine's `c:\...\english\lomse.exe`) -> skip, naming it;
         - a refusal with no such process -> retry once, because the match may have been a
           process that has already exited, and then **fail**, printing whatever a looser match
           finds, because a refusal that cannot be attributed to the game is a defect in the guard
