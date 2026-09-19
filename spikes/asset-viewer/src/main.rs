@@ -15,6 +15,7 @@ use lom_asset_viewer::gs_facts::GsFacts;
 use lom_asset_viewer::gamescript_vm::{
     GameScriptVm, GameScriptVmError, ModuleSource, Value as GameScriptValue, normalize_module_path,
 };
+use lom_asset_viewer::loose::{self, LomConfig, SettingsConfig};
 use lom_asset_viewer::imp;
 use lom_asset_viewer::imp::{
     IMP_ORPHAN_NOTES, IMP_VALIDATION_EXCEPTIONS, ImpHeaderStats, ImpOrphanNote, ImpSprite,
@@ -208,6 +209,13 @@ enum Command {
         reports: PathBuf,
     },
     ScanMapDirectory(PathBuf),
+    /// Walk a loose (non-archive) install tree and classify every file in it.
+    LooseInventory {
+        root: PathBuf,
+        profile: String,
+    },
+    /// Describe one `lom.cfg` or `settings.cfg`, chosen by its own shape rather than by name.
+    LooseConfig(PathBuf),
     /// Re-encode every PBM in an archive and compare the result with the original.
     RoundtripPbm(Source),
     /// Re-encode every IMP frame in an archive and compare the result with the original.
@@ -410,6 +418,8 @@ fn run() -> Result<(), String> {
             executable.as_deref(),
         ),
         Command::ScanMapDirectory(path) => scan_map_directory(&path),
+        Command::LooseInventory { root, profile } => loose_inventory(&root, &profile),
+        Command::LooseConfig(path) => describe_loose_config(&path),
         Command::RoundtripPbm(source) => roundtrip_pbm(&source),
         Command::RoundtripImp { source, rewrite } => roundtrip_imp(&source, rewrite),
         Command::ImportPngPbm {
@@ -864,6 +874,17 @@ fn parse_args() -> Result<Command, String> {
             require_len(&args, 2)?;
             Ok(Command::ScanMapDirectory(args[1].clone().into()))
         }
+        "--loose-inventory" => {
+            require_len(&args, 3)?;
+            Ok(Command::LooseInventory {
+                root: args[1].clone().into(),
+                profile: args[2].clone(),
+            })
+        }
+        "--loose-config" => {
+            require_len(&args, 2)?;
+            Ok(Command::LooseConfig(args[1].clone().into()))
+        }
         "--validate-imp" => {
             require_len(&args, 2)?;
             Ok(Command::ValidateImp(source(&args[1], listfile)))
@@ -1057,7 +1078,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --import-png-imp INPUT.png SOURCE.imp FRAME OUTPUT.imp\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --imp-roundtrip ARCHIVE.mpq [--listfile FILE] [--rewrite]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --loose-inventory INSTALL_ROOT PROFILE_LABEL\n  lom-asset-viewer --loose-config FILE\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --import-png-imp INPUT.png SOURCE.imp FRAME OUTPUT.imp\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --imp-roundtrip ARCHIVE.mpq [--listfile FILE] [--rewrite]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -2742,6 +2763,119 @@ fn describe_map(path: &Path) -> Result<(), String> {
                 .map_or_else(|| "none".to_owned(), |id| id.to_string()),
             hex_bytes(&record.raw),
         );
+    }
+    Ok(())
+}
+
+/// Emit the loose-file inventory as a tab-separated table.
+///
+/// TSV on stdout, one row per file, because that is what every other reproducible report in this
+/// repository is and because the committed report has to be diffable: an inventory whose value is
+/// "what changed since last time" cannot be a rendered summary.
+///
+/// The `profile` label is carried in the header comment rather than in every row. Four installs
+/// share 467 of their paths, and repeating the label 467 times would make the common rows differ
+/// between files for no reason, which is exactly the comparison the report exists to support.
+fn loose_inventory(root: &Path, profile: &str) -> Result<(), String> {
+    if !root.is_dir() {
+        return Err(format!("install root does not exist: {}", root.display()));
+    }
+    let rows = loose::inventory(root)
+        .map_err(|error| format!("could not walk {}: {error}", root.display()))?;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    writeln!(out, "# profile\t{profile}").map_err(|error| error.to_string())?;
+    writeln!(
+        out,
+        "relative_path\tsize\tsha256\textension\tmagic\tprobe_kind\textension_disagrees\tprobe_error"
+    )
+    .map_err(|error| error.to_string())?;
+    for row in &rows {
+        writeln!(
+            out,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            row.relative_path,
+            row.size,
+            row.sha256,
+            if row.extension.is_empty() {
+                "-"
+            } else {
+                &row.extension
+            },
+            row.magic,
+            row.probe_kind,
+            if row.extension_disagrees_with_magic() {
+                "yes"
+            } else {
+                "no"
+            },
+            row.probe_error.as_deref().unwrap_or("-"),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// Describe one loose configuration file.
+///
+/// Dispatches on content, not on the file name: `lom.cfg` is recognised by its length agreeing
+/// with its own embedded count, and `settings.cfg` by being ASCII text. A profile that renamed
+/// either file would still be readable, and -- more to the point -- a file that merely *looks* like
+/// one of them by name but does not parse is reported as a refusal rather than as an empty result.
+fn describe_loose_config(path: &Path) -> Result<(), String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    println!("file\t{}", path.display());
+    println!("size\t{}", bytes.len());
+    println!("sha256\t{}", loose::sha256_hex(&bytes));
+    match LomConfig::parse(&bytes) {
+        Ok(config) => {
+            println!("format\tlom.cfg");
+            println!("round-trips\t{}", config.to_bytes() == bytes);
+            println!("music-volume\t{}", config.music_volume);
+            println!("sound-fx-volume\t{}", config.sound_fx_volume);
+            println!("speech-volume\t{}", config.speech_volume);
+            println!("ambient-volume\t{}", config.ambient_volume);
+            println!("help-panel-count\t{}", config.help_panel_checks.len());
+            println!(
+                "help-panel-checks\t{}",
+                config
+                    .help_panel_checks
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            println!("balkoth-kill-counter\t{}", config.balkoth_kill_counter);
+            println!("center-on-movement\t{}", config.center_on_movement);
+            println!("install-guid\t{}", config.install_guid_text());
+            println!("building-speech-flag\t{}", config.building_speech_flag);
+            println!("show-completed-quests\t{}", config.show_completed_quests);
+            println!(
+                "unnamed-trailing-word\t{}",
+                config.unnamed_trailing_word as i32
+            );
+            return Ok(());
+        }
+        Err(lom_error) => {
+            let settings = SettingsConfig::parse(&bytes).map_err(|settings_error| {
+                format!(
+                    "{} is neither lom.cfg ({lom_error}) nor settings.cfg ({settings_error})",
+                    path.display()
+                )
+            })?;
+            println!("format\tsettings.cfg");
+            println!("round-trips\t{}", settings.round_trips(&bytes));
+            println!("records\t{}", settings.entries.len());
+            println!("unparsed-records\t{}", settings.unparsed.len());
+            println!("terminated\t{}", settings.terminated);
+            for entry in &settings.entries {
+                println!("setting\t{}\t{}", entry.key, entry.raw_value);
+            }
+            for record in &settings.unparsed {
+                println!("unparsed\t{record}");
+            }
+        }
     }
     Ok(())
 }
