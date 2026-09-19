@@ -6073,5 +6073,21 @@ The Python side now separates them: a process matching the narrow pattern is nam
 reason, so a skip says *which* process caused it; a refusal with no such process is retried once
 (safe, because the guard refuses before the script writes anything) and then **fails loudly**,
 printing whatever the broad pattern matched. Verified both ways by starting a process of each
-shape. **The shell guard itself still carries the broad pattern** and is left for a branch already
-editing that file.
+shape.
+
+**The pattern in this branch was still too loose, and a parallel fix on `main` is the one to
+keep.** Requiring the backslash form only asks whether a command line *mentions* a Wine path, which
+an agent, an editor or a shell quoting the name satisfies -- three agents tripped the guard in one
+day, and writing the fix tripped it, because a comment in the patch command contained
+`d:\lomse.exe`. The game's own command line **begins** with a DOS drive path, so the pattern is
+anchored: `^[A-Za-z]:[\\]lomse[.]exe`, in both the shell guard and here. Verified in both
+directions, which needs `exec -a` to fake convincingly: a process whose argv merely *contains* the
+path does **not** match, and one whose command line *begins* with it does. Six consecutive suite
+runs report `OK (skipped=1)` rather than 17, so the install and restore coverage that had been
+disappearing is executing again.
+
+**The retry is load-bearing rather than belt-and-braces, and the measurement above is why.**
+Sampling `ps` through a failing run caught zero matching command lines: some matches are processes
+that exit within milliseconds, so no pattern can close the race by itself. Anchoring shrinks the
+false-positive population; the retry survives the ones that are already gone by the time anything
+can look.

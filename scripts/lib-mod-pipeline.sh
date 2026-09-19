@@ -109,7 +109,10 @@ base_gs_facts() {
 # Refuse while the game is running. Copied in spirit from scripts/restore-game-archives.sh: an
 # archive swapped under a live process is a class of corruption no checksum afterwards can undo.
 refuse_if_game_running() {
-  if pgrep -f 'lomse.exe' >/dev/null 2>&1; then
+  # `pgrep -f` matches ANY live command line containing the pattern -- including this
+  # script's own shell and anything that merely mentions the name. The game runs under
+  # Wine and its command line BEGINS with a DOS drive path, so anchor to the start.
+  if pgrep -f '^[A-Za-z]:[\\]lomse[.]exe' >/dev/null 2>&1; then
     die "lomse.exe is running; quit the game first."
   fi
 }

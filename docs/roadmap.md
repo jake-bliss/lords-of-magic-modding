@@ -389,10 +389,18 @@ This track was never in the original plan. It is recorded here because it is a l
 the repository now contains, and because pretending it was always a phase would misrepresent how the
 project actually went.
 
-**Every file format outside the executable is now decoded.** `.smp`, `.scn`, `.lgd` and `.map` are
-one format; `.til` tilesets, `.lbm` images, `.imp` sprites, `.gs` scripts and the MPQ container all
-have native readers; the audio archives are plain WAVE and `.smk` is Smacker. The last gap, the
-savegame container, closed in PR #60 ([savegame format](save-format.md)).
+**Every *archived* file format is now decoded.** `.smp`, `.scn` and `.lgd` are one format; `.til`
+tilesets, `.lbm` images, `.imp` sprites, `.gs` scripts and the MPQ container all have native
+readers; the audio archives are plain WAVE and `.smk` is Smacker. The savegame container closed in
+PR #60 ([savegame format](save-format.md)).
+
+That claim used to read "every file format outside the executable", and it was written on the
+strength of the archive work alone. A [loose-file sweep](loose-files.md) found the **loose** tree
+had never been enumerated, and two of the things it turned up contradict the wider claim directly:
+`map/e3map2.map` is the single `.map` file in the corpus and the map reader refuses it, so `.map`
+was never shown to be the same format as `.smp`; and `English/custldr/0templdr.ldr`, the Asura
+string table behind the Steam launcher, and the trailing word of `lom.cfg` are all still undecoded.
+`lom.cfg` and `settings.cfg` now have parsers; what writes `settings.cfg` is still unknown.
 
 - [x] Recover the engine's operator dispatch table (1,906 operators) and their arity.
 - [x] Read the operator bodies ([native operator bodies](native-operator-bodies.md)).

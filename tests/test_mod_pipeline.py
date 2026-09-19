@@ -50,7 +50,7 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-GAME_PATTERN = r"\\lomse\.exe"
+GAME_PATTERN = r"^[A-Za-z]:[\\]lomse[.]exe"
 BROAD_PATTERN = r"lomse\.exe"
 
 
@@ -80,22 +80,31 @@ def matching_processes(pattern: str) -> list[str]:
 
 
 def game_processes() -> list[str]:
-    """Processes that are the running game, as distinct from processes that mention it.
+    r"""Processes that are the running game, as distinct from processes that mention it.
 
-    **The pattern is narrow on purpose.** `pgrep -f` matches the whole command line, so the
-    obvious pattern -- `lomse.exe` -- matches every one of this project's own tools, which take the
-    path to that executable as an argument: `engine_probe.py`, `dumpva`, the save survey, and the
-    corpus-gated `cargo test` that disassembles the image. The game itself runs under Wine and
-    shows as `d:\lomse.exe`, with a **backslash**; our paths have forward slashes. Demonstrated
-    2026-09-18 with two sleeping processes, one carrying each form: the broad pattern matched both,
-    `\\lomse\.exe` matched only the Wine one. (The `.` is escaped for the same reason -- it is an
-    any-character in a regex.)
+    **The pattern is anchored on purpose**, and matches `scripts/lib-mod-pipeline.sh`'s. `pgrep -f`
+    matches the whole command line, so the obvious pattern -- `lomse.exe` -- answers "does anything
+    mention this name?" rather than "is the game running?". It matches this project's own tools,
+    which take that path as an argument (`engine_probe.py`, `dumpva`, the save survey, the
+    corpus-gated disassembly test), and it matches any agent, editor or shell whose command line
+    quotes the name. Three agents tripped it in one day, and writing the fix tripped it: a comment
+    in the patch command contained `d:\lomse.exe`.
 
-    This matters more than a tidier pattern usually would. The broad pattern's false positive fires
-    exactly while this project's corpus-gated tooling runs, and the consequence is a *skip*: the
-    install, profile-creation and restore coverage would disappear silently, at the moment it is
-    most likely to be needed. A guard that cannot be wrong loudly reports safety it has not earned,
-    which is the failure this file's neighbours have spent several rounds removing.
+    Merely requiring the backslash form is not enough for the same reason -- it still matches
+    anything that *quotes* a Wine path. The game's own command line **begins** with a DOS drive
+    path, `d:\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1`, so the pattern is anchored to a
+    leading drive letter. Verified in both directions rather than only the quiet one: with the game
+    closed it does not match, and a decoy process carrying a game-shaped command line does.
+
+    **No pattern is sufficient on its own**, which is why `run_script` retries rather than trusting
+    this. Sampling `ps` continuously through a failing run caught **zero** matching command lines,
+    so some matches are processes that exit within milliseconds -- anchoring shrinks the
+    false-positive population but cannot win a race against a process that is already gone.
+
+    The stakes are the skip, not the tidiness. A false positive here would *skip* the install,
+    profile-creation and restore coverage, silently, exactly while the corpus tooling runs. A guard
+    that cannot be wrong loudly reports safety it has not earned, which is the failure this file's
+    neighbours have spent several rounds removing.
     """
     return matching_processes(GAME_PATTERN)
 
@@ -158,7 +167,7 @@ class PipelineTestCase(unittest.TestCase):
         )
 
     def run_script(self, name: str, *arguments: str) -> subprocess.CompletedProcess:
-        """Run a pipeline script, and decide honestly what a "game is running" refusal means.
+        r"""Run a pipeline script, and decide honestly what a "game is running" refusal means.
 
         The scripts refuse while the game is up, which is correct and makes every assertion about
         their output fail with a message about the game rather than about the code. The

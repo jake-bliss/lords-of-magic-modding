@@ -64,7 +64,27 @@ target/release/lom-asset-viewer --view-map '/path/to/Lords of Magic Special Edit
 target/release/lom-asset-viewer --view-map MAP.scn tilesb01.til tilesb01.lbm
 target/release/lom-asset-viewer --export-map-preview MAP.scn tilesb01.til tilesb01.lbm /tmp/map-preview.png
 target/release/lom-asset-viewer --serve --pic "$PIC_MPQ"
+
+INSTALL_ROOT='/path/to/steamapps/common/Lords of Magic Special Edition'
+target/release/lom-asset-viewer --loose-inventory "$INSTALL_ROOT" baseline
+target/release/lom-asset-viewer --loose-config "$INSTALL_ROOT/English/lom.cfg"
+target/release/lom-asset-viewer --loose-config "$INSTALL_ROOT/English/settings.cfg"
 ```
+
+`--loose-inventory` walks everything in an install that is **not** inside an `.mpq` and writes a TSV
+of path, size, SHA-256, extension, magic-only signature and `asset::probe` verdict. The magic and the
+probe columns are separate on purpose: `probe` consults the extension for several formats, and a
+sweep looking for what nobody named cannot let the extension decide the answer. Files the probe
+cannot classify are counted in the report, not dropped from it.
+
+`--loose-config` dispatches on content rather than on the file name and prints `round-trips`, so a
+partial read shows up instead of passing as a clean parse.
+
+Regenerate both reports and run every corpus-gated check behind them with
+`scripts/loose-file-reports.sh`, not by hand: the checks that re-derive the reports from the
+installed game are `#[ignore]`d, so an ordinary `cargo test` skips them. See
+[loose files](../../docs/loose-files.md) for the recovered `lom.cfg` layout, what names each field,
+and the list of what is still undetermined.
 
 `--dump-map-cells` prints one line per cell — `x`, `y`, packed index, raw tag, masked tile index,
 whether the unexplained `0x00800000` flag is set, and the elevation word — for the whole grid, or for
@@ -494,6 +514,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 - `src/paths.rs` — the device-and-inode same-file check both writers use.
 - `tools/map_editor_client_harness.js` — load `src/ui/app.js` verbatim against a stub DOM, fire its real handlers, and print what it computed. Asserts nothing itself; `tests/test_map_editor_client.py` holds the expected values.
 - `src/asset.rs` — content-first classification and typed format metadata.
+- `src/loose.rs` — the non-archive sweep, a magic-only signature table kept separate from `asset::probe`, SHA-256, and the `lom.cfg`/`settings.cfg` parsers. Both configuration parsers re-encode; `lom.cfg`'s trailing word is carried verbatim because no recovered operator names it.
 - `src/main.rs` — CLI inventory, extraction, validation, and SDL3 viewer.
 - `build.rs` — local native-library search and runtime paths for the Apple Silicon spike.
 
