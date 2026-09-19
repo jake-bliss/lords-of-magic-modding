@@ -3414,8 +3414,15 @@ fn scan_archive(source: &Source) -> Result<(), String> {
     // `readable`. `readable` already excludes members whose read failed, so subtracting them again
     // undercounted -- and with only an unreadable member it underflowed, which is a debug panic
     // and a wrapped count in release.
+    // `classified_entries`, not `decoded_entries`: this counts every member the probe recognised,
+    // of any kind, and most of them are not audio at all. The old name sat directly above an
+    // audio-specific `undecoded_entries` and invited the two to be read as a pair.
     let classified: usize = kinds.values().sum();
-    println!("decoded_entries\t{}", classified - undecoded_total);
+    println!("classified_entries\t{classified}");
+    println!(
+        "classified_and_decoded\t{}",
+        classified - undecoded_total
+    );
     println!("undecoded_entries\t{undecoded_total}");
     for (kind, count) in &kinds {
         println!("kind\t{kind}\t{count}");
@@ -3423,8 +3430,17 @@ fn scan_archive(source: &Source) -> Result<(), String> {
     for (kind, count) in &undecoded {
         println!("undecoded\t{kind}\t{count}");
     }
-    for (name, reason) in &undecoded_reasons {
+    // Capped: the whole point of this counter is the case where thousands of members stop
+    // decoding, and printing one line each would bury the totals it sits under.
+    const UNDECODED_SAMPLE_LIMIT: usize = 20;
+    for (name, reason) in undecoded_reasons.iter().take(UNDECODED_SAMPLE_LIMIT) {
         println!("undecoded_member\t{name}\t{reason}");
+    }
+    if undecoded_reasons.len() > UNDECODED_SAMPLE_LIMIT {
+        println!(
+            "undecoded_member_elided\t{}",
+            undecoded_reasons.len() - UNDECODED_SAMPLE_LIMIT
+        );
     }
     let failure_count = failures.len();
     println!("failures\t{failure_count}");

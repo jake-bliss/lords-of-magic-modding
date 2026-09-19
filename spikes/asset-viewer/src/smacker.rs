@@ -628,12 +628,17 @@ pub fn describe(name: &str, file: &SmackerFile) -> String {
         file.trees_size,
         file.video_bytes(),
         file.audio_bytes(),
+        // Per track, not folded into one total: a single Bink track has no unpacked length, and
+        // collapsing the whole column to "unrepresentable" would discard three totals that are
+        // perfectly well known.
         (0..AUDIO_TRACKS)
-            .try_fold(0_u64, |total, track| {
-                file.audio_unpacked_bytes(track)
-                    .and_then(|bytes| total.checked_add(bytes))
+            .filter(|track| file.audio[*track].present())
+            .map(|track| match file.audio_unpacked_bytes(track) {
+                Some(bytes) => bytes.to_string(),
+                None => "unrepresentable".to_owned(),
             })
-            .map_or_else(|| "unrepresentable".to_owned(), |value| value.to_string()),
+            .collect::<Vec<_>>()
+            .join(","),
         (0..AUDIO_TRACKS)
             .try_fold(0_u64, |total, track| {
                 file.audio_expected_bytes(track)

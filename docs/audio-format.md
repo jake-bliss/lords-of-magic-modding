@@ -105,8 +105,17 @@ of a file is written `dwEnd == frames`; under the inclusive reading it is writte
 `frames`. The remaining seven loops are interior — 238, 5,584, 42,415 and 76,437 frames short of the
 end — so being nowhere near the boundary they settle nothing either way, and are named here rather
 than left as an unexplained remainder. The external authority and the shipped files agree, so the
-gate rejects `end >= frames`. **This distribution is asserted by a corpus test**, because it is the
-evidence the decision rests on and an unpinned measurement becomes folklore.
+gate rejects `end >= frames`. **This distribution is asserted by a corpus test** — 41 records, 34 terminal, 116 cue points, 26
+terminal, and zero references at or past the end — because it is the evidence the decision rests on
+and an unpinned measurement becomes folklore. The sweep also carries
+`files_with_references_at_or_past_end`, which is **0** across all three populations, so the
+falsifier covers the loose tree too and not only the two archives.
+
+One limit of the corpus worth recording here, because it decides where a test has to come from:
+**every `smpl` chunk in the game declares at most one loop** — 41 declare one, 75 declare none. The
+24-byte loop stride is therefore never multiplied by anything the corpus can check, and a wrong
+stride survives every corpus assertion. It is pinned by a three-loop fixture instead. `cue ` chunks
+do carry 2, 3 and 4 points, so their stride is corroborated by the shipped files.
 
 This matters because the gate first shipped with `end > frames`, which admits a loop whose endpoint
 is one past the last frame — the precise failure it exists to prevent. The fixture encoded that
@@ -176,7 +185,16 @@ odd takes the template's pad, including `None`; an odd body whose template body 
 calling the writer's helper**. That duplication is deliberate. This repository's own recorded
 lesson is that two implementations agreeing is not confirmation when they share an assumption, and
 a guard that calls the code it guards cannot catch that code being wrong. A test mutates the
-writer's rule back to the broken one and requires the check to reject the result.
+writer's rule back to the broken one and requires the check to reject the result, and mutating the
+writer and the guard *separately* both fail the suite.
+
+**One branch of that rule still has no oracle, and should be read as such.** For the first two
+cases, byte-identity against the template is an independent check: the 3,140-member sweep compares
+the writer's output with the original bytes, so the post-condition is not the only thing watching.
+The third — an edit that turns an **even** final chunk **odd**, where the pad is invented as
+`Some(0)` — has no such witness. The writer invents it, the check expects it by the same reasoning,
+the recomputed `RIFF` size agrees because it uses the same rule, and **no corpus member has that
+shape**. The choice follows RIFF and is documented; it is not corroborated.
 
 **Why byte-identity is total, and why that is not a boast.** WAVE `data` is not compressed: there is
 exactly one byte sequence that encodes a given set of PCM samples. The only freedom a WAVE writer
@@ -278,9 +296,11 @@ of 3,098 undecoded WAVEs reports exactly what a sweep of 3,098 decoded ones repo
 **The repository-wide "9,804 members, 0 probe failures" figure was measured against the old probe.**
 It has been **re-measured** against the current one on the GS5R3 profile, and is now reported with
 the counter that can falsify it: `pic.mpq` 1,406, `special.mpq` 1,218, `gs.mpq` 1,700, `imp.mpq`
-3,600, `sndfx.mpq` 1,880 — **9,804 entries, 9,804 decoded, 0 undecoded, 0 probe failures.** That
-figure's sensitivity has now been wrong twice and re-measured three times; it is quoted here with
-the counter that can falsify it precisely because the bare "0 failures" form could not.
+3,600, `sndfx.mpq` 1,880 — **9,804 entries, 9,804 classified, 9,804 decoded, 0 undecoded, 0 probe
+failures.** That figure's sensitivity has now been wrong twice and been re-measured four times; it
+is quoted with the counter that can falsify it precisely because the bare "0 failures" form could
+not. The counter is named `classified_entries` rather than `decoded_entries` because it counts
+members of every kind — PBM, IMP, maps — and only the audio ones can be `undecoded`.
 
 ## Smacker
 

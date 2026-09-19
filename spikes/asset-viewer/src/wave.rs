@@ -1143,6 +1143,12 @@ pub struct WaveSweep {
     pub formats: BTreeMap<FormatKey, usize>,
     pub layouts: BTreeMap<String, usize>,
     pub loop_metadata_files: usize,
+    /// Files with a `smpl` loop or `cue ` point at or past the end of their own audio.
+    ///
+    /// The falsifier for the inclusive reading, carried by the sweep so it covers the loose tree
+    /// as well as the archives. "None at `frames`" does not on its own exclude "some above
+    /// `frames`"; this counts both.
+    pub references_at_or_past_end: usize,
     pub total_frames: u64,
     pub failures: Vec<(String, String)>,
     pub import_differences: Vec<(String, usize)>,
@@ -1172,6 +1178,14 @@ impl WaveSweep {
         self.total_frames += file.samples.frames() as u64;
         if file.last_referenced_frame().is_some() {
             self.loop_metadata_files += 1;
+        }
+        let frames = file.samples.frames() as u64;
+        if file
+            .loop_and_cue_references()
+            .iter()
+            .any(|(_, frame)| *frame >= frames)
+        {
+            self.references_at_or_past_end += 1;
         }
         if !file.riff_size_matches(bytes.len()) {
             self.riff_size_mismatch += 1;
@@ -1230,6 +1244,10 @@ impl WaveSweep {
         out.push_str(&format!(
             "files_with_loop_metadata\t{}\n",
             self.loop_metadata_files
+        ));
+        out.push_str(&format!(
+            "files_with_references_at_or_past_end\t{}\n",
+            self.references_at_or_past_end
         ));
         out.push_str(&format!("frames\t{}\n", self.total_frames));
         out.push_str(&format!("refused\t{}\n", self.refusals.len()));
@@ -1341,14 +1359,21 @@ mod tests {
 
     /// A `smpl` chunk with one loop over `start..=end` sample frames.
     fn smpl(start: u32, end: u32) -> Vec<u8> {
+        smpl_loops(&[(start, end)])
+    }
+
+    /// A `smpl` chunk with any number of loops, so the record stride is load-bearing.
+    fn smpl_loops(loops: &[(u32, u32)]) -> Vec<u8> {
         let mut body = vec![0_u8; SMPL_HEADER_BYTES];
-        body[28..32].copy_from_slice(&1_u32.to_le_bytes());
-        body.extend_from_slice(&0_u32.to_le_bytes());
-        body.extend_from_slice(&0_u32.to_le_bytes());
-        body.extend_from_slice(&start.to_le_bytes());
-        body.extend_from_slice(&end.to_le_bytes());
-        body.extend_from_slice(&0_u32.to_le_bytes());
-        body.extend_from_slice(&0_u32.to_le_bytes());
+        body[28..32].copy_from_slice(&(loops.len() as u32).to_le_bytes());
+        for (start, end) in loops {
+            body.extend_from_slice(&0_u32.to_le_bytes()); // cue point id
+            body.extend_from_slice(&0_u32.to_le_bytes()); // type
+            body.extend_from_slice(&start.to_le_bytes());
+            body.extend_from_slice(&end.to_le_bytes());
+            body.extend_from_slice(&0_u32.to_le_bytes()); // fraction
+            body.extend_from_slice(&0_u32.to_le_bytes()); // play count
+        }
         body
     }
 
@@ -1709,24 +1734,35 @@ mod tests {
     ///
     /// Fails if the retention branch is reverted to returning the edit's whole `fmt `, which was a
     /// surviving mutant. The edit here carries a `byte_rate` the template does not.
+    /// Unchanged nominal format: the **template's** fmt survives, not the edit's.
+    ///
+    /// The edit differs in `byte_rate`, which is at offset **28**, not 16. The first version of
+    /// this test wrote to `[16..20]` -- the `fmt ` chunk *size* field, which already holds 16 -- so
+    /// the two formats parsed byte-identically and the assertion could not tell
+    /// `Ok(template.clone())` from `Ok(edited.clone())`. It passed, and the mutant it was written
+    /// to kill survived. An off-by-four in a test offset is invisible to every green run.
     #[test]
     fn an_unchanged_format_keeps_the_templates_own_fmt_chunk() {
         let template = canonical(1, 22050, 8, &[1, 2, 3, 4]);
         let mut edited = canonical(1, 22050, 8, &[9, 9, 9, 9]);
-        // A legal-but-different fmt extension the template does not have would be refused, so use
-        // a distinguishable `extra`-free difference: the template is authoritative on everything.
-        edited[16..20].copy_from_slice(&16_u32.to_le_bytes());
-        let resolved = resolve_target_format(
-            &WaveFile::parse(&template).expect("parse").format,
-            &WaveFile::parse(&edited).expect("parse").format,
-            ImportOptions::default(),
-        )
-        .expect("same nominal format");
+        edited[28..32].copy_from_slice(&999_u32.to_le_bytes());
+
+        let template_format = WaveFile::parse(&template).expect("parse").format;
+        let edited_format = WaveFile::parse(&edited).expect("parse").format;
+        assert_ne!(
+            template_format, edited_format,
+            "the fixture must actually differ, or this test proves nothing"
+        );
+        assert_eq!(edited_format.byte_rate, 999);
+
+        let resolved =
+            resolve_target_format(&template_format, &edited_format, ImportOptions::default())
+                .expect("same nominal format");
         assert_eq!(
-            resolved,
-            WaveFile::parse(&template).expect("parse").format,
+            resolved, template_format,
             "the template's fmt chunk is the one that is kept"
         );
+        assert_eq!(resolved.byte_rate, 22050, "not the edit's 999");
     }
 
     /// Changed format: `block_align` and `byte_rate` are **derived**, not copied from the edit.
@@ -1802,6 +1838,46 @@ mod tests {
         let error = resolve_target_format(&template, &edited, ImportOptions::default())
             .expect_err("extension bytes have no evidence behind them");
         assert!(error.to_string().contains("extension byte"), "{error}");
+    }
+
+    /// A format change drops the **template's** extension bytes.
+    ///
+    /// The documented reason is that they describe a format no longer being written. Documented
+    /// and unasserted is how a rule quietly stops holding, so the rule is pinned.
+    #[test]
+    fn a_format_change_drops_the_templates_fmt_extension_bytes() {
+        let mut template = WaveFile::parse(&canonical(1, 22050, 8, &[1, 2, 3, 4]))
+            .expect("parse")
+            .format;
+        template.extra = vec![0x00, 0x00];
+        let mut edited = WaveFile::parse(&canonical(2, 22050, 8, &[1, 2, 3, 4]))
+            .expect("parse")
+            .format;
+        // The edit carries the SAME extension bytes as the template, which is the only shape the
+        // refusal above lets through. With an empty `extra` on the edit the assertion below holds
+        // whether the code drops the template's or copies the edit's, and the mutant survives.
+        edited.extra = vec![0x00, 0x00];
+
+        // Unchanged nominal format: the template is kept whole, extension bytes and all.
+        let kept = resolve_target_format(&template, &template, ImportOptions::default())
+            .expect("same format");
+        assert_eq!(kept.extra, vec![0x00, 0x00]);
+
+        // Changed: the extension describes the old format, so it goes.
+        let resolved = resolve_target_format(
+            &template,
+            &edited,
+            ImportOptions {
+                allow_format_change: true,
+                ..ImportOptions::default()
+            },
+        )
+        .expect("an allowed format change");
+        assert_eq!(resolved.channels, 2);
+        assert!(
+            resolved.extra.is_empty(),
+            "a format change must not carry the old format's extension bytes"
+        );
     }
 
     #[test]
@@ -2018,6 +2094,33 @@ mod tests {
         .expect("11025 is attested");
         assert_eq!(resolved.sample_rate, 11025);
         assert_eq!(resolved.byte_rate, 11025, "derived from the new rate");
+
+        // The depth arm, at the same level as the rate arm above. Dropping `bits_per_sample` from
+        // `same_nominal_format` makes this resolve silently instead of asking for the flag, and the
+        // user would then meet `container-changed` -- the tool accusing itself of a writer bug for
+        // what is a user-fixable refusal.
+        let depth_edit = WaveFile::parse(&canonical(1, 22050, 16, &[1, 2, 3, 4]))
+            .expect("parse")
+            .format;
+        let error =
+            resolve_target_format(&attested_template, &depth_edit, ImportOptions::default())
+                .expect_err("a depth change still needs to be asked for");
+        assert!(
+            error.to_string().contains("--allow-format-change"),
+            "{error}"
+        );
+        let resolved = resolve_target_format(
+            &attested_template,
+            &depth_edit,
+            ImportOptions {
+                allow_format_change: true,
+                ..ImportOptions::default()
+            },
+        )
+        .expect("16-bit is attested");
+        assert_eq!(resolved.bits_per_sample, 16);
+        assert_eq!(resolved.block_align, 2, "derived from the new depth");
+        assert_eq!(resolved.byte_rate, 44100, "derived from the new depth");
     }
 
     #[test]
@@ -2120,6 +2223,33 @@ mod tests {
         let error = import_samples(&short, &template, ImportOptions::default())
             .expect_err("the cue point now dangles");
         assert!(error.to_string().contains("cue "), "{error}");
+    }
+
+    /// The `smpl` record stride, which only a chunk with more than one loop can exercise.
+    ///
+    /// A mutation sweep found `SMPL_LOOP_BYTES = 24 -> 20` surviving, and the corpus cannot catch
+    /// it: **every `smpl` chunk in the game declares at most one loop** (41 declare one, 75 declare
+    /// none), and at index 0 the stride is never multiplied by anything. `cue ` chunks do carry 2,
+    /// 3 and 4 points, which is why the equivalent cue mutant dies against the corpus and this one
+    /// needs a fixture.
+    #[test]
+    fn the_smpl_record_stride_is_exercised_by_a_second_loop() {
+        let body = smpl_loops(&[(0, 10), (100, 200), (300, 400)]);
+        assert_eq!(
+            body.len(),
+            SMPL_HEADER_BYTES + 3 * SMPL_LOOP_BYTES,
+            "the fixture must be laid out at the documented stride"
+        );
+        assert_eq!(smpl_frames(&body), vec![10, 200, 400]);
+
+        let template = with_chunk(canonical(1, 22050, 8, &[0; 1000]), b"smpl", &body, 0);
+        assert_eq!(
+            WaveFile::parse(&template)
+                .expect("parse")
+                .last_referenced_frame(),
+            Some(("smpl".to_owned(), 400)),
+            "the furthest loop is found only if the stride steps correctly"
+        );
     }
 
     #[test]
@@ -2508,6 +2638,11 @@ mod tests {
         assert_eq!(sndfx.loop_metadata_files, 63);
         assert_eq!(special.loop_metadata_files, 62);
         assert_eq!(loose.loop_metadata_files, 22);
+        // The falsifier, over all three populations rather than only the two archives the
+        // endpoint-distribution test walks.
+        assert_eq!(sndfx.references_at_or_past_end, 0);
+        assert_eq!(special.references_at_or_past_end, 0);
+        assert_eq!(loose.references_at_or_past_end, 0);
         assert_eq!(
             sndfx.loop_metadata_files + special.loop_metadata_files + loose.loop_metadata_files,
             147
