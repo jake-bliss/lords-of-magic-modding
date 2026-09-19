@@ -20,12 +20,29 @@ source "${project_dir}/scripts/lib-mod-pipeline.sh"
 # shellcheck source=scripts/lib-game-archives.sh
 source "${project_dir}/scripts/lib-game-archives.sh"
 
-# This guards an ATTENDED engine-probe restore: a false positive here costs a human a game session,
-# not just a loud refusal. It used to be `pgrep -f 'lomse.exe'` -- unanchored, and with an
-# unescaped `.` that also fires on `lomseXexe` -- which is the same bare-name pattern
+# `set -euo pipefail` above makes a normal, executed run of this script fail closed if either
+# source fails or if `refuse_if_game_running` were somehow undefined: `errexit` stops the script at
+# the failed `source`, and an undefined function is a `127`. Neither is true if a caller ever does
+# `if source scripts/restore-game-archives.sh; then ...; fi` -- bash suspends `errexit` for the
+# whole body of a sourced script run inside an `if`/`while`/`&&`/`||` test, so a failed source and a
+# missing `refuse_if_game_running` could both go unnoticed and execution would still reach the
+# restore below. Nothing in this repository invokes the script that way today, but the guarantee
+# should not depend on how it is invoked rather than on what it does, so it is checked directly.
+declare -F refuse_if_game_running >/dev/null || exit 1
+
+# This guards an ATTENDED engine-probe restore: a false NEGATIVE here -- the guard staying quiet
+# while the game is actually up -- lets this script `cp` a recorded-original archive over
+# `gs.mpq`/`imp.mpq` while a live process still has them open, corrupting the session and the
+# archives it is trying to preserve; no checksum afterwards can undo that. A false positive only
+# costs a loud refusal and a re-run. (An earlier draft of this file had that backwards; see
+# `scripts/lib-mod-pipeline.sh`'s own comment on `game_command_pattern` for the correct ordering,
+# which is what this guard is written to.) It used to be `pgrep -f 'lomse.exe'` -- unanchored, and
+# with an unescaped `.` that also fires on `lomseXexe` -- which is the same bare-name pattern
 # `scripts/lib-mod-pipeline.sh` retired for matching this project's own tools and anything that
 # merely quotes the name in an argument. `refuse_if_game_running` is that retirement's replacement
-# and is now the only copy of this guard in the repository.
+# and is now the only copy of this guard FUNCTION in the repository (the pattern it evaluates is
+# also asserted equal, character for character, against a second copy in
+# `tests/test_mod_pipeline.py` -- see `test_the_shell_and_python_patterns_are_the_same`).
 refuse_if_game_running
 
 # nullglob only drops patterns that match nothing, so zprobe.log is written as a pattern too.

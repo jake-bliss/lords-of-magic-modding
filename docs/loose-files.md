@@ -47,22 +47,34 @@ This section used to describe a live flake: `pgrep -f 'lomse.exe'` matching a ha
 `python3 -c` whose command line merely mentioned the string, so the guard answered "does any live
 command line mention this name?" instead of "is the game running?". That guard has since been
 rewritten and is no longer the bare, unanchored form -- see `game_command_pattern` in
-`scripts/lib-mod-pipeline.sh`, which is the one place this repository still names the pattern. Its
-own comment carries the current derivation, the false-positive/false-negative trade it makes on
-purpose, and the defect history that produced it; it is not repeated here so this page cannot go
-stale against it a second time.
+`scripts/lib-mod-pipeline.sh`, which carries the current pattern, the anchor's warrant (the harness
+shell and bare `python3 -c` evidence, restored there rather than left only on this page), the
+false-positive/false-negative trade it makes on purpose, and the defect history that produced it.
+**It is not the only copy of the pattern**: `tests/test_mod_pipeline.py`'s `GAME_PATTERN` is a
+second, hand-maintained copy, kept because the test suite needs to construct decoys and assert
+against the pattern without shelling out for every check. `test_the_shell_and_python_patterns_are_the_same`
+asserts the two agree character for character, which is the only thing standing between two
+independent copies and silent drift. Read both files' comments before changing either.
 
-For orientation, the two command lines that motivated the current pattern, both observed live on
-2026-09-19:
+For orientation, the two command lines that motivated the current pattern:
 
-- `c:\program files (x86)\steam\steamapps\common\lords of magic special edition\english\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1`
-  (Development, Steam, 32-bit path)
-- `d:\lomse.exe /*` (the 3.02 profile, launched from the drive root)
+- **Observed in gameplay**, 2026-09-19, PID 77245: Development's own command line --
+  `c:\program files (x86)\steam\steamapps\common\lords of magic special edition\english\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1`.
+- **Observed in gameplay**, 2026-09-19, PID 47723: the 3.02 profile, launched from the drive root --
+  `d:\lomse.exe /*`.
+
+**Not established for the other two installed profiles.** `vanilla` (`Steambuild 32 64bit DXVK.app`)
+and `GS5R3` have never been watched live; nobody has run `ps -o command=` against either while it
+was running. `scripts/restore-game-archives.sh` -- which now uses this same guard -- targets GS5R3
+specifically, so this is not an idle gap. An attended measurement against both is the next thing to
+do before trusting this guard the way the two observed profiles already are; until then, the
+pattern's coverage of GS5R3 and vanilla is an assumption (that they share Development/3.02's DOS-path
+argv shape), not a measurement.
 
 `tests/test_mod_pipeline.py`'s `GameGuardPattern` class drives the shipped `refuse_if_game_running`
-against both of these plus deliberate decoys, including one the guard is expected to refuse for
-even though it is not the game (`ACCEPTED_FALSE_POSITIVES`) -- read there before changing either
-file.
+against both observed command lines plus deliberate decoys, including one the guard is expected to
+refuse for even though it is not the game (`ACCEPTED_FALSE_POSITIVES`) -- read there before changing
+either file.
 
 ## What the sweep covers, and what it does not
 

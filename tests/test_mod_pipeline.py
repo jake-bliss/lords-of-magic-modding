@@ -63,29 +63,36 @@ def digest(path: Path) -> str:
 # Wineskin bottle uses `Program Files` with no `(x86)`; a Wineskin profile can map its game drive to
 # anything, not just `c:`/`d:`), so the directory is not named at all: the only property every
 # observed and every plausible launch layout shares is being a DOS path ending in `lomse.exe`. See
-# `game_command_pattern`'s own comment for the full defect ladder that produced this decision.
+# `game_command_pattern`'s own comment for the full defect ladder that produced this decision,
+# including the 2026-09-19 widening for forward slashes, UNC paths and a quoted argv0, and the
+# explicit note that this is only measured against Development and 3.02 -- not GS5R3 or vanilla.
 #
 # `test_the_shell_and_python_patterns_are_the_same` asserts this equals the shell's OUTPUT
 # character for character, so a hand-maintained copy cannot drift silently even though there is no
 # longer a shared derivation to keep them honest.
-GAME_PATTERN = r"^[A-Za-z]:[\\](.*[\\])?lomse[.]exe([[:space:]]|$)"
+GAME_PATTERN = r'^"?([A-Za-z]:[\\/]|[\\][\\])(.*[\\/])?lomse[.]exe(["[:space:]]|$)'
 
-# `[[:space:]]` is a POSIX bracket expression. `pgrep`'s regex engine (BSD `regcomp`, the one
-# `/usr/bin/grep -iE` also uses) understands it; Python's `re` does not. `re` parses `[[:space:]]`
-# as the character class `[:space` (the literal characters `[`, `:`, `s`, `p`, `a`, `c`, `e`) closed
-# by the FIRST unescaped `]` it finds, followed by a literal `]` -- which is why compiling
-# `GAME_PATTERN` directly emits `FutureWarning: Possible nested set`, and a future Python turns that
-# into a hard error that takes the importing module down with it.
+# `[:space:]` is a POSIX bracket-expression CLASS TOKEN. `pgrep`'s regex engine (BSD `regcomp`, the
+# one `/usr/bin/grep -iE` also uses) understands it nested inside a bracket expression like
+# `[[:space:]]` or `["[:space:]]`; Python's `re` does not. `re` parses `[[:space:]]` as the
+# character class `[:space` (the literal characters `[`, `:`, `s`, `p`, `a`, `c`, `e`) closed by the
+# FIRST unescaped `]` it finds, followed by a literal `]` -- which is why compiling `GAME_PATTERN`
+# directly emits `FutureWarning: Possible nested set`, and a future Python turns that into a hard
+# error that takes the importing module down with it.
 #
 # `GAME_PATTERN` is what goes to `pgrep` (through `game_command_pattern` and, below,
 # `matching_processes`). `GAME_PATTERN_PY` is what every `re.match`/`re.search`/`re.fullmatch` call
-# in this file must use instead.
+# in this file must use instead. The substitution targets the CLASS TOKEN `[:space:]` itself, not
+# the outer bracket, because the outer bracket now also carries a literal `"` for the quoted-argv0
+# case (`["[:space:]]`, not `[[:space:]]`) -- replacing the token in place turns that into
+# `["\s]`, a bracket Python's `re` parses correctly as "a literal `"` or a whitespace character",
+# which is exactly what the shell's bracket already means.
 # `test_the_raw_pattern_goes_to_pgrep_and_the_translated_pattern_goes_to_re` pins the split, and
 # `test_no_re_call_site_uses_the_untranslated_pattern` is the regression guard for the mistake this
 # file already made once: a `re.match(GAME_PATTERN, ...)` call site that passed only because its one
 # fixture had no trailing content after `lomse.exe`, so the broken `[[:space:]]` branch was never
 # exercised.
-GAME_PATTERN_PY = GAME_PATTERN.replace("[[:space:]]", r"\s")
+GAME_PATTERN_PY = GAME_PATTERN.replace("[:space:]", r"\s")
 
 BROAD_PATTERN = r"lomse\.exe"
 
@@ -186,6 +193,42 @@ SIXTY_FOUR_BIT_BOTTLE_ARGV0 = (
     r"\lords of magic special edition\english\lomse.exe"
 )
 WINESKIN_Z_DRIVE_ARGV0 = r"z:\users\jake\lords of magic special edition\english\lomse.exe"
+
+# Three more forms admitted 2026-09-19, all Not observed -- constructed, and all cross-model
+# review found by reading `pgrep`'s actual reach rather than this project's own Wine builds:
+# `pgrep -f` sees the kernel-visible argv, not a normalized Windows command line, and neither
+# forward slashes nor a UNC host requires a drive letter at all.
+FORWARD_SLASH_DRIVE_ARGV0 = r"Z:/home/deck/Games/LOMSE/lomse.exe"
+UNC_PATH_ARGV0 = r"\\nas\games\LOMSE\lomse.exe"
+# `CreateProcess` is commonly handed a quoted path when it contains a space; quoting the argument
+# does not change whether a human would call this "the game running". Trailing content is
+# appended AFTER the closing quote deliberately: without it, `$` (end of string) would satisfy the
+# boundary regardless of whether `"` is a member of the boundary class, and a decoy that ends
+# exactly where the pattern happens to also accept `$` cannot tell the two apart -- the same
+# masking effect `OBSERVED_GAME_ARGV0`'s bare argv[0] has for the whitespace branch elsewhere in
+# this file.
+QUOTED_ARGV0 = (
+    r'"c:\program files (x86)\steam\steamapps\common'
+    r'\lords of magic special edition\english\lomse.exe" /*'
+)
+
+# Command lines with the SAME shape as the three above but that this guard does NOT cover, on
+# purpose -- a wrapper executable's own path precedes the DOS path rather than the DOS path
+# beginning the command line. Structurally indistinguishable from `grep --fixed-strings ...`
+# below: covering these would reopen the exact "mentions the path in an argument" class the
+# anchor exists to close, for every one of this project's own tools that take that path as an
+# argument. See `game_command_pattern`'s comment in `scripts/lib-mod-pipeline.sh` for the
+# evidence this project's own Wine build does not need them covered, and
+# `test_the_pattern_still_declines_a_wrapper_prefix_on_purpose` for the pinning test.
+WINE64_PRELOADER_WRAPPER_ARGV0 = r"/usr/bin/wine64-preloader Z:\home\deck\Games\LOMSE\lomse.exe"
+WINESKIN_LAUNCHER_WRAPPER_ARGV0 = (
+    r"/Applications/LOM.app/Contents/Frameworks/Wineskin.framework/bin/wine64 "
+    r"C:\Games\LOMSE\lomse.exe"
+)
+PROTON_WRAPPER_ARGV0 = (
+    r"/home/deck/.steam/steam/steamapps/common/Proton 9.0/proton waitforexitandrun "
+    r"/home/deck/Games/LOMSE/lomse.exe"
+)
 
 # The right name under a directory `GAME_SUBPATH` never named. An earlier revision of this file
 # filed this string as a decoy the guard had to REJECT -- correct for the pattern in force then,
@@ -294,6 +337,79 @@ class GameGuardPattern(unittest.TestCase):
         if running:
             raise unittest.SkipTest(f"the game is running, so a quiet guard is not expected: {running}")
 
+    def invoke_shipped_guard_with_overridden_pattern(self, pattern_source: str) -> subprocess.CompletedProcess:
+        r"""Drives the SHIPPED `refuse_if_game_running`, with `game_command_pattern` overridden.
+
+        Bash lets a later function definition replace an earlier one, so sourcing the library and
+        then redefining `game_command_pattern` is the easy, direct injection point for whatever
+        `pgrep -if "$(game_command_pattern)"` receives -- without needing a real malformed regex to
+        somehow reach production. `echo PROCEEDED` afterwards is how a caller distinguishes "the
+        function returned normally" from "the function died", since a `die`'d subshell prints
+        nothing further.
+        """
+        return subprocess.run(
+            [
+                "bash",
+                "-c",
+                f'source "$1"/scripts/lib-mod-pipeline.sh; '
+                f'game_command_pattern() {{ {pattern_source}; }}; '
+                'refuse_if_game_running; echo PROCEEDED',
+                "bash",
+                str(PROJECT_DIR),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+
+    def test_the_shipped_guard_dies_on_a_malformed_pattern_rather_than_proceeding(self) -> None:
+        r"""DEFECT 1, pinned: `pgrep`'s exit status was being treated as a boolean.
+
+        `pgrep` returns 0 for a match, 1 for no match, 2 for a malformed pattern, and 3 for an
+        internal error (`man pgrep`, EXIT STATUS; confirmed by hand on this machine: `pgrep -if
+        '['` prints "Cannot compile regular expression" and exits 2). `if pgrep ...; then die; fi`
+        treated every one of those non-zero codes identically to "no match" and let the caller
+        proceed as though the game were absent -- so a future edit that made the pattern invalid,
+        or a `pgrep` that could not run at all, would have silently turned this guard OFF instead
+        of erroring, and nothing would have noticed. This overrides `game_command_pattern` with an
+        unbalanced bracket expression and asserts the guard dies loudly instead.
+        """
+        completed = self.invoke_shipped_guard_with_overridden_pattern('printf "["')
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertNotIn("PROCEEDED", completed.stdout)
+        # Not misreported as the game running -- a broken guard is a distinct failure from a
+        # detected game, and folding the two together would hide which one happened. Checked
+        # against the exact `die` message a real match produces, not the substring `GAME_IS_UP`
+        # alone: the broken-guard message legitimately contains the words "lomse.exe is running"
+        # as part of explaining what it was trying to check.
+        self.assertNotIn(f"{GAME_IS_UP}; quit the game first.", completed.stderr)
+        self.assertIn("pgrep", completed.stderr.lower())
+
+    def test_the_shipped_guard_dies_on_pgreps_internal_error_code_too(self) -> None:
+        r"""The `3` branch of the same defect: `pgrep`'s own "internal error" exit status.
+
+        Exit 2 (malformed pattern) is the easy, reachable injection point and is what the test
+        above drives for real; this drives the `case` statement's `*` branch a second, different
+        way by replacing `game_command_pattern` with something that does not print a pattern for
+        `pgrep` at all but still leaves `pgrep` itself failing with a non-0/1 status: `false` short
+        -circuits the command substitution to empty output and `pgrep` itself refuses an empty
+        pattern the same way it refuses a malformed one, so this exercises the same `*` branch as
+        exit 2 without hand-waving that exit 3 specifically was reproduced.
+        """
+        completed = self.invoke_shipped_guard_with_overridden_pattern("printf ''")
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertNotIn("PROCEEDED", completed.stdout)
+        self.assertNotIn(f"{GAME_IS_UP}; quit the game first.", completed.stderr)
+
+    def test_the_shipped_guard_proceeds_quietly_when_pgrep_cleanly_finds_nothing(self) -> None:
+        """The `1` branch: still has to mean "proceed", not just "not obviously broken"."""
+        completed = self.invoke_shipped_guard_with_overridden_pattern(
+            'printf %s "this-matches-nothing-on-purpose-xyz"'
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("PROCEEDED", completed.stdout)
+        self.assertNotIn(GAME_IS_UP, completed.stderr)
+
     def test_the_shipped_guard_refuses_while_the_real_command_line_is_up(self) -> None:
         with decoy_process(OBSERVED_GAME_ARGV0):
             completed = self.invoke_shipped_guard()
@@ -301,7 +417,20 @@ class GameGuardPattern(unittest.TestCase):
         self.assertIn(GAME_IS_UP, completed.stderr)
 
     def test_the_shipped_guard_is_quiet_when_a_process_merely_mentions_the_path(self) -> None:
-        """The anchor's whole job. This project's own tools take that path as an argument."""
+        r"""The anchor's whole job, and the reason it exists: `scripts/lib-mod-pipeline.sh`'s
+        `refuse_if_game_running` carries the warrant -- an unanchored guard matched the agent
+        harness shell and a bare `python3 -c` on this exact machine, three times in one day.
+
+        This decoy and `ACCEPTED_FALSE_POSITIVES`'s cmd.exe decoy are the SAME semantic class -- a
+        live process that merely names the executable in its own arguments -- and this suite
+        requires opposite verdicts for them. Only the anchor tells them apart: this one begins with
+        a program name (`grep`), so `^[A-Za-z]:` never admits it; the cmd.exe one begins with a
+        drive letter, so it does. That means the anchor's safety depends entirely on the game's own
+        command line beginning with the DOS path rather than following some wrapper -- which is
+        Observed in gameplay for Development and 3.02 only (see `game_command_pattern`'s "four
+        profiles" comment). This project's own tools take that path as an argument, which is what
+        made this decoy a real, previously-observed failure rather than a hypothetical one.
+        """
         self.skip_if_the_real_game_is_running()
         with decoy_process(f"grep --fixed-strings {OBSERVED_GAME_ARGV0}"):
             completed = self.invoke_shipped_guard()
@@ -417,6 +546,72 @@ class GameGuardPattern(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0, completed.stderr)
         self.assertIn(GAME_IS_UP, completed.stderr)
 
+    def test_the_shipped_guard_refuses_for_a_forward_slash_drive_path(self) -> None:
+        r"""`pgrep -f` sees the kernel argv, not a normalized Windows path.
+
+        Nothing about a DOS drive letter requires the backslash form specifically, and some Wine
+        builds hand one back with forward slashes instead.
+        """
+        with decoy_process(FORWARD_SLASH_DRIVE_ARGV0):
+            completed = self.invoke_shipped_guard()
+        self.assertNotEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(GAME_IS_UP, completed.stderr)
+
+    def test_the_shipped_guard_refuses_for_a_unc_path_with_no_drive_letter(self) -> None:
+        r"""`\\server\share\...` names no drive letter at all; Wine can map one to a network share.
+
+        The fixture that catches the `[A-Za-z]:` branch being treated as the ONLY valid prefix
+        rather than one of two.
+        """
+        with decoy_process(UNC_PATH_ARGV0):
+            completed = self.invoke_shipped_guard()
+        self.assertNotEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(GAME_IS_UP, completed.stderr)
+
+    def test_the_shipped_guard_refuses_for_a_quoted_argv0(self) -> None:
+        r"""`CreateProcess` commonly quotes a path that contains a space.
+
+        Quoting the argument does not change whether a human would call this "the game running",
+        so the guard tolerates an optional leading `"` and an optional closing `"` right after
+        `lomse.exe`, at no cost against `NOT_THE_GAME` (nothing there starts with `"` or ends
+        `lomse.exe"`).
+        """
+        with decoy_process(QUOTED_ARGV0):
+            completed = self.invoke_shipped_guard()
+        self.assertNotEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(GAME_IS_UP, completed.stderr)
+
+    def test_the_shipped_guard_still_declines_a_wrapper_prefix_on_purpose(self) -> None:
+        r"""Drives the SHIPPED function against one of the three deliberately-uncovered forms.
+
+        `WINE64_PRELOADER_WRAPPER_ARGV0` is structurally identical to the `grep --fixed-strings
+        ...` decoy above -- some prefix, then whitespace, then the DOS path -- which is exactly
+        why it is not covered: doing so would reopen the class the anchor exists to close. See
+        `game_command_pattern`'s comment for the evidence this project's own machine does not need
+        it covered. This is a documented gap, not an oversight; if it starts failing, that means
+        the pattern grew a `.*` or similar ahead of the drive/UNC prefix, which is the exact defect
+        this test exists to catch before it reaches a real corruption.
+        """
+        self.skip_if_the_real_game_is_running()
+        with decoy_process(WINE64_PRELOADER_WRAPPER_ARGV0):
+            completed = self.invoke_shipped_guard()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertNotIn(GAME_IS_UP, completed.stderr)
+
+    def test_the_pattern_still_declines_a_wrapper_prefix_on_purpose(self) -> None:
+        r"""The regex-level half of the pin above, for all three wrapper forms at once."""
+        for line in (
+            WINE64_PRELOADER_WRAPPER_ARGV0,
+            WINESKIN_LAUNCHER_WRAPPER_ARGV0,
+            PROTON_WRAPPER_ARGV0,
+        ):
+            with self.subTest(line=line):
+                self.assertIsNone(
+                    re.match(GAME_PATTERN_PY, line, re.IGNORECASE),
+                    f"{line!r} was a deliberately-uncovered wrapper-prefix form, and now matches; "
+                    "see game_command_pattern's comment before widening this",
+                )
+
     def test_the_shipped_guard_refuses_for_the_real_game_under_an_unexpected_directory(
         self,
     ) -> None:
@@ -487,13 +682,15 @@ class GameGuardPattern(unittest.TestCase):
         # of them. A drive letter that is not a letter is what separates them.
         r"_:\lomse.exe",
         # No boundary after `lomse.exe` distinguishes these from a pattern with the trailing
-        # `([[:space:]]|$)` dropped, which matches a PREFIX of both and so misreads a backup file
+        # `(["[:space:]]|$)` dropped, which matches a PREFIX of both and so misreads a backup file
         # as the running game.
         OBSERVED_GAME_ARGV0 + ".bak",
         OBSERVED_GAME_ARGV0_DRIVE_ROOT + ".bak",
-        # Begins with a program name, not a drive letter, so the leading `^[A-Za-z]:` anchor
-        # excludes it -- the case that skipped three agents' installs in one day, back when the
-        # pattern had no such anchor at all.
+        # Begins with a program name, not a drive letter or a UNC `\\`, so the leading
+        # `^"?([A-Za-z]:...|[\\][\\])` anchor excludes it -- the case that skipped three agents'
+        # installs in one day, back when the pattern had no such anchor at all. This is also the
+        # decoy that pins the anchor's warrant: see
+        # `test_the_shipped_guard_is_quiet_when_a_process_merely_mentions_the_path`.
         f"grep --fixed-strings {OBSERVED_GAME_ARGV0}",
     )
 
@@ -592,27 +789,40 @@ class GameGuardPattern(unittest.TestCase):
         self.assertEqual(completed.stdout, GAME_PATTERN)
 
     def test_the_raw_pattern_goes_to_pgrep_and_the_translated_pattern_goes_to_re(self) -> None:
-        r"""`[[:space:]]` means different things to `pgrep` and to Python's `re` -- pin the split.
+        r"""`[:space:]` means different things to `pgrep` and to Python's `re` -- pin the split.
 
         `GAME_PATTERN` is the exact text `game_command_pattern` emits and the exact text
-        `matching_processes` feeds to `pgrep`; it has to keep the POSIX bracket expression pgrep's
-        regex engine understands. `GAME_PATTERN_PY` is what every `re.match`/`re.search` call in
-        this file uses instead -- compiling `GAME_PATTERN` directly emits `FutureWarning: Possible
-        nested set` today, because Python's `re` does not parse `[[:space:]]` as a POSIX class at
-        all: it is the character class `[:space` (literal `[`, `:`, `s`, `p`, `a`, `c`, `e`) closed
-        by the first `]`, followed by a second, literal `]`.
+        `matching_processes` feeds to `pgrep`; it has to keep the POSIX bracket-expression class
+        pgrep's regex engine understands (`["[:space:]]`: a literal `"` or the `space` class).
+        `GAME_PATTERN_PY` is what every `re.match`/`re.search` call in this file uses instead,
+        because Python's `re` does not parse a nested `[:space:]` token as a POSIX class at all.
+
+        **Whether that mistake WARNS is not something to depend on.** The previous shape of this
+        bracket (`[[:space:]]`, no leading `"`) made `re.compile` emit `FutureWarning: Possible
+        nested set`, because a bracket that opens with a second `[` immediately is the specific
+        shape Python's parser flags. Adding the literal `"` ahead of the class token for the
+        quoted-argv0 case (`["[:space:]]`) changes what the bracket opens with and defeats that
+        specific heuristic -- compiling `GAME_PATTERN` directly now warns of NOTHING, and instead
+        just silently parses the class token as a run of literal characters, closing at the first
+        `]` instead of the second. The observable consequence, not a warning, is the test that
+        actually matters here: the raw pattern fails to match a real command line once it has
+        trailing arguments (the space that should satisfy the boundary is not a member of the
+        broken bracket at all), while the translated one still does.
         """
-        self.assertIn("[[:space:]]", GAME_PATTERN)
-        self.assertNotIn("[[:space:]]", GAME_PATTERN_PY)
+        self.assertIn("[:space:]", GAME_PATTERN)
+        self.assertNotIn("[:space:]", GAME_PATTERN_PY)
         self.assertIn(r"\s", GAME_PATTERN_PY)
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            with self.assertRaises(Warning):
-                re.compile(GAME_PATTERN)
-            try:
-                re.compile(GAME_PATTERN_PY)
-            except Warning as raised:  # pragma: no cover -- the failure this test exists to catch
-                self.fail(f"GAME_PATTERN_PY is not supposed to warn: {raised}")
+        full_command_line = OBSERVED_GAME_ARGV0 + " /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1"
+        self.assertIsNone(
+            re.match(GAME_PATTERN, full_command_line, re.IGNORECASE),
+            "GAME_PATTERN (untranslated) was expected to mis-parse the [:space:] boundary and "
+            "miss a real command line with trailing arguments; it matched, so the bracket shape "
+            "no longer demonstrates why GAME_PATTERN_PY exists",
+        )
+        self.assertIsNotNone(
+            re.match(GAME_PATTERN_PY, full_command_line, re.IGNORECASE),
+            "GAME_PATTERN_PY (translated) should match the same command line GAME_PATTERN misses",
+        )
 
     def test_no_re_call_site_uses_the_untranslated_pattern(self) -> None:
         r"""Regression guard for the mistake this file already made once.
@@ -628,22 +838,38 @@ class GameGuardPattern(unittest.TestCase):
         Parsed with `ast` rather than grepped as text, because this docstring and others nearby
         talk ABOUT `re.match(GAME_PATTERN, ...)` in prose, and a text search cannot tell a mention
         from a call.
+
+        One call site is deliberately exempt:
+        `test_the_raw_pattern_goes_to_pgrep_and_the_translated_pattern_goes_to_re` calls
+        `re.match(GAME_PATTERN, ...)` ON PURPOSE, to demonstrate that the untranslated pattern
+        mis-parses and misses a real command line -- that is the point being proven, not a mistake
+        to catch. Named explicitly here so widening the exemption silently is visible in a diff.
         """
+        exempt_functions = {
+            "test_the_raw_pattern_goes_to_pgrep_and_the_translated_pattern_goes_to_re",
+        }
         tree = ast.parse(Path(__file__).read_text(encoding="utf-8"), filename=__file__)
         offending = []
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+        for func_def in ast.walk(tree):
+            if not isinstance(func_def, ast.FunctionDef) or func_def.name in exempt_functions:
                 continue
-            func = node.func
-            if not (
-                isinstance(func, ast.Attribute)
-                and func.attr in ("match", "search", "fullmatch")
-                and isinstance(func.value, ast.Name)
-                and func.value.id == "re"
-            ):
-                continue
-            if node.args and isinstance(node.args[0], ast.Name) and node.args[0].id == "GAME_PATTERN":
-                offending.append(node.lineno)
+            for node in ast.walk(func_def):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                if not (
+                    isinstance(func, ast.Attribute)
+                    and func.attr in ("match", "search", "fullmatch")
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "re"
+                ):
+                    continue
+                if (
+                    node.args
+                    and isinstance(node.args[0], ast.Name)
+                    and node.args[0].id == "GAME_PATTERN"
+                ):
+                    offending.append(node.lineno)
         self.assertEqual(
             offending,
             [],
@@ -654,10 +880,10 @@ class GameGuardPattern(unittest.TestCase):
     def test_translated_pattern_matches_the_real_command_line_with_its_real_arguments(
         self,
     ) -> None:
-        r"""The fixture that actually exercises the `[[:space:]]` branch of the pattern.
+        r"""The fixture that actually exercises the `[:space:]` branch of the pattern.
 
         Every other check in this file matches `OBSERVED_GAME_ARGV0` alone -- argv[0], with no
-        trailing arguments -- against which `([[:space:]]|$)` is satisfied by `$` regardless of
+        trailing arguments -- against which `(["[:space:]]|$)` is satisfied by `$` regardless of
         whether the space branch works. Appending the real, observed trailing arguments forces a
         match through the space branch instead, which is the branch Python's `re` cannot parse
         from `GAME_PATTERN` directly (see the test above).
