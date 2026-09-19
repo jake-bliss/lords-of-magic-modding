@@ -8808,6 +8808,222 @@ TILE= 1, 1, *, *, *, *, *, *, *, *, 1\r\n"
         assert_eq!(sweep.no_op_identical, sweep.no_op_edits);
     }
 
+    /// `values_rebuilt` and `no_op_identical` are **equal to their denominators on every `Ok`**,
+    /// by construction, and this is what makes that checkable rather than a read of the code.
+    ///
+    /// Mutation-testing the corpus guards below turned up two mutants they could not kill, because
+    /// a clean corpus cannot distinguish either: wiring `values_rebuilt` to `values_checked`, and
+    /// wiring `no_op_identical` to every `Ok` outcome. On a sweep that succeeds both ratios are 1
+    /// regardless, since a rebuild mismatch or a changed no-op pushes a failure and the sweep
+    /// returns `Err`. This test is where a corpus is not needed: it feeds a fixture that *does*
+    /// carry a lossy spelling, and asserts **both** failures arrive. That kills the second mutant
+    /// outright -- swallowing the differing-no-op arm leaves one failure, not two. The first
+    /// remains equivalent with respect to anything assertable here, because on the `Err` path the
+    /// tallies are never returned at all, only printed. Which is the reason the corpus test pins
+    /// `no_op_edits` -- a figure a change can genuinely move -- rather than resting on the ratios.
+    #[test]
+    fn a_value_whose_spelling_the_model_loses_fails_the_sweep_rather_than_lowering_a_ratio() {
+        let dir = scratch_dir("til-lossy-spelling");
+        // `1|0` parses to the same constraint set as `0|1` and rebuilds in sorted order. No shipped
+        // column is spelled that way, which is why the corpus figure is 46,989 of 46,989 rather
+        // than something smaller.
+        fs::write(
+            dir.join("lossy.til"),
+            b"LBM=a.lbm\r\nTILES= 2, 1\r\nTILESIZE= 32, 32\r\n\
+TERRAINTYPE= 0, 137, \"a\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TERRAINTYPE= 1, 112, \"b\", 0, 0, 9999, 4, 1, 1, 2, 2\r\n\
+TILE= 0, 0, 1|0, *, *, *, *, *, *, *, 0\r\n\
+TILE= 1, 1, *, *, *, *, *, *, *, *, 1\r\n"
+                .as_slice(),
+        )
+        .unwrap();
+
+        let error = roundtrip_tile_sets(&TileSetCorpus::Path(dir)).unwrap_err();
+
+        // Two failures, not one, and both matter: the rebuild audit names the column, and the
+        // no-op edit on that same column comes back changed. A sweep that reported the lowered
+        // ratio and still returned `Ok` would make the corpus guard's ratios meaningless.
+        assert!(error.contains("2 tileset check(s) failed"), "{error}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Corpus-gated: the real 26 `.til` members of `pic.mpq`
+    // -----------------------------------------------------------------------
+    //
+    // Everything above this line runs on fixtures. The fixtures cannot fail on what the shipped
+    // corpus contains and they cannot fail on the corpus changing size, which is why the headline
+    // `docs/til-format.md` quotes lived in prose and in a manual `--til-roundtrip` run -- the exact
+    // arrangement that let `no-op-edits-byte-identical` sit at a stale **740** in that file while
+    // the tool printed 2,724, inside the very commit that changed it.
+    //
+    // Run with:
+    //   APPS="$HOME/Applications"
+    //   SUB="Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition/English"
+    //   LOM_GAME_DIR="$APPS/Steambuild 32 64bit DXVK.app/$SUB" \
+    //   LOM_LISTFILE=artifacts/reference-listfiles/lords-of-magic.txt \
+    //     cargo test --release --bins -- --ignored
+    //
+    // **`--bins`, not `--lib`.** The sweep lives in this binary, so the
+    // `cargo test --lib -- --include-ignored` line `docs/audio-format.md:454` gives contributors
+    // does **not** reach this test. A plain `cargo test -- --ignored` does.
+    //
+    // `LOM_LISTFILE` is not optional. `pic.mpq` carries no internal listfile, so without it
+    // StormLib synthesises `File%08u.xxx` names, nothing ends in `.til`, and the sweep sees zero
+    // members -- which `roundtrip_tile_sets` refuses rather than reporting green.
+
+    /// **Observed in the corpus, 2026-09-19.** What `--til-roundtrip pic.mpq` counts, as
+    /// `(profile, checked, values, text fields carried, no-op edits)`.
+    ///
+    /// **There is one row, and that is itself a measurement rather than an assumption.** The
+    /// sibling guard in `map.rs` had to be re-keyed after it attested "measured in all four
+    /// installs" on the strength of one, so this was run against all four installed profiles
+    /// before being written down: `Steambuild 32 64bit DXVK`, `Lords of Magic Development`,
+    /// `Lords of Magic 3.02` and `Lords of Magic GS5R3` each print 26 / 46,989 / 2,036 / 2,724.
+    /// The 26 members total 315,358 bytes and hash identically across the four, so there is
+    /// genuinely one `.til` population -- even though GS5R3's `pic.mpq` as a whole does **not**
+    /// hash the same as the stock one, because it adds PBM members.
+    ///
+    /// A profile matching no row is a prompt to measure that profile and add a row **with its own
+    /// date**, never to widen an existing one.
+    const ATTESTED_TILE_SET_POPULATIONS: &[(&str, usize, usize, usize, usize)] =
+        &[("pic.mpq (all four installed profiles)", 26, 46_989, 2_036, 2_724)];
+
+    /// The row whose member count matches the archive opened.
+    ///
+    /// Keying on `checked` first is what stops this from degrading into "any attested number will
+    /// do": once the row is chosen, every other figure is an equality against *that* row.
+    fn attested_tile_set_population(checked: usize) -> (&'static str, usize, usize, usize, usize) {
+        *ATTESTED_TILE_SET_POPULATIONS
+            .iter()
+            .find(|(_, count, _, _, _)| *count == checked)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the archive holds {checked} .til members, which matches no attested profile \
+                     ({ATTESTED_TILE_SET_POPULATIONS:?}) -- measure that profile and add a row \
+                     with its date rather than widening an existing one"
+                )
+            })
+    }
+
+    fn game_directory() -> PathBuf {
+        let directory = env::var_os("LOM_GAME_DIR")
+            .map(PathBuf::from)
+            .expect("set LOM_GAME_DIR to the installed English directory");
+        assert!(
+            directory.join("lomse.exe").is_file(),
+            "no lomse.exe under {}",
+            directory.display()
+        );
+        directory
+    }
+
+    /// Every shipped `.til` re-encodes, rebuilds every typed field, and survives every no-op edit.
+    ///
+    /// Read the three counts as `docs/til-format.md` reads them. `identical` is near-tautological
+    /// and is pinned only so a line-splitter regression is visible. `values_rebuilt` is the figure
+    /// that can fail. `no_op_identical` is the one that exercises the **edit** path, and it is the
+    /// number this test exists to stop going stale.
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR and LOM_LISTFILE"]
+    fn every_shipped_tile_set_round_trips() {
+        let listfile = env::var_os("LOM_LISTFILE")
+            .map(PathBuf::from)
+            .expect("set LOM_LISTFILE alongside LOM_GAME_DIR; pic.mpq names no members itself");
+        let corpus = TileSetCorpus::Archive(super::Source {
+            archive: game_directory().join("pic.mpq"),
+            listfile: Some(listfile),
+        });
+
+        // `roundtrip_tile_sets` is an `Err` on any failure and on an empty sweep, so reaching the
+        // assertions already means every member parsed, re-encoded and survived its no-op edits.
+        let sweep = roundtrip_tile_sets(&corpus).expect("the shipped .til corpus round-trips");
+
+        // Panics when the archive matches no attested profile, so a sweep over a truncated or
+        // unrecognised corpus fails here rather than asserting a smaller population against itself.
+        let (profile, checked, values, carried, no_op_edits) =
+            attested_tile_set_population(sweep.checked);
+
+        assert_eq!(sweep.checked, checked, "{profile}: members checked");
+        assert_eq!(
+            sweep.identical, checked,
+            "{profile}: a member did not re-encode byte-identically"
+        );
+        assert_eq!(sweep.values_checked, values, "{profile}: typed fields seen");
+        assert_eq!(
+            sweep.values_rebuilt, values,
+            "{profile}: a typed field did not rebuild to the file's own characters"
+        );
+        assert_eq!(
+            sweep.text_fields_carried, carried,
+            "{profile}: carried text fields"
+        );
+        assert_eq!(
+            sweep.no_op_edits, no_op_edits,
+            "{profile}: the no-op edit set changed size -- re-measure it, do not widen this"
+        );
+        assert_eq!(
+            sweep.no_op_identical, no_op_edits,
+            "{profile}: a no-op edit changed a shipped file"
+        );
+    }
+
+    /// The tileset shape `docs/til-format.md`'s 26-row table quotes, checked against the archive.
+    ///
+    /// The sweep above counts fields; it never looks at what a tileset *declares*, so the table's
+    /// 402 terrain types, 4,043 tiles and "every grid is 16 columns wide" were prose only. A
+    /// tighter parser that silently dropped rows would keep `values_rebuilt == values_checked`
+    /// while shrinking these, which is why they are asserted separately rather than folded in.
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR and LOM_LISTFILE"]
+    fn the_shipped_tile_sets_declare_the_documented_shape() {
+        let listfile = env::var_os("LOM_LISTFILE")
+            .map(PathBuf::from)
+            .expect("set LOM_LISTFILE alongside LOM_GAME_DIR; pic.mpq names no members itself");
+        let corpus = TileSetCorpus::Archive(super::Source {
+            archive: game_directory().join("pic.mpq"),
+            listfile: Some(listfile),
+        });
+
+        let files = super::collect_tile_sets(&corpus).expect("read the .til members");
+        let (profile, checked, ..) = attested_tile_set_population(files.len());
+        assert_eq!(files.len(), checked, "{profile}");
+
+        let mut bytes = 0_usize;
+        let mut terrain_types = 0_usize;
+        let mut tiles = 0_usize;
+        let mut atlases = BTreeSet::new();
+        let mut largest_capacity = 0_u64;
+        for (name, contents) in &files {
+            bytes += contents.len();
+            let document = lom_asset_viewer::tile::TileSetDocument::parse(contents)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            let definition = document.definition();
+            terrain_types += definition.terrain_types.len();
+            tiles += definition.tiles.len();
+            atlases.insert(definition.atlas_member.to_ascii_lowercase());
+            largest_capacity = largest_capacity
+                .max(u64::from(definition.columns) * u64::from(definition.rows));
+            assert_eq!(
+                definition.columns, 16,
+                "{name}: the table's 'every grid is 16 columns wide' no longer holds"
+            );
+            assert_eq!(
+                (definition.tile_width, definition.tile_height),
+                (32, 32),
+                "{name}: TILESIZE is not 32x32, which the TILESIZE refusal rests on"
+            );
+        }
+
+        // **Observed in the corpus, 2026-09-19**, identically in all four installed profiles.
+        assert_eq!(bytes, 315_358, "{profile}: total tileset text");
+        assert_eq!(terrain_types, 402, "{profile}: TERRAINTYPE rows");
+        assert_eq!(tiles, 4_043, "{profile}: TILE rows");
+        // 26 files naming 19 distinct atlases: seven `.lbm` files are shared by two tilesets each.
+        assert_eq!(atlases.len(), 19, "{profile}: distinct atlas members");
+        // Quoted by the "not determined" section as the bound MAX_ATLAS_CAPACITY (1,024) clears.
+        assert_eq!(largest_capacity, 624, "{profile}: largest declared capacity");
+    }
+
     fn scratch_dir(name: &str) -> PathBuf {
         let path = env::temp_dir().join(format!("lom-placement-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);

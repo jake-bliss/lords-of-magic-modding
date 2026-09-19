@@ -163,6 +163,12 @@ columns are corpus-backed rather than merely asserted: `check_terrain_number` re
 passability above 2, and the sweep confirms the shipped corpus never carries one — all 402
 `TERRAINTYPE=` rows read 0, 1, or 2.
 
+Those figures are asserted rather than retyped: `every_shipped_tile_set_round_trips` and
+`the_shipped_tile_sets_declare_the_documented_shape` are `#[ignore]`d corpus tests over `pic.mpq`'s
+26 members. They live in the binary, so reach them with `cargo test --bins -- --ignored` (a
+`--lib` run does not), with `LOM_GAME_DIR` and `LOM_LISTFILE` both set. See
+[docs/til-format.md](../../docs/til-format.md#the-corpus-gated-tests).
+
 Nothing is minted. An unknown tile or terrain index is refused **by name**, as are the four columns
 the shipped headers disagree about, `TILESIZE=`, the pattern column, a `columns` change that would
 repaint every declared tile, and a grid that would orphan one. `--til-set-terrain`'s `COLUMN` is one

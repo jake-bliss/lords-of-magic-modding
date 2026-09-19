@@ -5,11 +5,22 @@ an edit may safely change, what this writer refuses and why, and what about the 
 undetermined. Reading a `.til` and the terrain-blend rule it carries are covered by
 [map-format.md](map-format.md); this file does not restate them.
 
-The corpus is the 26 `.til` members of `pic.mpq`. The baseline archive is
-SHA-256 `d0df8b9254bf03c6cb7b2c1db733d8ee1b735e20d16ed1fa192a99066cc62ca8` (vanilla profile),
-315,358 bytes of tileset text in total. **All 26 files are byte-identical across all four installed
-profiles** — vanilla, 3.02, GS5R3 and the development clone — so neither shipped mod changes a
-tileset, and every measurement below is one measurement, not four.
+The corpus is the 26 `.til` members of `pic.mpq`.
+
+**Observed in the corpus, 2026-09-19.** The baseline archive is SHA-256
+`d0df8b9254bf03c6cb7b2c1db733d8ee1b735e20d16ed1fa192a99066cc62ca8` (vanilla profile), and its 26
+`.til` members hold 315,358 bytes of tileset text in total. **All 26 files are byte-identical
+across all four installed profiles** — vanilla, 3.02, GS5R3 and the development clone — so neither
+shipped mod changes a tileset, and every measurement below is one measurement, not four.
+
+Two qualifications on that, both **Observed in the corpus, 2026-09-19**. GS5R3's `pic.mpq` does
+**not** hash the same as the vanilla one — it is
+`5c784a6aa743701487d6043d346f1ff7e256a3f160388f46acce482aa9078ccf`, because it adds PBM members —
+so the archive hash above identifies the vanilla archive, not the `.til` population. What is
+identical across the four is the 26 members themselves, measured file by file. And the identity is
+now a test rather than a sentence: `every_shipped_tile_set_round_trips` and
+`the_shipped_tile_sets_declare_the_documented_shape` were run against all four installs and pass on
+each (see [Reproducing](#reproducing)).
 
 Reproduce everything here with:
 
@@ -37,11 +48,20 @@ everything below.
 | Row width | **every** `TERRAINTYPE=` and `TILE=` row has exactly 11 comma-separated fields | Observed in the corpus |
 | Repeated keys | none: no file writes any of the five keys twice | Observed in the corpus |
 
-Column alignment is by hand and is not derivable: one row pads with a tab, the next with seven
-spaces, and `tilesb01.til` writes `"happy plains" ,` with a space before the comma. Nothing in this
-writer tries to regenerate that layout.
+**Observed in the corpus, 2026-09-19.** Column alignment is by hand and is not derivable. Measured
+on the pad that follows each of the 402 description fields: 288 rows pad with a tab and 114 with
+spaces, and the space runs are 1, 6, 7, 10, 11 or 12 characters wide; in 35 places a tab-padded row
+is followed immediately by a space-padded one (`aibldg01.til`'s terrain 5 and 6 are one such pair).
+`tilesb01.til` writes `"happy plains" ,` with a space before the comma. Nothing in this writer tries
+to regenerate that layout — it replaces the span of the field it was asked to change and leaves
+every other byte alone.
 
 ### The 26 tilesets
+
+**Observed in the corpus, 2026-09-19** — every cell below, and identical in all four installed
+profiles. Re-derived per file with `--describe-til`; the column totals (402 terrain types, 4,043
+tiles, 19 distinct atlases, 624 largest capacity) are asserted by
+`the_shipped_tile_sets_declare_the_documented_shape`.
 
 | file | atlas | grid | capacity | terrain types | tiles |
 |---|---|---|---|---|---|
@@ -79,23 +99,41 @@ Two things in that table are worth naming, both **Observed in the corpus**:
   different kind of edit from a change to `rows`.
 - **Seven atlases are shared by two tilesets each** — `cavecrys.lbm`, `chbldg01.lbm`,
   `debldg01.lbm`, `fibldg01.lbm`, `orbldg01.lbm`, `tilesb01.lbm`, `wabldg01.lbm` — so the 26 files
-  reference 19 distinct atlas images. `tilesa01.til` names `tilesb01.lbm`, not a `tilesa01.lbm`;
-  there is no such member. Editing one of a pair does not disturb the other, but repainting the
-  shared `.lbm` disturbs both, which is an `--import-png-pbm` concern rather than a `.til` one.
+  reference 19 distinct atlas images. `tilesa01.til` names `tilesb01.lbm` — **and a `tilesa01.lbm`
+  does exist**, 502,140 bytes at `til\tilesa01.lbm`, referenced by no `.til` at all. (An earlier
+  revision of this file said there was no such member; that was wrong, and the member list from
+  `lom-mpq list pic.mpq` shows it.) Three `.lbm` members of `til/` are unreferenced this way:
+  `tilesa01.lbm`, `thite01.lbm` and `ttype01.lbm`. Editing one of a shared pair does not disturb
+  the other, but repainting the shared `.lbm` disturbs both, which is an `--import-png-pbm` concern
+  rather than a `.til` one.
+- **The 32x32 tile size is corroborated by the atlases themselves.** Every one of the 19 referenced
+  `.lbm` files is 512 pixels wide, and `512 / 16 columns = 32`. This is independent of the `.til`:
+  the image header says it, not the tileset text.
 
 ## How the round trip is measured, and how strong each half is
 
 `--til-roundtrip` prints three counts. **They are not equally strong and the report should not be
 read as though they were.**
 
+**Observed in the corpus, 2026-09-19.** Every figure in the table below was re-derived by running
+`--til-roundtrip` against each of the four installed profiles; all four print the same three
+counts, and `every_shipped_tile_set_round_trips` asserts them.
+
 | Count | Over all 26, all four profiles | What it actually shows |
 | --- | --- | --- |
 | `byte-identical` | **26 / 26** | The line splitter and its terminators are exact. **Near-tautological**: the writer keeps each line's bytes and re-emits them, so an unedited file can only differ if a terminator was mis-recorded or a final line without a newline was given one. |
 | `values-rebuilt` | **46,989 / 46,989** | Each integer and each neighbour column was **regenerated from the value the parser read** and compared with the file's own characters. This can fail, and does on inputs the corpus does not contain. |
-| `no-op-edits-byte-identical` | **740 / 740** | Every span-replacing edit the writer offers, per file, set to the value the file already holds: the atlas name, the grid, both ends of the tile table, a terrain colour, **all 402 terrain descriptions**, and **all eight** neighbour columns of each file's first complete tile. Each goes through the real span replacement, re-parse and verification. A span located one character off, a trimmed field, or a re-quoted description shows up here and nowhere else. |
+| `no-op-edits-byte-identical` | **2,724 / 2,724** | Every span-replacing edit the writer offers, per file, set to the value the file already holds: the atlas name and the grid (26 each), both ends of the tile table (52), **all 402 terrain descriptions**, **every** named numeric `TerrainColumn` — palette colour, passability, min and max elevation, movement cost — on **all 402** terrain types (2,010), and **all eight** neighbour columns of each file's first complete tile (208). `26 + 26 + 52 + 402 + 2,010 + 208 = 2,724`. Each goes through the real span replacement, re-parse and verification. A span located one character off, a trimmed field, or a re-quoted description shows up here and nowhere else. |
 
 **Do not read 26/26 as the evidence.** It is reported for completeness. The measurement that can
 fail is `values-rebuilt`, and the measurement that tests the *edit* path is `no-op-edits`.
+
+**This count went stale once already, and that is why it is now a test.** The figure above read
+**740** — the size of the no-op set before it was widened — while the tool printed 2,724, and it
+stayed wrong inside the very commit that widened it, because nothing re-ran it. The two ratios are
+weaker than they look for a related reason: a rebuild mismatch or a changed no-op makes the sweep
+return an error, so on any successful run both ratios are 1 by construction. The figure a change
+can actually move is `no-op-edits` itself, which is what the corpus test pins.
 
 The no-op set covers **every** description rather than one per file, and all eight neighbour
 columns rather than one, because the awkward case is never the first: `tilesb01.til`'s terrain 4 is
@@ -104,6 +142,8 @@ that is wrong only for column `nw` is caught by column `nw` and by nothing else.
 byte-identical after a no-op; the space survives.
 
 ### What is genuinely reconstructed, and what is carried verbatim
+
+**Observed in the corpus, 2026-09-19.** Every count in this table, and the two totals under it.
 
 | Fields | Count over the corpus | Treatment |
 | --- | --- | --- |
@@ -155,15 +195,15 @@ record and the reason.
 | A `self` or constraint naming an undeclared terrain type | Such a tile can never be selected and its cells read as unknown terrain. The undeclared types are named. |
 | Moving the **last** tile out of a terrain type | Every map cell holding one of that type's tiles resolves through it; emptying the type makes those cells unreadable. The terrain and its description are named. |
 | A neighbour column of a row that did not declare all eight readably | The tile is already unpaintable; writing one column makes an incomplete row *look* complete. The first missing column is named. |
-| A column the row stops before | Extending a row means inventing values for the columns in between. The field count is named. No shipped row is short. |
+| A column the row stops before | Extending a row means inventing values for the columns in between. The field count is named. **Observed in the corpus, 2026-09-19:** no shipped row is short — all 4,445 `TERRAINTYPE=` and `TILE=` rows carry exactly 11 comma-separated fields. |
 | Changing `columns` while any tile is declared | A slot's picture is `(index % columns, index / columns)`, so re-columning repaints **every** declared tile with a different image — art the caller did not name. The count is in the message, and it says that changing `rows` alone is safe. |
 | A grid that would orphan declared tiles | The parser rejects a tile at or beyond capacity, so the file would stop loading. The orphaned tiles are listed. |
 | Columns `d`, `e`, `g`, `h` | **No sourced meaning.** 25 of 26 headers call `d` food and `e` ore; `tilesb01.til` calls both unused; all 26 call `g` and `h` unused. Writing into a column whose meaning is a disagreement is minting a field. |
 | `TILESIZE=`, any value — **including `32, 32`** | Changing it would **invent a capability**: nothing has been observed reading the line, so nothing says a different value would be honoured rather than ignored or crashed on. The refusal is about the field, not about the value written, which is why the same-value case is refused too. Note the caveat below: the reason is *not* "unobserved", or it would apply to four accepted columns as well. Library-only; there is no command for it. |
-| The trailing `index` (pattern) column of a `TILE=` row | The column's rule is not known and is demonstrably unreliable — `tilesb01.til`'s tile 2 carries 6 where its pattern is plainly 2, and its tile 50 carries 1. Library-only. |
+| The trailing `index` (pattern) column of a `TILE=` row | The column's rule is not known and is demonstrably unreliable. **Observed in the corpus, 2026-09-19:** `tilesb01.til`'s tile 2 is `TILE=      2, 6, ...,   6` — it carries 6 where its pattern is plainly 2 — and its tile 50 carries 1. Library-only. |
 | An atlas name that is not a `.lbm`, is empty, or carries `,` `;` `"` `=` or whitespace | The first is unsourced; the rest would change how the line parses. |
 | A passability above 2 | Outside both shipped vocabularies. |
-| A palette index above 255 | The palettes hold 256 entries; every shipped terrain colour is in `90..=158`. |
+| A palette index above 255 | The palettes hold 256 entries. **Observed in the corpus, 2026-09-19:** every one of the 402 shipped terrain colours is in `90..=158`. |
 | An inverted elevation range | No shipped row writes one and nothing says what the engine would do with it. |
 | A description containing `,`, `;`, `"` or a control character, or an empty one | Would change how the line parses, or would leave the terrain unnamed. |
 
@@ -191,8 +231,17 @@ caller would be told the edit succeeded while the file says something else.
 four `TERRAINTYPE=` columns this writer accepts** — `a`, `b`, `c` and `f` are sourced by the files'
 own headers, which are the authoring tool documenting itself, not evidence about `lomse.exe`. If
 unobservedness alone were the bar, those four would be refused too. `TILESIZE= 32, 32` is arguably
-*better* corroborated than `movement-cost`, since the renderer and `tools/map_projection.py`
-independently use a 32x32 tile.
+*better* corroborated than `movement-cost`, because a 32-pixel tile is witnessed by something other
+than the `.til` text: **Observed in the corpus, 2026-09-19**, all 19 referenced atlases are 512
+pixels wide against a declared 16 columns, so `512 / 16 = 32` comes from the image headers and not
+from `TILESIZE=`.
+
+**Refuted, 2026-09-19.** An earlier revision of this paragraph cited `tools/map_projection.py` as a
+second independent user of a 32x32 tile. It is not: that module carries no tile size at all, only
+the isometric constants `X_PER_ISO_STEP = 14.4`, `SCREEN_X_PER_STEP = 33.941` and
+`PIXELS_PER_ELEVATION = 20.3625`. Nor does this repository's renderer corroborate anything here —
+it reads `tile_width` out of the `.til` it was handed, which makes it circular rather than
+independent. The atlas widths above are the corroboration; the other two were not.
 
 The refusal stands anyway, on the narrower ground that every shipped file agrees on one value and
 changing it would be claiming a capability nothing demonstrates. The four accepted columns are
@@ -203,8 +252,9 @@ it can be overturned by an engine run rather than rediscovered as an inconsisten
 ### Line endings, and one refusal that is not a gap
 
 A `.til` whose records are separated by **bare CR** collapses to a single physical line and is
-refused. That is deliberate, not an omission. This game does ship a bare-CR text format —
-`settings.cfg` — but no `.til` uses one and nothing establishes that `lomse.exe` would read one, so
+refused. That is deliberate, not an omission. This game does ship a bare-CR text format:
+**Observed in the corpus, 2026-09-19**, `English/settings.cfg` holds 23 bare CR, 0 CRLF and 0 bare
+LF. But no `.til` uses one — all 26 are 6,001 CRLF, 0 bare LF, 0 bare CR — and nothing establishes that `lomse.exe` would read one, so
 accepting it would be minting a capability at the level of line structure. It is also explicitly
 *not* the `settings.cfg` failure mode, where a file parsed "successfully" while silently yielding
 nothing for 22 of 23 keys: here it fails loudly.
@@ -246,8 +296,9 @@ the fields are produced, not after.
   question is open rather than answered. Appending is the obvious next capability and it needs
   either an engine run or a source for the eight neighbour columns of a new tile.
 - **Whether `MAX_ATLAS_CAPACITY` (1,024) reflects anything in the engine.** It does not; it is a
-  conservative guard matched to the map writer's own tile-index guard. The largest shipped tileset
-  declares 624.
+  conservative guard matched to the map writer's own tile-index guard. **Observed in the corpus,
+  2026-09-19:** the largest shipped tileset declares 624 (`tilesa01.til` and `tilesb01.til`, both
+  16x39), so the guard clears the corpus by a factor of 1.6.
 
 ## Reproducing
 
@@ -265,3 +316,34 @@ lom-asset-viewer --describe-til OUTDIR/til/tilesb01.til
 
 Game data is read-only and none of it is committed. The sweep reads `pic.mpq` in place and writes
 nothing.
+
+### The corpus-gated tests
+
+Every count on this page is asserted by a test rather than retyped from a manual run. **Added
+2026-09-19**, because `no-op-edits-byte-identical` had gone stale at 740 against a tool printing
+2,724 — the same failure mode `docs/save-format.md` records for its own headline, twice.
+
+```sh
+cd spikes/asset-viewer
+APPS="$HOME/Applications"
+SUB="Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition/English"
+LOM_GAME_DIR="$APPS/Steambuild 32 64bit DXVK.app/$SUB" \
+LOM_LISTFILE=../../artifacts/reference-listfiles/lords-of-magic.txt \
+  cargo test --release --bins -- --ignored
+```
+
+Three things about that invocation are load-bearing.
+
+- **`--bins`, not `--lib`.** The sweep lives in the `lom-asset-viewer` binary, so the
+  `cargo test --lib -- --include-ignored` line `docs/audio-format.md:454` gives contributors does
+  **not** reach these two tests. A plain `cargo test -- --ignored` does.
+- **`LOM_LISTFILE` is not optional.** `pic.mpq` carries no internal listfile, so without it
+  StormLib synthesises `File%08u.xxx` names, nothing ends in `.til`, and the sweep sees zero
+  members. Verified as a negative control: with an empty listfile both tests fail with *"no .til
+  members were checked ... --listfile is what names them"*, rather than reporting a green run over
+  nothing.
+- **All four profiles were measured**, not one. `Steambuild 32 64bit DXVK`,
+  `Lords of Magic Development`, `Lords of Magic 3.02` and `Lords of Magic GS5R3` each print
+  26 / 46,989 / 2,036 / 2,724 and each passes both tests. The guard is keyed to the member count
+  the way `map.rs`'s is, so a profile matching no row fails by name instead of matching some other
+  profile's total.
