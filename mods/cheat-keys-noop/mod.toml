@@ -1,0 +1,28 @@
+# Rung A of the cheat-keys ladder: the control.
+#
+# `gs\hotkey.gs` is re-emitted through the pipeline with NOT ONE byte of its content changed.
+# This proves the repack itself -- StormLib rewriting gs.mpq under our recovered listfile, the
+# `0x80010100` (EXISTS | ENCRYPTED | IMPLODE) round trip -- changes nothing, and gives rung B
+# something to be compared against. Without this control, a rung B failure in the Development
+# profile cannot distinguish "the cheat_keys flag did nothing" from "we broke gs.mpq".
+#
+# `units\orinf.gs` already proved this compression class can survive the engine (Phase 4,
+# 2026-09-16). This rung is not re-litigating that; it exists because a DIFFERENT member,
+# `gs\hotkey.gs`, has never itself been through this pipeline, and a no-op control is cheaper than
+# assuming one repack's acceptance generalizes to every member without saying so.
+id = "cheat-keys-noop"
+name = "Cheat-keys ladder: repack control"
+version = "0.1.0"
+description = "Re-emit gs\\hotkey.gs byte-identically; proves the repack, not the flag."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false
+
+# The member this mod re-emits, declared as a control rather than an edit. Without this,
+# tools/mpq_shape.py's declared_change_not_applied rule refuses the build: a positional
+# replacement that produced identical bytes is, by that rule's own reasoning, indistinguishable
+# from a mistake. This mod's entire point is the opposite case -- a deliberate no-op -- so it is
+# declared instead of hidden from validate/build the way a real edit would be.
+expect_unchanged = ["gs\\hotkey.gs"]

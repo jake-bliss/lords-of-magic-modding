@@ -47,6 +47,7 @@ Concretely, today you can **inspect, decode, render, export, measure, validate a
 - [MPQ inventory](docs/mpq-inventory.md) — reproducible extraction and baseline/3.02/GS5R3 findings
 - [Deterministic MPQ repack](docs/repack.md) — the repack command, what its shape check proves, and what it does not guarantee
 - [Build and validation pipeline](docs/build-pipeline.md) — the mod source tree, validate/build/install-dev/restore-dev, and what none of it guarantees
+- [Cheat-keys ladder](docs/cheat-keys-ladder.md) — the `gs\hotkey.gs` debug-hotkey tier: a two-rung no-op/flip control, the full key-by-key table with destructive keys marked, and the separate `cheat_dlg`/`getcheatmode` mechanism it is not connected to
 - [Recovering MPQ member names](docs/member-names.md) — pooling every catalogue, confirming each name against the archive, and what stays unnamed
 - [Mod ecosystem](docs/mod-ecosystem.md) — 3.02, GS5R3, optional packages, and compatibility
 - [Research log](docs/research-log.md) — evidence and conclusions from the working installation

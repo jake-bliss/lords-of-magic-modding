@@ -1,0 +1,27 @@
+# Rung B of the cheat-keys ladder: the one-token flip.
+#
+# `gs\hotkey.gs` gates a tier of debug hotkeys behind `/cheat_keys false def` in `userdict`. This
+# mod flips that single token to `/cheat_keys true def` and changes nothing else in the member.
+# The token appears exactly once in the shipped member (verified: `data.count(b"/cheat_keys false
+# def") == 1` over the baseline bytes before this tree existed), so there is no second instance to
+# disturb and no ambiguity about which occurrence is meant.
+#
+# The tier this unlocks is enumerated, key by key, with the destructive ones marked, in
+# docs/cheat-keys-ladder.md. ASCII_VAL"Y" (destroyterrainsprite) is the one that can destroy map
+# state and is why this build is never installed without reading that table first.
+#
+# This is a length-changing edit -- "false" (5 bytes) to "true" (4 bytes) -- so a positional
+# byte-for-byte `cmp` against rung A's member reports a difference starting at that token and
+# running to the end of the file, even though nothing past the token was touched. The offline
+# check in scripts/build-cheat-keys-ladder.sh proves the stronger, token-level claim instead: the
+# bytes before the token are identical, the token itself is the only thing that changed, and the
+# bytes after the token (shifted by exactly len("false")-len("true") = 1) are identical.
+id = "cheat-keys-true"
+name = "Cheat-keys ladder: flag flip"
+version = "0.1.0"
+description = "Flip /cheat_keys false def to true in gs\\hotkey.gs; nothing else in the member differs."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false
