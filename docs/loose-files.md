@@ -41,6 +41,41 @@ lom-asset-viewer --loose-config "$ROOT/English/settings.cfg"
 Both `--loose-config` parsers re-encode; the CLI prints `round-trips` so a partial read is visible
 rather than silent.
 
+### A known flake in the mod-pipeline tests, and what is actually established
+
+`tests/test_mod_pipeline.py` sometimes fails with `lomse.exe is running; quit the game first.`
+while no game is running, and sometimes skips all 16 of its tests for the same reason. Both come
+from one guard: `game_is_running()` in that file and `refuse_if_game_running` in
+`scripts/lib-mod-pipeline.sh`, each `pgrep -f 'lomse.exe'`.
+
+**Observed, with the command lines captured.** `-f` matches the whole command line of every
+process, and it matched two processes that were not the game:
+
+- the agent harness shell (`/bin/zsh -c ...`) running a command whose text happened to contain
+  `lomse.exe`;
+- a bare `python3 -c` whose source contained the literal, with nothing to do with this repository.
+
+So the guard answers "is the game running?" with "does any live command line mention this string?".
+Whether it fires depends on what else is running at that instant, which is why the suite oscillates
+between *16 skipped* (the guard fired at module import, where the `skipIf` is evaluated once) and
+*runs and fails* (it did not fire at import but did fire mid-test).
+
+**Not established**: a minimal deterministic reproduction. Two instances were captured, not a rule
+about when `pgrep` matches. It is recorded at that grade rather than written up as a mechanism.
+
+**Not caused by this work**: no commit on this branch touches either file, and the captured
+instances are a harness shell and an unrelated `python3 -c`.
+
+The distinguishing signal for whoever fixes it: the real game runs as `d:\lomse.exe`, a Wine drive
+path with a **backslash**, while this project's own tools use forward slashes -- so
+`pgrep -f '\\lomse\.exe'` separates them. (`.` is an any-character wildcard in that pattern too,
+so `lomseXexe` matches; minor by comparison.) **Deliberately not fixed here**: both files are being
+edited on other branches, and a three-way collision on a test guard is how a real failure gets lost
+in a merge.
+
+Until it lands, run `scripts/loose-file-reports.sh` and the Python suite one after the other, and
+re-run the Python suite before believing a red result from it.
+
 ## What the sweep covers, and what it does not
 
 **The boundary is deliberate and it is not the whole app bundle.** The walk is rooted at each
