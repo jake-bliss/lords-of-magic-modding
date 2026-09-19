@@ -95,6 +95,13 @@ class ModManifest:
     #: Adding a member has no engine evidence behind it, so it needs two acts: naming the member
     #: and setting this. See `docs/build-pipeline.md`, "what this does not guarantee".
     allow_new_members: bool = False
+    #: Members the mod declares it is rewriting to the SAME bytes, spelled as member names --
+    #: e.g. a codec proving it can reproduce a shipped member byte for byte. Only a name on this
+    #: list may be classified `unchanged` by `tools/mod_build.py`'s `entry_kind`; every other
+    #: byte-identical rewrite is a declared `replace` that did nothing, and
+    #: `tools/mpq_shape.py`'s `declared_change_not_applied` exists to refuse exactly that. See
+    #: `docs/repack.md`.
+    expect_unchanged: tuple[str, ...] = ()
 
 
 @dataclass
@@ -160,6 +167,12 @@ def read_manifest(path: Path) -> ModManifest:
     if not isinstance(allow_new, bool):
         raise ModTreeError(f"{path}: allow_new_members must be true or false")
 
+    expect_unchanged = raw.get("expect_unchanged", [])
+    if not isinstance(expect_unchanged, list) or not all(
+        isinstance(entry, str) for entry in expect_unchanged
+    ):
+        raise ModTreeError(f"{path}: expect_unchanged must be a list of member-name strings")
+
     unknown = set(raw) - {
         "id",
         "name",
@@ -167,6 +180,7 @@ def read_manifest(path: Path) -> ModManifest:
         "base_profile",
         "new_members",
         "allow_new_members",
+        "expect_unchanged",
         "description",
     }
     if unknown:
@@ -183,6 +197,7 @@ def read_manifest(path: Path) -> ModManifest:
         base_profile=raw["base_profile"],
         new_members=tuple(new_members),
         allow_new_members=allow_new,
+        expect_unchanged=tuple(expect_unchanged),
     )
 
 

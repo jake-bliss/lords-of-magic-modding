@@ -72,10 +72,24 @@ anything is installed. It reports:
   Compressed size may move; it is a property of the packer, not of the content.
 - **Every changed member, reported with old and new size and digest** — and only the members the
   repack *declared* it would change are allowed to differ. An undeclared difference is a failure.
-- **A declared replacement that changed nothing is a failure.** A repack that silently did nothing
-  must not pass as a successful repack.
+- **A declared replacement that changed nothing is a failure**, unless the repack declared the
+  opposite. A repack that silently did nothing must not pass as a successful repack, and that rule
+  needs an escape hatch for the one case where nothing changing is the point: a codec proving it
+  can reproduce a shipped member byte for byte (`mods/imp-cursor-noop`, `mods/audio-welcome-noop`).
+  `--expect-unchanged NAME` (`scripts/repack-archive.sh`) inverts the expectation for exactly that
+  member — the failure moves to the content changing, not to it staying the same — and it is a
+  DECLARATION, not an inference: at the mod-tree level (`scripts/mod-build.sh`), naming a member in
+  `mod.toml`'s `expect_unchanged` list is the only way `tools/mod_build.py`'s `entry_kind`
+  classifies it `unchanged` rather than `replace`. A member that is byte-identical to its base but
+  not named there is still classified `replace`, so this rule still fires for it — see
+  `tools/mod_build.py`'s own comment on why that was, briefly, not true.
+- **A declared addition may not already exist in the source, and must appear in the output.**
+  `--expect-added NAME` (`scripts/repack-archive.sh`'s `--add`) declares a member the repack is
+  ADDING rather than replacing; every other member absent from the source and present in the
+  output is a failure, and a name on this list that did not appear in the output is a failure too.
 - **A declared replacement may not change how a member is stored.** Content may change; flags and
-  locale may not.
+  locale may not. The same rule applies to a declared no-op: it may come back byte-identical, but
+  not under a different storage class.
 
 **Observed 2026-09-18:** the manifest addresses members by **block index**, not by name, using
 StormLib's `File%08u.xxx` pseudo-name. This is what lets the check see the PIC5R3 loss class. PIC5R3

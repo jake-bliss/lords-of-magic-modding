@@ -747,7 +747,7 @@ build_tone_rung() {
         "${work_dir}/rung${rung}.${leaf}.${archive}.packed.wav" "${archive}"
       check "rung ${rung}: ${archive}:${member} read back out of the packed archive is the tone we wrote" \
         wave_samples_equal "${work_dir}/rung${rung}.${leaf}.${archive}.packed.wav" \
-        "${work_dir}/rung${rung}.${leaf}.${archive}.tone.wav"
+        "${work_dir}/rung${rung}.tone.${leaf}.${archive}.wav"
       cp "${work_dir}/rung${rung}.${leaf}.${archive}.packed.wav" \
         "$(fresh_output "${out_dir}/rung${rung}-${leaf%.wav}-expected-${archive%.mpq}.wav")"
     done
@@ -760,14 +760,18 @@ build_tone_rung() {
   note
 }
 
-# reconstruct_tone ARCHIVE HERTZ LEAF OUTPUT -- regenerates, from the ARCHIVE's own pristine bytes
-# (already seeded into work_dir by whichever rung most recently ran seed_audio_members), the exact
-# tone.wav that a rung assigning HERTZ to ARCHIVE would have produced. It exists so that rung 8's
-# swap check does not depend on rung 7 having actually run in this invocation: rung 8 seeds both
-# archives' pristines itself, so it can reconstruct "what rung 7 would have written" locally instead
-# of reading a file rung 7 may never have left behind.
+# reconstruct_tone ARCHIVE HERTZ LEAF OUTPUT [RAW_OUTPUT] -- regenerates, from the ARCHIVE's own
+# pristine bytes (already seeded into work_dir by whichever rung most recently ran
+# seed_audio_members), the exact tone.wav that a rung assigning HERTZ to ARCHIVE would have
+# produced. It exists so that rung 8's swap check does not depend on rung 7 having actually run in
+# this invocation: rung 8 seeds both archives' pristines itself, so it can reconstruct "what rung 7
+# would have written" locally instead of reading a file rung 7 may never have left behind.
+#
+# OUTPUT is the file after `--import-wave` (what gets copied into the mod tree). RAW_OUTPUT, if
+# given, also receives a copy of the file BEFORE `--import-wave` -- the independently generated
+# tone a packed readback must be checked against, not the pipeline's own intermediate.
 reconstruct_tone() {
-  local archive="$1" hertz="$2" leaf="$3" output="$4"
+  local archive="$1" hertz="$2" leaf="$3" output="$4" raw_output="${5:-}"
   local raw="${work_dir}/reconstruct.${leaf}.${archive}.${hertz}hz.wav"
   rm -f "${raw}" "${output}"
   PYTHONDONTWRITEBYTECODE=1 python3 "${project_dir}/tools/wav_tone.py" \
@@ -775,6 +779,9 @@ reconstruct_tone() {
     --hertz "${hertz}" --tone-ms "${TONE_MS}"
   "${viewer_tool}" --import-wave "${raw}" "${work_dir}/${leaf}.${archive}.pristine.wav" \
     "${output}" >/dev/null
+  if [[ -n "${raw_output}" ]]; then
+    cp "${raw}" "${raw_output}"
+  fi
 }
 
 if wants 7 && (( audio_writer_ready )); then
@@ -880,11 +887,11 @@ if wants 9 && (( audio_writer_ready )); then
   # The frequency argument is required but unused when there are zero tone frames.
   leaf=button.wav
   tree_file="${mod_dir}/archives/sndfx.mpq/wav/${leaf}"
-  rm -f "${work_dir}/rung9.silence.${leaf}.wav" "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav"
+  rm -f "${work_dir}/rung9.tone.${leaf}.sndfx.mpq.wav" "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav"
   PYTHONDONTWRITEBYTECODE=1 python3 "${project_dir}/tools/wav_tone.py" \
-    "${work_dir}/${leaf}.sndfx.mpq.pristine.wav" "${work_dir}/rung9.silence.${leaf}.wav" \
+    "${work_dir}/${leaf}.sndfx.mpq.pristine.wav" "${work_dir}/rung9.tone.${leaf}.sndfx.mpq.wav" \
     --hertz 0 --tone-ms 0
-  "${viewer_tool}" --import-wave "${work_dir}/rung9.silence.${leaf}.wav" \
+  "${viewer_tool}" --import-wave "${work_dir}/rung9.tone.${leaf}.sndfx.mpq.wav" \
     "${work_dir}/${leaf}.sndfx.mpq.pristine.wav" "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav" \
     >/dev/null
   cp "${work_dir}/rung9.${leaf}.sndfx.mpq.tone.wav" "${tree_file}"
@@ -905,7 +912,8 @@ if wants 9 && (( audio_writer_ready )); then
   # 41 ms and is a sound the engine has already demonstrably played (rung 7's listen), so the
   # audible side is made as hard to miss as 41 ms allows.
   reconstruct_tone special.mpq "${SPECIAL_HERTZ}" "${leaf}" \
-    "${work_dir}/rung9.${leaf}.special.mpq.tone.wav"
+    "${work_dir}/rung9.${leaf}.special.mpq.tone.wav" \
+    "${work_dir}/rung9.tone.${leaf}.special.mpq.wav"
   cp "${work_dir}/rung9.${leaf}.special.mpq.tone.wav" "${mod_dir}/archives/special.mpq/wav/${leaf}"
   check "rung 9: special.mpq:wav\\${leaf} keeps the shipped member's byte count" \
     test "$(wc -c < "${work_dir}/rung9.${leaf}.special.mpq.tone.wav")" \
@@ -929,7 +937,7 @@ if wants 9 && (( audio_writer_ready )); then
         "${work_dir}/rung9.${leaf}.${archive}.packed.wav" "${archive}"
       check "rung 9: ${archive}:${member} read back out of the packed archive is the member we wrote" \
         wave_samples_equal "${work_dir}/rung9.${leaf}.${archive}.packed.wav" \
-        "${work_dir}/rung9.${leaf}.${archive}.tone.wav"
+        "${work_dir}/rung9.tone.${leaf}.${archive}.wav"
       cp "${work_dir}/rung9.${leaf}.${archive}.packed.wav" \
         "$(fresh_output "${out_dir}/rung9-${leaf%.wav}-expected-${archive%.mpq}.wav")"
     done

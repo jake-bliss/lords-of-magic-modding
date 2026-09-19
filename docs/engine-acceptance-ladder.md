@@ -72,7 +72,7 @@ on `claude/lomse-guard-pattern`, with tests that spawn the observed command line
   by construction indistinguishable from silence if nothing plays there at all. Rung 7 settled it.
 
 
-Seven builds, each installed into the development profile on its own, and one look or one listen
+Nine builds, each installed into the development profile on its own, and one look or one listen
 each.
 macOS will not let this project drive the Wine window, so every keypress here is a request to a
 person; the ladder is ordered and worded to cost as few as possible.
@@ -132,6 +132,8 @@ machinery.
 | **5** | `imp-added-member` | `imp.mpq` | A member `imp.mpq` never had, carried alongside rung 2's visible change. |
 | **6** | `audio-welcome-noop` | `sndfx.mpq`, `special.mpq` | Control for the **STORED** class, and our WAVE encoder reproducing two shipped members exactly. One artefact, same as rungs 0+1. |
 | **7** | `audio-welcome-tone` | `sndfx.mpq`, `special.mpq` | An audible replacement of **identical length**, a *different* one in each archive. |
+| **8** | `audio-tone-swapped` | `sndfx.mpq`, `special.mpq` | Rung 7 with the two archives' frequencies **exchanged**, the control for rung 7's archive-attribution claim: the same two tones, in the opposite archives, not a second arbitrary build. |
+| **9** | `audio-button-silence` | `sndfx.mpq`, `special.mpq` | A **presence** judgement instead of a pitch judgement: `wav\button.wav` goes to digital silence in `sndfx.mpq` and stays at rung 7's tone, unchanged, in `special.mpq`; `wav\welcome.wav` gets one shared tone in both archives as a liveness control. |
 
 **Rungs 6 and 7 may be run first.** They depend on nothing in 0–5 — different archives, a different
 storage class, a different decoder — and they are by some distance the cheapest observation on the
@@ -351,7 +353,7 @@ matters because `wave.rs`'s `rebuild()` briefly wrote `0` for every pad instead 
 parsed, and a no-op control that "passed" because the corpus happened to agree with a bug would be
 a control that proved nothing. `scripts/build-acceptance-ladder.sh` therefore **gates both audio
 rungs on a fixture** with an odd `LIST` body whose pad is `0x20`: if `--import-wave` does not hand
-that byte back, rungs 6 and 7 are not built at all.
+that byte back, rungs 6 through 9 are not built at all.
 
 **Why both archives.** `sndfx.mpq` and `special.mpq` each hold both members, byte-identically, and
 nothing known says which one the engine opens — 1,214 member names are shared between them.
@@ -492,8 +494,8 @@ so the next attempt starts from the call site rather than from the assumption.
 ## What was checked without the engine
 
 `scripts/build-acceptance-ladder.sh` re-derives every edit from the installed baseline on each run
-and writes `artifacts/engine-acceptance-ladder/offline-checks.txt`. As of 2026-09-18 every check
-passes:
+and writes `artifacts/engine-acceptance-ladder/offline-checks.txt`. As of 2026-09-19, covering
+rungs 0 through 9, every check passes:
 
 - **Reproducible.** Each archive is repacked three times and all three runs are byte-identical.
 - **Shape preserved.** Every rung's shape check accounts for every member: 3,599 of 3,600 `imp.mpq`
@@ -505,11 +507,23 @@ passes:
   is the failure.
 - **Read back from the packed archive**, never from the loose file that went in: each changed
   member is exported out of the built MPQ by our own decoder and compared with what was drawn or
-  written. That export *is* the expected-value PNG or WAV the observer uses.
+  written. That export *is* the expected-value PNG or WAV the observer uses. For rungs 7-9 the
+  comparison is against the tone `tools/wav_tone.py` generated, not against `--import-wave`'s own
+  output: comparing the packed readback to the pipeline's own intermediate cannot catch that
+  intermediate having mangled the tone, which is exactly the failure mode this check exists for.
 - **`tools/mod_validate.py` and `tools/asset_validate.py` clean.** Both re-encoded images pass the
   IFF walk, BMHD, CMAP and palette-range checks.
-- **The audio writer is gated on a fixture, not on the corpus.** Rungs 6 and 7 are not built unless
-  `--import-wave` hands back a `0x20` pad byte on a template the corpus could never have supplied.
+- **The audio writer is gated on a fixture, not on the corpus.** Rungs 6 through 9 are not built
+  unless `--import-wave` hands back a `0x20` pad byte on a template the corpus could never have
+  supplied.
+- **Rung 8's swap is a genuine exchange, not two arbitrary builds.** Each of rung 8's tones is
+  byte-identical to rung 7's tone for the *opposite* archive, reconstructed locally so the check
+  holds even when rung 8 is built without rung 7 in the same invocation.
+- **Rung 9's silence is digital silence, not a truncation.** `sndfx.mpq`'s `wav\button.wav` data
+  chunk, read back out of the packed archive, is every sample at `0x80` — the 8-bit zero level —
+  and every ancillary chunk plus the odd `data` chunk's pad byte survive byte-for-byte; only the
+  data payload changed. `special.mpq`'s copy of the same member is checked byte-identical to rung
+  7's tone for that archive, unchanged.
 - **`--validate-imp` on every packed `imp.mpq`**: 1,798 stem pairs, 0 failures.
 - **Only the intended member moved.** Rung 2 additionally exports frame 112 of the same member —
   which the edit never named — out of the packed archive and compares it with the shipped export.
@@ -527,7 +541,10 @@ Everything the rungs exist to ask. In particular:
 - whether the engine reads a rewritten `imp.mpq`, `sndfx.mpq` or `special.mpq` at all;
 - whether it tolerates an added member, and — untestable by any observation here — whether it could
   read one;
-- **which** of `sndfx.mpq` and `special.mpq` it opens, which only rung 7 can answer;
+- **which** of `sndfx.mpq` and `special.mpq` it opens. Rung 7 alone could not answer this — its
+  reported "split" turned out to rest on a pitch judgement `wav\button.wav`'s 41 ms cannot support
+  — which is why rungs 8 and 9 exist. **Now answered:** `sndfx.mpq`, for both members; see
+  "Outcome, 2026-09-19" above;
 - whether `lom.cfg`'s last-audio words reach the applied volume — see the candidate rung above,
   which is unanswerable offline and costs a full new-game navigation to answer at all;
 - whether the IMP `layout=Tight` reading is the one the engine uses for `iface\cursors.imp` frame
@@ -536,7 +553,7 @@ Everything the rungs exist to ask. In particular:
 
 ## Cost and risk
 
-Seven installs into `Lords of Magic Development.app` and nothing else. The three installed profiles
+Nine installs into `Lords of Magic Development.app` and nothing else. The three installed profiles
 are opened read-only by this pipeline and written by none of it; `~/Applications` is refused as an
 output path by `scripts/repack-archive.sh`, and every write to the development profile is routed
 through `tools/install_guard.py`, an allowlist of exactly one directory. The loose `map/` directory

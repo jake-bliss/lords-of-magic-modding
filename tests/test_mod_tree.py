@@ -246,6 +246,32 @@ class LoadTest(unittest.TestCase):
         with self.assertRaisesRegex(ModTreeError, "list of member-name strings"):
             load(tree.root)
 
+    def test_expect_unchanged_defaults_to_empty(self) -> None:
+        tree = self.fixture()
+        tree.add("gs.mpq/a.gs")
+        loaded = load(tree.root)
+
+        self.assertEqual(loaded.manifest.expect_unchanged, ())
+
+    def test_expect_unchanged_is_read_from_mod_toml(self) -> None:
+        tree = self.fixture()
+        tree.add("gs.mpq/a.gs")
+        tree.manifest(
+            MANIFEST.format(mod_id="example", profile="vanilla")
+            + 'expect_unchanged = ["gs\\\\a.gs"]\n'
+        )
+        loaded = load(tree.root)
+
+        self.assertEqual(loaded.manifest.expect_unchanged, ("gs\\a.gs",))
+
+    def test_expect_unchanged_must_be_strings(self) -> None:
+        tree = self.fixture()
+        tree.manifest(
+            MANIFEST.format(mod_id="example", profile="vanilla") + "expect_unchanged = [3]\n"
+        )
+        with self.assertRaisesRegex(ModTreeError, "list of member-name strings"):
+            load(tree.root)
+
 
 class SourceDigestTest(unittest.TestCase):
     def setUp(self) -> None:

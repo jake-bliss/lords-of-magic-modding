@@ -35,9 +35,11 @@ from tools.engine_acceptance import (
     roadmap_paragraph,
     roadmap_region,
 )
-from tools.mod_build import command_report
-from tools.mpq_shape import MANIFEST_COLUMNS
+from tools.mod_build import command_report, entry_kind
 from tools.mod_tree import GAME_SUBPATH, PROFILE_APPS, SUPPORTED_ARCHIVES
+from tools.mod_tree import load as load_mod_tree
+from tools.mod_validate import normalise_member
+from tools.mpq_shape import MANIFEST_COLUMNS, Member, compare
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 DEV_PROFILE_NAME = "Lords of Magic Development.app"
@@ -491,6 +493,96 @@ class RecordPristineTest(PipelineTestCase):
         self.assertIn("already recorded", result.stdout)
         self.assertEqual(digest(pristine), before)
         self.assert_other_profiles_untouched()
+
+
+class UndeclaredNoOpRefusalTest(unittest.TestCase):
+    """`entry_kind` and `mpq_shape.compare`, wired together the way `scripts/mod-build.sh` wires
+    them: `entry_kind`'s answer decides which expectation (`--expect-changed` or
+    `--expect-unchanged`) a member's replacement is packed under, and `compare` is what actually
+    refuses a repack that changed nothing.
+
+    Nothing here opens an archive. A real mod tree (`mod_tree.load`) stands in for the source
+    half, and a fabricated `Member` pair stands in for the base and packed-output manifests --
+    exactly the boundary `entry_kind`'s own unit tests fabricate and `mpq_shape`'s own unit tests
+    fabricate, joined here because the defect this pins lived at the seam between them: `entry_kind`
+    alone still returns the right classification and `compare` alone still refuses a declared
+    no-op, but a build that forgot the edit and never declared `expect_unchanged` used to get a
+    green build anyway.
+    """
+
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.root = Path(self._temporary.name) / "unedited-mod"
+        self.root.mkdir()
+        self.contents = b"/hit_points 13 def"
+
+    def seed_tree(self, mod_toml_extra: str = ""):
+        (self.root / "archives" / "gs.mpq" / "units").mkdir(parents=True)
+        (self.root / "archives" / "gs.mpq" / "units" / "orinf.gs").write_bytes(self.contents)
+        (self.root / "mod.toml").write_text(
+            'id = "unedited-mod"\n'
+            'name = "Unedited"\n'
+            'version = "0.1.0"\n'
+            'base_profile = "vanilla"\n' + mod_toml_extra,
+            encoding="utf-8",
+        )
+        return load_mod_tree(self.root)
+
+    def base_member(self) -> Member:
+        return Member(
+            path="units\\orinf.gs",
+            block_index=0,
+            hash_index=0,
+            size=len(self.contents),
+            compressed_size=len(self.contents),
+            flags="0x80010100",
+            locale=0,
+            sha256=hashlib.sha256(self.contents).hexdigest(),
+        )
+
+    def test_a_forgotten_edit_is_refused_by_the_shape_check(self) -> None:
+        """The regression: a tree seeded and never edited must not build green."""
+        tree = self.seed_tree()
+        base = self.base_member()
+        source = tree.members[0]
+        declared_unchanged = frozenset(
+            normalise_member(name) for name in tree.manifest.expect_unchanged
+        )
+
+        kind = entry_kind(source, base, declared_unchanged)
+        self.assertEqual(kind, "replace", "an undeclared no-op must still be a declared change")
+
+        # Exactly what scripts/mod-build.sh does with a "replace" kind: the member is packed
+        # (still holding the base's own bytes, since nothing was ever edited) under
+        # --expect-changed.
+        report = compare([base], [base], expected_changes={base.path})
+
+        self.assertFalse(report.ok)
+        self.assertEqual(
+            [finding.kind for finding in report.findings if finding.failure],
+            ["declared_change_not_applied"],
+        )
+
+    def test_a_declared_no_op_builds_clean(self) -> None:
+        """The mechanism this refusal must not block: a genuinely declared no-op."""
+        tree = self.seed_tree('expect_unchanged = ["units\\\\orinf.gs"]\n')
+        base = self.base_member()
+        source = tree.members[0]
+        declared_unchanged = frozenset(
+            normalise_member(name) for name in tree.manifest.expect_unchanged
+        )
+
+        kind = entry_kind(source, base, declared_unchanged)
+        self.assertEqual(kind, "unchanged")
+
+        # Exactly what scripts/mod-build.sh does with an "unchanged" kind: --expect-unchanged.
+        report = compare([base], [base], expected_unchanged={base.path})
+
+        self.assertTrue(report.ok, [finding.detail for finding in report.findings])
+        self.assertIn(
+            "member_rewritten_unchanged", [finding.kind for finding in report.findings]
+        )
 
 
 class ProfileTableTest(unittest.TestCase):

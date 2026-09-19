@@ -473,10 +473,6 @@ class UnnamedMemberTest(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DeclaredNoOpTest(unittest.TestCase):
     """`--expect-unchanged`: a replacement whose content is expected NOT to move.
 
@@ -577,3 +573,7 @@ class DeclaredAdditionTest(unittest.TestCase):
         self.assertEqual(
             [finding.path for finding in report.failures], ["gs\\sneaked.gs"]
         )
+
+
+if __name__ == "__main__":
+    unittest.main()

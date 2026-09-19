@@ -55,6 +55,8 @@ base_profile = "vanilla"         # vanilla | patch302 | gs5r3
 description = "..."              # optional
 new_members = []                 # members being ADDED rather than replaced
 allow_new_members = false        # and the second act required to permit that
+expect_unchanged = []            # members DECLARED to rewrite to the same bytes; see "What each
+                                  # source file is classified as", below
 ```
 
 A key this pipeline does not understand is a **refusal**, not a warning. A key an author believes is
@@ -271,6 +273,27 @@ archives with the same tools twice lands in the same directory with the same byt
 is refused unless `--force` is passed. A build id that moved with the wall clock would make two
 identical builds look like two different things, and the install log would record a change that
 never happened.
+
+### What each source file is classified as
+
+Before `scripts/repack-archive.sh` runs, `tools/mod_build.py`'s `entry_kind` decides, for every
+source file, which of three expectations the shape check ([repack.md](repack.md)) is handed:
+
+| Kind | When | What the shape check is told to expect |
+|---|---|---|
+| `add` | the base archive has no such member | `--expect-added`: the member must be absent from the source and present in the output |
+| `unchanged` | the member is named in `mod.toml`'s `expect_unchanged` | `--expect-unchanged`: the content must NOT move |
+| `replace` | everything else | `--expect-changed`: the content must move |
+
+`unchanged` is a **declaration**, spelled the same way `new_members` is, not something inferred by
+comparing the file's bytes to the base member. A file that happens to be byte-identical to the
+member it replaces is still classified `replace` unless its name is in `expect_unchanged` --
+`tools/mpq_shape.py`'s `declared_change_not_applied` finding exists precisely so that a repack which
+silently changed nothing is refused, and that refusal can only fire while an undeclared no-op is
+still classified as a declared change. `mods/imp-cursor-noop` and `mods/audio-welcome-noop` are the
+two mods in this tree that declare `expect_unchanged`, because both exist to prove a codec can
+reproduce a shipped member byte for byte -- that is the one case where nothing changing is the
+result under test, not a forgotten edit.
 
 ### No step runs against a stale tool
 

@@ -38,3 +38,9 @@ base_profile = "vanilla"
 
 new_members = []
 allow_new_members = false
+# Declared, not inferred: `entry_kind` only classifies a member `unchanged` when it is named
+# here. Leaving this empty would reclassify the encoder's byte-identical output as a `replace`
+# that did nothing, and `declared_change_not_applied` would refuse this build for the exact thing
+# it is meant to prove. One name each covers the member in both archives -- entry_kind matches by
+# member name, not by (archive, member).
+expect_unchanged = ["wav\\welcome.wav", "wav\\button.wav"]
