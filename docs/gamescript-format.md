@@ -389,9 +389,14 @@ Note the coordinate convention split: these terrain and elevation operators take
 ```
 
 Any lexer or VM for this language has to handle `<<` and `>>` as delimiters, not as shift operators
-and not as ordinary names. Both of ours already do — checked, not assumed: `tools/gs_syntax.py`
-tokenises them separately, and `gamescript_vm.rs` opens and closes a `CollectionKind::Dictionary` on
-them.
+and not as ordinary names. **Corrected 2026-09-18:** this used to say both of ours did, "checked,
+not assumed". `gamescript.rs` and `gamescript_vm.rs` do — the lexer emits
+`Delimiter::DictionaryOpen`/`Close` and the VM opens and closes a `CollectionKind::Dictionary` on
+them. `tools/gs_syntax.py` does **not**: `<` and `>` are ordinary name bytes there, so `x<<y` is
+three tokens to the authority and one to it. It only ever looked right because every `<<` and `>>`
+in the corpus is whitespace-delimited, which is what the original check actually observed. The
+check that was missing is in [lexer parity](#lexer-parity-the-two-tokenizers-and-what-still-separates-them),
+where this is the one divergence still open.
 
 ### Unused engine surface
 
@@ -413,10 +418,42 @@ against a shuffled baseline on signals the table itself does not contain.
 | Adjacent operators' caller-set overlap (mean Jaccard) | 0.3145 | 0.0133 | **23.6x** |
 | Adjacent operators sharing at least one caller file | 58.5% | 10.5% | **5.6x** |
 | Adjacent operators sharing a name stem | 12.87% | 0.021% | **611x** |
-| Mean run length of dominant caller directory | 1.45 | 1.10 | 1.33x |
+| Mean run length of dominant caller directory | 1.44 | 1.10 | 1.31x |
 
-The first three say the ordering is real and strong. **The fourth says the obvious labelling axis is
-the wrong one**, and that is worth as much as the positive results.
+Unrounded, because two of these cells are close enough that rounding hides what moves:
+0.31445655255437444 / 0.01332579503380394 = 23.597582865163627; 0.5846702317290553 / 0.1048 =
+5.578914424857398; 0.12867443150305047 / 0.00021075984470327234 = 610.5263157894736;
+1.4397446129289704 / 1.0991692916425675 = 1.3098479223136381. The displayed cells are rounded to
+two or three places and the ratios to three significant figures; the fourth row's 1.31x is
+1.3098479223136381, not a ratio of the two rounded cells above it.
+
+**Re-measured 2026-09-18, and the re-measurement found a defect in the measurement.** This table is
+computed through `tools/gs_syntax.py`, five of whose rules changed that day, so it was re-run with
+the tokenizer immediately before those fixes and immediately after, over one 1,696-member GS5R3
+dump. **All four rows are bit-identical between the two runs** — not approximately, the same
+floats. The fixes restore tokens (706 to `wacave.gs` alone) and split `w/name`-shaped tokens, and
+those changes fall inside members whose caller sets they do not alter for any operator in the
+table.
+
+An earlier version of this note claimed the fourth row moved, 1.45 → 1.44 observed with the ratio
+going 1.33x → 1.32x, and credited the tokenizer. **That was wrong, and the way it was wrong is the
+useful part.** `caller_group_agreement` chose each operator's dominant directory with
+`Counter.most_common`, which breaks a tie by insertion order, and the insertion order came from
+iterating a `set` of file names — so it varied with Python's string hash randomisation between
+*processes*. Five runs over one corpus with one unchanged tokenizer give observed 1.43, 1.44, 1.44,
+1.44, 1.45 and ratio 1.31x-1.32x. The "delta" was noise, and comparing one pre-run against one
+post-run could not have told the difference. The tie is now broken by name, `tests/test_operator_groups.py`
+runs the measurement under eight hash seeds and requires one answer, and the numbers above are from
+the fixed, deterministic version. The published fourth row before all this was 1.45 / 1.10 / 1.33x,
+which is inside the noise band it was measured in.
+
+The first three say the ordering is real and strong — though "three rows" overstates how many
+independent things they are, and this page used to. Rows 1 and 2 are two projections of a single
+`call_site_agreement` computation, mean overlap and share-any, so they cannot disagree with each
+other; row 3 comes from `stem_agreement`, whose only argument is the operator sequence — it never
+touches the caller index and is mathematically incapable of moving when the tokenizer changes. So
+the evidence is one statistic about callers, two ways, plus one constant. **The fourth says the
+obvious labelling axis is the wrong one**, and that is worth as much as the positive results.
 
 #### The negative result
 
@@ -455,8 +492,17 @@ conservative measurement.
 
 ```sh
 target/release/lom-asset-viewer --scan-natives '/path/to/English/lomse.exe' > scan.txt
-# extract the .gs members of gs.mpq into a directory first
-python3 -m tools.operator_groups scan.txt /path/to/extracted/scripts
+# Extract gs.mpq first, then FLATTEN its .gs members into one directory, joining path components
+# with `__`: `gs/dlg/lib_dlg.gs` becomes `gs__dlg__lib_dlg.gs`. Both halves matter and neither is
+# optional. `caller_index` uses `Path.iterdir`, so it does not descend into subdirectories and a
+# nested tree yields 30 operators with callers instead of 1,371; and the dominant-caller-directory
+# row recovers the directory by splitting the file *name* on `__`, so the separator is the one the
+# tool reads. `caller_index` also applies NO suffix filter -- it reads every regular file in the
+# directory -- so a stray `scan.txt` or `.DS_Store` becomes a caller and shifts the caller-set
+# rows. Keep the dump to `.gs` members only. Link rather than copy; nothing is written to it.
+# The measurement is deterministic since 2026-09-18; before that the fourth row varied by hash
+# seed.
+python3 -m tools.operator_groups scan.txt /path/to/flattened/scripts
 ```
 
 Tokenising uses the project lexer rather than a regex, so a name appearing only inside a `;` comment
@@ -575,12 +621,62 @@ target, is one of those: 1,798 bytes, one line, no trailing newline. The build p
 compares a replacement's census against its base member's rather than against any fixed style; see
 [the build pipeline](build-pipeline.md).
 
-The damage `tools/gs_syntax.py`'s LF-only comment rule actually does is narrower than the bare-CR
-population suggests, because a bare CR costs it nothing unless a `;` comment is there to run on.
-Comparing its token count against the same rule with CR treated as a terminator: **34 members lose
-tokens, all 34 in GS5R3, none in vanilla or 3.02.**
+The damage `tools/gs_syntax.py`'s LF-only comment rule did was narrower than the bare-CR
+population suggests, because a bare CR cost it nothing unless a `;` comment was there to run on.
+Comparing its token count against the same rule with CR treated as a terminator: **34 members lost
+tokens, all 34 in GS5R3, none in vanilla or 3.02.** The rule was **fixed on 2026-09-18** — a comment
+now ends at the first of `\r` or `\n` — and the same measurement after the fix reports zero.
 
 The corpus relies on it. GS5R3's `gs\standard.gs` comments out its inherited `min`/`max` at lines 68 and 70 and redefines them at 73 and 74; reading the commented pair as live would give the wrong bodies.
+
+## Lexer parity: the two tokenizers and what still separates them
+
+This repository has two lexers for one grammar. `spikes/asset-viewer/src/gamescript.rs` is the
+authority — it is what `--gs-facts` runs and what the build pipeline validates with — and
+`tools/gs_syntax.py` is the tokenizer `compare_trees.py` normalises with. Where they disagree, one
+of them is wrong about a shipped member, so the change report prints both and says so
+([build pipeline](build-pipeline.md#why-the-lexer-is-the-rust-one)). This section is the list that
+message points at.
+
+**Closed 2026-09-18** — five divergences, each measured over all 4,692 `.gs` members of the three
+installed profiles before and after. Evidence class: Observed; the archives are not in this
+repository, so this measurement is the evidence and no reader can re-derive it from the repository
+alone. The port it was measured with is a throwaway instrument and is **not committed**: what is
+committed instead is `AuthorityParityTest` in `tests/test_gs_syntax.py`, which runs the real
+`lom-asset-viewer` against one fixture per divergence.
+
+| Divergence | Members changed | Where |
+|---|---:|---|
+| `;` comment ended at `\n` only, though bare CR is a line ending | 34 | all GS5R3 (25 with no LF at all) |
+| `\` treated as a string escape; the authority has no escape rule | 5 | vanilla 1, 3.02 2, GS5R3 2 |
+| `/` did not end a name, though `is_separator` lists it | 5 | vanilla 1, 3.02 1, GS5R3 3 |
+| `str.isspace()` wider than `is_ascii_whitespace` (`\x0b`, `\x1c`-`\x1f`, `\x85`, `\xa0`) | 0 | one member holds such a byte, inside a string |
+| `(` and `)` were delimiters here and are ordinary name bytes to the authority | 0 | 530 members hold a parenthesis; in every one it is inside a string or a comment |
+
+After them, **0 of 4,692 members tokenize differently**.
+
+**Two of the five had zero corpus reach and were fixed anyway.** A divergence about a shipped
+grammar is a defect whether or not the shipped corpus happens to exercise it: `foo(1)` was four
+tokens here (`foo`, `(`, `1`, `)`) and one to the engine's lexer, so an edit to `foo (1)` would have read as a real change
+to the authority and as layout-only here — in a mod nobody has written yet, which is exactly the
+kind of file this pipeline exists to check. Reach decides urgency, not whether something is wrong.
+
+**Still open — one divergence.** `<` and `>` end a name for the authority (`is_separator`) and not
+for `gs_syntax.py`, so `x<<y` is three tokens to one and one token to the other. No corpus member
+reaches it. Unlike the parentheses, it cannot be closed by editing a set: a single `<` not followed
+by `<` is a *parse error* to the authority, and `gs_syntax.py` has no error channel — the same
+holds for an unterminated string and an empty literal name after `/`, both of which this tokenizer
+keeps as tokens rather than inventing an error. `tests/test_mod_report.py` uses this divergence as
+its disagreement fixture, so the change report's check stays exercised, and
+`tests/test_gs_syntax.py` pins the two error-shaped behaviours so a later simplification cannot
+change them silently.
+
+**Decoding is not a lexing divergence, and is easy to mistake for one.** The Rust lexer decodes
+member bytes with `from_utf8_lossy`, so a byte above 0x7e that is not valid UTF-8 becomes U+FFFD in
+its token text and in its digest; `gs_syntax.py` decodes latin1 and keeps it. Seventeen corpus
+members contain such a byte. Their token *boundaries* agree — only the text of one token differs —
+so any comparison of the two tokenizers has to decode both sides the same way or it will report
+seventeen false divergences.
 
 ## Procedure locals: `replace` and the slot-zero dictionary
 

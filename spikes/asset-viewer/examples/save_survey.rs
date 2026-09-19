@@ -74,6 +74,9 @@ fn main() -> ExitCode {
     // one (717). Only the intersection across files is empty. Reporting it per file would be
     // claiming more than the measurement supports, so it is accumulated and checked once.
     let mut stride_intersection: Option<Vec<usize>> = None;
+    let mut sprite_round_trips = 0_usize;
+    let mut file_round_trips = 0_usize;
+    let mut sprite_files_with_no_echo_disagreement = 0_usize;
 
     for path in &paths {
         let label = display_name(path);
@@ -178,11 +181,54 @@ fn main() -> ExitCode {
         );
         let strides = save.sprites.candidate_fixed_strides(STRIDE_SEARCH_LIMIT);
         println!(
-            "    LS_SPR_  {} records, {} bytes carried undecoded; header sizes 0..={} that divide evenly: {:?}",
-            save.sprites.record_count,
-            save.sprites.records_raw().len(),
-            STRIDE_SEARCH_LIMIT,
-            strides,
+            "    LS_SPR_  {} records over {} bytes; classes {}",
+            save.sprites.live_record_count(),
+            save.sprites.records_raw().len() + 4,
+            save.sprites
+                .class_histogram()
+                .iter()
+                .map(|(class, count)| format!("{class}:{count}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        println!(
+            "             class-id echo: {} of {} records disagree",
+            save.sprites.class_id_echo_disagreements(),
+            save.sprites.records.len(),
+        );
+        if save.sprites.class_id_echo_disagreements() == 0 {
+            sprite_files_with_no_echo_disagreement += 1;
+        }
+        // The round trip is printed per file rather than only aggregated, because "31/31" hides
+        // which file broke on the run where it is not 31.
+        let reencoded = save.sprites.encode();
+        let original = {
+            let mut bytes = Vec::with_capacity(4 + save.sprites.records_raw().len());
+            bytes.extend_from_slice(&save.sprites.record_count.to_le_bytes());
+            bytes.extend_from_slice(save.sprites.records_raw());
+            bytes
+        };
+        let round_trips = reencoded == original;
+        if save.reencode_with_sprites(&bytes) == bytes {
+            file_round_trips += 1;
+        }
+        if round_trips {
+            sprite_round_trips += 1;
+        }
+        println!(
+            "             re-encode from the decoded records: {}",
+            if round_trips {
+                "byte-identical".to_string()
+            } else {
+                format!(
+                    "DIFFERS -- {} bytes out vs {} in",
+                    reencoded.len(),
+                    original.len()
+                )
+            }
+        );
+        println!(
+            "             header sizes 0..={STRIDE_SEARCH_LIMIT} that divide evenly: {strides:?}",
         );
         stride_intersection = Some(match stride_intersection {
             None => strides,
@@ -319,12 +365,24 @@ fn main() -> ExitCode {
 
     let strides = stride_intersection.unwrap_or_default();
     println!(
+        "\nLS_SPR_ class-id echo: no record disagrees in {sprite_files_with_no_echo_disagreement}/{parsed} file(s)"
+    );
+    println!(
+        "  -> a ONE-WAY detector. The writer emits the same [object+4] twice, at 0x004F6C25\n     and 0x004F6A8B, so this CANNOT fail on a save this engine wrote. DISAGREEMENT would\n     prove damage, misalignment or another writer; AGREEMENT proves only that those two\n     dwords match -- flip any body byte and this still reports zero. Not an integrity\n     check on the file, and it cannot detect a wrong layout."
+    );
+    println!(
+        "\nLS_SPR_ re-encoded byte-identically from its decoded records in {sprite_round_trips}/{parsed} file(s)\nwhole files reassembled byte-identically with LS_SPR_ regenerated: {file_round_trips}/{parsed}"
+    );
+    println!(
+        "  -> proves LOSSLESS PRESERVATION and correct container splicing, and nothing more:\n     once parse succeeds the re-encode is an IDENTITY. It does not prove any record's\n     internal field boundaries and does not exclude compensating errors -- swap class 0's\n     12+88 for 16+84 and both trips still match byte for byte. The disassembly, and the\n     independently written fixture the version sweep drives, are the evidence for those."
+    );
+    println!(
         "\nLS_SPR_ header sizes 0..={STRIDE_SEARCH_LIMIT} that divide evenly in EVERY file: {strides:?}"
     );
     println!(
         "  -> {}",
         if strides.is_empty() {
-            "no common candidate exists WITH A HEADER OF AT MOST 1024 BYTES. That is a bounded\n     search, not a proof of no stride: a larger header was not tried. The primary evidence\n     for variable-length records is the disassembly -- virtual dispatch through the 10-entry\n     table at 0x004F73B8 -- and the length-prefixed strings embedded at irregular offsets.\n     This arithmetic corroborates them; it does not carry the claim on its own."
+            "no common candidate exists WITH A HEADER OF AT MOST 1024 BYTES. That is a bounded\n     search, not a proof of no stride: a larger header was not tried. The primary evidence\n     for variable-length records is the disassembly -- virtual dispatch through the 10-entry\n     table at 0x004F73B8 -- and the three variable-length classes it reaches. This arithmetic\n     corroborates them; it does not carry the claim on its own.\n     (Was: \"length-prefixed strings at irregular offsets\". REFUTED 2026-09-18 -- 0x00427A40\n     reads a counted RAW BYTE array with a jle guard and no terminator, and decoded at its\n     true offset its payload is small integers, not text.)"
         } else {
             "NOT empty: a fixed stride may exist after all, and this claim needs revisiting"
         }

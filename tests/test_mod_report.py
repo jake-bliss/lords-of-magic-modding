@@ -127,31 +127,41 @@ class GameScriptChangeTest(unittest.TestCase):
 
 
 class PythonLexerDisagreementTest(unittest.TestCase):
-    """`tools/gs_syntax.py` ends a `;` comment at LF only. The report says when that matters.
+    """Two implementations of one grammar. The report says when they disagree.
 
-    A bare-CR member with a comment normalises, in Python, to far fewer tokens than it has, so the
-    Python answer to "did the tokens change" can differ from the CR-aware Rust answer. Reporting
-    the disagreement turns the repo's recorded latent defect into a visible finding instead of a
-    quietly wrong column.
+    Five divergences were closed on 2026-09-18 -- the LF-only `;` comment rule, a `\\` escape
+    inside strings, `/` not ending a name, `str.isspace()` being wider than the authority's
+    `is_ascii_whitespace`, and `(`/`)` being delimiters here when the authority reads them as
+    ordinary name bytes. After them the two tokenizers agree on all 4,692 `.gs` members of the
+    three installed profiles, so no shipped member can trip this branch today and the fixture has
+    to be synthetic. It is not arbitrary: `<` and `>` end a name for the authority
+    (`is_separator`, `gamescript.rs`) and not for `tools/gs_syntax.py`, which is the divergence
+    that is still open, and `x<<y` is the shape that exercises it.
     """
 
     def test_a_disagreement_is_reported_and_the_rust_answer_is_used(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            # Everything after the `;` is one comment to gs_syntax.py, so both files normalise to
-            # the same (empty) token stream there, while the real token streams differ.
+            # `<` ends a name for the authority, so it reads both files as the same seven tokens
+            # while gs_syntax.py reads `x<<y` as one token and `x << y` as three.
             base_path = root / "base.gs"
             new_path = root / "new.gs"
-            base_path.write_bytes(b"; note\r/hit_points 13 def")
-            new_path.write_bytes(b"; note\r/hit_points 18 def")
+            base_path.write_bytes(b"/a{ x<<y }def")
+            new_path.write_bytes(b"/a{ x << y }def")
 
+            # The Rust answer, which the caller supplies: one token stream, so layout only.
             base = facts(sha256="a" * 64, token_sha256="t" * 64)
-            new = facts(sha256="b" * 64, token_sha256="u" * 64)
+            new = facts(sha256="b" * 64, token_sha256="t" * 64)
             status, detail = describe_gamescript_change(base, new, base_path, new_path)
 
-        self.assertEqual(status, MODIFIED)
+        # Classified on the Rust answer, with the Python one reported rather than acted on.
+        self.assertEqual(status, REFORMATTED)
         self.assertTrue(any("DISAGREES" in line for line in detail))
         self.assertTrue(any("gs_syntax.py" in line for line in detail))
+        self.assertTrue(
+            any("docs/gamescript-format.md" in line for line in detail),
+            "the reader needs the list of known divergences, not one named cause",
+        )
 
     def test_agreement_produces_no_disagreement_line(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

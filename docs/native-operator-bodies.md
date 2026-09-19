@@ -36,6 +36,26 @@ window against the corpus's own definitions:
 | `setbuildingrequirements` | `building.gs:549:31` | 8 | **8** ✓ | 1 ✗ |
 | `getplayergroupintoformation` | `getinfrm.gs:1:1079` | 8 | **8** ✓ | 1 ✗ |
 
+**Re-run 2026-09-18, after five tokenizer fixes, and unchanged.** This table is read through
+`tools/gs_callsites.py`, which tokenizes with `tools/gs_syntax.py`, and that tokenizer's `;`
+comment, string-escape, `/`-separator, whitespace and parenthesis rules all changed that day. Every
+operator cited here — plus `launchmissile` and `relative2actual` below — was re-run with the
+tokenizer immediately before those fixes and immediately after, over the same GS5R3 extraction: the
+reports are **byte-identical**, call-site counts and operand windows alike. That is a measurement,
+not an inference from which members changed. The five members the string fix moved are
+`Dlg\lib_dlg.gs` (vanilla and 3.02), `standard.gs` (3.02), and `dlg\LIB_DLG5.gs` and
+`dlg\lib_dlg.gs` (GS5R3); the `/` fix moved those four and `spells\AIR\chain_lightning2.gs`. None
+holds a call site cited here, which is why nothing moved — but the re-run is what establishes that,
+and naming the members is what lets a reader check it.
+
+The re-run did surface one number below that **could not be reproduced**, and it is not the
+tokenizer's doing: `launchmissile` reports 4 call sites in vanilla, 7 in 3.02 and 5 in GS5R3 —
+16 in total, or fewer if a pooled dump loses same-named members — against the "twelve" recorded
+further down. The counts are identical before and after the fixes, so the discrepancy predates
+them and is about which corpus that paragraph was measured over. Recorded here rather than quietly
+rewritten, because the 21-operand conclusion it supports does not depend on the count and the
+count cannot be re-derived without knowing the dump.
+
 The fifth needs one substitution to read: `myowner 1 50 15 relative2actual 50 50 relative2actual
 3 0`, and `relative2actual` is itself an operator taking two and returning two, which this table
 also says — so the site passes 1+1+2+2+1+1 = 8.

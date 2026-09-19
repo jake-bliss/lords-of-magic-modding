@@ -15,6 +15,7 @@ use lom_asset_viewer::gs_facts::GsFacts;
 use lom_asset_viewer::gamescript_vm::{
     GameScriptVm, GameScriptVmError, ModuleSource, Value as GameScriptValue, normalize_module_path,
 };
+use lom_asset_viewer::loose::{self, LomConfig, SettingsConfig};
 use lom_asset_viewer::imp;
 use lom_asset_viewer::imp::{
     IMP_ORPHAN_NOTES, IMP_VALIDATION_EXCEPTIONS, ImpHeaderStats, ImpOrphanNote, ImpSprite,
@@ -34,7 +35,7 @@ use lom_asset_viewer::native_table;
 use lom_asset_viewer::paths::paths_are_same_file;
 use lom_asset_viewer::server::{TileSetSource, serve};
 use lom_asset_viewer::smacker::{self, SmackerFile};
-use lom_asset_viewer::wave::{WaveFile, WaveSweep, import_samples};
+use lom_asset_viewer::wave::{ImportOptions, WaveFile, WaveSweep, import_samples};
 use lom_asset_viewer::operator_arity;
 use lom_asset_viewer::pbm::{PbmChunk, PbmFile, PbmImage};
 use lom_asset_viewer::png_export::{
@@ -210,6 +211,13 @@ enum Command {
         reports: PathBuf,
     },
     ScanMapDirectory(PathBuf),
+    /// Walk a loose (non-archive) install tree and classify every file in it.
+    LooseInventory {
+        root: PathBuf,
+        profile: String,
+    },
+    /// Describe one `lom.cfg` or `settings.cfg`, chosen by its own shape rather than by name.
+    LooseConfig(PathBuf),
     /// Re-encode every PBM in an archive and compare the result with the original.
     RoundtripPbm(Source),
     /// Re-encode every IMP frame in an archive and compare the result with the original.
@@ -246,7 +254,7 @@ enum Command {
         edited: PathBuf,
         template: PathBuf,
         output: PathBuf,
-        allow_format_change: bool,
+        options: ImportOptions,
     },
     /// Report the container structure of one Smacker file.
     DescribeSmacker(PathBuf),
@@ -433,6 +441,8 @@ fn run() -> Result<(), String> {
             executable.as_deref(),
         ),
         Command::ScanMapDirectory(path) => scan_map_directory(&path),
+        Command::LooseInventory { root, profile } => loose_inventory(&root, &profile),
+        Command::LooseConfig(path) => describe_loose_config(&path),
         Command::RoundtripPbm(source) => roundtrip_pbm(&source),
         Command::RoundtripImp { source, rewrite } => roundtrip_imp(&source, rewrite),
         Command::ImportPngPbm {
@@ -457,8 +467,8 @@ fn run() -> Result<(), String> {
             edited,
             template,
             output,
-            allow_format_change,
-        } => import_wave(&edited, &template, &output, allow_format_change),
+            options,
+        } => import_wave(&edited, &template, &output, options),
         Command::DescribeSmacker(path) => describe_smacker(&path),
         Command::ScanSmackerDirectory(path) => scan_smacker_directory(&path),
         Command::ValidateImp(source) => validate_imp_archive(&source),
@@ -482,7 +492,10 @@ fn parse_args() -> Result<Command, String> {
     let rewrite = take_flag(&mut args, "--rewrite")?;
     // Same treatment as `--rewrite`: taken globally, honoured by exactly one command, and refused
     // everywhere else rather than silently discarded.
-    let allow_format_change = take_flag(&mut args, "--allow-format-change")?;
+    let import_options = ImportOptions {
+        allow_format_change: take_flag(&mut args, "--allow-format-change")?,
+        allow_dangling_loops: take_flag(&mut args, "--allow-dangling-loops")?,
+    };
     let executable = take_option(&mut args, "--exe")?.map(PathBuf::from);
     let expression = take_option(&mut args, "--eval")?;
     let reports = take_option(&mut args, "--reports")?.map(PathBuf::from);
@@ -522,9 +535,10 @@ fn parse_args() -> Result<Command, String> {
             "--rewrite is only meaningful with --imp-roundtrip, not {first}"
         ));
     }
-    if allow_format_change && first != "--import-wave" {
+    if import_options != ImportOptions::default() && first != "--import-wave" {
         return Err(format!(
-            "--allow-format-change is only meaningful with --import-wave, not {first}"
+            "--allow-format-change and --allow-dangling-loops are only meaningful with \
+             --import-wave, not {first}"
         ));
     }
     match first {
@@ -804,7 +818,7 @@ fn parse_args() -> Result<Command, String> {
                 edited: args[1].clone().into(),
                 template: args[2].clone().into(),
                 output: args[3].clone().into(),
-                allow_format_change,
+                options: import_options,
             })
         }
         "--describe-smk" => {
@@ -942,6 +956,17 @@ fn parse_args() -> Result<Command, String> {
         "--scan-map-dir" => {
             require_len(&args, 2)?;
             Ok(Command::ScanMapDirectory(args[1].clone().into()))
+        }
+        "--loose-inventory" => {
+            require_len(&args, 3)?;
+            Ok(Command::LooseInventory {
+                root: args[1].clone().into(),
+                profile: args[2].clone(),
+            })
+        }
+        "--loose-config" => {
+            require_len(&args, 2)?;
+            Ok(Command::LooseConfig(args[1].clone().into()))
         }
         "--validate-imp" => {
             require_len(&args, 2)?;
@@ -1136,7 +1161,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --import-png-imp INPUT.png SOURCE.imp FRAME OUTPUT.imp\n  lom-asset-viewer --wave-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --wave-roundtrip-dir DIRECTORY\n  lom-asset-viewer --export-wave ARCHIVE.mpq MEMBER OUTPUT.wav [--listfile FILE]\n  lom-asset-viewer --import-wave EDITED.wav TEMPLATE.wav OUTPUT.wav [--allow-format-change]\n  lom-asset-viewer --describe-smk FILE.smk\n  lom-asset-viewer --scan-smk-dir DIRECTORY\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --imp-roundtrip ARCHIVE.mpq [--listfile FILE] [--rewrite]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --loose-inventory INSTALL_ROOT PROFILE_LABEL\n  lom-asset-viewer --loose-config FILE\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --import-png-imp INPUT.png SOURCE.imp FRAME OUTPUT.imp\n  lom-asset-viewer --wave-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --wave-roundtrip-dir DIRECTORY\n  lom-asset-viewer --export-wave ARCHIVE.mpq MEMBER OUTPUT.wav [--listfile FILE]\n  lom-asset-viewer --import-wave EDITED.wav TEMPLATE.wav OUTPUT.wav [--allow-format-change] [--allow-dangling-loops]\n  lom-asset-viewer --describe-smk FILE.smk\n  lom-asset-viewer --scan-smk-dir DIRECTORY\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --imp-roundtrip ARCHIVE.mpq [--listfile FILE] [--rewrite]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -1270,9 +1295,6 @@ fn roundtrip_wave(source: &Source) -> Result<(), String> {
                 continue;
             }
         };
-        if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-            continue;
-        }
         sweep.observe(&entry.name, &bytes);
     }
     print!("{}", sweep.report());
@@ -1363,7 +1385,7 @@ fn import_wave(
     edited: &Path,
     template: &Path,
     output: &PathBuf,
-    allow_format_change: bool,
+    options: ImportOptions,
 ) -> Result<(), String> {
     for input in [edited, template] {
         if paths_are_same_file(input, output) {
@@ -1377,7 +1399,7 @@ fn import_wave(
         fs::read(edited).map_err(|error| format!("could not read {}: {error}", edited.display()))?;
     let template_bytes = fs::read(template)
         .map_err(|error| format!("could not read {}: {error}", template.display()))?;
-    let result = import_samples(&edited_bytes, &template_bytes, allow_format_change)
+    let result = import_samples(&edited_bytes, &template_bytes, options)
         .map_err(|error| error.to_string())?;
     let parsed = WaveFile::parse(&result).map_err(|error| {
         format!("the file this tool just wrote does not parse back: {error}")
@@ -1420,7 +1442,11 @@ fn describe_smacker(path: &Path) -> Result<(), String> {
     );
     println!("raw_frame_rate\t{}", file.raw_frame_rate);
     println!("frame_interval_us\t{}", file.frame_interval_us());
-    println!("duration_ms\t{}", file.duration_ms());
+    println!(
+        "duration_ms\t{}",
+        file.duration_ms()
+            .map_or_else(|| "unrepresentable".to_owned(), |value| value.to_string())
+    );
     println!("trees_offset\t{}", file.trees_offset);
     println!("trees_size\t{}", file.trees_size);
     println!(
@@ -1450,9 +1476,11 @@ fn describe_smacker(path: &Path) -> Result<(), String> {
             track.unaccounted_bits()
         );
         println!(
-            "audio_track_totals\t{index}\tunpacked-from-chunks={}\texpected-from-header={}",
-            file.audio_unpacked_bytes(index),
-            file.audio_expected_bytes(index)
+            "audio_track_totals\t{index}\tunpacked-from-chunks={}\tunpacked-in-timed-frames={}\t\
+             expected-from-header={}",
+            describe_optional(file.audio_unpacked_bytes(index)),
+            describe_optional(file.audio_unpacked_bytes_in_timed_frames(index)),
+            describe_optional(file.audio_expected_bytes(index))
         );
     }
     Ok(())
@@ -1474,7 +1502,8 @@ fn scan_smacker_directory(directory: &Path) -> Result<(), String> {
     let mut unknown_size_flags = 0_usize;
     // The frame-split control: how far the audio summed out of the chunks lands from the total the
     // header's rate and running time predict. A wrong split would not land close.
-    let mut worst_audio_drift = 0_i64;
+    let mut worst_audio_drift = 0_u64;
+    let mut unrepresentable_controls = 0_usize;
     let mut failures = Vec::new();
     for path in &paths {
         let name = path
@@ -1506,9 +1535,20 @@ fn scan_smacker_directory(directory: &Path) -> Result<(), String> {
                     .filter(|frame| frame.unknown_size_flag)
                     .count();
                 for track in 0..smacker::AUDIO_TRACKS {
-                    let drift = file.audio_unpacked_bytes(track) as i64
-                        - file.audio_expected_bytes(track) as i64;
-                    worst_audio_drift = worst_audio_drift.max(drift.abs());
+                    match (
+                        file.audio_unpacked_bytes_in_timed_frames(track),
+                        file.audio_expected_bytes(track),
+                    ) {
+                        // `abs_diff`, not a signed subtraction of two `u64`s: the difference is
+                        // what is wanted, and casting both sides to `i64` to get it is another
+                        // declared-value overflow waiting behind a plausible-looking number.
+                        (Some(found), Some(expected)) => {
+                            worst_audio_drift = worst_audio_drift.max(found.abs_diff(expected));
+                        }
+                        // Not folded into the maximum as a zero: a control that cannot be computed
+                        // is not a control that came out well.
+                        _ => unrepresentable_controls += 1,
+                    }
                 }
                 println!("{}", smacker::describe(&name, &file));
             }
@@ -1520,6 +1560,7 @@ fn scan_smacker_directory(directory: &Path) -> Result<(), String> {
     println!("sizes_account_for_every_byte\t{closed}");
     println!("frames_with_unknown_size_flag\t{unknown_size_flags}");
     println!("worst_audio_total_drift_bytes\t{worst_audio_drift}");
+    println!("unrepresentable_audio_controls\t{unrepresentable_controls}");
     for (signature, count) in &signatures {
         println!("signature\t{signature}\t{count}");
     }
@@ -1543,11 +1584,29 @@ fn scan_smacker_directory(directory: &Path) -> Result<(), String> {
     for failure in &failures {
         println!("failure\t{failure}");
     }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("{} file(s) failed", failures.len()))
+    // The result this command reports IS the size closure, so a file that parses but leaves bytes
+    // over is a failure of the claim even though it is not a parse failure. Exiting zero on it
+    // would let `sizes_account_for_every_byte < parsed` pass unnoticed.
+    if !failures.is_empty() {
+        return Err(format!("{} file(s) failed", failures.len()));
     }
+    if closed != parsed {
+        return Err(format!(
+            "{} of {parsed} file(s) leave bytes unaccounted for",
+            parsed - closed
+        ));
+    }
+    if unrepresentable_controls != 0 {
+        return Err(format!(
+            "{unrepresentable_controls} audio control(s) could not be computed"
+        ));
+    }
+    Ok(())
+}
+
+/// Render an optional measurement, naming the absent case rather than printing a plausible zero.
+fn describe_optional(value: Option<u64>) -> String {
+    value.map_or_else(|| "unrepresentable".to_owned(), |value| value.to_string())
 }
 
 /// Collect every file under `directory` whose extension matches, case-insensitively.
@@ -3159,6 +3218,143 @@ fn describe_map(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Emit the loose-file inventory as a tab-separated table.
+///
+/// TSV on stdout, one row per file, because that is what every other reproducible report in this
+/// repository is and because the committed report has to be diffable: an inventory whose value is
+/// "what changed since last time" cannot be a rendered summary.
+///
+/// The `profile` label is carried in the header comment rather than in every row. Four installs
+/// share 467 of their paths, and repeating the label 467 times would make the common rows differ
+/// between files for no reason, which is exactly the comparison the report exists to support.
+fn loose_inventory(root: &Path, profile: &str) -> Result<(), String> {
+    if !root.is_dir() {
+        return Err(format!("install root does not exist: {}", root.display()));
+    }
+    let rows = loose::inventory(root)
+        .map_err(|error| format!("could not walk {}: {error}", root.display()))?;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    writeln!(out, "# profile\t{profile}").map_err(|error| error.to_string())?;
+    writeln!(
+        out,
+        "relative_path\tsize\tsha256\textension\tmagic\tprobe_kind\textension_disagrees\tprobe_error"
+    )
+    .map_err(|error| error.to_string())?;
+    for row in &rows {
+        writeln!(
+            out,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            row.relative_path,
+            row.size,
+            row.sha256,
+            if row.extension.is_empty() {
+                "-"
+            } else {
+                &row.extension
+            },
+            row.magic,
+            row.probe_kind,
+            if row.extension_disagrees_with_magic() {
+                "yes"
+            } else {
+                "no"
+            },
+            row.probe_error.as_deref().unwrap_or("-"),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// Describe one loose configuration file.
+///
+/// Dispatches on content, not on the file name: `lom.cfg` is recognised by its length agreeing
+/// with its own embedded count, and `settings.cfg` by being ASCII text. A profile that renamed
+/// either file would still be readable, and -- more to the point -- a file that merely *looks* like
+/// one of them by name but does not parse is reported as a refusal rather than as an empty result.
+fn describe_loose_config(path: &Path) -> Result<(), String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    println!("file\t{}", path.display());
+    println!("size\t{}", bytes.len());
+    println!("sha256\t{}", loose::sha256_hex(&bytes));
+    match LomConfig::parse(&bytes) {
+        Ok(config) => {
+            println!("format\tlom.cfg");
+            // Not offered as proof that the fields are correctly named -- see
+            // `LomConfig::to_bytes`. It says the byte partition is total and ordered.
+            println!("round-trips\t{}", config.to_bytes() == bytes);
+            println!("last-music-volume\t{}", config.last_music_volume);
+            println!("last-sound-fx-volume\t{}", config.last_sound_fx_volume);
+            println!("last-speech-volume\t{}", config.last_speech_volume);
+            println!("last-ambient-volume\t{}", config.last_ambient_volume);
+            // `absent` and `0` are different files, so they print differently.
+            match &config.help_panel_checks {
+                Some(checks) => {
+                    println!("help-panel-count\t{}", checks.len());
+                    println!(
+                        "help-panel-checks\t{}",
+                        checks.iter().map(u32::to_string).collect::<Vec<_>>().join(",")
+                    );
+                }
+                None => {
+                    println!("help-panel-count\tabsent");
+                    println!("help-panel-checks\tabsent");
+                }
+            }
+            println!("balkoth-kill-counter\t{}", config.balkoth_kill_counter);
+            println!("center-on-movement\t{}", config.center_on_movement);
+            println!("install-guid\t{}", config.install_guid_text());
+            println!("building-speech-flag\t{}", config.building_speech_flag);
+            println!("show-completed-quests\t{}", config.show_completed_quests);
+            // Printed signed because both observed values (`1`, `-1`) read as a flag that way, and
+            // `4294967295` reads as neither. The stored width is unsigned; see `LomConfig`.
+            println!("used-drawblt\t{}", config.used_drawblt as i32);
+            return Ok(());
+        }
+        Err(lom_error) => {
+            // Valid UTF-8 alone is not a `settings.cfg`. Without the second gate this verb
+            // cheerfully labelled `ddraw.ini` -- 29,828 bytes, and in this tool's own inventory --
+            // as `format settings.cfg`, and did the same for this repository's `README.md`, for
+            // empty files and for NUL-only binaries. A classifier that accepts everything has
+            // classified nothing.
+            let settings = SettingsConfig::parse(&bytes)
+                .map_err(|settings_error| settings_error.to_string())
+                .and_then(|settings| {
+                    if settings.entries.is_empty() {
+                        Err("no KEY VALUE records".to_owned())
+                    } else if !settings.unparsed.is_empty() {
+                        Err(format!(
+                            "{} records are not KEY VALUE",
+                            settings.unparsed.len()
+                        ))
+                    } else {
+                        Ok(settings)
+                    }
+                })
+                .map_err(|settings_error| {
+                    format!(
+                        "{} is neither lom.cfg ({lom_error}) nor settings.cfg ({settings_error})",
+                        path.display()
+                    )
+                })?;
+            println!("format\tsettings.cfg");
+            println!("round-trips\t{}", settings.round_trips(&bytes));
+            println!("records\t{}", settings.entries.len());
+            println!("unparsed-records\t{}", settings.unparsed.len());
+            println!("terminated\t{}", settings.terminated);
+            for entry in &settings.entries {
+                println!("setting\t{}\t{}", entry.key, entry.raw_value);
+            }
+            for record in &settings.unparsed {
+                println!("unparsed\t{record}");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn scan_map_directory(directory: &Path) -> Result<(), String> {
     if !directory.is_dir() {
         return Err(format!(
@@ -3341,6 +3537,11 @@ fn scan_archive(source: &Source) -> Result<(), String> {
     let (archive, entries) = open_archive(source)?;
     let mut readable = 0_usize;
     let mut kinds = BTreeMap::<AssetKind, usize>::new();
+    // Classified, but with contents this tool has no decoder for. Counted separately and printed
+    // unconditionally so the "0 probe failures" figure carries its own falsifier: without it, an
+    // archive whose members had all stopped decoding reports exactly what a clean one reports.
+    let mut undecoded = BTreeMap::<AssetKind, usize>::new();
+    let mut undecoded_reasons = Vec::new();
     let mut failures = Vec::new();
 
     for entry in &entries {
@@ -3353,15 +3554,51 @@ fn scan_archive(source: &Source) -> Result<(), String> {
         };
         readable += 1;
         match probe(&entry.name, &bytes) {
-            Ok(info) => *kinds.entry(info.kind).or_default() += 1,
+            Ok(info) => {
+                *kinds.entry(info.kind).or_default() += 1;
+                if let Some(reason) = info.undecoded {
+                    *undecoded.entry(info.kind).or_default() += 1;
+                    undecoded_reasons.push((entry.name.clone(), reason));
+                }
+            }
             Err(error) => failures.push((entry.name.clone(), error)),
         }
     }
 
     println!("archive_entries\t{}", entries.len());
     println!("readable_entries\t{readable}");
-    for (kind, count) in kinds {
+    let undecoded_total: usize = undecoded.values().sum();
+    // Counted from the classifications that actually happened, not by subtracting failures from
+    // `readable`. `readable` already excludes members whose read failed, so subtracting them again
+    // undercounted -- and with only an unreadable member it underflowed, which is a debug panic
+    // and a wrapped count in release.
+    // `classified_entries`, not `decoded_entries`: this counts every member the probe recognised,
+    // of any kind, and most of them are not audio at all. The old name sat directly above an
+    // audio-specific `undecoded_entries` and invited the two to be read as a pair.
+    let classified: usize = kinds.values().sum();
+    println!("classified_entries\t{classified}");
+    println!(
+        "classified_and_decoded\t{}",
+        classified - undecoded_total
+    );
+    println!("undecoded_entries\t{undecoded_total}");
+    for (kind, count) in &kinds {
         println!("kind\t{kind}\t{count}");
+    }
+    for (kind, count) in &undecoded {
+        println!("undecoded\t{kind}\t{count}");
+    }
+    // Capped: the whole point of this counter is the case where thousands of members stop
+    // decoding, and printing one line each would bury the totals it sits under.
+    const UNDECODED_SAMPLE_LIMIT: usize = 20;
+    for (name, reason) in undecoded_reasons.iter().take(UNDECODED_SAMPLE_LIMIT) {
+        println!("undecoded_member\t{name}\t{reason}");
+    }
+    if undecoded_reasons.len() > UNDECODED_SAMPLE_LIMIT {
+        println!(
+            "undecoded_member_elided\t{}",
+            undecoded_reasons.len() - UNDECODED_SAMPLE_LIMIT
+        );
     }
     let failure_count = failures.len();
     println!("failures\t{failure_count}");

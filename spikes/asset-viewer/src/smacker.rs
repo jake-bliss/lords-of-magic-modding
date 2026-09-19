@@ -340,8 +340,17 @@ impl SmackerFile {
         }
     }
 
-    pub fn duration_ms(&self) -> i64 {
-        (self.frame_interval_us() * i64::from(self.frame_count)) / 1000
+    /// Running time, or `None` when the declared rate and frame count do not multiply out.
+    ///
+    /// `frame_count` and the rate word are both **file-declared**, and a crafted 174-byte file
+    /// whose sizes all close can still name a rate and a count whose product leaves `i64`. This
+    /// module already refuses to size an allocation from a declared value; the same rule has to
+    /// hold for arithmetic, or the "control" computed from these fields wraps and reports a number
+    /// rather than saying it cannot.
+    pub fn duration_ms(&self) -> Option<i64> {
+        self.frame_interval_us()
+            .checked_mul(i64::from(self.frame_count))
+            .map(|total| total / 1000)
     }
 
     pub fn has_ring_frame(&self) -> bool {
@@ -384,34 +393,99 @@ impl SmackerFile {
     /// lengths has to come out at the track's byte rate times the running time, a number derived
     /// from the header and never from the chunk positions. If the split were wrong, the two would
     /// not agree.
-    pub fn audio_unpacked_bytes(&self, track: usize) -> u64 {
-        self.frames
-            .iter()
-            .flat_map(|frame| frame.chunks.iter())
-            .map(|chunk| match chunk {
-                FrameChunk::Audio {
+    /// Decompressed audio a track declares across **every** frame, including a ring frame.
+    ///
+    /// This is the reporting total -- what `--describe-smk` prints as `unpacked-from-chunks`. It is
+    /// deliberately *not* the control below. Excluding the ring frame is right for a comparison
+    /// against the running time and wrong for a question about what the file contains, and letting
+    /// the control's need quietly redefine a reporting function is how a number comes to mean
+    /// something other than its name.
+    pub fn audio_unpacked_bytes(&self, track: usize) -> Option<u64> {
+        self.sum_unpacked(track, false)
+    }
+
+    /// The same total over the frames that make up the **running time**, for the control.
+    ///
+    /// A ring frame is an extra looping frame beyond `frame_count`, so its audio is not part of
+    /// the duration the prediction is built from. Including it drifted the control by exactly one
+    /// frame on any file that had one -- a shape the corpus never exercises.
+    pub fn audio_unpacked_bytes_in_timed_frames(&self, track: usize) -> Option<u64> {
+        self.sum_unpacked(track, true)
+    }
+
+    fn sum_unpacked(&self, track: usize, skip_ring_frame: bool) -> Option<u64> {
+        let descriptor = self.audio.get(track)?;
+        let mut total = 0_u64;
+        for frame in &self.frames {
+            if skip_ring_frame && frame.ring_frame {
+                continue;
+            }
+            for chunk in &frame.chunks {
+                let FrameChunk::Audio {
                     track: index,
-                    unpacked_bytes: Some(bytes),
+                    bytes,
+                    unpacked_bytes,
                     ..
-                } if *index == track => u64::from(*bytes),
-                _ => 0,
-            })
-            .sum()
+                } = chunk
+                else {
+                    continue;
+                };
+                if *index != track {
+                    continue;
+                }
+                let contribution = match unpacked_bytes {
+                    // A compressed chunk states its own decompressed length.
+                    Some(unpacked) => u64::from(*unpacked),
+                    // Not Smacker-Huffman. If it is not Bink either, the payload after the
+                    // four-byte header IS the audio, so its length is the decompressed length.
+                    None if !descriptor.bink_audio() => (*bytes as u64).saturating_sub(4),
+                    // Bink DCT audio. The payload is a transform-coded bitstream whose decoded
+                    // length is not stated anywhere this module reads, and calling its byte count
+                    // "unpacked" would be false. Named skip rather than a wrong number.
+                    None => return None,
+                };
+                total = total.checked_add(contribution)?;
+            }
+        }
+        Some(total)
     }
 
     /// Decompressed audio bytes the header's rate and running time predict for a track.
-    pub fn audio_expected_bytes(&self, track: usize) -> u64 {
-        let Some(descriptor) = self.audio.get(track) else {
-            return 0;
-        };
+    ///
+    /// `None` when the declared fields do not multiply out inside `u64`. Every factor here comes
+    /// from the file, so an unchecked multiply is a wrapped number presented as a measurement --
+    /// and this is the *control* on the frame walk, which is the last place that is acceptable.
+    pub fn audio_expected_bytes(&self, track: usize) -> Option<u64> {
+        let descriptor = self.audio.get(track)?;
         if !descriptor.present() {
-            return 0;
+            return Some(0);
         }
-        let bytes_per_second = u64::from(descriptor.sample_rate())
-            * u64::from(descriptor.channels())
-            * u64::from(descriptor.bits_per_sample() / 8);
-        let frames = i64::from(self.frame_count).max(0) as u64;
-        (bytes_per_second * frames * self.frame_interval_us().max(0) as u64) / 1_000_000
+        let interval = u128::try_from(self.frame_interval_us().max(0)).ok()?;
+        // The numerator is evaluated in `u128` and only the **quotient** has to fit `u64`.
+        // Checking the multiplication first rejected values that are perfectly representable once
+        // divided: the very fixture written for this guard came out at 18,734,973,333,169, well
+        // inside `u64`, and was reported unrepresentable. An over-rejecting guard is still a wrong
+        // answer, and it makes `--scan-smk-dir` fail on a file it could have measured.
+        let product = u128::from(descriptor.sample_rate())
+            * u128::from(descriptor.channels())
+            * u128::from(descriptor.bits_per_sample() / 8)
+            * u128::from(self.frame_count)
+            * interval;
+        u64::try_from(product / 1_000_000).ok()
+    }
+
+    /// Bytes of decompressed audio one frame of this track carries, for a drift tolerance.
+    pub fn audio_bytes_per_frame(&self, track: usize) -> Option<u64> {
+        let descriptor = self.audio.get(track)?;
+        if !descriptor.present() {
+            return Some(0);
+        }
+        let interval = u128::try_from(self.frame_interval_us().max(0)).ok()?;
+        let product = u128::from(descriptor.sample_rate())
+            * u128::from(descriptor.channels())
+            * u128::from(descriptor.bits_per_sample() / 8)
+            * interval;
+        u64::try_from(product / 1_000_000).ok()
     }
 
     pub fn palette_frames(&self) -> usize {
@@ -476,7 +550,17 @@ fn split_frame(
                 "audio track {track} declares {bytes} bytes, which does not fit the frame"
             )));
         }
-        let unpacked_bytes = if audio[track].compressed() && bytes >= 8 {
+        // A compressed track's payload *begins* with its decompressed length, so a chunk that
+        // declares only its own four-byte header cannot be a compressed chunk. Accepting it left
+        // `unpacked_bytes` as `None`, which the control then read as "uncompressed" and silently
+        // folded into the totals.
+        let unpacked_bytes = if audio[track].compressed() {
+            if bytes < 8 {
+                return Err(SmackerError::new(format!(
+                    "audio track {track} is compressed but its chunk is {bytes} bytes, too short \
+                     to hold the decompressed length"
+                )));
+            }
             Some(read_u32(source, cursor + 4)?)
         } else {
             None
@@ -537,18 +621,30 @@ pub fn describe(name: &str, file: &SmackerFile) -> String {
         file.frame_count,
         file.has_ring_frame(),
         file.frame_interval_us(),
-        file.duration_ms(),
+        file.duration_ms()
+            .map_or_else(|| "unrepresentable".to_owned(), |value| value.to_string()),
         file.keyframes(),
         file.palette_frames(),
         file.trees_size,
         file.video_bytes(),
         file.audio_bytes(),
+        // Per track, not folded into one total: a single Bink track has no unpacked length, and
+        // collapsing the whole column to "unrepresentable" would discard three totals that are
+        // perfectly well known.
         (0..AUDIO_TRACKS)
-            .map(|track| file.audio_unpacked_bytes(track))
-            .sum::<u64>(),
+            .filter(|track| file.audio[*track].present())
+            .map(|track| match file.audio_unpacked_bytes(track) {
+                Some(bytes) => bytes.to_string(),
+                None => "unrepresentable".to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
         (0..AUDIO_TRACKS)
-            .map(|track| file.audio_expected_bytes(track))
-            .sum::<u64>(),
+            .try_fold(0_u64, |total, track| {
+                file.audio_expected_bytes(track)
+                    .and_then(|bytes| total.checked_add(bytes))
+            })
+            .map_or_else(|| "unrepresentable".to_owned(), |value| value.to_string()),
         file.unaccounted_tail,
         if tracks.is_empty() {
             "no-audio".to_owned()
@@ -798,6 +894,12 @@ mod tests {
                 .frame_interval_us(),
             100_000
         );
+        assert_eq!(
+            SmackerFile::parse(&builder.build())
+                .expect("parse")
+                .duration_ms(),
+            Some(100)
+        );
         builder.frame_rate = 0;
         assert_eq!(
             SmackerFile::parse(&builder.build())
@@ -837,9 +939,157 @@ mod tests {
             builder.frames.push((payload, false, 0b10));
         }
         let file = SmackerFile::parse(&builder.build()).expect("parse");
-        assert_eq!(file.audio_unpacked_bytes(0), 44100);
+        assert_eq!(file.audio_unpacked_bytes(0), Some(44100));
+        assert_eq!(file.audio_unpacked_bytes_in_timed_frames(0), Some(44100));
         // 22050 Hz x 2 channels x 1 byte x 1.0 s of running time.
-        assert_eq!(file.audio_expected_bytes(0), 44100);
+        assert_eq!(file.audio_expected_bytes(0), Some(44100));
+        assert_eq!(file.audio_bytes_per_frame(0), Some(4410));
+    }
+
+    /// An uncompressed track stores no decompressed length; its payload IS the audio.
+    ///
+    /// Unexercised by the corpus, which is exactly why the control had a shape it had never run
+    /// in: summing only the compressed case reported zero audio and failed rather than skipping.
+    #[test]
+    fn the_control_reads_an_uncompressed_track_from_the_chunk_length() {
+        let mut builder = Builder::new();
+        builder.audio_rates[0] = AUDIO_PRESENT | AUDIO_STEREO | 22050;
+        builder.frame_rate = 100;
+        for _ in 0..10 {
+            // 4,414-byte audio chunk (4 header + 4,410 audio) plus 2 bytes of video, so the
+            // frame payload stays 4-byte aligned the way a real frame-size word requires.
+            let mut payload = 4414_u32.to_le_bytes().to_vec();
+            payload.extend_from_slice(&vec![0_u8; 4410]);
+            payload.extend_from_slice(&[0_u8; 2]);
+            builder.frames.push((payload, false, 0b10));
+        }
+        let file = SmackerFile::parse(&builder.build()).expect("parse");
+        assert_eq!(file.audio_unpacked_bytes(0), Some(44100));
+        assert_eq!(file.audio_expected_bytes(0), Some(44100));
+    }
+
+    /// A ring frame is extra, so its audio is not part of the running time being predicted.
+    #[test]
+    fn the_control_excludes_the_ring_frame() {
+        let mut builder = Builder::new();
+        builder.flags = FLAG_RING_FRAME;
+        builder.audio_rates[0] = AUDIO_PRESENT | AUDIO_COMPRESSED | AUDIO_STEREO | 22050;
+        builder.frame_rate = 100;
+        for _ in 0..11 {
+            let mut payload = 12_u32.to_le_bytes().to_vec();
+            payload.extend_from_slice(&4410_u32.to_le_bytes());
+            payload.extend_from_slice(&[0, 0, 0, 0]);
+            builder.frames.push((payload, false, 0b10));
+        }
+        let file = SmackerFile::parse(&builder.build()).expect("parse");
+        assert_eq!(file.frame_count, 10, "ten frames plus a ring frame");
+        assert_eq!(file.frames.len(), 11);
+        assert_eq!(
+            file.audio_unpacked_bytes_in_timed_frames(0),
+            Some(44100),
+            "the control must not count the ring frame's audio"
+        );
+        assert_eq!(
+            file.audio_unpacked_bytes(0),
+            Some(48510),
+            "the reporting total counts every frame the file contains"
+        );
+        assert_eq!(file.audio_expected_bytes(0), Some(44100));
+    }
+
+    /// Finding B: a compressed chunk that cannot hold its own decompressed length is malformed.
+    #[test]
+    fn a_compressed_audio_chunk_too_short_for_its_length_field_is_refused() {
+        let mut builder = Builder::new();
+        builder.audio_rates[0] = AUDIO_PRESENT | AUDIO_COMPRESSED | 22050;
+        let mut payload = 4_u32.to_le_bytes().to_vec();
+        payload.extend_from_slice(&[0, 0, 0, 0]);
+        builder.frames.push((payload, true, 0b10));
+        let error = SmackerFile::parse(&builder.build())
+            .expect_err("a 4-byte compressed chunk cannot hold an unpacked length");
+        assert!(error.to_string().contains("too short"), "{error}");
+    }
+
+    /// The guard must reject only what is genuinely unrepresentable -- and not what is not.
+    ///
+    /// The first version checked each multiplication and so reported `None` for a value that is
+    /// perfectly fine once divided. The numbers below were written as a *failure* fixture and are
+    /// in fact representable: 16,777,215 Hz x 2 x 2 x 13 frames x 21,474,836,480 us / 1,000,000 is
+    /// 18,734,973,333,169, comfortably inside `u64`. An over-rejecting guard is a wrong answer too,
+    /// and it made `--scan-smk-dir` exit non-zero on a file it could have measured.
+    #[test]
+    fn a_large_but_representable_control_is_computed_rather_than_refused() {
+        let mut builder = Builder::new();
+        builder.audio_rates[0] = 0xb0ff_ffff; // present, 16-bit, stereo, 16,777,215 Hz
+        for _ in 0..13 {
+            builder.frames.push((vec![0, 0, 0, 0], false, 0));
+        }
+        let mut bytes = builder.build();
+        // i32::MIN in the rate word: the negative case, 21,474,836,480 us a frame.
+        bytes[16..20].copy_from_slice(&0x8000_0000_u32.to_le_bytes());
+        let file = SmackerFile::parse(&bytes).expect("the container itself is well formed");
+        assert_eq!(file.frame_count, 13);
+        assert_eq!(file.frame_interval_us(), 21_474_836_480);
+        assert_eq!(file.audio_expected_bytes(0), Some(18_734_973_333_169));
+        assert_eq!(file.audio_bytes_per_frame(0), Some(1_441_151_794_859));
+        assert_eq!(file.duration_ms(), Some(279_172_874));
+    }
+
+    /// And the direction that matters: a quotient that really does leave `u64`.
+    ///
+    /// Built as a struct rather than parsed, and that is worth saying plainly: reaching this from
+    /// a **parseable** file needs about 12.8 million frames, which is 64 MB of frame table alone.
+    /// No file a unit test can build gets here, so the guard is tested at the level it lives at.
+    /// The bound is real all the same -- `frame_count` is a declared `u32` and the arithmetic must
+    /// not wrap for any value it can take.
+    #[test]
+    fn a_quotient_that_leaves_u64_is_reported_unrepresentable() {
+        let file = SmackerFile {
+            signature: *b"SMK2",
+            width: 1,
+            height: 1,
+            frame_count: u32::MAX,
+            raw_frame_rate: i32::MIN,
+            flags: 0,
+            audio: [AudioTrack {
+                raw_rate: 0xb0ff_ffff,
+                unpacked_size: 0,
+            }; AUDIO_TRACKS],
+            trees_size: 0,
+            mmap_size: 0,
+            mclr_size: 0,
+            full_size: 0,
+            type_size: 0,
+            unknown_header_word: 0,
+            trees_offset: HEADER_BYTES,
+            first_frame_offset: HEADER_BYTES,
+            frames: Vec::new(),
+            unaccounted_tail: 0,
+        };
+        // 16,777,215 x 4 x 4,294,967,295 x 21,474,836,480 / 1e6 is 6.19e21; u64 stops at 1.84e19.
+        assert_eq!(file.audio_expected_bytes(0), None);
+        // The per-frame tolerance is a different question and is still representable.
+        assert_eq!(file.audio_bytes_per_frame(0), Some(1_441_151_794_859));
+    }
+
+    /// Bink DCT audio: the payload's decoded length is not stated anywhere this module reads.
+    ///
+    /// The uncompressed branch treated every non-Smacker-Huffman track as raw PCM, so a Bink track
+    /// would have had its compressed byte count reported as an "unpacked" total. Unreachable in
+    /// the corpus, and a named skip is what this module's own standard asks for.
+    #[test]
+    fn a_bink_audio_track_has_no_unpacked_total_rather_than_a_wrong_one() {
+        let mut builder = Builder::new();
+        builder.audio_rates[0] = AUDIO_PRESENT | AUDIO_BINK | AUDIO_STEREO | 22050;
+        let mut payload = 12_u32.to_le_bytes().to_vec();
+        payload.extend_from_slice(&[0_u8; 8]);
+        builder.frames.push((payload, true, 0b10));
+        let file = SmackerFile::parse(&builder.build()).expect("parse");
+        assert!(file.audio[0].bink_audio());
+        assert_eq!(file.audio_unpacked_bytes(0), None);
+        assert_eq!(file.audio_unpacked_bytes_in_timed_frames(0), None);
+        // The chunk extent is still known; only its decoded length is not.
+        assert_eq!(file.audio_bytes(), 12);
     }
 
     #[test]
@@ -905,15 +1155,23 @@ mod tests {
     #[ignore = "needs LOM_GAME_DIR"]
     fn every_installed_smacker_accounts_for_every_byte() {
         let files = installed_files();
-        assert!(!files.is_empty(), "no .smk files under English/smk");
+        assert_eq!(files.len(), 23, "the installed Smacker corpus changed size");
         for (name, bytes) in &files {
             let file = SmackerFile::parse(bytes).unwrap_or_else(|error| panic!("{name}: {error}"));
             assert_eq!(file.unaccounted_tail, 0, "{name} left bytes unaccounted for");
+            // A genuine cross-check rather than the same quantity twice: recompute the tree offset
+            // from the raw header bytes read here, independently of anything the parse decided.
+            let declared_frames =
+                u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+            let flags = u32::from_le_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+            let entries = declared_frames + usize::from(flags & FLAG_RING_FRAME != 0);
+            let trees = u32::from_le_bytes([bytes[52], bytes[53], bytes[54], bytes[55]]) as usize;
             assert_eq!(
-                file.first_frame_offset + file.frames.iter().map(|frame| frame.size).sum::<usize>(),
-                bytes.len(),
-                "{name}: the frame sizes do not close on the file length"
+                file.first_frame_offset,
+                HEADER_BYTES + entries * 5 + trees,
+                "{name}: the first frame does not sit where the raw header says"
             );
+            assert_eq!(file.frames.len(), entries, "{name}: table length");
             assert_eq!(file.unaccounted_flag_bits(), 0, "{name} sets an unnamed flag");
         }
     }
@@ -931,17 +1189,25 @@ mod tests {
             let file = SmackerFile::parse(bytes).expect("parse");
             for track in 0..AUDIO_TRACKS {
                 if !file.audio[track].present() {
-                    assert_eq!(file.audio_unpacked_bytes(track), 0, "{name} track {track}");
+                    assert_eq!(
+                        file.audio_unpacked_bytes(track),
+                        Some(0),
+                        "{name} track {track}"
+                    );
                     continue;
                 }
-                let found = file.audio_unpacked_bytes(track) as i64;
-                let expected = file.audio_expected_bytes(track) as i64;
-                let descriptor = &file.audio[track];
-                let bytes_per_frame = (i64::from(descriptor.sample_rate())
-                    * i64::from(descriptor.channels())
-                    * i64::from(descriptor.bits_per_sample() / 8)
-                    * file.frame_interval_us())
-                    / 1_000_000;
+                let found = file
+                    .audio_unpacked_bytes_in_timed_frames(track)
+                    .unwrap_or_else(|| panic!("{name} track {track}: unpacked total unavailable"))
+                    as i64;
+                let expected = file
+                    .audio_expected_bytes(track)
+                    .unwrap_or_else(|| panic!("{name} track {track}: rate x count overflows"))
+                    as i64;
+                let bytes_per_frame = file
+                    .audio_bytes_per_frame(track)
+                    .unwrap_or_else(|| panic!("{name} track {track}: rate x interval overflows"))
+                    as i64;
                 assert!(
                     (found - expected).abs() < bytes_per_frame,
                     "{name} track {track}: {found} bytes of audio in the chunks, {expected} \

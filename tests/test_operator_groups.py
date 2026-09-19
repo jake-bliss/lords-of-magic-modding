@@ -1,10 +1,17 @@
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+
 from tools.operator_groups import (
     call_site_agreement,
+    caller_group_agreement,
     caller_index,
+    dominant_directories,
     name_stem,
     read_table_order,
     stem_agreement,
@@ -101,6 +108,85 @@ class StemRunsTest(unittest.TestCase):
     def test_does_not_group_matching_entries_that_are_not_adjacent(self) -> None:
         order = ["getslider", "cameraposition", "setslider"]
         self.assertEqual(stem_runs(order), [])
+
+
+class CallerGroupDeterminismTest(unittest.TestCase):
+    """The dominant-caller-directory row has to be the same number twice.
+
+    `caller_group_agreement` picks each operator's dominant caller directory out of a `Counter`.
+    `Counter.most_common` breaks a tie by insertion order, and the insertion order came from
+    iterating a `set` of file names, which varies with Python's string hash randomisation. The
+    published table moved between runs because of it: five runs over one corpus with one unchanged
+    tokenizer gave observed 1.43-1.45 and ratio 1.31-1.32x, and a tokenizer change was credited
+    with a difference that was noise. The tie is now broken by name.
+    """
+
+    SEED_PROBE = """
+import sys
+sys.path.insert(0, {project!r})
+from tools.operator_groups import caller_group_agreement
+
+order = [f"op{{index}}" for index in range(12)]
+callers = {{
+    name: {{f"{{letter}}__dir__{{name}}.gs" for letter in "abcdefgh"}}
+    for name in order
+}}
+print(caller_group_agreement(order, callers)["observed"])
+"""
+
+    def test_the_dominant_directory_does_not_depend_on_the_hash_seed(self) -> None:
+        """Run it under eight hash seeds and demand one answer.
+
+        This cannot be tested inside one process: a set with the same elements iterates the same
+        way every time within a run, and the defect is that the way *changes between runs*. Eight
+        subprocesses with different `PYTHONHASHSEED` values are the instrument, and the fixture
+        gives every operator an eight-way tie so a hash-ordered tie-break has every chance to
+        disagree with itself. Reverting the tie-break to `Counter.most_common` makes this fail.
+        """
+        answers = set()
+        for seed in range(8):
+            environment = dict(os.environ, PYTHONHASHSEED=str(seed), PYTHONDONTWRITEBYTECODE="1")
+            completed = subprocess.run(
+                [sys.executable, "-c", self.SEED_PROBE.format(project=str(PROJECT_DIR))],
+                capture_output=True,
+                check=True,
+                env=environment,
+                text=True,
+            )
+            answers.add(completed.stdout.strip())
+        self.assertEqual(
+            len(answers),
+            1,
+            f"the dominant-caller-directory measurement depends on the hash seed: {answers}",
+        )
+
+    def test_a_tie_is_broken_by_name_rather_than_by_iteration_order(self) -> None:
+        order = ["alpha", "beta"]
+        callers = {
+            # One caller in each of two directories -- a tie, which has to resolve to `a\\y`.
+            # The names carry three components because the grouping depth is two.
+            "alpha": {"b__x__one.gs", "a__y__two.gs"},
+            "beta": {"a__y__three.gs", "b__x__four.gs"},
+        }
+        first = caller_group_agreement(order, callers)
+
+        # The same sets, built in the opposite order, are the same sets -- which is the point: the
+        # result must not depend on how they were built or on how they happen to iterate.
+        reversed_callers = {
+            "alpha": {"a__y__two.gs", "b__x__one.gs"},
+            "beta": {"b__x__four.gs", "a__y__three.gs"},
+        }
+        self.assertEqual(first, caller_group_agreement(order, reversed_callers))
+
+        # Naming the winner, because a run length of 2 is satisfied by EITHER tie outcome as long
+        # as both operators pick the same one -- which is not the property under test.
+        self.assertEqual(dominant_directories(order, callers), ["a\\y", "a\\y"])
+        self.assertEqual(first["observed"], 2.0)
+
+    def test_a_clear_majority_still_wins(self) -> None:
+        order = ["alpha"]
+        callers = {"alpha": {"b__x__one.gs", "b__x__two.gs", "a__y__three.gs"}}
+        self.assertEqual(caller_group_agreement(order, callers)["observed"], 1.0)
 
 
 if __name__ == "__main__":
