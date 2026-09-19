@@ -505,7 +505,8 @@ residue in the file, which is what makes a save-diff a trustworthy instrument he
 
 [GitHub issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4) now tracks:
 
-- **what the value `0x00800000` means** — it is not a bit: it is `0x0080` in a signed 16-bit scalar at cell offset `+2` (**Observed in a local binary, 2026-09-17**). `resetvisibility` writes that field; **`forcetexture` provably cannot**, because its worker's only write is a 16-bit store to `+0` at `0x004a5f06`. Eleven readers use the field arithmetically and none masks it, so reading it as a *flag* of any kind is retired; reading it as *visibility intensity* remains an inference from the operator's name plus the `(0x80 - field)` arithmetic and is **not** established. What computes the perimeter ring the corpus carries, and whether a `.smp` load-and-save preserves it, are open;
+- **what the value `0x00800000` means** (unchanged by the 2026-09-18 save-diff, which placed
+  sprites rather than touching visibility) — it is not a bit: it is `0x0080` in a signed 16-bit scalar at cell offset `+2` (**Observed in a local binary, 2026-09-17**). `resetvisibility` writes that field; **`forcetexture` provably cannot**, because its worker's only write is a 16-bit store to `+0` at `0x004a5f06`. Eleven readers use the field arithmetically and none masks it, so reading it as a *flag* of any kind is retired; reading it as *visibility intensity* remains an inference from the operator's name plus the `(0x80 - field)` arithmetic and is **not** established. What computes the perimeter ring the corpus carries, and whether a `.smp` load-and-save preserves it, are open;
 - ~~**the 52-/53-byte record families**~~ — **decoded 2026-09-17.** There are six record layouts,
   not three; all 365 maps decode, 21,117 records rebuild from typed fields, and object editing works
   on all 365. What the extra bytes *mean* is still Unknown: every one of them is constant within its
@@ -517,12 +518,88 @@ residue in the file, which is what makes a save-diff a trustworthy instrument he
 - ~~**the header word at `0x00`**~~ — **settled 2026-09-17**: the engine rewrites it from its own
   state on every save and never reads it back from the file, so whatever selects a tileset, it is
   not this word;
-- **the trailing footer**, which stayed `1` across an empty and a populated save and so is not a
-  count of anything the probe changed;
-- **the attribute field at `+24`**, whose upper-nibble reading is suspect;
-- exact procedure-identifier semantics at `+34`.
+- ~~**the trailing footer**~~ -- **settled 2026-09-18**: it held at `1` while the record count went
+  from 299 to 303 across four saves, so it counts nothing. It is also *written by the editor*, since
+  a file carrying `footer:none` acquires `footer:1` on a no-op save;
+- ~~**the attribute field at `+24`**~~ -- **settled 2026-09-18**: it is the encounter LEVEL in the
+  high nibble, measured by varying the editor's LEVEL control with the sprite type held constant;
+- ~~**exact procedure-identifier semantics at `+34`**~~ -- **settled 2026-09-18** as far as the field
+  goes: it is an encounter reference and `0xffffffff` means none. **What the value indexes is still
+  open**, and it is NOT the encounter catalogue (Refuted: vanilla has 306 encounters and the one
+  selected sits at 171, not 568). Adjacent menu entries get adjacent ids, so the ids come from an
+  ordered registry that has not been identified;
+- **which registry assigns the `+34` encounter id.** The two data points are Life = 568 and
+  Death = 569. The instrument that would settle it is the executable, not the corpus: the editor's
+  encounter list is built somewhere in `lomse.exe` and the id is whatever that list's backing store
+  numbers its entries by.
 
-A controlled-save attempt reached the cloned Wine profile and launched the Map Editor integration, but macOS accessibility controls prevented reliable programmatic interaction with its Wine window. No map file was changed. The save-diff experiment remains parked rather than substituting guessed field meanings.
+A controlled-save attempt on 2026-09-17 reached the cloned Wine profile and launched the Map Editor
+integration, but macOS accessibility controls prevented reliable programmatic interaction with its
+Wine window. No map file was changed.
+
+**The experiment ran on 2026-09-18 with a human driving the editor**, which is the only thing that
+was ever missing -- macOS blocks synthetic input to Wine, but it does not block a person. Five saves
+of `map\XpertOnly.scn` in the development profile, each diffed against the one before. Results are
+in the section below; the profile was restored to byte-identical afterwards, all 354 map files and
+all 20 root files.
+
+### What a controlled save-diff established, Observed in gameplay 2026-09-18
+
+The instrument was calibrated before it was read, which is what made the rest legible.
+
+**Rung 0, the control: a load-and-save that changes nothing is NOT byte-identical.** `XpertOnly.scn`
+went from 146,939 to 145,747 bytes, and the shrink is structural: the editor reads the **53-byte
+record layout and writes the 49-byte one**. 299 records x 4 bytes, less the fixed section growing
+from 4 to 8 bytes, is 1,192 -- exactly the observed difference. All 16,384 terrain cells are
+unchanged, and every field this repository models (cell index, x, y, instance id, attribute bits,
+attribute code, sprite type) survives on all 299 records.
+
+That answers a question this document recorded as unanswerable. The four extra bytes per record in
+the 53-byte layout are **not information the engine needs to reconstruct the object**: it loads the
+map into its own in-memory form and writes it back without them. It also retires the caution that a
+record minted into any layout but the 49-byte one is Inferred -- the editor itself normalises *to*
+the 49-byte layout. `footer` appears the same way, `none` becoming `1`, so the footer is written by
+the editor rather than carried from the file.
+
+Without this rung every later diff would have shown 1,192 bytes of layout conversion on top of the
+one record that was actually placed.
+
+**The record count is a `u32` at tail offset 0.** It read `2b01`, `2c01`, `2d01`, `2e01` across four
+successive saves -- 299, 300, 301, 302 little-endian. Each placement appends its record and leaves
+every earlier record byte-identical.
+
+**The attribute field at `+24` is the encounter LEVEL, in the high nibble.** Two sprites of the same
+type (37, a cattle skull) placed with the editor's LEVEL control at 3 and then 5 produced
+`0x30000000` and `0x50000000`; a later one at level 6 produced `0x60000000`. Holding the sprite type
+constant is what makes this a measurement rather than two observations. The six *shipped* sprite-37
+records on this map all read 0. The "upper-nibble reading is suspect" note is retired.
+
+**The field at `+34` is an encounter reference, and `0xffffffff` means none.** Two records identical
+but for the editor's ENCOU setting differ in exactly one dword:
+
+```
+level 5, no encounter     ...ff01 ffffffff 00000000 ffffffff 000000
+level 5, Life Encounter   ...ff01 38020000 00000000 ffffffff 000000
+```
+
+`0x00000238` is 568. **Menu order is id order**: a Death Encounter, the next entry in the editor's
+list, came back as 569. That was a falsifiable prediction made before the save and it held.
+
+What the value 568 indexes is **still open**, and one hypothesis is Refuted rather than left
+hanging: it is not an index into the encounter catalogue. Vanilla defines 306 encounters and
+`life/genlife` -- display name "Life Encounter", the entry that was selected -- sits at position 171
+of them. The contiguity of 568 and 569 is what establishes that the ids come from an ordered
+registry at all; which registry is not established.
+
+**The trailing footer is confirmed not to be a count.** It held at `1` while the record count went
+from 299 to 303. One earlier save had shown this across a single change; four now show it.
+
+**Open, and logged as a question rather than a finding.** The human's screen-relative descriptions
+did not map to file coordinates the way screen intuition suggests: "down and to the right" moved
+`x` from 118 to 120 with `y` unchanged, and an earlier "above and to the right" moved `x` 44 to 43
+and `y` 119 to 117. That is consistent with isometric rendering, and this document already records
+the axis *names* as Inferred. Two imprecise descriptions are not evidence; settling it needs a probe
+that places a sprite at a stated cell index and reports where it draws.
 
 ## Writing maps
 
