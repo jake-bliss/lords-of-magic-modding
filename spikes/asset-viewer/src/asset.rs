@@ -19,7 +19,10 @@ pub enum AssetKind {
     ImpSprite,
     LegendScenario,
     Listfile,
+    AsuraText,
     MapComponent,
+    /// A bare cell grid: the `.map` files, which carry no version word and no tail.
+    MapGrid,
     MapScenario,
     MpqArchive,
     PortableExecutable,
@@ -43,7 +46,9 @@ impl fmt::Display for AssetKind {
             Self::ImpSprite => "imp-sprite",
             Self::LegendScenario => "legend-scenario",
             Self::Listfile => "mpq-listfile",
+            Self::AsuraText => "asura-text",
             Self::MapComponent => "map-component",
+            Self::MapGrid => "map-grid",
             Self::MapScenario => "map-scenario",
             Self::MpqArchive => "mpq-archive",
             Self::PortableExecutable => "portable-executable",
@@ -131,8 +136,12 @@ pub fn probe(name: &str, bytes: &[u8]) -> Result<AssetInfo, String> {
     if extension == "til" {
         return probe_tile_set(bytes);
     }
+    if extension == "asr" {
+        return probe_asura_text(bytes);
+    }
     if let Some(kind) = match extension {
         "lgd" => Some(AssetKind::LegendScenario),
+        "map" => Some(AssetKind::MapGrid),
         "scn" => Some(AssetKind::MapScenario),
         "smp" => Some(AssetKind::MapComponent),
         _ => None,
@@ -238,15 +247,35 @@ fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
     Ok(AssetInfo::new(
         kind,
         format!(
-            "metadata={};width={};height={};bits-per-pixel={};cells={};distinct-cell-tags={};distinct-tile-indexes={};high-flag-cells={high_flag_cells};candidate-value-range={value_range};nonfinite-values={nonfinite_values};trailing-bytes={};trailing-head-u32={trailing_head};tail-layout={tail_layouts};placed-sprite-records={placed_sprite_count};placed-sprite-types={placed_sprite_types};placed-sprite-footer={placed_sprite_footer}",
-            map.metadata,
+            "header-form={:?};metadata={};width={};height={};bytes-per-cell={};cells={};distinct-cell-tags={};distinct-tile-indexes={};high-flag-cells={high_flag_cells};candidate-value-range={value_range};nonfinite-values={nonfinite_values};trailing-bytes={};trailing-head-u32={trailing_head};tail-layout={tail_layouts};placed-sprite-records={placed_sprite_count};placed-sprite-types={placed_sprite_types};placed-sprite-footer={placed_sprite_footer}",
+            map.header_form,
+            map.metadata
+                .map_or_else(|| "none".to_owned(), |metadata| metadata.to_string()),
             map.width,
             map.height,
-            map.bits_per_pixel,
+            map.cell_bytes,
             map.cells.len(),
             distinct_tags.len(),
             distinct_tile_indexes.len(),
             map.trailing_bytes(),
+        ),
+    ))
+}
+
+/// An `Asura` `.asr` string table. See [`crate::asura`].
+fn probe_asura_text(bytes: &[u8]) -> Result<AssetInfo, String> {
+    let page = crate::asura::AsuraText::parse(bytes).map_err(|error| error.to_string())?;
+    Ok(AssetInfo::new(
+        AssetKind::AsuraText,
+        format!(
+            "chunk={};version={};page={};records={};text-bytes={};keys-match-records={};trailer-bytes={}",
+            String::from_utf8_lossy(&page.chunk_id),
+            page.chunk_version,
+            page.page_name(),
+            page.strings.len(),
+            page.text_bytes(),
+            page.keys_match_records(),
+            page.trailer.len(),
         ),
     ))
 }

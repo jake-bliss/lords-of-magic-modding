@@ -23,7 +23,7 @@ English/Shaders/xbrz/xbrz-freescale-multipass.glsl	12553	bb33262daa8cba06026fe09
 English/Shaders/xbrz/xbrz-freescale-multipass.glsl.pass1	8884	8785f14f704a4ce4a644c5e34174eccf75dd58f85023aa9c6efde88956a7f64f	pass1	ascii-text	text	no	-
 English/Sierra.inf	616	688b388db5ef623b788f61361a63855a129d88225773ee66f2170f8ff965d28e	inf	ascii-text	text	no	-
 English/Standard.snp	98282	7b527841c91d03d6acda8e6c73d67ffd744a9b252a58e7cdf0636dec14e0daee	snp	ms-dos-executable	portable-executable	no	-
-English/Text/Menu/Menu_En.asr	375	9154b6361c2c1aada2f8518f9d4094403b571ca4589c70ec2d558afe687e7f9c	asr	asura-container	unknown	no	-
+English/Text/Menu/Menu_En.asr	375	9154b6361c2c1aada2f8518f9d4094403b571ca4589c70ec2d558afe687e7f9c	asr	asura-container	asura-text	no	-
 English/Wav/Menu_Music.wav	4234976	97a0ca00a27c8554bbab56630155a553b64b0ac555454fc73ab10085ddb5844c	wav	wave-audio	wave-audio	no	-
 English/Wav/Music/M_Air.wav	11190316	ba04ce3624cd25db99fb9a384eb0284a0e7e5da488b9e495aa570343ffd0e106	wav	wave-audio	wave-audio	no	-
 English/Wav/Music/M_Chaos.wav	10566698	85d4ce994d50d3c7de3a6107207d9c0ae2524aae7cdbf32378c7b679d05a4840	wav	wave-audio	wave-audio	no	-
@@ -74,7 +74,7 @@ English/gs/dlg/comb_dlg.gs	4951	da15dfff66912cc67087a90cf52b3dd6ee9ce2b8e5e674a9
 English/gs/dlg/scroldlg.gs	3658	b7a46e0310df51d2afcdb8fdad355bc65f3582ce2a4368360d16f5f489c1284f	gs	ascii-text	game-script	no	-
 English/gs.mpq	1795987	6b84ea4cfc7595b8b94b821eb6cc8cb8b2fdf10bbea68ca8e381e9098196f86a	mpq	mpq-archive	mpq-archive	no	-
 English/imp.mpq	51488090	cb5c1068ea21936e5c301ff54d3c498c9c1a8cc19007b7d2cc8ac724abc6e2b2	mpq	mpq-archive	mpq-archive	no	-
-English/lom.cfg	160	f4142b7507306309bd4e8a318cd8fed58fc0891a75d367093c0103a50f8fa1c9	cfg	unrecognised	unknown	no	-
+English/lom.cfg	160	a781502500f9225dd9035d730935078fedc6af40378ddb4ac6e489efacb84016	cfg	unrecognised	unknown	no	-
 English/lomse.exe	1535488	a505f399d5be73fe0a2215633f663717f28daeb3075bbcc05b47d40653669052	exe	ms-dos-executable	portable-executable	no	-
 English/map/91gauntlet.smp	19681	43c67bc1db601c283640b4442099fdcfdf7c14e5a27edf8fe14e5eb2ba027e84	smp	unrecognised	map-component	no	-
 English/map/AIBLDG01.SMP	19336	68aa9d17da0a799a06bda12c26a361c42dea1f77ea9393b3e536384efdb6c802	smp	unrecognised	map-component	no	-
@@ -310,7 +310,7 @@ English/map/detowe.smp	19289	14a22d7fe0c318d0c9b045ccbb102f206ff0c452dc2d0e8d54a
 English/map/dragonduel.smp	19828	53a5ce9ecb600cbc6d1ae9c755ce539047b1404d1beb7ddc983e13ff89b0277f	smp	unrecognised	map-component	no	-
 English/map/dungeon.smp	20122	fcfc9d6f1f0a9908d30d8cedd7d6a25273e06116fb216281d5a54185ace64940	smp	unrecognised	map-component	no	-
 English/map/dungeon2.smp	20122	d7fb7cee91e18bab8e110472218417ca49fffa4820dee5150a588595fa90671b	smp	unrecognised	map-component	no	-
-English/map/e3map2.map	32780	3376411015d9b558cead2141f3ed39c7fa97d7d0c6dd3a0322cb68e56f42d369	map	unrecognised	unknown	no	-
+English/map/e3map2.map	32780	3376411015d9b558cead2141f3ed39c7fa97d7d0c6dd3a0322cb68e56f42d369	map	unrecognised	map-grid	no	-
 English/map/eacave.smp	19142	c703d52da5ab29cda099249ce7813a2152486e11a4bb2d6b5d10411ce05f2920	smp	unrecognised	map-component	no	-
 English/map/eacavmule.smp	19730	6f493ebb2e4fc2825132e747d1d7e22a486a63e924bd62da33a89abf9a40e542	smp	unrecognised	map-component	no	-
 English/map/eacavmulh.smp	19730	4ad469832dfd64cd4619df1d1fda2975d6accc5a1cecfcda2373de1434650fab	smp	unrecognised	map-component	no	-

@@ -50,7 +50,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::map::{MapAsset, MapCell, MapError};
+use crate::map::{MapAsset, MapCell, MapError, MapHeaderForm};
 
 /// The nine section tags, in the order the engine's array at `0x0055B168` stores them.
 ///
@@ -809,7 +809,7 @@ impl MultiplayerSection {
 /// [`MapSection::visibility_histogram`].
 pub const OBSERVED_VISIBILITY_LEVELS: [i16; 3] = [0, 63, 128];
 
-/// The embedded world map: the standalone map format **minus its leading `metadata` word**.
+/// The embedded world map: the **grid form** of the standalone map format, header and all.
 ///
 /// **Observed in a local binary, 2026-09-18.** The payload accounts exactly, with no slack:
 ///
@@ -825,9 +825,13 @@ pub const OBSERVED_VISIBILITY_LEVELS: [i16; 3] = [0, 63, 128];
 ///
 /// `4+4+4+131072+4+65536+4 = 196,628`, which is the payload length in every corpus file.
 ///
-/// Cell decoding is **not duplicated here**. The bytes are handed to [`MapAsset::parse`] with a
-/// synthesized zero `metadata` word in front, so the save and the standalone `.scn`/`.smp` path can
-/// never drift apart.
+/// Cell decoding is **not duplicated here**. The bytes are handed to
+/// [`MapAsset::parse_as`] as [`MapHeaderForm::Grid`], so the save, `map/e3map2.map` and the
+/// standalone `.scn`/`.smp` path can never drift apart.
+///
+/// **Observed in a local binary, 2026-09-19.** That this section's three head words are the
+/// standalone grid header is not a resemblance: the engine reads both with the same function,
+/// `0x004a52e0`, and writes both with `0x004a5440`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MapSection {
     pub map: MapAsset,
@@ -860,12 +864,11 @@ impl MapSection {
             .checked_add(grid_bytes)
             .ok_or_else(|| SaveError::section(tag, "map grid offset overflow"))?;
 
-        // Re-attach the `metadata` word the standalone format has and the save omits, so the one
-        // cell decoder in `map.rs` does the work. `0` is not invented data: it is the header field
-        // this section does not have, and nothing downstream of here reads it.
-        let mut standalone = Vec::with_capacity(4 + grid_end.min(payload.len()));
-        standalone.extend_from_slice(&0_u32.to_le_bytes());
-        standalone.extend_from_slice(payload.get(..grid_end).ok_or_else(|| {
+        // Hand the bytes to the one cell decoder in `map.rs` in their own right. This used to
+        // prepend a synthesized zero `metadata` word so the scenario-form parser would accept
+        // them; since `map.rs` learned the grid form -- which is exactly this header -- the
+        // section is parsed as what it is, with no fabricated field in front of it.
+        let grid = payload.get(..grid_end).ok_or_else(|| {
             SaveError::section(
                 tag,
                 format!(
@@ -873,8 +876,8 @@ impl MapSection {
                     payload.len()
                 ),
             )
-        })?);
-        let map = MapAsset::parse(&standalone)
+        })?;
+        let map = MapAsset::parse_as(grid, MapHeaderForm::Grid)
             .map_err(|error: MapError| SaveError::section(tag, format!("embedded map: {error}")))?;
 
         let plane_count = read_u32(tag, payload, grid_end)?;

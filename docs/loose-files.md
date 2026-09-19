@@ -8,11 +8,18 @@ entirely on the archive work. It was never true of the loose tree. `English/Wav/
 and two of them had no parser and no recorded layout at all. This page closes that gap and says
 plainly where it is still open.
 
-Every claim below carries its evidence class: **Observed in a local binary** (read out of
-`lomse.exe`), **Observed in the corpus** (read off the installed files), **Observed in gameplay**,
-**Documented**, **Inferred**, **Refuted**.
+**Updated 2026-09-19.** Four of the items this page listed as undecoded are now decoded:
+`map/e3map2.map` (the map format without its version word), `Text/Menu/Menu_En.asr` (parser **and**
+emitter, hash function included), what writes `settings.cfg`, and `lom.cfg`'s trailing word.
+`custldr/0templdr.ldr` is identified and its container is read, but its interior is not decoded and
+cannot be validated against a corpus of one file. So the loose tree's formats are **not** all
+decoded, and the one that is not is named.
 
-Measured **2026-09-18** on the four installed profiles. Reports:
+Every claim below carries its evidence class: **Observed in a local binary** (read out of
+`lomse.exe` or `LOMLauncher.exe`), **Observed in the corpus** (read off the installed files or the
+archives they ship), **Observed in gameplay**, **Documented**, **Inferred**, **Refuted**.
+
+Measured **2026-09-18**, re-measured **2026-09-19**, on the four installed profiles. Reports:
 [`reports/loose/summary.md`](../reports/loose/summary.md),
 `reports/loose/inventory-{baseline,development,gs5r3,patch302}.tsv`,
 [`reports/loose/config-fields.tsv`](../reports/loose/config-fields.tsv).
@@ -24,7 +31,7 @@ scripts/loose-file-reports.sh            # every report, then every corpus-gated
 ```
 
 That is the tracked command, and it is the one to run whenever the reports are regenerated or
-`src/loose.rs` changes. **Run it rather than the individual verbs.** Half the checks behind these
+`src/loose.rs`, `src/asura.rs` or `src/map.rs` changes. **Run it rather than the individual verbs.** Half the checks behind these
 reports need the proprietary tree, so they are `#[ignore]`d and an ordinary `cargo test` skips
 them; consistently permuting two `LomConfig` fields left `cargo test` green for exactly that
 reason. An `#[ignore]`d guard that no tracked command invokes is not a guard.
@@ -36,6 +43,9 @@ ROOT="$HOME/Applications/Steambuild 32 64bit DXVK.app/Contents/SharedSupport/pre
 lom-asset-viewer --loose-inventory "$ROOT" baseline > reports/loose/inventory-baseline.tsv
 lom-asset-viewer --loose-config "$ROOT/English/lom.cfg"
 lom-asset-viewer --loose-config "$ROOT/English/settings.cfg"
+lom-asset-viewer --describe-asura "$ROOT/English/Text/Menu/Menu_En.asr"
+lom-asset-viewer --dump-map-cells "$ROOT/English/map/e3map2.map" 0 0 3 3
+lom-asset-viewer --scan-map-dir "$ROOT/English/map"
 ```
 
 Both `--loose-config` parsers re-encode; the CLI prints `round-trips` so a partial read is visible
@@ -97,7 +107,14 @@ a number is the difference between a boundary and an omission.
 **Observed in the corpus.** The `gs5r3` profile was being played while this was measured — its
 `combat.log`, `artifact.log` and `savegame/*.lom` carry mtimes inside the measurement window. Its
 rows are a snapshot of live state, not of a shipped tree, and they will not reproduce after another
-session. The other three profiles are stable.
+session.
+
+**Observed in the corpus, 2026-09-19.** `development` is no longer stable either: its `lom.cfg`
+changed between the 2026-09-18 sweep and the 2026-09-19 regeneration — one more help-panel flag
+cleared, index 2 going `1` -> `0`, with a new digest — and its mtime is 2026-09-19 15:13. That is
+the monotone 1 -> 0 behaviour the help-panel vector is identified by, so something ran that profile.
+It was not this work: nothing here writes inside `~/Applications`, and the inventory opens files
+read-only. `baseline` and `patch302` are unchanged.
 
 ## Two classifiers, recorded side by side
 
@@ -127,8 +144,10 @@ elsewhere in this repository. **Observed in the corpus.**
 
 ### Files the existing probe cannot classify — the count
 
-Ten in the baseline and development profiles, 13 in `patch302`, 17 in `gs5r3`. The full list is in
-`reports/loose/summary.md`; the baseline ten are:
+**Re-measured 2026-09-19: eight** in the baseline and development profiles, 11 in `patch302`, 15 in
+`gs5r3`. Two came off the list in every profile — `English/Text/Menu/Menu_En.asr` and
+`English/map/e3map2.map`, which now probe as `asura-text` and `map-grid`. The full list is in
+`reports/loose/summary.md`; the baseline eight are:
 
 | path | why |
 | --- | --- |
@@ -140,8 +159,16 @@ Ten in the baseline and development profiles, 13 in `patch302`, 17 in `gs5r3`. T
 | `English/savegame/quickstart` | same, and no extension at all |
 | `English/lom.cfg` | now parsed — by `loose::LomConfig`, not by `probe` |
 | `English/Shaders/shader-package.zip` | zip; `probe` has no rule |
-| `English/Text/Menu/Menu_En.asr` | Asura container; `probe` has no rule |
-| `English/map/e3map2.map` | see below |
+
+Off this list since 2026-09-19, with their new `probe_kind`:
+
+| path | kind |
+| --- | --- |
+| `English/Text/Menu/Menu_En.asr` | `asura-text` |
+| `English/map/e3map2.map` | `map-grid` |
+
+`English/custldr/0templdr.ldr` (GS5R3 only) stays on it: the file is identified and its container
+is read, but no parser is written for it — see below.
 
 ### Extension against content
 
@@ -166,46 +193,246 @@ conflicts:
 
 Each was absent from `docs/`, `reports/`, `tools/` and `README.md` before this sweep.
 
-### `English/Text/Menu/Menu_En.asr` — an Asura container
+### `English/Text/Menu/Menu_En.asr` — decoded, and now composable
 
-375 bytes, magic `Asura   ` (eight bytes, three trailing spaces) followed by the block tag `HTXT`.
-Asura is Rebellion's engine container format; this file belongs to the Steam-era `LOMLauncher.exe`,
-not to `lomse.exe`. It holds the launcher's five UI strings.
+375 bytes. **Decoded, with a parser and an emitter**, 2026-09-19. `--describe-asura` reads it;
+`asura::AsuraText::to_bytes` writes it, recomputing every derived word rather than copying it.
 
-**Observed in the corpus**, by two exact length equations rather than by eye:
+#### It belongs to the launcher, and that is no longer an inference
 
-- Five string records follow a `u32` count of 5. Each record is `u32` hash, `u32` character count,
-  then UTF-16LE text. The five counts are 5, 8, 31, 6, 40 and the five strings are `Play`,
-  `Support`, `Lords of Magic Special Edition`, `Error` and
-  `Error launching the game: (0x%08x) - %s` — 4, 7, 30, 5 and 39 characters. Every count is the
-  character count **including** the terminator. Five for five.
-- A `Menu` block follows, with a `u32` of 87 and then 87 bytes of NUL-separated ASCII keys:
-  `LAUNCHER_PLAY`, `LAUNCHER_SUPPORT`, `LAUNCHER_GAME_TITLE`, `LAUNCHER_ERROR_TITLE`,
-  `LAUNCHER_ERROR`. Their lengths with terminators are 14 + 17 + 20 + 21 + 15 = 87. Exact.
+This page previously recorded the `LOMLauncher.exe` attribution as **Inferred** from the file's
+contents. **Observed in a local binary, 2026-09-19**: `English/Launcher/LOMLauncher.exe` contains
+the format strings `Text\Menu\Menu_%s.asr` and `Text\%s_%s.asr` — it builds this exact path —
+together with the literals `Asura   ` and `HTXT`, the RTTI names
+`Asura_HashedLocalisedText_Page`, `Asura_ResourceSet`, `Asura_Handle_List` and
+`Launcher_ResourceProtocol`, an embedded HTML page whose buttons are `[[LAUNCHER_PLAY]]` and
+`[[LAUNCHER_SUPPORT]]`, and the build path
+`C:\Source Code\ASURA_ROOT\FileTools\Launcher\LordsOfMagic\Workspace\Release\LOMLauncher.pdb`.
+`lomse.exe` contains none of them.
 
-**Not determined**: the meaning of the `u32`s at payload offsets `0x20` (`0x0033155f`) and `0x24`
-(`0xb4`), the hash function, and whether the trailing NUL run is alignment padding or a field. No
-parser is written for this; it is documented, not implemented.
+#### The layout
 
-### `English/map/e3map2.map` — a map component the map pass never saw
+**Observed in the corpus.** File offsets; little-endian throughout.
 
-**Observed in the corpus.** 32,780 bytes. `--describe-map` refuses it (`unsupported map cell depth
-391`), and `--scan-map-dir` skips it because it dispatches on the `.smp`/`.scn`/`.lgd` extensions.
-It is therefore outside the "all 365 installed map/scenario/component files parse" claim, which
-counts 337 `.smp` + 20 `.scn` + 8 `.lgd` in the GS5R3 profile.
+| offset | size | field |
+| ---: | ---: | --- |
+| `0x00` | 8 | magic `Asura   ` — eight bytes, **three** trailing spaces |
+| `0x08` | 4 | chunk id, `HTXT` |
+| `0x0c` | 4 | chunk payload bytes — `351`, and `375 - 24 = 351` |
+| `0x10` | 4 | `3`. **Not determined**; carried verbatim |
+| `0x14` | 4 | `0`. **Not determined**; carried verbatim |
+| `0x18` | 4 | string count, `5` |
+| `0x1c` | 4 | `0x0033155f` — **the hash of the page name `Menu`** |
+| `0x20` | 4 | `180` — total UTF-16 bytes across the records, terminators included |
+| `0x24` | 4 | `0`. **Not determined**; carried verbatim |
+| `0x28` | … | five records: `u32` hash, `u32` unit count, then that many UTF-16LE units |
+| `0x104` | 8 | the page name, `Menu` and four NULs |
+| `0x10c` | 4 | key-table bytes, `87` |
+| `0x110` | 87 | five NUL-terminated ASCII keys |
+| `0x167` | 16 | NULs. **Not determined**: padding or a field |
 
-The count is profile-dependent and the qualification has to say which: GS5R3's `English/map/` holds
-**366** files, and the other three profiles hold **354** (they have 8 `.scn` rather than 20). The
-profile-independent statement is the useful one -- **every profile holds exactly one file in
-`English/map/` that the map pass never offers to the parser**, and it is this one.
+Both length equations from the first draft still hold and are now the parser's own checks rather
+than prose: the five unit counts are 5, 8, 31, 6 and 40 against texts of 4, 7, 30, 5 and 39
+characters, so each count includes the terminator; and `14 + 17 + 20 + 21 + 15 = 87` for
+`LAUNCHER_PLAY`, `LAUNCHER_SUPPORT`, `LAUNCHER_GAME_TITLE`, `LAUNCHER_ERROR_TITLE`,
+`LAUNCHER_ERROR`.
 
-Its first three words are `64`, `64`, `8`. A `.smp` opens with a **version** word (`0x6f` in
-`91gauntlet.smp`) and then width, height, depth — the same three fields, one word later.
-`12 + 64 × 64 × 8 = 32,780` accounts for the file exactly, sourced as three terms and not as a
-total: a 12-byte header of three words, 4,096 cells, 8 bytes per cell.
+#### The hash — the thing that was blocking composition
 
-**Inferred**, not observed: that this is an earlier or variant map component that predates the
-version word. One file is not a format. It is not decoded further here.
+**Observed in a local binary.** `LOMLauncher.exe` `0x004018b0`:
+
+```text
+h = 0;  for each byte c of the key, terminator excluded:
+    if ('A' <= c <= 'Z') c += 0x20        ; 004018c0-004018c8, case folded down
+    else if (c == '\\')  c = '/'            ; 004018cd-004018d2, backslash folded to slash
+    h = h * 31 + (int8_t)c                ; shl/sub at 004018d6, movsx at 004018db
+```
+
+The multiply is the `shl edx,5; sub edx,eax` idiom, which is why a search for `imul reg,reg,31`
+finds nothing. Three details come from the instructions and **cannot** be shown by this corpus,
+whose keys are plain upper-case ASCII: the terminator is not hashed, `\` folds to `/`, and the
+byte is **sign-extended**, so a byte at or above `0x80` contributes a negative value.
+
+**Observed in the corpus.** It reproduces all five record hash words from their keys and the
+page-name word `0x0033155f` from `Menu`. Six for six, and that is asserted as an equation over the
+installed file rather than as a transcribed table.
+
+#### Composability, and what has and has not been shown
+
+- **Adding a key is possible**, and that is what the hash unblocked. Before it was recovered only
+  *replacing* an existing string could work, because a new record's hash word could not be filled
+  in. `AsuraText::push` computes it. **Observed in the corpus**, as a property of the format:
+  `a_key_added_to_the_installed_asura_table_survives_a_round_trip` adds a key to the *installed*
+  file, lengthens an existing string, re-encodes, and re-reads both back.
+- **Lengths are free.** Every derived word — the chunk size, the record count, the total text
+  length, each record's unit count, the page-name hash, the key-table length — is recomputed by
+  `to_bytes`, not stored. This is why the round trip is a real check here and not the mathematical
+  identity that `lom.cfg`'s is: a wrong length rule or a wrong hash makes the re-encoded file
+  differ from the installed one.
+- **Not established: that `LOMLauncher.exe` accepts a file this emitter wrote.** Nothing here has
+  been loaded by the launcher, and the launcher has not been run. The claim is self-consistency by
+  the format's own rules, which is weaker, and it is the one the tests assert.
+
+**Still not determined**: the words at `0x10`, `0x14` and `0x24`; whether the eight bytes at `0x104`
+are one NUL-padded name field or a four-byte name plus a zero word (the one corpus name is four
+characters, so the two readings produce identical bytes); and whether the trailing 16 NULs are
+padding or a field — the file is 375 bytes, so they are not alignment to any power of two. All five
+are carried verbatim, so nothing is invented for them and the file still re-encodes exactly.
+
+### `English/map/e3map2.map` — decoded: the map format without its version word
+
+**Decoded 2026-09-19.** It was the only file in `English/map/` the map pass never offered to the
+parser; it now parses, re-encodes byte for byte, and `--scan-map-dir` counts it.
+
+**Observed in a local binary.** The engine has two map readers and they are **nested**, not
+parallel. `0x004a52e0` reads a bare grid: `u32` width into map object `+0x5c`, `u32` height into
+`+0x60`, `u32` bytes-per-cell into a stack local, then a loop that reads `local << 6` bytes at a
+time into the cell array at `+0x54`, advancing 64 cells a pass. `0x004855c0` reads a scenario: one
+`u32` into the scenario object's `+0x00` and then a **call to that same `0x004a52e0`** on the
+embedded map at `+0x482c`, then the placed-sprite section and a version-gated dword. The writers
+mirror it: `0x004a5440` writes the grid, `0x00485550` writes four bytes from `0x0055b1b0` and then
+calls `0x004a5440`.
+
+So `.smp`/`.scn`/`.lgd` **is** a version word in front of a `.map`, and the operators reach the two
+separately -- `loadmap` (`0x004dfad0`) / `savemap` (`0x004dfbe0`) for the grid form,
+`loadscenariomap` / `savescenariomap` / `loadspecialmap` / `savespecialmap` for the scenario form.
+`loadmap`'s worker closes the file as soon as the grid is in, so the grid form has **no tail
+section at all** -- which is a different statement from "a tail this project cannot read", and the
+tools now say which.
+
+| form | header | tail | corpus |
+| --- | --- | --- | ---: |
+| scenario | `version, width, height, bytes_per_cell` | record section (+ version-gated dword) | 353-365 per profile |
+| grid | `width, height, bytes_per_cell` | none | 1 per profile |
+
+**Observed in the corpus.** 32,780 bytes: `12 + 64 x 64 x 8`, three header words of `64, 64, 8` and
+4,096 eight-byte cells, sourced as three terms rather than as a total. The nearest neighbour is
+`chbldg01.smp`, the one 64x64 scenario file in the corpus, at **32,788** bytes — exactly eight
+more, being the version word in front and the empty record section's zero count word behind. Their
+grids hold different content, so that is a shape match and not a duplicate.
+
+**The earlier reading was wrong in a way one file could not show, and the corpus settles it.**
+Reading the header one word later — as a 16-byte scenario header — is what produced `unsupported
+map cell depth 391`. That alignment is not merely unsupported, it is refuted: it yields a tile-index
+field that is `0` in all 4,095 cells it can reach and elevations that are denormal floats around
+`1e-45`. On the correct alignment every one of the 4,096 tile indexes is inside the atlas (`1..443`
+against the corpus range `0..623`), the cell's upper 16-bit field is `0` in every cell, and all 42
+distinct elevations — `0.0` to `10.25` in steps of `0.25` — are bit patterns that the scenario files
+in the same directory also use. Zero strays on either check. Pinned by
+`the_grid_form_map_uses_the_corpus_tile_and_elevation_vocabulary`.
+
+**Observed in the corpus.** `.map` and `.smp` are passed to the *same argument slot* by a script:
+`gs.mpq` member `File00000214.xxx` calls `startspecialcombat` with `"map/thanh.smp"` in one branch
+and `"map/test.map"` in the other, each paired with `"til/cavetile.til"`. So the extension does not
+choose the reader, and `lomse.exe` contains no `.map`, `.smp`, `.scn` or `.lgd` literal at all. The
+parser therefore sniffs the header: each form is tested on its own terms and every file in every
+profile's `English/map/` matches exactly one — 353 scenario + 1 grid in three profiles, 365 + 1 in
+`gs5r3`. Pinned by `both_header_forms_are_mutually_exclusive_across_the_corpus`.
+
+**The nesting claim is tested against the corpus, not against a fixture.** For every scenario file
+installed, dropping the first four bytes and re-reading the remainder as a grid reproduces the same
+shape words and the same cells, and re-encodes to that same slice. A fixture built to this shape
+could not fail on it. Pinned by `a_scenario_file_is_a_version_word_in_front_of_a_grid_file`.
+
+**Corrected in the code, not newly learned.** `MapAsset`'s third header field was called
+`bits_per_pixel`; `docs/map-format.md` has called it **bytes per cell** since 2026-09-17, on the
+evidence that the reader multiplies it by 64 to size a 64-cell block and the writer emits a literal
+`8`. The field is now `cell_bytes` and `--dump-map-cells` prints `bytes-per-cell:` instead of
+`bpp:`. The corpus can never show the difference, because 8 bits per pixel and 8 bytes per cell are
+the same number.
+
+**Not determined.** Which of the first two words is width and which is height *in this file*: it is
+64x64, so the corpus cannot separate them, and the assignment comes from the allocator at
+`0x004a4f20`, which stores the first as the row stride. Also not determined: what `e3map2.map` is
+*for*. The name suggests a combat map, and `startspecialcombat` takes a map path, but no script in
+any of the three corpora names this file.
+
+**Also not determined: whether any grid-form file other than this one exists.** One file is not a
+format; what carries the format here is the engine, not the file.
+
+### `English/custldr/0templdr.ldr` — the custom-leader scratch slot
+
+3,982 bytes, present in the `gs5r3` profile only. **Partly decoded, 2026-09-19**: what it is, what
+writes it and reads it, and the outer container. The interior is **not** decoded, and this section
+says exactly where the line is.
+
+#### What it is
+
+**Observed in the corpus.** The custom-leader editor. `gs\dlg\CHAREDIT5.gs` in GS5R3's `gs.mpq`
+(and `gs\dlg\charedit.gs` in the vanilla and 3.02 archives, so the feature is shipped, not a GS5R3
+addition) holds:
+
+```text
+/save_lord{"custldr/""custldr/*.*""Save Custom Leader"{ ... savevirtualarmy ... }fileselector}def
+/istempldrfile?{/dummy begin"0templdr.ldr"strcmp 0 eq end} ...
+/load_lord{"custldr/""custldr/*.*""Load Custom Leader"{ ... loadvirtualarmy ... }fileselector}def
+```
+
+and, on the button that starts the game with the edited leader, `savedefaultarmy`. `load_lord`
+explicitly refuses this one name: `load_filename istempldrfile? {false} {load_filename
+loadvirtualarmy} ifelse`. So `0templdr.ldr` is the *hand-off* file the editor writes on its way into
+a game, not one of the player's saved leaders — which is why it is the only `.ldr` in any profile
+and why it appears in the profile that has been played.
+
+**Observed in the corpus.** The file's four visible strings are `Knights`, `Crossbowmen`,
+`Crossbowmen` and `Jerk Lawbind` — three unit types and a leader name.
+
+#### Two `.ldr` forms, which is the trap
+
+**Observed in a local binary.** Two operators write into `custldr/`, with **different layouts**:
+
+| operator | worker | filename | writes |
+| --- | --- | --- | --- |
+| `savedefaultarmy` `0x0044c9a0` | `0x0044c8f0` | `sprintf("custldr/%dtempldr.ldr", …)` | `0x2a0` bytes from army `+0x58`; the army object through its vtable slot `+0x20`; then `+0x54`, `+0x4c`, `+0x50`, `+0x48` |
+| `savevirtualarmy` `0x0044ca80` | `0x0044c510` | `sprintf("custldr/%s", name)` | the same `0x2a0`, **plus** `0x78` bytes from `+0x2f8` and the three words `+0x40`, `+0x44`, `+0x38`; then the vtable write; then `+0x54`, `+0x4c`, `+0x50`, `+0x48`, **plus** one word from global `0x5af0f4` |
+
+Both open `"wb"` through `0x00539610` and close through `0x005394d0`; the readers,
+`loaddefaultarmy` `0x0044c9b0` → `0x0044c7d0` and `loadvirtualarmy` `0x0044cb60` → `0x0044c630`,
+mirror them `fread` for `fread`. `0x0044c510` and `0x0044c630` also call the import at `0x0054d0bc`
+on the literal `"custldr"` first, which is how the directory comes to exist.
+
+**So a file saved by "Save Custom Leader" is not the same format as `0templdr.ldr`**, despite the
+same extension and the same directory. Anyone writing a tool for these has to know which operator
+produced the file, and the file does not say.
+
+#### The outer container of the `0templdr.ldr` form
+
+**Observed in a local binary.** In `savedefaultarmy` order:
+
+| bytes | source |
+| ---: | --- |
+| 672 (`0x2a0`) | army object `+0x58` |
+| variable | the army object, written through vtable slot `+0x20` = `0x00412090` |
+| 4 | army `+0x54` |
+| 4 | army `+0x4c` |
+| 4 | army `+0x50` |
+| 4 | army `+0x48` |
+
+Fixed part = 672 + 16 = **688**, so the variable block in the installed file is
+`3,982 - 688 = 3,294` bytes.
+
+**Observed in the corpus**, and weakly: the file's first non-zero byte is at offset **676**, which
+is inside the first word the variable block writes (`+0x44`, which is `0`) — consistent with the
+672-byte boundary. It is consistent, not probative: a run of zeros fits many boundaries. The
+boundary itself comes from the instructions.
+
+#### What is not determined, and what would settle it
+
+- **The 3,294-byte army object.** `0x00412090` writes `+0x44`, `+0x48`, `+0x4c`, `+0x50`, then a
+  loop of `[+0x4c]` sub-objects at stride `0x4c` through `0x00524c20`, then `+0x53c`, `+0x540`,
+  `+0x544`, `+0x548`, a container at `+0x538` through `0x004279d0`, then `+0x54`, `+0x58`, `+0x64`,
+  `0x58` bytes at `+0x68`, and a further run of words. Decoding it means walking those three
+  callees and the unit sub-object's own writer. It is a real piece of work, not a gap that a
+  paragraph closes.
+- **It cannot be validated against a corpus.** There is exactly **one** `.ldr` file in all four
+  profiles. One file is not a format, and a layout fitted to one file is a layout that cannot fail.
+  What would change that is a second file — and the cheap way to get one is *not* to run the game
+  but to note that `savevirtualarmy`'s own form is written by a different code path, so the two
+  disagree structurally and each constrains the other.
+- **The `%d` in the filename.** `0x0044c8f0` formats it from `[0x005a7d90 + ([0x005a7d8c] << 10)]`
+  — a field of the current player's 1,024-byte record, the same indexed-global pattern
+  `loadconfig` uses. Whether that is the player index is **not determined**; the one shipped file
+  is `0`.
 
 ### `English/Wav/` — 42 files, 233 MB
 
@@ -241,8 +468,9 @@ recorded, not explained.
 - **`English/Shaders/`** — 11 `.glsl`, two `.glsl.pass1`, `readme.txt` and `shader-package.zip`.
   These belong to `ddraw.dll` (cnc-ddraw), not to the game.
 - **`English/Launcher/dbghelp.dll`** — shipped beside `LOMLauncher.exe`.
-- **`English/custldr/0templdr.ldr`** (GS5R3 only) — 3,982 bytes, binary, 2,738 of them zero and 834
-  of them `0xFF`. **Not determined**: anything about its structure.
+- **`English/custldr/0templdr.ldr`** (GS5R3 profile only) — 3,982 bytes. See
+  [the `.ldr` files](#englishcustldr0templdrldr--the-custom-leader-scratch-slot) below; it is the
+  custom-leader editor's scratch save, and it is **partly** decoded.
 
 ## `settings.cfg`
 
@@ -284,63 +512,89 @@ The parser now requires a key and value to contain no control characters, so a `
 as `unparsed` records instead of as silently missing keys. `--loose-config` refuses such a file
 outright. Pinned as a test.
 
-### It is written by something, during play
+### Resolved: what writes it, and how
 
-**Observed in gameplay.** The `patch302` profile's live `settings.cfg` differs from that profile's
-own `_vanilla_backup/settings.cfg` in exactly two records — `KB_MAP_SCROLL_SPEED` 100 → 50 and
-`KB_COMBAT_SCROLL_SPEED` 10 → 135 — and in nothing else. GS5R3 — the only other profile with a
-`_vanilla_backup/` — still matches its own backup byte for byte; `baseline` and `development` have
-no backup to compare against. So the running game does write this file.
+**Observed in the corpus, 2026-09-19.** It is `gs\dlg\opdlg.gs` — the options dialog — in the
+**3.02 unofficial patch's** `gs.mpq`. The relevant code is a GameScript procedure:
 
-The file is still 513 bytes because the two edits happen to cancel in length (`100`→`50` loses a
-character, `10`→`135` gains one). An earlier version of this page read that as evidence that the
-writer rewrites the whole file rather than patching a line. It is not: two changed values establish
-the resulting bytes and nothing about how they got there. **The write strategy is not determined.**
+```text
+"settings.cfg" "w" file
+dup "TOOL_TIP_TRANSLUCENCY " writestring
+dup tooltiptrans 3 string cvs writestring
+dup carriage_return
+...
+dup "USE_DIRECTX_BLIT " writestring
+dup getuseddrawblt 3 string cvs writestring
+dup carriage_return
+dup "CENTER_MOVE " writestring
+dup getcenteronmovement 3 string cvs writestring
+dup carriage_return
+closefile
+```
 
-### What is not determined: which component writes it
+That settles four things at once and closes three open questions on this page:
 
-The literal `settings.cfg` and all 23 key names are **absent** from:
+- **What writes it.** A script, not the engine — which is why the earlier search found nothing.
+- **How.** `"w"`, so the file is **truncated and rewritten whole**, one record at a time. The
+  equal-length coincidence the first draft nearly read this from was never evidence; the `"w"` is.
+- **Why every record ends in a bare `CR`.** The separator the script writes is `carriage_return`.
+- **Where the values come from.** Each is `cvs`'d from a script-level value or operator:
+  `getbuildingspeechflag`, `getmusicvolume`, `getsoundfxvolume`, `getspeechvolume`,
+  `getambientvolume`, `getuseddrawblt`, `getcenteronmovement`, `SCROLLINGMAP_SCREEN
+  getmodeticktime`, `COMBAT_SCREEN getmodeticktime`, and dialog state for the rest.
 
-- all 467 loose files of the baseline install other than `settings.cfg` itself — including
-  `lomse.exe`, `LOMLauncher.exe`, `ddraw.dll`, `storm.dll`, `goggame.dll` and both `.snp` providers;
-- all 1,688 `gs.mpq` members, extracted and searched;
-- all 1,218 `special.mpq` members, extracted and searched.
+The **matching reader** is in the same member: `/val_array 23 array def`, then a character loop that
+ends a key on a space (`char 32 eq`) and a record on a bare `CR` (`char 13 eq`), parsing each value
+with `string_cvi` into a three-character buffer. Twenty-three records, space-separated, bare-CR
+terminated — exactly what `loose::SettingsConfig` implements, arrived at from the bytes.
 
-That is 3,373 objects searched. **What the search could not reach**, stated rather than implied:
-the 1,071 `pic.mpq` members, the 3,600 `imp.mpq` members and the 1,880 `sndfx.mpq` members (media
-archives, not searched); the Wine prefix's own DLLs; and any filename or key assembled at run time
-from pieces, which no substring search can find.
+**Observed in the corpus.** The 23 `writestring` key literals in the script are the 23 keys of the
+installed file, **in the same order**. Two artifacts that know nothing about each other: one is a
+script inside an archive, one is a text file on disk.
 
-The extraction behind that was re-verified rather than trusted: 1,688 members listed, 1,688
-extracted, 0 failures, 4,965,502 bytes. An earlier run left a stale scratch directory and reported a
-member count that did not match what it had extracted, which is exactly how a negative gets
-published from a broken instrument.
+**Documented.** The patch's own readme, `English/lomse302.htm` in the `patch302` profile, agrees.
+Its feature list says the modification "greatly expanded the options menu, allowing the user to set
+options involving tooltips, combat display and selection, mouse and keyboard scroll speeds, as well
+as the option of loading and saving custom user settings"; its uninstall instructions say to delete
+`gs.mpq`, `pic.mpq`, `lomse302.htm`, **`settings.cfg`** and the `pic` directory — `settings.cfg`
+listed among the files the modification produces, not among the ones to restore from backup. And:
+"Do not delete or manually modify `settings.cfg`."
 
-Three cross-checks that do not share the byte-search mechanism:
+A lead chased and **refuted** along the way, kept because someone will chase it again:
+`lomse.exe` contains a `"%s %d"` format string of exactly the right shape for these records, but
+its single cross-reference at `0x0049b099` sits in an `sscanf("#define %s %d")` loop that reads IMP
+`.H` headers. It is not the settings writer, and now we know nothing in `lomse.exe` is.
 
-1. **The GameScript vocabulary** (`reports/gs/vocabulary-vanilla.tsv`, 14,082 names, built by lexing
-   rather than by byte search) contains none of the 23 keys. It indexes *names*, though, and these
-   would be string literals, so this narrows without closing.
-2. **The recovered operator table**, which a substring search structurally cannot exploit. Every one
-   of the 23 keys has a script-callable counterpart: `settooltipdelay`, `setcombatscrollpixels`,
-   `coarsescrollpixels`/`finescrollpixels`/`limitscrollinginpixels`, `setmilitaryselectionmode`,
-   `setmusicvolume`/`setsoundfxvolume`/`setspeechvolume`/`setambientvolume`,
-   `setbuildingspeechflag`, `setcenteronmovement`. So these settings **are** script-reachable, and a
-   script-level writer is mechanically possible: there is a generic `file` operator (`0x004cc0f0`)
-   that calls `fopen`, and `savedefaultarmy` and `trace` demonstrate script-driven file writing.
-3. **The scripts use a different vocabulary for the same options.** The member holding
-   `next_combat_display_option` spells its constants `OPTION_HEALTH_BAR_ALWAYS`,
-   `OPTION_SMALL_HEALTH_BAR_WHEN_ENEMY`, `OPTION_PLAYER_HALO_WHEN_SELECTED` -- not
-   `COMBAT_DISPLAY_HEALTH_BAR`. And the substring `.cfg` appears in **no** `gs.mpq` member at all,
-   so no script names any configuration file.
+**Why the previous negative was published, and what was wrong with it.** The search covered the
+**vanilla** `gs.mpq` and `special.mpq`, and the answer was in the *modded* one. The instrument was
+sound and the negative it reported was true — re-verified here: the keys are absent from all 1,688
+vanilla members and from GS5R3's 1,699 — but its reach was one archive short of the question. The
+lesson is not "search harder"; it is that **a corpus of four profiles is four different games**, and
+a negative measured on one of them is not a negative about the file that all four happen to hold.
 
-The lead was followed rather than filed as "not pursued", and it did not close the question. What it
-establishes is narrower and still worth having: the settings are script-reachable, script-level file
-writing exists, and the key strings are in neither the engine image nor the script corpus.
+**Observed in the corpus.** The three non-3.02 profiles hold a `settings.cfg` too, byte-identical
+across all three, and their `gs.mpq` contains no writer for it. So their copy was *delivered*, not
+written in place. **Not determined**: by what. It is identical to `patch302`'s own
+`_vanilla_backup/settings.cfg` except for the two keyboard-scroll records, which is what a file
+shipped by the patch and then edited in play looks like, but nothing here establishes how it reached
+a profile with no writer.
 
-A further lead was chased and **refuted**: `lomse.exe` contains a `"%s %d"` format string, the right
-shape for these records, but its single cross-reference at `0x0049b099` sits in an
-`sscanf("#define %s %d")` loop that reads IMP `.H` headers. It is not the settings writer.
+**Observed in gameplay** (unchanged, and now explained). The `patch302` profile's live
+`settings.cfg` differs from its own `_vanilla_backup/settings.cfg` in exactly two records —
+`KB_MAP_SCROLL_SPEED` 100 → 50 and `KB_COMBAT_SCROLL_SPEED` 10 → 135 — and in nothing else. That is
+one pass through the options dialog's Save button.
+
+### Resolved: `USE_DIRECTX_BLIT` and `lom.cfg`'s trailing word are the same quantity
+
+Open question, now closed. **Observed in the corpus**, from the writer above: `USE_DIRECTX_BLIT` is
+written from `getuseddrawblt`. **Observed in a local binary**: `getuseddrawblt` (`0x004da350`) names
+global `0x5d20bc` and nothing else, and `loadconfig`'s **last** `fread` before `fclose` reads four
+bytes straight into `0x5d20bc` (`0x004874d3`). One global, two files.
+
+They are still not *equal* across the corpus — the setting is `-1` everywhere and the `lom.cfg`
+field is `1` in `baseline` and `development` — and that is no longer a puzzle: only `patch302` has
+ever run the script that writes `settings.cfg`, so in the other three profiles the two files were
+last written by different things at different times.
 
 ## `lom.cfg`
 
@@ -565,6 +819,12 @@ Global `0x5d20bc` is named by exactly two operators, `getuseddrawblt` (`0x004da3
 `setuseddrawblt` (`0x004da2a0`), and each lists that address as its **only** global -- which is as
 clean as this naming rule gets. Both are called in all three script corpora (2/5/4 times).
 
+**Confirmed directly, 2026-09-19.** The naming rule gave this; the reader now corroborates it
+without going through the table at all. `loadconfig`'s **last** `fread` before `fclose`
+(`push 0x5d20bc` at `0x004874d3`, call at `0x004874d8`) reads four bytes straight into that global,
+and defaults it to `1` on a short read at `0x004874e4`. The trailing word of the file *is* the
+used-DrawBlt global, by direct address rather than by inference.
+
 Observed values: `1` in `baseline` and `development`, `-1` (`0xffffffff`) in `gs5r3` and
 `patch302`. `-1` is how this codebase spells true elsewhere, and `settings.cfg` ships
 `USE_DIRECTX_BLIT -1`. **Not determined**: whether the `lom.cfg` flag and that setting are the same
@@ -624,29 +884,44 @@ different matter and can genuinely fail, because its encoder has to reconstruct 
 
 ## Resolved since the first draft
 
-Recorded rather than quietly edited away. All three were closed from artifacts already committed in
-this repository, without touching the game again, and the method is reusable.
+Recorded rather than quietly edited away.
 
-- **What the four head words hold.** They are the *last audio settings*, not the live volumes; the
-  first attribution was refuted by `loadconfig`'s own recorded globals.
+Closed from artifacts already committed in this repository, without touching the game again:
+
+- **What the four `lom.cfg` head words hold.** They are the *last audio settings*, not the live
+  volumes; the first attribution was refuted by `loadconfig`'s own recorded globals.
 - **Why they read zero.** The `preset*volume` operators that populate the quad are mentioned zero
   times in two of the three script corpora. Zero is the expected value.
-- **The trailing word.** `getuseddrawblt`/`setuseddrawblt` name global `0x5d20bc` and nothing else.
+- **`lom.cfg`'s trailing word.** `getuseddrawblt`/`setuseddrawblt` name global `0x5d20bc` and
+  nothing else; confirmed directly 2026-09-19 by `loadconfig`'s last `fread` at `0x004874d3`.
 - **Which audio word is which channel.** `setlastaudiosettings`'s four call targets are the
-  distinguishing targets of the four `set*volume` operators, in order, and the sound-object slots
-  they write corroborate it. Filed as an open question for one commit by over-retracting; it was
-  answerable from the committed tables all along.
+  distinguishing targets of the four `set*volume` operators, in order.
+
+Closed 2026-09-19, by reading the binaries and the **modded** archives:
+
+- **`English/map/e3map2.map`.** The map format without its version word. Parsed, round-tripped,
+  counted by `--scan-map-dir`, and checked against the corpus's own tile and elevation vocabulary.
+- **`English/Text/Menu/Menu_En.asr`.** Parser *and* emitter, including the launcher's hash
+  function, read out of `LOMLauncher.exe` at `0x004018b0`.
+- **Who owns the Asura container.** `LOMLauncher.exe`, now Observed in a local binary rather than
+  inferred from the file's contents.
+- **What writes `settings.cfg`, and how.** `gs\dlg\opdlg.gs` in the 3.02 patch's `gs.mpq`,
+  whole-file through `"w"`, terminating each record with `carriage_return`.
+- **Whether `USE_DIRECTX_BLIT` and `lom.cfg`'s trailing word are the same quantity.** They are:
+  the script writes the setting from `getuseddrawblt`, which names the global the loader fills.
+- **What `English/custldr/0templdr.ldr` is**, what writes it, and its outer container. The interior
+  is not decoded; see below.
 
 ## What is not determined
 
 Collected, so that nothing here reads as settled when it is not.
 
-1. **What writes `settings.cfg`.** Established that something does, during play; that all 23 keys
-   have script-callable operator counterparts; and that script-level file writing exists. Not
-   established what writes it, after searching 3,373 objects by bytes and cross-checking with the
-   vocabulary and the operator table. Three media archives and the prefix DLLs remain out of reach,
-   as does any string assembled at run time.
-2. **How `settings.cfg` is written** — whole-file or in place. The size coincidence says nothing.
+1. **How `English/custldr/0templdr.ldr`'s 3,294-byte army object is laid out.** The container
+   around it is read out of `savedefaultarmy`; the object itself is written through a vtable slot
+   at `0x00412090` and three further callees. And it **cannot be validated against a corpus**:
+   there is one `.ldr` file in four profiles.
+2. **Whether `savevirtualarmy`'s `.ldr` form appears anywhere.** It has a different layout from
+   `0templdr.ldr` and no installed file is in it.
 3. **Test coverage, not format knowledge, for six of the eleven `lom.cfg` fields.** Their identity
    is established from `loadconfig`'s `fread` destinations. What is undetermined is only that no
    value-based check over this corpus verifies the parser's *ordering* of them, because the four
@@ -660,15 +935,17 @@ Collected, so that nothing here reads as settled when it is not.
    capability is missing from the extractor and every similar question will hit it again.
 6. **Why `lom.cfg` holds 26 help panels**, given 40 script mentions of `addhelppanel`. The obvious
    explanation is refuted and no replacement is offered.
-7. **Whether the used-DrawBlt flag and `settings.cfg`'s `USE_DIRECTX_BLIT` are the same quantity.**
-   They are not equal across the corpus.
+7. **How `settings.cfg` reached the three profiles whose `gs.mpq` cannot write it.** Their copies
+   are byte-identical and differ from `patch302`'s only in the two records a play session changed.
 8. **Why the 3.02 profile regenerated its GUID**, given its file is the full 160 bytes and the
    observed regeneration path is a short read.
-9. **`English/map/e3map2.map`** beyond its size equation. Not decoded, and one file is not a format.
-10. **`English/custldr/0templdr.ldr`** (GS5R3) — nothing at all beyond its byte histogram.
-11. **The Asura container** beyond its magic and two length equations: two header words, the hash
-    function, and the trailing NUL run are all unexplained, and no parser exists. The
-    `LOMLauncher.exe` attribution is inferred from contents, not from reading that binary.
+9. **Which of `e3map2.map`'s first two words is width.** It is 64x64; the assignment comes from the
+   allocator at `0x004a4f20`, not from the file. Also: what the file is *for*. No script names it.
+10. **Five fields of the Asura container**: the words at `0x10`, `0x14` and `0x24`, whether the
+    eight bytes at `0x104` are one name field or a name plus a zero word, and whether the trailing
+    16 NULs are padding or a field. All are carried verbatim, so the emitter is exact regardless.
+11. **Whether `LOMLauncher.exe` accepts a `.asr` this repository wrote.** The emitter's output is
+    self-consistent by the format's own rules and re-parses; the launcher has not been run.
 12. **Whether the German audio in `Wav/lou_scenarios/` is reachable** from an English install.
 13. **Anything above the game-tree root.** ~16,760 files per bundle were excluded by boundary, not
     examined. If the game writes state into the Wine prefix — registry hives, `users/` — this sweep

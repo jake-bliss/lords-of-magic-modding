@@ -396,11 +396,29 @@ PR #60 ([savegame format](save-format.md)).
 
 That claim used to read "every file format outside the executable", and it was written on the
 strength of the archive work alone. A [loose-file sweep](loose-files.md) found the **loose** tree
-had never been enumerated, and two of the things it turned up contradict the wider claim directly:
-`map/e3map2.map` is the single `.map` file in the corpus and the map reader refuses it, so `.map`
-was never shown to be the same format as `.smp`; and `English/custldr/0templdr.ldr`, the Asura
-string table behind the Steam launcher, and the trailing word of `lom.cfg` are all still undecoded.
-`lom.cfg` and `settings.cfg` now have parsers; what writes `settings.cfg` is still unknown.
+had never been enumerated. Most of what it turned up closed on 2026-09-19:
+
+- **`map/e3map2.map`** — **decoded**. It is the map format *without* its leading version word, and
+  the engine proves the relationship rather than a resemblance: `loadscenariomap` reads one `u32`
+  and then calls the whole of the grid reader `0x004a52e0`, which `loadmap` calls on its own. It
+  parses, re-encodes byte for byte, and `--scan-map-dir` counts it.
+- **`English/Text/Menu/Menu_En.asr`** — **decoded, with a parser and an emitter**. This is the Asura
+  string table behind the Steam launcher, and it belongs to `LOMLauncher.exe`, which is now
+  Observed in that binary rather than inferred from the file. Its hash function is recovered
+  (`LOMLauncher.exe` `0x004018b0`), so a new key can be *added*, not only an existing string
+  replaced.
+- **The trailing word of `lom.cfg`** — **decoded**: the used-DrawBlt flag, global `0x5d20bc`, read
+  by `loadconfig`'s last `fread` at `0x004874d3`.
+- **What writes `settings.cfg`** — **answered**: `gs\dlg\opdlg.gs` in the **3.02 patch's**
+  `gs.mpq`, not the shipped engine. It opens the file `"w"`, so the whole file is rewritten, and
+  terminates each record with `carriage_return`. The earlier negative was true but measured on the
+  vanilla archive, which is one game short of the question.
+
+One loose format is still open, and it is a different file from the Asura table:
+**`English/custldr/0templdr.ldr`** (GS5R3 only), the custom-leader editor's scratch save. What it
+is, what writes and reads it, and its outer container are established; the 3,294-byte army object
+inside it is not decoded, and with exactly one `.ldr` file across four profiles no layout for it
+could be validated against a corpus.
 
 - [x] Recover the engine's operator dispatch table (1,906 operators) and their arity.
 - [x] Read the operator bodies ([native operator bodies](native-operator-bodies.md)).

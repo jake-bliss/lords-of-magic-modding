@@ -46,7 +46,7 @@ baseline	settings.cfg	setting:AMBIENT_VOLUME	100
 baseline	settings.cfg	setting:USE_DIRECTX_BLIT	-1
 baseline	settings.cfg	setting:CENTER_MOVE	0
 development	lom.cfg	size	160
-development	lom.cfg	sha256	f4142b7507306309bd4e8a318cd8fed58fc0891a75d367093c0103a50f8fa1c9
+development	lom.cfg	sha256	a781502500f9225dd9035d730935078fedc6af40378ddb4ac6e489efacb84016
 development	lom.cfg	format	lom.cfg
 development	lom.cfg	round-trips	true
 development	lom.cfg	last-music-volume	0
@@ -54,7 +54,7 @@ development	lom.cfg	last-sound-fx-volume	0
 development	lom.cfg	last-speech-volume	0
 development	lom.cfg	last-ambient-volume	0
 development	lom.cfg	help-panel-count	26
-development	lom.cfg	help-panel-checks	0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+development	lom.cfg	help-panel-checks	0,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
 development	lom.cfg	balkoth-kill-counter	0
 development	lom.cfg	center-on-movement	0
 development	lom.cfg	install-guid	519A38B2-5C54-444F-9F8E-E7B9C36C9002
