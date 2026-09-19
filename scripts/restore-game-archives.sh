@@ -23,9 +23,16 @@ if pgrep -f 'lomse.exe' >/dev/null 2>&1; then
   exit 1
 fi
 
-# nullglob only drops patterns that match nothing, so zprobe.log is written as a pattern too.
-shopt -s nullglob
-captures=("${game_dir}"/z*.bmp "${game_dir}"/zprobe.lo[g])
+# An EXACT list of names taken from the probe generator itself, never a `z*.bmp` glob -- the same
+# provenance principle the map/ collection below already uses. A glob here would collect (and then
+# delete) a file this project never wrote, such as a user's own `English/zReference.bmp`.
+captures=()
+while IFS= read -r capture_name; do
+  candidate="${game_dir}/${capture_name}"
+  [[ -e "${candidate}" ]] || continue
+  captures+=("${candidate}")
+done < <(PYTHONPATH="${project_dir}/tools" python3 -c \
+  'import engine_probe; print("\n".join(engine_probe.all_capture_names()))')
 # Every run gets its OWN directory, decided once and used by both collections below.
 #
 # Collecting into a flat directory silently overwrote whatever the previous run left under the same

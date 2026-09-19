@@ -156,8 +156,19 @@ PY
 # `screencapture` refuses to overwrite, so a stale capture from an earlier attempt would survive the
 # run and be collected as if it were this run's output -- a plate diffed against itself reads as
 # "the sprite did not render", which is the exact conclusion this probe exists to test.
+#
+# Removed by an EXACT list of names taken from the probe generator itself, never a `z*.bmp` glob.
+# A glob is a standing offer to delete a file this project never created -- a user's own
+# `English/zReference.bmp` sitting in the same directory, say -- and nothing could bring it back.
+# Same provenance principle as the loose `map/` cleanup below.
 echo "== clearing stale probe output =="
-rm -f "${game_dir}"/z*.bmp "${game_dir}"/zprobe.log
+while IFS= read -r capture_name; do
+  stale="${game_dir}/${capture_name}"
+  [[ -e "${stale}" ]] || continue
+  echo "  removing stale ${capture_name}"
+  rm -f "${stale}"
+done < <(PYTHONPATH="${project_dir}/tools" python3 -c \
+  'import engine_probe; print("\n".join(engine_probe.all_capture_names()))')
 # The mapsize probe writes into the game's loose map/ directory, which holds 366 shipped files and
 # no backup here covers it -- the manifest covers gs.mpq and imp.mpq only.
 #
