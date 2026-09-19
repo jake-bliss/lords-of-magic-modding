@@ -7137,7 +7137,7 @@ fn roundtrip_tile_sets(corpus: &TileSetCorpus) -> Result<TileSetSweep, String> {
     Ok(sweep)
 }
 
-/// Five edits per file that ask for the value the file already holds.
+/// A batch of edits per file that ask for the value the file already holds.
 ///
 /// **This is the no-op calibration, and it runs before any real edit is trusted.** Each one goes
 /// through the same span replacement, re-parse and verification a genuine edit does; each one must
@@ -7145,8 +7145,9 @@ fn roundtrip_tile_sets(corpus: &TileSetCorpus) -> Result<TileSetSweep, String> {
 /// mis-locates a span by one character produces a diff here on a file nobody meant to change.
 ///
 /// They touch **every span-replacing edit the writer offers**: the atlas name, the grid, both ends
-/// of the tile table, the first terrain type's colour, **every** terrain description, and **all
-/// eight** neighbour columns of the first complete tile.
+/// of the tile table, **every** named numeric `TerrainColumn` (palette colour, passability, min
+/// and max elevation, movement cost) on **every** terrain type, **every** terrain description, and
+/// **all eight** neighbour columns of the first complete tile.
 ///
 /// The descriptions and the neighbour columns were added after a review pointed out that the docs
 /// claimed "a re-quoted description shows up here and nowhere else" while no description was ever
@@ -7157,6 +7158,12 @@ fn roundtrip_tile_sets(corpus: &TileSetCorpus) -> Result<TileSetSweep, String> {
 /// of replacing its span would lose that space on a file nobody meant to change. All eight columns
 /// are done for the same reason a symmetric fixture proves nothing: a span offset that is wrong
 /// only for column `nw` is caught by column `nw` and by nothing else.
+///
+/// The numeric columns were widened from "palette colour, terrain 0 only" after a review pointed
+/// out that `check_terrain_number` refuses any `Passability` above 2 by a hand-written literal,
+/// while the reader accepts any value via `Passability::Unrecognised`. A sweep that never tries
+/// `Passability`, `MinElevation`, `MaxElevation` or `MovementCost` on any terrain past the first
+/// cannot contradict that bound even if a shipped `.til` carries a value the writer would refuse.
 fn no_op_edits_of(
     document: &TileSetDocument,
 ) -> Vec<(String, Result<TileSetDocument, lom_asset_viewer::tile::TileError>)> {
@@ -7194,9 +7201,15 @@ fn no_op_edits_of(
         ));
     }
 
-    if let Some(terrain) = definition.terrain_types.values().next() {
+    // Every named numeric column, on **every** terrain type -- not just the first. A bound like
+    // `check_terrain_number`'s `Passability` cap is a hand-written literal; the only thing that
+    // can contradict it is sweeping the real corpus's values through the writer, and a sweep that
+    // only ever tries terrain 0 never gets the chance.
+    for terrain in definition.terrain_types.values() {
+        let index = terrain.index;
+
         let mut edited = document.clone();
-        let (index, color) = (terrain.index, terrain.palette_color);
+        let color = terrain.palette_color;
         edits.push((
             format!("TERRAINTYPE {index} color={color}"),
             edited
@@ -7204,17 +7217,55 @@ fn no_op_edits_of(
                 .map(|()| edited),
         ));
 
-    }
-
-    for terrain in definition.terrain_types.values() {
         let mut edited = document.clone();
-        let (index, description) = (terrain.index, terrain.description.clone());
+        let description = terrain.description.clone();
         edits.push((
             format!("TERRAINTYPE {index} description={description:?}"),
             edited
                 .set_terrain_field(index, TerrainColumn::Description, &description)
                 .map(|()| edited),
         ));
+
+        if let Some(passability) = terrain.passability {
+            let mut edited = document.clone();
+            let value = passability.value();
+            edits.push((
+                format!("TERRAINTYPE {index} passability={value}"),
+                edited
+                    .set_terrain_field(index, TerrainColumn::Passability, &value.to_string())
+                    .map(|()| edited),
+            ));
+        }
+
+        if let Some(value) = terrain.min_elevation {
+            let mut edited = document.clone();
+            edits.push((
+                format!("TERRAINTYPE {index} min-elevation={value}"),
+                edited
+                    .set_terrain_field(index, TerrainColumn::MinElevation, &value.to_string())
+                    .map(|()| edited),
+            ));
+        }
+
+        if let Some(value) = terrain.max_elevation {
+            let mut edited = document.clone();
+            edits.push((
+                format!("TERRAINTYPE {index} max-elevation={value}"),
+                edited
+                    .set_terrain_field(index, TerrainColumn::MaxElevation, &value.to_string())
+                    .map(|()| edited),
+            ));
+        }
+
+        if let Some(value) = terrain.movement_cost {
+            let mut edited = document.clone();
+            edits.push((
+                format!("TERRAINTYPE {index} movement-cost={value}"),
+                edited
+                    .set_terrain_field(index, TerrainColumn::MovementCost, &value.to_string())
+                    .map(|()| edited),
+            ));
+        }
     }
 
     // The first tile whose row declared all eight columns: an incomplete row is refused by design,
@@ -7384,6 +7435,16 @@ fn describe_tile_set(path: &Path) -> Result<(), String> {
 /// through the parser on the bytes it is about to write, then `create_new`. A refused edit leaves no
 /// file behind, and nothing is ever written in place -- the shipped tilesets live inside `pic.mpq`
 /// and a mod tree's copy is the only writable one.
+///
+/// **A declared edit that changes no bytes is refused, deliberately, at this layer only.** Every
+/// other refusal in this function leaves no output file, and a script driving `--til-set-*` has
+/// only the exit code to tell an applied edit apart from one that landed on the value already on
+/// disk -- `bytes-changed no` printed alongside exit 0 is not something a caller checking only the
+/// exit status can see. This is *not* the same claim [`TileSetDocument`]'s own setters make: they
+/// must keep accepting a no-op, because [`no_op_edits_of`]'s calibration sweep depends on asking
+/// for the value a file already holds and getting `Ok` back -- that is the control rung the sweep's
+/// real edits are measured against, and it calls the setters directly rather than going through
+/// this function. Only the CLI command gets the stricter policy.
 fn edit_tile_set(input: &Path, edit: &TileSetEdit, output: &Path) -> Result<(), String> {
     if paths_are_same_file(input, output) {
         return Err(format!(
@@ -7462,6 +7523,19 @@ fn edit_tile_set(input: &Path, edit: &TileSetEdit, output: &Path) -> Result<(), 
     };
 
     let encoded = document.to_bytes();
+    if encoded == bytes {
+        // See this function's doc comment for why this is refused here and not in the setters
+        // themselves. Refusing before the file is created keeps the same "no output on refusal"
+        // guarantee every other early return in this function already gives.
+        return Err(format!(
+            "refusing to write {}: {input} already reads the value this edit asked for ({note}), \
+             so no byte would change. A no-op that exited 0 would be indistinguishable from an \
+             applied edit to a script checking only the exit status; name the value {input} does \
+             not already hold, or skip this edit",
+            output.display(),
+            input = input.display(),
+        ));
+    }
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -7475,10 +7549,7 @@ fn edit_tile_set(input: &Path, edit: &TileSetEdit, output: &Path) -> Result<(), 
         return Err(format!("could not write {}: {error}", output.display()));
     }
     println!("wrote\t{}\t{} bytes", output.display(), encoded.len());
-    println!(
-        "bytes-changed\t{}",
-        if encoded == bytes { "no" } else { "yes" }
-    );
+    println!("bytes-changed\tyes");
     println!("{note}");
     Ok(())
 }
@@ -8664,6 +8735,37 @@ TILE= 1, 1, *, *, *, *, *, *, *, *, 1\r\n"
         assert_eq!(fs::read(&input).unwrap(), minimal_tile_set());
     }
 
+    /// A declared edit that would not change a byte is refused, not silently accepted.
+    ///
+    /// The setters underneath still accept this exact request -- see
+    /// [`tile::tests::a_no_op_edit_reproduces_the_file_exactly`], which pins that behaviour as
+    /// load-bearing for the corpus sweep's calibration. This is the CLI layer's own, stricter,
+    /// policy: a script driving `--til-set-*` has only the exit code to tell an applied edit apart
+    /// from one that landed on the value already on disk, and `bytes-changed no` printed next to
+    /// exit 0 is not something that exit code alone can show.
+    #[test]
+    fn editing_a_tile_set_to_its_own_value_is_refused() {
+        let dir = scratch_dir("til-edit-no-op");
+        let input = dir.join("in.til");
+        let output = dir.join("out.til");
+        fs::write(&input, minimal_tile_set()).unwrap();
+
+        let error = edit_tile_set(
+            &input,
+            &TileSetEdit::TerrainField {
+                terrain: 1,
+                column: TerrainColumn::MovementCost,
+                value: "1".to_owned(),
+            },
+            &output,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("already reads the value"), "{error}");
+        assert!(!output.exists(), "a refused edit created {}", output.display());
+        assert_eq!(fs::read(&input).unwrap(), minimal_tile_set());
+    }
+
     /// A sweep that checks nothing is not a pass. A mistyped directory would otherwise print
     /// `failures 0` and exit 0 -- a green corpus check that checked nothing.
     #[test]
@@ -8699,9 +8801,10 @@ TILE= 1, 1, *, *, *, *, *, *, *, *, 1\r\n"
         assert_eq!(sweep.values_rebuilt, sweep.values_checked);
         // Per file: the LBM value + 2 terrain rows x (description + four unnamed columns) = 11.
         assert_eq!(sweep.text_fields_carried, 2 * 11);
-        // Per file: atlas, grid, first and last tile self, the first terrain's colour, one
-        // description per terrain type (2), and all eight columns of the first complete tile.
-        assert_eq!(sweep.no_op_edits, 2 * (1 + 1 + 2 + 1 + 2 + 8));
+        // Per file: atlas, grid, first and last tile self, six edits per terrain type (colour,
+        // description, passability, min-elevation, max-elevation, movement-cost -- `minimal_tile_set`
+        // declares all six on both its terrain rows), and all eight columns of the first complete tile.
+        assert_eq!(sweep.no_op_edits, 2 * (1 + 1 + 2 + 2 * 6 + 8));
         assert_eq!(sweep.no_op_identical, sweep.no_op_edits);
     }
 

@@ -1758,24 +1758,44 @@ impl TileSetDocument {
 
     /// Rebuild every typed field's text from its value and compare it to the file's characters.
     ///
+    /// **A repeated `TILES=` or `TILESIZE=` line is audited only on its effective occurrence.**
+    /// [`TileSetDefinition::parse`] keeps the *last* assignment of each (see
+    /// [`last_line_matching`](Self::last_line_matching)), so `self.definition.columns` and its
+    /// siblings hold only that final line's values. Comparing an *earlier* occurrence's own text
+    /// against those values reports a mismatch on a line the value model never claimed to
+    /// represent -- a file is not malformed for repeating a key the parser already resolves by
+    /// last-write-wins. Non-effective occurrences are counted as carried text instead, the same
+    /// treatment `LineRecord::Atlas` gets.
+    ///
     /// See [`FieldRebuildAudit`] for what the two counts mean and why only one of them is evidence.
     pub fn field_rebuild_audit(&self) -> FieldRebuildAudit {
         let mut audit = FieldRebuildAudit::default();
-        for line in &self.lines {
+        let last_grid_line = self.last_line_matching(|record| matches!(record, LineRecord::Grid { .. }));
+        let last_tile_size_line =
+            self.last_line_matching(|record| matches!(record, LineRecord::TileSize { .. }));
+        for (line_index, line) in self.lines.iter().enumerate() {
             match &line.record {
                 LineRecord::Carried => {}
                 LineRecord::Atlas { .. } => audit.text_fields_carried += 1,
                 LineRecord::Grid { fields } => {
-                    self.audit_pair(&mut audit, line, fields, "TILES", [
-                        self.definition.columns,
-                        self.definition.rows,
-                    ]);
+                    if Some(line_index) == last_grid_line {
+                        self.audit_pair(&mut audit, line, fields, "TILES", [
+                            self.definition.columns,
+                            self.definition.rows,
+                        ]);
+                    } else {
+                        audit.text_fields_carried += fields.len();
+                    }
                 }
                 LineRecord::TileSize { fields } => {
-                    self.audit_pair(&mut audit, line, fields, "TILESIZE", [
-                        self.definition.tile_width,
-                        self.definition.tile_height,
-                    ]);
+                    if Some(line_index) == last_tile_size_line {
+                        self.audit_pair(&mut audit, line, fields, "TILESIZE", [
+                            self.definition.tile_width,
+                            self.definition.tile_height,
+                        ]);
+                    } else {
+                        audit.text_fields_carried += fields.len();
+                    }
                 }
                 LineRecord::TerrainType { index, fields } => {
                     let terrain = &self.definition.terrain_types[index];
@@ -3562,6 +3582,56 @@ TILE= 0, 0, *, *, *, *, *, *, *, *, 0\r\n"
         assert!(written.contains("LBM=first.lbm"), "{written}");
         assert!(written.contains("LBM=third.lbm"), "{written}");
         assert_eq!(document.definition().atlas_member, "third.lbm");
+    }
+
+    /// A repeated `TILES=` is not a mismatch, even though the two occurrences carry different
+    /// numbers.
+    ///
+    /// The audit used to rebuild **every** `TILES=` line from `self.definition.columns`/`rows`,
+    /// which are the *last* assignment's values (same last-write-wins rule as `LBM=`, see
+    /// [`editing_a_repeated_key_hits_the_line_the_parser_honours`]). Comparing an earlier
+    /// occurrence's own text against a later line's values reported a mismatch on a line the value
+    /// model never claimed to represent, even though `to_bytes` reproduces both lines unedited and
+    /// byte-identically. Only the effective (last) occurrence is checked; the other is carried
+    /// text, the same treatment a repeated `LBM=` line already gets.
+    #[test]
+    fn a_repeated_tiles_line_is_not_a_field_audit_mismatch() {
+        let source = b"LBM=a.lbm\r\nTILES=2,1\r\nTILES=3,1\r\nTILESIZE=32,32\r\n".to_vec();
+        let document = TileSetDocument::parse(&source).unwrap();
+        assert_eq!((document.definition().columns, document.definition().rows), (3, 1));
+
+        let audit = document.field_rebuild_audit();
+
+        assert!(audit.mismatches.is_empty(), "{:?}", audit.mismatches);
+        // The effective TILES line's two fields (columns, rows) and the file's one TILESIZE
+        // line's two fields (width, height) are checked; the superseded TILES line's two fields
+        // are carried text instead of being rebuilt and compared, alongside the one `LBM=` field.
+        assert_eq!(audit.values_checked, 4);
+        assert_eq!(audit.values_rebuilt, 4);
+        assert_eq!(audit.text_fields_carried, 3);
+        assert_eq!(document.to_bytes(), source);
+    }
+
+    /// The same false mismatch, for a repeated `TILESIZE=` line.
+    #[test]
+    fn a_repeated_tilesize_line_is_not_a_field_audit_mismatch() {
+        let source = b"LBM=a.lbm\r\nTILES=2,1\r\nTILESIZE=32,32\r\nTILESIZE=8,8\r\n".to_vec();
+        let document = TileSetDocument::parse(&source).unwrap();
+        assert_eq!(
+            (document.definition().tile_width, document.definition().tile_height),
+            (8, 8)
+        );
+
+        let audit = document.field_rebuild_audit();
+
+        assert!(audit.mismatches.is_empty(), "{:?}", audit.mismatches);
+        // The file's one TILES line's two fields and the effective TILESIZE line's two fields
+        // are checked; the superseded TILESIZE line's two fields are carried text, alongside the
+        // one `LBM=` field.
+        assert_eq!(audit.values_checked, 4);
+        assert_eq!(audit.values_rebuilt, 4);
+        assert_eq!(audit.text_fields_carried, 3);
+        assert_eq!(document.to_bytes(), source);
     }
 
     /// Every refusal, each asserted on its **reason** rather than on `is_err`.

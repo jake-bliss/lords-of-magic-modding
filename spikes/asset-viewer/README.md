@@ -155,14 +155,23 @@ is asked to change. That makes the byte-identical round trip — 26 of 26, on al
 profiles — near-tautological, and it is reported as such. The measurement that can fail is
 `values-rebuilt`: 46,989 integers and neighbour columns regenerated from the parsed value and
 compared with the file's own characters, 46,989 matching. The measurement that tests the *edit* path
-is `no-op-edits`: 740 edits that set a field to the value it already holds — every span-replacing
-edit the writer offers, including all 402 terrain descriptions and all eight neighbour columns of
-each file's first complete tile — all 740 byte-identical.
+is `no-op-edits`: 2,724 edits that set a field to the value it already holds — every span-replacing
+edit the writer offers, including all 402 terrain descriptions, every named numeric `TerrainColumn`
+(palette color, passability, min/max elevation, movement cost) on all 402 terrain types, and all
+eight neighbour columns of each file's first complete tile — all 2,724 byte-identical. The numeric
+columns are corpus-backed rather than merely asserted: `check_terrain_number` refuses any
+passability above 2, and the sweep confirms the shipped corpus never carries one — all 402
+`TERRAINTYPE=` rows read 0, 1, or 2.
 
 Nothing is minted. An unknown tile or terrain index is refused **by name**, as are the four columns
 the shipped headers disagree about, `TILESIZE=`, the pattern column, a `columns` change that would
 repaint every declared tile, and a grid that would orphan one. `--til-set-terrain`'s `COLUMN` is one
-of `color`, `description`, `passability`, `min-elevation`, `max-elevation`, `movement-cost`. See
+of `color`, `description`, `passability`, `min-elevation`, `max-elevation`, `movement-cost`.
+**Any `--til-set-*` command is also refused if it would not change a byte** — asking for the value a
+file already holds writes nothing and exits non-zero, so a script checking only the exit status can
+tell an applied edit apart from a no-op. This is a CLI-only policy: the library setters underneath
+still accept and byte-identically round-trip a no-op, because that is the calibration the corpus
+sweep's `no-op-edits` count depends on. See
 [tileset definitions](../../docs/til-format.md), which also states what stays undetermined —
 including that **no written `.til` has ever been in front of the engine.**
 
