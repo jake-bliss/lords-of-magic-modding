@@ -7,6 +7,7 @@ pub mod gamescript_vm;
 pub mod gs_facts;
 pub mod imp;
 pub mod imp_anim;
+pub mod imp_playback;
 pub mod install_checksum;
 pub mod loose;
 pub mod map;
