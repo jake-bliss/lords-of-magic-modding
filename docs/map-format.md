@@ -27,7 +27,10 @@ The corpus is the working GS5R3 profile, including its supplied custom maps. No 
 
 ## Observed prefix
 
-Every one of the 365 inspected files begins with the same little-endian prefix:
+Every one of the 365 inspected **scenario** files begins with the same little-endian prefix. One
+file in `English/map/` is not a scenario file -- `e3map2.map` carries the same prefix **without**
+the version word at `0x00`, and everything below shifts four bytes earlier. See
+[The two header forms](#the-two-header-forms).
 
 | Offset | Size | Engine name | Evidence |
 | ---: | ---: | --- | --- |
@@ -1736,6 +1739,69 @@ exactly.
 and multiplies it by 64 at `0x004a535c` to size each block read; the writer hardcodes `8` at
 `0x004a544b`. The field this project called `bits_per_pixel` is the engine's bytes-per-cell.
 
+### The two header forms
+
+**Observed in a local binary, 2026-09-19.** There are two file shapes, and they are nested rather
+than parallel. `0x004a52e0` is the whole of the **grid** reader: three `fread`s of a `u32` each --
+width into map object `+0x5c`, height into `+0x60`, bytes-per-cell into a stack local -- and then
+the 64-cell block loop. `0x004855c0`, the **scenario** reader, reads one `u32` into the scenario
+object's `+0x00` and then *calls `0x004a52e0`* on the embedded map at `+0x482c`, followed by the
+record section and the version-gated dword. The writers mirror this exactly: `0x004a5440` writes
+the grid (and emits the third word from a local set to the literal `8` at `0x004a544b`), and
+`0x00485550` writes four bytes from `0x0055b1b0` and then calls `0x004a5440`.
+
+So a scenario file **is** a version word followed by a grid file, byte for byte, followed by its
+tail sections. The operators reach the two forms separately:
+
+| form | header | tail | load | save |
+| --- | --- | --- | --- | --- |
+| scenario (`.smp`, `.scn`, `.lgd`) | `version, width, height, bytes_per_cell` | record section, then the version-gated dword | `loadscenariomap` `0x00485b80`, `loadspecialmap` `0x004eecf0` | `savescenariomap` `0x00485a80`, `savespecialmap` `0x004eec00` |
+| grid (`.map`) | `width, height, bytes_per_cell` | **none** | `loadmap` `0x004dfad0` | `savemap` `0x004dfbe0` |
+
+`loadmap`'s worker closes the file (`fclose` thunk `0x005394d0`, at `0x004a529d` and `0x004a52ac`)
+the instant the grid is in, so a grid-form file has no tail to read and a trailing byte would never
+be seen.
+
+Two halves of one sentence, which used to carry one evidence class between them and should not:
+
+- **Observed in a local binary, 2026-09-19.** The word at `0x0055b1b0` -- the one
+  `savescenariomap` stamps -- is `0x6f` = 111 in the shipped image. That is read out of the
+  executable's `.data`, not off a map file.
+- **Observed in the corpus, 2026-09-19.** 111 is also the highest version word any shipped
+  scenario file carries, across all 365 in the GS5R3 profile.
+
+Together they are consistent with the header word being a format version the engine rewrites from
+its own state, which `docs/map-format.md` already establishes separately.
+
+**Observed in the corpus, 2026-09-19.** `English/map/e3map2.map` is grid-form: `64, 64, 8` and then
+4,096 cells, `12 + 64 x 64 x 8 = 32,780` bytes with nothing left over. Its nearest neighbour is
+`chbldg01.smp`, the one 64x64 scenario file, at **32,788** bytes -- exactly eight more: the version
+word in front and the empty record section's zero count word behind. Their cell grids are different
+content, so this is a shape match, not a duplicate.
+
+The two forms are distinguished by content, not by extension, because the extension does not decide
+it in the engine either: no `.map`, `.smp`, `.scn` or `.lgd` literal appears anywhere in
+`lomse.exe`, and `gs.mpq` member `File00000214.xxx` passes `"map/thanh.smp"` and `"map/test.map"`
+to the same argument of `startspecialcombat`. `MapAsset::matching_header_forms` tests each form on
+its own terms -- shape words present, dimensions nonzero, bytes-per-cell 8, and the length at least
+(scenario) or exactly (grid) the header plus the grid -- and every file in every profile's
+`English/map/` matches exactly one, which is what makes sniffing legitimate rather than a guess.
+Pinned by `both_header_forms_are_mutually_exclusive_across_the_corpus`.
+
+**Sniffing needs a tie-break, and the reason is specific.** The two structural tests are
+asymmetric — a grid file must account for every byte, a scenario file only has to be *at least*
+header-plus-grid — so a grid file can satisfy both, and exactly one value makes it do so: reading a
+grid file as a scenario takes its cell-0 tag as the bytes-per-cell word, and tile slot **8** makes
+that word 8. `--map-set-tile e3map2.map 0 0 8` was refused as ambiguous while slots 7 and 9 wrote
+fine. When both fit, `MapHeaderForm::detect` keeps the scenario reading only if its remainder is
+section-shaped — a count word present and some decoded layout accounting for the remainder exactly
+— and otherwise takes the grid reading, which has no unexplained bytes.
+
+**The save file's map section was already this format.** `save::MapSection` has always read
+`width, height, bytes_per_cell` and then the grid; it used to prepend a synthesized zero version
+word so the scenario parser would take it. It no longer needs to: the engine reads both with the
+same function.
+
 ### The record size is one struct with five version gates
 
 The section reader `0x004f7120` reads a `u32` count, then per record a `u32` **kind**, which it
@@ -2134,9 +2200,9 @@ this survey has no reading of it beyond that. Two neighbouring fields are better
 - **What map object `+8` and `+0x48` are** — the two fields that decide whether `resetvisibility`
   writes the perimeter and what value it fills with.
 - **What the dword read at `0x004c8fa0` is for.**
-- **Whether a `.map` loaded by `loadmap` has a header word at all.** `0x004a5270` calls the terrain
-  reader without reading one first, so a bare terrain file would begin with `width`. Every file in
-  `English/map/` parses as a scenario file, so nothing in the corpus exercises that path.
+- ~~**Whether a `.map` loaded by `loadmap` has a header word at all.**~~ **Settled 2026-09-19: it
+  does not.** See [The two header forms](#the-two-header-forms). The corpus does exercise the path
+  after all -- `English/map/e3map2.map` is a grid-form file and every profile holds it.
 
 ## Commands
 

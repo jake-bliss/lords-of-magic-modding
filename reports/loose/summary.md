@@ -3,7 +3,8 @@
 Produced by `lom-asset-viewer --loose-inventory INSTALL_ROOT PROFILE_LABEL`, one table per
 installed profile, rooted at each profile's
 `Contents/SharedSupport/prefix/drive_c/Program Files (x86)/Steam/steamapps/common/Lords of Magic Special Edition`.
-Every file under that root that is not inside an `.mpq` is a row. Measured 2026-09-18.
+Every file under that root that is not inside an `.mpq` is a row. Measured 2026-09-18, regenerated
+2026-09-19.
 
 `magic` is decided by leading bytes alone; `probe_kind` is the verdict of the existing
 `asset::probe`, which consults the extension for several formats. Both are recorded so that
@@ -13,6 +14,10 @@ column establishes and what it does not.
 A file that could not be read is a row carrying its error in `probe_error`, not a missing
 row: the `gs5r3` profile is played while it is measured and its saves move underneath the
 walk. There are currently no such rows.
+
+The `development` profile moved too, between the two runs: its `lom.cfg` has a new digest and one
+more help-panel flag cleared, with an mtime of 2026-09-19. Nothing in this repository writes inside
+`~/Applications`; something ran that profile.
 
 ## Totals
 
@@ -44,16 +49,18 @@ walk. There are currently no such rows.
 
 | kind | `baseline` | `development` | `gs5r3` | `patch302` |
 | --- | ---: | ---: | ---: | ---: |
+| `asura-text` | 1 | 1 | 1 | 1 |
 | `game-script` | 2 | 2 | 2 | 2 |
 | `iff-pbm` | 1 | 1 | 1 | 1 |
 | `legend-scenario` | 8 | 8 | 8 | 8 |
 | `map-component` | 337 | 337 | 337 | 337 |
+| `map-grid` | 1 | 1 | 1 | 1 |
 | `map-scenario` | 8 | 8 | 20 | 8 |
 | `mpq-archive` | 5 | 5 | 7 | 7 |
 | `portable-executable` | 12 | 12 | 12 | 12 |
 | `smacker-video` | 23 | 23 | 23 | 23 |
 | `text` | 19 | 19 | 27 | 22 |
-| `unknown` | 10 | 10 | 17 | 13 |
+| `unknown` | 8 | 8 | 15 | 11 |
 | `wave-audio` | 42 | 42 | 42 | 42 |
 
 ## What the existing probe could not classify
@@ -61,12 +68,15 @@ walk. There are currently no such rows.
 A bounded negative needs a count, not a silence. These are every row whose `probe_kind` is
 `unknown`, listed rather than summarised because the list is short enough to read.
 
+Two kinds came off this list on 2026-09-19: `.asr` now probes as `asura-text` and `.map` as
+`map-grid`. `English/custldr/0templdr.ldr` stays on it -- the file is identified and its outer
+container is read out of `savedefaultarmy`, but no parser is written for it. See
+`docs/loose-files.md`.
+
 | profile | path | extension | magic |
 | --- | --- | --- | --- |
 | `baseline` | `English/Shaders/shader-package.zip` | `zip` | `zip-archive` |
-| `baseline` | `English/Text/Menu/Menu_En.asr` | `asr` | `asura-container` |
 | `baseline` | `English/lom.cfg` | `cfg` | `unrecognised` |
-| `baseline` | `English/map/e3map2.map` | `map` | `unrecognised` |
 | `baseline` | `English/savegame/combat.sav` | `sav` | `lom-serialised` |
 | `baseline` | `English/savegame/experience.sav` | `sav` | `lom-serialised` |
 | `baseline` | `English/savegame/magic.sav` | `sav` | `lom-serialised` |
@@ -74,9 +84,7 @@ A bounded negative needs a count, not a silence. These are every row whose `prob
 | `baseline` | `English/savegame/quickstart` | `-` | `lom-serialised` |
 | `baseline` | `English/savegame/temple.sav` | `sav` | `lom-serialised` |
 | `development` | `English/Shaders/shader-package.zip` | `zip` | `zip-archive` |
-| `development` | `English/Text/Menu/Menu_En.asr` | `asr` | `asura-container` |
 | `development` | `English/lom.cfg` | `cfg` | `unrecognised` |
-| `development` | `English/map/e3map2.map` | `map` | `unrecognised` |
 | `development` | `English/savegame/combat.sav` | `sav` | `lom-serialised` |
 | `development` | `English/savegame/experience.sav` | `sav` | `lom-serialised` |
 | `development` | `English/savegame/magic.sav` | `sav` | `lom-serialised` |
@@ -84,11 +92,9 @@ A bounded negative needs a count, not a silence. These are every row whose `prob
 | `development` | `English/savegame/quickstart` | `-` | `lom-serialised` |
 | `development` | `English/savegame/temple.sav` | `sav` | `lom-serialised` |
 | `gs5r3` | `English/Shaders/shader-package.zip` | `zip` | `zip-archive` |
-| `gs5r3` | `English/Text/Menu/Menu_En.asr` | `asr` | `asura-container` |
 | `gs5r3` | `English/_vanilla_backup/lom.cfg` | `cfg` | `unrecognised` |
 | `gs5r3` | `English/custldr/0templdr.ldr` | `ldr` | `unrecognised` |
 | `gs5r3` | `English/lom.cfg` | `cfg` | `unrecognised` |
-| `gs5r3` | `English/map/e3map2.map` | `map` | `unrecognised` |
 | `gs5r3` | `English/savegame/Merlin I` | `-` | `lom-serialised` |
 | `gs5r3` | `English/savegame/combat.lom` | `lom` | `lom-serialised` |
 | `gs5r3` | `English/savegame/combat.sav` | `sav` | `lom-serialised` |
@@ -101,10 +107,8 @@ A bounded negative needs a count, not a silence. These are every row whose `prob
 | `gs5r3` | `English/savegame/temple.lom` | `lom` | `lom-serialised` |
 | `gs5r3` | `English/savegame/temple.sav` | `sav` | `lom-serialised` |
 | `patch302` | `English/Shaders/shader-package.zip` | `zip` | `zip-archive` |
-| `patch302` | `English/Text/Menu/Menu_En.asr` | `asr` | `asura-container` |
 | `patch302` | `English/_vanilla_backup/lom.cfg` | `cfg` | `unrecognised` |
 | `patch302` | `English/lom.cfg` | `cfg` | `unrecognised` |
-| `patch302` | `English/map/e3map2.map` | `map` | `unrecognised` |
 | `patch302` | `English/savegame/Merlin I` | `-` | `lom-serialised` |
 | `patch302` | `English/savegame/combat.sav` | `sav` | `lom-serialised` |
 | `patch302` | `English/savegame/experience.sav` | `sav` | `lom-serialised` |

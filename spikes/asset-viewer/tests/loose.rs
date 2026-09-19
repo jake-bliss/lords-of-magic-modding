@@ -15,6 +15,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use lom_asset_viewer::loose::{self, LomConfig, MagicSignature, SettingsConfig, magic_signature};
+use lom_asset_viewer::asura::AsuraText;
+use lom_asset_viewer::map::{MapAsset, MapHeaderForm};
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -993,4 +995,267 @@ fn the_media_directories_hold_only_what_they_claim() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// `English/map/` -- the two header forms.
+
+/// Every file in the installed `English/map/` directory, as `(name, bytes)`.
+fn installed_map_files() -> Vec<(String, Vec<u8>)> {
+    let directory = game_directory().join("map");
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&directory).expect("English/map/ is installed") {
+        let entry = entry.expect("the directory entry reads");
+        if !entry.file_type().expect("the entry has a type").is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        files.push((name, std::fs::read(entry.path()).expect("the file reads")));
+    }
+    assert!(!files.is_empty(), "English/map/ is empty");
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
+}
+
+/// No file in the corpus reads as both header forms, and exactly one reads as the grid form.
+///
+/// **This is the check that makes sniffing the header legitimate.** `MapAsset::parse` picks a form
+/// from the bytes; if any installed file satisfied both tests, the choice would be decided by the
+/// order they are tried in rather than by the file, and this parser would be guessing. Stated
+/// before looking: a scenario file can only look grid-form if its *height* word is 8, and none is
+/// 8 tall -- so the expectation was exactly one match per file, and that is what the corpus says.
+///
+/// The grid-form count is asserted as **one**, not as a name: the claim worth pinning is that this
+/// directory holds a single file the map pass previously could not offer to the parser.
+#[test]
+#[ignore = "needs LOM_GAME_DIR"]
+fn both_header_forms_are_mutually_exclusive_across_the_corpus() {
+    let mut grid = Vec::new();
+    let mut scenario = 0_usize;
+    for (name, bytes) in installed_map_files() {
+        let forms = MapAsset::matching_header_forms(&bytes);
+        assert_eq!(
+            forms.len(),
+            1,
+            "map/{name} reads as {forms:?}, so the form is not decided by the file"
+        );
+        match forms[0] {
+            MapHeaderForm::Grid => grid.push(name.clone()),
+            MapHeaderForm::Scenario => scenario += 1,
+        }
+        assert!(
+            MapAsset::parse(&bytes).is_ok(),
+            "map/{name} matched a form but did not parse"
+        );
+    }
+    assert_eq!(
+        grid.len(),
+        1,
+        "expected exactly one grid-form file in English/map/, found {grid:?}"
+    );
+    assert!(
+        scenario > 300,
+        "only {scenario} scenario-form files; the directory did not walk"
+    );
+}
+
+/// The two readers agree on every installed scenario file, cell for cell.
+///
+/// **Retracted claim, kept as a warning.** An earlier version of this comment called this "the
+/// corpus test of the nesting claim" and said that if the scenario header were four independent
+/// words rather than a version in front of a grid header, re-reading the remainder as a grid would
+/// not reproduce the cells. **That is false.** `parse` on the scenario form reads its shape words
+/// at absolute offsets 4/8/12 and its cells from 16; `parse_as(&bytes[4..], Grid)` reads relative
+/// 0/4/8 and cells from 12 -- the same absolute offsets of the same buffer. The equality is a
+/// **mathematical identity** and holds for any input that parses as scenario form, nesting or no
+/// nesting. Found by review, not by this test.
+///
+/// **Measured, 2026-09-19.** Swapping the `width` and `height` reads in `MapAsset::parse_as` -- a
+/// genuinely different header-layout hypothesis -- leaves this test green, leaves
+/// `both_header_forms_are_mutually_exclusive_across_the_corpus` and
+/// `the_grid_form_map_uses_the_corpus_tile_and_elevation_vocabulary` green, and leaves **all
+/// eleven** corpus-gated checks green including `the_committed_inventory_reproduces`. The corpus
+/// cannot see it because every shipped map is square. The mutant is killed by 44 of the library's
+/// own unit tests, which use non-square fixtures, so the layout **is** pinned -- just not here.
+///
+/// **What the nesting claim actually rests on is the binary**, and only the binary: `0x004855c0`
+/// reads one `u32` and then `call 0x004a52e0` at `0x004855f8`; its writer `0x00485550` does
+/// `call 0x004a5440` at `0x0048558a`; and `0x004a5440` emits the third header word from a local
+/// set to `8` (`c7 44 24 08 08 00 00 00` at `0x004a544b`). That is **Observed in a local binary**.
+///
+/// **What this test is for**, stated at the grade it earns: it is a consistency check over the
+/// installed files. It fails if `parse_as` stops honouring the `header_form` it is handed -- the
+/// header-size mutant kills it -- and it keeps the grid entry point exercised against 353-365 real
+/// files rather than against a fixture. It is not evidence for the nesting.
+#[test]
+#[ignore = "needs LOM_GAME_DIR"]
+fn a_scenario_file_is_a_version_word_in_front_of_a_grid_file() {
+    let mut checked = 0_usize;
+    for (name, bytes) in installed_map_files() {
+        let scenario = MapAsset::parse(&bytes).unwrap_or_else(|error| panic!("map/{name}: {error}"));
+        if scenario.header_form != MapHeaderForm::Scenario {
+            continue;
+        }
+        let grid_end = 4 + 12 + scenario.cells.len() * 8;
+        let grid = MapAsset::parse_as(&bytes[4..grid_end], MapHeaderForm::Grid)
+            .unwrap_or_else(|error| panic!("map/{name} without its version word: {error}"));
+        assert_eq!(
+            (grid.width, grid.height, grid.cell_bytes),
+            (scenario.width, scenario.height, scenario.cell_bytes),
+            "map/{name}: the two forms disagree on the shape words"
+        );
+        assert_eq!(
+            grid.cells.len(),
+            scenario.cells.len(),
+            "map/{name}: cell counts differ"
+        );
+        for (index, (left, right)) in grid.cells.iter().zip(&scenario.cells).enumerate() {
+            assert!(
+                left.has_same_bytes(right),
+                "map/{name}: cell {index} differs between the two readings"
+            );
+        }
+        assert_eq!(
+            grid.to_bytes().expect("the grid re-encodes"),
+            &bytes[4..grid_end],
+            "map/{name}: the grid form did not re-encode its own slice"
+        );
+        checked += 1;
+    }
+    assert!(checked > 300, "only {checked} scenario files were checked");
+}
+
+/// The grid-form file re-encodes exactly, and its contents live in the corpus's own vocabulary.
+///
+/// Two separate claims, and the second is the one that would catch a plausible-but-wrong header:
+/// a misaligned read still round-trips (the writer emits whatever the reader put in the fields),
+/// but it produces tile indexes and elevations drawn from nowhere. So the tile indexes are checked
+/// against the set the *scenario* files in the same directory use, and the elevation bit patterns
+/// likewise. Nothing here is compared against a number transcribed out of this parser.
+///
+/// Reading the header one word later -- the 16-byte scenario header -- yields elevations that are
+/// denormal floats and a tile-index field that is zero in every cell, so this check separates the
+/// two alignments rather than merely accepting the one it was given.
+#[test]
+#[ignore = "needs LOM_GAME_DIR"]
+fn the_grid_form_map_uses_the_corpus_tile_and_elevation_vocabulary() {
+    let files = installed_map_files();
+    let mut corpus_tiles = std::collections::BTreeSet::new();
+    let mut corpus_elevations = std::collections::BTreeSet::new();
+    let mut grid_file = None;
+    for (name, bytes) in &files {
+        let map = MapAsset::parse(bytes).unwrap_or_else(|error| panic!("map/{name}: {error}"));
+        match map.header_form {
+            MapHeaderForm::Grid => grid_file = Some((name.clone(), bytes.clone(), map)),
+            MapHeaderForm::Scenario => {
+                for cell in &map.cells {
+                    corpus_tiles.insert(cell.tile_index());
+                    corpus_elevations.insert(cell.value_bits);
+                }
+            }
+        }
+    }
+    let (name, bytes, map) = grid_file.expect("the corpus holds a grid-form map");
+    assert_eq!(
+        map.to_bytes().expect("the grid re-encodes"),
+        bytes,
+        "map/{name} did not re-encode exactly"
+    );
+    assert_eq!(
+        map.trailing_bytes(),
+        0,
+        "map/{name} has bytes after the grid, which the grid form has no reader for"
+    );
+    let stray_tiles: Vec<u32> = map
+        .cells
+        .iter()
+        .map(|cell| cell.tile_index())
+        .filter(|tile| !corpus_tiles.contains(tile))
+        .collect();
+    assert!(
+        stray_tiles.is_empty(),
+        "map/{name} indexes tiles no scenario file in the same directory uses: {stray_tiles:?}"
+    );
+    let stray_elevations: Vec<u32> = map
+        .cells
+        .iter()
+        .map(|cell| cell.value_bits)
+        .filter(|bits| !corpus_elevations.contains(bits))
+        .collect();
+    assert!(
+        stray_elevations.is_empty(),
+        "map/{name} holds elevation bit patterns the corpus never uses: {stray_elevations:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// `English/Text/Menu/Menu_En.asr` -- the launcher's Asura string table.
+
+/// The installed `.asr` decodes, re-encodes byte for byte, and its two tables agree.
+///
+/// **The round trip is not a formality here**, because `AsuraText::to_bytes` *recomputes* every
+/// derived word rather than storing it: the chunk size, the record count, the total text length,
+/// each record's unit count, the page-name hash and the key-table length. So a wrong length rule
+/// or a wrong hash function produces a file that differs from the installed one, and this check
+/// names it. Contrast `lom.cfg`, whose round trip is a mathematical identity and cannot fail.
+///
+/// `keys_match_records` is the other half and is independent of the round trip: it asserts that
+/// hashing key *i* gives record *i*'s hash word, joining two tables the file never states are
+/// parallel. Transcribing the five hash words into a test would assert nothing about the rule.
+#[test]
+#[ignore = "needs LOM_GAME_DIR"]
+fn the_installed_asura_string_table_round_trips_and_its_keys_hash_to_its_records() {
+    let path = game_directory().join("Text/Menu/Menu_En.asr");
+    let bytes = std::fs::read(&path).expect("Menu_En.asr is installed");
+    let page = AsuraText::parse(&bytes).expect("the installed table parses");
+    assert_eq!(
+        page.to_bytes(),
+        bytes,
+        "the re-encoded table is not the installed one"
+    );
+    assert!(
+        page.keys_match_records(),
+        "the key table and the record table are not parallel: {:?} against {:?}",
+        page.keys,
+        page.strings.iter().map(|record| record.hash).collect::<Vec<_>>()
+    );
+    // Every key must be findable the way the launcher finds it, by hash rather than by position.
+    for key in &page.keys {
+        assert!(
+            page.get(key).is_some(),
+            "{key} hashes to no record in the installed table"
+        );
+    }
+}
+
+/// A new key can be added to the installed table and read back.
+///
+/// This is the composability claim, and it is exactly what the hash function unblocked: before it
+/// was recovered a new record's hash word could not be filled in, so only replacing an existing
+/// string was possible. Run against the installed file rather than a fixture so the starting
+/// point is the real table.
+///
+/// **What this does not establish:** that `LOMLauncher.exe` accepts the result. Nothing here has
+/// been loaded by the launcher; the claim is that the file is self-consistent by the format's own
+/// rules, which is a weaker statement and is the one asserted.
+#[test]
+#[ignore = "needs LOM_GAME_DIR"]
+fn a_key_added_to_the_installed_asura_table_survives_a_round_trip() {
+    let path = game_directory().join("Text/Menu/Menu_En.asr");
+    let bytes = std::fs::read(&path).expect("Menu_En.asr is installed");
+    let mut page = AsuraText::parse(&bytes).expect("the installed table parses");
+    let before = page.strings.len();
+    page.push("LAUNCHER_MODDED", "Modded")
+        .expect("the key is not already present");
+    assert!(page.set("LAUNCHER_PLAY", "Play the whole thing"));
+    let rewritten = AsuraText::parse(&page.to_bytes()).expect("the edited table parses");
+    assert_eq!(rewritten.strings.len(), before + 1);
+    assert_eq!(rewritten.get("LAUNCHER_MODDED"), Some("Modded"));
+    assert_eq!(rewritten.get("LAUNCHER_PLAY"), Some("Play the whole thing"));
+    assert!(rewritten.keys_match_records());
+    assert_ne!(
+        rewritten.to_bytes(),
+        bytes,
+        "the edit produced the original file, so nothing was written"
+    );
 }

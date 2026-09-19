@@ -6,6 +6,13 @@ use crate::tile::{
 };
 
 const HEADER_SIZE: usize = 16;
+/// The grid-form header: width, height, bytes-per-cell. See [`MapHeaderForm`].
+///
+/// This is also the size of the **shape words both forms share**, which is why the scenario form
+/// finds them at `header_bytes() - GRID_HEADER_SIZE`. Writing that offset as a literal `12` made
+/// this constant load-bearing in two places at once: changing it would silently move where the
+/// *scenario* form reads its width.
+const GRID_HEADER_SIZE: usize = 12;
 const CELL_SIZE: usize = 8;
 /// The head every trailing-record layout shares: eight `u32`s.
 ///
@@ -505,12 +512,137 @@ pub struct PlacedSpriteSection {
     pub(crate) instance_id_high_water: Option<u32>,
 }
 
+/// Which of the two header forms a map file on disk carries.
+///
+/// **Observed in a local binary, 2026-09-19.** The engine has two separate readers and they are
+/// nested, not parallel:
+///
+/// - `0x004a52e0` reads a **grid**: `fread` of one `u32` into map object `+0x5c`, one into `+0x60`,
+///   one into a stack local, then a loop that `fread`s `local << 6` bytes at a time into the cell
+///   array at `+0x54`, advancing 64 cells (`add esi, 0x40`, addressed `[edx + esi*8]`) each pass.
+///   Its writer `0x004a5440` mirrors it exactly and emits the third word from a local initialised
+///   to the constant `8` at `0x004a544b`, then writes `0x200` bytes a pass.
+/// - `0x004855c0` reads a **scenario**: one `u32` `fread` into the scenario object's `+0x00`, then
+///   a call to that same `0x004a52e0` (the instruction is at `0x004855f8`) on the embedded map at
+///   `+0x482c`, then the placed-sprite section (`0x004f7120`) and a third section. Its writer
+///   `0x00485550` writes four bytes from `0x0055b1b0`, calls the same `0x004a5440` at
+///   `0x0048558a`, then the two tail sections.
+///
+/// So a scenario file *contains* a grid file: the leading word and the trailing sections are the
+/// only difference. The operators reach them separately -- `loadmap` (`0x004dfad0`) and `savemap`
+/// (`0x004dfbe0`) go to the grid pair; `loadscenariomap` (`0x00485b80`), `savescenariomap`
+/// (`0x00485a80`), `loadspecialmap` (`0x004eecf0`) and `savespecialmap` (`0x004eec00`) go to the
+/// scenario pair.
+///
+/// **Observed in the corpus, 2026-09-19.** `English/map/e3map2.map` is the only grid-form file in
+/// any of the four installed profiles, and every other file in every profile's `English/map/`
+/// is scenario-form. The two forms are tested for separately and no file in any profile satisfies
+/// both -- see `both_header_forms_are_mutually_exclusive_across_the_corpus`.
+///
+/// **Observed in the corpus, 2026-09-19.** A script passes the two extensions to one argument
+/// slot: `gs.mpq` member `File00000214.xxx` calls `startspecialcombat` with `"map/thanh.smp"` in
+/// one branch and `"map/test.map"` in the other. The extension is therefore *not* what picks the
+/// reader -- no `.map`, `.smp`, `.scn` or `.lgd` literal appears in `lomse.exe` at all -- and this
+/// parser sniffs the header rather than the name, which is also what lets a caller hand it an
+/// unnamed buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapHeaderForm {
+    /// `version, width, height, bytes_per_cell`, then the grid, then the tail sections. The
+    /// `.smp`, `.scn` and `.lgd` files.
+    Scenario,
+    /// `width, height, bytes_per_cell`, then the grid, and nothing after it. `map/e3map2.map`,
+    /// and the shape the save file's own map section already uses -- see
+    /// [`crate::save::MapSection`].
+    Grid,
+}
+
+impl MapHeaderForm {
+    /// How many bytes this form's header occupies.
+    pub fn header_bytes(self) -> usize {
+        match self {
+            Self::Scenario => HEADER_SIZE,
+            Self::Grid => GRID_HEADER_SIZE,
+        }
+    }
+
+    /// Whether this form reads a tail section after the grid.
+    ///
+    /// **Observed in a local binary, 2026-09-19.** `loadmap`'s worker closes the file
+    /// (`0x004a529d` / `0x004a52ac`, the `fclose` thunk `0x005394d0`) the instant the grid is in,
+    /// so a grid-form file has no tail to decode and a trailing byte would simply never be read.
+    pub fn has_tail(self) -> bool {
+        matches!(self, Self::Scenario)
+    }
+
+    /// Which form these bytes are, or `None` when neither fits.
+    ///
+    /// Both forms are tested independently by [`MapAsset::matching_header_forms`] rather than one
+    /// being the fallback of the other, so a buffer that fits both is *visible* instead of being
+    /// silently resolved by test order. This is where that visible case is then decided, and the
+    /// rule is not cosmetic.
+    ///
+    /// **The two structural tests are asymmetric, and they have to be.** A grid-form file must
+    /// account for every byte; a scenario-form file only has to be *at least* header-plus-grid,
+    /// because a tail follows. So a grid file can accidentally satisfy the scenario test while the
+    /// reverse cannot: reading a grid file as a scenario takes its cell-0 tag as the
+    /// bytes-per-cell word, and a cell whose tile slot is **8** makes that word `8`.
+    ///
+    /// **That is not hypothetical, and it broke editing.** `--map-set-tile e3map2.map 0 0 8`
+    /// produced a file that `parse` refused as ambiguous, while slots 7 and 9 were fine; the same
+    /// trips `--map-set-terrain`, `--map-fill-terrain`, `--map-paint-terrain` and the editor
+    /// server's save path whenever cell (0, 0) lands on slot 8. No data was ever lost -- the
+    /// writers re-parse before writing -- but the tool refused a legal file and blamed the header
+    /// for the edit.
+    ///
+    /// **The tie-break.** When both fit, ask whether the *scenario* reading's remainder is
+    /// actually a placed-sprite section: at least a count word, and a count that some decoded
+    /// layout's `section_bytes` matches to the byte. If it is not, the scenario reading has left
+    /// bytes it cannot explain while the grid reading has explained all of them, so the file is
+    /// grid-form. The slot-8 case fails that test by a mile -- it leaves 28,668 unexplained bytes
+    /// behind a 512-cell grid.
+    ///
+    /// **The residual case is undecidable and resolved toward `Scenario`.** If the remainder *is*
+    /// section-shaped, both readings are internally consistent and nothing in the bytes can
+    /// choose. Scenario wins there because that is the reading every shipped file wants and the
+    /// conservative one to keep: no scenario file in the corpus can reach this branch at all,
+    /// since the grid test would need the scenario `height` word to be 8 and none is.
+    pub fn detect(source: &[u8]) -> Option<Self> {
+        match MapAsset::matching_header_forms(source).as_slice() {
+            [only] => Some(*only),
+            [_, _] => Some(if scenario_tail_is_a_section(source) {
+                Self::Scenario
+            } else {
+                Self::Grid
+            }),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MapAsset {
-    pub metadata: u32,
+    /// The leading version word, which only the scenario form has.
+    ///
+    /// `None` for a grid-form map, and deliberately not `Some(0)`: the grid form does not omit a
+    /// version, it has no slot for one, and a writer that stamped a zero there would produce a
+    /// file 4 bytes longer than the one it read.
+    pub metadata: Option<u32>,
     pub width: u32,
     pub height: u32,
-    pub bits_per_pixel: u32,
+    /// The header's third word: **bytes per cell**, `8` in the whole corpus.
+    ///
+    /// **Observed in a local binary, 2026-09-19.** Named `bits_per_pixel` until this was read out
+    /// of the engine, which was wrong in a way the corpus could never show, because 8 bits per
+    /// pixel and 8 bytes per cell are the same number. The reader at `0x004a52e0` multiplies this
+    /// word by 64 to get the byte count of a 64-cell chunk (`shl ecx, 6`), and the writer at
+    /// `0x004a5440` emits a constant `8` and writes `0x200` bytes per 64 cells. The cell stride
+    /// itself is hardcoded `8` in the addressing (`[edx + esi*8]`), so the engine never actually
+    /// honours a different value -- it would desynchronise the read from the stride.
+    ///
+    /// `save::MapSection` already called this field `bytes_per_cell`; the two now agree.
+    pub cell_bytes: u32,
+    /// Which header form this map was read from, and which one [`Self::to_bytes`] will write.
+    pub header_form: MapHeaderForm,
     pub cells: Vec<MapCell>,
     pub placed_sprites: Option<PlacedSpriteSection>,
     /// The trailing section exactly as it was read.
@@ -777,20 +909,113 @@ impl fmt::Display for MapError {
 impl std::error::Error for MapError {}
 
 impl MapAsset {
+    /// Every header form these bytes could be read as.
+    ///
+    /// The list is built by testing each form on its own terms, so a caller can tell "neither
+    /// fits" from "both fit". Only a one-element answer is a decodable map; see
+    /// [`MapHeaderForm::detect`].
+    ///
+    /// A form fits when its three shape words are present, the dimensions are nonzero, the
+    /// bytes-per-cell word is [`CELL_SIZE`], and the length works out: at least the header plus
+    /// the grid for the scenario form, which has a tail after it, and **exactly** the header plus
+    /// the grid for the grid form, which has none.
+    pub fn matching_header_forms(source: &[u8]) -> Vec<MapHeaderForm> {
+        let mut forms = Vec::new();
+        for form in [MapHeaderForm::Scenario, MapHeaderForm::Grid] {
+            let shape_at = form.header_bytes() - GRID_HEADER_SIZE;
+            let Ok(width) = read_u32(source, shape_at) else {
+                continue;
+            };
+            let (Ok(height), Ok(cell_bytes)) = (
+                read_u32(source, shape_at + 4),
+                read_u32(source, shape_at + 8),
+            ) else {
+                continue;
+            };
+            if width == 0 || height == 0 || cell_bytes != CELL_SIZE as u32 {
+                continue;
+            }
+            let Some(end) = usize::try_from(width)
+                .ok()
+                .zip(usize::try_from(height).ok())
+                .and_then(|(width, height)| width.checked_mul(height))
+                .and_then(|cells| cells.checked_mul(CELL_SIZE))
+                .and_then(|grid| grid.checked_add(form.header_bytes()))
+            else {
+                continue;
+            };
+            let fits = if form.has_tail() {
+                source.len() >= end
+            } else {
+                source.len() == end
+            };
+            if fits {
+                forms.push(form);
+            }
+        }
+        forms
+    }
+
+    /// Parse a map, sniffing which of the two header forms it is.
+    ///
+    /// The choice is [`MapHeaderForm::detect`]'s, including its tie-break, so there is one rule
+    /// and not a second copy of it inlined here.
     pub fn parse(source: &[u8]) -> Result<Self, MapError> {
+        // Neither form fits: keep the scenario form's own diagnosis for the overwhelmingly common
+        // case rather than reporting "neither form fits" for a truncated `.smp`.
+        let form = MapHeaderForm::detect(source).ok_or_else(|| Self::diagnose_scenario(source))?;
+        Self::parse_as(source, form)
+    }
+
+    /// Why the scenario form does not fit, phrased as this parser always has.
+    fn diagnose_scenario(source: &[u8]) -> MapError {
         if source.len() < HEADER_SIZE {
+            return MapError::new("map header is truncated");
+        }
+        let (Ok(width), Ok(height), Ok(cell_bytes)) = (
+            read_u32(source, 4),
+            read_u32(source, 8),
+            read_u32(source, 12),
+        ) else {
+            return MapError::new("map header is truncated");
+        };
+        if width == 0 || height == 0 {
+            return MapError::new("map dimensions must be nonzero");
+        }
+        if cell_bytes != CELL_SIZE as u32 {
+            return MapError::new(format!(
+                "unsupported map cell size {cell_bytes}; expected {CELL_SIZE} bytes per cell"
+            ));
+        }
+        MapError::new(format!(
+            "map cell grid is truncated: expected {} cells",
+            u64::from(width) * u64::from(height)
+        ))
+    }
+
+    /// Parse a map that is known to be in `form`.
+    ///
+    /// Callers that already know the form -- the save file's map section, which is grid-form by
+    /// construction -- should use this rather than re-deriving it from bytes they assembled.
+    pub fn parse_as(source: &[u8], form: MapHeaderForm) -> Result<Self, MapError> {
+        let header_size = form.header_bytes();
+        if source.len() < header_size {
             return Err(MapError::new("map header is truncated"));
         }
-        let metadata = read_u32(source, 0)?;
-        let width = read_u32(source, 4)?;
-        let height = read_u32(source, 8)?;
-        let bits_per_pixel = read_u32(source, 12)?;
+        let metadata = match form {
+            MapHeaderForm::Scenario => Some(read_u32(source, 0)?),
+            MapHeaderForm::Grid => None,
+        };
+        let shape_at = header_size - GRID_HEADER_SIZE;
+        let width = read_u32(source, shape_at)?;
+        let height = read_u32(source, shape_at + 4)?;
+        let cell_bytes = read_u32(source, shape_at + 8)?;
         if width == 0 || height == 0 {
             return Err(MapError::new("map dimensions must be nonzero"));
         }
-        if bits_per_pixel != 8 {
+        if cell_bytes != CELL_SIZE as u32 {
             return Err(MapError::new(format!(
-                "unsupported map cell depth {bits_per_pixel}; expected 8"
+                "unsupported map cell size {cell_bytes}; expected {CELL_SIZE} bytes per cell"
             )));
         }
 
@@ -802,11 +1027,11 @@ impl MapAsset {
                     .and_then(|height| width.checked_mul(height))
             })
             .ok_or_else(|| MapError::new("map cell count overflow"))?;
-        let cell_bytes = cell_count
+        let grid_bytes = cell_count
             .checked_mul(CELL_SIZE)
             .ok_or_else(|| MapError::new("map cell byte count overflow"))?;
-        let trailing_offset = HEADER_SIZE
-            .checked_add(cell_bytes)
+        let trailing_offset = header_size
+            .checked_add(grid_bytes)
             .ok_or_else(|| MapError::new("map cell offset overflow"))?;
         if trailing_offset > source.len() {
             return Err(MapError::new(format!(
@@ -816,7 +1041,7 @@ impl MapAsset {
 
         let mut cells = Vec::with_capacity(cell_count);
         for index in 0..cell_count {
-            let offset = HEADER_SIZE + index * CELL_SIZE;
+            let offset = header_size + index * CELL_SIZE;
             let tag = read_u32(source, offset)?;
             let value_bits = read_u32(source, offset + 4)?;
             cells.push(MapCell {
@@ -826,15 +1051,27 @@ impl MapAsset {
             });
         }
         let trailing_bytes = source.len() - trailing_offset;
-        let placed_sprites =
-            parse_placed_sprites(source, trailing_offset, trailing_bytes, cell_count, metadata)?;
+        // A grid-form map has no tail. `loadmap`'s worker closes the file as soon as the grid is
+        // in, so there is nothing after it to decode and nothing after it to preserve either --
+        // `matching_header_forms` already required the length to land exactly on the grid's end.
+        let placed_sprites = match (form, metadata) {
+            (MapHeaderForm::Scenario, Some(metadata)) => parse_placed_sprites(
+                source,
+                trailing_offset,
+                trailing_bytes,
+                cell_count,
+                metadata,
+            )?,
+            _ => None,
+        };
         let trailing_raw = source[trailing_offset..].to_vec();
 
         Ok(Self {
             metadata,
             width,
             height,
-            bits_per_pixel,
+            cell_bytes,
+            header_form: form,
             cells,
             placed_sprites,
             trailing_raw,
@@ -875,7 +1112,7 @@ impl MapAsset {
     /// still report the pre-edit tail length while `to_bytes` wrote the new one. No caller was
     /// wrong yet, which is exactly why it was worth removing: the next one would have been.
     pub fn trailing_offset(&self) -> usize {
-        HEADER_SIZE + self.cells.len() * CELL_SIZE
+        self.header_form.header_bytes() + self.cells.len() * CELL_SIZE
     }
 
     /// The trailing section as it will be written.
@@ -984,6 +1221,47 @@ impl MapAsset {
 /// Both collisions were enumerated rather than found: iterating every count against all six layouts
 /// yields these two for `count >= 1`, plus the degenerate `count == 0`, which the header word
 /// settles.
+/// Whether the **scenario** reading of these bytes leaves a remainder that is section-shaped.
+///
+/// The weaker of the two tests the reviewer proposed, deliberately: it asks only that a count word
+/// be present and that some decoded layout account for the remainder exactly, not that the records
+/// themselves decode. A hand-made scenario file whose tail this project cannot read is still a
+/// scenario file, and requiring `parse_placed_sprites` to succeed would have reclassified it.
+///
+/// Used only to break a tie between the two forms -- see [`MapHeaderForm::detect`].
+fn scenario_tail_is_a_section(source: &[u8]) -> bool {
+    let Ok(width) = read_u32(source, 4) else {
+        return false;
+    };
+    let Ok(height) = read_u32(source, 8) else {
+        return false;
+    };
+    let Some(trailing_offset) = usize::try_from(width)
+        .ok()
+        .zip(usize::try_from(height).ok())
+        .and_then(|(width, height)| width.checked_mul(height))
+        .and_then(|cells| cells.checked_mul(CELL_SIZE))
+        .and_then(|grid| grid.checked_add(HEADER_SIZE))
+    else {
+        return false;
+    };
+    let Some(trailing_bytes) = source.len().checked_sub(trailing_offset) else {
+        return false;
+    };
+    if trailing_bytes < PLACED_SPRITE_COUNT_BYTES {
+        return false;
+    }
+    let Ok(count) = read_u32(source, trailing_offset) else {
+        return false;
+    };
+    let Ok(count) = usize::try_from(count) else {
+        return false;
+    };
+    OBSERVED_TAIL_LAYOUTS
+        .into_iter()
+        .any(|layout| layout.section_bytes(count) == Some(trailing_bytes))
+}
+
 fn parse_placed_sprites(
     source: &[u8],
     trailing_offset: usize,
@@ -2237,10 +2515,11 @@ impl MapAsset {
         let trailing_raw = placed_sprites.to_bytes()?;
 
         Ok(Self {
-            metadata: GENERATED_HEADER_WORD,
+            metadata: Some(GENERATED_HEADER_WORD),
+            header_form: MapHeaderForm::Scenario,
             width,
             height,
-            bits_per_pixel: 8,
+            cell_bytes: CELL_SIZE as u32,
             cells,
             placed_sprites: Some(placed_sprites),
             trailing_raw,
@@ -2284,12 +2563,14 @@ impl MapAsset {
     /// not decoded still write back unchanged instead of being dropped.
     pub fn to_bytes(&self) -> Result<Vec<u8>, MapError> {
         let mut bytes = Vec::with_capacity(
-            HEADER_SIZE + self.cells.len() * CELL_SIZE + self.trailing_raw.len(),
+            self.header_form.header_bytes() + self.cells.len() * CELL_SIZE + self.trailing_raw.len(),
         );
-        bytes.extend_from_slice(&self.metadata.to_le_bytes());
+        if let Some(metadata) = self.metadata {
+            bytes.extend_from_slice(&metadata.to_le_bytes());
+        }
         bytes.extend_from_slice(&self.width.to_le_bytes());
         bytes.extend_from_slice(&self.height.to_le_bytes());
-        bytes.extend_from_slice(&self.bits_per_pixel.to_le_bytes());
+        bytes.extend_from_slice(&self.cell_bytes.to_le_bytes());
         for cell in &self.cells {
             bytes.extend_from_slice(&cell.tag.to_le_bytes());
             bytes.extend_from_slice(&cell.value_bits.to_le_bytes());
@@ -2724,10 +3005,112 @@ impl MapAsset {
 #[cfg(test)]
 mod tests {
     use super::{
-        CELL_TAG_HIGH_FLAG, MapAsset, OBSERVED_TILE_TERRAIN_TYPES, TERRAIN_TYPES,
-        base_tile_terrain_type, terrain_type_base_tile,
+        CELL_SIZE, CELL_TAG_HIGH_FLAG, GRID_HEADER_SIZE, MapAsset, MapHeaderForm,
+        OBSERVED_TILE_TERRAIN_TYPES, TERRAIN_TYPES, base_tile_terrain_type,
+        terrain_type_base_tile,
     };
     use crate::tile::{Neighbourhood, TileChoice, TileSelector, TileSetDefinition};
+
+    /// A grid-form map of `width x height` whose cell 0 carries `first_tag` and the rest `0`.
+    fn grid_form_bytes(width: u32, height: u32, first_tag: u32) -> Vec<u8> {
+        let cells = (width as usize) * (height as usize);
+        let mut bytes = Vec::with_capacity(GRID_HEADER_SIZE + cells * CELL_SIZE);
+        bytes.extend_from_slice(&width.to_le_bytes());
+        bytes.extend_from_slice(&height.to_le_bytes());
+        bytes.extend_from_slice(&(CELL_SIZE as u32).to_le_bytes());
+        for index in 0..cells {
+            let tag = if index == 0 { first_tag } else { 0 };
+            bytes.extend_from_slice(&tag.to_le_bytes());
+            bytes.extend_from_slice(&0_u32.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// A grid map whose cell 0 holds tile slot 8 is still grid-form.
+    ///
+    /// **Regression, found by review on the installed corpus.** Reading a grid file as a scenario
+    /// takes its cell-0 tag as the bytes-per-cell word, so slot 8 -- and only slot 8 -- made the
+    /// buffer satisfy both structural tests, and `parse` refused it as ambiguous. On
+    /// `e3map2.map`, `--map-set-tile 0 0 8` failed while slots 7 and 9 succeeded.
+    ///
+    /// The whole slot range is swept rather than just 8, because a test that only tries the one
+    /// value that broke cannot show the rule is right anywhere else.
+    #[test]
+    fn a_grid_map_whose_first_cell_is_tile_eight_is_still_grid_form() {
+        for tile in 0..=16_u32 {
+            let bytes = grid_form_bytes(64, 64, tile);
+            assert_eq!(
+                MapHeaderForm::detect(&bytes),
+                Some(MapHeaderForm::Grid),
+                "a 64x64 grid whose cell 0 is tile {tile} was not read as grid-form"
+            );
+            let map = MapAsset::parse(&bytes)
+                .unwrap_or_else(|error| panic!("tile {tile} did not parse: {error}"));
+            assert_eq!(map.header_form, MapHeaderForm::Grid, "tile {tile}");
+            assert_eq!(map.cells[0].tile_index(), tile, "tile {tile}");
+            assert_eq!(map.to_bytes().expect("it re-encodes"), bytes, "tile {tile}");
+        }
+    }
+
+    /// Slot 8 is the value that fits both tests, so the sweep above is not vacuous.
+    ///
+    /// Without this, `a_grid_map_whose_first_cell_is_tile_eight_is_still_grid_form` would still
+    /// pass if the ambiguity had simply stopped arising -- and would then be asserting nothing
+    /// about the tie-break it exists to pin.
+    #[test]
+    fn tile_eight_is_the_slot_that_makes_both_forms_fit() {
+        let ambiguous: Vec<u32> = (0..=16_u32)
+            .filter(|tile| MapAsset::matching_header_forms(&grid_form_bytes(64, 64, *tile)).len() == 2)
+            .collect();
+        assert_eq!(
+            ambiguous,
+            vec![8],
+            "the structural tests no longer single out the bytes-per-cell value"
+        );
+    }
+
+    /// An ordinary scenario map is scenario-form. The control for the tie-break tests.
+    #[test]
+    fn a_scenario_map_with_a_real_tail_stays_scenario_form() {
+        let bytes = uniform_map(11, 3, 15);
+        assert_eq!(MapAsset::matching_header_forms(&bytes).len(), 1);
+        assert_eq!(MapHeaderForm::detect(&bytes), Some(MapHeaderForm::Scenario));
+        let map = MapAsset::parse(&bytes).expect("a scenario map parses");
+        assert_eq!(map.header_form, MapHeaderForm::Scenario);
+        assert_eq!(map.metadata, Some(0x6c));
+    }
+
+    /// When both forms fit **and** the scenario remainder is section-shaped, `Scenario` wins.
+    ///
+    /// The other half of the tie-break, and it needs a deliberately constructed buffer because no
+    /// accident produces one: a 9x7 grid whose cell 0 is tile 8 reads as a scenario of version 9,
+    /// 7x8 cells, leaving a 52-byte remainder, and planting `1` in cell 56's elevation word puts a
+    /// count of 1 at that remainder's head -- exactly one 48-byte record plus a four-byte count.
+    ///
+    /// **Without this the tie-break is half-tested**, and measurably so: a mutant that returns
+    /// `Grid` unconditionally passed all 74 of this module's tests before it was added.
+    #[test]
+    fn a_tie_whose_scenario_remainder_is_section_shaped_reads_as_scenario() {
+        let (width, height) = (9_u32, 7_u32);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&width.to_le_bytes());
+        bytes.extend_from_slice(&height.to_le_bytes());
+        bytes.extend_from_slice(&(CELL_SIZE as u32).to_le_bytes());
+        for index in 0..(width * height) as usize {
+            bytes.extend_from_slice(&(if index == 0 { 8_u32 } else { 0 }).to_le_bytes());
+            bytes.extend_from_slice(&(if index == 56 { 1_u32 } else { 0 }).to_le_bytes());
+        }
+        assert_eq!(
+            MapAsset::matching_header_forms(&bytes).len(),
+            2,
+            "the fixture is meant to fit both forms; it no longer does"
+        );
+        assert_eq!(
+            MapHeaderForm::detect(&bytes),
+            Some(MapHeaderForm::Scenario),
+            "a section-shaped remainder must keep the scenario reading"
+        );
+    }
 
     /// The cell tag a cell holding `tile` has in these fixtures: the tile plus the unknown bit,
     /// which `uniform_map` sets and every edit must preserve.
@@ -2784,8 +3167,8 @@ mod tests {
 
         let map = MapAsset::parse(&source).unwrap();
 
-        assert_eq!(map.metadata, 42);
-        assert_eq!((map.width, map.height, map.bits_per_pixel), (2, 1, 8));
+        assert_eq!(map.metadata, Some(42));
+        assert_eq!((map.width, map.height, map.cell_bytes), (2, 1, 8));
         assert_eq!(map.cells[0].tag, 7);
         assert_eq!(map.cells[0].value, 1.5);
         assert_eq!(map.cells[1].value_bits, (-2.0_f32).to_bits());

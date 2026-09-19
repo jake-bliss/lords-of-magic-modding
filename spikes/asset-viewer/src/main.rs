@@ -8,7 +8,8 @@ use std::rc::Rc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use lom_asset_viewer::asset::{AssetKind, probe};
+use lom_asset_viewer::asset::{self, AssetKind, probe};
+use lom_asset_viewer::asura::AsuraText;
 use lom_asset_viewer::gameplay_symbols;
 use lom_asset_viewer::gamescript::{GameScriptDocument, is_number_token};
 use lom_asset_viewer::gs_facts::GsFacts;
@@ -99,6 +100,8 @@ enum MapEdit {
 
 enum Command {
     Catalog(Source),
+    /// Decode an `Asura` `.asr` string table and report whether it re-encodes exactly.
+    DescribeAsura(PathBuf),
     DescribeMap(PathBuf),
     /// Report which shipped `.til` the engine reads this map through.
     TileSetForMap(PathBuf),
@@ -355,6 +358,7 @@ fn main() {
 fn run() -> Result<(), String> {
     match parse_args()? {
         Command::Catalog(source) => catalog_archive(&source),
+        Command::DescribeAsura(path) => describe_asura(&path),
         Command::DescribeMap(path) => describe_map(&path),
         Command::TileSetForMap(path) => tile_set_for_map(&path),
         Command::DumpMapCells { path, rect } => dump_map_cells(&path, rect),
@@ -545,6 +549,10 @@ fn parse_args() -> Result<Command, String> {
         "--catalog" => {
             require_len(&args, 2)?;
             Ok(Command::Catalog(source(&args[1], listfile)))
+        }
+        "--describe-asura" => {
+            require_len(&args, 2)?;
+            Ok(Command::DescribeAsura(args[1].clone().into()))
         }
         "--describe-map" => {
             require_len(&args, 2)?;
@@ -1161,7 +1169,7 @@ fn require_len(args: &[String], expected: usize) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --loose-inventory INSTALL_ROOT PROFILE_LABEL\n  lom-asset-viewer --loose-config FILE\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --import-png-imp INPUT.png SOURCE.imp FRAME OUTPUT.imp\n  lom-asset-viewer --wave-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --wave-roundtrip-dir DIRECTORY\n  lom-asset-viewer --export-wave ARCHIVE.mpq MEMBER OUTPUT.wav [--listfile FILE]\n  lom-asset-viewer --import-wave EDITED.wav TEMPLATE.wav OUTPUT.wav [--allow-format-change] [--allow-dangling-loops]\n  lom-asset-viewer --describe-smk FILE.smk\n  lom-asset-viewer --scan-smk-dir DIRECTORY\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --imp-roundtrip ARCHIVE.mpq [--listfile FILE] [--rewrite]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
+    "usage:\n  lom-asset-viewer --list ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --catalog ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --scan-gamescript ARCHIVE.mpq [--listfile FILE] [--exe lomse.exe]\n  lom-asset-viewer --scan-natives lomse.exe [GS.MPQ] [--listfile FILE]\n  lom-asset-viewer --gs-facts ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --gs-facts FILE-OR-DIRECTORY\n  lom-asset-viewer --gameplay-symbol NAME [--reports DIR]\n  lom-asset-viewer --gameplay-symbols-like PATTERN [--reports DIR]\n  lom-asset-viewer --probe-gamescript ARCHIVE.mpq MEMBER [--listfile FILE] [--eval SOURCE] [--stub NAME=VALUE]...\n  lom-asset-viewer --scan-map-dir DIRECTORY\n  lom-asset-viewer --loose-inventory INSTALL_ROOT PROFILE_LABEL\n  lom-asset-viewer --loose-config FILE\n  lom-asset-viewer --describe-asura FILE.asr\n  lom-asset-viewer --describe-map FILE\n  lom-asset-viewer --map-tileset-for FILE\n  lom-asset-viewer --dump-map-cells FILE [X0 Y0 X1 Y1]\n  lom-asset-viewer --diff-maps LEFT RIGHT\n  lom-asset-viewer --map-roundtrip FILE-OR-DIRECTORY\n  lom-asset-viewer --map-create WIDTH HEIGHT TERRAIN OUT\n  lom-asset-viewer --map-sprite-types\n  lom-asset-viewer --map-transition-rings\n  lom-asset-viewer --map-rewrite IN OUT\n  lom-asset-viewer --map-set-high-flag IN X Y 0|1 OUT\n  lom-asset-viewer --map-flag-border IN OUT\n  lom-asset-viewer --map-flag-rect IN X0 Y0 X1 Y1 OUT\n  lom-asset-viewer --map-set-tile IN X Y TILE_SLOT OUT\n  lom-asset-viewer --map-set-terrain IN X Y TERRAIN OUT\n  lom-asset-viewer --map-set-elevation IN X Y VALUE OUT\n  lom-asset-viewer --map-fill-terrain IN TERRAIN OUT\n  lom-asset-viewer --map-paint-terrain IN X0 Y0 X1 Y1 TERRAIN OUT TILESET.til [--seed N]\n  lom-asset-viewer --map-place-sprite IN X Y SPRITE_TYPE OUT\n  lom-asset-viewer --map-remove-sprite IN INSTANCE_ID OUT\n  lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]\n  lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]\n  lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]\n  lom-asset-viewer --serve --pic PIC.MPQ [--port N]\n  lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]\n  lom-asset-viewer --set-imp-placement IN.imp FRAME X Y OUT.imp [--hotspot TYPE]\n  lom-asset-viewer --imp-placement-for WIDTH HEIGHT ANCHOR_X ANCHOR_Y TOP_LEFT_X TOP_LEFT_Y\n  lom-asset-viewer --export-map-preview FILE TILESET.til TILE_ATLAS.lbm OUTPUT.png\n  lom-asset-viewer --export-imp-frame ARCHIVE.mpq MEMBER FRAME OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --export-pbm ARCHIVE.mpq MEMBER OUTPUT.png [--listfile FILE]\n  lom-asset-viewer --import-png-pbm INPUT.png SOURCE.lbm OUTPUT.lbm\n  lom-asset-viewer --import-png-imp INPUT.png SOURCE.imp FRAME OUTPUT.imp\n  lom-asset-viewer --wave-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --wave-roundtrip-dir DIRECTORY\n  lom-asset-viewer --export-wave ARCHIVE.mpq MEMBER OUTPUT.wav [--listfile FILE]\n  lom-asset-viewer --import-wave EDITED.wav TEMPLATE.wav OUTPUT.wav [--allow-format-change] [--allow-dangling-loops]\n  lom-asset-viewer --describe-smk FILE.smk\n  lom-asset-viewer --scan-smk-dir DIRECTORY\n  lom-asset-viewer --pbm-roundtrip ARCHIVE.mpq [--listfile FILE]\n  lom-asset-viewer --imp-roundtrip ARCHIVE.mpq [--listfile FILE] [--rewrite]\n  lom-asset-viewer --inspect ARCHIVE.mpq [MEMBER] [--listfile FILE]\n  lom-asset-viewer --inspect-file FILE\n  lom-asset-viewer --extract ARCHIVE.mpq MEMBER OUTPUT [--listfile FILE]\n  lom-asset-viewer ARCHIVE.mpq [MEMBER] [--listfile FILE]".to_owned()
 }
 
 fn open_archive(source: &Source) -> Result<(Archive, Vec<Entry>), String> {
@@ -2981,12 +2989,13 @@ fn dump_map_cells(path: &Path, rect: Option<(u32, u32, u32, u32)>) -> Result<(),
         ));
     }
     println!(
-        "map\t{}\t{}x{}\tmetadata:0x{:08x}\tbpp:{}\ttrailing-offset:{}\ttrailing-bytes:{}\ttrailing-head:{}",
+        "map\t{}\t{}x{}\tform:{:?}\tmetadata:{}\tbytes-per-cell:{}\ttrailing-offset:{}\ttrailing-bytes:{}\ttrailing-head:{}",
         clean_field(&path.display().to_string()),
         map.width,
         map.height,
-        map.metadata,
-        map.bits_per_pixel,
+        map.header_form,
+        metadata_field(&map),
+        map.cell_bytes,
         map.trailing_offset(),
         map.trailing_bytes(),
         map.trailing_head_u32()
@@ -3033,21 +3042,21 @@ fn diff_maps(left: &Path, right: &Path) -> Result<(), String> {
     let (right_bytes, right_map) = read(right)?;
 
     println!(
-        "left\t{}\t{} bytes\t{}x{}\tmetadata:0x{:08x}\ttrailing-bytes:{}",
+        "left\t{}\t{} bytes\t{}x{}\tmetadata:{}\ttrailing-bytes:{}",
         clean_field(&left.display().to_string()),
         left_bytes.len(),
         left_map.width,
         left_map.height,
-        left_map.metadata,
+        metadata_field(&left_map),
         left_map.trailing_bytes(),
     );
     println!(
-        "right\t{}\t{} bytes\t{}x{}\tmetadata:0x{:08x}\ttrailing-bytes:{}",
+        "right\t{}\t{} bytes\t{}x{}\tmetadata:{}\ttrailing-bytes:{}",
         clean_field(&right.display().to_string()),
         right_bytes.len(),
         right_map.width,
         right_map.height,
-        right_map.metadata,
+        metadata_field(&right_map),
         right_map.trailing_bytes(),
     );
 
@@ -3175,10 +3184,58 @@ fn tile_set_for_map(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Decode an `Asura` string table: every record, every key, and the round-trip verdict.
+///
+/// The `round-trips` line is printed rather than merely checked because this emitter recomputes
+/// every derived word; if a length rule or the hash were wrong the re-encoded file would differ
+/// from the installed one, and that has to be visible rather than silent.
+fn describe_asura(path: &Path) -> Result<(), String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let page = AsuraText::parse(&bytes).map_err(|error| error.to_string())?;
+    println!("file\t{}", clean_field(&path.display().to_string()));
+    println!("chunk\t{}", String::from_utf8_lossy(&page.chunk_id));
+    println!("chunk-version\t{}", page.chunk_version);
+    println!("page-name\t{}", page.page_name());
+    println!("page-name-hash\t0x{:08x}", page.page_name_hash());
+    println!("records\t{}", page.strings.len());
+    println!("text-bytes\t{}", page.text_bytes());
+    println!("keys-match-records\t{}", page.keys_match_records());
+    println!("trailer-bytes\t{}", page.trailer.len());
+    println!("round-trips\t{}", page.to_bytes() == bytes);
+    println!("record\tindex\tkey\thash\tunits\ttext");
+    for (index, record) in page.strings.iter().enumerate() {
+        let key = page
+            .keys
+            .get(index)
+            .map_or("-", String::as_str);
+        println!(
+            "record\t{index}\t{key}\t0x{:08x}\t{}\t{}",
+            record.hash,
+            record.unit_count(),
+            clean_field(&record.text),
+        );
+    }
+    Ok(())
+}
+
 fn describe_map(path: &Path) -> Result<(), String> {
     let bytes =
         fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let map = MapAsset::parse(&bytes).map_err(|error| error.to_string())?;
+    // A grid-form map has no tail at all, which is a different statement from "its tail is a
+    // layout this tool cannot read". Saying so is the point: reporting the undecoded-layout error
+    // for `map/e3map2.map` would claim there is something here that has not been decoded.
+    if !map.header_form.has_tail() {
+        println!(
+            "map\t{}\t{}x{}\tform:{:?}\trecords:none\tfooter:none",
+            clean_field(&path.display().to_string()),
+            map.width,
+            map.height,
+            map.header_form,
+        );
+        return Ok(());
+    }
     let section = map.placed_sprites.as_ref().ok_or_else(|| {
         format!(
             "{}'s trailing section is not one of the six decoded placed-sprite layouts",
@@ -3187,10 +3244,11 @@ fn describe_map(path: &Path) -> Result<(), String> {
     })?;
 
     println!(
-        "map\t{}\t{}x{}\tlayout:{}\trecords:{}\tfooter:{}",
+        "map\t{}\t{}x{}\tform:{:?}\tlayout:{}\trecords:{}\tfooter:{}",
         clean_field(&path.display().to_string()),
         map.width,
         map.height,
+        map.header_form,
         section.layout,
         section.records.len(),
         section
@@ -3385,7 +3443,7 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
     let mut failures = Vec::new();
 
     for path in &paths {
-        let Some(kind) = map_kind(path) else {
+        let Some(extension_kind) = map_kind(path) else {
             continue;
         };
         let result = fs::read(path)
@@ -3399,14 +3457,15 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
             }
         };
         parsed += 1;
+        // Counted under what the header says it is, not under what it is called.
+        let kind = asset::map_kind_for_form(extension_kind, map.header_form);
         *kind_counts.entry(kind).or_default() += 1;
         *dimension_counts
             .entry((kind, map.width, map.height))
             .or_default() += 1;
-        metadata_values
-            .entry(kind)
-            .or_default()
-            .insert(map.metadata);
+        if let Some(metadata) = map.metadata {
+            metadata_values.entry(kind).or_default().insert(metadata);
+        }
         let range = trailing_ranges
             .entry(kind)
             .or_insert((map.trailing_bytes(), map.trailing_bytes()));
@@ -3415,7 +3474,13 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
         // The layout the parser resolved, not the arithmetic candidates: a section whose length
         // fits two layouts is common (four 48-byte records and four 47-byte records plus a footer
         // are both 196 bytes) and reporting that as "ambiguous" hid which one was decoded.
-        let layout = match map.resolved_tail_layout() {
+        // "no tail" and "a tail this tool could not resolve" are different findings, and
+        // collapsing them would have `map/e3map2.map` report an undecoded section it does not
+        // have.
+        let layout = if !map.header_form.has_tail() {
+            "none".to_owned()
+        } else {
+            match map.resolved_tail_layout() {
             Some(layout) => layout.to_string(),
             None => format!(
                 "undecoded:{}",
@@ -3428,6 +3493,7 @@ fn scan_map_directory(directory: &Path) -> Result<(), String> {
                         .join("|"),
                 }
             ),
+            }
         };
         *tail_layout_counts.entry((kind, layout)).or_default() += 1;
         if let Some(section) = &map.placed_sprites {
@@ -3524,9 +3590,26 @@ fn collect_map_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), S
     Ok(())
 }
 
+/// A map's version word rendered for a report line: hex, or `none` for the grid form.
+///
+/// A grid-form map has no version slot at all, so this prints `none` rather than `0x00000000` --
+/// a zero there would read as a version word the file does not contain.
+fn metadata_field(map: &MapAsset) -> String {
+    map.metadata
+        .map_or_else(|| "none".to_owned(), |word| format!("0x{word:08x}"))
+}
+
+/// Whether this path is offered to the map parser at all, and the kind its extension suggests.
+///
+/// **Candidacy only.** The kind a row is finally counted under comes from the sniffed
+/// `header_form`, through `asset::map_kind_for_form`, because the extension does not decide the
+/// format in the engine either -- `lomse.exe` holds no `.map`, `.smp`, `.scn` or `.lgd` literal,
+/// and a script passes `"map/thanh.smp"` and `"map/test.map"` to the same `startspecialcombat`
+/// argument. Counting by extension bucketed a scenario-form file named `.map` under `map-grid`.
 fn map_kind(path: &Path) -> Option<AssetKind> {
     match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
         "lgd" => Some(AssetKind::LegendScenario),
+        "map" => Some(AssetKind::MapGrid),
         "scn" => Some(AssetKind::MapScenario),
         "smp" => Some(AssetKind::MapComponent),
         _ => None,
@@ -6839,10 +6922,11 @@ mod tests {
     #[test]
     fn map_display_modes_lay_packed_cells_out_in_rows() {
         let map = MapAsset {
-            metadata: 1,
+            metadata: Some(1),
+            header_form: lom_asset_viewer::map::MapHeaderForm::Scenario,
             width: 3,
             height: 2,
-            bits_per_pixel: 8,
+            cell_bytes: 8,
             cells: vec![
                 MapCell {
                     tag: 4,
@@ -6896,10 +6980,11 @@ mod tests {
     #[test]
     fn terrain_preview_resolves_map_tile_indexes_through_the_atlas() {
         let map = MapAsset {
-            metadata: 0,
+            metadata: Some(0),
+            header_form: lom_asset_viewer::map::MapHeaderForm::Scenario,
             width: 2,
             height: 3,
-            bits_per_pixel: 8,
+            cell_bytes: 8,
             // Packed `y * width + x`, and non-square with alternating tiles so that a row read as
             // a column resolves different atlas pixels. A 2x1 fixture cannot tell them apart.
             cells: (0..6)
@@ -9399,7 +9484,7 @@ TILE= 32,    4, *,    *,   *,    *,   *,    *,   *,    *,    32
 
         let written = MapAsset::parse(&fs::read(&output).unwrap()).unwrap();
         assert_eq!((written.width, written.height), (96, 64));
-        assert_eq!(written.metadata, GENERATED_HEADER_WORD);
+        assert_eq!(written.metadata, Some(GENERATED_HEADER_WORD));
         assert!(written.cells.iter().all(|cell| cell.tile_index() == 15));
         assert!(written.cells.iter().all(|cell| !cell.high_flag_set()));
         assert_eq!(written.placed_sprites.as_ref().unwrap().records.len(), 0);

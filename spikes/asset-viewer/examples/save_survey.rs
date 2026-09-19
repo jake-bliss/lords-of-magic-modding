@@ -171,7 +171,7 @@ fn main() -> ExitCode {
             "    LS_MAP_  {}x{} bpc {}  plane count {}  trailer {}",
             save.map.map.width,
             save.map.map.height,
-            save.map.map.bits_per_pixel,
+            save.map.map.cell_bytes,
             save.map.plane_count,
             save.map.trailer,
         );
@@ -480,7 +480,7 @@ fn normalized_state(save: &SaveFile) -> Vec<u8> {
 
     out.extend_from_slice(&save.map.map.width.to_le_bytes());
     out.extend_from_slice(&save.map.map.height.to_le_bytes());
-    out.extend_from_slice(&save.map.map.bits_per_pixel.to_le_bytes());
+    out.extend_from_slice(&save.map.map.cell_bytes.to_le_bytes());
     out.extend_from_slice(&save.map.plane_count.to_le_bytes());
     out.extend_from_slice(&save.map.trailer.to_le_bytes());
     for cell in &save.map.map.cells {

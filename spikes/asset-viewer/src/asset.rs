@@ -3,7 +3,7 @@ use std::fmt;
 
 use crate::bmp::{BitmapImage, BmpErrorKind};
 use crate::imp::{ImpHeaderStats, ImpSprite};
-use crate::map::MapAsset;
+use crate::map::{MapAsset, MapHeaderForm};
 use crate::pbm::PbmImage;
 use crate::smacker::SmackerFile;
 use crate::tile::TileSetDefinition;
@@ -20,7 +20,10 @@ pub enum AssetKind {
     ImpSprite,
     LegendScenario,
     Listfile,
+    AsuraText,
     MapComponent,
+    /// A bare cell grid: the `.map` files, which carry no version word and no tail.
+    MapGrid,
     MapScenario,
     MpqArchive,
     PortableExecutable,
@@ -44,7 +47,9 @@ impl fmt::Display for AssetKind {
             Self::ImpSprite => "imp-sprite",
             Self::LegendScenario => "legend-scenario",
             Self::Listfile => "mpq-listfile",
+            Self::AsuraText => "asura-text",
             Self::MapComponent => "map-component",
+            Self::MapGrid => "map-grid",
             Self::MapScenario => "map-scenario",
             Self::MpqArchive => "mpq-archive",
             Self::PortableExecutable => "portable-executable",
@@ -132,8 +137,14 @@ pub fn probe(name: &str, bytes: &[u8]) -> Result<AssetInfo, String> {
     if extension == "til" {
         return probe_tile_set(bytes);
     }
+    if extension == "asr" {
+        return probe_asura_text(bytes);
+    }
+    // The extension only decides that this file is *offered* to the map parser. Which kind it is
+    // reported as comes from the header the parser sniffs -- see `probe_map`.
     if let Some(kind) = match extension {
         "lgd" => Some(AssetKind::LegendScenario),
+        "map" => Some(AssetKind::MapGrid),
         "scn" => Some(AssetKind::MapScenario),
         "smp" => Some(AssetKind::MapComponent),
         _ => None,
@@ -176,8 +187,17 @@ fn probe_tile_set(bytes: &[u8]) -> Result<AssetInfo, String> {
     ))
 }
 
-fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
+/// Describe a map, reporting the kind its **contents** say it is.
+///
+/// `extension_kind` is only the candidacy hint that got us here. The kind reported comes from the
+/// sniffed [`MapHeaderForm`], because the extension does not decide the format in the engine
+/// either: `lomse.exe` contains no `.map`, `.smp`, `.scn` or `.lgd` literal at all, and a script
+/// hands `"map/thanh.smp"` and `"map/test.map"` to the same `startspecialcombat` argument. Taking
+/// the kind from the extension made a scenario-form file named `.map` -- which the engine permits
+/// -- print `map-grid` and `header-form=Scenario` on one line. Found by review.
+fn probe_map(extension_kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
     let map = MapAsset::parse(bytes).map_err(|error| error.to_string())?;
+    let kind = map_kind_for_form(extension_kind, map.header_form);
     let distinct_tags: BTreeSet<u32> = map.cells.iter().map(|cell| cell.tag).collect();
     let distinct_tile_indexes: BTreeSet<u32> =
         map.cells.iter().map(|cell| cell.tile_index()).collect();
@@ -239,15 +259,51 @@ fn probe_map(kind: AssetKind, bytes: &[u8]) -> Result<AssetInfo, String> {
     Ok(AssetInfo::new(
         kind,
         format!(
-            "metadata={};width={};height={};bits-per-pixel={};cells={};distinct-cell-tags={};distinct-tile-indexes={};high-flag-cells={high_flag_cells};candidate-value-range={value_range};nonfinite-values={nonfinite_values};trailing-bytes={};trailing-head-u32={trailing_head};tail-layout={tail_layouts};placed-sprite-records={placed_sprite_count};placed-sprite-types={placed_sprite_types};placed-sprite-footer={placed_sprite_footer}",
-            map.metadata,
+            "header-form={:?};metadata={};width={};height={};bytes-per-cell={};cells={};distinct-cell-tags={};distinct-tile-indexes={};high-flag-cells={high_flag_cells};candidate-value-range={value_range};nonfinite-values={nonfinite_values};trailing-bytes={};trailing-head-u32={trailing_head};tail-layout={tail_layouts};placed-sprite-records={placed_sprite_count};placed-sprite-types={placed_sprite_types};placed-sprite-footer={placed_sprite_footer}",
+            map.header_form,
+            map.metadata
+                .map_or_else(|| "none".to_owned(), |metadata| metadata.to_string()),
             map.width,
             map.height,
-            map.bits_per_pixel,
+            map.cell_bytes,
             map.cells.len(),
             distinct_tags.len(),
             distinct_tile_indexes.len(),
             map.trailing_bytes(),
+        ),
+    ))
+}
+
+/// The asset kind a parsed map is, given the extension that offered it.
+///
+/// Grid form is [`AssetKind::MapGrid`] whatever the file is called; scenario form keeps the
+/// extension's distinction between component, scenario and legend, which is a distinction about
+/// what the file is *for* rather than about its layout -- all three are one format.
+///
+/// A scenario-form file with a `.map` extension has no extension-derived kind to keep, so it is
+/// reported as a plain [`AssetKind::MapScenario`].
+pub fn map_kind_for_form(extension_kind: AssetKind, form: MapHeaderForm) -> AssetKind {
+    match form {
+        MapHeaderForm::Grid => AssetKind::MapGrid,
+        MapHeaderForm::Scenario if extension_kind == AssetKind::MapGrid => AssetKind::MapScenario,
+        MapHeaderForm::Scenario => extension_kind,
+    }
+}
+
+/// An `Asura` `.asr` string table. See [`crate::asura`].
+fn probe_asura_text(bytes: &[u8]) -> Result<AssetInfo, String> {
+    let page = crate::asura::AsuraText::parse(bytes).map_err(|error| error.to_string())?;
+    Ok(AssetInfo::new(
+        AssetKind::AsuraText,
+        format!(
+            "chunk={};version={};page={};records={};text-bytes={};keys-match-records={};trailer-bytes={}",
+            String::from_utf8_lossy(&page.chunk_id),
+            page.chunk_version,
+            page.page_name(),
+            page.strings.len(),
+            page.text_bytes(),
+            page.keys_match_records(),
+            page.trailer.len(),
         ),
     ))
 }
@@ -575,6 +631,68 @@ fn read_i32_le(bytes: &[u8], offset: usize) -> Result<i32, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Four words, `width x height` eight-byte cells, and an empty record section.
+    fn scenario_form_bytes(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0x6f_u32.to_le_bytes());
+        bytes.extend_from_slice(&width.to_le_bytes());
+        bytes.extend_from_slice(&height.to_le_bytes());
+        bytes.extend_from_slice(&8_u32.to_le_bytes());
+        for _ in 0..width * height {
+            bytes.extend_from_slice(&15_u32.to_le_bytes());
+            bytes.extend_from_slice(&0_u32.to_le_bytes());
+        }
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes
+    }
+
+    /// Three words and `width x height` cells, and nothing after them.
+    fn grid_form_bytes(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&width.to_le_bytes());
+        bytes.extend_from_slice(&height.to_le_bytes());
+        bytes.extend_from_slice(&8_u32.to_le_bytes());
+        for _ in 0..width * height {
+            bytes.extend_from_slice(&15_u32.to_le_bytes());
+            bytes.extend_from_slice(&0_u32.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// The reported kind follows the header, not the file name.
+    ///
+    /// **Regression, found by review.** `probe` took the kind straight from the extension, so a
+    /// scenario-form file named `.map` -- which the engine permits, since it holds no extension
+    /// literal at all -- came back as `map-grid` while the same line said `header-form=Scenario`.
+    #[test]
+    fn a_map_is_classified_by_its_header_and_not_by_its_extension() {
+        let scenario = scenario_form_bytes(11, 3);
+        let grid = grid_form_bytes(11, 3);
+
+        // A scenario-form file wearing the grid form's extension.
+        let info = probe("misnamed.map", &scenario).expect("it parses");
+        assert_eq!(info.kind, AssetKind::MapScenario);
+        assert!(info.details.contains("header-form=Scenario"), "{}", info.details);
+
+        // A grid-form file wearing a scenario extension.
+        for name in ["misnamed.smp", "misnamed.scn", "misnamed.lgd"] {
+            let info = probe(name, &grid).expect("it parses");
+            assert_eq!(info.kind, AssetKind::MapGrid, "{name}");
+            assert!(info.details.contains("header-form=Grid"), "{name}");
+        }
+
+        // And the ordinary cases still land where they always did.
+        assert_eq!(
+            probe("real.smp", &scenario).expect("it parses").kind,
+            AssetKind::MapComponent
+        );
+        assert_eq!(
+            probe("real.map", &grid).expect("it parses").kind,
+            AssetKind::MapGrid
+        );
+    }
 
     #[test]
     fn probes_pcm_wave_metadata() {
