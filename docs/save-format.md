@@ -527,15 +527,26 @@ produces carries the equality *by construction*, whatever is right or wrong abou
 boundary downstream. This is the repository's own "agreement is not confirmation" lesson: two
 writers writing one field always agree.
 
-**What measuring it does buy, which is not nothing.** On a format with no checksum, it confirms
-per record that a file is aligned, uncorrupted, and written by the expected writer. `save_survey`
-now evaluates and prints it per file and `SaveFile::regularities` carries it, so the statement
-below is reproducible rather than asserted, and a future disagreement is reported as a
-**discovery about the file** instead of passing in silence.
+**What measuring it buys is one-way, and the first draft of this paragraph got even that wrong.**
+It claimed agreement "confirms per record that a file is aligned, uncorrupted, and written by the
+expected writer". It does not. Flip any byte of a record's class-specific **body** and leave the
+two class-id dwords alone: the check still reports zero disagreements, `regularities()` still
+passes, and the survey still counts the file clean while it is corrupt. The implication runs one
+way only:
+
+- **Disagreement** proves something is wrong — corruption, a misaligned parse, or another writer.
+- **Agreement** proves only that those two dwords match. It is not an integrity check on the file,
+  on the record, or on anything else.
+
+On a format with no checksum a one-way detector is still worth having, and `save_survey` evaluates
+it per file with `SaveFile::regularities` carrying it, so the count below is reproducible rather
+than asserted and a future disagreement is reported as a **discovery about the file** instead of
+passing in silence.
 
 **Observed in the corpus, 2026-09-18:** 0 disagreements in 31 of 31 files, across all 25,000-odd
-records. It is **not** evidence about the layouts, and in particular it cannot detect a wrong
-split of the 24-byte base block.
+records — which, per the above, means no file *failed* the detector, not that any file is sound.
+It is **not** evidence about the layouts, and in particular it cannot detect a wrong split of the
+24-byte base block.
 
 ```text
 base := u32 class_id_echo ; u32 +0x1C ; u32 +0x20 ; u32 +0x24 ; u32 +0x28 ; u32 +0x30
@@ -665,12 +676,21 @@ four billion records and reject it. No corpus file does this today — which is 
 reachability argument a new save invalidates.
 
 **Three counts are not guarded this way and are deliberately not treated as if they were.** The
-list counts inside a class-0 slot (`0x00524FC6`, `0x00525037`, `0x0044BD07`) are `test / je`
+list counts inside a class-0 slot (`0x00524FC6`, `0x0052503B`, `0x0044BD07`) are `test / je`
 followed by a decrement — a `do { } while (--n)` loop with no signed test, so a negative value
 does not skip, it runs away. There is no correct behaviour to mirror. This parser reads them
 unsigned and refuses, **a refusal where the engine would misbehave**; that is the right direction
 to differ in, but it is a difference, and `spr_unguarded_count` exists so that it is visible at
 each of the three call sites rather than hidden behind a cast that looks like the guarded case.
+
+**And two more are lengths, not counts.** Class 2's blob length reaches the `fread` at
+`0x0043D0E3` and class 3's the one at `0x004516F7`, in both cases as the `size` argument with no
+compare, branch or clamp anywhere in between. They are a third shape, they go through
+`spr_unguarded_length`, and the only reason that marker exists is that they sat silently outside
+the classification until a review found them — behaviour right, marker missing, which is how a
+convention rots. Every file-declared number in the section now goes through exactly one of the
+three markers, or is on a short, exactly matched list of reads that are not quantities at all
+(the nested factory's type id is the only member); a test enforces it.
 
 #### Refuted: the counted byte array in class 0 is not a string
 
@@ -703,11 +723,31 @@ values rather than the parser's constants. Driving the whole record set at every
 `0x30` to `0x80`, plus 0, 1, 50, 108, 111, 200, 9999 and `u32::MAX`, makes parser and fixture
 genuinely able to disagree: if any gate differs between them the record lengths differ and the
 section either overruns or leaves bytes over. `tools/mutate_save_constants.py` turns that into a
-number — **69 of 72 single-step mutations of this section's constants are caught, in both
+number — **73 of 76 single-step mutations of this section's constants are killed, in both
 directions**. The harness is in the repository rather than in a transcript, because a sweep
-nobody can re-run is a number nobody can check, and `tests/test_mutate_save_constants.py` asserts
-that it still reaches every gate constant and that each of its structural mutations still matches
-the source, so its coverage cannot quietly shrink while the headline number stays put. The three survivors are all expected and all named by the harness:
+nobody can re-run is a number nobody can check.
+
+**A mutation harness fails open, and this one was found failing open three ways.** The number it
+prints is worth only the harness's own honesty, so:
+
+- **It verifies its baseline before it mutates anything** and aborts nonzero if the suite is not
+  green, printing what it measured against. The first version inferred "caught" from the *absence*
+  of `test result: ok` in stdout, so a suite that could not build, could not take the target lock,
+  or failed for an unrelated reason would mark **every** mutant caught and exit 0 — total failure
+  and total success producing the same output. Success is now `returncode == 0`, never a
+  substring. A sister branch lost three commits to a red baseline making one survivor look killed;
+  this polarity is worse. Both red-baseline modes were checked by hand: a failing test and a
+  crate that will not compile each abort with exit 2.
+- **Its expected-survivor list is matched by equality, in both directions.** Substring matching
+  would excuse a future gate named `SPR_NESTED_LAST_WORD_MIN_EXTRA` in silence, and an exemption
+  that has stopped excusing anything must be deleted rather than left standing.
+- **A mutation whose pattern stops matching is `SKIPPED`, not a survivor,** and always fails the
+  run. Folding skips into the survivor list let an exempt mutation quietly stop being run at all.
+- **A mutant that does not compile is counted separately from one the tests killed.** Both are
+  "not survived"; only the second is evidence that a test can see the constant.
+
+`tests/test_mutate_save_constants.py` pins all of that, plus the exhaustiveness of the count
+taxonomy, so coverage cannot shrink while the headline number stays put. The three survivors are all expected and all named by the harness:
 `SPR_NESTED_LAST_WORD_MIN` moved either way, which guards a branch
 [this build cannot reach](#4-the-pre-version-99-ls_mult-layout-is-implemented-but-unexercised),
 and one deliberate compensating pair described below.
@@ -1165,7 +1205,7 @@ Three specific holes inside that:
   movement-path reading is **Inferred** and nothing rests on it.
 - **The version gates below 108 are transcribed, never exercised.** The corpus holds only 108 and
   111. The gate sweep drives every rung of the ladder against an independently written fixture and
-  `tools/mutate_save_constants.py` reports **69 of 72** single-step mutations caught in both
+  `tools/mutate_save_constants.py` reports **73 of 76** single-step mutations killed in both
   directions — but a fixture transcribed from the same reading of the same binary cannot confirm
   that the engine's own pre-108 writer produced it. Two of the three survivors are a single gate,
   `0x0044B6E0`, which is **unreachable in this build** because a second test against the build

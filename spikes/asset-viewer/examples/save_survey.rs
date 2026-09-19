@@ -76,7 +76,7 @@ fn main() -> ExitCode {
     let mut stride_intersection: Option<Vec<usize>> = None;
     let mut sprite_round_trips = 0_usize;
     let mut file_round_trips = 0_usize;
-    let mut sprite_echo_clean = 0_usize;
+    let mut sprite_files_with_no_echo_disagreement = 0_usize;
 
     for path in &paths {
         let label = display_name(path);
@@ -197,7 +197,7 @@ fn main() -> ExitCode {
             save.sprites.records.len(),
         );
         if save.sprites.class_id_echo_disagreements() == 0 {
-            sprite_echo_clean += 1;
+            sprite_files_with_no_echo_disagreement += 1;
         }
         // The round trip is printed per file rather than only aggregated, because "31/31" hides
         // which file broke on the run where it is not 31.
@@ -365,10 +365,10 @@ fn main() -> ExitCode {
 
     let strides = stride_intersection.unwrap_or_default();
     println!(
-        "\nLS_SPR_ class-id echo agrees in every record of {sprite_echo_clean}/{parsed} file(s)"
+        "\nLS_SPR_ class-id echo: no record disagrees in {sprite_files_with_no_echo_disagreement}/{parsed} file(s)"
     );
     println!(
-        "  -> an INTEGRITY check, not a layout check. The writer emits the same [object+4]\n     twice, at 0x004F6C25 and 0x004F6A8B, so this CANNOT fail on a save this engine wrote.\n     A failure means the file is damaged or came from another writer; it cannot detect a\n     wrong layout."
+        "  -> a ONE-WAY detector. The writer emits the same [object+4] twice, at 0x004F6C25\n     and 0x004F6A8B, so this CANNOT fail on a save this engine wrote. DISAGREEMENT would\n     prove damage, misalignment or another writer; AGREEMENT proves only that those two\n     dwords match -- flip any body byte and this still reports zero. Not an integrity\n     check on the file, and it cannot detect a wrong layout."
     );
     println!(
         "\nLS_SPR_ re-encoded byte-identically from its decoded records in {sprite_round_trips}/{parsed} file(s)\nwhole files reassembled byte-identically with LS_SPR_ regenerated: {file_round_trips}/{parsed}"

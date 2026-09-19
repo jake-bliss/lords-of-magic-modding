@@ -804,8 +804,8 @@ impl MultiplayerSection {
 
 /// The three values the cell visibility field takes across the whole corpus.
 ///
-/// **Observed in a local binary, 2026-09-18.** Across all 131,072 cells of every corpus
-/// files the field holds **0, 63 or 128 and nothing else**. What those mean is **Inferred**; see
+/// **Observed in a local binary, 2026-09-18.** Across all 131,072 cells of every corpus file
+/// the field holds **0, 63 or 128 and nothing else**. What those mean is **Inferred**; see
 /// [`MapSection::visibility_histogram`].
 pub const OBSERVED_VISIBILITY_LEVELS: [i16; 3] = [0, 63, 128];
 
@@ -1116,10 +1116,10 @@ pub const SPRITE_MAX_CLASS_ID: u32 = 9;
 /// writing one field always agree, and their agreement says nothing about any boundary
 /// downstream.
 ///
-/// What measuring it on the corpus does buy: it confirms a file is **aligned, uncorrupted and
-/// written by the expected writer**, per record. That is a real integrity signal on a format with
-/// no checksum, and the survey reports it per file so the "every record, every file" statement is
-/// reproducible instead of asserted. It is **not** evidence about the layouts. See
+/// What measuring it buys is **one-way**. Disagreement proves something is wrong: corruption, a
+/// misaligned parse, or another writer. Agreement proves only that those two dwords match -- flip
+/// any byte of a record's class-specific body and the check still reports zero. It is not an
+/// integrity check on the record, and it is not evidence about the layouts. See
 /// [`SpriteRecord::class_id_echo_agrees`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpriteBase {
@@ -1184,8 +1184,12 @@ impl SpriteRecord {
     /// Whether the base block's echo of the class id matches the dispatch dword.
     ///
     /// **Forced by the writer**, which emits the same `[object+4]` at `0x004F6C25` and
-    /// `0x004F6A8B`. A disagreement therefore means the file is damaged or was not written by
-    /// this engine -- it does **not** mean a record layout is wrong, and it cannot detect one.
+    /// `0x004F6A8B`, so this is a **one-way** detector.
+    ///
+    /// `false` means something is wrong: the file is damaged, the parse is misaligned, or another
+    /// writer produced it. `true` means **only that these two dwords match** -- every other byte
+    /// of the record could be corrupt and this would still be `true`. It does not mean a record
+    /// layout is right and it cannot detect a wrong one.
     pub fn class_id_echo_agrees(&self) -> bool {
         self.base.class_id_echo == self.class_id
     }
@@ -1283,7 +1287,10 @@ pub const SPRITE_NESTED_MAX_TYPE_ID: u32 = 3;
 /// fail, refusing it fails the **whole file** on a save the game loads.
 ///
 /// Not every count in the section is guarded this way, and the ones that are not are **not**
-/// routed through here. See [`spr_unguarded_count`].
+/// routed through here. The section has **three** shapes in total, and every file-declared number
+/// in it goes through exactly one of the three: [`spr_signed_count`] and [`spr_signed_count16`]
+/// for the `jle`-guarded counts, [`spr_unguarded_count`] for the `test / je` do-while loops, and
+/// [`spr_unguarded_length`] for the two lengths handed straight to `fread`.
 fn spr_signed_count(raw: u32) -> u32 {
     (raw as i32).max(0) as u32
 }
@@ -1298,14 +1305,29 @@ fn spr_signed_count16(raw: u16) -> u16 {
 /// A count the engine guards only with `test / je` and then decrements -- a `do { } while (--n)`
 /// loop with **no signed test at all**.
 ///
-/// The three list counts inside a class-0 slot are like this (`0x00524FC6`, `0x00525037`,
-/// `0x0044BD07`). A negative value does not skip: it decrements away from zero and the engine
+/// The three list counts inside a class-0 slot are like this (`0x00524FC6`, `0x0052503B`,
+/// `0x0044BD07`) -- each address is the `test` itself, not the load that precedes it. A negative value does not skip: it decrements away from zero and the engine
 /// runs away. There is no correct behaviour to mirror, so this parser reads the value unsigned
 /// and lets `Cursor::take` refuse — **a refusal where the engine would misbehave**, which is the
 /// right direction to differ in but is a difference, and is recorded here rather than hidden
 /// behind a cast that looks like the guarded case.
 fn spr_unguarded_count(raw: u32) -> u32 {
     raw
+}
+
+/// A **length** the engine passes straight to `fread` with no test on it at all.
+///
+/// **Observed in a local binary, 2026-09-18.** Class 2's blob length reaches the `fread` at
+/// `0x0043D0E3` and class 3's the one at `0x004516F7`, in both cases as the `size` argument with
+/// no compare, no branch and no clamp anywhere between the read of the word and the call. They
+/// are neither of the two count shapes above, and routing them through either would misstate the
+/// engine.
+///
+/// The behaviour here is unchanged -- `Cursor::take` bounds them, as it bounds everything -- so
+/// this marker exists purely so the taxonomy is complete where it is introduced. Two call sites
+/// silently outside a three-way classification is how a convention rots.
+fn spr_unguarded_length(raw: u32) -> usize {
+    raw as usize
 }
 
 // 0x004F6B00 -- the base reader every class calls first.
@@ -1543,7 +1565,8 @@ fn spr_class_body(cursor: &mut Cursor<'_>, version: i32, class_id: u32) -> Resul
         }
         // 0x0043D0A0
         2 => {
-            let blob = cursor.u32()? as usize;
+            // Straight into `fread`'s size argument at `0x0043D0E3`, untested.
+            let blob = spr_unguarded_length(cursor.u32()?);
             cursor.take(blob)?;
             cursor.take(4)?;
             if version >= SPR_CLASS2_NESTED_MIN && cursor.u32()? != 0 {
@@ -1555,8 +1578,9 @@ fn spr_class_body(cursor: &mut Cursor<'_>, version: i32, class_id: u32) -> Resul
         }
         // 0x004516A0
         3 => {
+            // Straight into `fread`'s size argument at `0x004516F7`, untested.
             let blob = if version >= SPR_CLASS3_STORED_LEN_MIN {
-                cursor.u32()? as usize
+                spr_unguarded_length(cursor.u32()?)
             } else {
                 SPR_CLASS3_LEGACY_BLOB_LEN
             };
@@ -1646,7 +1670,9 @@ pub struct SpriteSection {
     pub record_count: u32,
     pub records: Vec<SpriteRecord>,
     /// Every byte after the count word, kept as written. The records above are a view of exactly
-    /// these bytes; keeping both is what lets the round-trip check be a real comparison.
+    /// these bytes. Keeping both is for a future writer and for diagnosing a refused file -- it
+    /// is **not** what makes the round trip meaningful, because `records` is a view of exactly
+    /// these bytes and comparing the two is an identity. See [`encode`](Self::encode).
     pub raw: Vec<u8>,
 }
 
@@ -1750,8 +1776,10 @@ impl SpriteSection {
 
     /// How many records disagree with their own class-id echo.
     ///
-    /// Zero on any file this engine wrote, because [the writer emits the field
-    /// twice](SpriteBase). Non-zero means damage, not a layout error.
+    /// Zero on any file this engine wrote, because [the writer emits the field twice](SpriteBase),
+    /// so **zero is the uninformative answer** -- it is the count of records that failed a
+    /// one-way detector, not a count of records known to be sound. Non-zero means damage or a
+    /// misaligned parse, never a layout error.
     pub fn class_id_echo_disagreements(&self) -> usize {
         self.records
             .iter()
@@ -1923,9 +1951,14 @@ pub struct GameRecord {
 ///   u32 trailer
 /// ```
 ///
-/// `(payload_len - 24) % 12 == 0` in every corpus file, and **`N - live_count == 71` in every**:
-/// 1528/1457, 1653/1582, 269/198, 269/198, 424/353, 191/120, 2691/2620, 2691/2620. The constant 71
-/// is Observed and **unexplained** -- do not name the fields it relates.
+/// `(payload_len - 24) % 12 == 0` in every corpus file, and **`N - live_count == 71` in every**.
+/// The constant 71 is Observed and **unexplained** -- do not name the fields it relates.
+///
+/// The per-file `N`/`live_count` pairs are **not** listed here. They used to be, as eight of them,
+/// and the list was left behind when the claim above was re-measured over the whole corpus --
+/// a universal quantified over 31 files, evidenced by a list of 8, disagreeing with
+/// `docs/save-format.md`'s nine rows. `save_survey` prints the pairs it measured, which is the
+/// only version that cannot go stale.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameSection {
     /// The turn number. See [`SaveFile::turn_agreement`] for why this reading is Observed rather
@@ -3107,10 +3140,20 @@ impl SaveFile {
     /// Reassemble the whole file, with `LS_SPR_` regenerated from its decoded records and the
     /// other eight payloads copied from `source`.
     ///
-    /// **This is not a savegame writer.** There is no writer in this repository. It is the
-    /// strongest round-trip the one newly decoded section can honestly support: if the record
-    /// model got any record's extent wrong, `LS_SPR_`'s re-encoded payload would be a different
-    /// length and the file would not match byte for byte.
+    /// **This is not a savegame writer.** There is no writer in this repository.
+    ///
+    /// **Corrected, 2026-09-18.** This comment used to claim that "if the record model got any
+    /// record's extent wrong, `LS_SPR_`'s re-encoded payload would be a different length and the
+    /// file would not match byte for byte." That is false unconditionally -- see
+    /// [`SpriteSection::encode`], which this wraps: once `parse` has succeeded the re-encode is
+    /// an **identity**, so the payload can never come out a different length. The correction had
+    /// been applied to `encode` and to `docs/save-format.md` and **not here**, which is the
+    /// sibling an API consumer reads first.
+    ///
+    /// What a match proves is what [`SpriteSection::encode`] says it proves: lossless
+    /// preservation and correct container splicing. It does not prove any record's field
+    /// boundaries, and a compensating pair of errors passes it -- `tools/mutate_save_constants.py`
+    /// runs one.
     ///
     /// `source` must be the bytes this `SaveFile` was parsed from; passing anything else compares
     /// two unrelated files.
@@ -3158,7 +3201,8 @@ impl SaveFile {
     ///
     /// These are deliberately *not* mixed in with [`SaveContainer::structural_checks`]. A real save
     /// that breaks one of these is a **discovery**, not a malformed file -- `N - live_count` being
-    /// 71 is an unexplained constant over seven game states, and a save with 72 would be the most
+    /// 71 is an unexplained constant over every game state in the corpus, and a save with 72
+    /// would be the most
     /// interesting file in the corpus. Reporting it as a failure and exiting nonzero would train a
     /// reader to ignore exactly the signal worth acting on.
     pub fn regularities(&self) -> Vec<Invariant> {
@@ -3181,7 +3225,7 @@ impl SaveFile {
         // breaks it is damaged or came from another writer, and that is a discovery about the
         // file, not a failure of this parser's model.
         checks.push(regularity(
-            "LS_SPR_: every record echoes its class id in the base block",
+            "LS_SPR_: no record disagrees with its own class-id echo",
             format!(
                 "{} of {} records disagree",
                 self.sprites.class_id_echo_disagreements(),
@@ -3556,6 +3600,9 @@ mod tests {
         /// Emit this raw dword as the group count and emit no groups. For driving the signed
         /// guard at `0x0044BCC7` with a value `Vec::len()` cannot produce.
         groups_override: Option<u32>,
+        /// Emit this raw dword as **each group's** item count and emit no items. For driving the
+        /// **unguarded** `test / je` loop at `0x0044BD07`.
+        group_items_override: Option<u32>,
     }
 
     /// One of class 0's per-slot records.
@@ -3567,6 +3614,8 @@ mod tests {
         /// Emit this raw dword as the `items_a` count and emit no items. For driving the
         /// **unguarded** `test / je` loop at `0x00524FC6` with a value `Vec::len()` cannot make.
         items_a_override: Option<u32>,
+        /// The same for `items_b`, whose guard is the `test / je` at `0x0052503B`.
+        items_b_override: Option<u32>,
     }
 
     /// The body of a class-0 record, which three other classes also embed whole.
@@ -3892,9 +3941,14 @@ mod tests {
                 }
                 for items in &groups {
                     push_filler(out, 4);
-                    push_u32(out, *items as u32);
-                    for _ in 0..*items {
-                        push_spr_item_a(out, version);
+                    match nested.group_items_override {
+                        Some(raw) => push_u32(out, raw),
+                        None => {
+                            push_u32(out, *items as u32);
+                            for _ in 0..*items {
+                                push_spr_item_a(out, version);
+                            }
+                        }
                     }
                 }
             }
@@ -3930,9 +3984,14 @@ mod tests {
             }
         }
         if version >= 0x3E {
-            push_u32(out, slot.items_b as u32);
-            for _ in 0..slot.items_b {
-                push_spr_item_b(out, version);
+            match slot.items_b_override {
+                Some(raw) => push_u32(out, raw),
+                None => {
+                    push_u32(out, slot.items_b as u32);
+                    for _ in 0..slot.items_b {
+                        push_spr_item_b(out, version);
+                    }
+                }
             }
         }
     }
@@ -4914,6 +4973,45 @@ mod tests {
         }
     }
 
+    /// **The class-id echo is a one-way detector, and this is its blind spot.**
+    ///
+    /// Corrupt any byte of a record's class-specific body, leave the two class-id dwords alone,
+    /// and the check still reports zero disagreements and the regularity still passes. Pinned as
+    /// a test rather than left as a caveat, because the claim this replaced -- that agreement
+    /// shows a file is "uncorrupted" -- reads plausibly right up until someone relies on it.
+    #[test]
+    fn the_class_id_echo_does_not_notice_a_corrupted_record_body() {
+        let mut bytes = Fixture::default().build();
+        let clean = SaveFile::parse(&bytes).unwrap();
+        assert_eq!(clean.sprites.class_id_echo_disagreements(), 0);
+
+        // Record 0 is class 0; its body starts after the count word, the dispatch word and the
+        // base block. Literal 32, so this test does not move with the parser's constants.
+        let sprites = clean.container.location(SectionTag::Sprites);
+        let victim = sprites.payload_offset + 4 + 32;
+        bytes[victim] ^= 0xFF;
+
+        let corrupt = SaveFile::parse(&bytes).unwrap();
+        assert_ne!(
+            corrupt.sprites.records[0].body, clean.sprites.records[0].body,
+            "the fixture must actually have been corrupted for this test to mean anything"
+        );
+        assert_eq!(
+            corrupt.sprites.class_id_echo_disagreements(),
+            0,
+            "agreement is not an integrity claim about the record"
+        );
+        let check = corrupt
+            .regularities()
+            .into_iter()
+            .find(|check| check.name.contains("class-id echo"))
+            .expect("the regularity is present");
+        assert!(
+            check.passed,
+            "a corrupt body still passes: that is the point"
+        );
+    }
+
     /// Class 8 is the base reader and nothing more, so its record is exactly the dispatch dword
     /// plus the 24-byte base block. A reader that added any field of its own would fail this.
     #[test]
@@ -5007,8 +5105,13 @@ mod tests {
         assert!(error.to_string().starts_with("LS_SPR_:"), "{error}");
     }
 
-    /// Trailing bytes the record count does not reach are a refusal, not slack. This is the check
-    /// that makes the whole model falsifiable: a wrong record length leaves a remainder.
+    /// Trailing bytes the record count does not reach are a refusal, not slack.
+    ///
+    /// This is the strongest of the *corpus-side* checks -- a wrong record length leaves a
+    /// remainder -- but it is not what makes the whole model falsifiable, and an earlier version
+    /// of this comment said it was. It sees **aggregate** extents only: a compensating pair of
+    /// errors inside one record leaves no remainder at all. The field boundaries rest on the
+    /// disassembly and on the version sweep against an independently written fixture.
     #[test]
     fn refuses_a_payload_with_bytes_left_over_after_the_last_record() {
         let mut payload = Vec::new();
@@ -5220,10 +5323,17 @@ mod tests {
     /// save the game loads. Each case below is a record the engine reads successfully.
     #[test]
     fn a_non_positive_count_skips_its_loop_rather_than_failing_the_file() {
-        // The bit patterns, not a constant: 0x80000000 is the most negative i32, 0xFFFFFFFF is
-        // -1, and 0x8000 / 0xFFFF are their 16-bit counterparts. A reader that clamped with
-        // `as i16` on a `u32` field, or vice versa, disagrees on exactly these.
-        let negatives: [u32; 3] = [0x8000_0000, 0xFFFF_FFFF, 0xFFFF_FF9C];
+        // **`0x8000_0001` is the one that pins the WIDTH, and an earlier version of this test
+        // did not have it.** That version claimed these values caught "a reader that clamped with
+        // `as i16` on a `u32` field, or vice versa". They do not: 0x80000000, 0xFFFFFFFF and
+        // 0xFFFFFF9C all truncate to a negative `i16` too, so both widths clamp them to zero and
+        // agree. Mutating `spr_signed_count` to `(raw as i16)` left the whole suite green.
+        //
+        // 0x8000_0001 separates them: as `i32` it is negative and clamps to 0, as `i16` it is
+        // **+1**. The realistic failure it stands for is the opposite sign -- a slot count of
+        // 0x0001_8000, a large but legitimately positive 98,304 that a 16-bit read turns into 0,
+        // stopping the cursor short and refusing a whole file the engine loads.
+        let negatives: [u32; 4] = [0x8000_0000, 0xFFFF_FFFF, 0xFFFF_FF9C, 0x8000_0001];
 
         for raw in negatives {
             // Class 0's slot count, 0x004122FC.
@@ -5266,6 +5376,7 @@ mod tests {
                     type_id: 3,
                     groups: Vec::new(),
                     groups_override: Some(raw),
+                    ..Default::default()
                 }),
                 items_a: 0,
                 items_b: 0,
@@ -5294,9 +5405,13 @@ mod tests {
 
     /// The top-level record count, 0x004F717F. A save whose whole `LS_SPR_` payload is
     /// `FF FF FF FF` is one the engine loads and consumes nothing from.
+    ///
+    /// `0x8000_0001` is here to pin the clamp's **width** through a real parse rather than only
+    /// through the helper: as `i32` it is negative and yields no records, as `i16` it is `+1` and
+    /// the parser would go looking for a record in an empty payload and refuse the file.
     #[test]
     fn a_negative_top_level_record_count_yields_no_records_rather_than_a_refusal() {
-        for raw in [0x8000_0000_u32, 0xFFFF_FFFF] {
+        for raw in [0x8000_0000_u32, 0xFFFF_FFFF, 0x8000_0001] {
             let payload = raw.to_le_bytes().to_vec();
             let section = SpriteSection::parse(&payload, &VersionSection { version: 111 })
                 .unwrap_or_else(|error| panic!("record count {raw:#x}: {error}"));
@@ -5309,45 +5424,127 @@ mod tests {
         }
     }
 
-    /// The three list counts inside a slot are **not** signed-guarded: the engine writes
-    /// `test / je` and then decrements, so a negative value runs away rather than skipping. This
-    /// parser refuses instead, which is a deliberate divergence and is pinned here so that
-    /// "mirror the reader" does not quietly get applied to the wrong three sites.
+    /// Clamping must not **saturate**: a large positive count is data, not an overflow.
+    ///
+    /// `.max(0)` is the whole of the transform, and the two helpers differ only in the width they
+    /// reinterpret at. A reader that clamped to a maximum as well as a minimum, or that used the
+    /// wrong width, changes exactly these.
     #[test]
-    fn an_unguarded_list_count_is_refused_rather_than_silently_clamped() {
-        // The record is otherwise **complete and well-formed**: only the `items_a` count word is
-        // poisoned. That is what makes this discriminating. If the parser wrongly clamped this
-        // count to zero the way it clamps the six guarded ones, the rest of the record would read
-        // straight through and the file would parse -- so an earlier version of this test, which
-        // truncated the payload instead, passed under both readings and proved nothing.
-        let mut record = SpriteFixture::bare(0);
-        record.class0.slots = vec![SlotFixture {
-            nested: None,
-            items_a: 0,
-            items_b: 0,
-            items_a_override: Some(0xFFFF_FFFF),
-        }];
-        let fixture = Fixture {
-            sprite_records: vec![record],
-            ..Fixture::default()
-        };
-        let error = SaveFile::parse(&fixture.build()).unwrap_err();
-        assert!(error.to_string().starts_with("LS_SPR_:"), "{error}");
+    fn a_signed_count_preserves_large_positive_values_at_both_widths() {
+        // Expected values are the engine's semantics restated -- reinterpret at the field's own
+        // width, then take the non-negative part -- not readings taken from the helpers.
+        for (raw, expected) in [
+            (0x0000_0000_u32, 0_u32),
+            (0x0000_0001, 1),
+            (0x0000_8000, 0x8000), // positive as i32; NEGATIVE as i16, so the width shows
+            (0x0001_8000, 0x0001_8000), // 98,304 -- a 16-bit read makes this 0
+            (0x7FFF_FFFF, 0x7FFF_FFFF), // must not saturate to i16::MAX or anything else
+            (0x8000_0000, 0),
+            (0x8000_0001, 0), // +1 under a 16-bit read
+            (0xFFFF_FFFF, 0),
+        ] {
+            assert_eq!(
+                spr_signed_count(raw),
+                expected,
+                "spr_signed_count({raw:#010x})"
+            );
+        }
+        for (raw, expected) in [
+            (0x0000_u16, 0_u16),
+            (0x0001, 1),
+            (0x7FFF, 0x7FFF), // i16::MAX, preserved rather than saturated
+            (0x8000, 0),
+            (0xFF9C, 0),
+            (0xFFFF, 0),
+        ] {
+            assert_eq!(
+                spr_signed_count16(raw),
+                expected,
+                "spr_signed_count16({raw:#06x})"
+            );
+        }
+    }
 
-        // And the same record with a count `Vec::len()` could have produced parses, so the
-        // refusal above is about the value and not about the shape.
-        let mut sane = SpriteFixture::bare(0);
-        sane.class0.slots = vec![SlotFixture {
-            nested: None,
-            items_a: 0,
-            items_b: 0,
-            items_a_override: Some(0),
-        }];
-        let fixture = Fixture {
-            sprite_records: vec![sane],
-            ..Fixture::default()
-        };
-        SaveFile::parse(&fixture.build()).unwrap();
+    /// The three list counts inside a slot are **not** signed-guarded: the engine writes
+    /// `test / je` and then decrements, so a negative value does not skip, it runs away. This
+    /// parser refuses instead, which is a deliberate divergence.
+    ///
+    /// **All three call sites, not one.** A review found an earlier version of this test covered
+    /// only `items_a`: either of the other two could have been switched to the guarded helper and
+    /// a record carrying `0xFFFF_FFFF` there would have been accepted as an empty list, with this
+    /// test and every structural mutation still green. `tools/mutate_save_constants.py` now
+    /// carries one mutation per call site for the same reason.
+    ///
+    /// Each case is **discriminating**: the record is otherwise complete and well-formed, and
+    /// only the one count word is poisoned. If the parser wrongly clamped that count to zero the
+    /// way it clamps the six guarded ones, the rest of the record would read straight through and
+    /// the file would parse. An earlier version truncated the payload instead, which failed under
+    /// both readings and proved nothing.
+    #[test]
+    fn every_unguarded_list_count_is_refused_rather_than_silently_clamped() {
+        /// A call site, and how to build a class-0 record whose only variable is that site's
+        /// raw count word.
+        type Site = (&'static str, fn(u32) -> SpriteFixture);
+
+        let sites: [Site; 3] = [
+            ("items_a, 0x00524FC6", |raw| {
+                let mut record = SpriteFixture::bare(0);
+                record.class0.slots = vec![SlotFixture {
+                    items_a_override: Some(raw),
+                    ..Default::default()
+                }];
+                record
+            }),
+            ("items_b, 0x0052503B", |raw| {
+                let mut record = SpriteFixture::bare(0);
+                record.class0.slots = vec![SlotFixture {
+                    items_b_override: Some(raw),
+                    ..Default::default()
+                }];
+                record
+            }),
+            ("nested type 3 group items, 0x0044BD07", |raw| {
+                let mut record = SpriteFixture::bare(0);
+                record.class0.slots = vec![SlotFixture {
+                    nested: Some(NestedFixture {
+                        type_id: 3,
+                        groups: vec![0, 0],
+                        group_items_override: Some(raw),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }];
+                record
+            }),
+        ];
+
+        for (label, build) in sites {
+            // The control comes first: the identical record with a count `Vec::len()` could have
+            // produced must parse, so the refusal below is about the value and not the shape.
+            let sane = Fixture {
+                sprite_records: vec![build(0)],
+                ..Fixture::default()
+            };
+            SaveFile::parse(&sane.build()).unwrap_or_else(|error| {
+                panic!("{label}: the control record does not parse: {error}")
+            });
+
+            let poisoned = Fixture {
+                sprite_records: vec![build(0xFFFF_FFFF)],
+                ..Fixture::default()
+            };
+            match SaveFile::parse(&poisoned.build()) {
+                Err(error) => assert!(
+                    error.to_string().starts_with("LS_SPR_:"),
+                    "{label}: {error}"
+                ),
+                Ok(save) => panic!(
+                    "{label}: 0xFFFFFFFF was accepted as an empty list -- this call site is \
+                     clamped as though it were signed-guarded. Records: {}",
+                    save.sprites.records.len()
+                ),
+            }
+        }
     }
 
     /// Class 1's array length is a `u16`, not a `u32`. A reader that read four bytes there would
