@@ -14,9 +14,10 @@ app_dir="${1:-${HOME}/Applications/Lords of Magic GS5R3.app}"
 # Which probe to install: "ladder" (the four-rung compositing diagnostic), "elevation",
 # "mapsize" (the oversized-map ladder, issue #22 -- now closed), "flatground" (the built-mesh
 # probe that closes the map2screen y convention), "maptag" (the cell-tag and trailing-record probe
-# for issue #4), "mapload" (does the engine accept a map THIS PROJECT wrote?), or "terrainrings"
+# for issue #4), "mapload" (does the engine accept a map THIS PROJECT wrote?), "terrainrings"
 # (the full 11x11 setterrain transition matrix, plus the 0x00800000 call isolation and a dump of the
-# script-assigned sprite-type table).
+# script-assigned sprite-type table), or "unitanchor" (does the UNIT draw path apply the same
+# hotspot-record-0 anchor as the terrain-sprite path hotspots.md's own record-0 confirmation used?).
 #
 # "mapload" is the only probe with prerequisites: its rungs 1-6 load files that must already be in
 # the game's map/ directory, built by scripts/build-mapload-inputs.sh. Installing it without them
@@ -155,8 +156,19 @@ PY
 # `screencapture` refuses to overwrite, so a stale capture from an earlier attempt would survive the
 # run and be collected as if it were this run's output -- a plate diffed against itself reads as
 # "the sprite did not render", which is the exact conclusion this probe exists to test.
+#
+# Removed by an EXACT list of names taken from the probe generator itself, never a `z*.bmp` glob.
+# A glob is a standing offer to delete a file this project never created -- a user's own
+# `English/zReference.bmp` sitting in the same directory, say -- and nothing could bring it back.
+# Same provenance principle as the loose `map/` cleanup below.
 echo "== clearing stale probe output =="
-rm -f "${game_dir}"/z*.bmp "${game_dir}"/zprobe.log
+while IFS= read -r capture_name; do
+  stale="${game_dir}/${capture_name}"
+  [[ -e "${stale}" ]] || continue
+  echo "  removing stale ${capture_name}"
+  rm -f "${stale}"
+done < <(PYTHONPATH="${project_dir}/tools" python3 -c \
+  'import engine_probe; print("\n".join(engine_probe.all_capture_names()))')
 # The mapsize probe writes into the game's loose map/ directory, which holds 366 shipped files and
 # no backup here covers it -- the manifest covers gs.mpq and imp.mpq only.
 #
@@ -239,6 +251,15 @@ elif [[ "${probe}" == "mapsize" ]]; then
   echo "once. It generates and saves a 128, a 256 and a 512 map in turn, which takes a while --"
   echo "512x512 is sixteen times the work of a normal map. Watch zprobe.log for 'gen done' lines."
   echo "It places no sprites and destroys nothing. Do not save the game afterwards."
+elif [[ "${probe}" == "unitanchor" ]]; then
+  echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map"
+  echo "with your starting army visible on screen and NOT adjacent to a hostile stack, and TAP z"
+  echo "once. In order, on one empty cell next to your army: a shipped orchard sprite appears and"
+  echo "is removed, the SAME art the Unicorn uses (units/imp/licr2a.imp) appears as a terrain"
+  echo "sprite and is removed, and then a real Unicorn is recruited to your side, captured, and"
+  echo "deleted. Expect one new unit to flash into existence and vanish next to your army --"
+  echo "that is the probe's own cleanup, not a bug. See docs/unit-anchor-run-sheet.md."
+  echo "Do not save the game afterwards."
 else
   echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map,"
   echo "and TAP z once. The probe now fires only once per launch even if the key repeats."

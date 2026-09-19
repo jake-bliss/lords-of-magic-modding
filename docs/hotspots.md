@@ -148,7 +148,10 @@ wobble by cropping. That is the gap the rule above closes.
   come out first-byte-dominant 62-91% against 0.8-2.4%. Use `tools/probe_captures.py`.
 - **A unit-path caveat.** Record 0 was confirmed by placing a unit IMP through the *terrain sprite*
   draw path. The sign, the centre-relative form and the choice of record 0 are settled; a
-  unit-specific constant in the *anchor* is not ruled out.
+  unit-specific constant in the *anchor* is not ruled out. **A probe to close this is built and
+  ready to run:** [`LOM_PROBE=unitanchor`](unit-anchor-run-sheet.md) places a real recruited unit
+  through the actual unit draw path, on the same cell as a same-art terrain-sprite control, in one
+  capture. Not yet run.
 - **Out-of-vocabulary types in searchable slots.** `units\imp\eacr5a.imp` carries types 106, 138 and
   143 in slots 1 and 2, which the engine does search. Unexplained. (Its record-0 tag of 136, and
   `aiwm1b.imp`'s 190, are accounted for: record 0's tag is never read.)
