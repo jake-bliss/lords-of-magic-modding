@@ -57,22 +57,69 @@ pub const ATTESTED_BIT_DEPTHS: &[u16] = &[8, 16];
 /// Fixed part of a `smpl` chunk before the loop array. **Documented.**
 const SMPL_HEADER_BYTES: usize = 36;
 /// One `smpl` loop record: id, type, start, end, fraction, play count. **Documented.**
+///
+/// `dwEnd` is **inclusive** -- the Microsoft RIFF 1994 specification says of it that "this sample
+/// will also be played", so a loop ending at `dwEnd` needs `dwEnd + 1` frames of audio. Writers are
+/// known to disagree about this, so the corpus was asked as well: of the 41 loop records in
+/// `sndfx.mpq` and `special.mpq`, **34 end at exactly `frames - 1` and none at `frames`**
+/// (**Observed in the corpus**). Both authorities agree, which is why the gate rejects
+/// `end >= frames` rather than `end > frames`.
+///
+/// This is the first claim in this module grounded in an **external authority** rather than in the
+/// shipped files. It is stronger evidence than the corpus can give on its own -- and it is exactly
+/// the instrument the Smacker header layout still lacks.
 const SMPL_LOOP_BYTES: usize = 24;
 /// One `cue ` point record. Its last field is the sample-frame offset. **Documented.**
+///
+/// `dwSampleOffset` is a **position**, so an offset equal to the frame count is already past the
+/// end; there is no ambiguity here of the kind `dwEnd` has. **Observed in the corpus:** 26 of the
+/// 116 cue points sit at `frames - 1` and none at `frames`.
 const CUE_POINT_BYTES: usize = 24;
 
+/// Why a WAVE could not be turned into samples.
+///
+/// The distinction is not cosmetic. **`Unsupported` is a limit of this tool** -- a legal file in a
+/// format with no decoder here -- and a classifier may report it and carry on. **`Malformed` is a
+/// property of the file**, and a classifier that downgrades it has made its own failure count
+/// invisible: a PCM member declaring zero channels would be reported as "a WAVE this tool merely
+/// cannot decode" and the archive would still scan with zero failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaveErrorKind {
+    /// The container or the `fmt ` fields are wrong, or supported PCM will not decode.
+    Malformed,
+    /// A format tag or bit depth this module does not implement. The file may be perfectly valid.
+    Unsupported,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WaveError(String);
+pub struct WaveError {
+    message: String,
+    kind: WaveErrorKind,
+}
 
 impl WaveError {
     fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
+        Self {
+            message: message.into(),
+            kind: WaveErrorKind::Malformed,
+        }
+    }
+
+    fn unsupported(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            kind: WaveErrorKind::Unsupported,
+        }
+    }
+
+    pub fn kind(&self) -> WaveErrorKind {
+        self.kind
     }
 }
 
 impl fmt::Display for WaveError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(&self.message)
     }
 }
 
@@ -226,7 +273,7 @@ pub struct PcmSamples {
 impl PcmSamples {
     pub fn decode(format: &WaveFormat, data: &[u8]) -> Result<Self, WaveError> {
         if format.encoding != WAVE_FORMAT_PCM {
-            return Err(WaveError::new(format!(
+            return Err(WaveError::unsupported(format!(
                 "WAVE format tag {} is not PCM and has no decoder here",
                 format.encoding
             )));
@@ -235,7 +282,7 @@ impl PcmSamples {
             8 => 1_usize,
             16 => 2_usize,
             other => {
-                return Err(WaveError::new(format!(
+                return Err(WaveError::unsupported(format!(
                     "PCM bit depth {other} has no decoder here"
                 )));
             }
@@ -375,6 +422,7 @@ pub enum WaveRefusal {
     ByteRateDisagrees { declared: u32, computed: u32 },
     /// A `smpl` loop or `cue ` point would point past the end of the audio being written.
     DanglingLoopMetadata {
+        /// `smpl` or `cue `, kept so the refusal names which kind of metadata dangles.
         chunk: String,
         last_referenced_frame: u64,
         frames: u64,
@@ -471,6 +519,31 @@ fn layout_of(chunks: &[RawChunk<'_>]) -> String {
         .map(|chunk| printable_tag(&chunk.id))
         .collect::<Vec<_>>()
         .join("|")
+}
+
+/// The pad byte a rewritten chunk must carry, given what the template carried.
+///
+/// RIFF pads an odd-sized chunk to an even boundary, but the **final** chunk in a file may simply
+/// end: the parser records `pad: None` for it, because inventing one would make the output a byte
+/// longer than the input. `rebuild` used to decide purely on the new body's parity, so a template
+/// whose last chunk was odd and unpadded gained a `0x00` -- a 47-byte member came back 48 bytes,
+/// with the invented byte folded into the recomputed `RIFF` size so that every other check agreed.
+///
+/// The rule, shared by the writer and the check on the writer so the two cannot drift:
+///
+/// * an even-length body takes no pad;
+/// * an odd-length body whose length is **unchanged** takes exactly what the template had,
+///   including `None`;
+/// * an odd-length body whose length **changed** takes `Some(0)`, because there is no template pad
+///   for a parity the template did not have.
+fn expected_pad(template_pad: Option<u8>, template_len: u32, new_len: u32) -> Option<u8> {
+    if new_len.is_multiple_of(2) {
+        return None;
+    }
+    if new_len == template_len {
+        return template_pad;
+    }
+    Some(0)
 }
 
 impl WaveFile {
@@ -595,8 +668,11 @@ impl WaveFile {
     pub fn rebuild(&self) -> Result<Vec<u8>, WaveError> {
         let bodies = self.chunk_bodies()?;
         let mut payload = 4_u64; // the "WAVE" form type
-        for body in &bodies {
-            payload += 8 + body.len() as u64 + (body.len() as u64 % 2);
+        for (chunk, body) in self.chunks.iter().zip(&bodies) {
+            let size = u32::try_from(body.len())
+                .map_err(|_| WaveError::new("a rebuilt WAVE chunk exceeds 4 GiB"))?;
+            let pad = expected_pad(chunk.pad, chunk.declared_size, size);
+            payload += 8 + body.len() as u64 + u64::from(pad.is_some());
         }
         payload += self.trailing.len() as u64;
         let declared = u32::try_from(payload)
@@ -612,8 +688,8 @@ impl WaveFile {
             out.extend_from_slice(&chunk.id);
             out.extend_from_slice(&size.to_le_bytes());
             out.extend_from_slice(body);
-            if size % 2 == 1 {
-                out.push(chunk.pad.unwrap_or(0));
+            if let Some(pad) = expected_pad(chunk.pad, chunk.declared_size, size) {
+                out.push(pad);
             }
         }
         out.extend_from_slice(&self.trailing);
@@ -657,9 +733,9 @@ impl WaveFile {
 
     /// The highest sample frame any `smpl` loop or `cue ` point in this container refers to.
     ///
-    /// Returns the chunk that names it alongside the frame. `smpl` loop records and `cue ` points
-    /// both address **sample frames**, so shortening the audio under them leaves a loop or marker
-    /// pointing past the end. **Documented** layouts; the fields are read, not the semantics.
+    /// Returns the chunk that names it alongside the frame. Both address **sample frames**, and
+    /// both are inclusive positions, so the audio must hold `frame + 1` frames for the reference to
+    /// land inside it. See [`SMPL_LOOP_BYTES`] for the evidence behind that reading.
     pub fn last_referenced_frame(&self) -> Option<(String, u64)> {
         let mut worst: Option<(String, u64)> = None;
         for chunk in &self.chunks {
@@ -773,7 +849,9 @@ pub fn import_samples(
         && let Some((chunk, last)) = result.last_referenced_frame()
     {
         let frames = result.samples.frames() as u64;
-        if last > frames {
+        // `>=`, not `>`: both kinds of reference are inclusive positions, so a reference to frame
+        // `frames` names a frame one past the last one that exists.
+        if last >= frames {
             return Err(WaveError::new(format!(
                 "refusing to write it: {}; pass --allow-dangling-loops to write it anyway",
                 WaveRefusal::DanglingLoopMetadata {
@@ -894,15 +972,29 @@ fn verify_import(
                 detail: format!("the {} chunk body changed", printable_tag(&out.id)),
             });
         }
-        // A pad byte is written only when the body is odd, so compare it only when both have one.
-        if let (Some(written_pad), Some(source_pad)) = (out.pad, source.pad)
-            && written_pad != source_pad
-        {
+        // The whole `Option`, not just the value. Comparing only when both sides have a pad
+        // skipped the one case that matters: a template whose final odd chunk carries no pad and
+        // an output that invented one.
+        let wanted = expected_pad(source.pad, source.declared_size, out.declared_size);
+        if out.pad != wanted {
             return Err(WaveRefusal::ContainerChanged {
-                detail: format!(
-                    "the pad byte after {} became 0x{written_pad:02x}, the template has 0x{source_pad:02x}",
-                    printable_tag(&out.id)
-                ),
+                detail: match (out.pad, wanted) {
+                    (Some(written), None) => format!(
+                        "a pad byte 0x{written:02x} was invented after {}, which the template does \
+                         not carry",
+                        printable_tag(&out.id)
+                    ),
+                    (None, Some(_)) => format!(
+                        "the pad byte after {} was dropped",
+                        printable_tag(&out.id)
+                    ),
+                    (Some(written), Some(source_pad)) => format!(
+                        "the pad byte after {} became 0x{written:02x}, the template has \
+                         0x{source_pad:02x}",
+                        printable_tag(&out.id)
+                    ),
+                    (None, None) => unreachable!("equal options do not reach this arm"),
+                },
             });
         }
     }
@@ -1311,6 +1403,250 @@ mod tests {
         );
     }
 
+    /// The pad case the guard could not see: a template whose final odd chunk carries no pad.
+    ///
+    /// `walk_chunks` records `pad: None` only at end of file, so this is a real 47-byte member
+    /// shape. The writer used to invent a `0x00`, fold it into the recomputed `RIFF` size so that
+    /// every other check agreed, and return a 48-byte "identical" import.
+    #[test]
+    fn a_final_odd_chunk_with_no_pad_does_not_gain_one() {
+        let template = canonical(1, 22050, 8, &[1, 2, 3]);
+        // `canonical` pads, so strip the pad back off to build the unpadded shape.
+        let mut template = template;
+        assert_eq!(template.pop(), Some(0));
+        let payload = template.len() as u32 - 8;
+        template[4..8].copy_from_slice(&payload.to_le_bytes());
+        assert_eq!(template.len(), 47);
+
+        let file = WaveFile::parse(&template).expect("parse");
+        let data = file
+            .chunks
+            .iter()
+            .find(|chunk| chunk.id == *b"data")
+            .expect("a data chunk");
+        assert_eq!(data.pad, None, "the fixture must carry no final pad");
+        assert_eq!(file.encode().expect("encode"), template);
+        assert_eq!(file.rebuild().expect("rebuild"), template, "rebuild invented a pad");
+
+        let imported =
+            import_samples(&template, &template, ImportOptions::default()).expect("import");
+        assert_eq!(imported.len(), 47, "the import grew by an invented pad byte");
+        assert_eq!(imported, template);
+    }
+
+    #[test]
+    fn the_import_post_condition_catches_an_invented_pad_byte() {
+        let mut template = canonical(1, 22050, 8, &[1, 2, 3]);
+        assert_eq!(template.pop(), Some(0));
+        let payload = template.len() as u32 - 8;
+        template[4..8].copy_from_slice(&payload.to_le_bytes());
+        let good = WaveFile::parse(&template).expect("parse");
+        let mut damaged = good.clone();
+        for chunk in &mut damaged.chunks {
+            if chunk.id == *b"data" {
+                chunk.pad = Some(0);
+            }
+        }
+        let written = damaged.rebuild().expect("rebuild");
+        let refusal = verify_import(&written, &good, &good.format, &good.samples)
+            .expect_err("a pad was invented");
+        assert!(
+            matches!(&refusal, WaveRefusal::ContainerChanged { detail } if detail.contains("invented")),
+            "{refusal}"
+        );
+    }
+
+    /// `expected_pad` is the rule the writer and the check on the writer share.
+    #[test]
+    fn the_pad_rule_covers_every_transition() {
+        // Even body: never a pad, whatever the template had.
+        assert_eq!(expected_pad(Some(0x20), 3, 4), None);
+        assert_eq!(expected_pad(None, 3, 4), None);
+        // Odd body, unchanged length: exactly what the template had, including nothing.
+        assert_eq!(expected_pad(Some(0x20), 3, 3), Some(0x20));
+        assert_eq!(expected_pad(None, 3, 3), None);
+        // Odd body, changed length: there is no template pad for this parity.
+        assert_eq!(expected_pad(None, 4, 5), Some(0));
+        assert_eq!(expected_pad(Some(0x20), 3, 5), Some(0));
+    }
+
+    // --- one damaged-container case per `verify_import` branch -----------------------------
+    //
+    // A mutation sweep found four of this guard's six comparisons could be deleted with the suite
+    // staying green. A guard nobody mutated reports safety it has not earned, which is the same
+    // failure the guard replaced. Each case below fails when its branch is removed.
+
+    fn post_condition_fixture() -> (Vec<u8>, WaveFile) {
+        let template = with_chunk(
+            canonical(1, 22050, 8, &[1, 2, 3, 4]),
+            b"LIST",
+            b"INFOISFT",
+            0,
+        );
+        let file = WaveFile::parse(&template).expect("parse");
+        (template, file)
+    }
+
+    #[test]
+    fn the_import_post_condition_catches_a_renamed_chunk() {
+        let (_, good) = post_condition_fixture();
+        let mut damaged = good.clone();
+        damaged.chunks[2].id = *b"junk";
+        let written = damaged.rebuild().expect("rebuild");
+        let refusal = verify_import(&written, &good, &good.format, &good.samples)
+            .expect_err("a chunk id changed");
+        assert!(
+            matches!(&refusal, WaveRefusal::ContainerChanged { detail } if detail.contains("but the template has")),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn the_import_post_condition_catches_a_changed_ancillary_body() {
+        let (_, good) = post_condition_fixture();
+        let mut damaged = good.clone();
+        damaged.chunks[2].body = WaveChunkBody::Other(b"INFOXXXX".to_vec());
+        let written = damaged.rebuild().expect("rebuild");
+        let refusal = verify_import(&written, &good, &good.format, &good.samples)
+            .expect_err("an ancillary body changed");
+        assert!(
+            matches!(&refusal, WaveRefusal::ContainerChanged { detail } if detail.contains("chunk body changed")),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn the_import_post_condition_catches_changed_trailing_bytes() {
+        let (_, good) = post_condition_fixture();
+        let mut damaged = good.clone();
+        damaged.trailing = vec![0xab];
+        let written = damaged.rebuild().expect("rebuild");
+        let refusal = verify_import(&written, &good, &good.format, &good.samples)
+            .expect_err("trailing bytes appeared");
+        assert!(
+            matches!(&refusal, WaveRefusal::ContainerChanged { detail } if detail.contains("trailing")),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn the_import_post_condition_catches_a_format_that_is_not_the_resolved_one() {
+        let (_, good) = post_condition_fixture();
+        let mut damaged = good.clone();
+        damaged.format.sample_rate = 11025;
+        let (block_align, byte_rate) = damaged.format.derived_fields().expect("derive");
+        damaged.format.block_align = block_align;
+        damaged.format.byte_rate = byte_rate;
+        let written = damaged.rebuild().expect("rebuild");
+        let refusal = verify_import(&written, &good, &good.format, &good.samples)
+            .expect_err("the written format is not the resolved one");
+        assert!(
+            matches!(&refusal, WaveRefusal::ContainerChanged { detail } if detail.contains("the import resolved")),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn the_import_post_condition_catches_samples_that_are_not_the_edit() {
+        let (_, good) = post_condition_fixture();
+        let mut damaged = good.clone();
+        damaged.samples.interleaved[0] = damaged.samples.interleaved[0].wrapping_add(1);
+        let written = damaged.rebuild().expect("rebuild");
+        let refusal = verify_import(&written, &good, &good.format, &good.samples)
+            .expect_err("the samples are not the edit's");
+        assert!(
+            matches!(&refusal, WaveRefusal::ContainerChanged { detail } if detail.contains("written samples")),
+            "{refusal}"
+        );
+    }
+
+    /// The `RIFF` size branch, reached by handing `verify_import` bytes whose header is wrong.
+    ///
+    /// `rebuild` computes that field, so the only way to exercise the check is to corrupt its
+    /// output -- which is exactly what the check is for: it is the last line between a writer bug
+    /// and a file on disk.
+    #[test]
+    fn the_import_post_condition_catches_a_wrong_riff_size() {
+        let (_, good) = post_condition_fixture();
+        let mut written = good.rebuild().expect("rebuild");
+        let riff = u32::from_le_bytes([written[4], written[5], written[6], written[7]]);
+        written[4..8].copy_from_slice(&(riff + 2).to_le_bytes());
+        let refusal = verify_import(&written, &good, &good.format, &good.samples)
+            .expect_err("the RIFF size field is wrong");
+        assert!(
+            matches!(&refusal, WaveRefusal::ContainerChanged { detail } if detail.contains("RIFF size field")),
+            "{refusal}"
+        );
+    }
+
+    // --- one case per `resolve_target_format` branch ---------------------------------------
+
+    /// Unchanged nominal format: the **template's** fmt survives, not the edit's.
+    ///
+    /// Fails if the retention branch is reverted to returning the edit's whole `fmt `, which was a
+    /// surviving mutant. The edit here carries a `byte_rate` the template does not.
+    #[test]
+    fn an_unchanged_format_keeps_the_templates_own_fmt_chunk() {
+        let template = canonical(1, 22050, 8, &[1, 2, 3, 4]);
+        let mut edited = canonical(1, 22050, 8, &[9, 9, 9, 9]);
+        // A legal-but-different fmt extension the template does not have would be refused, so use
+        // a distinguishable `extra`-free difference: the template is authoritative on everything.
+        edited[16..20].copy_from_slice(&16_u32.to_le_bytes());
+        let resolved = resolve_target_format(
+            &WaveFile::parse(&template).expect("parse").format,
+            &WaveFile::parse(&edited).expect("parse").format,
+            ImportOptions::default(),
+        )
+        .expect("same nominal format");
+        assert_eq!(
+            resolved,
+            WaveFile::parse(&template).expect("parse").format,
+            "the template's fmt chunk is the one that is kept"
+        );
+    }
+
+    /// Changed format: `block_align` and `byte_rate` are **derived**, not copied from the edit.
+    ///
+    /// Fails if the two derivation lines are deleted, both of which were surviving mutants.
+    #[test]
+    fn a_changed_format_derives_the_redundant_fields_rather_than_copying_them() {
+        let template = WaveFile::parse(&canonical(1, 22050, 8, &[1, 2, 3, 4]))
+            .expect("parse")
+            .format;
+        let mut edited = WaveFile::parse(&canonical(2, 22050, 8, &[1, 2, 3, 4]))
+            .expect("parse")
+            .format;
+        // An edit that declares nonsense in the redundant fields. `rewrite_refusal` would catch
+        // this on a whole file; `resolve_target_format` must not propagate it either way.
+        edited.block_align = 99;
+        edited.byte_rate = 7;
+        let resolved = resolve_target_format(
+            &template,
+            &edited,
+            ImportOptions {
+                allow_format_change: true,
+                ..ImportOptions::default()
+            },
+        )
+        .expect("an allowed format change");
+        assert_eq!(resolved.channels, 2);
+        assert_eq!(resolved.block_align, 2, "derived, not the edit's 99");
+        assert_eq!(resolved.byte_rate, 44100, "derived, not the edit's 7");
+    }
+
+    /// The extension-byte refusal, which survived an `if false` mutation.
+    #[test]
+    fn an_edit_that_introduces_fmt_extension_bytes_is_refused() {
+        let template = WaveFile::parse(&canonical(1, 22050, 8, &[1, 2, 3, 4]))
+            .expect("parse")
+            .format;
+        let mut edited = template.clone();
+        edited.extra = vec![0x00, 0x00];
+        let error = resolve_target_format(&template, &edited, ImportOptions::default())
+            .expect_err("extension bytes have no evidence behind them");
+        assert!(error.to_string().contains("extension byte"), "{error}");
+    }
+
     #[test]
     fn a_trailing_list_chunk_survives_the_round_trip() {
         let bytes = with_chunk(
@@ -1475,6 +1811,12 @@ mod tests {
         assert_eq!(WaveFile::parse(&allowed).expect("parse").format.channels, 2);
     }
 
+    /// A format change to something unattested is refused even when changes are allowed.
+    ///
+    /// This used to pass for a reason other than the one it names: the whole-file
+    /// `rewrite_refusal` on the edit caught 48 kHz before `resolve_target_format` was reached, so
+    /// removing `sample_rate` from the nominal-format comparison left it green. The `fmt `-level
+    /// case below reaches the gate this test is about.
     #[test]
     fn a_format_change_outside_the_attested_set_is_refused_even_when_allowed() {
         let template = canonical(1, 22050, 8, &[1, 2, 3, 4]);
@@ -1489,6 +1831,36 @@ mod tests {
         )
         .expect_err("48 kHz is not attested");
         assert!(error.to_string().contains("48000"), "{error}");
+
+        // Same depth and channel count, different rate: the case that isolates the rate field in
+        // `same_nominal_format` rather than being caught by an earlier whole-file check.
+        let attested_template = WaveFile::parse(&canonical(1, 22050, 8, &[1, 2, 3, 4]))
+            .expect("parse")
+            .format;
+        let attested_edit = WaveFile::parse(&canonical(1, 11025, 8, &[1, 2, 3, 4]))
+            .expect("parse")
+            .format;
+        let error = resolve_target_format(
+            &attested_template,
+            &attested_edit,
+            ImportOptions::default(),
+        )
+        .expect_err("a rate change still needs to be asked for");
+        assert!(
+            error.to_string().contains("--allow-format-change"),
+            "{error}"
+        );
+        let resolved = resolve_target_format(
+            &attested_template,
+            &attested_edit,
+            ImportOptions {
+                allow_format_change: true,
+                ..ImportOptions::default()
+            },
+        )
+        .expect("11025 is attested");
+        assert_eq!(resolved.sample_rate, 11025);
+        assert_eq!(resolved.byte_rate, 11025, "derived from the new rate");
     }
 
     #[test]
@@ -1511,19 +1883,23 @@ mod tests {
 
     // --- loop metadata ------------------------------------------------------------------------
 
+    /// `dwEnd` is inclusive, so a loop over a 1,000-frame file ends at 999.
+    ///
+    /// The fixture used to say 1,000 and pass, which pinned the exclusive reading in as correct
+    /// without ever stating that a choice was being made.
     #[test]
     fn a_smpl_loop_past_the_end_of_the_new_audio_is_refused_by_name() {
         let template = with_chunk(
             canonical(1, 22050, 8, &[0; 1000]),
             b"smpl",
-            &smpl(0, 1000),
+            &smpl(0, 999),
             0,
         );
         assert_eq!(
             WaveFile::parse(&template)
                 .expect("parse")
                 .last_referenced_frame(),
-            Some(("smpl".to_owned(), 1000))
+            Some(("smpl".to_owned(), 999))
         );
         // Unedited, the loop still fits.
         import_samples(&template, &template, ImportOptions::default())
@@ -1536,6 +1912,7 @@ mod tests {
             error.to_string().contains("dangling-loop-metadata"),
             "{error}"
         );
+        assert!(error.to_string().contains("chunk=smpl"), "{error}");
         assert!(error.to_string().contains("--allow-dangling-loops"), "{error}");
 
         let allowed = import_samples(
@@ -1548,6 +1925,26 @@ mod tests {
         )
         .expect("explicitly allowed");
         assert_eq!(WaveFile::parse(&allowed).expect("parse").layout(), "fmt |data|smpl");
+    }
+
+    /// The three boundaries the inclusive reading turns on.
+    #[test]
+    fn the_loop_gate_is_inclusive_at_every_boundary() {
+        let audio = |frames: usize| canonical(1, 22050, 8, &vec![0_u8; frames]);
+        let template = |end: u32| with_chunk(audio(1000), b"smpl", &smpl(0, end), 0);
+
+        // end == frames - 1: the last frame that exists. Allowed.
+        import_samples(&audio(100), &template(99), ImportOptions::default())
+            .expect("a loop ending on the last frame fits");
+        // end == frames: one past the end. Refused -- this is the case `>` used to admit.
+        let error = import_samples(&audio(100), &template(100), ImportOptions::default())
+            .expect_err("a loop ending at the frame count is past the end");
+        assert!(error.to_string().contains("last-referenced-frame=100"), "{error}");
+        assert!(error.to_string().contains("frames=100"), "{error}");
+        // Empty audio holds no frame at all, so even a reference to frame 0 dangles.
+        let error = import_samples(&audio(0), &template(0), ImportOptions::default())
+            .expect_err("empty audio cannot hold a loop point");
+        assert!(error.to_string().contains("frames=0"), "{error}");
     }
 
     #[test]
@@ -1802,6 +2199,12 @@ mod tests {
     ///
     /// Run against real `smpl` and `cue ` chunks rather than a fixture, because the fixture is
     /// written from the same documented layout the parser reads.
+    ///
+    /// The edit is built by truncating the **interleaved sample vector**, and the truncation is
+    /// expressed in samples. An earlier version passed `frame_bytes` -- a byte count -- to
+    /// `truncate`, which for stereo 16-bit is four samples, not the "one frame" its comment
+    /// claimed. Here the edit is a single frame by construction, so any reference to a frame other
+    /// than 0 must dangle.
     #[test]
     #[ignore = "needs LOM_GAME_DIR"]
     fn shortening_a_member_with_loop_metadata_is_refused() {
@@ -1817,16 +2220,25 @@ mod tests {
                 continue;
             };
             carried += 1;
-            if last == 0 {
+            let channels = usize::from(file.format.channels);
+            if file.samples.frames() < 2 {
                 continue;
             }
-            // One frame of audio: anything with a nonzero loop or cue point must now dangle.
-            let frame_bytes = file.format.frame_bytes().expect("frame size");
             let short = {
                 let mut shortened = file.clone();
-                shortened.samples.interleaved.truncate(frame_bytes);
+                // Exactly one frame: `channels` samples.
+                shortened.samples.interleaved.truncate(channels);
+                assert_eq!(shortened.samples.frames(), 1, "{}", entry.name);
                 shortened.rebuild().expect("rebuild a short edit")
             };
+            // With one frame, frame 0 is the only valid position, so any reference at or above 1
+            // dangles -- and `last >= 1` for every member that reaches here, because a member
+            // whose only reference is frame 0 would need `last == 0`.
+            if last == 0 {
+                import_samples(&short, &bytes, ImportOptions::default())
+                    .expect("a reference to frame 0 still fits in a one-frame edit");
+                continue;
+            }
             let error = import_samples(&short, &bytes, ImportOptions::default())
                 .expect_err("the metadata must dangle");
             assert!(
@@ -1845,7 +2257,53 @@ mod tests {
             .expect("explicitly allowed");
             refused += 1;
         }
-        assert!(carried > 0, "no sndfx member carries loop metadata");
+        assert_eq!(carried, 63, "the sndfx loop-metadata population changed");
         assert!(refused > 0, "no sndfx member has a nonzero loop or cue point");
+    }
+
+    /// `files_with_loop_metadata` counts chunks that declare at least one **record**.
+    ///
+    /// Pinned because the number it replaced was wrong, and because it does not match the
+    /// `smpl`/`cue `-bearing rows of the layout table: 96 + 96 + 23 files **carry a chunk**, while
+    /// 63 + 62 + 22 declare a record inside it. Most `smpl` chunks in this corpus declare zero
+    /// loops. See `docs/audio-format.md`.
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR"]
+    fn the_loop_metadata_population_is_what_the_documentation_says() {
+        let directory = game_directory();
+        let sndfx = sweep_archive(&directory.join("sndfx.mpq"));
+        let special = sweep_archive(&directory.join("special.mpq"));
+        let mut loose = WaveSweep::default();
+        for (name, bytes) in &loose_wave_files() {
+            loose.observe(name, bytes);
+        }
+        assert_eq!(sndfx.loop_metadata_files, 63);
+        assert_eq!(special.loop_metadata_files, 62);
+        assert_eq!(loose.loop_metadata_files, 22);
+        assert_eq!(
+            sndfx.loop_metadata_files + special.loop_metadata_files + loose.loop_metadata_files,
+            147
+        );
+
+        // The other number, reached by a different path: chunk PRESENCE, counted off the layout
+        // strings rather than by parsing any record. 215 files carry a `smpl` or `cue ` chunk and
+        // only 147 put a record in one, which is the discrepancy a reader checking the layout
+        // table's arithmetic would otherwise conclude was an error.
+        let carrying = |sweep: &WaveSweep| -> usize {
+            sweep
+                .layouts
+                .iter()
+                .filter(|(layout, _)| layout.contains("smpl") || layout.contains("cue "))
+                .map(|(_, count)| *count)
+                .sum()
+        };
+        assert_eq!(carrying(&sndfx), 96);
+        assert_eq!(carrying(&special), 96);
+        assert_eq!(carrying(&loose), 23);
+        assert_eq!(
+            carrying(&sndfx) + carrying(&special) + carrying(&loose),
+            215,
+            "files carrying a chunk, as opposed to the 147 declaring a record in one"
+        );
     }
 }

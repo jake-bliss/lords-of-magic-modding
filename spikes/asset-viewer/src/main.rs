@@ -1455,10 +1455,11 @@ fn describe_smacker(path: &Path) -> Result<(), String> {
             track.unaccounted_bits()
         );
         println!(
-            "audio_track_totals\t{index}\tunpacked-from-chunks={}\texpected-from-header={}",
-            file.audio_unpacked_bytes(index),
-            file.audio_expected_bytes(index)
-                .map_or_else(|| "unrepresentable".to_owned(), |value| value.to_string())
+            "audio_track_totals\t{index}\tunpacked-from-chunks={}\tunpacked-in-timed-frames={}\t\
+             expected-from-header={}",
+            describe_optional(file.audio_unpacked_bytes(index)),
+            describe_optional(file.audio_unpacked_bytes_in_timed_frames(index)),
+            describe_optional(file.audio_expected_bytes(index))
         );
     }
     Ok(())
@@ -1480,7 +1481,7 @@ fn scan_smacker_directory(directory: &Path) -> Result<(), String> {
     let mut unknown_size_flags = 0_usize;
     // The frame-split control: how far the audio summed out of the chunks lands from the total the
     // header's rate and running time predict. A wrong split would not land close.
-    let mut worst_audio_drift = 0_i64;
+    let mut worst_audio_drift = 0_u64;
     let mut unrepresentable_controls = 0_usize;
     let mut failures = Vec::new();
     for path in &paths {
@@ -1513,14 +1514,19 @@ fn scan_smacker_directory(directory: &Path) -> Result<(), String> {
                     .filter(|frame| frame.unknown_size_flag)
                     .count();
                 for track in 0..smacker::AUDIO_TRACKS {
-                    match file.audio_expected_bytes(track) {
-                        Some(expected) => {
-                            let drift = file.audio_unpacked_bytes(track) as i64 - expected as i64;
-                            worst_audio_drift = worst_audio_drift.max(drift.abs());
+                    match (
+                        file.audio_unpacked_bytes_in_timed_frames(track),
+                        file.audio_expected_bytes(track),
+                    ) {
+                        // `abs_diff`, not a signed subtraction of two `u64`s: the difference is
+                        // what is wanted, and casting both sides to `i64` to get it is another
+                        // declared-value overflow waiting behind a plausible-looking number.
+                        (Some(found), Some(expected)) => {
+                            worst_audio_drift = worst_audio_drift.max(found.abs_diff(expected));
                         }
                         // Not folded into the maximum as a zero: a control that cannot be computed
                         // is not a control that came out well.
-                        None => unrepresentable_controls += 1,
+                        _ => unrepresentable_controls += 1,
                     }
                 }
                 println!("{}", smacker::describe(&name, &file));
@@ -1575,6 +1581,11 @@ fn scan_smacker_directory(directory: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Render an optional measurement, naming the absent case rather than printing a plausible zero.
+fn describe_optional(value: Option<u64>) -> String {
+    value.map_or_else(|| "unrepresentable".to_owned(), |value| value.to_string())
 }
 
 /// Collect every file under `directory` whose extension matches, case-insensitively.
@@ -3368,6 +3379,11 @@ fn scan_archive(source: &Source) -> Result<(), String> {
     let (archive, entries) = open_archive(source)?;
     let mut readable = 0_usize;
     let mut kinds = BTreeMap::<AssetKind, usize>::new();
+    // Classified, but with contents this tool has no decoder for. Counted separately and printed
+    // unconditionally so the "0 probe failures" figure carries its own falsifier: without it, an
+    // archive whose members had all stopped decoding reports exactly what a clean one reports.
+    let mut undecoded = BTreeMap::<AssetKind, usize>::new();
+    let mut undecoded_reasons = Vec::new();
     let mut failures = Vec::new();
 
     for entry in &entries {
@@ -3380,15 +3396,30 @@ fn scan_archive(source: &Source) -> Result<(), String> {
         };
         readable += 1;
         match probe(&entry.name, &bytes) {
-            Ok(info) => *kinds.entry(info.kind).or_default() += 1,
+            Ok(info) => {
+                *kinds.entry(info.kind).or_default() += 1;
+                if let Some(reason) = info.undecoded {
+                    *undecoded.entry(info.kind).or_default() += 1;
+                    undecoded_reasons.push((entry.name.clone(), reason));
+                }
+            }
             Err(error) => failures.push((entry.name.clone(), error)),
         }
     }
 
     println!("archive_entries\t{}", entries.len());
     println!("readable_entries\t{readable}");
+    let undecoded_total: usize = undecoded.values().sum();
+    println!("decoded_entries\t{}", readable - undecoded_total - failures.len());
+    println!("undecoded_entries\t{undecoded_total}");
     for (kind, count) in kinds {
         println!("kind\t{kind}\t{count}");
+    }
+    for (kind, count) in &undecoded {
+        println!("undecoded\t{kind}\t{count}");
+    }
+    for (name, reason) in &undecoded_reasons {
+        println!("undecoded_member\t{name}\t{reason}");
     }
     let failure_count = failures.len();
     println!("failures\t{failure_count}");

@@ -75,13 +75,34 @@ their counts:
 | `fmt \|data\|smpl\|LIST\|cue \|LIST` | 6 | 6 | 0 |
 
 No member has a `fmt ` chunk longer than 16 bytes, and no member's `RIFF` size field disagrees with
-its file length (`riff_size_mismatch 0` on all three sweeps). **Observed in the corpus:** 147 files
-(63 + 62 + 22) carry a `smpl` loop, a `cue ` point, or both — that is the population the
-length-change gate below exists for.
+its file length (`riff_size_mismatch 0` on all three sweeps).
+
+**Observed in the corpus, and the two numbers are different questions.** **215** files (96 + 96 +
+23) *carry* a `smpl` or `cue ` chunk — that is the sum of the `smpl`/`cue `-bearing rows above.
+Only **147** (63 + 62 + 22) declare at least one **record** inside it: 116 `smpl` chunks between the
+two archives declare just 41 loops in total, so most of them are empty. The length-change gate
+below acts on records, so 147 is its population. Both counts are pinned by a corpus test.
 
 The `LIST INFO` blocks name the authoring tool. **Observed in the corpus:** every one of the 1,678
 `ISFT` fields across both archives reads `Sound Forge 4.0`, and the `ICRD` dates run 1996 (16),
 1997 (1,232) and 1998 (430). One tool cut the entire corpus.
+
+### What the `smpl` and `cue ` positions mean
+
+**Documented, and the only claim in this branch grounded in an external authority.** The Microsoft
+RIFF 1994 specification says of a `smpl` loop's `dwEnd` that "this sample will also be played" — the
+endpoint is **inclusive**, so a loop ending at `dwEnd` needs `dwEnd + 1` frames of audio. A `cue `
+point's `dwSampleOffset` is a position, so an offset equal to the frame count is already past the
+end; there is no ambiguity of the same kind there.
+
+Writers are known to disagree about `dwEnd`, so the corpus was asked as well. **Observed in the
+corpus:** of the 41 `smpl` loop records in the two archives, **34 end at exactly `frames - 1` and
+none at `frames`**; of the 116 `cue ` points, 26 sit at `frames - 1` and none at `frames`. The
+external authority and the shipped files agree, so the gate rejects `end >= frames`.
+
+This matters because the gate first shipped with `end > frames`, which admits a loop whose endpoint
+is one past the last frame — the precise failure it exists to prevent. The fixture encoded that
+error as correct without stating that a choice was being made.
 
 ### Read the round-trip numbers for what they are
 
@@ -125,6 +146,14 @@ path could have noticed, because that path replays the pad.
 `skipped_not_wave` is 0 in all three. It is reported because without it the denominator would be
 chosen by the same magic-byte test being measured, and the archive and directory sweeps would
 quietly report over different populations.
+
+One thing `import_verified` caught that nothing else could: the rewriting serialiser decided a pad
+byte purely from the new body's parity, so a template whose **final** odd-sized chunk simply ends
+without a pad — a legal shape the parser records as `pad: None` — gained a `0x00`. A 47-byte member
+came back 48 bytes, with the invented byte folded into the recomputed `RIFF` size so that every
+other check agreed. The writer and the check on the writer now share one rule for pad presence and
+value, and the check compares the whole `Option` rather than only the case where both sides have
+one.
 
 **Why byte-identity is total, and why that is not a boast.** WAVE `data` is not compressed: there is
 exactly one byte sequence that encodes a given set of PCM samples. The only freedom a WAVE writer
@@ -183,7 +212,7 @@ The precedent is the IMP writer, which refuses 3,439 frames whose pixels are sha
 | `partial-frame` | the `data` chunk does not hold a whole number of interleaved frames | **0** |
 | `block-align-disagrees` | `block_align` contradicts the channel count and bit depth in the same `fmt ` chunk | **0** |
 | `byte-rate-disagrees` | `byte_rate` contradicts the sample rate and block alignment | **0** |
-| `dangling-loop-metadata` | a `smpl` loop or `cue ` point would point past the end of the audio being written | **0** on unedited members |
+| `dangling-loop-metadata` | a `smpl` loop or `cue ` point would land at or past the end of the audio being written | **0** on unedited members |
 | `container-changed` | the writer's own output does not carry the container it was told to carry | **0**, and this one has fired on a real bug |
 
 All 3,140 corpus files are rewritable; nothing that ships is refused. Four of these six are gates on
@@ -195,9 +224,9 @@ redundant fields are the ones an editor gets wrong. The decoder computes frame s
 would otherwise never notice.
 
 `dangling-loop-metadata` is the gate on the hazard this page previously only described. `smpl` loop
-records and `cue ` points address **sample frames**; shortening the audio under them leaves a loop
-or marker past the end, which plays as a hang or a click. 147 corpus files carry such metadata.
-Refused by name; `--allow-dangling-loops` writes it anyway.
+records and `cue ` points address **sample frames**, inclusively; shortening the audio under them
+leaves a loop or marker at or past the end, which plays as a hang or a click. 147 corpus files
+declare such a record. Refused by name; `--allow-dangling-loops` writes it anyway.
 
 The attested sets are **Observed in the corpus**, not **Documented**: format tag PCM (1) only;
 channels 1 or 2; rate 11025, 22050 or 44100; depth 8 or 16. Nothing in `lomse.exe` has been read to
@@ -209,16 +238,23 @@ establish what the engine actually accepts. An import at 48 kHz is refused by na
 `asset::probe` now walks the WAVE container rather than reading the `fmt ` header and stopping, and
 decodes the samples when there is a decoder. The two claims are kept apart:
 
-* a container error means the member is **not classified** — the probe returns an error;
-* a legal WAVE in a format with no decoder here **is** classified, with `undecoded=<reason>` naming
-  what stopped. Reporting it as a probe failure would be the tool mistaking its own reach for the
-  file being broken, and would flip `--scan` to a non-zero exit on a valid file.
+* a **container** error, or **malformed supported PCM**, means the member is not classified — the
+  probe returns an error and `--scan` counts a failure. A PCM member declaring zero channels belongs
+  here;
+* a legal WAVE in a format with **no decoder here** is classified, with `undecoded` set. Reporting
+  it as a probe failure would be the tool mistaking its own reach for the file being broken.
+
+Only the second case is downgraded, and the distinction is typed rather than a substring of the
+details string. Downgrading *every* post-header error made the probe-failure count insensitive:
+supported PCM could stop decoding across an entire archive and the scan would still report zero
+failures. `--scan` also now prints `decoded_entries` and `undecoded_entries` unconditionally,
+because it records only the asset kind and throws the details away — without those counters a sweep
+of 3,098 undecoded WAVEs reports exactly what a sweep of 3,098 decoded ones reports.
 
 **The repository-wide "9,804 members, 0 probe failures" figure was measured against the old probe.**
-It has been **re-measured** against the new one on the GS5R3 profile and still holds:
-`pic.mpq` 1,406, `special.mpq` 1,218, `gs.mpq` 1,700, `imp.mpq` 3,600, `sndfx.mpq` 1,880 —
-**9,804 entries, 0 probe failures**. The corpus is all PCM, so nothing reaches the `undecoded=` path
-today.
+It has been **re-measured** against the current one on the GS5R3 profile, and is now reported with
+the counter that can falsify it: `pic.mpq` 1,406, `special.mpq` 1,218, `gs.mpq` 1,700, `imp.mpq`
+3,600, `sndfx.mpq` 1,880 — **9,804 entries, 9,804 decoded, 0 undecoded, 0 probe failures.**
 
 ## Smacker
 
@@ -297,11 +333,22 @@ chunk position. **Observed in the corpus:** the two totals agree for all 23 file
 disagreement being **36 bytes** against per-file totals of 0.5–4.0 MB — well under one frame's 3,675
 bytes of audio, and explained by the 83,330 µs frame interval not dividing evenly into milliseconds.
 
-Every factor in that control is a **file-declared** value, so all of it is computed with checked
-arithmetic. A crafted file whose sizes all close can still name a rate, channel count, frame count
-and interval whose product leaves `u64`; the control then reports `unrepresentable` and
+Every factor in that control is a **file-declared** value, so all of it is computed in `u128` and
+only the quotient has to fit `u64`. A crafted file can name a rate, channel count, frame count and
+interval whose *quotient* leaves `u64`; the control then reports `unrepresentable` and
 `--scan-smk-dir` exits non-zero, rather than presenting a wrapped number as a measurement. The same
-rule this module already applied to allocation now applies to arithmetic.
+rule this module already applied to allocation now applies to arithmetic — in both directions: the
+first version checked each multiplication instead of the result and so refused to compute a value
+of 18,734,973,333,169, which fits `u64` with room to spare. An over-rejecting guard is a wrong
+answer too.
+
+Two measurements are reported, deliberately separated. `unpacked-from-chunks` totals **every**
+frame; `unpacked-in-timed-frames` excludes a ring frame and is what the control compares against.
+Excluding the ring frame is right for a comparison with the running time and wrong for a question
+about what the file contains, and letting the control's need silently redefine a reporting number
+is how a figure comes to mean something other than its name. Neither total is produced for a
+**Bink DCT** track: the payload's decoded length is not stated anywhere this module reads, and
+calling its compressed byte count "unpacked" would be false, so it is a named skip.
 
 ### Measured corpus
 
@@ -375,8 +422,10 @@ expected per-member results.
 12. **The keyframe bit is never set here.** The parse of bit 0 is exercised only in the negative
     direction by this corpus.
 13. **`SMK4`, ring frames, Y-interlaced and Y-doubled, Bink audio, 16-bit and multi-track audio are
-    all unexercised by the corpus.** The parser handles them from the documented layout and the
-    uncompressed-track and ring-frame paths have unit tests, but no installed file tests any of them.
+    all unexercised by the corpus.** The parser handles them from the documented layout, and the
+    uncompressed-track, ring-frame and Bink paths have unit tests, but no installed file tests any
+    of them. Bink is a **named skip** rather than a handled case: the decoded length of a Bink DCT
+    payload is not determined here, so no unpacked total is produced for such a track.
 14. **The header layout has not been checked against an external implementation.** It is
     **Documented** from community descriptions; ScummVM and libav source were not diffed against it.
     The size closure and the audio-rate control are what stand behind it.

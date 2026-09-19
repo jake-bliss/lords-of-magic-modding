@@ -6,7 +6,7 @@ use crate::map::MapAsset;
 use crate::pbm::PbmImage;
 use crate::smacker::SmackerFile;
 use crate::tile::TileSetDefinition;
-use crate::wave::WaveFile;
+use crate::wave::{WaveErrorKind, WaveFile};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AssetKind {
@@ -61,6 +61,12 @@ impl fmt::Display for AssetKind {
 pub struct AssetInfo {
     pub kind: AssetKind,
     pub details: String,
+    /// Set when the member was **classified** but this tool has no decoder for its contents.
+    ///
+    /// A typed field rather than a substring of `details`, because `scan_archive` records only the
+    /// kind and throws the details away -- which is how a sweep of 3,098 undecoded WAVEs would
+    /// have reported exactly what a sweep of 3,098 decoded ones does.
+    pub undecoded: Option<String>,
 }
 
 impl AssetInfo {
@@ -68,6 +74,15 @@ impl AssetInfo {
         Self {
             kind,
             details: details.into(),
+            undecoded: None,
+        }
+    }
+
+    fn undecoded(kind: AssetKind, details: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            kind,
+            details: details.into(),
+            undecoded: Some(reason.into()),
         }
     }
 }
@@ -395,18 +410,22 @@ fn probe_bitmap(bytes: &[u8]) -> Result<AssetInfo, String> {
 
 /// Classify a WAVE by walking its **container**, and decode its samples when there is a decoder.
 ///
-/// Two claims that must not be collapsed into one another:
+/// Three outcomes, and the middle one is the whole point:
 ///
-/// * *this is a WAVE* -- the container walked, `fmt ` and `data` found, every chunk inside the
-///   file. A container error is an error and the member is not classified.
-/// * *this tool can decode it* -- a PCM depth [`crate::wave`] implements. A legal WAVE in a format
-///   with no decoder here is still a WAVE, and reporting it as a probe failure would be this tool
-///   confusing its own reach with the file's validity. It is classified, with `undecoded=<reason>`
-///   naming what stopped.
+/// * a **container** error, or malformed supported PCM -- not classified, the probe returns an
+///   error and `--scan` reports a failure. A PCM member declaring zero channels belongs here.
+/// * a legal WAVE in a format this tool has **no decoder for** -- classified, with `undecoded`
+///   set. Reporting it as a probe failure would be the tool confusing its own reach with the
+///   file's validity.
+/// * decoded -- classified, with frame count and duration.
 ///
-/// The old probe read the `fmt ` chunk and stopped, so `--scan` reported a clean sweep over 3,098
-/// members it had never read a sample of. **The repository-wide "9,804 members, 0 probe failures"
-/// figure was measured against that old probe and must be re-measured before it is repeated.**
+/// Only [`WaveErrorKind::Unsupported`] is downgraded. Downgrading every post-header error made the
+/// probe-failure count insensitive: supported PCM could stop decoding and the archive would still
+/// scan clean.
+///
+/// The old probe read the `fmt ` chunk and stopped. The repository-wide "9,804 members, 0 probe
+/// failures" figure was measured against it; it has since been **re-measured against this probe**
+/// and is reported alongside an `undecoded` count -- see `docs/native-asset-stage.md`.
 fn probe_wave(bytes: &[u8]) -> Result<AssetInfo, String> {
     let header = WaveFile::parse_header(bytes).map_err(|error| error.to_string())?;
     let common = format!(
@@ -427,10 +446,12 @@ fn probe_wave(bytes: &[u8]) -> Result<AssetInfo, String> {
                 file.samples.duration_ms()
             ),
         )),
-        Err(error) => Ok(AssetInfo::new(
+        Err(error) if error.kind() == WaveErrorKind::Unsupported => Ok(AssetInfo::undecoded(
             AssetKind::WaveAudio,
             format!("{common};undecoded={error}"),
+            error.to_string(),
         )),
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -584,6 +605,32 @@ mod tests {
         assert!(info.details.contains("encoding=17"), "{}", info.details);
         assert!(info.details.contains("undecoded="), "{}", info.details);
         assert!(!info.details.contains("frames="), "{}", info.details);
+        assert!(info.undecoded.is_some(), "the flag must be typed, not a substring");
+    }
+
+    /// Malformed **supported** PCM is a failure, not an `undecoded` downgrade.
+    ///
+    /// This is the case that made the probe-failure count insensitive: the container walks, the
+    /// format is PCM at a depth this tool implements, and the file is still broken. Downgrading it
+    /// meant an archive of members that had stopped decoding still scanned with zero failures.
+    #[test]
+    fn refuses_malformed_supported_pcm_rather_than_downgrading_it() {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&40_u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes()); // PCM
+        bytes.extend_from_slice(&0_u16.to_le_bytes()); // zero channels
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&8_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&4_u32.to_le_bytes());
+        bytes.extend_from_slice(&[1, 2, 3, 4]);
+
+        let error = probe("broken.wav", &bytes).expect_err("supported PCM that will not decode");
+        assert!(error.contains("zero channels"), "{error}");
     }
 
     #[test]
