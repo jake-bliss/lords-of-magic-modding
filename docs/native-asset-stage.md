@@ -44,7 +44,91 @@ Measured on the preserved local GS5R3 profile on 2026-09-11:
 | `sndfx.mpq` | 1,880 | 1,880 WAVE | 0 |
 | **Total** | **9,804** | | **0** |
 
-The 3,098 WAVE members are now **decoded**, not probed: the container is walked, the `fmt ` chunk is rebuilt from typed fields, and the PCM sample data is converted both ways. See [audio and video formats](audio-format.md) for the encoding histogram, the round-trip counts and what each of them covers, and the export/import path. A legal WAVE in a format this tool has no decoder for is still **classified**, with `undecoded=<reason>`, rather than counted as a probe failure. The table above was re-measured against that changed probe on 2026-09-18 and is unchanged: 9,804 entries, **9,804 decoded, 0 undecoded**, 0 probe failures. `--scan` now prints the decoded/undecoded split unconditionally, so a future run in which members stop decoding cannot report a clean sweep. BMP members are still probed for dimensions, bit depth, and compression only.
+The 3,098 WAVE members are now **decoded**, not probed: the container is walked, the `fmt ` chunk is rebuilt from typed fields, and the PCM sample data is converted both ways. See [audio and video formats](audio-format.md) for the encoding histogram, the round-trip counts and what each of them covers, and the export/import path. A legal WAVE in a format this tool has no decoder for is still **classified**, with `undecoded=<reason>`, rather than counted as a probe failure. The table above was re-measured against that changed probe on 2026-09-18 and is unchanged: 9,804 entries, **9,804 decoded, 0 undecoded**, 0 probe failures. `--scan` now prints the decoded/undecoded split unconditionally, so a future run in which members stop decoding cannot report a clean sweep.
+
+The **2 BMP members are also decoded** as of 2026-09-19, where they were previously probed for dimensions, bit depth and compression only -- which is what made the "every archived format is decoded" reading of the table above wrong for two members that nothing had ever decoded. `--scan` on GS5R3's `pic.mpq` was re-measured against the new probe on 2026-09-19 and is unchanged: 1,406 entries, 1,406 classified, **1,406 decoded, 0 undecoded**, 0 failures. See [the bitmap members](#the-two-bmp-members-decoded) below.
+
+## The two BMP members, decoded
+
+**Observed in the corpus, 2026-09-19.** `.bmp` members exist in exactly one installed profile:
+GS5R3's `pic.mpq` holds two, `LBM\ARTIFACT5R3A.bmp` and `LBM\ARTIFACT5R3B.bmp`. The 3.02,
+Development and Steambuild profiles hold **none** -- all four hold the same 26 `.til` tilesets, so
+this is a difference in the GS5R3 content and not in how the archives were enumerated.
+
+Both are the same shape in every header field:
+
+| field | value |
+| --- | --- |
+| `bfType` / `bfSize` | `BM` / 172,854, exactly the member's length |
+| `bfReserved1`, `bfReserved2` | 0, 0 |
+| `bfOffBits` | 54 -- a 14-byte file header plus a 40-byte DIB header, no palette, no gap |
+| `biSize` | 40 (`BITMAPINFOHEADER`) |
+| `biWidth` x `biHeight` | 400 x 144, positive height, so **bottom-up** |
+| `biPlanes` / `biBitCount` | 1 / 24 |
+| `biCompression` / `biSizeImage` | 0 (`BI_RGB`) / 172,800 = 1,200 x 144 |
+| `biXPelsPerMeter`, `biYPelsPerMeter` | 2,834, 2,834 |
+| `biClrUsed`, `biClrImportant` | 0, 0 |
+
+`spikes/asset-viewer/src/bmp.rs` decodes exactly that shape and encodes it back. **Both members
+survive a decode and an encode byte for byte, 2 of 2** (`every_archived_bitmap_round_trips`,
+corpus-gated on `LOM_GAME_DIR`, with a tripwire on the member count so a run that swept zero files
+cannot report a pass).
+
+### Channel order and row order, settled numerically
+
+A 24-bit BMP can be read B,G,R or R,G,B and bottom-up or top-down, and this repository has already
+been burned once judging that by eye. It did not have to be judged. Each `.bmp` has a **same-named
+sibling** in the same archive -- `LBM\ARTIFACT5R3A.lbm` and `LBM\ARTIFACT5R3B.lbm`, IFF PBM images
+of the same 400x144 dimensions -- read by an independent decoder written for an unrelated format.
+Comparing all 57,600 pixels of each:
+
+| reading | `ARTIFACT5R3A` | `ARTIFACT5R3B` |
+| --- | ---: | ---: |
+| **B,G,R bottom-up** | **57,600 / 57,600** | **57,600 / 57,600** |
+| R,G,B bottom-up | 11,384 | 7,161 |
+| B,G,R top-down | 8,070 | 10,542 |
+| R,G,B top-down | 1,686 | 192 |
+
+**Observed in the corpus, 2026-09-19.** The standard reading is exact and the three alternatives are
+nowhere near it, so the measurement discriminates rather than merely agreeing with a flat image.
+`every_archived_bitmap_matches_its_sibling_lbm` asserts all four rows, the three wrong ones as a
+negative control.
+
+**This is not the same claim as the `screencapture` one.** [The research
+log](research-log.md#the-bmp-byte-order-settled-numerically) records that the engine's
+`screencapture` operator writes R,G,B into a file whose header says otherwise. That is a property of
+*that operator's output*, measured on captures. These two members are authored art shipped inside an
+archive, and they are B,G,R. Neither finding may be used to predict the other.
+
+### What two files can and cannot establish
+
+Two members, identical in every header field, are a corpus that fixes **one point** in the format.
+They establish that this repository reads and writes *these* members. They establish **nothing**
+about the format's range: no shipped member witnesses an 8-, 16- or 32-bit depth, `BI_RLE8`,
+`BI_BITFIELDS`, a palette, a `BITMAPV4HEADER`/`BITMAPV5HEADER`, a top-down row order, a nonzero
+reserved word, or a row that needs padding. The decoder therefore implements the attested shape and
+reports every other legal variant as **unsupported** -- classified, with `undecoded=<reason>`, the
+same split `wave.rs` makes -- rather than guessing. A file whose declared sizes do not close is still
+a probe failure.
+
+Two consequences worth stating plainly:
+
+- **Row padding is Documented, not Observed.** Both members are 400 pixels wide and 400 x 3 = 1,200
+  is already a multiple of four, so the corpus contains zero padding bytes and cannot witness the
+  rounding rule, what a real padding byte holds, or that a decoder must skip it. The synthetic
+  `padding_*` tests are that branch's only coverage.
+- **The encoder's byte-identity is by construction, not by luck.** Every header field the decoder
+  does not derive is carried on the struct, and every field it does derive it also checks -- so a
+  file carrying a value the encoder would not reproduce is refused at decode instead of being
+  silently rewritten.
+
+**What would establish more:** a second archive, a community-authored `.bmp`, or a member of a
+different depth. None is known to exist. Until one does, the honest claim is the two-file one.
+
+**Not established:** what the engine does with these members. They are named like the `.lbm` art
+beside them and are the same dimensions as their siblings, which is suggestive and is not evidence.
+No gamescript reference to either name has been looked for, and nothing here has been put in front
+of the engine.
 
 ## IMP findings
 
@@ -332,7 +416,7 @@ Verified on 2026-09-16 (the full corpus scan itself dates from 2026-09-12):
 
 The implementation uses three layers of evidence:
 
-1. Tiny synthetic unit fixtures cover endianness, chunk bounds, ByteRun1 scanline behavior, IMP tables, sequence/facing ranges, navigation boundaries, RLE packets, all four packed pixel depths, hotspots, duplicate references, shared-pixel records inside a record array, indexed-PNG preservation, BMP metadata, WAVE chunks, and the platform-dependent StormLib enumeration ABI.
+1. Tiny synthetic unit fixtures cover endianness, chunk bounds, ByteRun1 scanline behavior, IMP tables, sequence/facing ranges, navigation boundaries, RLE packets, all four packed pixel depths, hotspots, duplicate references, shared-pixel records inside a record array, indexed-PNG preservation, BMP headers, channel order, row order and row padding, WAVE chunks, and the platform-dependent StormLib enumeration ABI.
 2. User-local corpus tests scan all five archives, require every member to be readable/classifiable, and cross-check IMP binaries against their generated headers. No copyrighted fixture enters Git.
 3. Visual comparison checks representative UI, portrait, map, and animation output against the original executable before renderer behavior is considered faithful.
 
@@ -345,7 +429,7 @@ Stage 1 can pass only when common assets round-trip losslessly, unknown variants
 - [x] List, catalog, scan, inspect, and non-overwriting extract commands.
 - [x] Content-first classification of all five core archives.
 - [x] Lossless decode of all 1,377 observed PBM images.
-- [x] Metadata probes for BMP and WAVE.
+- [x] Metadata probes for BMP and WAVE, both since replaced by decoders -- see above for BMP and [audio and video formats](audio-format.md) for WAVE.
 - [x] Bounds-checked structural parser for all 1,800 IMP binaries.
 - [x] Pixel decoding for both IMP record variants and all observed packed depths.
 - [x] Individual-frame viewer with duplicate resolution and animation controls.

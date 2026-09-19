@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use crate::bmp::{BitmapImage, BmpErrorKind};
 use crate::imp::{ImpHeaderStats, ImpSprite};
 use crate::map::MapAsset;
 use crate::pbm::PbmImage;
@@ -384,6 +385,18 @@ fn probe_pbm(bytes: &[u8]) -> Result<AssetInfo, String> {
     ))
 }
 
+/// Classify a Windows bitmap, and **decode its pixels** when there is a decoder.
+///
+/// The same three-way split [`probe_wave`] makes, and for the same reason. The old probe read
+/// width, height, depth and compression out of the header and stopped, which is how the
+/// repository-wide "every archived file format is decoded" line came to cover two members nothing
+/// had ever decoded. It now reports `pixels=` on a member [`crate::bmp`] reads and
+/// `undecoded=<reason>` on a legal bitmap in a variant it does not implement -- a limit of this
+/// tool, not a fault in the archive. Only [`BmpErrorKind::Unsupported`] is downgraded; a file whose
+/// sizes do not close is still a probe failure.
+///
+/// The metadata line is still built from the raw header rather than from the decode, so an
+/// undecodable member is described as fully as it was before.
 fn probe_bitmap(bytes: &[u8]) -> Result<AssetInfo, String> {
     if bytes.len() < 30 {
         return Err("truncated Windows bitmap header".to_owned());
@@ -398,14 +411,23 @@ fn probe_bitmap(bytes: &[u8]) -> Result<AssetInfo, String> {
     let height = read_i32_le(bytes, 22)?;
     let bits_per_pixel = read_u16_le(bytes, 28)?;
     let compression = read_u32_le(bytes, 30)?;
-    Ok(AssetInfo::new(
-        AssetKind::Bitmap,
-        format!(
-            "width={};height={};bits-per-pixel={bits_per_pixel};compression={compression}",
-            width.unsigned_abs(),
-            height.unsigned_abs()
-        ),
-    ))
+    let common = format!(
+        "width={};height={};bits-per-pixel={bits_per_pixel};compression={compression}",
+        width.unsigned_abs(),
+        height.unsigned_abs()
+    );
+    match BitmapImage::decode(bytes) {
+        Ok(image) => Ok(AssetInfo::new(
+            AssetKind::Bitmap,
+            format!("{common};pixels={}", image.pixels.len()),
+        )),
+        Err(error) if error.kind() == BmpErrorKind::Unsupported => Ok(AssetInfo::undecoded(
+            AssetKind::Bitmap,
+            format!("{common};undecoded={error}"),
+            error.to_string(),
+        )),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 /// Classify a WAVE by walking its **container**, and decode its samples when there is a decoder.
@@ -684,10 +706,17 @@ mod tests {
         assert!(info.details.contains("bit depth 24"), "{}", info.details);
     }
 
+    /// A header-only fixture is still described, and is now reported as **undecoded**.
+    ///
+    /// This fixture declares 400x144 and carries no pixel bytes at all, so it never was a decodable
+    /// bitmap; before the decoder existed the probe could not tell. The metadata assertions are
+    /// unchanged, which is the point -- describing a member did not get worse.
     #[test]
     fn probes_windows_bitmap_metadata() {
         let mut bytes = vec![0_u8; 54];
         bytes[0..2].copy_from_slice(b"BM");
+        bytes[2..6].copy_from_slice(&54_u32.to_le_bytes());
+        bytes[10..14].copy_from_slice(&54_u32.to_le_bytes());
         bytes[14..18].copy_from_slice(&40_u32.to_le_bytes());
         bytes[18..22].copy_from_slice(&400_i32.to_le_bytes());
         bytes[22..26].copy_from_slice(&(-144_i32).to_le_bytes());
@@ -698,6 +727,20 @@ mod tests {
         assert_eq!(info.kind, AssetKind::Bitmap);
         assert!(info.details.contains("width=400;height=144"));
         assert!(info.details.contains("bits-per-pixel=24"));
+        assert!(info.undecoded.is_some(), "{}", info.details);
+        assert!(info.details.contains("bottom-up"), "{}", info.details);
+    }
+
+    /// A bitmap in the corpus's own shape decodes, and the probe says how many pixels it got.
+    #[test]
+    fn a_decodable_bitmap_is_reported_with_its_pixel_count() {
+        let bytes = crate::bmp::BitmapImage::from_pixels(4, 3, vec![[1, 2, 3]; 12])
+            .expect("a well-formed fixture")
+            .encode();
+        let info = probe("artifact.bmp", &bytes).unwrap();
+        assert_eq!(info.kind, AssetKind::Bitmap);
+        assert_eq!(info.undecoded, None, "{}", info.details);
+        assert!(info.details.contains("pixels=12"), "{}", info.details);
     }
 
     #[test]
