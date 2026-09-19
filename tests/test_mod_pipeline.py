@@ -52,7 +52,19 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-GAME_PATTERN = r"^[A-Za-z]:[\\].*lomse[.]exe"
+def _game_pattern() -> str:
+    r"""The guard's regex, derived from `GAME_SUBPATH` exactly as the shell does.
+
+    Derived rather than written out, because two hand-maintained copies of a safety pattern drift
+    and the drift is silent. `test_the_shell_and_python_patterns_are_the_same` asserts they agree.
+    """
+    tail = GAME_SUBPATH.split("drive_c/", 1)[1]
+    escaped = "".join(f"[{c}]" if c in "[](){}.*+?^$|" else c for c in tail)
+    escaped = escaped.replace("/", r"[\\]")
+    return rf"^[A-Za-z]:[\\]{escaped}[\\]lomse[.]exe([[:space:]]|$)"
+
+
+GAME_PATTERN = _game_pattern()
 BROAD_PATTERN = r"lomse\.exe"
 
 
@@ -132,7 +144,12 @@ OBSERVED_GAME_ARGV0 = (
 
 # What the guard said before 2026-09-19. Kept so the defect has a test that fails if it returns,
 # rather than a comment saying it used to be there.
+# What the guard said before 2026-09-19, and what it briefly said after. Both are kept so each
+# defect has a test that fails if it returns, rather than a comment saying it used to be there.
 RETIRED_PATTERN = r"^[A-Za-z]:[\\]lomse[.]exe"
+# The first fix. It matched the real game -- and also anything whose command line merely mentions
+# the executable, which is the false-positive class the anchor exists to prevent.
+OVERBROAD_PATTERN = r"^[A-Za-z]:[\\].*lomse[.]exe"
 
 
 @contextlib.contextmanager
@@ -215,6 +232,28 @@ class GameGuardPattern(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertNotIn(GAME_IS_UP, completed.stderr)
 
+    def test_the_shipped_guard_is_quiet_while_a_drive_anchored_decoy_runs(self) -> None:
+        r"""Drives the SHIPPED shell function against a false positive, not just the regex.
+
+        This exists because a mutation survived without it. Reverting the call site to the
+        over-broad `^[A-Za-z]:[\\].*lomse[.]exe` left every other test in this class green: the
+        pattern-agreement test compares `game_command_pattern`'s OUTPUT, which that mutation does
+        not touch, and the decoy in the other quiet test begins with a program name, so the anchor
+        excludes it under either pattern.
+
+        `c:\tools\notlomse.exe` is the discriminating case. It begins with a drive letter, so the
+        anchor admits it, and only the full-path requirement rejects it.
+        """
+        with decoy_process(r"c:\tools\notlomse.exe"):
+            completed = self.invoke_shipped_guard()
+        self.assertEqual(
+            completed.returncode,
+            0,
+            "the guard refused while a process that is NOT the game was running; a false positive "
+            f"here silently skips install and restore coverage. stderr: {completed.stderr}",
+        )
+        self.assertNotIn(GAME_IS_UP, completed.stderr)
+
     def test_the_retired_pattern_could_not_have_matched_the_real_command_line(self) -> None:
         """The defect, pinned. If this ever passes a match, the old pattern is back."""
         self.assertIsNone(
@@ -226,6 +265,87 @@ class GameGuardPattern(unittest.TestCase):
             re.match(GAME_PATTERN, OBSERVED_GAME_ARGV0, re.IGNORECASE),
             f"{GAME_PATTERN!r} does not match the command line the game really has",
         )
+
+    # Command lines that are NOT the game, each one a false positive the guard must not produce.
+    # A false positive SKIPS this file's install, profile-creation and restore coverage silently,
+    # which is worse than the red it would replace.
+    NOT_THE_GAME = (
+        r"c:\tools\notlomse.exe",
+        r"c:\windows\system32\cmd.exe /c dir c:\games\lomse.exe",
+        OBSERVED_GAME_ARGV0 + ".bak",
+        f"grep --fixed-strings {OBSERVED_GAME_ARGV0}",
+    )
+
+    def test_the_pattern_rejects_command_lines_that_merely_mention_the_game(self) -> None:
+        r"""The anchor's real job, with the cases that defeated the first fix.
+
+        `^[A-Za-z]:[\\].*lomse[.]exe` matched every one of these. `.*` was introduced to fix a false
+        NEGATIVE -- the executable is six directories down, not at the drive root -- and it
+        reintroduced the false POSITIVES the anchor existed to prevent. Both directions need a test
+        or the pattern oscillates between the two defects.
+        """
+        for line in self.NOT_THE_GAME:
+            with self.subTest(line=line):
+                self.assertIsNone(
+                    re.match(GAME_PATTERN.replace("[[:space:]]", r"\s"), line, re.IGNORECASE),
+                    f"{line!r} is not the game, but the guard would refuse to install",
+                )
+
+    def test_each_decoy_is_pinned_to_the_defect_it_demonstrates(self) -> None:
+        r"""The two retired patterns failed on DIFFERENT decoys, and the distinction is the point.
+
+        `OVERBROAD_PATTERN` is still anchored to a drive letter, so it never matched a command line
+        beginning with a program name -- that case is the ANCHOR's job and belongs to the original
+        bare-name pattern. Asserting all four decoys against the over-broad pattern conflated the
+        two failure classes and this test failed until they were separated, which is what a pinning
+        test is for.
+        """
+        # Anchored at a drive letter, so only the over-broad `.*` admits them.
+        for line in self.NOT_THE_GAME[:3]:
+            with self.subTest(pattern="overbroad", line=line):
+                self.assertIsNotNone(
+                    re.match(OVERBROAD_PATTERN, line, re.IGNORECASE),
+                    f"{line!r} no longer demonstrates the over-broad pattern's failure",
+                )
+        # Begins with a program name, so the anchor already excluded it; only the bare name admits
+        # it. This is the case that skipped three agents' installs in one day.
+        mentions = self.NOT_THE_GAME[3]
+        self.assertIsNone(
+            re.match(OVERBROAD_PATTERN, mentions, re.IGNORECASE),
+            "the anchor should already exclude a command line that begins with a program name",
+        )
+        self.assertIsNotNone(
+            re.search(BROAD_PATTERN, mentions, re.IGNORECASE),
+            f"{mentions!r} no longer demonstrates the bare-name pattern's failure",
+        )
+
+    def test_the_shell_and_python_patterns_are_the_same(self) -> None:
+        """Two hand-maintained copies of a safety pattern drift, and the drift is silent.
+
+        Both are derived from the same path constant; this asserts the derivations agree
+        character for character, which an earlier draft of this fix did not -- the shell emitted
+        escaped backslash pairs where Python emitted single ones, so the two regexes meant
+        different things while looking alike in a diff.
+        """
+        completed = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'source "$1"/scripts/lib-mod-pipeline.sh; game_command_pattern',
+                "bash",
+                str(PROJECT_DIR),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), GAME_PATTERN)
+
+    def test_the_pattern_is_derived_from_the_path_the_pipeline_installs_to(self) -> None:
+        """If the install layout moves, the guard must move with it rather than silently miss."""
+        self.assertIn("Lords of Magic Special Edition", GAME_PATTERN)
+        self.assertIn(GAME_SUBPATH.rsplit("/", 1)[-1], GAME_PATTERN)
 
     def test_game_processes_names_the_decoy(self) -> None:
         """The Python side and the shell side must agree, or the suite's skip is wrong."""

@@ -108,21 +108,47 @@ base_gs_facts() {
 
 # Refuse while the game is running. Copied in spirit from scripts/restore-game-archives.sh: an
 # archive swapped under a live process is a class of corruption no checksum afterwards can undo.
+# The DOS command line the game presents, as an extended regular expression anchored at the start.
+#
+# Derived from `game_subpath` rather than written out, so a change to the install layout cannot
+# leave the guard matching a path the pipeline no longer uses. Everything after `drive_c/` is the
+# Windows-side path; `/` becomes `\`, and the ERE metacharacters in `Program Files (x86)` are
+# bracket-escaped.
+game_command_pattern() {
+  local tail="${game_subpath#*drive_c/}"
+  # Bracket-escape every ERE metacharacter. A bracket expression is the one escaping form that
+  # needs no backslash bookkeeping through two levels of quoting.
+  tail="$(printf '%s' "${tail}" | sed 's/[][(){}.*+?^$|]/[&]/g')"
+  # Every separator becomes the bracket expression [\\]. A bracket expression is the one form that
+  # survives two levels of shell quoting and means the same thing to Python's generator, which is
+  # what lets the test assert the two are byte-identical.
+  tail="${tail//\//[\\\\]}"
+  # Anchored at the drive letter, and terminated by whitespace or end of line, so a command line
+  # that merely MENTIONS the executable later in its arguments cannot match.
+  printf '^[A-Za-z]:[\\\\]%s[\\\\]lomse[.]exe([[:space:]]|$)' "${tail}"
+}
+
 refuse_if_game_running() {
-  # `pgrep -f` matches ANY live command line containing the pattern -- including this
-  # script's own shell and anything that merely mentions the name. The game runs under
-  # Wine and its command line BEGINS with a DOS drive path, so anchor to the start.
+  # `pgrep -f` matches ANY live command line containing the pattern -- including this script's own
+  # shell and anything that merely mentions the name. The game runs under Wine and its command line
+  # BEGINS with a DOS drive path, so the pattern is anchored to the start.
   #
-  # The anchor is followed by `.*` because the executable is NOT at the drive root. Observed
-  # 2026-09-19 against the live process, PID 77245:
+  # Observed 2026-09-19 against the live process, PID 77245:
   #
   #   c:\program files (x86)\steam\steamapps\common\lords of magic special edition\english\lomse.exe /* MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE=1
   #
-  # The previous pattern demanded `lomse.exe` immediately after the drive letter and so could
-  # never match anything. It was "verified" against a decoy this project wrote to its own
-  # assumption; `tests/test_mod_pipeline.py` now spawns the command line above instead.
-  # `-i` because the drive letter and the name both arrive lower-case from Wine.
-  if pgrep -if '^[A-Za-z]:[\\].*lomse[.]exe' >/dev/null 2>&1; then
+  # Two failures are guarded against here, and they pull in opposite directions:
+  #
+  #   1. `^[A-Za-z]:[\\]lomse[.]exe` -- the 2026-09-18 pattern -- demanded the executable at the
+  #      drive root and so matched NOTHING. The guard was dead for a day.
+  #   2. `^[A-Za-z]:[\\].*lomse[.]exe` -- the first fix -- matched `c:\tools\notlomse.exe` and
+  #      `c:\windows\system32\cmd.exe /c dir c:\games\lomse.exe`, reopening exactly the
+  #      false-positive class the anchor exists to close. A false positive SKIPS install and
+  #      restore coverage silently.
+  #
+  # The full path plus a trailing boundary is what separates them. `-i` because Wine hands back a
+  # lower-case drive letter and name.
+  if pgrep -if "$(game_command_pattern)" >/dev/null 2>&1; then
     die "lomse.exe is running; quit the game first."
   fi
 }
