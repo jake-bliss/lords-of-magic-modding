@@ -261,6 +261,35 @@ def check_member_resolution(
     return resolved
 
 
+def check_expect_unchanged_resolves(tree: ModTree, report: ValidationReport) -> None:
+    """Every `mod.toml` `expect_unchanged` entry must name a member the tree actually has.
+
+    `tools/mod_build.py`'s `entry_kind` is only ever consulted for a SOURCE FILE, matching that
+    file's own member name against this list -- `command_plan` iterates `tree.members_for`, not
+    the declared names. A declared name with no matching source file therefore produces no plan
+    entry at all: it never becomes `--expect-unchanged`, and the declaration is silently inert.
+
+    This does not fail open. The member the author actually meant to declare is still classified
+    `replace`, so a genuine no-op still trips `mpq_shape.py`'s `declared_change_not_applied` --
+    just for the wrong reason, pointing the operator at "why didn't this change" instead of at the
+    typo. A control the author believes they declared should not silently not exist, which is why
+    this is refused by name here, the same way an unresolved `new_members` entry already is at
+    `check_member_resolution` above.
+    """
+    present = {normalise_member(source.member) for source in tree.members}
+    for name in tree.manifest.expect_unchanged:
+        if normalise_member(name) not in present:
+            report.add(
+                ERROR,
+                "expect-unchanged-absent",
+                name,
+                f"{name!r} is declared in mod.toml's expect_unchanged but no source file in the "
+                "tree maps to that member name, so the declaration would silently do nothing: "
+                "entry_kind is only ever consulted for a source file, never for a declared name "
+                "on its own.",
+            )
+
+
 def check_gamescript_syntax(
     tree: ModTree, mod_facts: dict[str, dict], report: ValidationReport
 ) -> None:
@@ -765,6 +794,7 @@ def validate(
     report = ValidationReport()
     check_tree_shape(tree, report)
     resolved = check_member_resolution(tree, manifests, report)
+    check_expect_unchanged_resolves(tree, report)
     check_gamescript_syntax(tree, mod_facts, report)
     check_encoding(tree, mod_facts, base_facts, resolved, report)
     check_symbols(tree, mod_facts, base_facts, vocabulary, resolved, report)

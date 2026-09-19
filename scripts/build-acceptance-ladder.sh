@@ -190,6 +190,23 @@ export_wave() {
 # value arrived is a question about audio; a byte comparison would also answer it, but it would
 # answer it for a file that differed only in an ancillary chunk, and then it would be answering a
 # different question without saying so.
+#
+# Deliberately narrow, not incomplete: this checks channels, sample width, frame rate, the
+# DECLARED frame count and the decoded sample payload, and nothing else in the file. Every
+# ancillary byte -- `fmt `'s own extra fields, a `LIST` chunk, the `data` chunk's odd-size pad --
+# is a different question, already asked by `wav_ancillary_identical` below, which this function
+# does not duplicate. A caller that needs both asks both; rung 9 does exactly that, pairing this
+# check with `wav_ancillary_identical` rather than folding the two together.
+#
+# The declared frame count is NOT sufficient on its own, though: `wave.Wave_read.readframes`
+# returns however many bytes the underlying `data` chunk actually has, silently short if the file
+# is physically truncated below what its own header claims. Two files can therefore agree on
+# `getnframes()` while disagreeing on how much of that many frames either one actually delivered --
+# and `zip()` over the decoded payloads would then stop at the SHORTER one and report zero
+# differences, reading a truncated file as matching an intact one wherever their common prefix
+# happens to agree, which a truncation (a dropped tail, not a corrupted middle) always does. The
+# payload lengths are therefore compared explicitly, before the per-sample comparison, rather than
+# left for `zip` to silently paper over.
 wave_samples_equal() {
   PYTHONDONTWRITEBYTECODE=1 python3 -c '
 import sys, wave
@@ -200,6 +217,10 @@ def read(path):
 left, right = read(sys.argv[1]), read(sys.argv[2])
 if left[:4] != right[:4]:
     print(f"format or length differs: {left[:4]} vs {right[:4]}")
+    sys.exit(1)
+if len(left[4]) != len(right[4]):
+    print(f"declared {left[3]} frame(s) but the decoded payload is truncated: "
+          f"{len(left[4])} vs {len(right[4])} byte(s) actually read back")
     sys.exit(1)
 differing = sum(1 for a, b in zip(left[4], right[4]) if a != b)
 print(f"compare\t{sys.argv[1]}\t{sys.argv[2]}\tframes={left[3]}\tdiffering-bytes={differing}")
@@ -337,19 +358,37 @@ note
 # cannot notice that the copy it describes was itself overwritten.
 note "-- rollback sources in the development profile --"
 dev_pristine="$(dev_metadata_dir)/pristine"
-for archive in "${PIPELINE_ARCHIVES[@]}"; do
-  if [[ -f "${dev_pristine}/${archive}" ]]; then
-    if files_identical "${dev_pristine}/${archive}" "${game_dir}/${archive}"; then
-      note "  PASS  pristine/${archive} is byte-identical to the baseline archive"
+if [[ -d "${dev_pristine}" ]]; then
+  # A profile exists, so every archive PIPELINE_ARCHIVES now names is a promise this profile
+  # should be keeping. A missing one here used to print TODO and nothing else -- informational,
+  # not a failed check -- which is exactly how a profile created before `imp.mpq`, `sndfx.mpq` and
+  # `special.mpq` joined PIPELINE_ARCHIVES could sit unrecorded for those three indefinitely while
+  # this report stayed green. `scripts/install-dev.sh` now refuses to install an archive with no
+  # pristine line for exactly this reason; this check exists so the gap is visible before an
+  # install is even attempted, not just at the moment it is refused.
+  for archive in "${PIPELINE_ARCHIVES[@]}"; do
+    if [[ -f "${dev_pristine}/${archive}" ]]; then
+      if files_identical "${dev_pristine}/${archive}" "${game_dir}/${archive}"; then
+        note "  PASS  pristine/${archive} is byte-identical to the baseline archive"
+      else
+        note "  FAIL  pristine/${archive} DIFFERS from the baseline archive"
+        failures=$(( failures + 1 ))
+      fi
     else
-      note "  FAIL  pristine/${archive} DIFFERS from the baseline archive"
+      note "  FAIL  pristine/${archive} is not recorded;" \
+        "run scripts/install-dev.sh --record-pristine before installing any build that touches it"
       failures=$(( failures + 1 ))
     fi
-  else
-    note "  TODO  pristine/${archive} is not recorded yet;" \
-      "run scripts/install-dev.sh --record-pristine"
-  fi
-done
+  done
+else
+  # No development profile at all is the expected state before scripts/install-dev.sh
+  # --create-profile has ever been run -- the run sheet's own first step -- so this stays
+  # informational rather than a failure. It is not the same state as the one above: a profile
+  # that EXISTS but is missing one archive's record is a promise the pipeline stopped keeping,
+  # not a step nobody has reached yet.
+  note "  TODO  no development profile yet;" \
+    "run scripts/install-dev.sh --create-profile"
+fi
 note
 
 # ------------------------------------------------------------------------------------------------

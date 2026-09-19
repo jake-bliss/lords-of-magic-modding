@@ -244,6 +244,49 @@ class MemberResolutionTest(ValidateTestCase):
         self.assertEqual(self.findings(report, "base-manifest")[0].severity, ERROR)
 
 
+class ExpectUnchangedResolutionTest(ValidateTestCase):
+    """`expect_unchanged` entries that name no source file, silently inert otherwise.
+
+    `tools/mod_build.py`'s `entry_kind` is only ever consulted per SOURCE FILE
+    (`command_plan` iterates `tree.members_for`), so a declared name matching no source file
+    produces no plan entry and never reaches `--expect-unchanged` at all -- the control the
+    author believes they declared does not exist, and they are never told.
+    """
+
+    def test_a_declared_member_that_resolves_produces_no_finding(self) -> None:
+        relative = self.write("gs.mpq/units/orinf.gs")
+        self.manifest(MANIFEST + 'expect_unchanged = ["units\\\\orinf.gs"]\n')
+        report = self.run_validate(
+            manifests={"gs.mpq": [base_member("units\\orinf.gs")]},
+            mod_facts={relative: facts(relative)},
+        )
+        self.assertEqual(self.findings(report, "expect-unchanged-absent"), [])
+        self.assertTrue(report.ok)
+
+    def test_a_declared_member_with_no_matching_source_file_is_an_error(self) -> None:
+        """The regression: a typo (or a rename that left the declaration behind)."""
+        relative = self.write("gs.mpq/units/orinf.gs")
+        self.manifest(MANIFEST + 'expect_unchanged = ["units\\\\ornif.gs"]\n')
+        report = self.run_validate(
+            manifests={"gs.mpq": [base_member("units\\orinf.gs")]},
+            mod_facts={relative: facts(relative)},
+        )
+        finding = self.findings(report, "expect-unchanged-absent")[0]
+        self.assertEqual(finding.severity, ERROR)
+        self.assertIn("units\\\\ornif.gs", finding.message)
+        self.assertFalse(report.ok)
+
+    def test_matching_is_case_and_slash_insensitive_like_new_members(self) -> None:
+        relative = self.write("gs.mpq/units/orinf.gs")
+        self.manifest(MANIFEST + 'expect_unchanged = ["UNITS/ORINF.GS"]\n')
+        report = self.run_validate(
+            manifests={"gs.mpq": [base_member("units\\orinf.gs")]},
+            mod_facts={relative: facts(relative)},
+        )
+        self.assertEqual(self.findings(report, "expect-unchanged-absent"), [])
+        self.assertTrue(report.ok)
+
+
 class SyntaxTest(ValidateTestCase):
     def test_a_file_that_does_not_lex_is_an_error_at_line_and_column(self) -> None:
         relative = self.write("gs.mpq/units/orinf.gs")

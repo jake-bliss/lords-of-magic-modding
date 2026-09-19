@@ -15,6 +15,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -357,6 +358,49 @@ class InstallTest(PipelineTestCase):
         self.assertIn("abc123", log)
         self.assertEqual(len(log.strip().splitlines()), 1 + len(ARCHIVES))
 
+    def test_installing_an_archive_with_no_pristine_record_is_refused(self) -> None:
+        """A profile that predates an archive joining PIPELINE_ARCHIVES, with
+        `--record-pristine` never run for it.
+
+        Before this check, installing such an archive succeeded, and the profile was then left
+        with no way back for it: `restore-dev.sh` refuses on the missing manifest line before
+        restoring anything -- including every OTHER archive -- and `--record-pristine` refuses too,
+        because the profile's copy no longer matches the baseline once the mod is installed. Only
+        `--recreate` (discarding every other install in the profile) or a hand-write into
+        `~/Applications` recovers.
+        """
+        self.create_profile()
+        build_dir = self.fabricate_build("example", "abc123", b"new ")
+
+        # Simulate the predates-the-widening profile: no pristine copy or manifest line for one
+        # archive, everything else recorded normally.
+        manifest_path = self.metadata / "MANIFEST.sha256"
+        manifest_path.write_text(
+            "\n".join(
+                line
+                for line in manifest_path.read_text().splitlines()
+                if not line.endswith("pristine/sndfx.mpq")
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (self.metadata / "pristine" / "sndfx.mpq").unlink()
+
+        result = self.run_script("install-dev.sh", "example", "abc123")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no pristine copy of sndfx.mpq", result.stderr)
+        # Preflighted before anything is written: not even an archive ordered before sndfx.mpq
+        # in the build ended up installed.
+        for archive in ARCHIVES:
+            self.assertEqual(
+                digest(self.dev_root / GAME_SUBPATH / archive),
+                digest(self.applications / BASELINE / GAME_SUBPATH / archive),
+            )
+        self.assertEqual((self.metadata / "INSTALLS.tsv").read_text().strip().splitlines(), [
+            "timestamp\tmod_id\tbuild_id\tarchive\tsha256"
+        ])
+        self.assert_other_profiles_untouched()
+
 
 class RestoreTest(PipelineTestCase):
     def install_something(self) -> Path:
@@ -482,6 +526,36 @@ class RecordPristineTest(PipelineTestCase):
         self.assertFalse((self.metadata / "pristine" / "pic.mpq").exists())
         self.assert_other_profiles_untouched()
 
+    def test_record_pristine_preflights_every_archive_before_writing_any(self) -> None:
+        """A later archive's check failing must not leave an earlier one already recorded.
+
+        Same all-or-nothing-before-any-write rule the install path follows.
+        `PIPELINE_ARCHIVES` orders `pic.mpq` before `imp.mpq`; before this fix, a modified
+        `imp.mpq` died only after `pic.mpq` -- whose own check would have passed -- had already
+        been copied and appended to the manifest, a half-migrated manifest indistinguishable from
+        one nobody had touched.
+        """
+        self.create_profile()
+        manifest = self.metadata / "MANIFEST.sha256"
+        lines = [
+            line
+            for line in manifest.read_text().splitlines()
+            if "pristine/pic.mpq" not in line and "pristine/imp.mpq" not in line
+        ]
+        manifest.write_text("\n".join(lines) + "\n")
+        (self.metadata / "pristine" / "pic.mpq").unlink()
+        (self.metadata / "pristine" / "imp.mpq").unlink()
+        dev_game = self.applications / DEV_PROFILE_NAME / GAME_SUBPATH
+        dev_game.joinpath("imp.mpq").write_bytes(b"a mod put this here")
+
+        result = self.run_script("install-dev.sh", "--record-pristine")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match the baseline", result.stderr)
+        self.assertFalse((self.metadata / "pristine" / "pic.mpq").exists())
+        self.assertNotIn("pristine/pic.mpq", manifest.read_text())
+        self.assert_other_profiles_untouched()
+
     def test_record_pristine_leaves_an_already_recorded_archive_alone(self) -> None:
         self.create_profile()
         pristine = self.metadata / "pristine" / "pic.mpq"
@@ -496,10 +570,19 @@ class RecordPristineTest(PipelineTestCase):
 
 
 class UndeclaredNoOpRefusalTest(unittest.TestCase):
-    """`entry_kind` and `mpq_shape.compare`, wired together the way `scripts/mod-build.sh` wires
-    them: `entry_kind`'s answer decides which expectation (`--expect-changed` or
-    `--expect-unchanged`) a member's replacement is packed under, and `compare` is what actually
-    refuses a repack that changed nothing.
+    """`entry_kind` and `mpq_shape.compare`, exercised together against the CONTRACT
+    `scripts/mod-build.sh` wires them under: `entry_kind`'s answer decides which expectation
+    (`--expect-changed` or `--expect-unchanged`) a member's replacement is packed under, and
+    `compare` is what actually refuses a repack that changed nothing.
+
+    This does NOT run `scripts/mod-build.sh` itself, and the `compare(...)` calls below choose
+    `expected_changes=`/`expected_unchanged=` by hand rather than reading them off the shipped
+    script's own `case` statement -- so a bug that swapped which option `replace` and `unchanged`
+    map to in `scripts/mod-build.sh` would pass every test here unchanged. That specific seam --
+    `entry_kind`'s answer to the ACTUAL option `scripts/mod-build.sh` sends it to -- is what
+    `PlanDispatchLoopTest` below drives the shipped script's own dispatch loop to prove; this
+    class is narrower, pinning `entry_kind` and `compare` each honouring the CONTRACT, not the
+    literal script line that connects them.
 
     Nothing here opens an archive. A real mod tree (`mod_tree.load`) stands in for the source
     half, and a fabricated `Member` pair stands in for the base and packed-output manifests --
@@ -583,6 +666,148 @@ class UndeclaredNoOpRefusalTest(unittest.TestCase):
         self.assertIn(
             "member_rewritten_unchanged", [finding.kind for finding in report.findings]
         )
+
+
+MOD_BUILD_SH = PROJECT_DIR / "scripts" / "mod-build.sh"
+LIB_MOD_PIPELINE_SH = PROJECT_DIR / "scripts" / "lib-mod-pipeline.sh"
+
+
+def extract_plan_dispatch_loop() -> str:
+    """The literal `for archive in "${built_archives[@]}"; do ... done` block of
+    `scripts/mod-build.sh` that turns each plan entry's `kind` into a `repack-archive.sh`
+    argument -- the `add`/`unchanged`/`replace`/`*` `case` statement this file's own
+    `PlanDispatchLoopTest` drives, taken from the shipped script by anchor rather than
+    retyped, so a change to the real dispatch is a change to what this test runs.
+
+    `scripts/mod-build.sh` has two `for archive in "${built_archives[@]}"; do` loops; this is
+    the first one (`re.search`, not `re.findall`, with a non-greedy body so the match stops at
+    the first unindented `done`). The second, near the end of the script, only prints a
+    digest and shares nothing with the dispatch loop this needs.
+    """
+    text = MOD_BUILD_SH.read_text()
+    match = re.search(
+        r'for archive in "\$\{built_archives\[@\]\}"; do\n(.*?)\ndone\n', text, re.DOTALL
+    )
+    assert match, "scripts/mod-build.sh no longer has the expected dispatch loop shape"
+    return match.group(0)
+
+
+class PlanDispatchLoopTest(unittest.TestCase):
+    """The `kind` -> `repack-archive.sh` argument mapping, run through the literal loop
+    `scripts/mod-build.sh` itself uses -- not a Python re-statement of what that mapping is
+    supposed to be.
+
+    `UndeclaredNoOpRefusalTest` above tests `entry_kind` and `mpq_shape.compare` against the
+    CONTRACT; it hand-picks `expected_changes=`/`expected_unchanged=` and would not notice if
+    `scripts/mod-build.sh` itself sent `replace` and `unchanged` to the wrong option. This class
+    closes that gap: it extracts the exact `for archive in ...; do ... done` block
+    (`extract_plan_dispatch_loop`), replaces ONLY the one external call inside it --
+    `"${project_dir}/scripts/repack-archive.sh"` -> a stub that records its own argv and touches
+    the output path so the loop's own `file_hash` call afterward still succeeds -- and runs the
+    rest of the block, unedited, under `bash -c`. Everything upstream of that one substitution
+    (the `case` statement, the option arrays, `--listfile`/`--determinism-runs`) is the shipped
+    text.
+
+    `lib-mod-pipeline.sh` is sourced for real (`die`, `profile_listfile`, `file_hash`) rather than
+    stubbed, so a change to any of those is exercised too.
+    """
+
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.root = Path(self._temporary.name)
+        (self.root / "work_dir").mkdir()
+        (self.root / "game_dir").mkdir()
+        (self.root / "out_dir").mkdir()
+
+        self.repack_stub = self.root / "repack-stub.sh"
+        self.captured = self.root / "captured-argv.txt"
+        self.repack_stub.write_text(
+            "#!/usr/bin/env bash\n"
+            'printf \'%s\\n\' "$@" > "${CAPTURED_ARGV}"\n'
+            'touch "$2"\n',
+            encoding="utf-8",
+        )
+        self.repack_stub.chmod(0o755)
+
+        loop = extract_plan_dispatch_loop()
+        # The one substitution: everything else in `loop` is the shipped script, verbatim.
+        stubbed_loop = loop.replace(
+            '"${project_dir}/scripts/repack-archive.sh" \\',
+            '"${repack_stub}" \\',
+        )
+        self.assertNotEqual(stubbed_loop, loop, "the repack-archive.sh call line was not found")
+
+        harness = self.root / "harness.sh"
+        harness.write_text(
+            "set -euo pipefail\n"
+            f'source "{LIB_MOD_PIPELINE_SH}"\n'
+            'built_archives=(gs.mpq)\n'
+            f'work_dir="{self.root / "work_dir"}"\n'
+            f'game_dir="{self.root / "game_dir"}"\n'
+            f'output_dir="{self.root / "out_dir"}"\n'
+            'base_profile="vanilla"\n'
+            "determinism_runs=0\n"
+            f'repack_stub="{self.repack_stub}"\n'
+            "output_digest_arguments=()\n" + stubbed_loop,
+            encoding="utf-8",
+        )
+
+    def run_loop(self, entries: list[dict]) -> subprocess.CompletedProcess:
+        (self.root / "work_dir" / "plan.json").write_text(
+            json.dumps({"archives": {"gs.mpq": entries}}), encoding="utf-8"
+        )
+        self.captured.unlink(missing_ok=True)
+        environment = dict(os.environ)
+        environment["CAPTURED_ARGV"] = str(self.captured)
+        return subprocess.run(
+            ["bash", str(self.root / "harness.sh")],
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+    def test_replace_is_a_positional_replacement_and_nothing_else(self) -> None:
+        result = self.run_loop(
+            [{"kind": "replace", "member": "units\\orinf.gs", "file": "/tmp/edited.gs"}]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = self.captured.read_text().splitlines()
+        self.assertIn("units\\orinf.gs=/tmp/edited.gs", argv)
+        self.assertNotIn("--expect-unchanged", argv)
+        self.assertNotIn("--add", argv)
+
+    def test_unchanged_is_a_replacement_plus_expect_unchanged(self) -> None:
+        """The exact swap Codex's scenario proposed: transpose these two arms and this fails."""
+        result = self.run_loop(
+            [{"kind": "unchanged", "member": "units\\orinf.gs", "file": "/tmp/edited.gs"}]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = self.captured.read_text().splitlines()
+        self.assertIn("units\\orinf.gs=/tmp/edited.gs", argv)
+        self.assertIn("--expect-unchanged", argv)
+        index = argv.index("--expect-unchanged")
+        self.assertEqual(argv[index + 1], "units\\orinf.gs")
+
+    def test_add_is_its_own_option_and_not_a_positional_replacement(self) -> None:
+        result = self.run_loop(
+            [{"kind": "add", "member": "units\\new.gs", "file": "/tmp/new.gs"}]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = self.captured.read_text().splitlines()
+        self.assertIn("--add", argv)
+        index = argv.index("--add")
+        self.assertEqual(argv[index + 1], "units\\new.gs=/tmp/new.gs")
+        # Exactly one occurrence: the --add value, not ALSO a bare positional replacement.
+        self.assertEqual(argv.count("units\\new.gs=/tmp/new.gs"), 1)
+
+    def test_an_unrecognised_kind_dies_rather_than_packing_anything(self) -> None:
+        result = self.run_loop(
+            [{"kind": "bogus", "member": "units\\orinf.gs", "file": "/tmp/edited.gs"}]
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown plan entry kind: bogus", result.stderr)
+        self.assertFalse(self.captured.exists(), "the stub must never have been reached")
 
 
 class ProfileTableTest(unittest.TestCase):

@@ -122,7 +122,10 @@ than doing it silently; re-run deliberately if that is what you want."
 Refusing to record a pristine manifest that is already wrong."
     fi
     # The pristine copy lives inside the development profile, cloned again, so that a rollback
-    # never has to open the baseline at all. The baseline is read exactly once, here.
+    # never has to open the baseline at all. The baseline is read exactly once PER ARCHIVE here,
+    # at creation -- but --record-pristine below reads it again for any archive that joins
+    # PIPELINE_ARCHIVES after this profile already exists, which is the whole reason that path
+    # exists rather than forcing --recreate.
     cp -c "${dev_game_dir}/${archive}" "${metadata_dir}/pristine/${archive}"
     stored_hash="$(file_hash "${metadata_dir}/pristine/${archive}")"
     [[ "${stored_hash}" == "${baseline_hash}" ]] \
@@ -190,11 +193,21 @@ Create it first: scripts/install-dev.sh --create-profile"
   dev_game_dir="${dev_root}/${game_subpath}"
   recorded=0
 
+  to_record=()
   for archive in "${PIPELINE_ARCHIVES[@]}"; do
-    if grep -q "  pristine/${archive}\$" "${manifest}"; then
+    if grep -qF "  pristine/${archive}" "${manifest}"; then
       echo "  ${archive} already recorded; leaving it alone"
       continue
     fi
+    to_record+=("${archive}")
+  done
+
+  # Preflight every unrecorded archive, read-only, before writing any of them -- the same
+  # all-or-nothing-before-any-write rule the install path below already follows. Without it, an
+  # archive later in PIPELINE_ARCHIVES failing its check (a profile copy that no longer matches
+  # the baseline, say) would leave the EARLIER archives in this run already recorded and the rest
+  # not, a half-migrated manifest that looks no different from one nobody had touched yet.
+  for archive in ${to_record[@]+"${to_record[@]}"}; do
     [[ -f "${baseline_game_dir}/${archive}" ]] || die "the baseline has no ${archive}"
     [[ -f "${dev_game_dir}/${archive}" ]] || die "the development profile has no ${archive}"
 
@@ -214,6 +227,11 @@ baseline by hand, or recreate the profile."
     [[ -e "${approved}" ]] && die "a pristine copy already exists without a manifest line:
   ${approved}
 Refusing to overwrite it."
+  done
+
+  for archive in ${to_record[@]+"${to_record[@]}"}; do
+    baseline_hash="$(file_hash "${baseline_game_dir}/${archive}")"
+    approved="$(approve_dev_path "${metadata_dir}/pristine/${archive}")"
     cp -c "${baseline_game_dir}/${archive}" "${approved}"
     stored_hash="$(file_hash "${approved}")"
     [[ "${stored_hash}" == "${baseline_hash}" ]] \
@@ -266,9 +284,20 @@ for archive, digest in sorted(build["output_archive_digests"].items()):
 
 # Preflight everything before writing anything, so a bad second archive cannot leave the profile
 # half-installed. Same ordering rule as scripts/restore-game-archives.sh.
+#
+# Including that the archive has a pristine manifest line. PIPELINE_ARCHIVES has grown since this
+# profile may have been created -- imp.mpq, sndfx.mpq and special.mpq joined it on 2026-09-18 --
+# and --record-pristine is a separate, OPTIONAL step for exactly that migration. Nothing before
+# this line checked for the line itself, only that MANIFEST.sha256 exists at all: an install of an
+# archive this profile never recorded a pristine copy of would succeed and then leave that archive
+# (and, once restore-dev.sh refuses on it, every OTHER archive too) with no way back except
+# --recreate or a hand-write into ~/Applications -- the one write the allowlist exists to prevent.
 for row in "${install_rows[@]}"; do
   archive="${row%%$'\t'*}"
   recorded="${row##*$'\t'}"
+  grep -qF "  pristine/${archive}" "${metadata_dir}/MANIFEST.sha256" \
+    || die "no pristine copy of ${archive} in ${metadata_dir}/MANIFEST.sha256.
+Run scripts/install-dev.sh --record-pristine first, or this install cannot be rolled back."
   [[ -f "${build_dir}/${archive}" ]] || die "build.json names ${archive} but the file is missing"
   actual="$(file_hash "${build_dir}/${archive}")"
   [[ "${actual}" == "${recorded}" ]] || die "BUILD CORRUPT: ${build_dir}/${archive}

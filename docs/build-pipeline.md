@@ -95,6 +95,7 @@ saying what specifically is wrong. Validate exits nonzero on any error-severity 
 | `case-mismatch` | error | the tree and the manifest spelling one member differently |
 | `ambiguous-member` | error | a name the archive holds more than once; see below |
 | `new-member` | error / warning | an added member, refused unless declared **and** allowed |
+| `expect-unchanged-absent` | error | an `expect_unchanged` entry matching no source file in the tree -- silently inert otherwise, since `entry_kind` is only ever consulted per source file, never for a declared name on its own |
 | `lex` | error | a `.gs` file the lexer rejects, or an unclosed `{`, at `file:line:column` |
 | `duplicate-definition` | error | a definition this mod introduces that another member already defines |
 | `dropped-definition` | error / note | a definition the edit removed; error if any other member calls it, note otherwise |

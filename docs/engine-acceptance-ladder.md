@@ -154,21 +154,30 @@ scripts/install-dev.sh --record-pristine
 
 Step 1 writes `artifacts/engine-acceptance-ladder/offline-checks.txt`. **Read the build ids out of
 that file**, not out of this one: a build id is a digest of the mod tree, the base archives *and the
-tool binaries*, so recompiling the tools changes it. The ids below are what the 2026-09-18 build
+tool binaries*, so recompiling the tools changes it -- and so does an edit to `mod.toml` itself,
+which is exactly what moved three of the ids below. The ids here are what the 2026-09-19 build
 produced and are here to be compared against, not copied blindly.
 
 | Rung | `scripts/install-dev.sh MOD_ID BUILD_ID` | Archive digest |
 | ---: | --- | --- |
-| 0+1 | `imp-cursor-noop 97cbdaa91ce8` | `imp.mpq` `fd84136cb54c53a8` |
+| 0+1 | `imp-cursor-noop aaef19ae63b6` | `imp.mpq` `fd84136cb54c53a8` |
 | 2 | `imp-cursor-repaint 662dbe11a111` | `imp.mpq` `bc49262901870699` |
 | 3 | `pic-newgame-reencode b630c5fdf97a` | `pic.mpq` `d8d59a106112ef98` |
 | 4 | `pic-newgame-stripe 677597622f4e` | `pic.mpq` `e78486a2be7170e6` |
 | 5 | `imp-added-member 04999ceaaa69` | `imp.mpq` `ef834c35483471a6` |
-| 6 | `audio-welcome-noop 48ba953d15c7` | `sndfx.mpq` `c82323af22335959`, `special.mpq` `140cef430465ab06` |
+| 6 | `audio-welcome-noop 82cb90088cb5` | `sndfx.mpq` `c82323af22335959`, `special.mpq` `140cef430465ab06` |
 | 7 | `audio-welcome-tone b7452899a1c3` | `sndfx.mpq` `bf7c93ecb9ad46f1`, `special.mpq` `61102efd225d9677` |
+| 8 | `audio-tone-swapped 00bafacaa3a1` | `sndfx.mpq` `ed7b9351ac78e14d`, `special.mpq` `915b11b19aa4f7bd` |
+| 9 | `audio-button-silence a34867dd34ef` | `sndfx.mpq` `2128d5a3fc72794e`, `special.mpq` `02c3bc5b631befd7` |
 
 The archive digests are a function of the archive bytes alone and did not move when the tools were
-rebuilt; the build ids did. That is the difference the warning above is about.
+rebuilt; the build ids did. That is the difference the warning above is about. Rungs 0+1, 6 and 8
+carry a SECOND reason their ids moved from the ids first recorded here on 2026-09-18: `mods/imp-
+cursor-noop/mod.toml` and `mods/audio-welcome-noop/mod.toml` gained an `expect_unchanged`
+declaration, and `mods/audio-tone-swapped/mod.toml` gained the recorded run outcome -- a build id is
+a digest of the mod tree, and `mod.toml` is part of that tree, so editing its text is expected to
+move the id even though nothing about what gets packed changed. The archive digest is the thing
+that must not move for a documentation or validation-only edit, and for all nine rungs it did not.
 
 ## The loop, once per rung
 
@@ -187,8 +196,9 @@ scripts/restore-dev.sh                     # back to pristine, verified against 
 ```
 
 `restore-dev.sh` restores **every** archive in the pipeline, so one call undoes any rung. It checks
-each source against the record written when the profile was created — never against the file it was
-copied from, which would prove the copy succeeded and nothing else.
+each source against the record in `MANIFEST.sha256` — written when the profile was created, or
+added afterward by `--record-pristine` for an archive that joined the pipeline later — never
+against the file it was copied from, which would prove the copy succeeded and nothing else.
 
 ---
 
@@ -499,9 +509,12 @@ rungs 0 through 9, every check passes:
 
 - **Reproducible.** Each archive is repacked three times and all three runs are byte-identical.
 - **Shape preserved.** Every rung's shape check accounts for every member: 3,599 of 3,600 `imp.mpq`
-  members proven unchanged with exactly one declared change; 1,879 of 1,880 and 1,217 of 1,218 for
-  the audio archives. Rung 5 additionally reports `member_added_as_declared iface\ladder.imp`, which
-  is the only way an added member is not a failure.
+  members proven unchanged with exactly one declared change; **1,878 of 1,880 and 1,216 of 1,218**
+  for the audio archives, **two** declared changes each -- `AUDIO_MEMBERS` is `wav\welcome.wav` and
+  `wav\button.wav`, both rewritten in both archives from rung 7 onward, and `artifacts/build/audio-
+  welcome-tone/<build-id>/build.json`'s `changed_members` lists exactly those four rows. Rung 5
+  additionally reports `member_added_as_declared iface\ladder.imp`, which is the only way an added
+  member is not a failure.
 - **The no-op rungs are checked as no-ops, not waved through.** `--expect-unchanged` inverts the
   rule that catches a repack which silently did nothing: for rungs 0+1 and 6, content that *moved*
   is the failure.
@@ -558,4 +571,6 @@ are opened read-only by this pipeline and written by none of it; `~/Applications
 output path by `scripts/repack-archive.sh`, and every write to the development profile is routed
 through `tools/install_guard.py`, an allowlist of exactly one directory. The loose `map/` directory
 — which has no backup anywhere — is never touched. Rollback is one command and is verified against
-a record written when the profile was created.
+a record in `MANIFEST.sha256` — written when the profile was created, or added afterward by
+`--record-pristine` for an archive that joined the pipeline later, such as the three this ladder
+added on 2026-09-18.
