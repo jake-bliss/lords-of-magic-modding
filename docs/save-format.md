@@ -15,11 +15,20 @@ class-0 record inside themselves, and one embeds it recursively through an array
 carried verbatim. See [`LS_SPR_`](#ls_spr_--units-armies-and-heroes) and
 [What is not determined](#what-is-not-determined).
 
-**The one round trip this repository has.** `LS_SPR_` re-emits byte-identically from its decoded
-records in **31 of 31 files**, and the whole file reassembles byte-identically with `LS_SPR_`
-regenerated in **31 of 31**. That is not a savegame writer — there still is none, and the other
-eight payloads are copied through unchanged. It is the check that makes the record model
-falsifiable: get any record's extent wrong and the re-emitted section is a different length.
+**What carries the claim, and what does not.** The evidence for the record layouts is the
+**disassembly**, corroborated by a **version sweep against an independently written fixture** —
+a second transcription of the same readers with literal gate values, so parser and fixture can
+genuinely disagree. A **byte account** over the corpus corroborates the aggregate extents:
+31 of 31 files, zero slack.
+
+`LS_SPR_` also re-emits byte-identically from its decoded records in 31 of 31 files, and the
+whole file reassembles byte-identically with `LS_SPR_` regenerated in 31 of 31. **Corrected,
+2026-09-18: an earlier draft of this page called that "the check that makes the record model
+falsifiable". It is not.** Once `parse` succeeds the re-encode is an *identity*, so it proves
+**lossless preservation and correct container splicing** and nothing more. It does not prove any
+record's internal field boundaries and does not exclude compensating errors — see
+[what the round trip proves](#what-the-round-trip-proves-and-what-it-cannot). There is still no
+savegame writer; the other eight payloads are copied through unchanged.
 
 ### The three new sections were decoded from the writer, not from the files
 
@@ -476,15 +485,17 @@ and what it dispatches was not.
 | 1 | `0x004F71E1` | 96 | `0x0050C0B0` | `0x0054E910` | `0x0050D930` | `0x0050DD70` | `0x0050DA70` |
 | 2 | `0x004F7213` | 148 | `0x0043B930` | `0x0054D4D8` | `0x0043D000` | `0x0043D1A0` | `0x0043D0A0` |
 | 3 | `0x004F7248` | 844 | `0x0044E850` | `0x0054D630` | `0x00451610` | `0x004517A0` | `0x004516A0` |
-| 4 | `0x004F727D` | 120 | `0x004EF6F0` | `0x0054DD88` | `0x004F0C80` | `0x004F0D80` | — |
+| 4 | `0x004F727D` | 120 | `0x004EF6F0` | `0x0054DD88` | `0x004F0C80` | `0x004F0D80` | `0x004F0D80` |
 | 5 | `0x004F73A3` | **raises** | — | — | — | — | — |
 | 6 | `0x004F73A3` | **raises** | — | — | — | — | — |
 | 7 | `0x004F72A8` | 196, pooled | `0x0047CA70` | `0x0054D968` | `0x0047CCD0` | `0x0047CDA0` | `0x0047CDD0` |
-| 8 | `0x004F72AF` | 88 | `0x004BA150` | `0x0054DC68` | `0x004F6A80` | `0x004F6B00` | — |
+| 8 | `0x004F72AF` | 88 | `0x004BA150` | `0x0054DC68` | `0x004F6A80` | `0x004F6B00` | `0x004F6B00` |
 | 9 | `0x004F72DA` | 328 | `0x004ACF00` | `0x0054DAF8` | `0x004AD910` | `0x004ADB40` | `0x004ADA10` |
 
 "Allocation" is the size in **RAM**. It is not the on-disk record length and is not close to it —
-class 0's object is 1500 bytes and its smallest possible record is 176.
+class 0's object is 1500 bytes and its smallest possible record is 202. Classes 4 and 8 have no
+separate on-disk reader — the `vtable+0x24` entry point *is* the reader, with no registration
+wrapper in front of it.
 
 Three things in that table are worth stating outright:
 
@@ -507,9 +518,24 @@ no version gate anywhere in it, into `this+4`, `+0x1C`, `+0x20`, `+0x24`, `+0x28
 bytes, always. `this+4` is where the class id lives in the object, so the base reader reads the
 class id **a second time**, the container's dispatch loop having already consumed one.
 
-That is a prediction made from the disassembly before any file was looked at, and it is the kind
-worth making: under the alternative — the class id stored once — the second dword would be
-arbitrary. **Observed in the corpus:** it holds in all 31 files, for every record.
+**Corrected, 2026-09-18: this is a deduction, not a prediction, and an earlier draft of this page
+claimed more for it than it can carry.** That draft said it was "a prediction of the disassembly
+and not a pattern noticed in the files" which "could have failed and did not". It could not have
+failed. The **writer** puts the same field on disk twice — the outer writer reads `[object+4]` at
+`0x004F6C25` and the base writer writes `[this+4]` at `0x004F6A8B` — so every save this engine
+produces carries the equality *by construction*, whatever is right or wrong about any record
+boundary downstream. This is the repository's own "agreement is not confirmation" lesson: two
+writers writing one field always agree.
+
+**What measuring it does buy, which is not nothing.** On a format with no checksum, it confirms
+per record that a file is aligned, uncorrupted, and written by the expected writer. `save_survey`
+now evaluates and prints it per file and `SaveFile::regularities` carries it, so the statement
+below is reproducible rather than asserted, and a future disagreement is reported as a
+**discovery about the file** instead of passing in silence.
+
+**Observed in the corpus, 2026-09-18:** 0 disagreements in 31 of 31 files, across all 25,000-odd
+records. It is **not** evidence about the layouts, and in particular it cannot detect a wrong
+split of the 24-byte base block.
 
 ```text
 base := u32 class_id_echo ; u32 +0x1C ; u32 +0x20 ; u32 +0x24 ; u32 +0x28 ; u32 +0x30
@@ -517,6 +543,10 @@ base := u32 class_id_echo ; u32 +0x1C ; u32 +0x20 ; u32 +0x24 ; u32 +0x28 ; u32 
 
 So the minimum record is **28 bytes**: the dispatch word plus the base block. That is exactly a
 class-8 record.
+
+**Every byte count on this page includes the four-byte dispatch word**, so that "record" means the
+same thing in every sentence. Class 0's smallest possible record at version 111 is **202 bytes**
+on that convention, and 180 for a pre-`0x33` save.
 
 #### The eight class record layouts
 
@@ -611,6 +641,37 @@ Class 1's array count is a **`u16`**, not a `u32`: `fread(this+0x4E, 2, 1)` at `
 the loop bound is re-read as a signed word at `0x0050DD35`. Reading four bytes there consumes two
 too many and derails the rest of the section.
 
+#### Counts in this section are signed, and a non-positive one skips its loop
+
+**Observed in a local binary, 2026-09-18.** Six counts are read into a register and then tested
+with a **signed** branch before their loop is entered. A non-positive value is not an error to the
+engine — it skips the loop, and in the counted array's case skips the read as well as the
+allocation:
+
+| count | guard | note |
+| --- | --- | --- |
+| the **top-level record count** | `0x004F717F` `cmp eax,0 / jle` | continues with `jl` at `0x004F7336` |
+| class 0's slot count | `0x004122FC` `test eax,eax / jle` | |
+| the counted byte array's length | `0x00427A5E` `test eax,eax / jle` | skips the allocation *and* the read |
+| class 1's array count | `0x0050DC81` `cmp word,0 / jle` | a **word**; `movsx` at `0x0050DD35` |
+| nested type 3's group count | `0x0044BCC7` `test eax,eax / jle` | |
+| class 3's tail count | `0x00452EBF` `cmp eax,0 / jle` | |
+
+This matters more here than it would elsewhere, because `LS_SPR_` can now **fail**. When the
+section decoded to its count only it could not refuse anything; now a modelling error in it
+refuses the **whole file**. A save whose entire `LS_SPR_` payload is `FF FF FF FF` is one the
+engine loads and consumes nothing from, and a parser that read the count unsigned would attempt
+four billion records and reject it. No corpus file does this today — which is exactly the
+reachability argument a new save invalidates.
+
+**Three counts are not guarded this way and are deliberately not treated as if they were.** The
+list counts inside a class-0 slot (`0x00524FC6`, `0x00525037`, `0x0044BD07`) are `test / je`
+followed by a decrement — a `do { } while (--n)` loop with no signed test, so a negative value
+does not skip, it runs away. There is no correct behaviour to mirror. This parser reads them
+unsigned and refuses, **a refusal where the engine would misbehave**; that is the right direction
+to differ in, but it is a difference, and `spr_unguarded_count` exists so that it is visible at
+each of the three call sites rather than hidden behind a cast that looks like the guarded case.
+
 #### Refuted: the counted byte array in class 0 is not a string
 
 The previous pass called `0x00427A40` a length-prefixed **string** reader, and
@@ -629,26 +690,87 @@ the other direction, and only decoding the record stopped it.
 
 #### How the model was checked
 
-The same byte account the three sections before it used: parse `count` records and require the
-cursor to land **exactly** on the section end. Nothing in that check is tunable — every length
-here is either a constant in the instruction stream or a count the file itself stores, so a model
-that is merely plausible stops short or overruns.
+Three instruments, and they are not equally strong. Stating which is which is the point of this
+section — an earlier draft of this page put the weakest one first.
 
-**Observed in the corpus, 2026-09-18.** Zero slack in **31 of 31 files** across both format
-versions present, and the section re-emits byte-identically from its decoded records in all 31.
-The class census:
+**1. The disassembly.** Every length in this section is either a constant in the instruction
+stream or a count the file itself stores. That is where the layouts come from, and it is what any
+correction has to argue with.
 
-| file | records | class 0 | 1 | 2 | 3 | 7 |
+**2. The version sweep against an independently written fixture.** The test fixture emitters are a
+**second transcription** of the same readers, written from the disassembly with **literal** gate
+values rather than the parser's constants. Driving the whole record set at every version from
+`0x30` to `0x80`, plus 0, 1, 50, 108, 111, 200, 9999 and `u32::MAX`, makes parser and fixture
+genuinely able to disagree: if any gate differs between them the record lengths differ and the
+section either overruns or leaves bytes over. `tools/mutate_save_constants.py` turns that into a
+number — **69 of 72 single-step mutations of this section's constants are caught, in both
+directions**. The harness is in the repository rather than in a transcript, because a sweep
+nobody can re-run is a number nobody can check, and `tests/test_mutate_save_constants.py` asserts
+that it still reaches every gate constant and that each of its structural mutations still matches
+the source, so its coverage cannot quietly shrink while the headline number stays put. The three survivors are all expected and all named by the harness:
+`SPR_NESTED_LAST_WORD_MIN` moved either way, which guards a branch
+[this build cannot reach](#4-the-pre-version-99-ls_mult-layout-is-implemented-but-unexercised),
+and one deliberate compensating pair described below.
+
+**3. The byte account over the corpus.** Parse the records and require the cursor to land
+**exactly** on the section end. **Observed in the corpus, 2026-09-18:** zero slack in **31 of 31
+files** across both format versions present. This corroborates the *aggregate* extents of the
+paths those files exercise. It cannot see inside a record.
+
+#### What the round trip proves, and what it cannot
+
+**Corrected, 2026-09-18.** `LS_SPR_` re-emits byte-identically from its decoded records in 31 of
+31 files, and the whole file reassembles byte-identically with `LS_SPR_` regenerated in 31 of 31.
+An earlier draft of this page presented that as the falsifier — "get any record's extent wrong and
+the re-emitted section is a different length". **That is wrong, and it is wrong in a way this
+repository has been caught by before.**
+
+`class_id` and the six base dwords are read little-endian and written back little-endian, and each
+record's body is an exact contiguous slice. So once `parse` has succeeded, re-encoding is an
+**identity**: it *necessarily* equals the payload. The whole-file version then copies the other
+eight payloads through, so it is the same identity in a larger wrapper.
+
+The worked counter-example, which the mutation harness **runs** rather than merely describing:
+change class 0's two consecutive fixed reads from `12 + 88` to the compensating `16 + 84`. Every
+field boundary in that record is then wrong. The aggregate size is unchanged, so `parse` still
+lands exactly on the section end, the body captures the same bytes, and **both round trips still
+match byte for byte**. `mutate_save_constants.py` lists it as a survivor by design, so the
+limitation is demonstrated in the test suite instead of being a caveat in prose.
+
+So, precisely:
+
+| claim | what supports it |
+| --- | --- |
+| the records tile the payload contiguously, in order, with no gap or overlap | the round trip, and equivalently the zero-slack check |
+| every byte is preserved losslessly, and the container splices back together | the round trip |
+| the aggregate extent of each record on an exercised path | the byte account over 31 files |
+| **each individual field boundary** | **the disassembly, corroborated by the version sweep** |
+| that no compensating pair of errors exists | **nothing here.** Only re-reading the instruction stream |
+
+#### The class census
+
+Per distinct game state rather than per file, and with the five genuine-play states shown, because
+the six shipped demo scenarios [may share a generator](#corpus-limitations) and a table built only
+from them is weaker than its row count suggests.
+
+| state | records | class 0 | 1 | 2 | 3 | 7 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `combat.sav` | 829 | 67 | 673 | 46 | 8 | 35 |
-| `experience.sav` | 851 | 68 | 673 | 46 | 8 | 56 |
-| `magic.sav` | 491 | 27 | 377 | 48 | 8 | 31 |
-| `merc.sav` | 488 | 25 | 377 | 48 | 8 | 30 |
-| `temple.sav` | 496 | 33 | 377 | 48 | 8 | 30 |
-| `quickstart` (v108) | 877 | 30 | 703 | 46 | 8 | 90 |
+| `combat.sav` (demo) | 829 | 67 | 673 | 46 | 8 | 35 |
+| `experience.sav` (demo) | 851 | 68 | 673 | 46 | 8 | 56 |
+| `magic.sav` (demo) | 491 | 27 | 377 | 48 | 8 | 31 |
+| `merc.sav` (demo) | 488 | 25 | 377 | 48 | 8 | 30 |
+| `temple.sav` (demo) | 496 | 33 | 377 | 48 | 8 | 30 |
+| `quickstart` (demo, v108) | 877 | 30 | 703 | 46 | 8 | 90 |
+| 3.02 `Merlin I` / `lastsave.lom` — **turn 315, real play** | 836 | 15 | 702 | 73 | 8 | 38 |
+| GS5R3 `Merlin I` / `lastsave.lom` — **real play** | 833 | 35 | 702 | 51 | 8 | 37 |
+| GS5R3 `combat.lom` — **real play** | 838 | 36 | 702 | 51 | 8 | 41 |
+| GS5R3 `endturn.lom` — **real play** | 848 | 39 | 702 | 51 | 8 | 48 |
+| GS5R3 `temple.lom` — **real play** | 838 | 36 | 702 | 51 | 8 | 41 |
 
-**Class 3 is exactly 8 records in every file in the corpus**, which is a corpus regularity and not
-a structural requirement — nothing in the reader fixes it.
+**Class 3 is exactly 8 records in every state, demo and real play alike**, which is a corpus
+regularity and not a structural requirement — nothing in the reader fixes it. **Class-id echo
+disagreements: 0 in every record of every file**, which is the integrity reading
+[above](#every-record-opens-with-its-class-id-twice) and not a layout check.
 
 The no-fixed-stride argument the previous pass made from the files is now **explained** rather than
 merely corroborated: the survey still computes it, and the intersection is still empty, because
@@ -670,6 +792,19 @@ So **classes 4, 8 and 9 are read from the instruction stream and have never met 
 Each is short, fixed-length and gate-free, which is the best case for a transcription — but a
 wrong reading of any of them would parse every save on this machine perfectly, exactly like the
 two empty alarm queues.
+
+**Partly narrowed by a second reader, 2026-09-18.** An independent review disassembled `lomse.exe`
+itself and re-derived classes **4 and 9** from their instruction streams, agreeing with the
+transcriptions here — class 9's reader at `0x004ADA10` is `fread(this+0x44, 1, 0x5C)` followed by
+ten dword reads into `+0xA0`..`+0xC4`, which is the `92 + 40 + 24 = 156` stated above. That is a
+second transcription, not corpus corroboration: both readers read the same bytes of the same
+binary, so a shared misreading would survive it. **Class 8 has neither.** It is the base reader
+verbatim, which is the least likely of the three to be wrong and still the one with no second
+opinion.
+
+The same review reproduced the corpus numbers on its own machine — 31 files, 11 states, zero
+slack, both round trips — which is the first second-party check of any corpus figure on this
+page. `save_survey` takes a directory at runtime precisely so that this is possible.
 
 ### `LS_USER` — eight per-player records
 
@@ -1022,15 +1157,25 @@ Three specific holes inside that:
 
 - **Classes 4, 8 and 9 have never been seen in a save.** Their layouts are short, fixed and
   gate-free, which is the easiest case to transcribe correctly, but no file on this machine
-  exercises any of them. This is the same shape of gap as alarm queues 3 and 4 below.
+  exercises any of them. This is the same shape of gap as alarm queues 3 and 4 below. Classes 4
+  and 9 have since been re-derived from the instruction stream by an independent reader and
+  agree; **class 8 has no second opinion and no corpus coverage.** A second transcription is not
+  corpus corroboration — both readers read the same binary.
 - **The counted byte array in class 0** is a run of small integers with a larger closing byte. The
   movement-path reading is **Inferred** and nothing rests on it.
 - **The version gates below 108 are transcribed, never exercised.** The corpus holds only 108 and
-  111. The gate sweep drives every rung of the ladder against a synthetic fixture, and 58 of the
-  60 single-step mutations of those gates are caught, but a fixture built from the same reading
-  cannot confirm that the engine's own pre-108 writer produced it. The two uncaught mutations are
-  a single gate, `0x0044B6E0`, which is **unreachable in this build** because a second test
-  against the build constant at `0x0055B1B0` decides it at compile time.
+  111. The gate sweep drives every rung of the ladder against an independently written fixture and
+  `tools/mutate_save_constants.py` reports **69 of 72** single-step mutations caught in both
+  directions — but a fixture transcribed from the same reading of the same binary cannot confirm
+  that the engine's own pre-108 writer produced it. Two of the three survivors are a single gate,
+  `0x0044B6E0`, which is **unreachable in this build** because a second test against the build
+  constant at `0x0055B1B0` decides it at compile time; the third is the deliberate compensating
+  pair that demonstrates the round trip's blind spot.
+- **Nothing here excludes a compensating pair of errors** inside a record — two boundaries wrong
+  in opposite directions by the same number of bytes. Neither the byte account nor the round trip
+  can see one, and the version sweep only sees one that a *gate* would move. Only re-reading the
+  instruction stream can, which is why classes 4 and 9 having a second reader matters and class 8
+  not having one is listed above.
 
 ### 2. The six-byte `LS_REGN` grid cell
 
