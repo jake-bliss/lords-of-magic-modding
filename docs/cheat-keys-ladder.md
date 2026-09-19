@@ -1,8 +1,45 @@
 # Cheat-keys ladder run sheet
 
-**Not yet run.** Everything below is written before either build has been installed. Both
-predictions are recorded ahead of the observation, in the style of
-[`docs/engine-acceptance-ladder.md`](engine-acceptance-ladder.md).
+**Run attended 2026-09-19. Both rungs passed, and `cheat_keys` is LIVE.** Everything below the
+outcome was written before either build was installed; both predictions are recorded ahead of the
+observation, in the style of [`docs/engine-acceptance-ladder.md`](engine-acceptance-ladder.md).
+
+## Outcome, 2026-09-19
+
+**Evidence class: observed in gameplay.**
+
+| Rung | `gs.mpq` | Observed |
+| --- | --- | --- |
+| A, `cheat_keys false`, member byte-identical | `cea24b878bb41b40` | Main menu, music and sound normal. **Delete on the world map: nothing moved, no balloon.** |
+| B, `cheat_keys true`, one token | `94ba04db6b5c6bc1` | **Delete on the world map: the sprites all shifted** — `getxrot 1 add rotatex rendermap`. |
+
+**The debug tier is reachable by flipping one GameScript token in `gs.mpq`.** That is the cheapest
+attended-test harness this project has: `*` sets every unit in the current army to 10,000 experience,
+runs `set_level_modifications` and sets 1,000 move points; `K` grants all 160 spells; `k` fills wizard
+mana. A future run that needs a levelled army in a particular state can press one key instead of
+playing to it.
+
+### The control was added mid-run, and it was necessary
+
+Rung B was read first and its result was **ambiguous as recorded**. `hotkey.gs` binds Delete as
+`VK_VAL 46` inside the `cheat_keys` gate, but later — and *outside* the gate — it binds the period
+key as `ASCII_VAL 46`, to game speed. The file opens with `256 setmaxhotkeys`. If `addhotkey` keyed a
+single table by raw code, the later binding would win and Delete would already do something with the
+flag `false`, which would make rung B's sprite movement say nothing about `cheat_keys` at all.
+
+Rung A was therefore re-installed and **the same key pressed on the same screen**. Nothing moved and
+no `"Game Speed:"` balloon appeared. Two things follow:
+
+1. `cheat_keys` gates the binding, and the flag is what changed the behaviour.
+2. **`VK_VAL` and `ASCII_VAL` are separate namespaces.** `VK_VAL 46` (Delete) and `ASCII_VAL 46`
+   (`.`) are distinct hotkey slots, so the collision does not exist. Several other pairs in this file
+   would otherwise silently overwrite one another — `ASCII_VAL 42` (`bugkeyenable`, ungated) beside
+   the gated `ASCII_VAL "*"`, for one.
+
+The omission is worth naming: the first pass installed only the changed rung and read its effect.
+A no-op control existed for the *archive* (rung A's menu) but not for the *key*. Calibrating the
+do-nothing case means the specific observation, not merely the build —
+[[feedback-calibrate-the-no-op-before-the-change]].
 
 ## Why this exists
 
