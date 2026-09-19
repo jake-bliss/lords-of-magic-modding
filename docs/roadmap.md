@@ -174,10 +174,11 @@ agreeing on six counts is confirmation, so nothing there is corrected; what the 
 scope -- 1,696 members to 4,692 -- and the fact that **bare CR is a GS5R3 phenomenon only**, absent
 from vanilla and 3.02 entirely.
 
-That also narrows the `gs_syntax.py` bullet below. Measured by comparing its token count against the
-same rule with CR treated as a terminator, **34 members lose tokens, all 34 in GS5R3 and none in
-vanilla or 3.02** -- the 25 already recorded there are a subset. Counting every member containing a
-bare CR would give 242 and overstate the reach sevenfold.
+That also sized the `gs_syntax.py` defect below, which was **fixed on 2026-09-18**. Measured by
+comparing its token count against the same rule with CR treated as a terminator, **34 members lose
+tokens, all 34 in GS5R3 and none in vanilla or 3.02** -- the 25 already recorded there are a subset.
+The same measurement after the fix reports zero. Counting every member containing a bare CR would
+give 242 and overstate the reach sevenfold.
 
 Separately, the only control bytes anywhere in the corpus are TAB, CR and LF, and the 17 members
 with a byte above 0x7e are **none of them valid UTF-8** -- so a validator demanding UTF-8 would
@@ -377,22 +378,31 @@ savegame container, closed in PR #60 ([savegame format](save-format.md)).
 - [x] Establish how multiplayer works and why it desyncs ([multiplayer](multiplayer.md)). It is lockstep-deterministic, the shipped desync post-mortem is **gated off at load**, and the asterisk in the game list already means the host's build differs from yours. A home server cannot fix desync, because the problem is determinism rather than the network.
 - [ ] Measure difficulty-dependent computer AI behavior in controlled games ([issue #6](https://github.com/jake-bliss/lords-of-magic-modding/issues/6)).
 
-Three known latent defects are recorded rather than fixed, because each needs its own corpus
-re-verification:
+This list recorded three known latent defects. **All three are now fixed, and the list was itself
+stale when checked on 2026-09-18** — two of the three had been corrected in code on 2026-09-17 and
+only this page still said otherwise:
 
-- `MapCell::tile_index()` in `src/map.rs` still masks `tag & !0x00800000` rather than `tag & 0xffff`,
-  which agrees on every shipped map only because the high bits there take just two values.
-- The map editor's `set_tile` preserves a bit it should not — byte-correct on every shipped map and
-  wrong in general.
-- **`tools/gs_syntax.py` ends a `;` comment at `\n` only**, but bare CR is a line ending in
-  GameScript. The build pipeline routes around this rather than fixing it -- it lexes through the
-  CR-aware Rust lexer -- and its change report calls `gs_syntax.py` as well and **reports when the
-  two disagree**, so the defect is now visible at the one place it would do damage. 25 GS5R3 members
-  have a comment and no LF at all; `gs\dungeons\water\wacave.gs` is 5,347 bytes and normalises to
-  **six tokens** against its real 712. This feeds `compare_trees.py`'s token hash, so the
-  "layout/comments only" column in `reports/gs/summary.md` is unreliable for those members. Its full
-  reach, measured 2026-09-18 over all three profiles, is **34 members, every one in GS5R3**; the 25
-  are the subset with no LF anywhere.
+- `MapCell::tile_index()` in `src/map.rs` — **fixed 2026-09-17.** It masks `self.tag & 0xffff`; the
+  claim that it still masks `tag & !0x00800000` was stale. The upper half of the word is a separate
+  sixteen-bit field, measured from the engine's bounds-checked tileset lookup rather than from the
+  corpus, which cannot distinguish the two rules.
+- The map editor's `set_tile` — **fixed 2026-09-17.** It writes
+  `(cell.tag & CELL_TAG_UPPER_FIELD) | tile_index`, preserving the whole upper field rather than one
+  bit of it. Latent either way: across 353 shipped maps and 1,040,384 cells that field takes only
+  `0x0000` and `0x0080`.
+- **`tools/gs_syntax.py` ended a `;` comment at `\n` only** — **fixed 2026-09-18.** Bare CR is a
+  line ending in GameScript, so in a member with no LF the first comment swallowed the rest of the
+  file. It now ends a comment at the first of `\r` or `\n` and leaves the terminator to the
+  whitespace branch, matching `skip_layout` in the CR-aware Rust lexer, which remains the lexer
+  validation uses. The reach, measured over all 4,692 `.gs` members of the three profiles before and
+  after: **34 members lexed differently under the two rules, every one in GS5R3 (25 of them the
+  subset with no LF anywhere); after the fix, zero.** `gs\dungeons\water\wacave.gs` is 5,347 bytes
+  and normalised to **six tokens** against its real 712; it now yields 712, the same count
+  `--gs-facts` reports. `reports/gs/summary.md` needed no regeneration: the token hash moved for
+  those 34 members in both `gs5r3` comparisons and **no member changed status**. The change report's
+  two-lexer disagreement check is kept, on a narrower remaining divergence — Python's
+  `str.isspace()` accepts non-ASCII whitespace the Rust lexer does not, which exactly one corpus
+  member, GS5R3's `shield_balkoth.gs`, contains.
 
 **Fixed since:** `gamescript.rs` no longer lexes the shipped infantry unit code `INF` as
 floating-point infinity. Classification was `name.parse::<f64>().is_ok()`, and Rust accepts `inf`,

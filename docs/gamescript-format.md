@@ -575,10 +575,11 @@ target, is one of those: 1,798 bytes, one line, no trailing newline. The build p
 compares a replacement's census against its base member's rather than against any fixed style; see
 [the build pipeline](build-pipeline.md).
 
-The damage `tools/gs_syntax.py`'s LF-only comment rule actually does is narrower than the bare-CR
-population suggests, because a bare CR costs it nothing unless a `;` comment is there to run on.
-Comparing its token count against the same rule with CR treated as a terminator: **34 members lose
-tokens, all 34 in GS5R3, none in vanilla or 3.02.**
+The damage `tools/gs_syntax.py`'s LF-only comment rule did was narrower than the bare-CR
+population suggests, because a bare CR cost it nothing unless a `;` comment was there to run on.
+Comparing its token count against the same rule with CR treated as a terminator: **34 members lost
+tokens, all 34 in GS5R3, none in vanilla or 3.02.** The rule was **fixed on 2026-09-18** — a comment
+now ends at the first of `\r` or `\n` — and the same measurement after the fix reports zero.
 
 The corpus relies on it. GS5R3's `gs\standard.gs` comments out its inherited `min`/`max` at lines 68 and 70 and redefines them at 73 and 74; reading the commented pair as live would give the wrong bodies.
 

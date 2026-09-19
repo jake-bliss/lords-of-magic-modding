@@ -127,23 +127,26 @@ class GameScriptChangeTest(unittest.TestCase):
 
 
 class PythonLexerDisagreementTest(unittest.TestCase):
-    """`tools/gs_syntax.py` ends a `;` comment at LF only. The report says when that matters.
+    """Two implementations of one grammar. The report says when they disagree.
 
-    A bare-CR member with a comment normalises, in Python, to far fewer tokens than it has, so the
-    Python answer to "did the tokens change" can differ from the CR-aware Rust answer. Reporting
-    the disagreement turns the repo's recorded latent defect into a visible finding instead of a
-    quietly wrong column.
+    `tools/gs_syntax.py`'s LF-only `;` comment rule was fixed on 2026-09-18, and that class of
+    disagreement is gone -- a bare-CR member no longer normalises to a handful of tokens. The
+    check is kept because the two lexers still differ elsewhere: Python's `str.isspace()` is true
+    for non-ASCII whitespace and the Rust lexer's `is_ascii_whitespace` is not, so a name
+    containing byte 0x85 is one token to the engine's lexer and two to Python. That is not
+    hypothetical -- GS5R3's `shield_balkoth.gs` contains that byte -- which is why this fixture
+    uses it rather than a bare CR.
     """
 
     def test_a_disagreement_is_reported_and_the_rust_answer_is_used(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            # Everything after the `;` is one comment to gs_syntax.py, so both files normalise to
-            # the same (empty) token stream there, while the real token streams differ.
+            # gs_syntax.py splits the name on 0x85 and so normalises both files to the same token
+            # stream, while their real token streams differ.
             base_path = root / "base.gs"
             new_path = root / "new.gs"
-            base_path.write_bytes(b"; note\r/hit_points 13 def")
-            new_path.write_bytes(b"; note\r/hit_points 18 def")
+            base_path.write_bytes(b"/hit_points\x85 13 def")
+            new_path.write_bytes(b"/hit_points 13 def")
 
             base = facts(sha256="a" * 64, token_sha256="t" * 64)
             new = facts(sha256="b" * 64, token_sha256="u" * 64)

@@ -7,10 +7,13 @@ difference is whitespace. Three existing pieces are reused rather than rewritten
 
 - `tools/compare_trees.py`'s unchanged / **reformatted** / modified split, which is the repo's
   existing way of saying "layout and comments only";
-- `tools/gs_syntax.py`'s token normalisation, which is what that split is computed from -- and
-  which carries the **known defect** that it ends a `;` comment at LF only. Rather than paper over
-  that, this report computes the same split a second time from the CR-aware Rust lexer and
-  **reports when the two disagree**, which turns a latent defect into a visible finding;
+- `tools/gs_syntax.py`'s token normalisation, which is what that split is computed from. Its
+  LF-only `;` comment rule was fixed on 2026-09-18, but it is still a second implementation of the
+  same grammar and the two are not identical: Python's `str.isspace()` accepts non-ASCII whitespace
+  where the Rust lexer's `is_ascii_whitespace` does not, and GS5R3's `shield_balkoth.gs` contains
+  byte 0x85, which Python splits a name on and the engine's lexer does not. So this report computes
+  the same split a second time from the Rust lexer and **reports when the two disagree** rather than
+  trusting either silently;
 - `reports/gameplay/symbols.tsv`, the 1,535-symbol gameplay index, to name which gameplay symbol a
   changed member defines.
 
@@ -103,9 +106,9 @@ def describe_gamescript_change(
     token_identical = base_facts["token_sha256"] == new_facts["token_sha256"]
     status = REFORMATTED if token_identical else MODIFIED
 
-    # The same question asked through the older, LF-only Python lexer. A disagreement means one of
-    # the two files is in the class `tools/gs_syntax.py` mis-lexes, and the reader needs to know
-    # which answer they are looking at.
+    # The same question asked through the second implementation, `tools/gs_syntax.py`. A
+    # disagreement means one of the two lexers mis-lexes one of the two files, and the reader needs
+    # to know which answer they are looking at.
     if base_path is not None and base_path.is_file():
         python_identical = token_hash(base_path, base_facts["sha256"]) == token_hash(
             new_path, new_facts["sha256"]
@@ -114,9 +117,10 @@ def describe_gamescript_change(
             detail.append(
                 "token comparison DISAGREES between the CR-aware Rust lexer "
                 f"({'same' if token_identical else 'different'}) and tools/gs_syntax.py "
-                f"({'same' if python_identical else 'different'}). gs_syntax.py ends a `;` "
-                "comment at LF only, so it mis-lexes bare-CR members; the Rust answer is the one "
-                "this report classifies on."
+                f"({'same' if python_identical else 'different'}). The two are independent "
+                "implementations of the same grammar and gs_syntax.py splits names on non-ASCII "
+                "whitespace the engine's lexer keeps; the Rust answer is the one this report "
+                "classifies on."
             )
 
     if token_identical:
