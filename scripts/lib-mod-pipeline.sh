@@ -163,8 +163,14 @@ refuse_if_game_running() {
   #      false-positive class the anchor exists to close. A false positive SKIPS install and
   #      restore coverage silently.
   #
-  # The full path plus a trailing boundary is what separates them. `-i` because Wine hands back a
-  # lower-case drive letter and name.
+  # The full path plus a trailing boundary is what separates them.
+  #
+  # `-i` is NOT because Wine hands back a lower-case command line -- `[A-Za-z]` and the lower-case
+  # literals already match that, so the observation does not justify the flag. It is because
+  # Windows paths and executable names are case-INSENSITIVE, so a profile presenting
+  # `E:\LOMSE.EXE` is equally valid. `tests/test_mod_pipeline.py` spawns exactly that, which is
+  # the one fixture pinning both this flag and the `[A-Za-z]` class; every other fixture drives
+  # `c:` or `d:` in lower case and so cannot see either.
   if pgrep -if "$(game_command_pattern)" >/dev/null 2>&1; then
     die "lomse.exe is running; quit the game first."
   fi

@@ -150,6 +150,12 @@ OBSERVED_GAME_ARGV0 = (
 # this guard was written against exactly one of them.
 OBSERVED_GAME_ARGV0_DRIVE_ROOT = r"d:\lomse.exe"
 
+# Not observed -- constructed. Windows paths and executable names are case-insensitive and a
+# Wineskin profile may sit on any drive, so this is a command line the guard CLAIMS to cover.
+# It is the single fixture that pins both `-i` and the drive-letter class: without `-i` the
+# upper-case name misses, and with `[CDcd]` or any narrowed class the `e:` misses.
+UPPERCASE_OTHER_DRIVE_ARGV0 = r"E:\LOMSE.EXE"
+
 # What the guard said before 2026-09-19. Kept so the defect has a test that fails if it returns,
 # rather than a comment saying it used to be there.
 # What the guard said before 2026-09-19, and what it briefly said after. Both are kept so each
@@ -227,6 +233,17 @@ class GameGuardPattern(unittest.TestCase):
             text=True,
         )
 
+    def skip_if_the_real_game_is_running(self) -> None:
+        """A `quiet` assertion cannot be read while the game is actually up.
+
+        The guard refuses for a correct reason then, and the test would fail claiming a false
+        positive. Found by running this suite during an attended session: two tests went red
+        because the guard was doing its job.
+        """
+        running = game_processes()
+        if running:
+            raise unittest.SkipTest(f"the game is running, so a quiet guard is not expected: {running}")
+
     def test_the_shipped_guard_refuses_while_the_real_command_line_is_up(self) -> None:
         with decoy_process(OBSERVED_GAME_ARGV0):
             completed = self.invoke_shipped_guard()
@@ -235,6 +252,7 @@ class GameGuardPattern(unittest.TestCase):
 
     def test_the_shipped_guard_is_quiet_when_a_process_merely_mentions_the_path(self) -> None:
         """The anchor's whole job. This project's own tools take that path as an argument."""
+        self.skip_if_the_real_game_is_running()
         with decoy_process(f"grep --fixed-strings {OBSERVED_GAME_ARGV0}"):
             completed = self.invoke_shipped_guard()
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -253,6 +271,24 @@ class GameGuardPattern(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0, completed.stderr)
         self.assertIn(GAME_IS_UP, completed.stderr)
 
+    def test_the_shipped_guard_covers_the_whole_drive_letter_range_and_case(self) -> None:
+        r"""`E:\LOMSE.EXE` -- the one fixture that pins both `-i` and `[A-Za-z]`.
+
+        Two independent Codex runs found the same gap: every other fixture here drives `c:` or
+        `d:` in lower case, so narrowing the class to `[CDcd]`, or widening it to `[A-z]`, or
+        dropping `-i` altogether, left all ten tests green while the guard stopped covering a
+        profile it claims to cover. Windows paths and executable names are case-insensitive and a
+        Wineskin profile can sit on any drive.
+
+        The comment that came with `-i` had the justification backwards: observing a lower-case
+        command line is not a reason for `-i`, because `[A-Za-z]` and a lower-case literal already
+        match that. Protecting against case VARIATION is the reason.
+        """
+        with decoy_process(UPPERCASE_OTHER_DRIVE_ARGV0):
+            completed = self.invoke_shipped_guard()
+        self.assertNotEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(GAME_IS_UP, completed.stderr)
+
     def test_the_shipped_guard_is_quiet_while_a_drive_anchored_decoy_runs(self) -> None:
         r"""Drives the SHIPPED shell function against a false positive, not just the regex.
 
@@ -265,6 +301,7 @@ class GameGuardPattern(unittest.TestCase):
         `c:\tools\notlomse.exe` is the discriminating case. It begins with a drive letter, so the
         anchor admits it, and only the full-path requirement rejects it.
         """
+        self.skip_if_the_real_game_is_running()
         with decoy_process(r"c:\tools\notlomse.exe"):
             completed = self.invoke_shipped_guard()
         self.assertEqual(
@@ -293,6 +330,10 @@ class GameGuardPattern(unittest.TestCase):
     NOT_THE_GAME = (
         r"c:\tools\notlomse.exe",
         r"d:\notlomse.exe",
+        # `[A-z]` is `[A-Za-z]` plus the six ASCII characters between `Z` and `a` -- [ \ ] ^ _ `
+        # -- and every test here drove `c:` or `d:`, so that widening passed all ten. A drive
+        # letter that is not a letter is the fixture that separates them.
+        r"_:\lomse.exe",
         # The right name under the WRONG directory. This is why the optional group is a specific
         # path and not `.*` -- `.*` would admit it.
         r"c:\games\lomse.exe",
@@ -328,8 +369,14 @@ class GameGuardPattern(unittest.TestCase):
         """
         # Anchored at a drive letter, so only the over-broad `.*` admits them. `c:\games\lomse.exe`
         # is included deliberately: the over-broad pattern admitted it and the current one does not.
+        # `_:\lomse.exe` is excluded for the same reason `grep ...` is: it demonstrates a
+        # DIFFERENT defect (the `[A-z]` widening), and the over-broad pattern still required a
+        # letter drive, so it never admitted it. Lumping the three classes together is what made
+        # an earlier version of this test fail.
         drive_anchored = [
-            line for line in self.NOT_THE_GAME if not line.startswith("grep ")
+            line
+            for line in self.NOT_THE_GAME
+            if not line.startswith("grep ") and not line.startswith("_:")
         ]
         for line in drive_anchored:
             with self.subTest(pattern="overbroad", line=line):
@@ -370,7 +417,10 @@ class GameGuardPattern(unittest.TestCase):
             text=True,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stdout.strip(), GAME_PATTERN)
+        # NOT `.strip()`. The contract this test exists to enforce is character-for-character
+        # equality, and stripping would hide a generator that emitted trailing whitespace.
+        # `game_command_pattern` uses printf and deliberately writes no trailing newline.
+        self.assertEqual(completed.stdout, GAME_PATTERN)
 
     def test_the_pattern_is_derived_from_the_path_the_pipeline_installs_to(self) -> None:
         """If the install layout moves, the guard must move with it rather than silently miss."""
