@@ -95,10 +95,18 @@ endpoint is **inclusive**, so a loop ending at `dwEnd` needs `dwEnd + 1` frames 
 point's `dwSampleOffset` is a position, so an offset equal to the frame count is already past the
 end; there is no ambiguity of the same kind there.
 
-Writers are known to disagree about `dwEnd`, so the corpus was asked as well. **Observed in the
-corpus:** of the 41 `smpl` loop records in the two archives, **34 end at exactly `frames - 1` and
-none at `frames`**; of the 116 `cue ` points, 26 sit at `frames - 1` and none at `frames`. The
-external authority and the shipped files agree, so the gate rejects `end >= frames`.
+Writers are known to disagree about `dwEnd`, so the corpus was asked as well, and it
+**discriminates between the two readings**. Under the exclusive reading a loop running to the end
+of a file is written `dwEnd == frames`; under the inclusive reading it is written
+`dwEnd == frames - 1`.
+
+**Observed in the corpus:** of the 41 `smpl` loop records in the two archives, **34 end at exactly
+`frames - 1` and not one at `frames`**; of the 116 `cue ` points, 26 sit at `frames - 1` and none at
+`frames`. The remaining seven loops are interior — 238, 5,584, 42,415 and 76,437 frames short of the
+end — so being nowhere near the boundary they settle nothing either way, and are named here rather
+than left as an unexplained remainder. The external authority and the shipped files agree, so the
+gate rejects `end >= frames`. **This distribution is asserted by a corpus test**, because it is the
+evidence the decision rests on and an unpinned measurement becomes folklore.
 
 This matters because the gate first shipped with `end > frames`, which admits a loop whose endpoint
 is one past the last frame — the precise failure it exists to prevent. The fixture encoded that
@@ -147,13 +155,28 @@ path could have noticed, because that path replays the pad.
 chosen by the same magic-byte test being measured, and the archive and directory sweeps would
 quietly report over different populations.
 
-One thing `import_verified` caught that nothing else could: the rewriting serialiser decided a pad
-byte purely from the new body's parity, so a template whose **final** odd-sized chunk simply ends
-without a pad — a legal shape the parser records as `pad: None` — gained a `0x00`. A 47-byte member
-came back 48 bytes, with the invented byte folded into the recomputed `RIFF` size so that every
-other check agreed. The writer and the check on the writer now share one rule for pad presence and
-value, and the check compares the whole `Option` rather than only the case where both sides have
-one.
+#### The pad byte, and why the guard does not call the writer
+
+One byte in the RIFF container has been wrong three times, in three different ways, and the
+sequence is worth recording because the third failure was caused by the fix for the second.
+
+1. The rewriting serialiser emitted `0x00` unconditionally, discarding a template's own pad value.
+2. Fixed — but the check on the writer compared pads only when *both* sides had one, so a template
+   whose **final** odd-sized chunk simply ends without a pad (a legal shape the parser records as
+   `pad: None`) gained a `0x00`. A 47-byte member came back 48 bytes, with the invented byte folded
+   into the recomputed `RIFF` size so every other check agreed.
+3. Fixed by giving the writer and the check **one shared helper** — and the helper was wrong. It
+   turned on the body length being *unchanged* rather than on its *parity*, so editing a 3-byte
+   chunk to 5 bytes rewrote a `0x20` pad to `0x00`, and the check approved it by calling the same
+   function. Unifying the two had removed the disagreement and the independence together.
+
+The rule now turns on parity: an even body takes no pad; an odd body whose template body was also
+odd takes the template's pad, including `None`; an odd body whose template body was even takes
+`Some(0)`. And the check derives its expectation **from the template's own bytes rather than by
+calling the writer's helper**. That duplication is deliberate. This repository's own recorded
+lesson is that two implementations agreeing is not confirmation when they share an assumption, and
+a guard that calls the code it guards cannot catch that code being wrong. A test mutates the
+writer's rule back to the broken one and requires the check to reject the result.
 
 **Why byte-identity is total, and why that is not a boast.** WAVE `data` is not compressed: there is
 exactly one byte sequence that encodes a given set of PCM samples. The only freedom a WAVE writer
@@ -239,8 +262,9 @@ establish what the engine actually accepts. An import at 48 kHz is refused by na
 decodes the samples when there is a decoder. The two claims are kept apart:
 
 * a **container** error, or **malformed supported PCM**, means the member is not classified — the
-  probe returns an error and `--scan` counts a failure. A PCM member declaring zero channels belongs
-  here;
+  probe returns an error and `--scan` counts a failure. A PCM member declaring zero channels or a
+  zero bit depth belongs here. Malformedness is decided **before** any bit depth is dispatched;
+  deciding it afterwards let a zero depth fall to the unsupported catch-all and be classified;
 * a legal WAVE in a format with **no decoder here** is classified, with `undecoded` set. Reporting
   it as a probe failure would be the tool mistaking its own reach for the file being broken.
 
@@ -254,7 +278,9 @@ of 3,098 undecoded WAVEs reports exactly what a sweep of 3,098 decoded ones repo
 **The repository-wide "9,804 members, 0 probe failures" figure was measured against the old probe.**
 It has been **re-measured** against the current one on the GS5R3 profile, and is now reported with
 the counter that can falsify it: `pic.mpq` 1,406, `special.mpq` 1,218, `gs.mpq` 1,700, `imp.mpq`
-3,600, `sndfx.mpq` 1,880 — **9,804 entries, 9,804 decoded, 0 undecoded, 0 probe failures.**
+3,600, `sndfx.mpq` 1,880 — **9,804 entries, 9,804 decoded, 0 undecoded, 0 probe failures.** That
+figure's sensitivity has now been wrong twice and re-measured three times; it is quoted here with
+the counter that can falsify it precisely because the bare "0 failures" form could not.
 
 ## Smacker
 

@@ -278,6 +278,12 @@ impl PcmSamples {
                 format.encoding
             )));
         }
+        // `frame_bytes` before the depth dispatch, not after. The other order let a **malformed**
+        // file be reported as merely unsupported: `bits_per_sample = 0` fell to the catch-all arm
+        // and came back `Unsupported`, so the probe classified it and the archive still scanned
+        // with zero failures. Zero channels paired with an unsupported depth hid the same way.
+        // A valid 24-bit file passes this line and is still `Unsupported` at the next one.
+        let frame_bytes = format.frame_bytes()?;
         let sample_bytes = match format.bits_per_sample {
             8 => 1_usize,
             16 => 2_usize,
@@ -287,7 +293,6 @@ impl PcmSamples {
                 )));
             }
         };
-        let frame_bytes = format.frame_bytes()?;
         let whole = data.len() - (data.len() % frame_bytes);
         // Sized from the slice actually in hand, never from a declared length.
         let mut interleaved = Vec::with_capacity(whole / sample_bytes);
@@ -525,25 +530,30 @@ fn layout_of(chunks: &[RawChunk<'_>]) -> String {
 ///
 /// RIFF pads an odd-sized chunk to an even boundary, but the **final** chunk in a file may simply
 /// end: the parser records `pad: None` for it, because inventing one would make the output a byte
-/// longer than the input. `rebuild` used to decide purely on the new body's parity, so a template
-/// whose last chunk was odd and unpadded gained a `0x00` -- a 47-byte member came back 48 bytes,
-/// with the invented byte folded into the recomputed `RIFF` size so that every other check agreed.
+/// longer than the input.
 ///
-/// The rule, shared by the writer and the check on the writer so the two cannot drift:
+/// The rule turns on **parity**, not on the lengths being equal:
 ///
 /// * an even-length body takes no pad;
-/// * an odd-length body whose length is **unchanged** takes exactly what the template had,
-///   including `None`;
-/// * an odd-length body whose length **changed** takes `Some(0)`, because there is no template pad
-///   for a parity the template did not have.
+/// * an odd-length body whose template body was **also odd** takes exactly what the template had,
+///   including `None`. The length may have changed; the pad is still the template's, because the
+///   template had one for this parity;
+/// * an odd-length body whose template body was **even** takes `Some(0)`, because the template
+///   carried no pad for a parity it did not have.
+///
+/// The middle case is the one this got wrong twice. It first read "unchanged **length**" instead
+/// of "unchanged **parity**", so editing a 3-byte chunk to 5 bytes rewrote a `0x20` pad to `0x00`
+/// and made an unpadded final chunk gain a byte -- silently, because the check on the writer was
+/// calling this same function and agreeing with it. See [`verify_import`] for why it no longer
+/// does.
 fn expected_pad(template_pad: Option<u8>, template_len: u32, new_len: u32) -> Option<u8> {
     if new_len.is_multiple_of(2) {
-        return None;
+        None
+    } else if !template_len.is_multiple_of(2) {
+        template_pad
+    } else {
+        Some(0)
     }
-    if new_len == template_len {
-        return template_pad;
-    }
-    Some(0)
 }
 
 impl WaveFile {
@@ -731,72 +741,85 @@ impl WaveFile {
             .join("|")
     }
 
+    /// Every sample frame this container's `smpl` loops and `cue ` points refer to.
+    ///
+    /// Exposed rather than folded straight into a maximum so the *distribution* can be asserted
+    /// against the corpus. That distribution is the evidence the inclusive reading rests on, and a
+    /// decision whose evidence no test pins is a decision that quietly becomes folklore.
+    pub fn loop_and_cue_references(&self) -> Vec<(String, u64)> {
+        let mut out = Vec::new();
+        for chunk in &self.chunks {
+            let WaveChunkBody::Other(body) = &chunk.body else {
+                continue;
+            };
+            let frames = match &chunk.id {
+                b"smpl" => smpl_frames(body),
+                b"cue " => cue_frames(body),
+                _ => Vec::new(),
+            };
+            for frame in frames {
+                out.push((printable_tag(&chunk.id), frame));
+            }
+        }
+        out
+    }
+
     /// The highest sample frame any `smpl` loop or `cue ` point in this container refers to.
     ///
     /// Returns the chunk that names it alongside the frame. Both address **sample frames**, and
     /// both are inclusive positions, so the audio must hold `frame + 1` frames for the reference to
     /// land inside it. See [`SMPL_LOOP_BYTES`] for the evidence behind that reading.
     pub fn last_referenced_frame(&self) -> Option<(String, u64)> {
-        let mut worst: Option<(String, u64)> = None;
-        for chunk in &self.chunks {
-            let WaveChunkBody::Other(body) = &chunk.body else {
-                continue;
-            };
-            let frame = match &chunk.id {
-                b"smpl" => smpl_last_frame(body),
-                b"cue " => cue_last_frame(body),
-                _ => None,
-            };
-            if let Some(frame) = frame
-                && worst.as_ref().is_none_or(|(_, seen)| frame > *seen)
-            {
-                worst = Some((printable_tag(&chunk.id), frame));
-            }
-        }
-        worst
+        self.loop_and_cue_references()
+            .into_iter()
+            .max_by_key(|(_, frame)| *frame)
     }
 }
 
-/// Highest loop end in a `smpl` chunk. **Documented:** 36-byte header, then 24-byte loop records
-/// whose third and fourth words are the start and end sample frames.
-fn smpl_last_frame(body: &[u8]) -> Option<u64> {
+/// Every loop endpoint in a `smpl` chunk. **Documented:** 36-byte header, then 24-byte loop
+/// records whose third and fourth words are the start and end sample frames.
+///
+/// One entry per loop, carrying `max(start, end)`: both are positions in the audio, and a start
+/// past the end of a shortened file dangles exactly as an end does.
+fn smpl_frames(body: &[u8]) -> Vec<u64> {
     if body.len() < SMPL_HEADER_BYTES {
-        return None;
+        return Vec::new();
     }
-    let declared = read_u32(body, 28).ok()? as usize;
+    let Ok(declared) = read_u32(body, 28) else {
+        return Vec::new();
+    };
     // The loop count is a declared value, so the array is bounded by the bytes actually present
     // rather than by the count. A file claiming four billion loops reads the ones it has.
     let available = (body.len() - SMPL_HEADER_BYTES) / SMPL_LOOP_BYTES;
-    let mut worst = None;
-    for index in 0..declared.min(available) {
+    let mut out = Vec::new();
+    for index in 0..(declared as usize).min(available) {
         let at = SMPL_HEADER_BYTES + index * SMPL_LOOP_BYTES;
-        let start = u64::from(read_u32(body, at + 8).ok()?);
-        let end = u64::from(read_u32(body, at + 12).ok()?);
-        let highest = start.max(end);
-        if worst.is_none_or(|seen| highest > seen) {
-            worst = Some(highest);
-        }
+        let (Ok(start), Ok(end)) = (read_u32(body, at + 8), read_u32(body, at + 12)) else {
+            continue;
+        };
+        out.push(u64::from(start).max(u64::from(end)));
     }
-    worst
+    out
 }
 
-/// Highest sample offset in a `cue ` chunk. **Documented:** a 4-byte count, then 24-byte points
+/// Every sample offset in a `cue ` chunk. **Documented:** a 4-byte count, then 24-byte points
 /// whose last word is the sample-frame offset.
-fn cue_last_frame(body: &[u8]) -> Option<u64> {
+fn cue_frames(body: &[u8]) -> Vec<u64> {
     if body.len() < 4 {
-        return None;
+        return Vec::new();
     }
-    let declared = read_u32(body, 0).ok()? as usize;
+    let Ok(declared) = read_u32(body, 0) else {
+        return Vec::new();
+    };
     let available = (body.len() - 4) / CUE_POINT_BYTES;
-    let mut worst = None;
-    for index in 0..declared.min(available) {
+    let mut out = Vec::new();
+    for index in 0..(declared as usize).min(available) {
         let at = 4 + index * CUE_POINT_BYTES + 20;
-        let offset = u64::from(read_u32(body, at).ok()?);
-        if worst.is_none_or(|seen| offset > seen) {
-            worst = Some(offset);
+        if let Ok(offset) = read_u32(body, at) {
+            out.push(u64::from(offset));
         }
     }
-    worst
+    out
 }
 
 /// The two deliberate relaxations `--import-wave` offers, each of which must be asked for.
@@ -925,9 +948,16 @@ fn resolve_target_format(
     let (block_align, byte_rate) = target.derived_fields()?;
     target.block_align = block_align;
     target.byte_rate = byte_rate;
-    if let Err(reason) = target.attested() {
-        return Err(WaveError::new(format!("edited file: {reason}")));
-    }
+    // No `attested()` call here. There was one, and it could not fire: `import_samples` runs
+    // `rewrite_refusal` over the whole edited file first, which checks the same four fields and
+    // gives a better message. A check that cannot fail reads like protection and is not, which is
+    // the mistake this module has already had to undo once. The invariant is asserted instead, so
+    // a future caller that skips the whole-file check trips it in a debug build rather than
+    // inheriting a silent gap.
+    debug_assert!(
+        target.attested().is_ok(),
+        "the caller must reject an unattested edit before resolving a target format"
+    );
     Ok(target)
 }
 
@@ -972,10 +1002,24 @@ fn verify_import(
                 detail: format!("the {} chunk body changed", printable_tag(&out.id)),
             });
         }
-        // The whole `Option`, not just the value. Comparing only when both sides have a pad
-        // skipped the one case that matters: a template whose final odd chunk carries no pad and
-        // an output that invented one.
-        let wanted = expected_pad(source.pad, source.declared_size, out.declared_size);
+        // Derived here rather than by calling `expected_pad`, and the duplication is the point.
+        //
+        // This repository has a recorded lesson that two implementations agreeing is not
+        // confirmation when they share an assumption, and the pad byte has now demonstrated it
+        // three times: the writer zeroed a pad, then the check could not see a pad being added,
+        // then -- once the two were unified on one helper -- both agreed on the wrong answer for
+        // an odd-to-odd length change and nothing could notice. A guard that calls the code it
+        // guards cannot catch that code being wrong.
+        //
+        // The expectation is read off the TEMPLATE's own bytes: a pad exists iff the written body
+        // is odd and the template carried one for an odd body, and its value is the template's.
+        let wanted = if out.declared_size.is_multiple_of(2) {
+            None
+        } else if source.declared_size.is_multiple_of(2) {
+            Some(0)
+        } else {
+            source.pad
+        };
         if out.pad != wanted {
             return Err(WaveRefusal::ContainerChanged {
                 detail: match (out.pad, wanted) {
@@ -1458,16 +1502,96 @@ mod tests {
 
     /// `expected_pad` is the rule the writer and the check on the writer share.
     #[test]
-    fn the_pad_rule_covers_every_transition() {
+    fn the_pad_rule_turns_on_parity_not_on_the_length_being_unchanged() {
         // Even body: never a pad, whatever the template had.
         assert_eq!(expected_pad(Some(0x20), 3, 4), None);
         assert_eq!(expected_pad(None, 3, 4), None);
         // Odd body, unchanged length: exactly what the template had, including nothing.
         assert_eq!(expected_pad(Some(0x20), 3, 3), Some(0x20));
         assert_eq!(expected_pad(None, 3, 3), None);
-        // Odd body, changed length: there is no template pad for this parity.
+        // Odd to odd with a DIFFERENT length: still the template's pad. The template had one for
+        // this parity, so there is nothing to invent and nothing to drop.
+        assert_eq!(expected_pad(Some(0x20), 3, 5), Some(0x20));
+        assert_eq!(expected_pad(None, 3, 5), None);
+        assert_eq!(expected_pad(Some(0x20), 5, 3), Some(0x20));
+        // Even to odd: the template carried no pad for this parity, so zero is the only choice.
         assert_eq!(expected_pad(None, 4, 5), Some(0));
-        assert_eq!(expected_pad(Some(0x20), 3, 5), Some(0));
+        assert_eq!(expected_pad(Some(0x20), 4, 5), Some(0));
+    }
+
+    /// The odd-to-odd case end to end, for both a padded and an unpadded template.
+    #[test]
+    fn an_odd_to_odd_edit_keeps_the_templates_pad_byte() {
+        // Padded: a 3-byte data chunk with a 0x20 pad, edited to 5 bytes.
+        let mut template = canonical(1, 22050, 8, &[1, 2, 3]);
+        let last = template.len() - 1;
+        template[last] = 0x20;
+        template = with_chunk(template, b"LIST", b"INFO", 0);
+        let edited = canonical(1, 22050, 8, &[1, 2, 3, 4, 5]);
+        let written =
+            import_samples(&edited, &template, ImportOptions::default()).expect("import");
+        let parsed = WaveFile::parse(&written).expect("parse");
+        let data = parsed
+            .chunks
+            .iter()
+            .find(|chunk| chunk.id == *b"data")
+            .expect("a data chunk");
+        assert_eq!(data.declared_size, 5);
+        assert_eq!(
+            data.pad,
+            Some(0x20),
+            "an odd-to-odd edit must keep the template's own pad byte"
+        );
+
+        // Unpadded: a final 3-byte data chunk that simply ends, edited to 5 bytes.
+        let mut bare = canonical(1, 22050, 8, &[1, 2, 3]);
+        assert_eq!(bare.pop(), Some(0));
+        let payload = bare.len() as u32 - 8;
+        bare[4..8].copy_from_slice(&payload.to_le_bytes());
+        let written = import_samples(&edited, &bare, ImportOptions::default()).expect("import");
+        assert_eq!(
+            written.len(),
+            49,
+            "an unpadded final chunk must not gain a pad when it stays odd"
+        );
+        let parsed = WaveFile::parse(&written).expect("parse");
+        assert_eq!(parsed.chunks.last().expect("a chunk").pad, None);
+    }
+
+    /// The guard must catch the writer's pad rule being wrong, not agree with it.
+    ///
+    /// `verify_import` derives its expectation from the template's bytes rather than calling
+    /// `expected_pad`. This test proves the two are genuinely independent: it feeds the check
+    /// output built with the *broken* rule -- "unchanged length" instead of "unchanged parity" --
+    /// and the check has to reject it. If the guard ever calls `expected_pad` again, this fails.
+    #[test]
+    fn the_post_condition_rejects_the_writers_pad_rule_being_wrong() {
+        let mut template = canonical(1, 22050, 8, &[1, 2, 3]);
+        let last = template.len() - 1;
+        template[last] = 0x20;
+        let template = with_chunk(template, b"LIST", b"INFO", 0);
+        let good = WaveFile::parse(&template).expect("parse");
+
+        let mut edited = good.clone();
+        edited.samples.interleaved = vec![1, 2, 3, 4, 5];
+
+        // Serialise the way the broken rule would have: odd-to-odd resets the pad to zero.
+        let mut written = edited.rebuild().expect("rebuild");
+        let data_pad = written
+            .windows(4)
+            .position(|window| window == b"data")
+            .expect("a data chunk")
+            + 8
+            + 5;
+        assert_eq!(written[data_pad], 0x20, "the correct writer keeps 0x20");
+        written[data_pad] = 0x00;
+
+        let refusal = verify_import(&written, &good, &edited.format, &edited.samples)
+            .expect_err("the pad was reset by the broken rule");
+        assert!(
+            matches!(&refusal, WaveRefusal::ContainerChanged { detail } if detail.contains("pad byte")),
+            "{refusal}"
+        );
     }
 
     // --- one damaged-container case per `verify_import` branch -----------------------------
@@ -1632,6 +1756,39 @@ mod tests {
         assert_eq!(resolved.channels, 2);
         assert_eq!(resolved.block_align, 2, "derived, not the edit's 99");
         assert_eq!(resolved.byte_rate, 44100, "derived, not the edit's 7");
+    }
+
+    /// A depth-only change: same channels, same rate, 8-bit to 16-bit.
+    ///
+    /// The channel and rate arms of `same_nominal_format` each had a case; the depth arm did not,
+    /// so removing it left the suite green. Without it an 8-bit template would be retained over
+    /// 16-bit sample bytes and the post-condition would reject an import that should succeed.
+    #[test]
+    fn a_depth_only_format_change_is_gated_and_then_derived() {
+        let template = canonical(1, 22050, 8, &[0x80, 0x80, 0x80, 0x80]);
+        let edited = canonical(1, 22050, 16, &[0, 0, 0, 0, 0, 0, 0, 0]);
+        let error = import_samples(&edited, &template, ImportOptions::default())
+            .expect_err("a depth change still has to be asked for");
+        assert!(
+            error.to_string().contains("--allow-format-change"),
+            "{error}"
+        );
+
+        let written = import_samples(
+            &edited,
+            &template,
+            ImportOptions {
+                allow_format_change: true,
+                ..ImportOptions::default()
+            },
+        )
+        .expect("explicitly allowed");
+        let parsed = WaveFile::parse(&written).expect("parse");
+        assert_eq!(parsed.format.bits_per_sample, 16);
+        assert_eq!(parsed.format.channels, 1);
+        assert_eq!(parsed.format.block_align, 2, "derived from the new depth");
+        assert_eq!(parsed.format.byte_rate, 44100, "derived from the new depth");
+        assert_eq!(parsed.samples.frames(), 4);
     }
 
     /// The extension-byte refusal, which survived an `if false` mutation.
@@ -1969,11 +2126,11 @@ mod tests {
     fn a_lying_loop_count_reads_only_the_loops_that_are_there() {
         let mut body = smpl(0, 40);
         body[28..32].copy_from_slice(&0xffff_ffff_u32.to_le_bytes());
-        assert_eq!(smpl_last_frame(&body), Some(40));
+        assert_eq!(smpl_frames(&body), vec![40]);
         let mut cue = 0xffff_ffff_u32.to_le_bytes().to_vec();
         cue.extend_from_slice(&[0_u8; CUE_POINT_BYTES]);
         cue[4 + 20..4 + 24].copy_from_slice(&7_u32.to_le_bytes());
-        assert_eq!(cue_last_frame(&cue), Some(7));
+        assert_eq!(cue_frames(&cue), vec![7]);
     }
 
     #[test]
@@ -2259,6 +2416,77 @@ mod tests {
         }
         assert_eq!(carried, 63, "the sndfx loop-metadata population changed");
         assert!(refused > 0, "no sndfx member has a nonzero loop or cue point");
+    }
+
+    /// The distribution the inclusive reading of `dwEnd` rests on.
+    ///
+    /// The Microsoft RIFF 1994 spec says `dwEnd` is inclusive, but writers disagree, so the gate's
+    /// `>=` was decided on what the authoring tool actually emitted. Until now nothing pinned that
+    /// measurement -- the sweep would reject any record at or past the end, but the *shape* of the
+    /// data underneath the decision was uncorroborated, which is how a measurement becomes folklore.
+    ///
+    /// Under the **exclusive** reading a loop running to the end of a file is written
+    /// `dwEnd == frames`. Not one record in the corpus does that. Under the **inclusive** reading
+    /// it is written `dwEnd == frames - 1`, and 34 of the 41 records do exactly that. The corpus
+    /// discriminates, and it agrees with the spec.
+    ///
+    /// The other seven are interior loops, 238 to 76,437 frames short of the end. They are named
+    /// here rather than left implicit: being nowhere near the boundary, they carry no information
+    /// about the convention either way.
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR"]
+    fn the_corpus_shows_smpl_end_is_an_inclusive_position() {
+        let directory = game_directory();
+        let mut smpl_records = 0_usize;
+        let mut smpl_on_last_frame = 0_usize;
+        let mut cue_points = 0_usize;
+        let mut cue_on_last_frame = 0_usize;
+        let mut at_or_past_end = 0_usize;
+        let mut interior_gaps = std::collections::BTreeSet::new();
+        for archive in ["sndfx.mpq", "special.mpq"] {
+            let handle =
+                crate::mpq::Archive::open(&directory.join(archive)).expect("open the archive");
+            for entry in &handle.entries().expect("enumerate the archive") {
+                let bytes = handle.read(&entry.name).expect("read the member");
+                let file = WaveFile::parse(&bytes).expect("parse");
+                let frames = file.samples.frames() as u64;
+                for (kind, frame) in file.loop_and_cue_references() {
+                    if frame >= frames {
+                        at_or_past_end += 1;
+                    }
+                    let on_last = frames > 0 && frame == frames - 1;
+                    if kind == "smpl" {
+                        smpl_records += 1;
+                        if on_last {
+                            smpl_on_last_frame += 1;
+                        } else {
+                            interior_gaps.insert(frames - 1 - frame);
+                        }
+                    } else {
+                        cue_points += 1;
+                        if on_last {
+                            cue_on_last_frame += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(smpl_records, 41, "the smpl loop population changed");
+        assert_eq!(cue_points, 116, "the cue point population changed");
+        assert_eq!(
+            smpl_on_last_frame, 34,
+            "loops ending on the last frame -- the inclusive signature"
+        );
+        assert_eq!(cue_on_last_frame, 26);
+        assert_eq!(
+            at_or_past_end, 0,
+            "a shipped record at or past the end would refute the inclusive reading"
+        );
+        assert_eq!(
+            interior_gaps,
+            [238_u64, 5_584, 42_415, 76_437].into_iter().collect(),
+            "the seven non-terminal loops sit far from the boundary and settle nothing"
+        );
     }
 
     /// `files_with_loop_metadata` counts chunks that declare at least one **record**.

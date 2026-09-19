@@ -633,6 +633,57 @@ mod tests {
         assert!(error.contains("zero channels"), "{error}");
     }
 
+    /// A zero bit depth is malformed, not "a depth this tool does not implement".
+    ///
+    /// It used to fall through the depth dispatch to the unsupported catch-all, so the member was
+    /// classified and the archive scanned clean. The ordering fix in `PcmSamples::decode` is what
+    /// this pins: `frame_bytes` decides malformedness before any depth is dispatched.
+    #[test]
+    fn refuses_a_zero_bit_depth_rather_than_calling_it_unsupported() {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&40_u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes()); // PCM
+        bytes.extend_from_slice(&1_u16.to_le_bytes()); // one channel
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&0_u16.to_le_bytes()); // zero bits per sample
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&4_u32.to_le_bytes());
+        bytes.extend_from_slice(&[1, 2, 3, 4]);
+
+        let error = probe("zerodepth.wav", &bytes).expect_err("a zero depth is malformed");
+        assert!(error.contains("not a whole number of bytes"), "{error}");
+    }
+
+    /// A 24-bit PCM file is valid and merely unimplemented here, so it stays classified.
+    ///
+    /// The other side of the same ordering: moving `frame_bytes` earlier must not turn a legal
+    /// file into a probe failure.
+    #[test]
+    fn a_valid_twenty_four_bit_file_stays_classified_as_unsupported() {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&40_u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&22_050_u32.to_le_bytes());
+        bytes.extend_from_slice(&66_150_u32.to_le_bytes());
+        bytes.extend_from_slice(&3_u16.to_le_bytes());
+        bytes.extend_from_slice(&24_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&3_u32.to_le_bytes());
+        bytes.extend_from_slice(&[1, 2, 3]);
+
+        let info = probe("24bit.wav", &bytes).expect("a valid 24-bit file is still a WAVE");
+        assert_eq!(info.kind, AssetKind::WaveAudio);
+        assert!(info.undecoded.is_some(), "{}", info.details);
+        assert!(info.details.contains("bit depth 24"), "{}", info.details);
+    }
+
     #[test]
     fn probes_windows_bitmap_metadata() {
         let mut bytes = vec![0_u8; 54];

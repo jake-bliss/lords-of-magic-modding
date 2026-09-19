@@ -3410,9 +3410,14 @@ fn scan_archive(source: &Source) -> Result<(), String> {
     println!("archive_entries\t{}", entries.len());
     println!("readable_entries\t{readable}");
     let undecoded_total: usize = undecoded.values().sum();
-    println!("decoded_entries\t{}", readable - undecoded_total - failures.len());
+    // Counted from the classifications that actually happened, not by subtracting failures from
+    // `readable`. `readable` already excludes members whose read failed, so subtracting them again
+    // undercounted -- and with only an unreadable member it underflowed, which is a debug panic
+    // and a wrapped count in release.
+    let classified: usize = kinds.values().sum();
+    println!("decoded_entries\t{}", classified - undecoded_total);
     println!("undecoded_entries\t{undecoded_total}");
-    for (kind, count) in kinds {
+    for (kind, count) in &kinds {
         println!("kind\t{kind}\t{count}");
     }
     for (kind, count) in &undecoded {
