@@ -1,5 +1,33 @@
 # Attended run index
 
+## Status, 2026-09-19
+
+| Item | State |
+|---|---|
+| **A1** command line of the unmeasured profiles | ✅ **DONE** — GS5R3 runs `d:\lomse.exe /*`; premise holds |
+| **A2** guard refuses per profile | ✅ **DONE** — refuses exit 1 running, permits exit 0 closed |
+| **B1** unit anchor probe | ⚠️ **RUN, NOT ANSWERED** — control passed, subject was wrong art. Redesign in progress. |
+| **B2** direction 0 to a bearing | ⏸ **OFFLINE FIRST** — script route refuted; chase the table builder behind `0x5AE970` |
+| **C1** PBM ByteRun1 encoder | 🔴 **QUEUED, HIGHEST VALUE** — the encoder has still never faced the engine |
+| **C2** a size-changing edit | ✅ **ALREADY DONE** — see below; this box was stale |
+| **C3** a member added, not replaced | 🔴 **QUEUED** — genuinely never attempted, and it blocks new art |
+| **C4** two members in one build | ✅ **ALREADY DONE** — see below; this box was stale |
+| **C5** first `imp.mpq` run | 🔴 **QUEUED** — the last wholly-untouched archive |
+| **C6** load a savegame we wrote | ⏸ **BLOCKED** — encoders for the other eight sections in progress |
+
+**Two boxes closed without anyone noticing.** C2 and C4 were both satisfied by runs already made,
+and the roadmap went on publishing them as limits until 2026-09-19. C2 fell to the cheat-keys
+ladder: `/cheat_keys false def` -> `/cheat_keys true def` is 21 bytes to 20, the archive shipped,
+and the engine ran it. C4 fell to acceptance rungs 6-9, which rewrote two members in each of two
+archives in one build. Neither was the point of its run, which is exactly why neither was noticed.
+The limits are now derived from the recorded runs by `tools/engine_acceptance.py` rather than
+typed beside them, so this cannot recur silently.
+
+**What that leaves as the real frontier:** adding a member rather than replacing one (C3), and
+`imp.mpq` in any form (C5). Those two together are what stand between this project and shipping
+**new art**. Everything needed for a gameplay or balance mod is already proven.
+
+
 Every measurement that needs a human at the keyboard, ordered so one sitting closes as many as
 possible. Each entry states **what it would mean** before the run, because a prediction written
 afterwards is not a prediction.
@@ -86,7 +114,7 @@ against. We are in that position again, on the profile whose restore script now 
 fires. `bash -c 'source scripts/lib-mod-pipeline.sh; refuse_if_game_running'` should **refuse**.
 If it returns quietly while the game is up, that is the fail-open, observed directly.
 
-### A2. Confirm the guard refuses under each profile
+### A2. Confirm the guard refuses under each profile ✅ RUN 2026-09-19
 
 Same two minutes, needs A1's answer. With each profile running, run the guard and confirm a loud
 refusal. A silent pass is the failure, and it is the one that costs an archive.
@@ -95,7 +123,7 @@ refusal. A silent pass is the failure, and it is the one that costs an archive.
 
 ## Group B — existing ladders, sheets already written
 
-### B1. Unit anchor probe — `docs/unit-anchor-run-sheet.md`
+### B1. Unit anchor probe — `docs/unit-anchor-run-sheet.md` ⚠️ RUN 2026-09-19, NOT ANSWERED
 
 Written, reviewed, and its two critical safety defects fixed. This closes whether the **unit draw
 path** uses the same anchor rule as the terrain-sprite path.
@@ -155,9 +183,18 @@ untouched. Build the edit so it carries its own control — change a region with
 | Image renders but `TINY`-related breakage appears elsewhere | `TINY` is load-bearing somewhere we have not identified. A finding, not a failure. |
 | Archive rejected / game will not start | Either the length change or the encoder. C2 separates them — run it next. |
 
-### C2. A size-changing edit
+### C2. A size-changing edit ✅ CLOSED 2026-09-19
 
-**No archive, in any format, has ever been accepted with a member whose length changed.** This is
+> **Closed by the cheat-keys ladder, not by a run designed to test it.** `/cheat_keys false def`
+> -> `/cheat_keys true def` in `gs\hotkey.gs` is **21 bytes to 20**. That archive shipped to the
+> Development profile, the engine loaded it, and the debug hotkey tier was exercised in gameplay
+> (`*` took a level-1 Paladin Lord to LVL 9). **Observed in gameplay, 2026-09-19.**
+>
+> The ladder was about the flag, so the length change went unremarked for a day while the roadmap
+> kept publishing "the engine has not been shown an edit that changes a member's size".
+
+The claim this box was written against:
+**No archive, in any format, had ever been accepted with a member whose length changed.** This is
 the limit every engine-acceptance marker repeats, and it caps every format delivered via MPQ. If
 C1 fails, this isolates whether length or the encoder was responsible — so build both before the
 sitting.
@@ -166,8 +203,13 @@ sitting.
 
 Never attempted. `allow_new_members` exists and is deliberately gated behind two separate acts.
 
-### C4. Two members in one build
+### C4. Two members in one build ✅ CLOSED 2026-09-19
 
+> **Closed by acceptance rungs 6-9.** Each rewrote **two** members -- `wav\welcome.wav` and
+> `wav\button.wav` -- in **both** `sndfx.mpq` and `special.mpq`, four changed members in one
+> build, and the engine played them. **Observed in gameplay, 2026-09-19.**
+
+The claim this box was written against:
 Never attempted. Nothing establishes that a *large* mod loads — every acceptance so far is one
 member. Note rungs 6–9 did rewrite two members across two archives, so this is partly addressed;
 confirm against the ladder outcome before spending a sitting on it.
