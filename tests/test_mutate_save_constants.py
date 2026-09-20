@@ -40,17 +40,38 @@ class GateCoverage(unittest.TestCase):
         )
         self.assertGreater(len(declared), 25, "the gate ladder should not have shrunk this far")
 
+        # `LS_GAME`'s ladder lives in a `pub mod` and is written decimal, so it needs its own
+        # count. Added 2026-09-19 with the corrected `LS_GAME` model; a harness regex that
+        # matched none of them would otherwise have reported a clean sweep over six untouched
+        # gates.
+        game_declared = set(
+            re.findall(r"^    pub const (\w+): i32 = \d+;$", self.text, re.MULTILINE)
+        )
+        self.assertEqual(
+            game_declared,
+            {
+                "RECORD_TABLE",
+                "UNKNOWN_4FB4_4FC8",
+                "BLOCK_4FCC",
+                "COUNTED_ARRAY",
+                "BLOCK_230CC",
+                "UNKNOWN_23194",
+            },
+            "the LS_GAME ladder changed; re-read the handler at 0x00483342 before editing it",
+        )
+
         mutated = {}
         for _, _, label in self.harness.gate_mutations(self.text):
             name, delta = label.rsplit(" ", 1)
             mutated.setdefault(name, set()).add(delta)
 
-        self.assertEqual(set(mutated), declared)
+        expected = declared | {f"game_section_versions::{name}" for name in game_declared}
+        self.assertEqual(set(mutated), expected)
         for name, deltas in mutated.items():
             self.assertEqual(deltas, {"+1", "-1"}, f"{name} is not swept in both directions")
 
     def test_every_structural_mutation_still_matches_the_source_exactly_once(self):
-        for old, new, label in self.harness.STRUCTURAL:
+        for old, new, label in self.harness.STRUCTURAL + self.harness.ENCODERS:
             with self.subTest(label=label):
                 self.assertEqual(
                     self.text.count(old),
@@ -62,8 +83,25 @@ class GateCoverage(unittest.TestCase):
 
     def test_mutation_ids_are_unique_so_results_can_be_attributed(self):
         labels = [label for _, _, label in self.harness.gate_mutations(self.text)]
-        labels += [label for _, _, label in self.harness.STRUCTURAL]
+        labels += [label for _, _, label in self.harness.STRUCTURAL + self.harness.ENCODERS]
         self.assertEqual(len(labels), len(set(labels)))
+
+    def test_every_encoder_refusal_in_the_source_is_mutated(self):
+        # The encoders' refusals are the half of the writer that a round trip cannot check, so a
+        # refusal added without a mutation beside it is a refusal nothing forces to exist. Counted
+        # from the source rather than from the harness, so the two can disagree.
+        refusals = self.text.count("return Err(SaveError::section(")
+        mutated = sum(
+            1
+            for old, _, _ in self.harness.ENCODERS
+            if "refusal" in old or "if " in old.splitlines()[0]
+        )
+        self.assertGreaterEqual(
+            mutated,
+            7,
+            f"the source carries {refusals} section refusals and the sweep mutates {mutated} "
+            f"guard sites",
+        )
 
     def test_each_unguarded_callsite_has_its_own_structural_mutation(self):
         # One shared mutation would let two of the three call sites go untested while the sweep

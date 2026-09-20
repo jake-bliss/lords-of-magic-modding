@@ -33,14 +33,54 @@
 //! | [`MultiplayerSection`] | fully decoded |
 //! | [`MapSection`] | fully decoded, through [`crate::map::MapAsset`] |
 //! | [`UserSection`] | eight fixed-size records; the known head fields are named, the rest carried |
-//! | [`GameSection`] | fully decoded |
-//! | [`RegionSection`] | header and grid decoded; **tail carried raw**, structure Unknown |
-//! | [`AlarmSection`] | header decoded; **records carried raw**, layout Unknown |
-//! | [`PlayerSection`] | tail decoded from the end; **records carried raw**, size Unknown for v111 |
+//! | [`GameSection`] | fully decoded, version gates and all -- **corrected 2026-09-19**, see its own docs |
+//! | [`RegionSection`] | fully decoded; the six-byte grid cell's fields are Unknown and carried |
+//! | [`AlarmSection`] | fully decoded, six queues with their own field schedules |
+//! | [`PlayerSection`] | fully decoded from the writer, version gates and all |
 //! | [`SpriteSection`] | fully decoded, through ten class readers; field *meanings* Unknown |
 //!
 //! Everything in the "carried" column is an explicit `raw` field rather than silence. A parser that
 //! drops the bytes it does not understand cannot be grown into a writer.
+//!
+//! # Composing a save: what is RECONSTRUCTED and what is REPLAYED
+//!
+//! **Added 2026-09-19.** All nine sections now have an encoder and [`SaveFile::encode`] writes a
+//! whole file from the decoded sections with **nothing spliced**. Read this before quoting the
+//! round-trip figure, because the byte-identical result is **split** between parts that are
+//! genuinely reconstructed and parts that are replayed, and it is only evidence about the first.
+//!
+//! **Reconstructed, and therefore load-bearing.** Every quantity that describes other bytes is
+//! recomputed from the bytes it describes, never copied out of the parse:
+//!
+//! | section | reconstructed |
+//! | --- | --- |
+//! | [`MultiplayerSection`] | `declared_setup_len`; whether the slot block is present |
+//! | [`MapSection`] | the second plane's count word |
+//! | [`GameSection`] | the record count; the record-size word; the counted array's length; all six version gates |
+//! | [`PlayerSection`] | every queue count, every army's unit count, the roster's slot count, every bitset's implied width; all seven version gates |
+//! | [`RegionSection`] | `array_count`, as `regions.len() - 1`; every region's name-length byte |
+//! | [`AlarmSection`] | all six queue counts, every callback name's length, every argument count |
+//!
+//! Break any of those and the file changes length or stops parsing. A corpus test writes all 31
+//! installed saves back and compares them byte for byte, so a regression in any of them is
+//! visible on real data and not only on a fixture.
+//!
+//! **Replayed, and therefore proving nothing.** Every opaque block -- `LS_USER`'s eight records,
+//! `LS_MAP_`'s cells, `LS_REGN`'s six-byte grid cells and 64-byte region blocks, `LS_PLR_`'s
+//! 3,200-byte block and army stats, every `Unknown` word, every `LS_SPR_` record body, and the
+//! **uninitialised name padding** in `LS_MULT` -- is carried out of the parse and copied back in.
+//! [`SaveFile::encode`] cannot disagree with its input about any of them, so a byte-identical
+//! result says nothing about whether they were understood.
+//!
+//! **What the encoders can refuse.** Each one rejects a section it cannot write faithfully rather
+//! than writing a plausible file: a `LS_USER` that is not eight records of 784, a region name past
+//! the `u8` length field, a bitset whose words do not match its bit count, a player record without
+//! sixteen armies, an alarm record whose shape does not match its queue's schedule, and -- in both
+//! directions -- any version-gated field that is present when the target version does not store it
+//! or absent when it does.
+//!
+//! **No save this project has written has ever been loaded by the engine.** That run is an
+//! attended item. "Composable offline" is the claim; "accepted by the game" is not.
 //!
 //! # No compression and no encryption
 //!
@@ -429,19 +469,28 @@ impl SaveContainer {
             user.payload_len == expected_user,
         ));
 
+        // **Corrected, 2026-09-19.** This used to be `(payload - 24) % 12 == 0`, which is what a
+        // model with 71 phantom records in it can check: a divisibility test that a 856-byte tail
+        // satisfies by accident. It is now a walk of the writer's actual field schedule, which
+        // lands on the payload's end or does not. Like the alarm and region walkers it is
+        // deliberately a **second implementation** -- it counts bytes off the container and never
+        // builds a section, so it runs on files `SaveFile::parse` refuses.
         let game = self.location(SectionTag::Game);
-        let game_records = game.payload_len.checked_sub(GameSection::FIXED_BYTES);
+        let game_walk = version.and_then(|version| {
+            account_for_game_section(
+                source
+                    .get(game.payload_offset..game.payload_end())
+                    .unwrap_or_default(),
+                version,
+            )
+        });
         checks.push(structural(
-            "LS_GAME: (payload - 24) % 12 == 0",
-            match game_records {
-                Some(bytes) => format!(
-                    "({} - 24) = {bytes}, % 12 = {}",
-                    game.payload_len,
-                    bytes % GameSection::RECORD_LEN
-                ),
-                None => format!("{} is shorter than the 24-byte head", game.payload_len),
+            "LS_GAME: the writer's field schedule accounts for the payload",
+            match game_walk {
+                Some(consumed) => format!("{consumed} vs {}", game.payload_len),
+                None => "ran off the end".to_owned(),
             },
-            game_records.is_some_and(|bytes| bytes.is_multiple_of(GameSection::RECORD_LEN)),
+            game_walk == Some(game.payload_len),
         ));
 
         let player = self.location(SectionTag::Player);
@@ -548,8 +597,59 @@ fn read_u32(tag: SectionTag, payload: &[u8], offset: usize) -> Result<u32, SaveE
     Ok(u32::from_le_bytes(bytes))
 }
 
-fn read_i32(tag: SectionTag, payload: &[u8], offset: usize) -> Result<i32, SaveError> {
-    read_u32(tag, payload, offset).map(|value| value as i32)
+// ---------------------------------------------------------------------------
+// Little-endian writers, and the two refusals every encoder shares
+// ---------------------------------------------------------------------------
+
+/// Append one little-endian `u32`. The engine `fwrite`s struct memory on a little-endian host, so
+/// every multi-byte field in this format is little-endian and there is no other case to handle.
+fn push_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+/// A count word **reconstructed** from the collection it counts.
+///
+/// This is the load-bearing half of every encoder here. The engine's writers count the list they
+/// are about to emit -- `0x0052B3B0` walks a linked list to length before writing it, the alarm
+/// list writers do the same -- so a writer that copied a parsed count instead of recomputing it
+/// would preserve a count that disagrees with its own records, which is exactly the file no reader
+/// can recover from.
+fn count_word<T>(tag: SectionTag, what: &str, items: &[T]) -> Result<u32, SaveError> {
+    u32::try_from(items.len()).map_err(|_| {
+        SaveError::section(
+            tag,
+            format!(
+                "{what} holds {} items, past the 32-bit count field",
+                items.len()
+            ),
+        )
+    })
+}
+
+/// Check a version-gated field against the version being written for.
+///
+/// Every gate in this format is one-sided at **read** time -- a reader below the gate simply does
+/// not consume the field -- so an encoder that wrote a field the target reader will not read, or
+/// omitted one it will, produces a file that misparses from that point on and not a file that is
+/// merely missing a value. Both directions are refused here rather than papered over with a
+/// default, because a default is a field this project would be minting.
+fn gate<'a, T>(
+    tag: SectionTag,
+    what: &str,
+    stored_at_this_version: bool,
+    value: Option<&'a T>,
+) -> Result<Option<&'a T>, SaveError> {
+    match (stored_at_this_version, value) {
+        (true, None) => Err(SaveError::section(
+            tag,
+            format!("this version stores {what} and the decoded section does not carry it"),
+        )),
+        (false, Some(_)) => Err(SaveError::section(
+            tag,
+            format!("this version does not store {what} and the decoded section carries it"),
+        )),
+        (_, value) => Ok(value),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -604,6 +704,20 @@ impl VersionSection {
     /// the opposite and disagree with the engine on exactly the inputs a hostile file would use.
     pub fn stores_multiplayer_slots(&self) -> bool {
         (self.version as i32) >= (MULTIPLAYER_SLOTS_MIN_VERSION as i32)
+    }
+
+    /// Re-emit the payload.
+    ///
+    /// **REPLAYED, entirely.** One field in, the same field out; this cannot disagree with the
+    /// file it came from and proves nothing about it.
+    ///
+    /// **It is also not what the engine writes.** `0x00482B76` `fwrite`s four bytes from
+    /// `0x0055B1B0`, the build's own [`BUILD_FORMAT_VERSION`] constant, so the engine stamps 111
+    /// on every save whatever it loaded. This writes the version it was given, because a caller
+    /// splicing an existing save must not silently upgrade it -- and a caller that wants the
+    /// engine's behaviour sets `version` to [`BUILD_FORMAT_VERSION`] and gets it.
+    pub fn encode(&self) -> Vec<u8> {
+        self.version.to_le_bytes().to_vec()
     }
 }
 
@@ -786,6 +900,49 @@ impl MultiplayerSection {
             .filter(|(_, slot)| slot.is_occupied())
     }
 
+    /// Re-emit the payload in the writer's order.
+    ///
+    /// **Observed in a local binary, 2026-09-19**, `0x004839A0`: `fwrite` of a stack local holding
+    /// the literal `0xa4`, then `fwrite(setup, 0xa4, 1)`, then `fwrite(slots, 0x240, 1)`. The
+    /// writer has **no version gate** -- it always emits all three -- so a pre-99 payload is
+    /// something only a pre-99 *build* produced, and this encoder reproduces the shape that
+    /// build's reader expects rather than this one's writer.
+    ///
+    /// **RECONSTRUCTED**: `declared_setup_len`, recomputed from the setup block so the stored
+    /// length and the bytes behind it cannot disagree, and the presence of the slot block, taken
+    /// from `version`. **REPLAYED**: the setup bytes, every lord code, and every name field
+    /// *including its uninitialised padding* -- see [`LordSlot::name_padding`]. Reproducing the
+    /// padding is deliberate: it is the only way a re-encode of a real save comes out byte-equal,
+    /// and it is also the reason a byte-equal result here is **not** evidence that the names were
+    /// understood.
+    pub fn encode(&self, version: &VersionSection) -> Result<Vec<u8>, SaveError> {
+        let tag = SectionTag::Multiplayer;
+        let declared_setup_len = u32::try_from(self.setup.len()).map_err(|_| {
+            SaveError::section(
+                tag,
+                format!(
+                    "a setup block of {} bytes does not fit the 32-bit length word",
+                    self.setup.len()
+                ),
+            )
+        })?;
+        let mut out = Vec::with_capacity(self.accounted_len());
+        push_u32(&mut out, declared_setup_len);
+        out.extend_from_slice(&self.setup);
+        if let Some(slots) = gate(
+            tag,
+            "the sixteen lord slots",
+            version.stores_multiplayer_slots(),
+            self.slots.as_ref(),
+        )? {
+            for slot in slots {
+                push_u32(&mut out, slot.lord_code);
+                out.extend_from_slice(&slot.name_field);
+            }
+        }
+        Ok(out)
+    }
+
     /// The lord codes of slots `0..8`, in order, for comparison against [`PlayerSection`], or
     /// `None` when the version omits the block.
     pub fn seated_lord_codes(&self) -> Option<[u32; Self::SEATED_SLOT_COUNT]> {
@@ -902,6 +1059,45 @@ impl MapSection {
     /// `docs/save-format.md`.
     pub fn accounted_len(&self) -> usize {
         12 + self.map.cells.len() * 8 + 4 + self.plane.len() * 4 + 4
+    }
+
+    /// Re-emit the payload in the writer's order.
+    ///
+    /// **Observed in a local binary, 2026-09-19.** Three calls, in this order: `0x004A5440`
+    /// writes `width`, `height` and a **literal `8`** and then the grid; `0x004A54E0` writes the
+    /// plane's count and then one `u32` per plane entry; `0x004C8FC0` writes the single trailer
+    /// word.
+    ///
+    /// **RECONSTRUCTED**: the plane's count word, recomputed from the plane. **REPLAYED**: every
+    /// cell, every plane entry and the trailer. The header's three words come from
+    /// [`MapAsset::to_bytes`], which is the same serialiser the standalone `.scn`/`.smp` path
+    /// uses, so the save path cannot drift from it.
+    ///
+    /// **One difference from the engine, stated rather than hidden.** The engine's grid loop
+    /// writes `0x200` bytes per **64 cells** and steps `esi` by `0x40`, so on a cell count that is
+    /// not a multiple of 64 it writes past the end of the grid; this writes exactly
+    /// `cells * 8`. The two agree whenever the cell count is a multiple of 64, which is true of
+    /// every corpus map (128x128) and of this module's 96x64 fixture, and is the only case either
+    /// side has been observed on.
+    pub fn encode(&self) -> Result<Vec<u8>, SaveError> {
+        let tag = SectionTag::Map;
+        if self.map.header_form != MapHeaderForm::Grid {
+            return Err(SaveError::section(
+                tag,
+                "the embedded map is not in grid form; a save has no metadata word to write",
+            ));
+        }
+        let mut out = self
+            .map
+            .to_bytes()
+            .map_err(|error: MapError| SaveError::section(tag, format!("embedded map: {error}")))?;
+        out.reserve(4 + self.plane.len() * 4 + 4);
+        push_u32(&mut out, count_word(tag, "the second plane", &self.plane)?);
+        for value in &self.plane {
+            push_u32(&mut out, *value);
+        }
+        push_u32(&mut out, self.trailer);
+        Ok(out)
     }
 
     /// Whether the plane's count word equals the map's cell count.
@@ -1916,6 +2112,43 @@ impl UserSection {
         Ok(Self { records })
     }
 
+    /// Re-emit the payload.
+    ///
+    /// **Observed in a local binary, 2026-09-19**, `0x0052D040`: `push 0x310` and `fwrite` eight
+    /// times, unconditionally and with no version gate.
+    ///
+    /// **REPLAYED, entirely** -- eight records of carried bytes. The one thing it can refuse is a
+    /// section that is not eight records of 784, which is the shape the writer makes unavoidable
+    /// and which a caller assembling a section by hand can get wrong.
+    pub fn encode(&self) -> Result<Vec<u8>, SaveError> {
+        let tag = SectionTag::User;
+        if self.records.len() != Self::RECORD_COUNT {
+            return Err(SaveError::section(
+                tag,
+                format!(
+                    "{} records; the writer emits exactly {}",
+                    self.records.len(),
+                    Self::RECORD_COUNT
+                ),
+            ));
+        }
+        let mut out = Vec::with_capacity(Self::RECORD_COUNT * UserRecord::LEN);
+        for (index, record) in self.records.iter().enumerate() {
+            if record.raw.len() != UserRecord::LEN {
+                return Err(SaveError::section(
+                    tag,
+                    format!(
+                        "record {index} is {} bytes; the writer's `push 0x310` makes it {}",
+                        record.raw.len(),
+                        UserRecord::LEN
+                    ),
+                ));
+            }
+            out.extend_from_slice(&record.raw);
+        }
+        Ok(out)
+    }
+
     /// Whether every record's stored index equals its position.
     pub fn indexes_are_positional(&self) -> bool {
         self.records
@@ -1939,120 +2172,424 @@ pub struct GameRecord {
     pub b: i32,
 }
 
-/// The turn counter and a table of twelve-byte records.
+impl GameRecord {
+    /// The width the writer emits and the only width this parser accepts. See
+    /// [`GameRecordTable::declared_record_size`].
+    pub const LEN: usize = 12;
+}
+
+/// The counted record table inside `LS_GAME`.
 ///
-/// **Observed in a local binary, 2026-09-18.** The shape holds in every corpus file with no
-/// exception:
+/// **Observed in a local binary, 2026-09-19.** Writer `0x0052B3B0`, reader `0x0052B2A0`. The
+/// writer walks a linked list through `+0xc` to count it, writes the count, writes a **literal
+/// `0xc`**, then `fwrite`s 12 bytes from each node. The reader reads the count, reads the record
+/// size, **refuses a record size above 12** (`cmp dword,0xc / jbe` at `0x0052B2F8`), and then
+/// `fread`s `record_size` bytes per record into a 12-byte stack buffer whose three dwords it
+/// copies into a freshly allocated 16-byte node.
+///
+/// So the count is the number of records, exactly, and the stored size is a **length the reader
+/// uses**, like [`MultiplayerSection::declared_setup_len`] and unlike anything else in this
+/// format.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameRecordTable {
+    /// The stored record size. `12` in every corpus file and the only value this parser accepts;
+    /// see [`GameSection::parse`] for why a shorter one is refused rather than modelled.
+    pub declared_record_size: u32,
+    pub records: Vec<GameRecord>,
+}
+
+impl GameRecordTable {
+    /// The bytes this table occupies: the two head words plus the records.
+    pub fn encoded_len(&self) -> usize {
+        8 + self.records.len() * GameRecord::LEN
+    }
+}
+
+/// A counted `u32` array written by `0x004C4010` and read by `0x004C3FA0`.
+///
+/// **Observed in a local binary, 2026-09-19.** The object is `{ u32 count; u32 word; u32* data }`
+/// and both sides put exactly that on disk: the count, the second word, then `count * 4` bytes.
+/// The reader reallocates when the stored count differs from the one it already holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameCountedArray {
+    /// The object's second word, written between the count and the data. Meaning **Unknown**.
+    pub unknown_4: u32,
+    pub words: Vec<u32>,
+}
+
+impl GameCountedArray {
+    /// The bytes this array occupies: two head words plus the data.
+    pub fn encoded_len(&self) -> usize {
+        8 + self.words.len() * 4
+    }
+}
+
+/// The version ladder inside the `LS_GAME` handler.
+///
+/// **Observed in a local binary, 2026-09-19.** Six `cmp dword [esi], n / jl` gates in the handler
+/// at `0x00483342`, where `[esi]` is the version field of the shared singleton. The first three
+/// words are unconditional; everything after them is gated.
+///
+/// | gate VA | minimum version | field |
+/// | --- | ---: | --- |
+/// | `0x00483397` | 80 | the record table |
+/// | `0x004833B0` | 82 | `+0x4fb4` and `+0x4fc8` (defaulted to `1`, `1` when absent) |
+/// | `0x00483401` | 87 | the 32-byte block at `+0x4fcc` |
+/// | `0x00483423` | 97 | `+0x4dc4` and the counted array at `+0x4db0` |
+/// | `0x00483459` | 105 | the 200-byte block at `+0x230cc` |
+/// | `0x0048347E` | 108 | `+0x23194` |
+///
+/// **The writer at `0x00482CF2` has no gates**, exactly as `LS_PLR_`'s does not: it always emits
+/// the full section. The ladder exists only to read older files, which is why a record must be
+/// parsed against `LS_VER_` and not against its own length.
+/// **The gates are `jl`, so they are SIGNED**, and these are `i32` to say so. It matters only at
+/// the top of the range -- a stored version of `0xFFFFFFFF` is `-1` to the engine and takes the
+/// *low* path on all six -- but that is exactly the input a hostile file would use, and
+/// [`VersionSection::stores_multiplayer_slots`] already answers it the engine's way.
+pub mod game_section_versions {
+    pub const RECORD_TABLE: i32 = 80;
+    pub const UNKNOWN_4FB4_4FC8: i32 = 82;
+    pub const BLOCK_4FCC: i32 = 87;
+    pub const COUNTED_ARRAY: i32 = 97;
+    pub const BLOCK_230CC: i32 = 105;
+    pub const UNKNOWN_23194: i32 = 108;
+}
+
+/// The record count's guard, `0x0052B30F` / `0x0052B323`: `test eax,eax / jle`.
+///
+/// The same shape as [`spr_signed_count`] and given its own function for the same reason -- a
+/// count the engine tests with a **signed** branch is a count a non-positive value makes empty,
+/// not a count of four billion. The address here is the one that carries the claim.
+fn game_signed_count(raw: u32) -> u32 {
+    spr_signed_count(raw)
+}
+
+/// The counted array's length at `0x004C3FA0`, which is **not** guarded.
+///
+/// The reader takes the stored word, hands it to a reallocation, shifts it left by two and passes
+/// the result to `fread` as the size, with no compare and no branch anywhere in between -- the
+/// third shape in [`spr_unguarded_length`]'s taxonomy, given its own function so that `LS_GAME`'s
+/// one unguarded number is not filed under a name that claims a `LS_SPR_` address. This parser
+/// reads it unsigned and lets `Cursor::take` refuse, **a refusal where the engine would read
+/// gigabytes**, which is the right direction to differ in and is still a difference.
+fn game_unguarded_length(raw: u32) -> usize {
+    raw as usize
+}
+
+/// The turn counter, a record table, and six version-gated tail fields.
+///
+/// **Decoded from the writer, 2026-09-19**, at `0x00482CF2`..`0x00482E1D`, and cross-checked
+/// against the handler at `0x00483342`:
 ///
 /// ```text
-///   u32 turn
-///   u32 unknown_4
-///   u32 0
-///   u32 live_count
-///   u32 12                      -- literally the record size, stored
-///   N * 12 bytes                -- N = (payload_len - 24) / 12
-///   u32 trailer
+///   u32 turn                                            +0x5004
+///   u32 unknown_5008                                    +0x5008
+///   u32 unknown_228a8                                   +0x228a8
+///   V >= 80  : u32 count ; u32 record_size ; count * record_size bytes   0x0052B3B0
+///   V >= 82  : u32 +0x4fb4 ; u32 +0x4fc8
+///   V >= 87  : 32 bytes                                 +0x4fcc
+///   V >= 97  : u32 +0x4dc4 ; u32 n ; u32 +0x4db4 ; n * u32               0x004C4010
+///   V >= 105 : 200 bytes                                +0x230cc
+///   V >= 108 : u32                                      +0x23194
 /// ```
 ///
-/// `(payload_len - 24) % 12 == 0` in every corpus file, and **`N - live_count == 71` in every**.
-/// The constant 71 is Observed and **unexplained** -- do not name the fields it relates.
+/// # Corrected, 2026-09-19: there is no 71-record surplus, and there never was
 ///
-/// The per-file `N`/`live_count` pairs are **not** listed here. They used to be, as eight of them,
-/// and the list was left behind when the claim above was re-measured over the whole corpus --
-/// a universal quantified over 31 files, evidenced by a list of 8, disagreeing with
-/// `docs/save-format.md`'s nine rows. `save_survey` prints the pairs it measured, which is the
-/// only version that cannot go stale.
+/// **Refuted.** The previous model read this section as five head words, `N = (payload - 24) / 12`
+/// records and a trailer, and recorded as its headline finding that `N - live_count == 71` in
+/// every corpus file -- "Observed and **unexplained**", carried in `docs/save-format.md` and in a
+/// public constant.
+///
+/// It is explained, and the explanation is that the model was wrong. Everything the old model
+/// called the 72 trailing records-and-a-trailer is the **fixed, version-gated tail above**:
+///
+/// ```text
+///   4 + 4 + 32 + 4 + (8 + 4*n) + 200 + 4  =  256 + 4*n
+/// ```
+///
+/// and `n == 150` in every corpus file, which makes the tail 856 bytes, which is
+/// `71 * 12 + 4` -- seventy-one phantom records and the phantom trailer. The count word the old
+/// model called `live_count` is simply **the number of records**, written by a writer that counts
+/// the list it is about to emit.
+///
+/// **What let it survive**: the old model's only check was a byte total and a divisibility test,
+/// and 856 is a multiple of 4 that happens to leave the total divisible by 12. This is the third
+/// time in this file's history that an accounting check over a sum failed to see a regrouping of
+/// its terms -- see the `128*128*12 + 16` note in `docs/save-format.md`. **An unexplained constant
+/// that appears in every file is a reading error until it is read out of the instruction stream.**
+///
+/// The section now accounts for **every corpus file with zero slack** under the writer's model,
+/// and the record count equals the stored count by construction rather than by 71.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameSection {
     /// The turn number. See [`SaveFile::turn_agreement`] for why this reading is Observed rather
     /// than guessed.
     pub turn: u32,
-    /// Meaning **Unknown**; varies across files with no pattern found.
-    pub unknown_4: u32,
-    /// `0` in every inspected file.
-    pub zero_8: u32,
-    /// Meaning **Unknown**, but see the `N - live_count == 71` invariant.
-    pub live_count: u32,
-    /// The stored record size. Unlike [`MultiplayerSection::declared_setup_len`] there is no
-    /// evidence the reader uses this as a length, so it is checked, not trusted.
-    pub declared_record_size: u32,
-    pub records: Vec<GameRecord>,
-    /// The final word. Varies (1, 319, 801 observed); meaning **Unknown**.
-    pub trailer: u32,
+    /// `+0x5008`. Meaning **Unknown**; varies across files with no pattern found.
+    pub unknown_5008: u32,
+    /// `+0x228a8`. `0` in every inspected file; meaning **Unknown**.
+    pub unknown_228a8: u32,
+    /// The record table, or `None` below version 80.
+    pub table: Option<GameRecordTable>,
+    /// `+0x4fb4` and `+0x4fc8`. The reader defaults both to `1` when the version omits them.
+    pub unknown_4fb4_4fc8: Option<[u32; 2]>,
+    /// 32 bytes at `+0x4fcc`. Structure **Unknown**, carried verbatim.
+    pub block_4fcc: Option<[u8; GameSection::BLOCK_4FCC_LEN]>,
+    /// `+0x4dc4`, written immediately before the counted array and gated with it.
+    pub unknown_4dc4: Option<u32>,
+    /// The counted array at `+0x4db0`. Gated at the same version as [`Self::unknown_4dc4`].
+    pub counted_array: Option<GameCountedArray>,
+    /// 200 bytes at `+0x230cc`. Structure **Unknown**, carried verbatim.
+    pub block_230cc: Option<Vec<u8>>,
+    /// `+0x23194`. Meaning **Unknown**.
+    pub unknown_23194: Option<u32>,
 }
 
 impl GameSection {
-    /// The fixed bytes: five leading words and the trailing one.
-    pub const FIXED_BYTES: usize = 24;
-    pub const RECORD_LEN: usize = 12;
+    /// `push 0x20` at `0x00482D7F`.
+    pub const BLOCK_4FCC_LEN: usize = 32;
+    /// `push 0xc8` at `0x00482DBB`.
+    pub const BLOCK_230CC_LEN: usize = 200;
 
-    pub fn parse(payload: &[u8]) -> Result<Self, SaveError> {
+    /// Parse, using `version` to decide which of the six gated tail fields are present.
+    ///
+    /// **A record size other than 12 is refused, and that is a deliberate difference from the
+    /// engine.** The reader accepts anything `<= 12` and `fread`s that many bytes into a 12-byte
+    /// stack buffer it does not clear between records, then copies three dwords out of it -- so on
+    /// a short record the engine's third field is whatever the *previous* record left behind.
+    /// That is not a layout this project can express, and writing one back would be inventing it.
+    /// No corpus file stores anything but 12.
+    pub fn parse(payload: &[u8], version: &VersionSection) -> Result<Self, SaveError> {
         let tag = SectionTag::Game;
-        if payload.len() < Self::FIXED_BYTES {
-            return Err(SaveError::section(
-                tag,
-                format!(
-                    "payload of {} bytes is shorter than the {}-byte fixed part",
-                    payload.len(),
-                    Self::FIXED_BYTES
-                ),
-            ));
-        }
-        let record_bytes = payload.len() - Self::FIXED_BYTES;
-        if !record_bytes.is_multiple_of(Self::RECORD_LEN) {
-            return Err(SaveError::section(
-                tag,
-                format!(
-                    "{record_bytes} record bytes are not a whole number of {}-byte records",
-                    Self::RECORD_LEN
-                ),
-            ));
-        }
+        let version = version.version as i32;
+        let mut cursor = Cursor::new(tag, payload);
+        let turn = cursor.u32()?;
+        let unknown_5008 = cursor.u32()?;
+        let unknown_228a8 = cursor.u32()?;
 
-        let turn = read_u32(tag, payload, 0)?;
-        let unknown_4 = read_u32(tag, payload, 4)?;
-        let zero_8 = read_u32(tag, payload, 8)?;
-        let live_count = read_u32(tag, payload, 12)?;
-        let declared_record_size = read_u32(tag, payload, 16)?;
+        let table = if version >= game_section_versions::RECORD_TABLE {
+            let count = game_signed_count(cursor.u32()?);
+            let declared_record_size = cursor.u32()?;
+            if usize::try_from(declared_record_size) != Ok(GameRecord::LEN) {
+                return Err(SaveError::section(
+                    tag,
+                    format!(
+                        "record table declares a {declared_record_size}-byte record; the reader's \
+                         `jbe` at 0x0052B2F8 accepts 0..={} but only {} is a layout this parser \
+                         can express",
+                        GameRecord::LEN,
+                        GameRecord::LEN
+                    ),
+                ));
+            }
+            let mut records = Vec::with_capacity(usize::try_from(count).unwrap_or(0).min(4096));
+            for _ in 0..count {
+                records.push(GameRecord {
+                    id: cursor.u32()? as i32,
+                    a: cursor.u32()? as i32,
+                    b: cursor.u32()? as i32,
+                });
+            }
+            Some(GameRecordTable {
+                declared_record_size,
+                records,
+            })
+        } else {
+            None
+        };
 
-        let count = record_bytes / Self::RECORD_LEN;
-        let mut records = Vec::with_capacity(count);
-        for index in 0..count {
-            let offset = 20 + index * Self::RECORD_LEN;
-            records.push(GameRecord {
-                id: read_i32(tag, payload, offset)?,
-                a: read_i32(tag, payload, offset + 4)?,
-                b: read_i32(tag, payload, offset + 8)?,
-            });
-        }
-        let trailer = read_u32(tag, payload, 20 + count * Self::RECORD_LEN)?;
+        let unknown_4fb4_4fc8 = if version >= game_section_versions::UNKNOWN_4FB4_4FC8 {
+            Some([cursor.u32()?, cursor.u32()?])
+        } else {
+            None
+        };
+        let block_4fcc = if version >= game_section_versions::BLOCK_4FCC {
+            Some(cursor.array::<{ GameSection::BLOCK_4FCC_LEN }>()?)
+        } else {
+            None
+        };
+        let (unknown_4dc4, counted_array) = if version >= game_section_versions::COUNTED_ARRAY {
+            let word = cursor.u32()?;
+            // `0x004C3FA0` hands this count to a reallocation and then to `fread` with no signed
+            // test anywhere between: an unguarded length, not a `jle`-guarded count.
+            let count = game_unguarded_length(cursor.u32()?);
+            let unknown_4 = cursor.u32()?;
+            let words = cursor.words(count)?;
+            (Some(word), Some(GameCountedArray { unknown_4, words }))
+        } else {
+            (None, None)
+        };
+        let block_230cc = if version >= game_section_versions::BLOCK_230CC {
+            Some(cursor.take(Self::BLOCK_230CC_LEN)?.to_vec())
+        } else {
+            None
+        };
+        let unknown_23194 = if version >= game_section_versions::UNKNOWN_23194 {
+            Some(cursor.u32()?)
+        } else {
+            None
+        };
+        cursor.expect_exhausted("the LS_GAME fields")?;
 
         Ok(Self {
             turn,
-            unknown_4,
-            zero_8,
-            live_count,
-            declared_record_size,
-            records,
-            trailer,
+            unknown_5008,
+            unknown_228a8,
+            table,
+            unknown_4fb4_4fc8,
+            block_4fcc,
+            unknown_4dc4,
+            counted_array,
+            block_230cc,
+            unknown_23194,
         })
     }
 
-    /// `records.len() - live_count`, the quantity that is 71 in every inspected file.
+    /// Re-emit the payload in the writer's order.
     ///
-    /// Signed, and computed rather than asserted, because a survey that printed only pass/fail
-    /// could not tell "held at 71" from "held at some other constant".
-    pub fn record_surplus(&self) -> i64 {
-        self.records.len() as i64 - i64::from(self.live_count)
+    /// **RECONSTRUCTED**: the record count, and the record size word. **REPLAYED**: every other
+    /// field, and which gated fields are present -- that is taken from `version`, so an encoder
+    /// asked for a version whose fields this section does not carry refuses instead of writing a
+    /// file the matching reader would misparse.
+    pub fn encode(&self, version: &VersionSection) -> Result<Vec<u8>, SaveError> {
+        let tag = SectionTag::Game;
+        let version = version.version as i32;
+        let mut out = Vec::with_capacity(self.accounted_len());
+        push_u32(&mut out, self.turn);
+        push_u32(&mut out, self.unknown_5008);
+        push_u32(&mut out, self.unknown_228a8);
+
+        let table = gate(
+            tag,
+            "the record table",
+            version >= game_section_versions::RECORD_TABLE,
+            self.table.as_ref(),
+        )?;
+        if let Some(table) = table {
+            push_u32(
+                &mut out,
+                count_word(tag, "LS_GAME records", &table.records)?,
+            );
+            push_u32(&mut out, u32::try_from(GameRecord::LEN).expect("12 fits"));
+            for record in &table.records {
+                push_u32(&mut out, record.id as u32);
+                push_u32(&mut out, record.a as u32);
+                push_u32(&mut out, record.b as u32);
+            }
+        }
+        if let Some(words) = gate(
+            tag,
+            "+0x4fb4 and +0x4fc8",
+            version >= game_section_versions::UNKNOWN_4FB4_4FC8,
+            self.unknown_4fb4_4fc8.as_ref(),
+        )? {
+            push_u32(&mut out, words[0]);
+            push_u32(&mut out, words[1]);
+        }
+        if let Some(block) = gate(
+            tag,
+            "the 32-byte block",
+            version >= game_section_versions::BLOCK_4FCC,
+            self.block_4fcc.as_ref(),
+        )? {
+            out.extend_from_slice(block);
+        }
+        let word_4dc4 = gate(
+            tag,
+            "+0x4dc4",
+            version >= game_section_versions::COUNTED_ARRAY,
+            self.unknown_4dc4.as_ref(),
+        )?;
+        let array = gate(
+            tag,
+            "the counted array",
+            version >= game_section_versions::COUNTED_ARRAY,
+            self.counted_array.as_ref(),
+        )?;
+        if let (Some(word), Some(array)) = (word_4dc4, array) {
+            push_u32(&mut out, *word);
+            push_u32(
+                &mut out,
+                count_word(tag, "the counted array", &array.words)?,
+            );
+            push_u32(&mut out, array.unknown_4);
+            for value in &array.words {
+                push_u32(&mut out, *value);
+            }
+        }
+        if let Some(block) = gate(
+            tag,
+            "the 200-byte block",
+            version >= game_section_versions::BLOCK_230CC,
+            self.block_230cc.as_ref(),
+        )? {
+            if block.len() != Self::BLOCK_230CC_LEN {
+                return Err(SaveError::section(
+                    tag,
+                    format!(
+                        "the block at +0x230cc is {} bytes; the writer's `push 0xc8` makes it {}",
+                        block.len(),
+                        Self::BLOCK_230CC_LEN
+                    ),
+                ));
+            }
+            out.extend_from_slice(block);
+        }
+        if let Some(word) = gate(
+            tag,
+            "+0x23194",
+            version >= game_section_versions::UNKNOWN_23194,
+            self.unknown_23194.as_ref(),
+        )? {
+            push_u32(&mut out, *word);
+        }
+        Ok(out)
     }
 
+    /// How many records the table holds, or `None` below the version that stores one.
+    pub fn record_count(&self) -> Option<usize> {
+        self.table.as_ref().map(|table| table.records.len())
+    }
+
+    /// The bytes this section accounts for, added up from the decoded content.
+    ///
+    /// A **second implementation** of the parse's arithmetic: the parse walks forward and this
+    /// adds sizes up, so the two can genuinely disagree.
     pub fn accounted_len(&self) -> usize {
-        Self::FIXED_BYTES + self.records.len() * Self::RECORD_LEN
+        let mut len = 12;
+        if let Some(table) = &self.table {
+            len += table.encoded_len();
+        }
+        if self.unknown_4fb4_4fc8.is_some() {
+            len += 8;
+        }
+        if let Some(block) = &self.block_4fcc {
+            len += block.len();
+        }
+        if self.unknown_4dc4.is_some() {
+            len += 4;
+        }
+        if let Some(array) = &self.counted_array {
+            len += array.encoded_len();
+        }
+        if let Some(block) = &self.block_230cc {
+            len += block.len();
+        }
+        if self.unknown_23194.is_some() {
+            len += 4;
+        }
+        len
     }
 }
 
-/// The value [`GameSection::record_surplus`] takes in every inspected file. Unexplained.
-pub const OBSERVED_GAME_RECORD_SURPLUS: i64 = 71;
+/// The length of the `LS_GAME` counted array in every corpus file.
+///
+/// **Observed in the corpus, 2026-09-19**, 150 in all 31 files across both format versions
+/// present, which is what made the retracted "71-record surplus" constant -- `256 + 4*150 = 856`
+/// and `856 = 71 * 12 + 4`. Nothing in the format requires it, so this is a **corpus regularity**:
+/// a save with a different length is a discovery, not a bad file, and `regularities` reports it
+/// with its measured value rather than failing.
+pub const OBSERVED_GAME_COUNTED_ARRAY_LEN: usize = 150;
 
 // ---------------------------------------------------------------------------
 // A forward-only payload cursor
@@ -2086,6 +2623,34 @@ impl Bitset {
     /// The bytes this bitset occupies on disk: the count word plus its words.
     pub fn encoded_len(&self) -> usize {
         4 + self.words_raw.len()
+    }
+
+    /// Re-emit the bitset.
+    ///
+    /// **RECONSTRUCTED**: nothing -- `bit_count` is stored and the word count is *derived from it*
+    /// by both sides, so what this can check is the one thing that is derivable: that the carried
+    /// words are the width `bit_count` implies. A bitset whose two halves disagree is refused
+    /// here rather than written, because the reader would take `ceil(bit_count / 32)` words and
+    /// desynchronise everything after it. **REPLAYED**: the count and the words themselves.
+    fn encode_into(&self, tag: SectionTag, out: &mut Vec<u8>) -> Result<(), SaveError> {
+        let expected = usize::try_from(self.bit_count)
+            .map_err(|_| SaveError::section(tag, "bitset bit count does not fit a usize"))?
+            .div_ceil(32)
+            * 4;
+        if self.words_raw.len() != expected {
+            return Err(SaveError::section(
+                tag,
+                format!(
+                    "a {}-bit set carries {} bytes of words; `add eax,0x1f / sar eax,5` at \
+                     0x004BF0C7 makes it {expected}",
+                    self.bit_count,
+                    self.words_raw.len()
+                ),
+            ));
+        }
+        push_u32(out, self.bit_count);
+        out.extend_from_slice(&self.words_raw);
+        Ok(())
     }
 }
 
@@ -2253,6 +2818,28 @@ impl PlayerArmy {
         3 * 4 + 4 + self.units.len() * 5 * 4 + Self::STATS_LEN + self.flags.encoded_len() + 2 * 4
     }
 
+    /// Re-emit one army in the writer's order, `0x0050A360`.
+    ///
+    /// **RECONSTRUCTED**: the unit count. **REPLAYED**: the three leading words, every unit's five
+    /// words, the hundred-byte stats block and the two trailing words.
+    fn encode_into(&self, tag: SectionTag, out: &mut Vec<u8>) -> Result<(), SaveError> {
+        for word in self.leading_words {
+            push_u32(out, word);
+        }
+        push_u32(out, count_word(tag, "an army's unit list", &self.units)?);
+        for unit in &self.units {
+            for word in unit.words {
+                push_u32(out, word);
+            }
+        }
+        out.extend_from_slice(&self.stats_raw);
+        self.flags.encode_into(tag, out)?;
+        for word in self.trailing_words {
+            push_u32(out, word);
+        }
+        Ok(())
+    }
+
     fn parse(cursor: &mut Cursor<'_>) -> Result<Self, SaveError> {
         let leading_words = [cursor.u32()?, cursor.u32()?, cursor.u32()?];
         let unit_count = cursor.count()?;
@@ -2310,6 +2897,25 @@ impl PlayerRoster {
     /// The bytes this roster occupies on disk.
     pub fn encoded_len(&self) -> usize {
         4 * 4 + self.slots.len() * 4 + self.block_raw.len()
+    }
+
+    /// Re-emit the roster in the writer's order, `0x0051C6C0`.
+    ///
+    /// **RECONSTRUCTED**: `slot_count`, from the slots behind it -- the two are stored separately
+    /// and the reader takes the stored one as the length, so a pair that disagrees is a file that
+    /// misparses. **REPLAYED**: the two leading words, `entry_count` (whose entries write zero
+    /// bytes each, so nothing can recompute it), every slot word and the 64-byte block.
+    fn encode_into(&self, tag: SectionTag, out: &mut Vec<u8>) -> Result<(), SaveError> {
+        for word in self.leading_words {
+            push_u32(out, word);
+        }
+        push_u32(out, self.entry_count);
+        push_u32(out, count_word(tag, "the roster slot list", &self.slots)?);
+        for slot in &self.slots {
+            push_u32(out, *slot);
+        }
+        out.extend_from_slice(&self.block_raw);
+        Ok(())
     }
 
     fn parse(cursor: &mut Cursor<'_>) -> Result<Self, SaveError> {
@@ -2457,6 +3063,134 @@ impl PlayerRecord {
             len += 4;
         }
         len
+    }
+
+    /// Re-emit the record, slot index and all, in the writer's order at `0x004BCE20`.
+    ///
+    /// **RECONSTRUCTED**: the queue count, each army's unit count, the roster's slot count, and
+    /// every bitset's implied width. **REPLAYED**: every other word, the stats blocks, the name
+    /// field and the 3,200-byte block.
+    ///
+    /// **The presence of each gated field comes from `version`, not from the `Option`.** The
+    /// writer has no gates at all and always emits the full record, so a save is read back by the
+    /// build that wrote it and by every later one; an encoder targeting an *older* reader has to
+    /// emit that reader's shape, and one that carries a field the target will not read is refused
+    /// rather than written.
+    fn encode_into(
+        &self,
+        tag: SectionTag,
+        out: &mut Vec<u8>,
+        version: u32,
+    ) -> Result<(), SaveError> {
+        if self.slot_index >= PlayerSection::MAX_SLOT_INDEX {
+            return Err(SaveError::section(
+                tag,
+                format!(
+                    "slot index {} is outside the reader's 0..{} range",
+                    self.slot_index,
+                    PlayerSection::MAX_SLOT_INDEX
+                ),
+            ));
+        }
+        if self.armies.len() != Self::ARMY_COUNT {
+            return Err(SaveError::section(
+                tag,
+                format!(
+                    "{} armies; the writer's loop at 0x004BCEB3 runs exactly {} times",
+                    self.armies.len(),
+                    Self::ARMY_COUNT
+                ),
+            ));
+        }
+        push_u32(out, self.slot_index);
+        for word in self.leading_words {
+            push_u32(out, word);
+        }
+        push_u32(out, count_word(tag, "a player's unit queue", &self.queue)?);
+        for entry in &self.queue {
+            for word in entry.words {
+                push_u32(out, word);
+            }
+        }
+        for army in &self.armies {
+            army.encode_into(tag, out)?;
+        }
+        push_u32(out, self.unknown_15e4);
+        self.roster.encode_into(tag, out)?;
+
+        if let Some(triples) = gate(
+            tag,
+            "the fifteen interleaved words",
+            version >= player_record_versions::INTERLEAVED_WORDS,
+            self.interleaved_words.as_ref(),
+        )? {
+            for triple in triples {
+                for word in triple {
+                    push_u32(out, *word);
+                }
+            }
+        }
+        if let Some(word) = gate(
+            tag,
+            "+0x3c",
+            version >= player_record_versions::UNKNOWN_3C,
+            self.unknown_3c.as_ref(),
+        )? {
+            push_u32(out, *word);
+        }
+        self.flags.encode_into(tag, out)?;
+        if let Some(name) = gate(
+            tag,
+            "the 31-byte name",
+            version >= player_record_versions::NAME,
+            self.name_raw.as_ref(),
+        )? {
+            out.extend_from_slice(name);
+        }
+        if let Some(word) = gate(
+            tag,
+            "+0x15d8",
+            version >= player_record_versions::UNKNOWN_15D8,
+            self.unknown_15d8.as_ref(),
+        )? {
+            push_u32(out, *word);
+        }
+        if let Some(block) = gate(
+            tag,
+            "the 3,200-byte block",
+            version >= player_record_versions::BLOCK_68,
+            self.block_68_raw.as_ref(),
+        )? {
+            if block.len() != Self::BLOCK_68_LEN {
+                return Err(SaveError::section(
+                    tag,
+                    format!(
+                        "the block at +0x68 is {} bytes; the writer's `push 0xc80` makes it {}",
+                        block.len(),
+                        Self::BLOCK_68_LEN
+                    ),
+                ));
+            }
+            out.extend_from_slice(block);
+        }
+        if let Some(words) = gate(
+            tag,
+            "+0x15b4 and +0x15b8",
+            version >= player_record_versions::UNKNOWN_15B4_15B8,
+            self.unknown_15b4_15b8.as_ref(),
+        )? {
+            push_u32(out, words[0]);
+            push_u32(out, words[1]);
+        }
+        if let Some(word) = gate(
+            tag,
+            "+0x40",
+            version >= player_record_versions::UNKNOWN_40,
+            self.unknown_40.as_ref(),
+        )? {
+            push_u32(out, *word);
+        }
+        Ok(())
     }
 
     fn parse(cursor: &mut Cursor<'_>, slot_index: u32, version: u32) -> Result<Self, SaveError> {
@@ -2644,6 +3378,29 @@ impl PlayerSection {
         })
     }
 
+    /// Re-emit the payload in the writer's order, `0x00482E2F`..`0x00482F33`.
+    ///
+    /// **RECONSTRUCTED**: every count inside every record (see
+    /// [`PlayerRecord::encode_into`](PlayerRecord)), and which version-gated fields are present.
+    /// **REPLAYED**: the sentinel, which is carried rather than minted, and the eight lord codes.
+    ///
+    /// The sentinel is written from the parsed value on purpose. The writer emits a literal
+    /// `-1` and [`parse`](Self::parse) refuses anything else, so re-emitting the carried value
+    /// cannot differ from the constant on a file this parser accepted -- which is precisely why
+    /// writing the constant here would be an unfalsifiable claim dressed as a check.
+    pub fn encode(&self, version: &VersionSection) -> Result<Vec<u8>, SaveError> {
+        let tag = SectionTag::Player;
+        let mut out = Vec::with_capacity(self.records_raw.len() + Self::TAIL_LEN);
+        for record in &self.records {
+            record.encode_into(tag, &mut out, version.version)?;
+        }
+        push_u32(&mut out, self.sentinel);
+        for code in self.lord_codes {
+            push_u32(&mut out, code);
+        }
+        Ok(out)
+    }
+
     /// Where the sentinel sat, which is `payload_len - 36`.
     pub fn sentinel_offset(&self) -> usize {
         self.records_raw.len()
@@ -2714,6 +3471,35 @@ impl RegionRecord {
             .position(|byte| *byte == 0)
             .unwrap_or(self.name_raw.len());
         &self.name_raw[..end]
+    }
+
+    /// Re-emit one region in the writer's order, `0x004C5840`.
+    ///
+    /// **RECONSTRUCTED**: the name's length byte, recomputed from the name. **REPLAYED**: the two
+    /// leading bytes, the name bytes, `+0x10` and the six 64-byte blocks.
+    ///
+    /// The length field is a `u8` and the stored name includes its NUL, so a name of more than
+    /// **254 characters cannot be written at all** -- the engine's own limit, not a limit of this
+    /// encoder, and refused rather than truncated.
+    fn encode_into(&self, tag: SectionTag, out: &mut Vec<u8>) -> Result<(), SaveError> {
+        let name_len = u8::try_from(self.name_raw.len()).map_err(|_| {
+            SaveError::section(
+                tag,
+                format!(
+                    "a region name of {} bytes does not fit the u8 length at +0x0a",
+                    self.name_raw.len()
+                ),
+            )
+        })?;
+        out.push(self.bytes_8_9[0]);
+        out.push(self.bytes_8_9[1]);
+        out.push(name_len);
+        out.extend_from_slice(&self.name_raw);
+        push_u32(out, self.unknown_10);
+        for block in &self.blocks_raw {
+            out.extend_from_slice(block);
+        }
+        Ok(())
     }
 
     fn parse(cursor: &mut Cursor<'_>) -> Result<Self, SaveError> {
@@ -2839,6 +3625,54 @@ impl RegionSection {
         })
     }
 
+    /// Re-emit the payload in the writer's order, `0x004C7390`.
+    ///
+    /// **RECONSTRUCTED**: `array_count`, recomputed as `regions.len() - 1`. That `-1` is the
+    /// section's one real structural claim -- the writer emits the counted array and then calls
+    /// the same record writer **once more** on the object embedded at `[this+0x10]`
+    /// (`0x004C742E`) -- so getting it wrong by one produces a file one region short or long, and
+    /// an empty `regions` is refused because the writer cannot produce one. **REPLAYED**: the
+    /// dimensions, every six-byte grid cell, and every region's bytes apart from its length byte.
+    pub fn encode(&self) -> Result<Vec<u8>, SaveError> {
+        let tag = SectionTag::Region;
+        let array_count = self.regions.len().checked_sub(1).ok_or_else(|| {
+            SaveError::section(
+                tag,
+                "no regions at all; the writer always emits the embedded region after the array",
+            )
+        })?;
+        let array_count = u32::try_from(array_count).map_err(|_| {
+            SaveError::section(tag, "the region array is past the 32-bit count field")
+        })?;
+        let declared_cells = usize::try_from(self.width)
+            .ok()
+            .zip(usize::try_from(self.height).ok())
+            .and_then(|(width, height)| width.checked_mul(height))
+            .ok_or_else(|| SaveError::section(tag, "region cell count overflow"))?;
+        if declared_cells != self.cells.len() {
+            return Err(SaveError::section(
+                tag,
+                format!(
+                    "{}x{} declares {declared_cells} cells and the grid carries {}",
+                    self.width,
+                    self.height,
+                    self.cells.len()
+                ),
+            ));
+        }
+        let mut out = Vec::with_capacity(8 + self.grid_len() + self.accounted_tail_len());
+        push_u32(&mut out, self.width);
+        push_u32(&mut out, self.height);
+        for cell in &self.cells {
+            out.extend_from_slice(cell);
+        }
+        push_u32(&mut out, array_count);
+        for region in &self.regions {
+            region.encode_into(tag, &mut out)?;
+        }
+        Ok(out)
+    }
+
     pub fn grid_len(&self) -> usize {
         self.cells.len() * Self::CELL_LEN
     }
@@ -2953,6 +3787,61 @@ impl AlarmRecord {
             .unwrap_or_default()
     }
 
+    /// Re-emit one alarm in its queue's field schedule.
+    ///
+    /// **RECONSTRUCTED**: every name's length word, and the argument count. **REPLAYED**: the
+    /// fixed words, the name bytes and the trailer.
+    ///
+    /// The schedule is shared with [`parse`](Self::parse), so which fields come out in which
+    /// order is **not** evidence -- it is the same table read twice. What this can catch is a
+    /// record whose decoded shape does not match the queue it sits in, which is what a caller
+    /// moving a record between queues produces.
+    fn encode_into(
+        &self,
+        tag: SectionTag,
+        out: &mut Vec<u8>,
+        queue: AlarmQueue,
+    ) -> Result<(), SaveError> {
+        let schedule = queue.schedule();
+        let wanted_words = schedule
+            .iter()
+            .filter(|field| matches!(field, AlarmField::Word))
+            .count();
+        let wanted_names = schedule.len() - wanted_words;
+        if self.words.len() != wanted_words || self.names.len() != wanted_names {
+            return Err(SaveError::section(
+                tag,
+                format!(
+                    "a record with {} word(s) and {} name(s) does not fit queue {queue:?}'s \
+                     schedule of {wanted_words} word(s) and {wanted_names} name(s)",
+                    self.words.len(),
+                    self.names.len()
+                ),
+            ));
+        }
+        let mut words = self.words.iter();
+        let mut names = self.names.iter();
+        for field in schedule {
+            match field {
+                AlarmField::Word => push_u32(out, *words.next().expect("counted above")),
+                AlarmField::Name => {
+                    let name = names.next().expect("counted above");
+                    push_u32(out, count_word(tag, "a callback name", name)?);
+                    out.extend_from_slice(name);
+                }
+            }
+        }
+        push_u32(
+            out,
+            count_word(tag, "an alarm's argument vector", &self.arguments)?,
+        );
+        for argument in &self.arguments {
+            push_u32(out, *argument);
+        }
+        push_u32(out, self.trailer);
+        Ok(())
+    }
+
     fn parse(cursor: &mut Cursor<'_>, queue: AlarmQueue) -> Result<Self, SaveError> {
         let mut words = Vec::new();
         let mut names = Vec::new();
@@ -3041,6 +3930,39 @@ impl AlarmSection {
         })
     }
 
+    /// Re-emit the payload as six counted queues, in the writer's order.
+    ///
+    /// **RECONSTRUCTED**: each queue's count word, each name's length and each argument count.
+    /// **REPLAYED**: every fixed word, every name's bytes and every trailer.
+    ///
+    /// The six queues must be present, once each, in [`AlarmQueue::ALL`] order: the writer's six
+    /// calls at `0x00482F77`..`0x00482FBA` are a fixed sequence, and a section that reordered or
+    /// dropped one would produce a file the reader walks into the wrong schedule.
+    pub fn encode(&self) -> Result<Vec<u8>, SaveError> {
+        let tag = SectionTag::Alarm;
+        let present: Vec<AlarmQueue> = self.queues.iter().map(|queue| queue.queue).collect();
+        if present != AlarmQueue::ALL {
+            return Err(SaveError::section(
+                tag,
+                format!(
+                    "the section carries {present:?}; the writer emits {:?} in that order",
+                    AlarmQueue::ALL
+                ),
+            ));
+        }
+        let mut out = Vec::with_capacity(self.payload_raw.len());
+        for contents in &self.queues {
+            push_u32(
+                &mut out,
+                count_word(tag, "an alarm queue", &contents.records)?,
+            );
+            for record in &contents.records {
+                record.encode_into(tag, &mut out, contents.queue)?;
+            }
+        }
+        Ok(out)
+    }
+
     /// Queue [`AlarmQueue::One`]'s first record, which is the one that carries the turn.
     pub fn turn_record(&self) -> Option<&AlarmRecord> {
         self.queues
@@ -3082,6 +4004,28 @@ impl AlarmSection {
             .sum()
     }
 }
+
+/// The order the engine's own writer emits the nine sections in.
+///
+/// **Observed in a local binary, 2026-09-19.** The nine tag `push`es in `0x00482AF0`, in
+/// instruction order: `0x00482B69`, `0x00482BA0`, `0x00482C63`, `0x00482C97`, `0x00482CB5`,
+/// `0x00482CE5`, `0x00482E22`, `0x00482F3A`, `0x00482F6A`.
+///
+/// **The reader does not require it** -- it dispatches on the tag (`0x0048322A`) and accepts any
+/// order -- and [`SaveFile::encode`] deliberately uses the parsed file's own order instead, so
+/// that a re-encode is a re-encode and not a normalisation. This constant is here to be compared
+/// against, which a corpus test does.
+pub const WRITER_SECTION_ORDER: [SectionTag; 9] = [
+    SectionTag::Version,
+    SectionTag::Multiplayer,
+    SectionTag::Map,
+    SectionTag::Sprites,
+    SectionTag::User,
+    SectionTag::Game,
+    SectionTag::Player,
+    SectionTag::Region,
+    SectionTag::Alarm,
+];
 
 /// The constant the alarm countdown word is measured down from: `countdown == 1000001 - turn`.
 ///
@@ -3129,7 +4073,7 @@ impl SaveFile {
                 &version,
             )?,
             users: UserSection::parse(container.payload(source, SectionTag::User)?)?,
-            game: GameSection::parse(container.payload(source, SectionTag::Game)?)?,
+            game: GameSection::parse(container.payload(source, SectionTag::Game)?, &version)?,
             players: PlayerSection::parse(
                 container.payload(source, SectionTag::Player)?,
                 &version,
@@ -3138,6 +4082,43 @@ impl SaveFile {
             alarms: AlarmSection::parse(container.payload(source, SectionTag::Alarm)?)?,
             container,
         })
+    }
+
+    /// Re-emit the whole file from the decoded sections, with no reference to the bytes it was
+    /// parsed from.
+    ///
+    /// **This is the savegame writer.** Every one of the nine payloads is regenerated; nothing is
+    /// spliced. What that is worth is split, and the split is the point -- see the
+    /// [module header](crate::save) for the full list of which fields are RECONSTRUCTED and which
+    /// are REPLAYED. In one line: the count words, length words and gate decisions are
+    /// reconstructed and can disagree with the file; the payload bytes behind them are carried
+    /// and cannot.
+    ///
+    /// **No save this project has written has ever been loaded by the engine.** A byte-identical
+    /// re-encode says the bytes are preserved and the container is assembled correctly; it does
+    /// not say the engine accepts the result, and that run is an attended item.
+    ///
+    /// Sections are emitted in **this file's own tag order**, not the engine's, so a save that
+    /// stored them in an unusual order re-encodes to itself rather than being silently
+    /// normalised. [`WRITER_SECTION_ORDER`] is the order the engine's own writer uses.
+    pub fn encode(&self) -> Result<Vec<u8>, SaveError> {
+        let mut out = Vec::new();
+        for tag in self.container.tag_order() {
+            out.extend_from_slice(&tag.on_disk_bytes());
+            let payload = match tag {
+                SectionTag::Version => self.version.encode(),
+                SectionTag::Multiplayer => self.multiplayer.encode(&self.version)?,
+                SectionTag::Map => self.map.encode()?,
+                SectionTag::Sprites => self.sprites.encode(),
+                SectionTag::User => self.users.encode()?,
+                SectionTag::Game => self.game.encode(&self.version)?,
+                SectionTag::Player => self.players.encode(&self.version)?,
+                SectionTag::Region => self.regions.encode()?,
+                SectionTag::Alarm => self.alarms.encode()?,
+            };
+            out.extend_from_slice(&payload);
+        }
+        Ok(out)
     }
 
     /// Reassemble the whole file, with `LS_SPR_` regenerated from its decoded records and the
@@ -3256,20 +4237,23 @@ impl SaveFile {
             ),
             self.users.indexes_are_positional(),
         ));
+        // **This replaces the retracted `N - live_count == 71`.** That was never a property of
+        // the files: it was the fixed 856-byte tail below being read as 71 records and a trailer.
+        // What genuinely varies and happens not to is the counted array's length, so that is what
+        // is measured -- and it is a regularity, not a requirement, so a file with a different
+        // length is reported rather than failed.
+        let counted_array_len = self
+            .game
+            .counted_array
+            .as_ref()
+            .map(|array| array.words.len());
         checks.push(regularity(
-            "LS_GAME: N - live_count == 71",
-            format!(
-                "{} - {} = {}",
-                self.game.records.len(),
-                self.game.live_count,
-                self.game.record_surplus()
-            ),
-            self.game.record_surplus() == OBSERVED_GAME_RECORD_SURPLUS,
-        ));
-        checks.push(regularity(
-            "LS_GAME: stored record size == 12",
-            format!("{}", self.game.declared_record_size),
-            usize::try_from(self.game.declared_record_size) == Ok(GameSection::RECORD_LEN),
+            "LS_GAME: the counted array holds 150 words",
+            match counted_array_len {
+                Some(len) => format!("{len}"),
+                None => "absent at this version".to_owned(),
+            },
+            counted_array_len == Some(OBSERVED_GAME_COUNTED_ARRAY_LEN),
         ));
         checks.push(regularity(
             "LS_PLR_: 8 lord codes == LS_MULT slots 0..8",
@@ -3373,6 +4357,56 @@ impl SaveFile {
 /// this one counts and never builds a record. An invariant read back off the structs `parse`
 /// already validated cannot fail, which is the same defect as a test that cannot fail -- and this
 /// one runs on files `SaveFile::parse` refuses.
+/// How many bytes `LS_GAME`'s field schedule accounts for, walked straight over the raw payload.
+///
+/// The counterpart of [`account_for_alarm_queues`], and for the same reason: a check read off a
+/// struct that `parse` already validated cannot report a failure, and this one runs on files
+/// `SaveFile::parse` refuses. It is a **second transcription of the writer** at `0x00482CF2` --
+/// written from the instruction stream with literal gate values rather than from
+/// [`game_section_versions`] -- so the two can genuinely disagree.
+fn account_for_game_section(payload: &[u8], version: u32) -> Option<usize> {
+    // Signed, like the engine's `jl`, and written as a literal comparison rather than through
+    // `game_section_versions` so that this transcription can disagree with that one.
+    let version = version as i32;
+    let mut at = 0_usize;
+    let word = |at: &mut usize| -> Option<u32> {
+        let bytes = payload.get(*at..at.checked_add(4)?)?;
+        *at += 4;
+        Some(u32::from_le_bytes(bytes.try_into().expect("four bytes")))
+    };
+    let skip = |at: &mut usize, len: usize| -> Option<()> {
+        *at = at.checked_add(len)?;
+        payload.get(..*at)?;
+        Some(())
+    };
+    // turn, +0x5008, +0x228a8 -- the three ungated words.
+    skip(&mut at, 12)?;
+    if version >= 80 {
+        let count = (word(&mut at)? as i32).max(0) as usize;
+        let record_size = usize::try_from(word(&mut at)?).ok()?;
+        skip(&mut at, count.checked_mul(record_size)?)?;
+    }
+    if version >= 82 {
+        skip(&mut at, 8)?;
+    }
+    if version >= 87 {
+        skip(&mut at, 32)?;
+    }
+    if version >= 97 {
+        skip(&mut at, 4)?;
+        let count = usize::try_from(word(&mut at)?).ok()?;
+        skip(&mut at, 4)?;
+        skip(&mut at, count.checked_mul(4)?)?;
+    }
+    if version >= 105 {
+        skip(&mut at, 200)?;
+    }
+    if version >= 108 {
+        skip(&mut at, 4)?;
+    }
+    Some(at)
+}
+
 fn account_for_alarm_queues(payload: &[u8]) -> Option<usize> {
     let mut at = 0_usize;
     let word = |at: &mut usize| -> Option<u32> {
@@ -3493,8 +4527,12 @@ mod tests {
         alarm_queue_records: [usize; 6],
         /// The argument count every synthetic alarm record carries.
         alarm_arguments: usize,
-        game_live_count: u32,
+        /// How many records the `LS_GAME` record table holds.
         game_records: u32,
+        /// How many words the `LS_GAME` counted array holds. **Deliberately not 150**, which is
+        /// what every corpus file stores: a fixture that copied the regularity could not fail on
+        /// a reader that hardcoded it.
+        game_counted_array_words: u32,
         /// One entry per `LS_SPR_` record. The shapes differ on purpose: the records are
         /// polymorphic and three of the eight classes are variable-length, so a fixture whose
         /// records were all one class could not fail on a reader that guessed a stride.
@@ -3526,8 +4564,8 @@ mod tests {
                 turn: 42,
                 alarm_queue_records: [1, 2, 3, 1, 2, 4],
                 alarm_arguments: 3,
-                game_live_count: 9,
                 game_records: 80,
+                game_counted_array_words: 3,
                 sprite_records: SpriteFixture::default_set(),
                 declared_setup_len: 164,
                 lord_codes: [
@@ -4238,17 +5276,45 @@ mod tests {
                     }
                 }
                 SectionTag::Game => {
+                    // **A second transcription of the handler at `0x00483342`**, with the six gate
+                    // values written as literals rather than taken from `game_section_versions`.
+                    // A fixture generated from the constant it is testing moves with that
+                    // constant and cannot fail on it -- this file has already lost three
+                    // mutations to exactly that, and `docs/save-format.md` records them.
+                    let version = self.version as i32;
                     push_u32(&mut out, self.turn);
                     push_u32(&mut out, 1234);
                     push_u32(&mut out, 0);
-                    push_u32(&mut out, self.game_live_count);
-                    push_u32(&mut out, 12);
-                    for index in 0..self.game_records {
-                        push_u32(&mut out, 5000 - index);
-                        push_u32(&mut out, index);
-                        push_u32(&mut out, index * 2);
+                    if version >= 80 {
+                        push_u32(&mut out, self.game_records);
+                        push_u32(&mut out, 12);
+                        for index in 0..self.game_records {
+                            push_u32(&mut out, 5000 - index);
+                            push_u32(&mut out, index);
+                            push_u32(&mut out, index * 2);
+                        }
                     }
-                    push_u32(&mut out, 77);
+                    if version >= 82 {
+                        push_u32(&mut out, 77);
+                        push_u32(&mut out, 78);
+                    }
+                    if version >= 87 {
+                        push_filler(&mut out, 32);
+                    }
+                    if version >= 97 {
+                        push_u32(&mut out, 0xabcd);
+                        push_u32(&mut out, self.game_counted_array_words);
+                        push_u32(&mut out, 0x1234);
+                        for index in 0..self.game_counted_array_words {
+                            push_u32(&mut out, 900 + index);
+                        }
+                    }
+                    if version >= 105 {
+                        push_filler(&mut out, 200);
+                    }
+                    if version >= 108 {
+                        push_u32(&mut out, 4242);
+                    }
                 }
                 SectionTag::Player => {
                     for record in &self.player_records {
@@ -4378,7 +5444,7 @@ mod tests {
             assert!(check.passed, "{} failed: {}", check.name, check.measured);
         }
         let regularities = save.regularities();
-        assert_eq!(regularities.len(), 13);
+        assert_eq!(regularities.len(), 12);
         for check in &regularities {
             assert!(!check.is_structural());
         }
@@ -4386,8 +5452,8 @@ mod tests {
 
     /// A synthetic save may legitimately break a **corpus regularity** without being malformed.
     /// That is the whole reason the two classes are separate: this fixture's regions, its alarm
-    /// queue 0 and its `LS_REGN` tail length are all perfectly well-formed and none of them is
-    /// what the seven shipped scenarios happen to contain. Calling that malformed would bury a
+    /// queue 0, its `LS_REGN` tail length and its `LS_GAME` counted array are all perfectly
+    /// well-formed and none of them is what the shipped scenarios happen to contain. Calling that malformed would bury a
     /// real discovery under a parse error.
     #[test]
     fn a_broken_regularity_is_not_a_broken_structure() {
@@ -4406,11 +5472,17 @@ mod tests {
         assert_eq!(
             broken,
             vec![
+                // Added 2026-09-19 with the corrected `LS_GAME` model. The fixture's counted
+                // array holds three words where every corpus file holds 150 -- deliberately,
+                // because 150 is precisely the number that produced the retracted "71-record
+                // surplus", and a fixture that reproduced it could not fail on a reader that
+                // hardcoded the tail's width.
+                "LS_GAME: the counted array holds 150 words",
                 "LS_REGN: tail length is one of 8998 / 9389 / 9780",
                 "LS_ALRM: queue 0 is empty, so the turn lands at payload word 2",
                 "LS_REGN: exactly one region stores a name, and it is the empty string",
             ],
-            "the fixture is deliberately unlike the corpus in exactly these three ways"
+            "the fixture is deliberately unlike the corpus in exactly these four ways"
         );
     }
 
@@ -5712,54 +6784,205 @@ mod tests {
 
     // -- LS_GAME ------------------------------------------------------------
 
-    /// The surplus must be **computed from the parsed data**, so that a file whose surplus is not
-    /// 71 reports the number it actually has.
+    /// The record count is the **number of records**, and the section accounts for its payload
+    /// under the writer's own field schedule.
+    ///
+    /// **This test replaces `the_game_record_surplus_is_measured_rather_than_assumed`, which
+    /// asserted the retracted `N - live_count == 71`.** There is no surplus: the 71 was a
+    /// 856-byte version-gated tail being read as 71 records and a trailer. See [`GameSection`].
     #[test]
-    fn the_game_record_surplus_is_measured_rather_than_assumed() {
+    fn the_record_count_is_the_record_count_and_the_tail_is_a_tail() {
+        for records in [0_u32, 1, 80] {
+            let fixture = Fixture {
+                game_records: records,
+                ..Fixture::default()
+            };
+            let bytes = fixture.build();
+            let save = SaveFile::parse(&bytes).unwrap();
+            let table = save.game.table.as_ref().expect("v111 stores the table");
+            assert_eq!(table.records.len(), records as usize);
+            assert_eq!(save.game.record_count(), Some(records as usize));
+
+            // The account is the falsifier, not the count: a model that misplaced any boundary
+            // stops short of the payload's end or runs off it.
+            let payload = save.container.location(SectionTag::Game).payload_len;
+            assert_eq!(save.game.accounted_len(), payload, "{records} records");
+            assert_eq!(
+                account_for_game_section(
+                    &bytes[save.container.location(SectionTag::Game).payload_offset
+                        ..save.container.location(SectionTag::Game).payload_end()],
+                    111
+                ),
+                Some(payload)
+            );
+        }
+    }
+
+    /// The 856-byte tail that the old model read as 71 records is exactly the six gated fields.
+    ///
+    /// The arithmetic is spelled out rather than asserted as a total, because a total is what let
+    /// the wrong model stand: `4 + 4 + 32 + 4 + (8 + 4*150) + 200 + 4 == 71 * 12 + 4`.
+    #[test]
+    fn the_retracted_seventy_one_surplus_is_the_gated_tail() {
         let fixture = Fixture {
-            game_records: 80,
-            game_live_count: 9,
+            game_records: 5,
+            // The corpus value, used here and nowhere else, because this test is about that
+            // number specifically.
+            game_counted_array_words: 150,
             ..Fixture::default()
         };
         let save = SaveFile::parse(&fixture.build()).unwrap();
-        assert_eq!(save.game.records.len(), 80);
-        assert_eq!(save.game.record_surplus(), 71);
+        let table_bytes = 8 + 5 * GameRecord::LEN;
+        let tail = save.game.accounted_len() - 12 - table_bytes;
+        assert_eq!(tail, 4 + 4 + 32 + 4 + (8 + 4 * 150) + 200 + 4);
+        assert_eq!(tail, 856);
+        assert_eq!(tail, 71 * GameRecord::LEN + 4);
 
-        let broken = Fixture {
-            game_records: 80,
-            game_live_count: 40,
-            ..Fixture::default()
-        };
-        let save = SaveFile::parse(&broken.build()).unwrap();
-        assert_eq!(save.game.record_surplus(), 40);
+        // And the old model's arithmetic, reproduced, to show where the 71 came from.
+        let payload = save.container.location(SectionTag::Game).payload_len;
+        let old_model_records = (payload - 24) / 12;
+        assert_eq!(old_model_records as i64 - 5, 71);
+
+        // With the corpus's own array length the regularity passes, which is what pins
+        // `OBSERVED_GAME_COUNTED_ARRAY_LEN` to a number: every other test in this file uses a
+        // fixture that breaks it, and a constant only ever compared against a failing case can be
+        // moved without any test noticing.
         let check = save
             .regularities()
             .into_iter()
-            .find(|check| check.name.contains("N - live_count"))
+            .find(|check| check.name.contains("counted array"))
             .expect("invariant is present");
-        assert!(!check.passed);
-        assert!(
-            check.measured.contains("80 - 40 = 40"),
-            "{}",
-            check.measured
+        assert!(check.passed, "{}", check.measured);
+        assert_eq!(check.measured, "150");
+    }
+
+    /// Each version gate changes the section's length by exactly its own fields' width, including
+    /// the **zeros** -- a gate moved down is invisible to a sweep that only samples the gates.
+    #[test]
+    fn each_game_version_gate_changes_the_length_by_its_own_fields_width() {
+        // One version below each gate, the gate itself, and the top of the ladder.
+        let versions = [79_u32, 80, 81, 82, 86, 87, 96, 97, 104, 105, 107, 108, 111];
+        let lengths: Vec<usize> = versions
+            .iter()
+            .map(|version| {
+                let fixture = Fixture {
+                    version: *version,
+                    game_records: 2,
+                    game_counted_array_words: 3,
+                    ..Fixture::default()
+                };
+                let save = SaveFile::parse(&fixture.build()).unwrap();
+                let payload = save.container.location(SectionTag::Game).payload_len;
+                assert_eq!(save.game.accounted_len(), payload, "version {version}");
+                payload
+            })
+            .collect();
+        let deltas: Vec<i64> = lengths
+            .windows(2)
+            .map(|pair| pair[1] as i64 - pair[0] as i64)
+            .collect();
+        assert_eq!(
+            deltas,
+            vec![
+                8 + 2 * 12, // 79 -> 80   the record table
+                0,          // 80 -> 81
+                8,          // 81 -> 82   +0x4fb4, +0x4fc8
+                0,          // 82 -> 86
+                32,         // 86 -> 87   the 32-byte block
+                0,          // 87 -> 96
+                4 + 8 + 12, // 96 -> 97   +0x4dc4 and the counted array of three
+                0,          // 97 -> 104
+                200,        // 104 -> 105 the 200-byte block
+                0,          // 105 -> 107
+                4,          // 107 -> 108 +0x23194
+                0,          // 108 -> 111
+            ],
+            "measured {lengths:?}"
         );
     }
 
-    /// A live count larger than the record count must produce a negative surplus, not an underflow
-    /// and not a saturated zero.
+    /// The counted array's length is **unguarded**, so a value the engine would take as a huge
+    /// `fread` size is refused here rather than silently clamped to zero.
+    ///
+    /// The refusal is a deliberate difference from the engine, which is why it is tested: a
+    /// parser that quietly treated this as signed would accept a file the engine reads gigabytes
+    /// for, and would do it without saying so.
     #[test]
-    fn a_live_count_above_the_record_count_gives_a_negative_surplus() {
+    fn the_counted_array_length_is_unguarded_and_refused_rather_than_clamped() {
+        let fixture = Fixture::default();
+        let mut bytes = fixture.build();
+        let game = SaveContainer::locate(&bytes)
+            .unwrap()
+            .location(SectionTag::Game);
+        // Three ungated words, the table's count and size, 80 records, two words, 32 bytes, and
+        // +0x4dc4 -- then the array's length.
+        let length_at = game.payload_offset + 12 + 8 + 80 * GameRecord::LEN + 8 + 32 + 4;
+        bytes[length_at..length_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+
+        let error = SaveFile::parse(&bytes).unwrap_err();
+        assert!(error.to_string().starts_with("LS_GAME:"), "{error}");
+        assert!(
+            error.to_string().contains("17179869180-byte field"),
+            "the length must reach the read as 4 * 0xffffffff, not be clamped: {error}"
+        );
+    }
+
+    /// A version the engine reads as negative takes the **low** path on every gate.
+    #[test]
+    fn the_game_gates_are_signed_like_the_engines_jl() {
         let fixture = Fixture {
-            game_records: 3,
-            game_live_count: 900,
+            version: u32::MAX,
+            game_records: 4,
             ..Fixture::default()
         };
         let save = SaveFile::parse(&fixture.build()).unwrap();
-        assert_eq!(save.game.record_surplus(), -897);
+        assert_eq!(save.game.table, None);
+        assert_eq!(save.game.unknown_23194, None);
+        assert_eq!(save.game.accounted_len(), 12);
+    }
+
+    /// A non-positive record count skips the loop rather than failing the file, because
+    /// `0x0052B30F` tests it with `jle`.
+    #[test]
+    fn a_negative_game_record_count_yields_no_records_rather_than_a_refusal() {
+        let fixture = Fixture::default();
+        let mut bytes = fixture.build();
+        let game = SaveContainer::locate(&bytes)
+            .unwrap()
+            .location(SectionTag::Game);
+        // The count word sits immediately after the three ungated words.
+        let count_at = game.payload_offset + 12;
+        bytes[count_at..count_at + 4].copy_from_slice(&(-1_i32).to_le_bytes());
+        // The 80 records the count used to cover are now unaccounted for, so trim them: the
+        // engine would read the rest of the payload as the tail, and so must this.
+        let records_at = count_at + 8;
+        bytes.drain(records_at..records_at + 80 * GameRecord::LEN);
+
+        let save = SaveFile::parse(&bytes).unwrap();
+        let table = save.game.table.as_ref().expect("the table word is present");
+        assert!(table.records.is_empty());
+    }
+
+    /// A record size other than 12 is refused, and the message says why rather than pretending
+    /// the layout is known.
+    #[test]
+    fn refuses_a_record_size_the_reader_would_accept_but_this_parser_cannot_model() {
+        let fixture = Fixture::default();
+        let mut bytes = fixture.build();
+        let game = SaveContainer::locate(&bytes)
+            .unwrap()
+            .location(SectionTag::Game);
+        let size_at = game.payload_offset + 16;
+        // 8 is inside the reader's `jbe 0xc` bound, so this is a file the engine loads.
+        bytes[size_at..size_at + 4].copy_from_slice(&8_u32.to_le_bytes());
+
+        let error = SaveFile::parse(&bytes).unwrap_err();
+        assert!(error.to_string().starts_with("LS_GAME:"), "{error}");
+        assert!(error.to_string().contains("8-byte record"), "{error}");
     }
 
     #[test]
-    fn refuses_a_game_payload_that_is_not_a_whole_number_of_records() {
+    fn refuses_a_game_payload_with_a_byte_left_over_after_the_last_field() {
         let fixture = Fixture::default();
         let mut bytes = fixture.build();
         let game = SaveContainer::locate(&bytes)
@@ -5769,7 +6992,10 @@ mod tests {
 
         let error = SaveFile::parse(&bytes).unwrap_err();
         assert!(error.to_string().starts_with("LS_GAME:"), "{error}");
-        assert!(error.to_string().contains("12-byte records"), "{error}");
+        assert!(
+            error.to_string().contains("leaving 1 unaccounted for"),
+            "{error}"
+        );
     }
 
     // -- LS_PLR_ ------------------------------------------------------------
@@ -6297,6 +7523,376 @@ mod tests {
         assert!(!check.passed, "{}", check.measured);
     }
 
+    // -- the encoders -------------------------------------------------------
+    //
+    // **Read `save`'s module header before reading these.** A re-encode that matches is evidence
+    // about the RECONSTRUCTED fields only -- counts, lengths and version gates -- because every
+    // other byte is carried out of the parse and copied back. The tests that carry the claim are
+    // the ones below that *change the decoded model* and assert the reconstructed word moved with
+    // it, and the ones that assert a refusal.
+
+    /// Every section, and then the whole file, re-emits the fixture byte for byte -- at a spread
+    /// of shapes and at every rung of every version ladder in the format.
+    ///
+    /// **What this can fail on**: any reconstructed count, length or gate. **What it cannot fail
+    /// on**: anything carried verbatim, which is most of the bytes.
+    #[test]
+    fn every_section_re_emits_its_payload_at_every_shape_and_version() {
+        let versions = [
+            0_u32, 50, 57, 68, 76, 79, 80, 82, 86, 87, 97, 99, 104, 105, 108, 110, 111, 150,
+        ];
+        let mut checked = 0_usize;
+        for version in versions {
+            for (records, array_words) in [(0_u32, 0_u32), (1, 1), (80, 150)] {
+                let fixture = Fixture {
+                    version,
+                    game_records: records,
+                    game_counted_array_words: array_words,
+                    ..Fixture::default()
+                };
+                let bytes = fixture.build();
+                let save = SaveFile::parse(&bytes).unwrap();
+                for tag in SECTION_TAGS {
+                    let location = save.container.location(tag);
+                    let payload = &bytes[location.payload_offset..location.payload_end()];
+                    let written = match tag {
+                        SectionTag::Version => save.version.encode(),
+                        SectionTag::Multiplayer => save.multiplayer.encode(&save.version).unwrap(),
+                        SectionTag::Map => save.map.encode().unwrap(),
+                        SectionTag::Sprites => save.sprites.encode(),
+                        SectionTag::User => save.users.encode().unwrap(),
+                        SectionTag::Game => save.game.encode(&save.version).unwrap(),
+                        SectionTag::Player => save.players.encode(&save.version).unwrap(),
+                        SectionTag::Region => save.regions.encode().unwrap(),
+                        SectionTag::Alarm => save.alarms.encode().unwrap(),
+                    };
+                    assert_eq!(
+                        written, payload,
+                        "{tag} at version {version} with {records} game record(s)"
+                    );
+                    checked += 1;
+                }
+                assert_eq!(
+                    save.encode().unwrap(),
+                    bytes,
+                    "whole file at version {version}"
+                );
+                checked += 1;
+            }
+        }
+        // A tripwire on the sweep itself: 18 versions x 3 shapes x (9 sections + the file).
+        assert_eq!(checked, 18 * 3 * 10, "the sweep stopped covering something");
+    }
+
+    /// The count words are **recomputed from the collections they count**, not copied.
+    ///
+    /// This is the test the round trip cannot be. Each case edits the decoded model and asserts
+    /// the written bytes moved by exactly the right amount -- an encoder that replayed a parsed
+    /// count would write a file whose count disagrees with its own records, which is the one
+    /// outcome no reader recovers from.
+    #[test]
+    fn a_count_word_follows_the_collection_it_counts() {
+        let bytes = Fixture::default().build();
+        let save = SaveFile::parse(&bytes).unwrap();
+
+        // LS_GAME: drop a record.
+        let mut game = save.game.clone();
+        let table = game.table.as_mut().unwrap();
+        table.records.pop();
+        let written = game.encode(&save.version).unwrap();
+        assert_eq!(
+            u32::from_le_bytes(written[12..16].try_into().unwrap()),
+            79,
+            "the record count must follow the records"
+        );
+        assert_eq!(written.len(), save.game.accounted_len() - GameRecord::LEN);
+
+        // LS_ALRM: add a record to queue 0, copied from the one already there.
+        let mut alarms = save.alarms.clone();
+        let extra = alarms.queues[0].records[0].clone();
+        alarms.queues[0].records.push(extra);
+        let written = alarms.encode().unwrap();
+        assert_eq!(
+            u32::from_le_bytes(written[0..4].try_into().unwrap()),
+            save.alarms.queues[0].records.len() as u32 + 1
+        );
+
+        // LS_REGN: `array_count` is `regions.len() - 1`, which is the section's one structural
+        // claim -- the writer emits the counted array and then one more region.
+        let mut regions = save.regions.clone();
+        let extra = regions.regions[0].clone();
+        regions.regions.push(extra);
+        let written = regions.encode().unwrap();
+        let count_at = 8 + regions.grid_len();
+        assert_eq!(
+            u32::from_le_bytes(written[count_at..count_at + 4].try_into().unwrap()),
+            save.regions.array_count + 1
+        );
+
+        // LS_PLR_: a player's queue count.
+        let mut players = save.players.clone();
+        let extra = players.records[0].queue[0].clone();
+        players.records[0].queue.push(extra);
+        let written = players.encode(&save.version).unwrap();
+        assert_eq!(
+            u32::from_le_bytes(written[16..20].try_into().unwrap()),
+            save.players.records[0].queue.len() as u32 + 1
+        );
+
+        // LS_PLR_: the roster's slot count, which is stored beside its own slots and is what the
+        // reader takes as the length. Checked by **re-parsing** rather than by indexing into the
+        // output: a record is a tree of counted lists with no fixed offsets, so the only honest
+        // place to look for the count is where the reader looks for it.
+        let mut players = save.players.clone();
+        players.records[0].roster.slots.push(0xfeed);
+        let written = players.encode(&save.version).unwrap();
+        let reparsed = PlayerSection::parse(&written, &save.version)
+            .expect("a roster whose stored count follows its slots reads back");
+        assert_eq!(
+            reparsed.records[0].roster.slot_count as usize,
+            save.players.records[0].roster.slots.len() + 1
+        );
+        assert_eq!(
+            reparsed.records[0].roster.slots.len(),
+            reparsed.records[0].roster.slot_count as usize
+        );
+
+        // LS_MAP_: the second plane's count word.
+        let mut map = save.map.clone();
+        map.plane.pop();
+        let written = map.encode().unwrap();
+        let count_at = 12 + map.map.cells.len() * 8;
+        assert_eq!(
+            u32::from_le_bytes(written[count_at..count_at + 4].try_into().unwrap()),
+            save.map.plane_count - 1
+        );
+
+        // LS_MULT: the declared setup length.
+        let mut multiplayer = save.multiplayer.clone();
+        multiplayer.setup.truncate(100);
+        let written = multiplayer.encode(&save.version).unwrap();
+        assert_eq!(u32::from_le_bytes(written[0..4].try_into().unwrap()), 100);
+    }
+
+    /// The container's raw-bytes `LS_GAME` walk lands on the payload's end **at every rung of
+    /// the ladder**, not only at the versions the corpus happens to hold.
+    ///
+    /// The walker is a second transcription of the writer, so it is only worth having if it is
+    /// driven across the gates it transcribes: at version 111 every gate is open and a gate moved
+    /// by one is invisible. A mutation sweep found exactly that -- both walker-gate mutants
+    /// survived the whole suite until this existed.
+    #[test]
+    fn the_game_walk_accounts_for_the_payload_at_every_rung_of_the_ladder() {
+        // Every gate, and the version immediately below it. A sweep that samples only the gates
+        // cannot fail on a gate moved DOWN, which is the asymmetry this file keeps re-learning.
+        let versions = [79_u32, 80, 81, 82, 86, 87, 96, 97, 104, 105, 107, 108, 111];
+        for version in versions {
+            let fixture = Fixture {
+                version,
+                game_records: 2,
+                game_counted_array_words: 3,
+                ..Fixture::default()
+            };
+            let bytes = fixture.build();
+            let container = SaveContainer::locate(&bytes).unwrap();
+            let check = container
+                .structural_checks(&bytes)
+                .into_iter()
+                .find(|check| check.name.contains("LS_GAME"))
+                .expect("the LS_GAME structural check is present");
+            assert!(
+                check.passed,
+                "version {version}: {} measured {}",
+                check.name, check.measured
+            );
+        }
+    }
+
+    /// A version-gated field is refused in **both** directions: present when the target version
+    /// does not store it, and absent when it does.
+    ///
+    /// One direction is not enough, and this file has already been caught by exactly that
+    /// asymmetry -- see the `63 -> 62` note in `docs/save-format.md`.
+    #[test]
+    fn a_version_gated_field_is_refused_in_both_directions() {
+        let save = SaveFile::parse(&Fixture::default().build()).unwrap();
+
+        // Present, target does not store it: a v111 section written for a v79 reader.
+        let error = save
+            .game
+            .encode(&VersionSection { version: 79 })
+            .unwrap_err();
+        assert!(error.to_string().starts_with("LS_GAME:"), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("does not store the record table"),
+            "{error}"
+        );
+
+        // Absent, target stores it: a v79 section written for a v111 reader.
+        let low = SaveFile::parse(
+            &Fixture {
+                version: 79,
+                ..Fixture::default()
+            }
+            .build(),
+        )
+        .unwrap();
+        let error = low
+            .game
+            .encode(&VersionSection { version: 111 })
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("stores the record table and"),
+            "{error}"
+        );
+
+        // The same, for `LS_PLR_`'s ladder and for `LS_MULT`'s slot block.
+        let error = save
+            .players
+            .encode(&VersionSection { version: 75 })
+            .unwrap_err();
+        assert!(error.to_string().starts_with("LS_PLR_:"), "{error}");
+        let error = save
+            .multiplayer
+            .encode(&VersionSection { version: 98 })
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("the sixteen lord slots"),
+            "{error}"
+        );
+    }
+
+    /// Each encoder refuses a section it cannot write faithfully, rather than writing a plausible
+    /// file. Every arm here is a distinct refusal with its own message.
+    #[test]
+    fn each_encoder_refuses_the_shape_its_writer_cannot_produce() {
+        let save = SaveFile::parse(&Fixture::default().build()).unwrap();
+
+        // LS_USER: the writer `fwrite`s 784 bytes exactly eight times.
+        let mut users = save.users.clone();
+        users.records.pop();
+        let error = users.encode().unwrap_err();
+        assert!(error.to_string().contains("7 records"), "{error}");
+        let mut users = save.users.clone();
+        users.records[3].raw.pop();
+        let error = users.encode().unwrap_err();
+        assert!(
+            error.to_string().contains("record 3 is 783 bytes"),
+            "{error}"
+        );
+
+        // LS_REGN: the length byte is a `u8` and the stored name includes its NUL, so 255 bytes
+        // is the longest writable name and 256 is refused. Both sides of the boundary, because a
+        // limit tested only from outside cannot fail on an off-by-one.
+        let mut regions = save.regions.clone();
+        regions.regions[0].name_raw = vec![b'x'; 255];
+        assert!(regions.encode().is_ok(), "255 bytes is exactly the limit");
+        regions.regions[0].name_raw = vec![b'x'; 256];
+        let error = regions.encode().unwrap_err();
+        assert!(error.to_string().contains("u8 length"), "{error}");
+
+        // LS_REGN: the writer always emits the embedded region, so an empty table is unwritable.
+        let mut regions = save.regions.clone();
+        regions.regions.clear();
+        let error = regions.encode().unwrap_err();
+        assert!(error.to_string().contains("no regions at all"), "{error}");
+
+        // LS_REGN: the dimensions and the grid must agree.
+        let mut regions = save.regions.clone();
+        regions.width += 1;
+        let error = regions.encode().unwrap_err();
+        assert!(error.to_string().contains("declares"), "{error}");
+
+        // LS_PLR_: sixteen armies, always.
+        let mut players = save.players.clone();
+        players.records[0].armies.pop();
+        let error = players.encode(&save.version).unwrap_err();
+        assert!(error.to_string().contains("15 armies"), "{error}");
+
+        // LS_PLR_: a bitset whose words do not match its own bit count.
+        let mut players = save.players.clone();
+        players.records[0].flags.bit_count += 32;
+        let error = players.encode(&save.version).unwrap_err();
+        assert!(error.to_string().contains("bytes of words"), "{error}");
+
+        // LS_PLR_: the slot index the reader bounds at 16.
+        let mut players = save.players.clone();
+        players.records[0].slot_index = 16;
+        let error = players.encode(&save.version).unwrap_err();
+        assert!(error.to_string().contains("slot index 16"), "{error}");
+
+        // LS_PLR_: the 3,200-byte block is a `push 0xc80`, not a length.
+        let mut players = save.players.clone();
+        players.records[0].block_68_raw.as_mut().unwrap().pop();
+        let error = players.encode(&save.version).unwrap_err();
+        assert!(error.to_string().contains("3199 bytes"), "{error}");
+
+        // LS_GAME: the 200-byte block is a `push 0xc8`.
+        let mut game = save.game.clone();
+        game.block_230cc.as_mut().unwrap().push(0);
+        let error = game.encode(&save.version).unwrap_err();
+        assert!(error.to_string().contains("201 bytes"), "{error}");
+
+        // LS_ALRM: a record whose shape does not match the queue it sits in. Queue 2's schedule is
+        // one name and no words; queue 0's is four words and a name.
+        let mut alarms = save.alarms.clone();
+        let from_queue_zero = alarms.queues[0].records[0].clone();
+        alarms.queues[2].records.push(from_queue_zero);
+        let error = alarms.encode().unwrap_err();
+        assert!(error.to_string().contains("schedule"), "{error}");
+
+        // LS_ALRM: the six queues are a fixed sequence.
+        let mut alarms = save.alarms.clone();
+        alarms.queues.swap(1, 4);
+        let error = alarms.encode().unwrap_err();
+        assert!(error.to_string().contains("in that order"), "{error}");
+
+        // LS_MAP_: a save's map has no metadata word, so the scenario form cannot be written here.
+        let mut map = save.map.clone();
+        map.map.header_form = crate::map::MapHeaderForm::Scenario;
+        let error = map.encode().unwrap_err();
+        assert!(error.to_string().contains("grid form"), "{error}");
+    }
+
+    /// The order the engine's writer uses is a constant, and it is not what
+    /// [`SaveFile::encode`] imposes -- the fixture's permuted order survives a re-encode.
+    #[test]
+    fn a_re_encode_keeps_the_files_own_section_order() {
+        let fixture = Fixture::default();
+        let bytes = fixture.build();
+        let save = SaveFile::parse(&bytes).unwrap();
+        assert_ne!(
+            save.container.tag_order(),
+            WRITER_SECTION_ORDER.to_vec(),
+            "the fixture's permuted order is the point of it"
+        );
+        let written = save.encode().unwrap();
+        assert_eq!(written, bytes);
+        assert_eq!(
+            SaveContainer::locate(&written).unwrap().tag_order(),
+            fixture.order
+        );
+
+        // Literal, not derived from `WRITER_SECTION_ORDER`: a constant compared against itself
+        // cannot fail, which is the defect this file keeps re-learning.
+        assert_eq!(
+            WRITER_SECTION_ORDER,
+            [
+                SectionTag::Version,
+                SectionTag::Multiplayer,
+                SectionTag::Map,
+                SectionTag::Sprites,
+                SectionTag::User,
+                SectionTag::Game,
+                SectionTag::Player,
+                SectionTag::Region,
+                SectionTag::Alarm,
+            ]
+        );
+    }
+
     // -- tags ---------------------------------------------------------------
 
     #[test]
@@ -6451,7 +8047,8 @@ mod tests {
     }
 
     /// Every installed savegame parses, satisfies every structural invariant, accounts for its
-    /// bytes with zero slack, and reassembles byte-identically with `LS_SPR_` regenerated.
+    /// bytes with zero slack, reassembles byte-identically with `LS_SPR_` regenerated, and is
+    /// **written back byte-identically from its decoded sections with nothing spliced**.
     ///
     /// **What this proves and what it does not.** The byte account is the real content: a section
     /// model that is merely plausible stops short of its section's end or runs off it, and every
@@ -6575,6 +8172,31 @@ mod tests {
             if save.reencode_with_sprites(bytes) != *bytes {
                 failures.push(format!(
                     "{name}: the whole file did not reassemble byte-identically"
+                ));
+            }
+
+            // **The writer.** Every one of the nine payloads regenerated from the decoded
+            // sections, nothing spliced. Unlike the line above this is NOT an identity: every
+            // count word, length word and version gate in the file is recomputed from the
+            // content behind it, and a section order is reproduced rather than assumed. It is
+            // still only evidence about those -- every opaque block is carried. See the module
+            // header's RECONSTRUCTED / REPLAYED split.
+            match save.encode() {
+                Ok(written) if written == *bytes => {}
+                Ok(written) => failures.push(format!(
+                    "{name}: the writer produced {} bytes for a {}-byte file",
+                    written.len(),
+                    bytes.len()
+                )),
+                Err(error) => failures.push(format!("{name}: the writer refused it: {error}")),
+            }
+
+            // The engine's own section order, checked against the files rather than assumed:
+            // every save on this machine uses it, and nothing in the format requires it.
+            if save.container.tag_order() != WRITER_SECTION_ORDER {
+                failures.push(format!(
+                    "{name}: sections stored as {:?}, not the writer's order",
+                    save.container.tag_order()
                 ));
             }
         }

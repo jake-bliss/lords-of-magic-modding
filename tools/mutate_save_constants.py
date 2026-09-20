@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Mutate the `LS_SPR_` constants in `save.rs` one at a time and report which survive.
+"""Mutate the `save.rs` constants and refusals one at a time and report which survive.
+
+Covers the `LS_SPR_` record model, the corrected `LS_GAME` model, and every RECONSTRUCTED field
+and refusal in the nine section encoders.
 
 A mutation sweep that lives outside the repository is a claim nobody else can check. This is the
 harness behind the "N of M caught" number in `docs/save-format.md`.
@@ -121,6 +124,178 @@ STRUCTURAL = [
     ),
 ]
 
+# The writer-side mutations, added 2026-09-19 with the nine section encoders. Every one of these
+# targets something RECONSTRUCTED -- a count word, a length, a version gate or a refusal. A
+# mutation of something REPLAYED would be invisible by construction and is deliberately not here:
+# see the RECONSTRUCTED / REPLAYED split in `save.rs`'s module header.
+ENCODERS = [
+    # -- the corrected LS_GAME model ------------------------------------------------------------
+    (
+        "    pub const LEN: usize = 12;",
+        "    pub const LEN: usize = 11;",
+        "game record width 12 -> 11",
+    ),
+    (
+        "    pub const LEN: usize = 12;",
+        "    pub const LEN: usize = 13;",
+        "game record width 12 -> 13",
+    ),
+    (
+        "    pub const LEN: usize = 784;",
+        "    pub const LEN: usize = 783;",
+        "LS_USER record width 784 -> 783",
+    ),
+    (
+        "    pub const LEN: usize = 784;",
+        "    pub const LEN: usize = 785;",
+        "LS_USER record width 784 -> 785",
+    ),
+    (
+        "    pub const BLOCK_4FCC_LEN: usize = 32;",
+        "    pub const BLOCK_4FCC_LEN: usize = 31;",
+        "LS_GAME 32-byte block -> 31",
+    ),
+    (
+        "    pub const BLOCK_4FCC_LEN: usize = 32;",
+        "    pub const BLOCK_4FCC_LEN: usize = 33;",
+        "LS_GAME 32-byte block -> 33",
+    ),
+    (
+        "    pub const BLOCK_230CC_LEN: usize = 200;",
+        "    pub const BLOCK_230CC_LEN: usize = 199;",
+        "LS_GAME 200-byte block -> 199",
+    ),
+    (
+        "    pub const BLOCK_230CC_LEN: usize = 200;",
+        "    pub const BLOCK_230CC_LEN: usize = 201;",
+        "LS_GAME 200-byte block -> 201",
+    ),
+    (
+        "pub const OBSERVED_GAME_COUNTED_ARRAY_LEN: usize = 150;",
+        "pub const OBSERVED_GAME_COUNTED_ARRAY_LEN: usize = 149;",
+        "observed counted-array length 150 -> 149",
+    ),
+    (
+        "pub const OBSERVED_GAME_COUNTED_ARRAY_LEN: usize = 150;",
+        "pub const OBSERVED_GAME_COUNTED_ARRAY_LEN: usize = 151;",
+        "observed counted-array length 150 -> 151",
+    ),
+    (
+        "fn game_unguarded_length(raw: u32) -> usize {\n    raw as usize\n}",
+        "fn game_unguarded_length(raw: u32) -> usize {\n    (raw as i32).max(0) as usize\n}",
+        "LS_GAME counted-array length treated as guarded",
+    ),
+    (
+        "            let count = game_signed_count(cursor.u32()?);",
+        "            let count = cursor.u32()?;",
+        "LS_GAME record count modelled unsigned",
+    ),
+    # The raw-bytes walker is a SECOND transcription on purpose. A mutation of one that the other
+    # does not catch would mean the two had collapsed into one implementation.
+    (
+        "    if version >= 80 {\n        let count = (word(&mut at)? as i32).max(0) as usize;",
+        "    if version >= 81 {\n        let count = (word(&mut at)? as i32).max(0) as usize;",
+        "game walker gate 80 -> 81",
+    ),
+    (
+        "    if version >= 105 {\n        skip(&mut at, 200)?;",
+        "    if version >= 104 {\n        skip(&mut at, 200)?;",
+        "game walker gate 105 -> 104",
+    ),
+    # -- the reconstructed counts ---------------------------------------------------------------
+    (
+        "        let array_count = self.regions.len().checked_sub(1).ok_or_else(|| {",
+        "        let array_count = self.regions.len().checked_sub(0).ok_or_else(|| {",
+        "LS_REGN array_count = len - 1 -> len",
+    ),
+    (
+        "        let array_count = self.regions.len().checked_sub(1).ok_or_else(|| {",
+        "        let array_count = self.regions.len().checked_sub(2).ok_or_else(|| {",
+        "LS_REGN array_count = len - 1 -> len - 2",
+    ),
+    (
+        "                count_word(tag, \"an alarm queue\", &contents.records)?,",
+        "                contents.records.len().saturating_sub(1) as u32,",
+        "LS_ALRM queue count written short",
+    ),
+    (
+        "        push_u32(&mut out, count_word(tag, \"the second plane\", &self.plane)?);",
+        "        push_u32(&mut out, self.plane_count);",
+        "LS_MAP_ plane count replayed instead of reconstructed",
+    ),
+    (
+        "        push_u32(out, count_word(tag, \"the roster slot list\", &self.slots)?);",
+        "        push_u32(out, self.slot_count);",
+        "LS_PLR_ roster slot count replayed instead of reconstructed",
+    ),
+    (
+        "        push_u32(&mut out, declared_setup_len);",
+        "        push_u32(&mut out, self.declared_setup_len);",
+        "LS_MULT setup length replayed instead of reconstructed",
+    ),
+    (
+        "            .div_ceil(32)\n            * 4;",
+        "            .div_ceil(16)\n            * 4;",
+        "bitset word width div_ceil(32) -> div_ceil(16)",
+    ),
+    # -- the refusals ---------------------------------------------------------------------------
+    (
+        "        (true, None) => Err(SaveError::section(",
+        "        (true, None) if false => Err(SaveError::section(",
+        "gate: missing gated field no longer refused",
+    ),
+    (
+        "        (false, Some(_)) => Err(SaveError::section(",
+        "        (false, Some(_)) if false => Err(SaveError::section(",
+        "gate: surplus gated field no longer refused",
+    ),
+    (
+        "        if self.records.len() != Self::RECORD_COUNT {",
+        "        if self.records.len() > Self::RECORD_COUNT {",
+        "LS_USER record-count refusal weakened to an upper bound",
+    ),
+    (
+        "        if self.armies.len() != Self::ARMY_COUNT {",
+        "        if self.armies.len() > Self::ARMY_COUNT {",
+        "LS_PLR_ army-count refusal weakened to an upper bound",
+    ),
+    (
+        "        if self.slot_index >= PlayerSection::MAX_SLOT_INDEX {",
+        "        if self.slot_index > PlayerSection::MAX_SLOT_INDEX {",
+        "LS_PLR_ slot-index bound off by one",
+    ),
+    (
+        "        let name_len = u8::try_from(self.name_raw.len()).map_err(|_| {",
+        "        let name_len = Ok::<u8, ()>(self.name_raw.len() as u8).map_err(|_: ()| {",
+        "LS_REGN name length truncated instead of refused",
+    ),
+    (
+        "        if present != AlarmQueue::ALL {",
+        "        if false && present != AlarmQueue::ALL {",
+        "LS_ALRM queue-order refusal removed",
+    ),
+    (
+        "        if self.map.header_form != MapHeaderForm::Grid {",
+        "        if false && self.map.header_form != MapHeaderForm::Grid {",
+        "LS_MAP_ grid-form refusal removed",
+    ),
+    (
+        "        if declared_cells != self.cells.len() {",
+        "        if false && declared_cells != self.cells.len() {",
+        "LS_REGN grid-size refusal removed",
+    ),
+    (
+        "            if record.raw.len() != UserRecord::LEN {",
+        "            if false && record.raw.len() != UserRecord::LEN {",
+        "LS_USER per-record width refusal removed",
+    ),
+    (
+        "    SectionTag::Version,\n    SectionTag::Multiplayer,\n    SectionTag::Map,",
+        "    SectionTag::Multiplayer,\n    SectionTag::Version,\n    SectionTag::Map,",
+        "writer section order: first two swapped",
+    ),
+]
+
 SURVIVED, KILLED, UNCOMPILABLE, SKIPPED = "survived", "killed", "uncompilable", "skipped"
 
 
@@ -133,6 +308,16 @@ def gate_mutations(text: str) -> list[tuple[str, str, str]]:
         for delta in (1, -1):
             moved = f"const {name}: i32 = {hex(int(value, 16) + delta)};"
             out.append((original, moved, f"{name} {delta:+d}"))
+    # `LS_GAME`'s ladder, added 2026-09-19. Written decimal and inside a `pub mod`, so it needs its
+    # own pattern -- a regex that silently matched nothing here would have reported a clean sweep
+    # over six gates it never touched.
+    for name, value in re.findall(
+        r"^    pub const (\w+): i32 = (\d+);$", text, re.MULTILINE
+    ):
+        original = f"    pub const {name}: i32 = {value};"
+        for delta in (1, -1):
+            moved = f"    pub const {name}: i32 = {int(value) + delta};"
+            out.append((original, moved, f"game_section_versions::{name} {delta:+d}"))
     return out
 
 
@@ -176,7 +361,7 @@ def main() -> int:
     original = SOURCE.read_text()
     mutations = gate_mutations(original)
     if not args.quick:
-        mutations += STRUCTURAL
+        mutations += STRUCTURAL + ENCODERS
 
     labels = [label for _, _, label in mutations]
     duplicates = {label for label in labels if labels.count(label) > 1}
