@@ -125,6 +125,18 @@ fn every_inventory_row_carries_a_usable_digest_and_size() {
             // A row for a file that could not be read carries no digest by design; asserting the
             // digest shape on it would fail the suite for a filesystem race with a message naming
             // neither the race nor the file.
+            // A runtime-written row carries the sentinel in both columns by design. The set of
+            // such rows is named in full by
+            // `the_committed_reports_unpin_exactly_the_runtime_written_rows`, so skipping here does
+            // not leave them unexamined.
+            if row["sha256"] == loose::RUNTIME_WRITTEN {
+                assert_eq!(
+                    row["size"],
+                    loose::RUNTIME_WRITTEN,
+                    "{profile}:{path} unpins its digest but not its size"
+                );
+                continue;
+            }
             if row["probe_error"].starts_with(loose::UNREADABLE_PREFIX) {
                 assert_eq!(
                     row["sha256"],
@@ -168,6 +180,10 @@ fn equal_digests_across_the_profiles_agree_on_length() {
     let mut sizes: BTreeMap<String, (u64, String)> = BTreeMap::new();
     for profile in PROFILES {
         for (path, row) in inventory_rows(profile) {
+            // A runtime-written row has no digest to collide and no length to agree on.
+            if row["sha256"] == loose::RUNTIME_WRITTEN {
+                continue;
+            }
             let size: u64 = row["size"].parse().expect("checked elsewhere");
             let digest = row["sha256"].clone();
             if let Some((seen, seen_at)) = sizes.get(&digest) {
@@ -217,14 +233,11 @@ fn the_recorded_lom_cfg_size_matches_its_recorded_help_panel_count() {
             checks, count,
             "{profile} records {count} help panels but lists {checks} check values"
         );
-        let on_disk: u64 = inventory_rows(profile)["English/lom.cfg"]["size"]
-            .parse()
-            .expect("checked elsewhere");
-        assert_eq!(
-            on_disk as usize,
-            20 + 4 * count + 36,
-            "{profile}: lom.cfg is {on_disk} bytes, which the {count}-entry layout does not explain"
-        );
+        // The length arithmetic that used to live here read `English/lom.cfg`'s size out of the
+        // inventory. The engine writes that file, so the inventory no longer records its length --
+        // and comparing two reports was the weaker form of the check anyway. It now runs against
+        // the installed bytes in `the_installed_configuration_lengths_match_their_layouts`, where
+        // it can actually fail on a real file rather than on two tables drifting apart.
         assert_eq!(
             fields[&(
                 profile.to_owned(),
@@ -269,13 +282,9 @@ fn the_recorded_settings_cfg_size_is_the_sum_of_its_records() {
             records, declared,
             "{profile}: settings.cfg declares {declared} records and lists {records}"
         );
-        let on_disk: usize = inventory_rows(profile)["English/settings.cfg"]["size"]
-            .parse()
-            .expect("checked elsewhere");
-        assert_eq!(
-            total, on_disk,
-            "{profile}: settings.cfg is {on_disk} bytes and its records sum to {total}"
-        );
+        // As above: the sum is now compared against the installed file rather than against the
+        // inventory's recorded size, which this report no longer pins.
+        let _ = total;
     }
 }
 
@@ -583,6 +592,98 @@ fn the_walker_reports_contents_not_names() {
 }
 
 // ---------------------------------------------------------------------------------------------
+/// The committed reports must unpin **exactly** the rows the rule says are runtime-written.
+///
+/// This reads the committed TSVs only, so it runs in an ordinary `cargo test` with no game
+/// installed -- which matters, because it is the guard the corpus-gated reproduction cannot be.
+/// That check applies the rule to the tree *and* to the report, so widening the rule moves both
+/// sides together and it still passes. Here the unpinned set is named, profile by profile, so a
+/// rule that started excluding `_vanilla_backup/lom.cfg` or a `.sav` table would have to say so
+/// out loud.
+///
+/// Listed rather than counted, for the usual reason: a count cannot say *which* row went missing.
+#[test]
+fn the_committed_reports_unpin_exactly_the_runtime_written_rows() {
+    let expected: BTreeMap<&str, Vec<&str>> = BTreeMap::from([
+        (
+            "baseline",
+            vec![
+                "English/ddraw.ini",
+                "English/lom.cfg",
+                "English/settings.cfg",
+            ],
+        ),
+        (
+            "development",
+            vec![
+                "English/ddraw.ini",
+                "English/lom.cfg",
+                "English/settings.cfg",
+            ],
+        ),
+        (
+            "gs5r3",
+            vec![
+                "English/artifact.log",
+                "English/combat.log",
+                "English/ddraw.ini",
+                "English/gs5r.cfg",
+                "English/lom.cfg",
+                "English/savegame/Merlin I",
+                "English/savegame/combat.lom",
+                "English/savegame/endturn.lom",
+                "English/savegame/lastsave.lom",
+                "English/savegame/temple.lom",
+                "English/settings.cfg",
+                "English/thief.log",
+            ],
+        ),
+        (
+            "patch302",
+            vec![
+                "English/ddraw.ini",
+                "English/lom.cfg",
+                "English/savegame/Merlin I",
+                "English/savegame/lastsave.lom",
+                "English/settings.cfg",
+            ],
+        ),
+    ]);
+
+    for profile in PROFILES {
+        let rows = inventory_rows(profile);
+        let unpinned: Vec<String> = rows
+            .iter()
+            .filter(|(_, row)| row["sha256"] == loose::RUNTIME_WRITTEN)
+            .map(|(path, _)| path.clone())
+            .collect();
+        assert_eq!(
+            unpinned,
+            expected[profile],
+            "{profile} unpins a different set of rows than the rule accounts for"
+        );
+
+        // Both columns move together, and every other row keeps a real digest and a real size.
+        for (path, row) in &rows {
+            let unpinned = row["sha256"] == loose::RUNTIME_WRITTEN;
+            assert_eq!(
+                unpinned,
+                row["size"] == loose::RUNTIME_WRITTEN,
+                "{profile}/{path} unpins one column and not the other"
+            );
+            assert_eq!(
+                unpinned,
+                loose::runtime_writer(path).is_some(),
+                "{profile}/{path} disagrees with the rule"
+            );
+            if !unpinned && row["sha256"] != loose::UNREADABLE_DIGEST {
+                assert_eq!(row["sha256"].len(), 64, "{profile}/{path}");
+                assert!(row["size"].parse::<u64>().is_ok(), "{profile}/{path}");
+            }
+        }
+    }
+}
+
 // Corpus-gated
 // ---------------------------------------------------------------------------------------------
 
@@ -591,6 +692,52 @@ fn game_directory() -> PathBuf {
     std::env::var_os("LOM_GAME_DIR")
         .map(PathBuf::from)
         .expect("set LOM_GAME_DIR to the installed English directory")
+}
+
+/// The installed game root, derived from `LOM_GAME_DIR` when it was not named separately.
+///
+/// `LOM_INSTALL_ROOT` used to be required alongside `LOM_GAME_DIR`, and a run with only the latter
+/// panicked -- so an *incomplete invocation* was reported in the same shape as a broken guard. The
+/// root is simply the parent of the `English` directory, so it is derived and the variable is now
+/// an override rather than a second thing to remember.
+fn install_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("LOM_INSTALL_ROOT") {
+        return PathBuf::from(root);
+    }
+    let directory = game_directory();
+    directory
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| panic!("{} has no parent to use as the install root; set LOM_INSTALL_ROOT", directory.display()))
+}
+
+/// Which committed report this run is being compared against.
+///
+/// **This one is declared, and unlike the GameScript lineage it is right that it is.** There the
+/// variable selected *expectations about behaviour*, so a wrong declaration silently asserted the
+/// wrong thing; here it selects which committed table to compare a tree against, and a wrong
+/// declaration makes that comparison fail loudly rather than pass. The label is checked against the
+/// committed set so a typo is a named refusal rather than a missing-file panic, and
+/// `inventory_rows` additionally asserts the report's own `# profile` line agrees with it.
+///
+/// **One measured limit, new as of 2026-09-19.** `baseline` and `development` differed in exactly
+/// one file, `English/lom.cfg`, which the engine writes and which this report therefore no longer
+/// pins. Their trees are otherwise byte-identical, so declaring one where the other is installed
+/// now passes. That is not a hole this change opened so much as one it exposed: the only thing
+/// telling those two installs apart was a file the game rewrites, which was never a difference
+/// between the installs at all.
+fn profile_label(requires: &str) -> String {
+    let declared = std::env::var("LOM_PROFILE").unwrap_or_else(|_| {
+        panic!(
+            "SETUP: {requires} needs LOM_PROFILE as well as LOM_GAME_DIR. This is an incomplete \
+             invocation, not a failed check. Set one of {PROFILES:?}."
+        )
+    });
+    assert!(
+        PROFILES.contains(&declared.as_str()),
+        "SETUP: LOM_PROFILE={declared} names no committed report; use one of {PROFILES:?}"
+    );
+    declared
 }
 
 /// Re-encoding the installed files must reproduce them byte for byte.
@@ -621,37 +768,112 @@ fn the_installed_configuration_files_round_trip() {
     );
 }
 
-/// The installed files must be the ones the committed report describes.
+/// The two configuration files' lengths must be what their own layouts predict.
 ///
-/// Digest, not mtime: the GS5R3 profile is played, so its logs and saves move constantly, and a
-/// timestamp check would fail for reasons that say nothing about the parsers.
+/// This is the length arithmetic that used to be done between two committed reports. Both files
+/// are written while the game runs, so their lengths are no longer recorded -- but the invariant
+/// was never really about the report. `lom.cfg` is a 20-byte head, four bytes per help panel and a
+/// 36-byte tail; `settings.cfg` is `KEY`, one space, the value, one `CR` per record. Run against
+/// the installed bytes it can fail on a real file, which the report-to-report version could not:
+/// `LomConfig::parse` refuses any image whose length disagrees with its own count, so the producer
+/// had already enforced the invariant before either number reached a table.
+#[test]
+#[ignore = "needs LOM_GAME_DIR"]
+fn the_installed_configuration_lengths_match_their_layouts() {
+    let directory = game_directory();
+
+    let bytes = std::fs::read(directory.join("lom.cfg")).expect("lom.cfg is installed");
+    let config = LomConfig::parse(&bytes).expect("lom.cfg parses");
+    let count = config
+        .help_panel_checks
+        .as_ref()
+        .map(Vec::len)
+        .expect("lom.cfg carries a help-panel vector");
+    assert_eq!(
+        bytes.len(),
+        20 + 4 * count + 36,
+        "lom.cfg is {} bytes, which the {count}-entry layout does not explain",
+        bytes.len()
+    );
+
+    let bytes = std::fs::read(directory.join("settings.cfg")).expect("settings.cfg is installed");
+    let settings = SettingsConfig::parse(&bytes).expect("settings.cfg parses");
+    let total: usize = settings
+        .entries
+        .iter()
+        .map(|entry| entry.key.len() + 1 + entry.raw_value.len() + 1)
+        .sum();
+    assert!(
+        settings.unparsed.is_empty(),
+        "settings.cfg has records this parser could not split: {:?}",
+        settings.unparsed
+    );
+    assert_eq!(
+        total,
+        bytes.len(),
+        "settings.cfg is {} bytes and its {} records sum to {total}",
+        bytes.len(),
+        settings.entries.len()
+    );
+}
+
+/// The committed report must **not** claim to pin the two configuration files.
+///
+/// This test used to assert the opposite: that `lom.cfg` and `settings.cfg` on disk still hashed to
+/// what the report recorded. That premise is void, because both are written while the game runs --
+/// `lom.cfg` by `saveconfig`'s `"wb"` open, `settings.cfg` by `gs/Dlg/opdlg.gs` -- so the check
+/// failed for reasons that said nothing about the parsers, which is the disease it now guards
+/// against. `docs/loose-files.md` had already recorded `development`'s `lom.cfg` drifting between
+/// two sweeps a day apart and could not explain it; this is the explanation.
+///
+/// What is still worth asserting, and is asserted here: the files exist, they parse, and the
+/// report records them as unpinned rather than quietly carrying a digest that will rot. The second
+/// half is what stops the exclusion from being undone by accident -- if someone restores a real
+/// digest to those rows, this fails.
 #[test]
 #[ignore = "needs LOM_GAME_DIR and LOM_PROFILE"]
-fn the_installed_configuration_matches_the_committed_report() {
+fn the_committed_report_does_not_pin_the_runtime_written_configuration() {
     let directory = game_directory();
-    let profile = std::env::var("LOM_PROFILE").expect("set LOM_PROFILE alongside LOM_GAME_DIR");
+    let profile = profile_label("the_committed_report_does_not_pin_the_runtime_written_configuration");
     let fields = config_fields();
     for name in ["lom.cfg", "settings.cfg"] {
-        let bytes = std::fs::read(directory.join(name)).expect("the file is installed");
-        let recorded = fields
-            .get(&(profile.clone(), name.to_owned(), "sha256".to_owned()))
-            .unwrap_or_else(|| panic!("{profile}/{name} is in the committed report"));
-        assert_eq!(
-            &loose::sha256_hex(&bytes),
-            recorded,
-            "{profile}/{name} on disk is not the file the report describes"
+        let path = directory.join(name);
+        let bytes = std::fs::read(&path).expect("the file is installed");
+        assert!(
+            loose::runtime_writer_for_path(&path).is_some(),
+            "{name} is written while the game runs, so the rule must say so"
         );
+        for column in ["size", "sha256"] {
+            let recorded = fields
+                .get(&(profile.clone(), name.to_owned(), column.to_owned()))
+                .unwrap_or_else(|| panic!("{profile}/{name}/{column} is in the committed report"));
+            assert_eq!(
+                recorded,
+                loose::RUNTIME_WRITTEN,
+                "{profile}/{name} carries a pinned {column}; the file is rewritten by the game, so \
+                 recording one makes this report stale after every session"
+            );
+        }
+        // The file is still required to be readable and well-formed -- unpinning its content is
+        // not licence to stop looking at it.
+        match name {
+            "lom.cfg" => {
+                LomConfig::parse(&bytes).expect("lom.cfg parses");
+            }
+            _ => {
+                let parsed = SettingsConfig::parse(&bytes).expect("settings.cfg parses");
+                assert!(parsed.unparsed.is_empty(), "{:?}", parsed.unparsed);
+            }
+        }
     }
 }
 
 /// The whole sweep, re-run against the tree, must reproduce the committed table.
 #[test]
-#[ignore = "needs LOM_INSTALL_ROOT and LOM_PROFILE"]
+#[ignore = "needs LOM_GAME_DIR (or LOM_INSTALL_ROOT) and LOM_PROFILE"]
 fn the_committed_inventory_reproduces() {
-    let root = std::env::var_os("LOM_INSTALL_ROOT")
-        .map(PathBuf::from)
-        .expect("set LOM_INSTALL_ROOT to the installed game root");
-    let profile = std::env::var("LOM_PROFILE").expect("set LOM_PROFILE alongside LOM_INSTALL_ROOT");
+    let root = install_root();
+    let profile = profile_label("the_committed_inventory_reproduces");
     let committed = inventory_rows(&profile);
     let fresh = loose::inventory(&root).expect("the tree walks");
     assert_eq!(
@@ -667,10 +889,17 @@ fn the_committed_inventory_reproduces() {
             .unwrap_or_else(|| panic!("{} is not in the committed report", row.relative_path));
         // Every column, not just the digest. Comparing two of eight let a change that broke the
         // classification of all 337 map components past this check unnoticed.
-        assert_eq!(recorded["sha256"], row.sha256, "{}", row.relative_path);
+        // Through the same accessors the emitter uses, so a runtime-written row is compared as
+        // the sentinel on both sides rather than as two different hashes of the same live file.
+        assert_eq!(
+            recorded["sha256"],
+            row.reported_sha256(),
+            "{}",
+            row.relative_path
+        );
         assert_eq!(
             recorded["size"],
-            row.size.to_string(),
+            row.reported_size(),
             "{}",
             row.relative_path
         );
@@ -730,7 +959,7 @@ fn the_committed_inventory_reproduces() {
 #[ignore = "needs LOM_GAME_DIR and LOM_PROFILE"]
 fn the_committed_configuration_report_reproduces() {
     let directory = game_directory();
-    let profile = std::env::var("LOM_PROFILE").expect("set LOM_PROFILE alongside LOM_GAME_DIR");
+    let profile = profile_label("the_committed_configuration_report_reproduces");
     let committed = config_fields();
 
     // Built to mirror `describe_loose_config`'s output exactly, field for field.
@@ -744,10 +973,18 @@ fn the_committed_configuration_report_reproduces() {
         );
     };
 
-    let bytes = std::fs::read(directory.join("lom.cfg")).expect("lom.cfg is installed");
+    let path = directory.join("lom.cfg");
+    let bytes = std::fs::read(&path).expect("lom.cfg is installed");
     let config = LomConfig::parse(&bytes).expect("lom.cfg parses");
-    put("lom.cfg", "size", bytes.len().to_string());
-    put("lom.cfg", "sha256", loose::sha256_hex(&bytes));
+    // Through the same rule `describe_loose_config` uses. Both files are rewritten while the game
+    // runs, so their length and digest are the player's; re-deriving a real one here would put the
+    // staleness back on the other side of the comparison.
+    let reported = |real: String| match loose::runtime_writer_for_path(&path) {
+        Some(_) => loose::RUNTIME_WRITTEN.to_owned(),
+        None => real,
+    };
+    put("lom.cfg", "size", reported(bytes.len().to_string()));
+    put("lom.cfg", "sha256", reported(loose::sha256_hex(&bytes)));
     put("lom.cfg", "format", "lom.cfg".to_owned());
     put(
         "lom.cfg",
@@ -819,10 +1056,18 @@ fn the_committed_configuration_report_reproduces() {
         (config.used_drawblt as i32).to_string(),
     );
 
-    let bytes = std::fs::read(directory.join("settings.cfg")).expect("settings.cfg is installed");
+    let path = directory.join("settings.cfg");
+    let bytes = std::fs::read(&path).expect("settings.cfg is installed");
     let settings = SettingsConfig::parse(&bytes).expect("settings.cfg parses");
-    put("settings.cfg", "size", bytes.len().to_string());
-    put("settings.cfg", "sha256", loose::sha256_hex(&bytes));
+    // Through the same rule `describe_loose_config` uses. Both files are rewritten while the game
+    // runs, so their length and digest are the player's; re-deriving a real one here would put the
+    // staleness back on the other side of the comparison.
+    let reported = |real: String| match loose::runtime_writer_for_path(&path) {
+        Some(_) => loose::RUNTIME_WRITTEN.to_owned(),
+        None => real,
+    };
+    put("settings.cfg", "size", reported(bytes.len().to_string()));
+    put("settings.cfg", "sha256", reported(loose::sha256_hex(&bytes)));
     put("settings.cfg", "format", "settings.cfg".to_owned());
     put(
         "settings.cfg",

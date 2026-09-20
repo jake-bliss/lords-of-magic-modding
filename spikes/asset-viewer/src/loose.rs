@@ -552,6 +552,136 @@ pub const UNREADABLE_DIGEST: &str = "-";
 /// the file was unreadable" from "this row has no digest because the walker is broken".
 pub const UNREADABLE_PREFIX: &str = "unreadable: ";
 
+/// The sentinel the `size` and `sha256` columns carry for a file the game writes while it runs.
+///
+/// Not a digest and not a number, so a careless reader cannot mistake it for either, and the
+/// report's own validator (`a digest is 64 hex characters`) rejects it if it ever lands on a row
+/// that should have been pinned.
+pub const RUNTIME_WRITTEN: &str = "runtime-written";
+
+/// Names a **shipped script** opens for writing, relative to the game's working directory.
+///
+/// **Observed in the corpus, 2026-09-19.** Swept over every `.gs` member of all three distinct
+/// `gs.mpq` files on this machine, matching `"NAME" "MODE" file` where `MODE` contains `w` or `a`.
+/// The modes seen are `w`, `a`, `ab`, `wb` and `abw`. The sweep is the general rule; the list is
+/// its result, not a set of filenames someone thought of:
+///
+/// - 3.02 — `settings.cfg` (`gs/Dlg/opdlg.gs`, read `"r"` and written `"w"`), `gs_ms.txt`,
+///   `profile.txt`.
+/// - GS5R3 — `army.log`, `artifact.log`, `chat.log`, `combat.log`, `gs5r.cfg`, `hotkey.log`,
+///   `spells.log`, `thief.log`, `profile.txt`.
+/// - stock and `development` — `profile.txt`.
+///
+/// The union is taken rather than a per-profile table, because the question a row answers is "did
+/// anything but us change this file", and a name some profile's scripts write is a name whose
+/// content this inventory cannot own. Several of these do not exist in any install yet; listing
+/// them means the first one to appear is recorded by presence and type instead of pinning a body
+/// the next session rewrites.
+const SCRIPT_WRITTEN_NAMES: &[&str] = &[
+    "army.log",
+    "artifact.log",
+    "chat.log",
+    "combat.log",
+    "gs5r.cfg",
+    "gs_ms.txt",
+    "hotkey.log",
+    "profile.txt",
+    "settings.cfg",
+    "spells.log",
+    "thief.log",
+];
+
+/// Names something **other than the scripts** writes into the game directory.
+///
+/// - `lom.cfg` — **Observed in a local binary.** The `saveconfig` thunk at `0x00487570` tail-jumps
+///   to `0x00487220`, which opens `"lom.cfg"` `"wb"` and issues a fixed `fwrite` sequence; those
+///   two functions are the only code in the image naming that string. Recorded independently at
+///   `docs/loose-files.md`, "`lom.cfg`". It is also the file whose drift under `development` that
+///   page records for 2026-09-18/19, which this rule now explains rather than leaves open.
+/// - `ddraw.ini` — **Observed in a local binary.** Not the engine: `ddraw.dll`, the cnc-ddraw
+///   wrapper the installs ship, names `ddraw.ini` three times and imports
+///   `WritePrivateProfileStringA`. The launcher writes it, which counts for exactly the same
+///   reason the engine does.
+const HOST_WRITTEN_NAMES: &[&str] = &["ddraw.ini", "lom.cfg"];
+
+/// The save directories, which the game writes into under names it or the player chooses.
+///
+/// **Observed in the corpus**: GS5R3's scripts pass `savegame/autosave.lom`, `savegame/barter.lom`,
+/// `savegame/combat.lom`, `savegame/endturn.lom` and the `multisav/` equivalents to the `savegame`
+/// operator, along with `gettempsavegamefilename savegame` and the file selector's
+/// `"savegame/" <user name> strcat ... savegame`. **Observed in a local binary**: `lomse.exe`
+/// holds `savegame/lastsave.lom` and `multisav/lastsave.lom`.
+///
+/// Because the player names saves, the contents of these directories cannot be enumerated in
+/// advance. The default is therefore inverted here and **only** here: everything in them is treated
+/// as runtime-written unless it is one of the shipped entries below.
+const SAVE_DIRECTORIES: &[&str] = &["multisav/", "savegame/"];
+
+/// The entries in the save directories the game only ever **reads**.
+///
+/// **Observed in the corpus, 2026-09-19**: `savegame/quickstart` appears in the scripts of both
+/// 3.02 and GS5R3 as `loadgame`'s operand and never as `savegame`'s. **Observed in the corpus**:
+/// the five `.sav` tables and `quickstart` are byte-identical in all four installs on this machine,
+/// including the two that have been played — which is why they are read as shipped data rather
+/// than as somebody's old saves. `Merlin I`, by contrast, differs between 3.02 and GS5R3 in both
+/// size and digest, so it is a save and is not listed.
+const SHIPPED_SAVE_ENTRIES: &[&str] = &[
+    "combat.sav",
+    "experience.sav",
+    "magic.sav",
+    "merc.sav",
+    "quickstart",
+    "temple.sav",
+];
+
+/// The directory the game runs in, and therefore the one the names above are relative to.
+const WORKING_DIRECTORY: &str = "English/";
+
+/// [`runtime_writer`] for a file addressed by its own path rather than by an inventory row.
+///
+/// The rule is anchored at the working directory, so a bare path has to be placed back into one
+/// before it can be asked about. Only a file whose parent directory *is* the working directory
+/// qualifies -- which is what keeps `.../English/_vanilla_backup/lom.cfg` pinned while
+/// `.../English/lom.cfg` is not, exactly as the inventory sees them.
+pub fn runtime_writer_for_path(path: &Path) -> Option<&'static str> {
+    let name = path.file_name()?.to_str()?;
+    let parent = path.parent()?.file_name()?.to_str()?;
+    if !parent.eq_ignore_ascii_case(WORKING_DIRECTORY.trim_end_matches('/')) {
+        return None;
+    }
+    runtime_writer(&format!("{WORKING_DIRECTORY}{name}"))
+}
+
+/// Why this path's content is not the inventory's to pin, or `None` if it is.
+///
+/// **The inventory's job is to notice when the installed tree changes in ways we did not make.** A
+/// log the engine appends to is not that. Pinning one converted a real signal into noise that fires
+/// after every play session — `English/combat.log` did exactly that — and a guard that cries wolf
+/// teaches people to skip it, which costs more than the guard was worth.
+///
+/// Matching is **anchored at the working directory**, not on the bare file name, and that is the
+/// load-bearing part. `English/_vanilla_backup/lom.cfg` and `.../settings.cfg` are a modder's
+/// snapshot of the stock files; nothing writes them, they are exactly the kind of thing this
+/// inventory exists to watch, and a rule keyed on the base name would have silently stopped
+/// watching them.
+pub fn runtime_writer(relative_path: &str) -> Option<&'static str> {
+    let rest = relative_path.strip_prefix(WORKING_DIRECTORY)?;
+    if SCRIPT_WRITTEN_NAMES.contains(&rest) {
+        return Some("a shipped script opens it for writing");
+    }
+    if HOST_WRITTEN_NAMES.contains(&rest) {
+        return Some("the engine or the display wrapper writes it");
+    }
+    if let Some(entry) = SAVE_DIRECTORIES
+        .iter()
+        .find_map(|directory| rest.strip_prefix(directory))
+        && !SHIPPED_SAVE_ENTRIES.contains(&entry)
+    {
+        return Some("it is a saved game");
+    }
+    None
+}
+
 /// One row of the loose inventory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LooseFile {
@@ -569,6 +699,33 @@ pub struct LooseFile {
 }
 
 impl LooseFile {
+    /// Why this row's content is not pinned, or `None` if it is.
+    pub fn runtime_writer(&self) -> Option<&'static str> {
+        runtime_writer(&self.relative_path)
+    }
+
+    /// The `size` column as the report carries it.
+    ///
+    /// A runtime-written file reports the sentinel rather than a number: a log's length is the
+    /// player's, not ours, and a report that stores it is stale the moment the game is run. The
+    /// emitter and the test both go through this, so the committed table and the check that
+    /// re-derives it cannot drift apart -- which is the failure that would turn an exclusion into
+    /// a hole nobody notices.
+    pub fn reported_size(&self) -> String {
+        match self.runtime_writer() {
+            Some(_) => RUNTIME_WRITTEN.to_owned(),
+            None => self.size.to_string(),
+        }
+    }
+
+    /// The `sha256` column as the report carries it. See [`LooseFile::reported_size`].
+    pub fn reported_sha256(&self) -> String {
+        match self.runtime_writer() {
+            Some(_) => RUNTIME_WRITTEN.to_owned(),
+            None => self.sha256.clone(),
+        }
+    }
+
     /// Whether the extension implies a different family from the leading bytes.
     ///
     /// Only extensions with an unambiguous expected magic are judged. An extension nobody has a
@@ -928,5 +1085,112 @@ mod tests {
     #[test]
     fn two_leading_bytes_are_not_enough_to_claim_a_bitmap() {
         assert_eq!(magic_signature(b"BMX help text"), MagicSignature::AsciiText);
+    }
+
+    /// The rule's decisions, named one by one.
+    ///
+    /// `the_committed_inventory_reproduces` cannot catch a mistake here, because it applies this
+    /// same rule to both the tree and the report -- widen the rule and both sides move together and
+    /// the comparison still passes. That symmetry is exactly how an exclusion becomes a hole, so
+    /// the decisions are pinned here instead, where nothing else shares the mistake.
+    #[test]
+    fn the_runtime_written_rule_unpins_what_the_game_writes_and_nothing_else() {
+        // Written by a shipped script, by the engine, or by the display wrapper.
+        for path in [
+            "English/army.log",
+            "English/artifact.log",
+            "English/chat.log",
+            "English/combat.log",
+            "English/ddraw.ini",
+            "English/gs5r.cfg",
+            "English/gs_ms.txt",
+            "English/hotkey.log",
+            "English/lom.cfg",
+            "English/profile.txt",
+            "English/settings.cfg",
+            "English/spells.log",
+            "English/thief.log",
+        ] {
+            assert!(
+                runtime_writer(path).is_some(),
+                "{path} is written while the game runs"
+            );
+        }
+
+        // Saves, under either directory, named by the engine or by the player.
+        for path in [
+            "English/savegame/combat.lom",
+            "English/savegame/endturn.lom",
+            "English/savegame/lastsave.lom",
+            "English/savegame/temple.lom",
+            "English/savegame/Merlin I",
+            "English/multisav/endturn.lom",
+        ] {
+            assert!(runtime_writer(path).is_some(), "{path} is a saved game");
+        }
+
+        // The shipped entries in the save directories, which the game only reads.
+        for path in [
+            "English/savegame/combat.sav",
+            "English/savegame/experience.sav",
+            "English/savegame/magic.sav",
+            "English/savegame/merc.sav",
+            "English/savegame/quickstart",
+            "English/savegame/temple.sav",
+        ] {
+            assert!(
+                runtime_writer(path).is_none(),
+                "{path} is shipped data and must stay pinned"
+            );
+        }
+
+        // **The case that makes the anchoring load-bearing.** These are a modder's snapshot of the
+        // stock files. Nothing writes them, they are precisely what this inventory exists to watch,
+        // and a rule keyed on the base name would have stopped watching them without saying so.
+        for path in [
+            "English/_vanilla_backup/ddraw.ini",
+            "English/_vanilla_backup/lom.cfg",
+            "English/_vanilla_backup/settings.cfg",
+        ] {
+            assert!(
+                runtime_writer(path).is_none(),
+                "{path} is a backup copy, not a file the game writes"
+            );
+        }
+
+        // Ordinary shipped content, including files whose names resemble the written ones.
+        for path in [
+            "English/gs.mpq",
+            "English/lomse.exe",
+            "English/custldr/0templdr.ldr",
+            "English/map/e3map2.map",
+            "installscript.vdf",
+            // Outside the working directory entirely.
+            "lom.cfg",
+            "Other/lom.cfg",
+        ] {
+            assert!(runtime_writer(path).is_none(), "{path} must stay pinned");
+        }
+    }
+
+    /// `runtime_writer_for_path` must agree with `runtime_writer` on the same file.
+    #[test]
+    fn addressing_a_file_by_path_reaches_the_same_verdict() {
+        use std::path::Path;
+        assert!(runtime_writer_for_path(Path::new("/games/LoM/English/lom.cfg")).is_some());
+        assert!(
+            runtime_writer_for_path(Path::new("/games/LoM/English/_vanilla_backup/lom.cfg"))
+                .is_none()
+        );
+        assert!(runtime_writer_for_path(Path::new("/games/LoM/lom.cfg")).is_none());
+        assert!(runtime_writer_for_path(Path::new("/games/LoM/English/gs.mpq")).is_none());
+    }
+
+    /// The sentinel must not be mistakable for either column it replaces.
+    #[test]
+    fn the_sentinel_is_neither_a_digest_nor_a_number() {
+        assert_ne!(RUNTIME_WRITTEN.len(), 64);
+        assert!(RUNTIME_WRITTEN.parse::<u64>().is_err());
+        assert!(!RUNTIME_WRITTEN.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

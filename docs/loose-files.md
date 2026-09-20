@@ -106,15 +106,88 @@ a number is the difference between a boundary and an omission.
 
 **Observed in the corpus.** The `gs5r3` profile was being played while this was measured — its
 `combat.log`, `artifact.log` and `savegame/*.lom` carry mtimes inside the measurement window. Its
-rows are a snapshot of live state, not of a shipped tree, and they will not reproduce after another
+rows were a snapshot of live state, not of a shipped tree, and did not reproduce after another
 session.
 
-**Observed in the corpus, 2026-09-19.** `development` is no longer stable either: its `lom.cfg`
-changed between the 2026-09-18 sweep and the 2026-09-19 regeneration — one more help-panel flag
-cleared, index 2 going `1` -> `0`, with a new digest — and its mtime is 2026-09-19 15:13. That is
-the monotone 1 -> 0 behaviour the help-panel vector is identified by, so something ran that profile.
-It was not this work: nothing here writes inside `~/Applications`, and the inventory opens files
-read-only. `baseline` and `patch302` are unchanged.
+**Observed in the corpus, 2026-09-19.** `development`'s `lom.cfg` changed between the 2026-09-18
+sweep and the 2026-09-19 regeneration — one more help-panel flag cleared, index 2 going `1` -> `0`,
+with a new digest — and its mtime is 2026-09-19 15:13. That is the monotone 1 -> 0 behaviour the
+help-panel vector is identified by. It was not this work: nothing here writes inside
+`~/Applications`, and the inventory opens files read-only.
+
+**Both of those are now expected rather than open, and the report no longer records the values that
+move.** This page recorded them as instability without connecting them to the writer it documents
+three sections below: `saveconfig` at `0x00487570` opens `lom.cfg` `"wb"` and rewrites it. Something
+*running the game* is the whole explanation for the `development` drift, and the same goes for
+`gs5r3`'s logs and saves. See [what the game writes](#what-the-game-writes-and-why-the-report-does-not-pin-it).
+
+## What the game writes, and why the report does not pin it
+
+**The inventory's job is to notice when the installed tree changes in ways we did not make.** A log
+the engine appends to is not that. `English/combat.log` was pinned by content digest, so the guard
+failed after every play session — on 2026-09-19 it failed for exactly that reason — and a guard that
+fires for reasons nobody controls teaches people to ignore it, which costs more than the guard was
+worth.
+
+Such files now carry `runtime-written` in both the `size` and `sha256` columns. Everything else
+about them is still recorded and still checked: the row's presence, its extension, its `magic` and
+its `probe_kind`. A runtime-written file **appearing or disappearing still fails**, deliberately —
+that is a real change to the tree, and unlike an opaque hash mismatch it names its own cause.
+
+### The rule, and the evidence for each part
+
+Membership is not a list of filenames somebody thought of. It is the result of a sweep, and every
+entry carries its class:
+
+- **Observed in the corpus, 2026-09-19.** Every `.gs` member of all three distinct `gs.mpq` files
+  was searched for `"NAME" "MODE" file` with a `MODE` containing `w` or `a` — the modes in use are
+  `w`, `a`, `ab`, `wb` and `abw`. Result: `settings.cfg` (3.02, `gs/Dlg/opdlg.gs`, read `"r"` and
+  written `"w"`), `gs_ms.txt`, `profile.txt`, and GS5R3's `army.log`, `artifact.log`, `chat.log`,
+  `combat.log`, `gs5r.cfg`, `hotkey.log`, `spells.log`, `thief.log`.
+- **Observed in a local binary.** `lom.cfg` — `saveconfig` opens it `"wb"`; see
+  [`lom.cfg`](#lomcfg). `ddraw.ini` — not the engine at all: `ddraw.dll`, the cnc-ddraw wrapper the
+  installs ship, names `ddraw.ini` three times and imports `WritePrivateProfileStringA`. The
+  launcher writes it, which counts for the same reason the engine does.
+- **Observed in the corpus and in a local binary.** The save directories. GS5R3's scripts pass
+  `savegame/autosave.lom`, `savegame/barter.lom`, `savegame/combat.lom`, `savegame/endturn.lom` and
+  the `multisav/` equivalents to `savegame`, alongside `gettempsavegamefilename savegame` and the
+  file selector's `"savegame/" <user name> strcat ... savegame`; `lomse.exe` holds
+  `savegame/lastsave.lom` and `multisav/lastsave.lom`. Because the player names saves, the default
+  is inverted **here and only here**: everything under those directories is runtime-written unless
+  it is one of the shipped entries below.
+- **Shipped, and still pinned:** `savegame/combat.sav`, `experience.sav`, `magic.sav`, `merc.sav`,
+  `temple.sav` and `quickstart`. **Observed in the corpus**: `quickstart` appears in both 3.02's and
+  GS5R3's scripts as `loadgame`'s operand and never as `savegame`'s, and all six are byte-identical
+  in all four installs — including the two that have been played. `savegame/Merlin I` is not among
+  them: it differs between 3.02 and GS5R3 in both size and digest, so it is somebody's save.
+
+### The anchoring is the load-bearing part
+
+The rule matches `English/<name>`, **not** a bare file name. `English/_vanilla_backup/lom.cfg`,
+`settings.cfg` and `ddraw.ini` are a modder's snapshot of the stock files; nothing writes them, they
+are precisely what this inventory exists to watch, and a rule keyed on the base name would have
+stopped watching them without saying so. That case is pinned by name in
+`the_runtime_written_rule_unpins_what_the_game_writes_and_nothing_else`.
+
+`the_committed_inventory_reproduces` cannot catch a mistake in the rule, because it applies the same
+rule to the tree and to the report — widen it and both sides move together. So the unpinned set is
+**named, profile by profile**, in `the_committed_reports_unpin_exactly_the_runtime_written_rows`,
+which reads only the committed TSVs and therefore runs without the game installed.
+
+### One thing this cost, stated plainly
+
+`baseline` and `development` differed in **exactly one file**: `English/lom.cfg`. With that file
+unpinned their inventories are byte-identical apart from the `# profile` line, so declaring the
+wrong one of those two now passes where it used to fail. Measured 2026-09-19: every other wrong
+declaration still fails. That is less a hole this change opened than one it exposed — the only thing
+telling those two installs apart was a file the game rewrites, which was never a difference between
+the installs at all.
+
+### Not classified
+
+`English/custldr/0templdr.ldr` has a recent mtime in the played profile and a name suggesting a
+temporary, but **no write path was found for it** in either the scripts or the binary. It stays
+pinned. A suggestive filename is not an observation.
 
 ## Two classifiers, recorded side by side
 
