@@ -265,14 +265,7 @@ loads -- only that a correct one-member rewrite does.
      marked region to equal the render, for every archive with a run -- which is what keeps a
      claim here and the caveat in every build.json from drifting apart. -->
 <!-- engine-acceptance:gs.mpq -->
-**Not established.** 1 member of one `gs.mpq`, replaced rather than added, with a length-preserving
-edit made by the mod pipeline's own writer, 2026-09-16. The attended 2026-09-16 round trip of an
-MPQ_FILE_IMPLODE member of gs.mpq. The engine has not been shown an edit that changes a member's
-size. The engine has not been shown a member added to an archive rather than replaced. The engine
-has not been shown a second member of the same archive in one build. The engine has not been shown
-any flag combination other than 0x80010100. The member carried flags 0x80010100 (EXISTS | ENCRYPTED
-| IMPLODE), which is the only storage class any run has covered. `imp.mpq`, `sndfx.mpq` and
-`special.mpq` remain untested.
+**Not established.** 1 member of one `gs.mpq`, replaced rather than added, with a length-preserving edit made by the mod pipeline's own writer, 2026-09-16. The attended 2026-09-16 round trip of an MPQ_FILE_IMPLODE member of gs.mpq. 1 member of one `gs.mpq`, replaced rather than added, with a size-changing edit made by the mod pipeline's own writer, 2026-09-19. The cheat-keys ladder flipped a single token in a member of gs.mpq, which made the member shorter, and the debug hotkey tier it gates was then exercised in gameplay. The engine has not been shown a member added to an archive rather than replaced. The engine has not been shown a second member of the same archive in one build. The engine has not been shown any flag combination other than 0x80010100. The member carried flags 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), which is the only storage class any run has covered. `imp.mpq` remains untested.
 <!-- /engine-acceptance:gs.mpq -->
 
 The `pic.mpq` half of this paragraph was closed on 2026-09-18; see the `pic.mpq` slice under Phase 5.
@@ -366,15 +359,26 @@ reading the image rather than on knowing where the engine draws it was wrong abo
 the observation succeeded anyway because the main menu is the first thing drawn.
 
 <!-- engine-acceptance:pic.mpq -->
-**Not established.** 1 member of one `pic.mpq`, replaced rather than added, with a length-preserving
-edit made by tools/pbm_patch.py, 2026-09-18. The engine read an archive this pipeline built from
-pic.mpq, and a human read the change off the screen. The engine has not been shown an edit that
-changes a member's size. The engine has not been shown a member added to an archive rather than
-replaced. The engine has not been shown a second member of the same archive in one build. The engine
-has not been shown the full ByteRun1 encoder, which no run has used. The compression choice is not
-Inferred: all 1,071 baseline members carry flags 0x80010100, the same storage class the gs.mpq run
-proved. `imp.mpq`, `sndfx.mpq` and `special.mpq` remain untested.
+**Not established.** 1 member of one `pic.mpq`, replaced rather than added, with a length-preserving edit made by tools/pbm_patch.py, 2026-09-18. The engine read an archive this pipeline built from pic.mpq, and a human read the change off the screen. The engine has not been shown an edit that changes a member's size. The engine has not been shown a member added to an archive rather than replaced. The engine has not been shown a second member of the same archive in one build. The engine has not been shown the full ByteRun1 encoder, which no run has used. The compression choice is not Inferred: all 1,071 baseline members carry flags 0x80010100, the same storage class the gs.mpq run proved. `imp.mpq` remains untested.
 <!-- /engine-acceptance:pic.mpq -->
+
+### The audio archives, Observed in gameplay 2026-09-19
+
+The acceptance ladder's rungs 6-9 put `sndfx.mpq` and `special.mpq` in front of the engine for the
+first time. These are the **`0x80010000` STORED** storage class -- every member of both archives --
+which no earlier run had covered, and each rung rewrote **two** members in **both** archives in one
+build. Rung 7 gave each archive a different tone and the listener named the one the engine played;
+rung 8 exchanged the two tones and the report flipped, which is what makes it a measurement rather
+than a reading. Both members read from `sndfx.mpq`.
+
+<!-- engine-acceptance:sndfx.mpq -->
+**Not established.** 2 members of one `sndfx.mpq`, replaced rather than added, with a length-preserving edit made by the WAVE importer, 2026-09-19. The acceptance ladder wrote a tone into both audio archives and the listener named which archive the engine had opened; exchanging the two tones flipped the report. The engine has not been shown an edit that changes a member's size. The engine has not been shown a member added to an archive rather than replaced. The members carried flags 0x80010000 (EXISTS | STORED), a storage class no earlier run had covered. `imp.mpq` remains untested.
+<!-- /engine-acceptance:sndfx.mpq -->
+
+<!-- engine-acceptance:special.mpq -->
+**Not established.** 2 members of one `special.mpq`, replaced rather than added, with a length-preserving edit made by the WAVE importer, 2026-09-19. The acceptance ladder wrote a tone into both audio archives and the listener named which archive the engine had opened; exchanging the two tones flipped the report. The engine has not been shown an edit that changes a member's size. The engine has not been shown a member added to an archive rather than replaced. The members carried flags 0x80010000 (EXISTS | STORED), a storage class no earlier run had covered. `imp.mpq` remains untested.
+<!-- /engine-acceptance:special.mpq -->
+
 
 Note that painting has never been verified by a probe loading a painted map, and the core tile
 family, road in either role, and painting across an existing boundary are refused rather than

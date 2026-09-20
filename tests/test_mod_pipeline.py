@@ -1740,7 +1740,7 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
         return " ".join(text.split())
 
     def test_the_pic_run_is_recorded_as_the_narrow_thing_it_was(self) -> None:
-        run = ACCEPTANCE["pic.mpq"].run
+        run = ACCEPTANCE["pic.mpq"].runs[0]
         self.assertIsNotNone(run)
         self.assertEqual(run.date, "2026-09-18")
         self.assertEqual(run.members, 1)
@@ -1755,7 +1755,7 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
         run that replaced a member implies that an added one is. Nobody can delete those limits
         while leaving the run describing what it describes.
         """
-        run = ACCEPTANCE["pic.mpq"].run
+        run = ACCEPTANCE["pic.mpq"].runs[0]
         self.assertIn("an edit that changes a member's size", run.derived_limits)
         self.assertIn("a member added to an archive rather than replaced", run.derived_limits)
 
@@ -1778,7 +1778,7 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
         roadmap = self.roadmap()
         covered = 0
         for archive, acceptance in sorted(ACCEPTANCE.items()):
-            if acceptance.run is None:
+            if not acceptance.runs:
                 continue
             covered += 1
             with self.subTest(archive=archive):
@@ -1796,7 +1796,7 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
         self.assertGreater(covered, 1, "at least gs.mpq and pic.mpq have runs")
 
     def test_the_roadmap_still_records_the_acceptance_the_facts_claim(self) -> None:
-        run = ACCEPTANCE["pic.mpq"].run
+        run = ACCEPTANCE["pic.mpq"].runs[0]
         self.assertIn(
             "- [x] Put a rewritten `pic.mpq` in front of the engine. **Observed in gameplay "
             f"{run.date}**",
@@ -1810,13 +1810,41 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
         self.assertEqual(sorted(metadata), sorted(ACCEPTANCE))
         pic = metadata["pic.mpq"]
         self.assertEqual(pic["summary"], ACCEPTANCE["pic.mpq"].summary())
-        self.assertEqual(pic["established"]["edit_kind"], "length_preserving")
-        self.assertEqual(pic["established"]["disposition"], "replaced")
+        self.assertEqual(len(pic["established"]), 1)
+        self.assertEqual(pic["established"][0]["edit_kind"], "length_preserving")
+        self.assertEqual(pic["established"][0]["disposition"], "replaced")
         self.assertEqual(pic["not_established"], list(ACCEPTANCE["pic.mpq"].not_established))
-        for archive in ("imp.mpq", "sndfx.mpq", "special.mpq"):
+
+        # gs.mpq has TWO runs, and the second one is why "an edit that changes a member's size"
+        # is no longer among its limits. Pinned here because the intersection that produces that
+        # is the whole reason this module holds runs rather than a run.
+        gs = metadata["gs.mpq"]
+        self.assertEqual(len(gs["established"]), 2)
+        self.assertEqual(
+            [entry["edit_kind"] for entry in gs["established"]],
+            ["length_preserving", "size_changing"],
+        )
+        self.assertNotIn(
+            "an edit that changes a member's size",
+            gs["not_established"],
+            "the 2026-09-19 cheat-keys run changed a member's size; the limit cannot survive it",
+        )
+
+        # The audio archives were run on 2026-09-19, two members each, in the STORED class.
+        for archive in ("sndfx.mpq", "special.mpq"):
             with self.subTest(archive=archive):
-                self.assertIsNone(metadata[archive]["established"])
-                self.assertIn("Never tested", metadata[archive]["summary"])
+                established = metadata[archive]["established"]
+                self.assertEqual(len(established), 1)
+                self.assertEqual(established[0]["members"], 2)
+                self.assertNotIn("Never tested", metadata[archive]["summary"])
+                self.assertNotIn(
+                    "a second member of the same archive in one build",
+                    metadata[archive]["not_established"],
+                )
+
+        # imp.mpq is the one archive still never run, and that has to stay sayable.
+        self.assertIsNone(metadata["imp.mpq"]["established"])
+        self.assertIn("Never tested", metadata["imp.mpq"]["summary"])
 
     def test_every_observation_reaches_the_documentation_through_its_region(self) -> None:
         """The one free-text field, pinned to a place rather than to a document.
@@ -1829,16 +1857,18 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
         """
         roadmap = self.roadmap()
         for archive, acceptance in sorted(ACCEPTANCE.items()):
-            if acceptance.run is None:
+            if not acceptance.runs:
                 continue
             with self.subTest(archive=archive):
                 open_marker, close_marker = roadmap_region(archive)
                 region = roadmap.split(open_marker, 1)[1].split(close_marker, 1)[0]
-                self.assertIn(
-                    self.flatten(acceptance.run.observation),
-                    self.flatten(region),
-                    "an observation has to be a claim the roadmap makes in this archive's region",
-                )
+                for run in acceptance.runs:
+                    self.assertIn(
+                        self.flatten(run.observation),
+                        self.flatten(region),
+                        "an observation has to be a claim the roadmap makes in this "
+                        "archive's region",
+                    )
 
     def test_an_observation_may_not_carry_a_quantity_the_run_does_not_record(self) -> None:
         with self.assertRaises(ValueError):
@@ -1876,18 +1906,24 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
         for name, acceptance in sorted(ACCEPTANCE.items()):
             with self.subTest(archive=name):
                 limits = "; ".join(acceptance.not_established)
-                if acceptance.run is None:
+                if not acceptance.runs:
                     expected = (
                         f"Never tested. No {name} this pipeline wrote has been put in front of "
                         f"the engine. Not established: {limits}."
                     )
                 else:
-                    run = acceptance.run
-                    expected = (
-                        f"Observed {run.date}, once: {run.members} member of {name}, "
+                    times = (
+                        "once" if len(acceptance.runs) == 1 else f"{len(acceptance.runs)} times"
+                    )
+                    sentences = " ".join(
+                        f"{run.date}: {run.members} "
+                        f"{'member' if run.members == 1 else 'members'} of {name}, "
                         f"{run.disposition.value}, with a {run.edit_kind.value} edit made by "
-                        f"{run.mechanism.value}. {run.observation} Not established: "
-                        f"{limits}."
+                        f"{run.mechanism.value}. {run.observation}"
+                        for run in acceptance.runs
+                    )
+                    expected = (
+                        f"Observed {times}. {sentences} Not established: {limits}."
                     )
                     if acceptance.storage_class:
                         expected += f" {acceptance.storage_class.value}"
@@ -2005,10 +2041,10 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
                 observation="y",
             )
         with self.assertRaises(ValueError):
-            ArchiveAcceptance(archive="imp.mpq", run=None)
+            ArchiveAcceptance(archive="imp.mpq")
 
     def test_the_gs_run_still_matches_the_prose_that_cites_it(self) -> None:
-        run = ACCEPTANCE["gs.mpq"].run
+        run = ACCEPTANCE["gs.mpq"].runs[0]
         self.assertEqual(run.date, "2026-09-16")
         self.assertIn(
             f"attended {run.date} round trip of an `MPQ_FILE_IMPLODE` member of",
