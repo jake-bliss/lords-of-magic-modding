@@ -5044,6 +5044,15 @@ script that is not in Git, so they report as `ignored` rather than being absent,
 disagree on nothing, `vanilla` on its two missing string helpers, `gs5r3` on those plus the swapped
 `min`/`max`. A declared disagreement that stops happening fails too.
 
+**Superseded 2026-09-19.** Taking the lineage from an environment variable made the battery green
+only on the profile the operator happened to name, and its `patch302` default made three of the
+four installs red out of the box; worse, a *wrong* declaration silently selected the wrong
+expectations rather than being caught. The lineage is now **derived from the archive's own
+`standard.gs`** and `LOM_GS_PROFILE` is checked against that derivation instead of believed. The
+"declared disagreements" are gone too: tolerating a disagreement meant four exercises asserted
+nothing at all on GS5R3, so each lineage now carries a real expectation for every exercise. All
+three runs report zero failures, on all four installs, with no environment variable.
+
 For the default suite, which cannot reach the corpus, I added
 `trigonometry_is_not_self_consistent_under_a_swap` (sin is odd, cos is even; a swap breaks both
 identities and both orderings) and

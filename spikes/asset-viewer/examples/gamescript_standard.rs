@@ -21,7 +21,7 @@ use std::rc::Rc;
 
 use lom_asset_viewer::gamescript::GameScriptDocument;
 use lom_asset_viewer::gamescript_standard::{
-    EXERCISES, MEMBER, STEP_LIMIT, load_module, run_exercises,
+    EXERCISES, Expected, Lineage, MEMBER, STEP_LIMIT, load_module, run_exercises,
 };
 use lom_asset_viewer::gamescript_vm::{
     GameScriptVm, ModuleSource, NameResolution, normalize_module_path,
@@ -116,6 +116,9 @@ fn run(
         .read(&entry.name)
         .map_err(|error| format!("could not read {MEMBER}: {error}"))?;
 
+    let (lineage, evidence) = Lineage::derive(&bytes)?;
+    println!("lineage\t{}", lineage.label());
+    println!("lineage-evidence\t{evidence:?}");
     let (mut vm, document) = load_module(&bytes)?;
     let analysis = document.analyze();
 
@@ -137,15 +140,23 @@ fn run(
     let mut unknown_names: BTreeMap<String, usize> = BTreeMap::new();
     let mut unknown_frames: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
-    for (exercise, outcome) in EXERCISES.iter().zip(run_exercises(&mut vm)) {
+    for (exercise, outcome) in EXERCISES.iter().zip(run_exercises(&mut vm, lineage)) {
         if let Some(trace) = &outcome.unknown_name {
             *unknown_names.entry(trace.name.clone()).or_default() += 1;
             unknown_frames
                 .entry(trace.name.clone())
                 .or_insert_with(|| trace.call_stack.clone());
         }
+        // The *resolved* expectation is printed alongside the verdict. Without it an `ok` on an
+        // archive that does not ship `string_cvi` is indistinguishable from an `ok` on one that
+        // does -- the first stopped on an undefined name and the second computed `1234 -42`, and
+        // a transcript that records both as bare `ok` has lost the thing it exists to witness.
+        let expected = match lineage.expected_for(exercise) {
+            Expected::Stack(stack) => format!("leaves [{stack}]"),
+            Expected::StopsOn(name) => format!("stops on {name}"),
+        };
         match &outcome.disagreement {
-            None => println!("exercise\t{}\tok", exercise.name),
+            None => println!("exercise\t{}\tok\t{expected}", exercise.name),
             Some(disagreement) => {
                 failures += 1;
                 println!("exercise\t{}\tDISAGREES\t{disagreement}", exercise.name);
