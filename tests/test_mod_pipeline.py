@@ -1810,9 +1810,23 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
         self.assertEqual(sorted(metadata), sorted(ACCEPTANCE))
         pic = metadata["pic.mpq"]
         self.assertEqual(pic["summary"], ACCEPTANCE["pic.mpq"].summary())
-        self.assertEqual(len(pic["established"]), 1)
-        self.assertEqual(pic["established"][0]["edit_kind"], "length_preserving")
-        self.assertEqual(pic["established"][0]["disposition"], "replaced")
+        # Two runs: the 2026-09-18 pbm_patch two-byte repaint, and the 2026-09-20 ladder run that
+        # put the ByteRun1 encoder itself in front of the engine at a length that SHRANK. The
+        # second is why "an edit that changes a member's size" is no longer among pic.mpq's
+        # limits, exactly as the gs.mpq pair below.
+        self.assertEqual(len(pic["established"]), 2)
+        self.assertEqual(
+            [entry["edit_kind"] for entry in pic["established"]],
+            ["length_preserving", "size_changing"],
+        )
+        self.assertEqual(
+            [entry["disposition"] for entry in pic["established"]], ["replaced", "replaced"]
+        )
+        self.assertNotIn(
+            "an edit that changes a member's size",
+            pic["not_established"],
+            "the 2026-09-20 encoder run shrank the member; the limit cannot survive it",
+        )
         self.assertEqual(pic["not_established"], list(ACCEPTANCE["pic.mpq"].not_established))
 
         # gs.mpq has TWO runs, and the second one is why "an edit that changes a member's size"
@@ -1842,9 +1856,35 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
                     metadata[archive]["not_established"],
                 )
 
-        # imp.mpq is the one archive still never run, and that has to stay sayable.
-        self.assertIsNone(metadata["imp.mpq"]["established"])
-        self.assertIn("Never tested", metadata["imp.mpq"]["summary"])
+        # imp.mpq was the one archive never run, until rungs 0-5 on 2026-09-20. Its record is
+        # now what makes "added rather than replaced" sayable anywhere in this module.
+        imp = metadata["imp.mpq"]
+        self.assertEqual(len(imp["established"]), 3)
+        self.assertEqual(
+            [entry["disposition"] for entry in imp["established"]],
+            ["replaced", "replaced", "added"],
+        )
+        self.assertNotIn(
+            "a member added to an archive rather than replaced",
+            imp["not_established"],
+            "rung 5 added a member the archive never had; the limit cannot survive it",
+        )
+        self.assertIn(
+            "an edit that changes a member's size",
+            imp["not_established"],
+            "all three imp.mpq rungs were length-preserving, so that limit still stands here",
+        )
+
+        # "Never tested" has to stay sayable now that no archive is in that state. Asserted
+        # against a constructed record rather than a real one, because the alternative is that
+        # the branch quietly stops being exercised the day the last untested archive is run --
+        # and the next archive to join the pipeline would inherit a render nothing checks.
+        never = ArchiveAcceptance(
+            archive="nothing.mpq",
+            also_untested=("anything at all; no nothing.mpq this pipeline wrote has been run",),
+        )
+        self.assertIsNone(never.as_json()["established"])
+        self.assertIn("Never tested", never.summary())
 
     def test_every_observation_reaches_the_documentation_through_its_region(self) -> None:
         """The one free-text field, pinned to a place rather than to a document.

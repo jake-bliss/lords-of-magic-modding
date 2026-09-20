@@ -1,9 +1,56 @@
 # Engine-acceptance ladder run sheet
 
+## Outcome, 2026-09-20 — rungs 0 through 5, all five passed
+
+**The ladder is complete. Every rung has now been run.**
+
+`imp.mpq` was the largest wholly-untouched archive in the game and the reason the entire sprite
+pipeline was offline-only. It is untouched no longer, and two encoders that had never been read by
+the engine have now been read by it.
+
+| Rung | What it showed | Observed |
+| ---: | --- | --- |
+| **0+1** | `imp.mpq` survives our repack under the recovered names, and the member the engine read came out of `write_frame_pixels` byte-identically | pointer unchanged, as shipped |
+| **2** | the engine reads an **IMP pixel change** we made | pointer repainted white, shape intact |
+| **3** | the **ByteRun1 PBM encoder** as a no-op, member 302,432 → 302,714 | main menu exactly as shipped |
+| **4** | the encoder with something to see, member 302,432 → **256,996** — it *shrank* | clean straight-edged red stripe, surrounding art intact, all four screen edges untouched |
+| **5** | a member the archive **never had** (`iface\ladder.imp`), archive grown to 3,601 members | repainted pointer still drawn |
+
+**Three published limits fell.** `imp.mpq` untested; the full ByteRun1 encoder unproven; a member
+added rather than replaced never tried. All three had been repeated in every `build.json` and in
+`docs/roadmap.md` until this evening.
+
+**The `TINY` drop is now gameplay evidence.** Rung 4's member lost its thumbnail, because
+regenerating one needs a downscaler this repo does not have. That the drop is safe was justified
+from the corpus — 128 of 1,045 shipped images carry no `TINY` — which is corpus inference. The
+engine has now rendered one.
+
+**What is still not established, stated because the temptation is to round up:**
+
+- Whether the engine can **read** an added member. Nothing in the game asks for `iface\ladder.imp`
+  and no observation on screen could settle it. What *is* established is offline: the name resolves
+  through the archive's own hash table, which is the lookup Storm performs.
+- A **size-changing** edit in `imp.mpq`. All three IMP rungs were length-preserving by construction
+  — rung 2's edit is a permutation of the index alphabet precisely so no pointer moves. `pic.mpq`
+  and `gs.mpq` have both had size-changing edits accepted; `imp.mpq` has not.
+- A `TINY` thumbnail **regenerated** rather than dropped.
+
+**A reading I got wrong, recorded because it nearly became the result.** Rung 0+1 was first read off
+a screenshot as a pale/silver pointer rather than the expected green, which would have been rung 2's
+outcome on rung 0+1's build — a corruption report. The sprite is 31×28 and the screenshot was scaled;
+the observer looking at the actual screen reported it normal, and described the art as "a hand with a
+ring on it", which is the gauntlet. **A downscaled screenshot is not the instrument here; the
+observer's eye is.** This is [[feedback-ask-only-what-the-sensor-can-report]] in a new place: the
+sensor was fine and the *relay* was lossy.
+
+---
+
 **Rungs 6 and 7 were run attended on 2026-09-19, and two further rungs were built and run the same
-evening in answer to what they showed. Rungs 0–5 have not been run.** Everything below this outcome
-was written before the game was launched, so none of it is hindsight; rungs 8 and 9 were added
-afterwards, and each states the prediction that was recorded before its own run.
+evening in answer to what they showed. Rungs 0–5 were run on 2026-09-20 — see the outcome above.**
+Everything below this line was written before the game was launched, so none of it is hindsight;
+rungs 8 and 9 were added afterwards, and each states the prediction that was recorded before its own
+run. **The five questions below are left in their pre-run wording on purpose**, with the answers
+recorded beneath them rather than edited into them.
 
 ## Outcome, 2026-09-19
 
@@ -92,6 +139,16 @@ person; the ladder is ordered and worded to cost as few as possible.
    members stored `0x80010100`, IMPLODE. Every member of `sndfx.mpq` and `special.mpq` is
    `0x80010000`, **STORED**. That is a storage class the engine has never been asked to accept from
    us, and it is a different question from another image member rather than a repeat of one.
+
+**All five are answered, and every answer is yes.** Question 5 fell on 2026-09-19 (rungs 6–9) and
+questions 1–4 on 2026-09-20 (rungs 0–5). Question 3 had in fact already fallen on 2026-09-19 to the
+cheat-keys ladder's 21-to-20-byte token flip in `gs.mpq`, a day before the rung built to test it —
+so rung 3's description of itself as "the first size-changing member" below is wrong, and is left
+standing as written for the same reason the questions are.
+
+What did **not** get answered, because no rung asked it: whether the engine can **read** an added
+member, a size-changing edit in `imp.mpq` specifically, and a `TINY` thumbnail regenerated rather
+than dropped.
 
 ## The blocker, and how it was cleared
 
@@ -551,9 +608,12 @@ rungs 0 through 9, every check passes:
 
 Everything the rungs exist to ask. In particular:
 
-- whether the engine reads a rewritten `imp.mpq`, `sndfx.mpq` or `special.mpq` at all;
+- whether the engine reads a rewritten `imp.mpq`, `sndfx.mpq` or `special.mpq` at all. **All three
+  answered: yes.** `sndfx.mpq` and `special.mpq` on 2026-09-19, `imp.mpq` on 2026-09-20;
 - whether it tolerates an added member, and — untestable by any observation here — whether it could
-  read one;
+  read one. **The first is answered: yes**, rung 5, 2026-09-20. **The second remains untestable and
+  untested**, for exactly the reason given when this line was written: nothing in the game asks for
+  the added member;
 - **which** of `sndfx.mpq` and `special.mpq` it opens. Rung 7 alone could not answer this — its
   reported "split" turned out to rest on a pitch judgement `wav\button.wav`'s 41 ms cannot support
   — which is why rungs 8 and 9 exist. **Now answered:** `sndfx.mpq`, for both members; see
@@ -563,10 +623,12 @@ Everything the rungs exist to ask. In particular:
 - whether the IMP `layout=Tight` reading is the one the engine uses for `iface\cursors.imp` frame
   111. The frame is not in the 45 ambiguous or the 752 unobservable classes, and the importer would
   have warned if it were, so this is not a live worry — but nothing offline can close it.
+  **Answered 2026-09-20:** rung 2 repainted that exact frame and the engine drew the repaint with
+  the silhouette intact, which a wrong layout reading could not have produced.
 
 ## Cost and risk
 
-Nine installs into `Lords of Magic Development.app` and nothing else. The three installed profiles
+Ten installs into `Lords of Magic Development.app` and nothing else. The three installed profiles
 are opened read-only by this pipeline and written by none of it; `~/Applications` is refused as an
 output path by `scripts/repack-archive.sh`, and every write to the development profile is routed
 through `tools/install_guard.py`, an allowlist of exactly one directory. The loose `map/` directory

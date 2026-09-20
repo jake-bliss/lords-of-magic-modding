@@ -13,6 +13,12 @@
 # The frame's own control travels with it: the dark outline and the transparent silhouette are not
 # in the swap set, so "a white gauntlet of exactly the shipped shape" and "the cursor is broken"
 # are different observations.
+#
+# **Run 2026-09-20, and it passed.** The observer reported the pointer repainted, shape intact.
+# The engine reads IMP pixels this project wrote -- the question rung 0+1 could not answer on its
+# own. Every IMP this repository had written before this landed in a loose `.imp`, and loose files
+# were measured on 2026-09-16 not to override MPQ members, so no IMP we wrote had ever been read by
+# the engine until this rung. See `docs/engine-acceptance-ladder.md`.
 id = "imp-cursor-repaint"
 name = "Cursor sprite, repainted"
 version = "0.1.0"

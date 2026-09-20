@@ -204,6 +204,15 @@ impl PbmFile {
     /// re-encode drops the chunk instead; that is format-valid on the corpus's
     /// own evidence, since 128 of the 1,045 carry no `TINY` at all
     /// (`fonts\balloon2.lbm` is `BMHD`, `CMAP`, `BODY` and nothing else).
+    ///
+    /// **The drop is no longer only a corpus inference.** Acceptance rung 4 put
+    /// a member re-encoded by this function -- `TINY` dropped, length 302,432
+    /// down to 256,996 -- in front of the engine on 2026-09-20, and it rendered
+    /// correctly with the rest of the screen untouched. **Observed in gameplay.**
+    /// What that does *not* establish: that a regenerated `TINY` would be read,
+    /// or that no screen anywhere reads the thumbnail. It establishes that the
+    /// main menu does not.
+    ///
     /// `CRNG` and `DPPS` do not describe pixels and are always preserved.
     pub fn encode_with_indices(&self, indices: &[u8]) -> Result<Vec<u8>, PbmError> {
         let width = usize::from(self.image.width);

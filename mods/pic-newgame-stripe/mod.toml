@@ -12,6 +12,15 @@
 #
 # The control is the rest of the screen: everything outside the stripe, including all four edges of
 # the image, must render exactly as shipped.
+#
+# **Run 2026-09-20, and it passed.** The observer reported a clean straight-edged red stripe with
+# the surrounding art intact and all four screen edges untouched. The member SHRANK, 302,432 ->
+# 256,996, because a fill merges runs. Two things this settles that the 2026-09-18 `pbm_patch` run
+# could not: the full ByteRun1 encoder survives the engine, and the dropped `TINY` thumbnail is
+# safe -- that drop was justified from the corpus (128 of 1,045 shipped images carry no `TINY`),
+# which is corpus inference, and it is now gameplay evidence. Straight edges are the tell:
+# `pbm_patch.py` repaints whole runs and leaves a ragged edge, so this rectangle is a thing the old
+# mechanism could not have produced. NOT established: a `TINY` regenerated rather than dropped.
 id = "pic-newgame-stripe"
 name = "Main menu, striped"
 version = "0.1.0"

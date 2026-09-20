@@ -2462,13 +2462,15 @@ impl MapAsset {
     /// for a sprite-less map. "Create from scratch" here means *compose observed patterns*, not
     /// *invent values* — which is why it is possible while three fields' meanings are still Unknown.
     ///
-    /// Two things it cannot promise, both of which the attended `mapload` probe exists to settle:
+    /// Two things this could not promise, **both settled by the attended `mapload` probe on
+    /// 2026-09-17** (`docs/mapload-run-sheet.md`, all seven rungs passed):
     ///
-    /// - **The engine has never been asked to load a map this project created.** Round-trip
-    ///   identity shows this writer matches the engine's *writer*; it says nothing about its
-    ///   *reader*.
-    /// - **No map, shipped or engine-generated, has ever been non-square.** A non-square map is the
-    ///   first artifact here that no observation covers.
+    /// - **Whether the engine's *reader* accepts what this writes.** Round-trip identity only
+    ///   showed this writer matches the engine's *writer*. The probe drove `loadscenariomap`,
+    ///   which returns a boolean the engine itself computes, and the created-from-nothing maps
+    ///   loaded and re-saved **byte-identically** -- so the engine normalised nothing.
+    /// - **Whether a non-square map works.** No map, shipped or engine-generated, had ever been
+    ///   non-square; one was created here and the engine loaded it.
     ///
     /// Elevation is `0.0` everywhere, which is inside the corpus range and is flat by any reading
     /// of a word whose units are Inferred.

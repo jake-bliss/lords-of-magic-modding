@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tools.engine_acceptance import ACCEPTANCE, Disposition
 from tools.mod_tree import load
 from tools.mod_validate import ERROR, WARNING, validate
 from tools.mpq_shape import Member
@@ -233,7 +234,22 @@ class MemberResolutionTest(ValidateTestCase):
         )
         finding = self.findings(report, "new-member")[0]
         self.assertEqual(finding.severity, WARNING)
-        self.assertIn("No evidence exists", finding.message)
+
+        # Derived, not typed. Rung 5 added a member to imp.mpq on 2026-09-20, so "No evidence
+        # exists" -- which this test asserted until then -- became false while the test stayed
+        # green. What has to hold is the relationship: if any archive has an ADDED run, the
+        # warning reports tolerance and refuses to call it readability; if none does, it says so.
+        added = [
+            name
+            for name, acceptance in ACCEPTANCE.items()
+            if any(run.disposition is Disposition.ADDED for run in acceptance.runs)
+        ]
+        if added:
+            self.assertIn("TOLERANCE, not readability", finding.message)
+            for name in added:
+                self.assertIn(name, finding.message)
+        else:
+            self.assertIn("No evidence exists", finding.message)
         self.assertTrue(report.ok)
 
     def test_a_missing_base_manifest_is_an_error_rather_than_a_pass(self) -> None:
@@ -594,10 +610,18 @@ class RunTargetTest(ValidateTestCase):
 
 class CoverageTest(ValidateTestCase):
     def test_a_pic_member_carries_the_engine_acceptance_note(self) -> None:
-        """The note states what the 2026-09-18 run did NOT cover, not that pic.mpq is untried.
+        """The note names every limit the RECORD holds, rather than a phrase typed here.
 
-        It used to assert the word "NEVER", from when no rewritten pic.mpq had faced the engine.
-        One has (mods/newgame-picslice), so asserting that again would pin a false claim.
+        Two earlier versions of this test pinned literals and both went stale behind a run. It
+        asserted "NEVER", from when no rewritten pic.mpq had faced the engine; then "ONE member",
+        "REPLACED" and "WITHOUT changing its length", which the 2026-09-20 encoder run refuted by
+        shrinking a member. A test that compares the note to a constant cannot fail on the note
+        being WRONG -- only on it being reworded -- which is exactly how the validator came to
+        print three limits that recorded runs had already refuted.
+
+        So this asserts the relationship instead: every limit `tools/engine_acceptance.py` derives
+        for this archive has to appear in the note, and the note must not call an archive with
+        recorded runs untried.
         """
         self.write("pic.mpq/LBM/ART.lbm", b"\x00")
         report = self.run_validate(
@@ -606,9 +630,21 @@ class CoverageTest(ValidateTestCase):
         )
         finding = self.findings(report, "engine-acceptance")[0]
         self.assertEqual(finding.severity, WARNING)
+
+        acceptance = ACCEPTANCE["pic.mpq"]
+        self.assertTrue(acceptance.runs, "this test is about an archive the engine HAS read")
         self.assertNotIn("NEVER been", finding.message)
-        for scope in ("ONE member", "REPLACED", "WITHOUT changing its length"):
-            self.assertIn(scope, finding.message, "the note must name what is still uncovered")
+        self.assertNotIn("has been put in front of the engine", finding.message)
+        for limit in acceptance.not_established:
+            self.assertIn(
+                limit,
+                finding.message,
+                "the note must name every limit the record still holds for this archive",
+            )
+        for run in acceptance.runs:
+            self.assertIn(
+                run.date, finding.message, "the note must date the runs it is reporting"
+            )
 
     def test_a_member_no_reader_here_understands_is_counted_as_unvalidated(self) -> None:
         """A .til tileset is packed as given; 26 of them sit in pic.mpq beside the images."""

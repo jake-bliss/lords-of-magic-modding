@@ -1,10 +1,15 @@
 # Ladder rung 6: the STORED storage class, and the WAVE encoder proving it can be a no-op.
 #
-# Every archive acceptance this project has ever proven -- `gs.mpq` on 2026-09-16, `pic.mpq` on
-# 2026-09-18 -- was on members stored `0x80010100`, EXISTS | ENCRYPTED | IMPLODE. Every member of
-# `sndfx.mpq` (1,880 of 1,880) and `special.mpq` (1,218 of 1,218) is `0x80010000`: STORED, not
-# imploded. So this is not another image member. It is a storage class the engine has never been
-# asked to accept from us.
+# As of this rung, every archive acceptance this project had proven -- `gs.mpq` on 2026-09-16,
+# `pic.mpq` on 2026-09-18 -- was on members stored `0x80010100`, EXISTS | ENCRYPTED | IMPLODE.
+# Every member of `sndfx.mpq` (1,880 of 1,880) and `special.mpq` (1,218 of 1,218) is `0x80010000`:
+# STORED, not imploded. So this was not another image member. It was a storage class the engine had
+# never been asked to accept from us.
+#
+# That enumeration is a snapshot of 2026-09-18 and is deliberately left in its own tense: this rung
+# ran on 2026-09-19 and covered the STORED class, and `imp.mpq` followed on 2026-09-20. For the
+# current record read `tools/engine_acceptance.py`, which derives it from the runs; do not read a
+# list of dates in a mod comment as an enumeration of what is true today.
 #
 # TWO members are rewritten in BOTH archives. Both archives hold both members byte-identically --
 # `wav\welcome.wav` digest 3966266dcf504bab at 250,142 bytes, `wav\button.wav` digest

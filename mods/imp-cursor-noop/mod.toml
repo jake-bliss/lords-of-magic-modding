@@ -13,6 +13,18 @@
 # `gs/cursor.gs` before it opens the main menu. The mouse pointer is therefore on screen the moment
 # the game finishes loading, with no navigation at all -- and every keypress in this experiment is
 # a request to a person, because macOS will not let this project drive the Wine window itself.
+#
+# **Run 2026-09-20, and it passed.** The observer reported the shipped pointer unchanged at the
+# main menu. That is `imp.mpq`'s FIRST acceptance: StormLib rewriting this archive under the
+# recovered names leaves one the engine can still read, and -- because of the byte-identity rung 1
+# asserts -- the bytes the engine read came out of `write_frame_pixels`. Read together with rung 2
+# (`mods/imp-cursor-repaint`), which changes the same frame visibly through the same machinery;
+# alone, a rung whose expected picture is the shipped picture cannot tell "the engine read our
+# file" from "the engine ignored it". See `docs/engine-acceptance-ladder.md`.
+#
+# One reading worth recording: a downscaled screenshot of this rung was first misread as a pale
+# pointer rather than the green one, which would have been a corruption report. The observer
+# looking at the actual screen reported it normal. The screenshot is not the instrument here.
 id = "imp-cursor-noop"
 name = "Cursor sprite, repacked unchanged"
 version = "0.1.0"

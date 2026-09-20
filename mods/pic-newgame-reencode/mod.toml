@@ -16,6 +16,11 @@
 # picture is the shipped picture cannot, on its own, tell "the engine read our file" from "the
 # engine ignored it" -- it is a corruption control, and it is read together with rung 4, which uses
 # the same encoder on the same member and changes something visible.
+#
+# **Run 2026-09-20, and it passed.** The observer reported the main menu exactly as shipped. The
+# member's bytes all moved (302,432 -> 302,714, every ByteRun1 packet repacked by `pbm.rs`) and its
+# pixels did not. This is the corruption control for rung 4 and cannot, alone, show the engine read
+# it -- the expected picture is the shipped picture. Read with `mods/pic-newgame-stripe`.
 id = "pic-newgame-reencode"
 name = "Main menu, re-encoded"
 version = "0.1.0"

@@ -73,11 +73,16 @@ establishes that the pipeline agrees with the archive before anything is edited.
 Every member name inferred from the tree must already exist in the base archive's manifest,
 case-exactly. A file that names no existing member is an error.
 
-Adding a member is a different and riskier operation. **No archive this project has produced with an
-added member has ever been put in front of the engine** — every engine-verified write has *replaced*
-an existing member. So adding one takes two deliberate acts: naming it in `new_members` and setting
-`allow_new_members = true`. Even then it is reported as a warning that says it is Inferred and
-untested.
+Adding a member is a different and riskier operation. It takes two deliberate acts: naming it in
+`new_members` and setting `allow_new_members = true`.
+
+**It is no longer untested.** Acceptance rung 5 added `iface\ladder.imp` to `imp.mpq` on
+2026-09-20, taking the archive to 3,601 members, and the engine ran it — **Observed in gameplay**.
+The gate stays, because what that establishes is **tolerance**, not readability: nothing in the game
+asks for the added member, and no on-screen observation could settle whether the engine can read
+one. `tools/mod_validate.py` derives this warning's text from `tools/engine_acceptance.py` rather
+than stating it, so the claim cannot drift from the record again — which it did, surviving the run
+that refuted it.
 
 ## `validate`
 
@@ -431,9 +436,12 @@ baseline at all**. The baseline is read exactly once, when the profile is create
 
 This is the part of the document worth reading twice.
 
-- **It does not prove the game runs anything it builds.** The only engine acceptance evidence for a
-  rewritten archive remains the attended 2026-09-16 round trip of an `MPQ_FILE_IMPLODE` member of
-  `gs.mpq`. The Phase 4 target `units\orinf.gs` has flags `0x80010100` — EXISTS | ENCRYPTED |
+- **It does not prove the game runs anything it builds.** The first engine acceptance evidence for
+  a rewritten archive was the attended 2026-09-16 round trip of an `MPQ_FILE_IMPLODE` member of
+  `gs.mpq`; there have since been three more sittings covering all five archives, both storage
+  classes, size-changing edits, multi-member builds and an added member. The rendered
+  `engine-acceptance` regions in [the roadmap](roadmap.md) are the authority and derive from
+  `tools/engine_acceptance.py`; read those rather than any sentence here. The Phase 4 target `units\orinf.gs` has flags `0x80010100` — EXISTS | ENCRYPTED |
   IMPLODE — so it is in **that same class**, and that is the strongest thing that can be said. It is
   not a statement about `gs.mpq` in general or about other flag combinations. **Corrected
   2026-09-18:** this used to add "and about `pic.mpq`, for which a rewritten archive has never faced
@@ -487,13 +495,16 @@ This is the part of the document worth reading twice.
   Three runs of the `orinf` build were byte-identical (**Observed 2026-09-18**,
   `a69732513e54d3c8…`), which is a measurement of this StormLib build on this machine for these
   inputs and not a promise from StormLib's contract.
-- **Adding a member has never been tested against the engine.** The pipeline refuses it by default
-  and warns when permitted. That warning is the whole of the evidence.
+- **An added member is accepted, but only in the weak sense.** Acceptance rung 5 grew `imp.mpq` by
+  one member on 2026-09-20 and the engine ran it. Nothing asks for that member, so this is
+  tolerance, not readability. The pipeline still refuses adding by default and still warns when
+  permitted; the warning now derives its text from the record.
 - **Compaction is off and stays off.** `SFileCompactArchive` fails with `ERROR_UNKNOWN_FILE_NAMES`
   on any archive holding unnamed members, which includes vanilla `gs.mpq` and PIC5R3 `pic.mpq`.
-- **The development profile has never been created.** As of this writing the command exists and its
-  refusals are tested against fabricated directories; no `Lords of Magic Development.app` exists on
-  any machine. The first real creation is an attended step.
+- **The development profile exists and is in routine use.** `Lords of Magic Development.app` was
+  created on 2026-09-16 and has since taken every attended install; `scripts/restore-dev.sh` returns
+  it to pristine against `MANIFEST.sha256` after each one. (This bullet read "has never been
+  created" until 2026-09-20, four sittings after the fact.)
 - **The case-collision test in `tests/test_mod_tree.py` skips on a case-insensitive filesystem**,
   which is the macOS default, so on this machine that one refusal is asserted by code inspection
   rather than by a passing test. The skip is reported rather than silently passing.

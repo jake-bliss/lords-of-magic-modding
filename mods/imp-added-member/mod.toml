@@ -15,6 +15,17 @@
 # The addition is checked off the screen as well: the build reopens the packed archive with
 # StormLib and resolves `iface\ladder.imp` BY NAME through the hash table, which is the same lookup
 # the engine's own Storm does.
+#
+# **Run 2026-09-20, and it passed.** The observer reported the repainted pointer still drawn with
+# the archive grown to 3,601 members, so the hash table, the block table and all 3,600 originals
+# survived. This closes the last engine-acceptance gap the roadmap named.
+#
+# **The limit, stated plainly, because this is exactly where a claim gets rounded up.** It
+# establishes that the engine TOLERATES an added member, not that it can READ one -- nothing in the
+# game asks for `iface\ladder.imp` and no on-screen observation could settle it. What is
+# established offline: `lom-mpq probe-names` reopens the packed archive and resolves that name
+# through the archive's OWN hash table, which is the lookup the engine's Storm performs, and the
+# member reads back as the bytes it was added from.
 id = "imp-added-member"
 name = "Cursor sprite, plus an added member"
 version = "0.1.0"

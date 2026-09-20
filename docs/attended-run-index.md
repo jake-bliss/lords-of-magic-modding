@@ -1,31 +1,41 @@
 # Attended run index
 
-## Status, 2026-09-19
+## Status, 2026-09-20
 
 | Item | State |
 |---|---|
-| **A1** command line of the unmeasured profiles | ✅ **DONE** — GS5R3 runs `d:\lomse.exe /*`; premise holds |
-| **A2** guard refuses per profile | ✅ **DONE** — refuses exit 1 running, permits exit 0 closed |
-| **B1** unit anchor probe | ⚠️ **RUN, NOT ANSWERED** — control passed, subject was wrong art. Redesign in progress. |
+| **A1** command line of the unmeasured profiles | ✅ **DONE** 09-19 — GS5R3 runs `d:\lomse.exe /*`; premise holds |
+| **A2** guard refuses per profile | ✅ **DONE** 09-19 — refuses exit 1 running, permits exit 0 closed |
+| **B1** unit anchor probe | ⚠️ **RUN, NOT ANSWERED** — control passed, subject was wrong art. Rebuilt around `/pyele`; ready to run. |
 | **B2** direction 0 to a bearing | ⏸ **OFFLINE FIRST** — script route refuted; chase the table builder behind `0x5AE970` |
-| **C1** PBM ByteRun1 encoder | 🔴 **QUEUED, HIGHEST VALUE** — the encoder has still never faced the engine |
-| **C2** a size-changing edit | ✅ **ALREADY DONE** — see below; this box was stale |
-| **C3** a member added, not replaced | 🔴 **QUEUED** — genuinely never attempted, and it blocks new art |
-| **C4** two members in one build | ✅ **ALREADY DONE** — see below; this box was stale |
-| **C5** first `imp.mpq` run | 🔴 **QUEUED** — the last wholly-untouched archive |
-| **C6** load a savegame we wrote | ⏸ **BLOCKED** — encoders for the other eight sections in progress |
+| **C1** PBM ByteRun1 encoder | ✅ **DONE 09-20** — ladder rungs 3+4; member shrank, `TINY` dropped, stripe rendered clean |
+| **C2** a size-changing edit | ✅ **DONE 09-19** — cheat-keys ladder, 21→20 bytes |
+| **C3** a member added, not replaced | ✅ **DONE 09-20** — ladder rung 5; `imp.mpq` grew to 3,601 members |
+| **C4** two members in one build | ✅ **DONE 09-19** — acceptance rungs 6–9 |
+| **C5** first `imp.mpq` run | ✅ **DONE 09-20** — ladder rungs 0+1, 2; repack accepted and our IMP pixels rendered |
+| **C6** load a savegame we wrote | 🔴 **QUEUED, NOW UNBLOCKED** — all nine sections encode, 31/31 byte-identical |
 
-**Two boxes closed without anyone noticing.** C2 and C4 were both satisfied by runs already made,
-and the roadmap went on publishing them as limits until 2026-09-19. C2 fell to the cheat-keys
-ladder: `/cheat_keys false def` -> `/cheat_keys true def` is 21 bytes to 20, the archive shipped,
-and the engine ran it. C4 fell to acceptance rungs 6-9, which rewrote two members in each of two
-archives in one build. Neither was the point of its run, which is exactly why neither was noticed.
-The limits are now derived from the recorded runs by `tools/engine_acceptance.py` rather than
-typed beside them, so this cannot recur silently.
+**Group C is closed.** Every engine-acceptance gap on this sheet has been run. The ladder that
+`docs/engine-acceptance-ladder.md` describes is complete — all ten rungs, across four sittings.
 
-**What that leaves as the real frontier:** adding a member rather than replacing one (C3), and
-`imp.mpq` in any form (C5). Those two together are what stand between this project and shipping
-**new art**. Everything needed for a gameplay or balance mod is already proven.
+**What that means for modding.** The two things standing between this project and shipping **new
+art** were adding a member and touching `imp.mpq` at all. Both fell on 2026-09-20. Sprites, images,
+audio, GameScript and savegames all now have a proven path from this pipeline into the running
+engine. `docs/roadmap.md`'s per-archive regions carry the exact limits that remain, derived from the
+runs rather than typed beside them.
+
+**What is left on this sheet:** B1 (rerun, the redesigned probe), B2 (offline chase first), and C6
+(newly unblocked). None of them is an acceptance question any more — they are measurement questions.
+
+### Limits that survived the sitting
+
+Stated here because a clean sweep is exactly when a limit gets rounded away:
+
+- The engine **tolerates** an added member. Whether it can **read** one is untested and no on-screen
+  observation could settle it — nothing asks for `iface\ladder.imp`.
+- `imp.mpq` has never been shown a **size-changing** member edit. All three of its rungs were
+  length-preserving by construction.
+- A `TINY` thumbnail **regenerated** rather than dropped.
 
 
 Every measurement that needs a human at the keyboard, ordered so one sitting closes as many as
@@ -168,11 +178,26 @@ any compass claim.
 
 ## Group C — needs a mod built first
 
-These are the engine-acceptance gaps. The engine has only ever been shown:
-**one member, replaced not added, length-preserving, storage class `0x80010100`** — plus the
-`0x80010000` STORED class proven by rungs 6–9 on 2026-09-19.
+These were the engine-acceptance gaps. **All of them are now closed** — C2 and C4 on 2026-09-19,
+C1, C3 and C5 on 2026-09-20. Both storage classes, size-changing edits, multi-member builds and an
+added member have all been shown to the engine. Each box below keeps the brief it was written
+against, with its outcome quoted above it, so the prediction can be read against the result.
 
-### C1. The PBM ByteRun1 encoder, in front of the engine 🔴 HIGHEST VALUE
+### C1. The PBM ByteRun1 encoder, in front of the engine ✅ CLOSED 2026-09-20
+
+> **Ran as ladder rungs 3 and 4, and passed.** Rung 3 re-encoded `lbm\newgame.lbm` with the shipped
+> pixels: 302,432 -> 302,714 bytes, every ByteRun1 packet repacked, and the menu was reported
+> unchanged. Rung 4 filled a rectangle: 302,432 -> **256,996** bytes -- the member *shrank* -- and
+> the observer reported a clean straight-edged red stripe with the surrounding art intact and all
+> four screen edges untouched. **Observed in gameplay, 2026-09-20.**
+>
+> The `TINY` drop was the real question and it is answered: rung 4's member carries no thumbnail and
+> nothing broke. That was corpus inference (128 of 1,045 shipped images carry no `TINY`) until now.
+>
+> Straight edges are the part `pbm_patch.py` could not have produced -- it repaints whole runs and
+> leaves a ragged edge -- so this is the encoder, not the old mechanism wearing a new name.
+
+The brief this box was written against:
 
 **The single highest-value run available.** `pic.mpq` ran on 2026-09-18 — but with
 `tools/pbm_patch.py`, which rewrites only the *data byte* of an existing repeat packet. A two-byte
@@ -209,9 +234,21 @@ the limit every engine-acceptance marker repeats, and it caps every format deliv
 C1 fails, this isolates whether length or the encoder was responsible — so build both before the
 sitting.
 
-### C3. A member added rather than replaced
+### C3. A member added rather than replaced ✅ CLOSED 2026-09-20
 
-Never attempted. `allow_new_members` exists and is deliberately gated behind two separate acts.
+> **Ran as ladder rung 5, and passed.** `iface\ladder.imp` -- a member no shipped archive holds --
+> was added to `imp.mpq` alongside rung 2's repainted cursor, taking the archive to 3,601 members.
+> The repainted pointer still drew, so the hash table, the block table and all 3,600 originals
+> survived the archive growing. **Observed in gameplay, 2026-09-20.**
+>
+> ⚠️ **This establishes tolerance, not readability.** Nothing in the game asks for
+> `iface\ladder.imp` and no on-screen observation could settle whether the engine can read an added
+> member. What is established offline: `lom-mpq probe-names` resolves the name through the archive's
+> own hash table -- the lookup Storm performs -- and the member reads back as the bytes it was added
+> from.
+
+The brief this box was written against: never attempted. `allow_new_members` exists and is
+deliberately gated behind two separate acts.
 
 ### C4. Two members in one build ✅ CLOSED 2026-09-19
 
@@ -224,7 +261,26 @@ Never attempted. Nothing establishes that a *large* mod loads — every acceptan
 member. Note rungs 6–9 did rewrite two members across two archives, so this is partly addressed;
 confirm against the ladder outcome before spending a sitting on it.
 
-### C5. First `imp.mpq` run
+### C5. First `imp.mpq` run ✅ CLOSED 2026-09-20
+
+> **Ran as ladder rungs 0+1 and 2, and passed.** Rung 0+1 repacked `imp.mpq` under the recovered
+> names with the cursor member re-emitted byte-identically by our IMP encoder; the pointer was
+> reported unchanged. Rung 2 repainted it white by eight disjoint palette-index swaps at unchanged
+> payload length, and the observer reported the change. **Observed in gameplay, 2026-09-20.**
+>
+> The sprite pipeline is no longer offline-only. Every IMP this project had ever written landed in a
+> loose `.imp`, and loose files were measured on 2026-09-16 not to override MPQ members -- so until
+> this run, no IMP we wrote had ever been read by the engine.
+>
+> **The pointer-enumeration worry, addressed rather than dismissed.** The stated risk was that the
+> IMP writer rewrites every absolute pointer *the repo has identified* and that the enumeration
+> being complete was not measured -- header bytes 12-25 are read by nothing here. Rungs 0+1 and 2
+> both passed, which is evidence against a hidden pointer in the path these frames exercise. It is
+> not proof of completeness: both rungs were length-preserving by construction, so a pointer that
+> only matters when offsets move was never put under load. **A size-changing `imp.mpq` edit remains
+> untested and is the honest next rung.**
+
+The brief this box was written against:
 
 **`imp.mpq` has never been repacked or put in front of the engine at all.** It is the largest
 wholly-untouched archive, and the entire sprite pipeline is offline-only as a result.

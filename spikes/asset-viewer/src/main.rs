@@ -6221,9 +6221,12 @@ fn parse_flag(value: &str) -> Result<bool, String> {
 
 /// Create a map from nothing, composing only byte patterns the engine was observed writing.
 ///
-/// The engine has never been asked to load a map this project created, and no map anywhere has
-/// ever been non-square, so both are warned about at the point of use rather than only in a
-/// document nobody reads at the terminal.
+/// **Both of this function's old warnings were retired by the attended `mapload` probe on
+/// 2026-09-17.** The engine loaded a map created from nothing by this code and re-saved it
+/// byte-identically, and it loaded a **non-square** map too -- the first artifact here that no
+/// prior observation covered. See `docs/mapload-run-sheet.md`. The warning is kept at the point of
+/// use, now stating what was measured rather than what was unknown, because a terminal user is the
+/// one who needs it.
 fn create_map(width: u32, height: u32, terrain_type: u32, output: &Path) -> Result<(), String> {
     let map = MapAsset::create(width, height, terrain_type).map_err(|error| error.to_string())?;
     let encoded = map.to_bytes().map_err(|error| error.to_string())?;

@@ -45,6 +45,7 @@ from mpq_shape import Member, read_manifest  # noqa: E402
 # findings and must not import this one. They are re-exported here so callers keep one import.
 from asset_validate import ERROR, NOTE, WARNING  # noqa: E402
 from asset_validate import is_image_member, validate_image  # noqa: E402
+from engine_acceptance import ACCEPTANCE  # noqa: E402
 
 SEVERITY_ORDER = {ERROR: 0, WARNING: 1, NOTE: 2}
 
@@ -233,10 +234,8 @@ def check_member_resolution(
                         WARNING,
                         "new-member",
                         source.relative,
-                        f"{source.member!r} is not in the base archive and is being ADDED. No "
-                        "evidence exists that the engine tolerates a member added to an archive: "
-                        "every engine-verified write so far has replaced an existing member. "
-                        "This is Inferred, and untested.",
+                        f"{source.member!r} is not in the base archive and is being ADDED. "
+                        + added_member_evidence(source.archive),
                     )
                 else:
                     report.add(
@@ -244,9 +243,9 @@ def check_member_resolution(
                         "new-member",
                         source.relative,
                         f"{source.member!r} is declared in new_members but allow_new_members is "
-                        "false. Adding a member is refused by default because it has never been "
-                        "put in front of the engine; set allow_new_members = true to accept "
-                        "that risk deliberately.",
+                        "false. Adding a member stays gated behind a deliberate act; set "
+                        "allow_new_members = true to accept it. "
+                        + added_member_evidence(source.archive),
                     )
                 continue
 
@@ -714,6 +713,66 @@ def check_image_content(tree: ModTree, report: ValidationReport) -> None:
     )
 
 
+def acceptance_note(archive: str) -> str:
+    """What the engine has and has not been shown for one archive, DERIVED from the record.
+
+    These sentences used to be typed here, and that is how this validator came to print three
+    limits that recorded runs had already refuted -- "no rewritten imp.mpq has ever been in front
+    of the engine" survived the run that refuted it, because the run was recorded in
+    `tools/engine_acceptance.py` and the warning was a string literal in this file. A reader
+    running `validate` is exactly the reader who acts on it, so it is the worst place for a stale
+    claim to live. The facts are the source; this only renders them.
+    """
+    acceptance = ACCEPTANCE[archive]
+    if not acceptance.runs:
+        limits = "; ".join(acceptance.not_established)
+        return (
+            f"No {archive} this pipeline wrote has been put in front of the engine. Not "
+            f"established: {limits}. See docs/engine-acceptance-ladder.md."
+        )
+    dates = sorted({run.date for run in acceptance.runs})
+    when = dates[0] if len(dates) == 1 else f"{dates[0]} and {dates[-1]}"
+    limits = "; ".join(acceptance.not_established)
+    return (
+        f"The engine DOES read a rewritten {archive} -- Observed in gameplay {when} -- so this is "
+        f"a note about scope, not a warning that the archive is untried. Not established: "
+        f"{limits}. See docs/engine-acceptance-ladder.md."
+    )
+
+
+def added_member_evidence(archive: str) -> str:
+    """Whether adding a member has been shown to the engine, derived the same way.
+
+    Kept separate from `acceptance_note` because it answers a different question and is reached
+    from a different place: this fires per added member, and the note fires per archive.
+    """
+    proven = sorted(
+        name
+        for name, acceptance in ACCEPTANCE.items()
+        if any(run.disposition.name == "ADDED" for run in acceptance.runs)
+    )
+    if not proven:
+        return (
+            "No evidence exists that the engine tolerates a member added to an archive: every "
+            "engine-verified write so far has replaced an existing member. This is Inferred, and "
+            "untested."
+        )
+    where = ", ".join(proven)
+    same = archive in proven
+    scope = (
+        f"in {archive} itself"
+        if same
+        else f"in {where}, which is a different archive from {archive}"
+    )
+    return (
+        f"The engine has been shown an archive that GREW a member ({scope}) and ran it. That "
+        "establishes TOLERANCE, not readability: nothing in the game asked for the added member, "
+        "and no on-screen observation could settle whether the engine can read one. The added "
+        "member was shown to resolve only through the archive's own hash table. See "
+        "docs/engine-acceptance-ladder.md."
+    )
+
+
 def check_unvalidatable_content(tree: ModTree, report: ValidationReport) -> None:
     """Say plainly what this validator does not read at all."""
     unread = [
@@ -737,14 +796,11 @@ def check_unvalidatable_content(tree: ModTree, report: ValidationReport) -> None
             "engine-acceptance",
             str(tree.root),
             f"{len(audio_members)} member(s) target sndfx.mpq or special.mpq. Every member of "
-            "both is stored 0x80010000 (EXISTS | ENCRYPTED, STORED), and every archive the engine "
-            "has been observed accepting from this pipeline -- gs.mpq 2026-09-16, pic.mpq "
-            "2026-09-18 -- was 0x80010100, IMPLODE. This is a storage class the engine has never "
-            "been asked to accept from us, so it is a different question from another image "
-            "member rather than a repeat of one. A further trap: 1,214 member NAMES are held by "
-            "BOTH archives, and nothing known says which one the engine opens, so a change to "
-            "one of them alone has no unambiguous null result. See "
-            "docs/engine-acceptance-ladder.md.",
+            "both is stored 0x80010000 (EXISTS | ENCRYPTED, STORED). A further trap: 1,214 "
+            "member NAMES are held by BOTH archives, so a change to one of them alone has no "
+            "unambiguous null result -- rung 7 gave each archive a different tone and rung 8 "
+            "exchanged them, which is how both members were pinned to sndfx.mpq. "
+            + acceptance_note("sndfx.mpq"),
         )
 
     imp_members = [source for source in tree.members if source.archive == "imp.mpq"]
@@ -753,14 +809,10 @@ def check_unvalidatable_content(tree: ModTree, report: ValidationReport) -> None
             WARNING,
             "engine-acceptance",
             str(tree.root),
-            f"{len(imp_members)} member(s) target imp.mpq. NO rewritten imp.mpq has ever been in "
-            "front of the engine, and no IMP this repository wrote has ever been read by it: "
-            "every one landed in a loose `.imp`, and loose files do not override MPQ members "
-            "(measured 2026-09-16). The archive's storage class is not the open question -- all "
-            "3,600 members are 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), the class the engine "
-            "accepted on 2026-09-16 -- and neither is addressing, since every member resolves "
-            "under reports/member-names/all-profiles-imp-recovered.txt. What is open is whether "
-            "the engine reads the result. See docs/engine-acceptance-ladder.md.",
+            f"{len(imp_members)} member(s) target imp.mpq. Addressing is not an open question: "
+            "every member resolves under "
+            "reports/member-names/all-profiles-imp-recovered.txt, and the archive carries no "
+            "(listfile). " + acceptance_note("imp.mpq"),
         )
 
     pic_members = [source for source in tree.members if source.archive == "pic.mpq"]
@@ -769,13 +821,7 @@ def check_unvalidatable_content(tree: ModTree, report: ValidationReport) -> None
             WARNING,
             "engine-acceptance",
             str(tree.root),
-            f"{len(pic_members)} member(s) target pic.mpq. The engine DOES read a rewritten "
-            "pic.mpq -- Observed in gameplay 2026-09-18, mods/newgame-picslice -- so this is a "
-            "note about scope, not a warning that the archive is untried. What that run covered "
-            "was ONE member, REPLACED rather than added, edited WITHOUT changing its length. A "
-            "member whose size changes has not been put in front of the engine, and neither has "
-            "an added one. Storage class is not in question: all 1,071 members are 0x80010100 "
-            "(EXISTS | ENCRYPTED | IMPLODE), the class the engine accepted on 2026-09-16.",
+            f"{len(pic_members)} member(s) target pic.mpq. " + acceptance_note("pic.mpq"),
         )
 
 

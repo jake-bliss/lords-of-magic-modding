@@ -13,8 +13,9 @@ description = "Raise Order's Footmen hit points, as the smallest change that is 
 # The profile this mod's source files were taken from and are validated against. The baseline.
 base_profile = "vanilla"
 
-# Members this mod ADDS to an archive, as opposed to replaces. Both of these stay at their
-# defaults here, and should stay there unless somebody has put an added member in front of the
-# engine: nothing in this project ever has. See docs/build-pipeline.md.
+# Members this mod ADDS to an archive, as opposed to replaces. Both stay at their defaults here,
+# because this mod has no reason to add anything. An added member HAS been put in front of the
+# engine -- acceptance rung 5, `imp.mpq`, 2026-09-20 -- but that established tolerance, not
+# readability: nothing in the game asked for the added member. See docs/build-pipeline.md.
 new_members = []
 allow_new_members = false

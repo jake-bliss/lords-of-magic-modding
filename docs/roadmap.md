@@ -255,9 +255,13 @@ since it describes a unit that does not exist yet and so has no level, leader or
 applied -- which is what the map panel demonstrably does have. A future numeric slice should be read
 there, not on the map.
 
-**Not established by Phase 4.** This was one member, one archive, one compression class. Adding a
-member rather than replacing one has still never been tried, and nothing here says a *large* mod
-loads -- only that a correct one-member rewrite does.
+**Not established by Phase 4.** This was one member, one archive, one compression class, and
+nothing here says a *large* mod loads -- only that a correct one-member rewrite does. **Two of the
+three limits this paragraph recorded have since fallen:** a size-changing edit was accepted on
+2026-09-19 (the cheat-keys ladder, 21 bytes to 20) and a member *added* rather than replaced on
+2026-09-20 (acceptance rung 5, `imp.mpq` grown to 3,601 members). Both are recorded in the rendered
+per-archive regions below, which are the authority; this paragraph states what **Phase 4 alone**
+established and is left standing for that reason.
 
 <!-- The two blocks marked `engine-acceptance:<archive>` are RENDERED from
      tools/engine_acceptance.py. Do not edit them by hand: change the facts there and paste
@@ -265,7 +269,7 @@ loads -- only that a correct one-member rewrite does.
      marked region to equal the render, for every archive with a run -- which is what keeps a
      claim here and the caveat in every build.json from drifting apart. -->
 <!-- engine-acceptance:gs.mpq -->
-**Not established.** 1 member of one `gs.mpq`, replaced rather than added, with a length-preserving edit made by the mod pipeline's own writer, 2026-09-16. The attended 2026-09-16 round trip of an MPQ_FILE_IMPLODE member of gs.mpq. 1 member of one `gs.mpq`, replaced rather than added, with a size-changing edit made by the mod pipeline's own writer, 2026-09-19. The cheat-keys ladder flipped a single token in a member of gs.mpq, which made the member shorter, and the debug hotkey tier it gates was then exercised in gameplay. The engine has not been shown a member added to an archive rather than replaced. The engine has not been shown a second member of the same archive in one build. The engine has not been shown any flag combination other than 0x80010100. The member carried flags 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), which is the only storage class any run has covered. `imp.mpq` remains untested.
+**Not established.** 1 member of one `gs.mpq`, replaced rather than added, with a length-preserving edit made by the mod pipeline's own writer, 2026-09-16. The attended 2026-09-16 round trip of an MPQ_FILE_IMPLODE member of gs.mpq. 1 member of one `gs.mpq`, replaced rather than added, with a size-changing edit made by the mod pipeline's own writer, 2026-09-19. The cheat-keys ladder flipped a single token in a member of gs.mpq, which made the member shorter, and the debug hotkey tier it gates was then exercised in gameplay. The engine has not been shown a member added to an archive rather than replaced. The engine has not been shown a second member of the same archive in one build. The engine has not been shown any flag combination other than 0x80010100. The member carried flags 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), which is the only storage class any run has covered.
 <!-- /engine-acceptance:gs.mpq -->
 
 The `pic.mpq` half of this paragraph was closed on 2026-09-18; see the `pic.mpq` slice under Phase 5.
@@ -288,7 +292,9 @@ The `pic.mpq` half of this paragraph was closed on 2026-09-18; see the `pic.mpq`
 - [x] IMP placement write-back (`--set-imp-placement`, `--imp-placement-for`).
 - [x] Bind `.smp` tilesets per encounter rather than per map class; 169 of 337 resolve and 168 honestly refuse.
 - [x] A map editor drivable with a mouse (`--serve`), loopback-only, with terrain paint, undo and Save As.
-- [x] Put a rewritten `pic.mpq` in front of the engine. **Observed in gameplay 2026-09-18** — see the section below.
+- [x] Put a rewritten `pic.mpq` in front of the engine. **Observed in gameplay 2026-09-18** — see the section below. Re-run with the **full ByteRun1 encoder** and a member that *shrank* (302,432 → 256,996), **Observed in gameplay 2026-09-20** as acceptance rungs 3 and 4.
+- [x] Put a rewritten `imp.mpq` in front of the engine. **Observed in gameplay 2026-09-20** — acceptance rungs 0+1 and 2. The repack is accepted and the engine renders pixels our IMP encoder wrote; see the `imp.mpq` section below. Until this run no IMP this project wrote had ever been read by the engine, because loose `.imp` files were measured on 2026-09-16 not to override MPQ members.
+- [x] Add a member an archive never had. **Observed in gameplay 2026-09-20** — acceptance rung 5 took `imp.mpq` to 3,601 members and the engine ran it. Establishes **tolerance**, not readability: nothing in the game asks for the added member.
 - [x] Resolve the IMP chroma key and the shadow blend against the game (2026-09-17). Shadow index 1 draws the background at half brightness as a **palette remap, not per-pixel arithmetic**, on 100% of the 903 and 889 pixels measured; palette entries are stored **B, R, G, pad**, not RGB, and the decoder was corrected. Both are in [hotspots](hotspots.md). The `[ ]` box below is what is LEFT of issue #2, not the whole of it.
 - [x] Decode IMP animation records ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2) partially — the timing premise it was filed on is **Refuted**; see the issue for the three-way split it became).
 - [x] Prove candidate placed-sprite field behavior, and find out what the six layouts' constant tail words mean. **Observed in gameplay 2026-09-18** by a controlled save-diff with a human driving the Map Editor — macOS blocks synthetic input to Wine, but not a person. The `+24` attribute field is the encounter LEVEL in its high nibble; `+34` is an encounter reference with `0xffffffff` for none; the record count is a `u32` at tail offset 0; the footer counts nothing and is written by the editor. The tail-word question is answered from the other side: **a no-op load-and-save rewrites 53-byte records as 49-byte ones**, dropping four bytes each while preserving every modelled field and all 16,384 cells, so those bytes are not information the engine needs — and the caution that a non-49-byte record is Inferred is retired, because the editor normalises *to* 49. Still open: which registry assigns the `+34` id (Life 568, Death 569 — adjacent, so an ordered registry, but **Refuted** as the encounter catalogue). See [map format](map-format.md).
@@ -362,7 +368,7 @@ reading the image rather than on knowing where the engine draws it was wrong abo
 the observation succeeded anyway because the main menu is the first thing drawn.
 
 <!-- engine-acceptance:pic.mpq -->
-**Not established.** 1 member of one `pic.mpq`, replaced rather than added, with a length-preserving edit made by tools/pbm_patch.py, 2026-09-18. The engine read an archive this pipeline built from pic.mpq, and a human read the change off the screen. The engine has not been shown an edit that changes a member's size. The engine has not been shown a member added to an archive rather than replaced. The engine has not been shown a second member of the same archive in one build. The engine has not been shown the full ByteRun1 encoder, which no run has used. The compression choice is not Inferred: all 1,071 baseline members carry flags 0x80010100, the same storage class the gs.mpq run proved. `imp.mpq` remains untested.
+**Not established.** 1 member of one `pic.mpq`, replaced rather than added, with a length-preserving edit made by tools/pbm_patch.py, 2026-09-18. The engine read an archive this pipeline built from pic.mpq, and a human read the change off the screen. 1 member of one `pic.mpq`, replaced rather than added, with a size-changing edit made by the ByteRun1 PBM encoder, 2026-09-20. The acceptance ladder re-encoded the main-menu backdrop with the ByteRun1 encoder, once with the shipped pixels and once with a filled rectangle; the member shrank, its TINY thumbnail was dropped, and the observer read the straight-edged rectangle off the screen with the surrounding art intact. The engine has not been shown a member added to an archive rather than replaced. The engine has not been shown a second member of the same archive in one build. The engine has not been shown a TINY thumbnail regenerated rather than dropped, which needs a downscaler this repo does not have. The compression choice is not Inferred: all 1,071 baseline members carry flags 0x80010100, the same storage class the gs.mpq run proved.
 <!-- /engine-acceptance:pic.mpq -->
 
 ### The audio archives, Observed in gameplay 2026-09-19
@@ -375,12 +381,42 @@ rung 8 exchanged the two tones and the report flipped, which is what makes it a 
 than a reading. Both members read from `sndfx.mpq`.
 
 <!-- engine-acceptance:sndfx.mpq -->
-**Not established.** 2 members of one `sndfx.mpq`, replaced rather than added, with a length-preserving edit made by the WAVE importer, 2026-09-19. The acceptance ladder wrote a tone into both audio archives and the listener named which archive the engine had opened; exchanging the two tones flipped the report. The engine has not been shown an edit that changes a member's size. The engine has not been shown a member added to an archive rather than replaced. The members carried flags 0x80010000 (EXISTS | STORED), a storage class no earlier run had covered. `imp.mpq` remains untested.
+**Not established.** 2 members of one `sndfx.mpq`, replaced rather than added, with a length-preserving edit made by the WAVE importer, 2026-09-19. The acceptance ladder wrote a tone into both audio archives and the listener named which archive the engine had opened; exchanging the two tones flipped the report. The engine has not been shown an edit that changes a member's size. The engine has not been shown a member added to an archive rather than replaced. The members carried flags 0x80010000 (EXISTS | STORED), a storage class no earlier run had covered.
 <!-- /engine-acceptance:sndfx.mpq -->
 
 <!-- engine-acceptance:special.mpq -->
-**Not established.** 2 members of one `special.mpq`, replaced rather than added, with a length-preserving edit made by the WAVE importer, 2026-09-19. The acceptance ladder wrote a tone into both audio archives and the listener named which archive the engine had opened; exchanging the two tones flipped the report. The engine has not been shown an edit that changes a member's size. The engine has not been shown a member added to an archive rather than replaced. The members carried flags 0x80010000 (EXISTS | STORED), a storage class no earlier run had covered. `imp.mpq` remains untested.
+**Not established.** 2 members of one `special.mpq`, replaced rather than added, with a length-preserving edit made by the WAVE importer, 2026-09-19. The acceptance ladder wrote a tone into both audio archives and the listener named which archive the engine had opened; exchanging the two tones flipped the report. The engine has not been shown an edit that changes a member's size. The engine has not been shown a member added to an archive rather than replaced. The members carried flags 0x80010000 (EXISTS | STORED), a storage class no earlier run had covered.
 <!-- /engine-acceptance:special.mpq -->
+
+### `imp.mpq`, Observed in gameplay 2026-09-20
+
+The acceptance ladder's rungs 0-5 put `imp.mpq` in front of the engine for the **first time**. It
+was the largest wholly-untouched archive, and the whole sprite pipeline was offline-only because of
+it. Three things were settled in one sitting, each with its own control.
+
+**Rung 0+1, the repack control.** `iface\cursors.imp` was re-emitted by our IMP pixel encoder,
+asserted byte-identical to the shipped member, and the archive repacked under the recovered names.
+The observer reported the shipped pointer unchanged -- so StormLib rewriting this archive leaves one
+the engine can still read, and the bytes it read came out of `write_frame_pixels`.
+
+**Rung 2, the pixel change.** Eight disjoint palette-index swaps repainted the gauntlet white at
+unchanged payload length (`shift=0`, the member still 90,000 bytes), leaving outline and silhouette
+alone so that "wrong colour", "wrong shape" and "unchanged" are three different observations. The
+observer reported the change. That is the engine reading our IMP pixels.
+
+**Rung 5, a member the archive never had.** `iface\ladder.imp` was added alongside rung 2's
+repaint, and the repainted pointer still drew -- so the hash table, the block table and all 3,600
+original members survived the archive growing by one.
+
+**The limit, stated plainly.** This establishes that the engine **tolerates** an added member, not
+that it can **read** one: nothing in the game asks for `iface\ladder.imp`, and no observation on
+screen could. What is established offline is that `lom-mpq probe-names` resolves that name through
+the archive's own hash table -- the same lookup Storm performs -- and that the member reads back as
+the bytes it was added from.
+
+<!-- engine-acceptance:imp.mpq -->
+**Not established.** 1 member of one `imp.mpq`, replaced rather than added, with a length-preserving edit made by the IMP pixel encoder, 2026-09-20. The repack control: the cursor member was re-emitted by the IMP encoder byte for byte, the archive was repacked under the recovered names, and the observer reported the shipped pointer unchanged. 1 member of one `imp.mpq`, replaced rather than added, with a length-preserving edit made by the IMP pixel encoder, 2026-09-20. Disjoint palette-index swaps repainted the cursor frame at unchanged payload length, and the observer reported the pointer had changed colour. 2 members of one `imp.mpq`, added rather than replaced, with a length-preserving edit made by the IMP pixel encoder, 2026-09-20. A member no shipped archive holds was added alongside the repainted cursor; the archive grew, and the observer reported the repainted pointer still drawn, so every original member survived the hash and block tables growing. The engine has not been shown an edit that changes a member's size. The engine has not been shown an added member that the engine then READS; nothing in the game asks for one, so the added member was shown to resolve only through the archive's own hash table. The member carried flags 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), which is the only storage class any run has covered.
+<!-- /engine-acceptance:imp.mpq -->
 
 
 Note that painting has never been verified by a probe loading a painted map, and the core tile

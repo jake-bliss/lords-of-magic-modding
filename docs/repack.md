@@ -179,20 +179,21 @@ Two things make that possible and should be understood as conditions, not guaran
 
 ## What this does not guarantee
 
-- **It does not prove the game runs the output** in general, though it no longer has no evidence
-  either. Two attended runs have now put archives this writer produced in front of `lomse.exe` and
-  both were read: a `gs.mpq` member on 2026-09-16 and 2026-09-18, and a `pic.mpq` member on
-  2026-09-18. Both archives are `MPQ_FILE_IMPLODE`, which is the storage class of every member of
-  `gs.mpq`, `pic.mpq` and `imp.mpq`; `sndfx.mpq` and `special.mpq` are stored and untested. Every
-  one of those runs replaced a member with one of **exactly the same size**, and none added a
-  member. Shape preserved ≠ playable.
+- **It does not prove the game runs the output** in general, though the evidence is now broad.
+  Four attended sittings have put archives this writer produced in front of `lomse.exe`, covering
+  **all five archives** the pipeline targets: `gs.mpq` (2026-09-16, 2026-09-18, and a size-changing
+  edit 2026-09-19), `pic.mpq` (2026-09-18, and the full ByteRun1 encoder at a length that shrank
+  2026-09-20), `sndfx.mpq` and `special.mpq` (2026-09-19 — the **STORED** `0x80010000` class, two
+  members each in one build), and `imp.mpq` (2026-09-20, including a member the archive never had).
+  Both storage classes are covered. Shape preserved ≠ playable, and the per-archive limits that
+  remain are rendered in [the roadmap](roadmap.md) from `tools/engine_acceptance.py`.
 - **It does not validate content.** A syntactically broken `.gs` file passes the shape check
   perfectly. Content validation is Phase 3.
 - **A replaced member is rewritten by StormLib, not reproduced.** Its compressed bytes are whatever
   StormLib produces for the declared flags. For `MPQ_FILE_COMPRESS` members the method used is PKWARE
-  DCL — an **inference** about what a 1997 engine reads, not a measurement. Every engine-verified
-  replacement so far has been an `MPQ_FILE_IMPLODE` member of `gs.mpq`. Replacing a `pic.mpq` member
-  has never been run against the game.
+  DCL — an **inference** about what a 1997 engine reads, not a measurement. Engine-verified
+  replacements now cover `MPQ_FILE_IMPLODE` members of `gs.mpq`, `pic.mpq` and `imp.mpq`, and
+  **STORED** members of `sndfx.mpq` and `special.mpq`.
 - **Determinism is measured, not proven.** It holds for this StormLib build on this machine for these
   inputs. Nothing in StormLib's contract promises it. The pinned-hash test is the tripwire.
 - **It says nothing about archives it has not seen.** Every number above is from GS5R3. Vanilla and

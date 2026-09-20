@@ -73,6 +73,8 @@ class Mechanism(Enum):
     PBM_PATCH = "tools/pbm_patch.py"
     PIPELINE_WRITER = "the mod pipeline's own writer"
     WAVE_IMPORTER = "the WAVE importer"
+    IMP_ENCODER = "the IMP pixel encoder"
+    PBM_ENCODER = "the ByteRun1 PBM encoder"
 
 
 class StorageClass(Enum):
@@ -288,13 +290,71 @@ ACCEPTANCE: dict[str, ArchiveAcceptance] = {
                 "The engine read an archive this pipeline built from pic.mpq, and a human read "
                 "the change off the screen."
             ),
-        ),),
+        ),
+            EngineRun(
+                date="2026-09-20",
+                members=1,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.SIZE_CHANGING,
+                mechanism=Mechanism.PBM_ENCODER,
+                observation=(
+                    "The acceptance ladder re-encoded the main-menu backdrop with the ByteRun1 "
+                    "encoder, once with the shipped pixels and once with a filled rectangle; the "
+                    "member shrank, its TINY thumbnail was dropped, and the observer read the "
+                    "straight-edged rectangle off the screen with the surrounding art intact."
+                ),
+            ),
+        ),
         storage_class=StorageClass.IMPLODE_BY_CENSUS,
-        also_untested=("the full ByteRun1 encoder, which no run has used",),
+        also_untested=(
+            "a TINY thumbnail regenerated rather than dropped, which needs a downscaler this "
+            "repo does not have",
+        ),
     ),
     "imp.mpq": ArchiveAcceptance(
         archive="imp.mpq",
-        also_untested=("anything at all; no imp.mpq this pipeline wrote has been run",),
+        runs=(
+            EngineRun(
+                date="2026-09-20",
+                members=1,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism=Mechanism.IMP_ENCODER,
+                observation=(
+                    "The repack control: the cursor member was re-emitted by the IMP encoder "
+                    "byte for byte, the archive was repacked under the recovered names, and the "
+                    "observer reported the shipped pointer unchanged."
+                ),
+            ),
+            EngineRun(
+                date="2026-09-20",
+                members=1,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism=Mechanism.IMP_ENCODER,
+                observation=(
+                    "Disjoint palette-index swaps repainted the cursor frame at unchanged "
+                    "payload length, and the observer reported the pointer had changed colour."
+                ),
+            ),
+            EngineRun(
+                date="2026-09-20",
+                members=2,
+                disposition=Disposition.ADDED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism=Mechanism.IMP_ENCODER,
+                observation=(
+                    "A member no shipped archive holds was added alongside the repainted cursor; "
+                    "the archive grew, and the observer reported the repainted pointer still "
+                    "drawn, so every original member survived the hash and block tables growing."
+                ),
+            ),
+        ),
+        storage_class=StorageClass.IMPLODE_PROVED,
+        also_untested=(
+            "an added member that the engine then READS; nothing in the game asks for one, so "
+            "the added member was shown to resolve only through the archive's own hash table",
+        ),
     ),
     "sndfx.mpq": ArchiveAcceptance(
         archive="sndfx.mpq",
