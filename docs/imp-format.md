@@ -1,7 +1,8 @@
 # IMP animation control: cycle mode, direction mirroring, and timing
 
 **What this file covers:** the animation-control fields of an `.imp` — which frame plays next, which
-stored facing a direction resolves to, and where the playback cadence comes from. Sprite *placement*
+stored facing a direction resolves to, where the playback cadence comes from, and how the viewer
+consumes all of that. Sprite *placement*
 is a separate solved problem and lives in [hotspots.md](hotspots.md); this file does not restate it.
 
 Everything here was read out of the engine's own decoder rather than observed in gameplay. The
@@ -232,10 +233,13 @@ a compass bearing by anything read so far. **Inferred**, not observed: direction
 one consistent rotational order. Naming them N/NE/E/… requires either a gameplay observation or a
 GameScript call site whose bearing is known independently.
 
-## Timing: there is none in the file
+## Timing: there is none in the *file*
 
 This is the part of issue #2 that has no answer of the shape the issue expects, and saying so
-plainly is the honest result.
+plainly is the honest result. It is only half the answer, though: the interval exists, it is simply
+not in the asset. See [timing: not in the asset, but in the
+engine](#timing-not-in-the-asset-but-in-the-engine) for where it is. This section establishes the
+negative that sends the question there.
 
 **Claim, Observed in a local binary: no field of an `.imp` is read by `lomse.exe` as a duration,
 delay, frame rate or tick count.**
@@ -385,10 +389,13 @@ Cadence is therefore entirely the caller's. Two callers show the two shapes it t
   global counter, one modulus per object: every terrain sprite in a scene animates off the same
   clock at the same rate, differing only in phase.
 
-So the viewer's fixed interval is **not** a guess that better metadata would replace — the metadata
-does not exist. The right fix is a single global interval, which is a property of the engine's tick
-loop and not of the IMP container. What that interval is in milliseconds has **not** been
-established here; see [what is still open](#what-is-still-open).
+So the interval is **not** a guess that better sprite metadata would replace — that metadata does
+not exist. It is a single global interval, a property of the engine's tick loop rather than of the
+IMP container. **Answered 2026-09-19**: that loop's period is the field at object `+0x228AC`, and
+`gs/modeinfo.gs` sets it per screen mode. See [timing: not in the asset, but in the
+engine](#timing-not-in-the-asset-but-in-the-engine). Note that the `[0x005AF134]` in the
+terrain-sprite driver above is the *counter* this scheme advances, not the period — an earlier
+revision of this page confused the two.
 
 ### Byte 2: the field that is not settled
 
@@ -562,15 +569,202 @@ measurable property except the pixels they draw.
 Until then: 0 of 41,373 frames are observed row-padded, 40,571 of them by an instrument that could
 have seen it, 752 by one that could not, and 50 by one where the file settles nothing.
 
+## Issue #2's acceptance criterion, restated
+
+The issue asks the viewer to derive playback timing from verified metadata, and that conflates two
+different questions. Separating them is the answer:
+
+**The asset says which frame comes next. The engine's screen mode says how long to wait.**
+
+- **The `.imp` carries no timing at all.** No field of one is read by `lomse.exe` as a duration,
+  delay, rate or tick count — the bounded negative above, **Observed in a local binary**. So no
+  amount of further work on the asset can produce an interval, and the half of the criterion that
+  expected one from the file is unsatisfiable as written.
+- **`AnimRules` determines frame order, end-of-cycle behaviour, reflection, and which stored facing
+  each direction draws** — and only those.
+- **The interval is nevertheless sourceable**, from the engine and from `gs.mpq`, not from the
+  sprite. See the next section.
+
+**Restated:** the viewer plays an `.imp` using the animation rules recovered from `lomse.exe` for
+frame order, reflection and mirrored facings, and takes its frame interval from the engine's
+per-screen-mode tick time rather than from the asset or from a constant of its own.
+
+## Timing: not in the asset, but in the engine
+
+**Corrected and superseded, 2026-09-19.** An earlier revision of this page said the interval was
+"none in the file" and stopped there, and the viewer shipped a 100 ms constant labelled unsourced.
+The first clause is still true and still matters. The stopping was premature: the period is in the
+engine, and it is a number.
+
+### The period field
+
+| Claim | Evidence class | Proof |
+| --- | --- | --- |
+| The tick method at `0x00482230` reads the wall clock from `KERNEL32!GetTickCount` | Observed in a local binary | it loads `[0x0054D0E8]` into `ebx` and `call ebx`; parsing the import directory resolves that IAT slot to `KERNEL32.dll!GetTickCount` |
+| It divides the elapsed time by a field at object `+0x228AC` to get how many ticks to catch up | Observed in a local binary | `cdq` / `idiv dword [esi+0x228AC]` at `0x004822FF` |
+| That field's constructor default is **100** | Observed in a local binary | `mov dword [ebp+0x228AC],0x64` — bytes `c7 85 ac 28 02 00 64 00 00 00` — at `0x0047F7EA`, the only occurrence of that encoding in the image |
+| The object base is `0x5AA12C`, so the field is `0x005CC9D8` | Observed in a local binary | from the parallel binary-analysis pass; `0x5AA12C + 0x228AC = 0x5CC9D8` is arithmetic, the base is theirs and was not re-derived here |
+
+So the viewer's old "arbitrary" 100 ms was in fact the engine's **pre-script default** — which is a
+coincidence worth naming rather than a vindication, because that default is overwritten before any
+gameplay happens.
+
+### Refuted, 2026-09-19: `0x005AF134` is not the period
+
+This page previously filed the tick period as unknown and pointed at `0x005AF134`, guessing its
+writer was reached through `0x005AF130 + 4`. Both halves are wrong.
+
+- `0x005AF134` is a **tick counter**, not a period. The GameScript operator `combattime`
+  (`0x00464F60`) is `mov ecx,[0x005AF134]` — **Observed in a local binary**, the bytes at that
+  address are `8b 0d 34 f1 5a 00`. It increments by one per tick at `0x00482796` and is reset at
+  level and combat start (`0x0045B5FA`, `0x0048191D`). The five animation sites use it as
+  `(phase[obj+0x28] + [0x5AF134]) mod CycleLength`: it is the modulo *dividend*, an advancing
+  counter.
+- The base is `0x5AA12C + 0x5008`, not `0x5AF130 + 4`. `0x5AF130` is independently known as
+  `currentturn`, which cross-checks that object layout.
+
+### What the screen modes set it to, Observed in the corpus
+
+`gs/modeinfo.gs` in `gs.mpq` assigns the tick time per screen mode at load. Read out of the shipped
+archive on 2026-09-19, and **identical in all three distinct `gs.mpq` files on this machine** —
+stock (Steam build and `Lords of Magic Development`, byte-identical), 3.02, and GS5R3:
+
+```
+SCROLLINGMAP_SCREEN 66 setmodeticktime
+COMBAT_SCREEN 121 setmodeticktime
+LOCATION_SCREEN 121 setmodeticktime
+REGION_SCREEN 66 setmodeticktime
+WORLD_SCREEN 66 setmodeticktime
+INTRO_SCREEN 66 setmodeticktime
+SETUP_SCREEN 66 setmodeticktime
+```
+
+It is also **user-adjustable**, and the range is the game's own, not a viewer invention:
+`gs/hotkey.gs` steps the map and combat tick times by 11 ms and clamps them with
+`11 sub 11 max` / `11 add 330 min`; `gs/hotkey.gs` also restores 66 and 121 outright;
+`gs/Dlg/opdlg.gs:547,579` drives the same field from the options dialog. All **Observed in the
+corpus**.
+
+**The clamp is spelled differently in GS5R3, and the spelling is not the semantics.** Measured
+2026-09-19 across all three distinct archives, four occurrences of each form:
+
+| profile | `gs.mpq` members | faster key | slower key | `gs/standard.gs` defines |
+| --- | --- | --- | --- | --- |
+| stock (Steam build, `Lords of Magic Development`) | 1,688 | `11 sub 11 max` | `11 add 330 min` | `/min` with `gt`, `/max` with `lt` |
+| 3.02 | 1,691 | `11 sub 11 max` | `11 add 330 min` | `/min` with `gt`, `/max` with `lt` |
+| GS5R3 | 1,700 | `11 sub 11 min` | `11 add 330 max` | `/min` with `lt`, `/max` with `gt` |
+
+GS5R3 swaps the two call sites **and** reverses the two definitions, under ManTerA's own comment
+`WILL WORK TO REVERSE THE TWO ABOVE BY USING THE TWO BELOW`. The two changes cancel: in GS5R3 the
+token `min` computes a maximum, so `11 sub 11 min` is the same floor of 11 that `11 sub 11 max` is
+elsewhere, and `11 add 330 max` is the same ceiling of 330.
+
+**The effective clamp is therefore identical in all four installs: step 11, floor 11, ceiling 330**,
+which is what the viewer implements. An earlier revision of this section read the swapped tokens at
+face value and claimed GS5R3's speed keys "move to an extreme instead of stepping". That was an
+inference from the spelling presented as an observation, and it is **Refuted** — by
+`gs/standard.gs`, which defines what the spelling means.
+
+In GameScript both are `/NAME{2 copy CMP{exch pop}{pop}ifelse}bind def`. With `a b` on the stack,
+`2 copy` gives `a b a b`, `CMP` pops two and leaves a boolean, the true branch `{exch pop}` leaves
+`b` and the false branch `{pop}` leaves `a`. So the body returns `b` when the comparison holds:
+`gt` yields the smaller operand and `lt` the larger one. Read the comparison, never the name.
+
+### The honest limit
+
+**Inferred, not observed:** which of the five animation sites belongs to which screen mode was not
+traced. The viewer starts sprite playback at **66 ms** because the terrain-sprite driver at
+`0x50C334` is a map-screen site — that is reasoning from where the driver sits, not a measurement
+of which period it runs under. 121 ms is one keypress away in the viewer for exactly that reason,
+and this should not be promoted to an observation without tracing the sites.
+
+## The viewer plays by these rules
+
+`src/imp_playback.rs` joins the decoded sprite to the recovered rules, and `--view-imp` consumes
+it. The playhead is the engine's own state — an action, a direction, and a position in the *cycle*
+— rather than the global frame index the viewer used to walk.
+
+Because the rules come from the binary, `--view-imp` now needs one. It takes `--exe PATH`, and
+falls back to a `lomse.exe` sitting beside the archive, which is where an installed archive is.
+With neither it **refuses to open** rather than inventing an order. Whatever it is given goes
+through `recover`, which refuses a binary that does not hold the decoder this page read.
+
+Keys: arrows scrub the cycle (left/right) and turn through the directions (up/down), page up/down
+change the action, space plays, `C` cycles the display mode, `T` switches between the two screen
+modes' tick times, and `-` / `=` step the interval by 11 ms. The title bar names the cycle mode,
+the direction and whether it is mirrored, the position in the cycle, and the interval with where
+that interval came from.
+
+### What the fold changed, Observed in the corpus
+
+Measured 2026-09-19 against `imp.mpq` (1,800 `.imp` members, 4,667 sequence records) with the rules
+recovered from `lomse.exe` 3.02. Each row is the previous walk — "advance one index inside the
+current facing, wrap at its end" — compared against the fold.
+
+| | Sequences | What was wrong before |
+| --- | ---: | --- |
+| Ping-pong, mode 4 | **955** | played `0,1,…,N−1` and jumped back to 0 instead of reflecting |
+| One-shot, mode 1 | **5** | looped instead of holding the last frame |
+| Five facings, eight directions | **2,234** | directions 5, 6 and 7 were unreachable |
+| Any synthesised direction | **2,304** | as above, at facing counts 3, 5, 7, 9, 13 and 33 |
+| Synthesised directions, total | **7,810** | drawn by mirroring an earlier facing |
+
+Two of those numbers need their arithmetic stated, because both look wrong at a glance:
+
+- **2,304, not 2,388.** 2,388 sequences have the mirror bit set *and* two or more facings. The 84
+  with exactly two advertise `2 × 2 − 2 = 2` directions, and both are below the facing count, so
+  the fold is never reached and nothing is synthesised. Mirroring is set on them and inert.
+- **7,810** is `2,234 × 3 + 28 × 31 + 15 × 5 + 13 × 7 + 8 × 1 + 6 × 11`, i.e. the per-facing-count
+  rows of the direction table above. The corpus total and the table agree exactly; neither was
+  fitted to the other.
+
+**941 sequences, not 960, actually change what the viewer shows.** 955 ping-pong plus 5 one-shot is
+960, and 19 of those have a one-frame facing: a one-frame cycle reflects onto itself and holds the
+frame it was already showing, so the rule applies and changes nothing visible. The corpus test
+asserts 941 and 19 separately and asserts that they sum to 955 + 5, which is what would catch a
+sequence outside those two modes starting to differ.
+
+### What is deliberately the viewer's own behaviour, not the engine's
+
+Three things, each of which would be a lie if filed as engine behaviour:
+
+- **Starting at the map screens' 66 ms.** The number itself is the engine's
+  (`gs/modeinfo.gs`, **Observed in the corpus**); pairing *sprite playback* with that screen mode
+  rather than the combat one is **Inferred**, as above. `T` switches to 121 ms, and `-` / `=` step
+  by 11 ms within the game's own 11..=330 clamp.
+- **Stopping on a one-shot.** The engine reports completion and its *caller* switches action. The
+  viewer has no caller to switch to, so it stops playback on the held frame rather than pretending
+  to be a game loop.
+- **Skipping frames that decode to nothing.** The corpus has facing records whose frames carry no
+  pixels. The viewer steps past them; it cannot change which frames the engine would show, only
+  how long the viewer dwells on nothing.
+
+### The remaining piece of the roadmap's box
+
+Wiring the fold and restating the criterion are done. **Anchoring direction 0 to a compass bearing
+is the only part left**, and it is item 2 of [what is still open](#what-is-still-open). It cannot
+be done from the file or the binary: two rotations sit between a GameScript-level facing and a
+stored index, and closing it needs a gameplay observation or a call site whose bearing is known
+independently. Nothing here should be read as having narrowed it.
+
+Two pointers for whoever picks it up, from a parallel pass and **not** verified here:
+`locationindirection` is **Refuted** as the anchor; the better target is whatever builds the
+runtime neighbour table behind the pointer at `0x5AE970`.
+
 ## What is still open
 
-1. **The engine's animation tick period in milliseconds.** The counter is `0x005AF134`. Establishing
-   the period means finding what increments it and at what rate; that was not chased here. A
-   literal-dword search over `.text` finds only readers, so the writer is reached through a base
-   pointer — probably `0x005AF130 + 4` — and needs a data-xref pass rather than a byte search.
+1. **Which screen mode each of the five animation sites runs under.** The period itself is
+   answered — it is the field at object `+0x228AC`, defaulting to 100 and set to 66 or 121 by
+   `gs/modeinfo.gs` (see [timing](#timing-not-in-the-asset-but-in-the-engine)). What is *not*
+   traced is which site takes which mode's value, so "sprite playback runs at 66 ms" is
+   **Inferred** from the terrain-sprite driver being a map-screen site. The earlier version of
+   this item, which called the period unknown and pointed at `0x005AF134`, is **Refuted** and
+   recorded as such rather than deleted.
 2. **The compass bearing of direction 0.** Two rotations sit between a script-level facing and a
    stored index: a global bias at `0x005AEC3C` and a `+1` at `0x0049DCDD`. Neither zero point is
-   anchored to a bearing by anything read here.
+   anchored to a bearing by anything read here. This is the **only** remaining part of the
+   roadmap's issue-#2 box; the other two, wiring the fold into the viewer and restating the
+   acceptance criterion, are done.
 3. **Facing-record bytes 0–1.** Zero in all 14,921 records in this archive. Whether they mean
    anything in another build is unanswerable from this corpus.
 4. **Sequence byte 2.** Plausibly an export frame rate, unread by the engine, unconfirmed.
@@ -589,9 +783,9 @@ have seen it, 752 by one that could not, and 50 by one where the file settles no
 
 ## Test coverage
 
-`src/imp_anim.rs`. The default `cargo test` run covers the recovery machinery against synthetic PEs;
-the two tests that need the installed game are `#[ignore]`d, so the summary reports them as
-`ignored` rather than as passes.
+`src/imp_anim.rs` and `src/imp_playback.rs`. The default `cargo test` run covers the recovery
+machinery against synthetic PEs and the fold against skeleton sprites; the tests that need the
+installed game are `#[ignore]`d, so the summary reports them as `ignored` rather than as passes.
 
 Default:
 
@@ -621,7 +815,10 @@ Default:
   `docs/hotspots.md`'s rule, asserting the even-width discrepancy as well as the odd-width identity.
 
 Opt-in, with `LOM_GAME_DIR` set to the `English` directory and `LOM_LISTFILE` to a listfile, run via
-`cargo test --release -- --ignored`:
+`cargo test --release -- --ignored`. The IMP sweeps below were measured on the **GS5R3** profile and
+their pinned counts are that archive's; `the_viewer_ticks_at_the_rates_the_shipped_scripts_set` is
+separate, takes `LOM_GS_MPQ` rather than `LOM_GAME_DIR`, and is **profile-independent — it passes on
+all four installs**, keying the part that genuinely differs between them rather than pinning one:
 
 - `the_recovered_rules_match_the_installed_executable` — `recover` refuses on any disagreement with
   this module, so reaching the end is the check. It also asserts Part 1 (every `GetSequence` call
@@ -636,6 +833,40 @@ Opt-in, with `LOM_GAME_DIR` set to the `English` directory and `LOM_LISTFILE` to
   the shipped archive — set it to 3 and the ping-pong count goes to zero. The facing-record total is
   pinned because the "all 14,921 are zero" claim is otherwise satisfied vacuously by a corpus that
   has shrunk.
+
+### The fold, in `src/imp_playback.rs`
+
+Default, on skeleton sprites whose only job is to let a test hand the fold a value the binary does
+not hold. They are **not** corpus stand-ins and nothing about the archive is asserted against them:
+
+- `the_reflection_follows_the_mode_the_rules_name` and
+  `a_held_ending_stops_where_a_wrapping_one_restarts` — point the rules at a different ping-pong
+  mode, or a different `CycleEnd`, and the played order must change accordingly. A fold reading
+  `imp_anim::PING_PONG_MODE` passes half of the first and fails the other half, which is the
+  point.
+- `the_mirror_fold_follows_the_bit_the_rules_name` — likewise for the mirror bit: a bit the record
+  does not set must take the direction count back to the stored facing count.
+- `a_mode_outside_the_dispatch_is_refused` — a mode past the dispatch bound is refused by name,
+  not given an invented ending.
+- `playback_skips_blank_frames_and_keeps_the_engine_order`,
+  `a_held_cycle_reports_completion_and_stays_put` and `a_blank_direction_is_stepped_over` — the
+  viewer-side skipping must not flatten the reflection or spin on a held cycle.
+
+Opt-in, against the shipped archive:
+
+- `every_shipped_sequence_resolves_at_every_direction_and_position` — 4,667 sequences and 97,232
+  frame resolutions, every one inside the decoded frame table, and **zero refusals**. The test used
+  to allow a refusal wherever the sequence had a facing with no frames; a byte-level walk of all
+  1,800 members that does not share this decoder (`tools/imp_structure_scan.py`) **refutes** the
+  premise — **observed in the corpus**
+  2026-09-19, none of the 14,921 facing records has `frame_count == 0`. (The same walk counts 6,552
+  zero-*dimension* frames across 107 files, which is the separate fact behind the viewer's
+  blank-skipping and is not the same thing.) The escape hatch was therefore dead code that also
+  weakened the test, since a refusal from any other cause would have been diverted into an assertion
+  about facings. `resolve` is now asserted to refuse nothing at all.
+- `the_fold_changes_these_many_shipped_sequences` — the counts in the table above, plus the 941/19
+  split and the structural assertion that they sum to 955 + 5.
+- `single_facing_mirrored_sequences_advertise_nothing_and_still_play` — the 991 inert records.
 
 ### Why the constants are parameters
 
