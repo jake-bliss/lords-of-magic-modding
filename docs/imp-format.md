@@ -825,9 +825,14 @@ not hold. They are **not** corpus stand-ins and nothing about the archive is ass
 Opt-in, against the shipped archive:
 
 - `every_shipped_sequence_resolves_at_every_direction_and_position` — 4,667 sequences and 97,232
-  frame resolutions, every one inside the decoded frame table. A refusal is allowed only where the
-  sequence genuinely has a facing with no frames, and the test asserts that rather than accepting
-  any refusal.
+  frame resolutions, every one inside the decoded frame table, and **zero refusals**. The test used
+  to allow a refusal wherever the sequence had a facing with no frames; a byte-level walk of all
+  1,800 members that does not share this decoder **refutes** the premise — **observed in the corpus**
+  2026-09-19, none of the 14,921 facing records has `frame_count == 0`. (The same walk counts 6,552
+  zero-*dimension* frames across 107 files, which is the separate fact behind the viewer's
+  blank-skipping and is not the same thing.) The escape hatch was therefore dead code that also
+  weakened the test, since a refusal from any other cause would have been diverted into an assertion
+  about facings. `resolve` is now asserted to refuse nothing at all.
 - `the_fold_changes_these_many_shipped_sequences` — the counts in the table above, plus the 941/19
   split and the structural assertion that they sum to 955 + 5.
 - `single_facing_mirrored_sequences_advertise_nothing_and_still_play` — the 991 inert records.

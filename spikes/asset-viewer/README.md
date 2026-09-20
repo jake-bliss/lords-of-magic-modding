@@ -52,7 +52,7 @@ target/release/lom-asset-viewer --inspect "$PIC_MPQ" 'LBM\ACTIONS5.lbm'
 target/release/lom-asset-viewer --extract "$PIC_MPQ" 'LBM\ACTIONS5.lbm' /tmp/actions5.lbm
 target/release/lom-asset-viewer --validate-imp "$IMP_MPQ" --listfile "$LISTFILE"
 target/release/lom-asset-viewer --describe-imp "$IMP_MPQ" 'units\imp\chcr5a.imp' --listfile "$LISTFILE"
-target/release/lom-asset-viewer --view-imp "$IMP_MPQ" 'units\imp\chcr5a.imp' --listfile "$LISTFILE"
+target/release/lom-asset-viewer --view-imp "$IMP_MPQ" 'units\imp\chcr5a.imp' --listfile "$LISTFILE" --exe "$LOMSE_EXE"   # --exe is required unless lomse.exe sits beside the archive
 target/release/lom-asset-viewer --export-imp-frame "$IMP_MPQ" 'units\imp\chcr5a.imp' 155 /tmp/chcr5a-frame-155.png --listfile "$LISTFILE"
 target/release/lom-asset-viewer "$PIC_MPQ" 'LBM\ACTIONS5.lbm'
 target/release/lom-asset-viewer --wave-roundtrip "$SNDFX_MPQ"
@@ -491,14 +491,32 @@ In the PBM archive viewer:
 
 In the IMP frame viewer:
 
-- Right or Left selects the next or previous visible logical frame within the current facing.
-- Down or Up selects the next or previous facing within the current action.
+- Right or Left scrubs one **cycle position** forward or back. A position is not a frame index: for
+  the 955 ping-pong sequences the cycle is a 2N-1 out-and-back traversal, so scrubbing walks the
+  reflection rather than wrapping at the facing's end.
+- Down or Up turns one **direction**. A sequence advertises up to 64 directions, including the
+  mirrored ones a five-facing record covers by reflection, which the old facing-stepping could not
+  reach at all.
 - Page Down or Page Up selects the next or previous action sequence.
-- Space toggles facing-scoped animation at the current provisional 100 ms frame interval.
-- C facings between clean preview, visible mask, and raw-palette modes.
+- Space toggles animation at the current interval, which starts at the 66 ms of the map screen
+  modes. A one-shot sequence plays to its last frame and holds there rather than looping.
+- T cycles the screen-mode group, which is what sets the interval: 66 ms for the map screens,
+  121 ms for the combat and location screens.
+- `=` and `-` step the interval by 11 ms, clamped to 11-330 ms, for looking at a sequence slower or
+  faster than the engine runs it.
+- C cycles between clean preview, visible mask, and raw-palette modes.
 - Escape or closing the window exits.
 
-When a paired generated `.h` member is available, the window title shows its recovered action name. Facing direction and the provisional frame interval still require confirmation against the original executable.
+When a paired generated `.h` member is available, the window title shows its recovered action name.
+
+The frame order and the interval are both **read out of the engine** rather than invented, so
+`--view-imp` now **requires** `lomse.exe` — `--exe PATH`, or a copy beside the archive. Without one
+it exits non-zero and says so. The frame order comes from the `AnimRules` fold recovered from the
+binary; the interval comes from the screen-mode tick time, whose default lives in the binary and
+whose per-mode values `gs/modeinfo.gs` sets. See [the IMP format notes](../../docs/imp-format.md).
+
+The shadow-index blend, the chroma-key rule and the terrain-mode caveat below were all open
+**before** the animation work and are untouched by it. Nothing here re-derives them.
 
 The IMP title and `--describe-imp` report raw sequence/facing metadata plus candidate origin or hotspot values. In the map viewer, `C` switches among original terrain artwork (when `.til` and atlas paths are supplied), candidate elevation, and stable diagnostic tag colors. The terrain mode proves atlas selection and orientation, but its overview is not yet a recreation of the original renderer's full-size terrain composition.
 
@@ -541,7 +559,7 @@ The IMP decoder handles both observed frame-record variants, the custom packet R
 ## What it does not prove
 
 - The rendering is not yet behaviorally equivalent to the game. A visible bright-green color in the atlas suggests an engine-level chroma-key rule that is not represented by the PBM header's masking field.
-- IMP rendering is not yet behaviorally equivalent to the game. The clean preview hides palette indices 0 and 1 as the inferred background and secondary-mask channels; the other viewer modes expose them. Placement is settled — see [hotspots](../../docs/hotspots.md). What still needs reference comparison is the shadow-index blend, the chroma-key rule, and sequence timing and facing direction ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)).
+- IMP rendering is not yet behaviorally equivalent to the game. The clean preview hides palette indices 0 and 1 as the inferred background and secondary-mask channels; the other viewer modes expose them. Placement is settled — see [hotspots](../../docs/hotspots.md). Sequence timing and facing direction are **no longer open**: the frame order is the `AnimRules` fold recovered from `lomse.exe` and the interval is the engine's screen-mode tick time, both read rather than inferred (see [the IMP format notes](../../docs/imp-format.md)). What still needs reference comparison is the shadow-index blend and the chroma-key rule ([issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)) — those two were already open before the animation work and are untouched by it.
 - BMP/WAVE currently have metadata probes. Map/scenario/component grids, standard terrain lookup, and all six placed-object record layouts are decoded — but what the layouts' constant tail words *mean* is Unknown, and fonts and video are not decoded at all.
 - The viewer recreates its streaming texture while drawing; caching is a production optimization, not a spike requirement.
 - There is no thumbnail grid, search UI, batch/GUI export, or general asset reimport. IMP **placement** write-back exists (`--set-imp-placement`); pixel and frame reimport do not. MPQ member replacement is not a command of *this* tool: it lives in `lom-mpq repack`, with a shape check, in [deterministic MPQ repack](../../docs/repack.md). `examples/mpq_replace.rs` remains only because `scripts/install-engine-probe.sh` uses it to edit an installed archive in place.

@@ -4933,8 +4933,10 @@ fn clean_field(value: &str) -> String {
 /// **Observed in a local binary**). It comes from the engine's screen mode instead: the asset says
 /// which frame comes next, the screen mode says how long to wait.
 ///
-/// **Observed in a local binary** (`lomse.exe` 3.02): the period lives at `0x005CC9D8`, which is
-/// object `0x5AA12C` plus `0x228AC`. The tick method at `0x00482230` calls `GetTickCount`, compares
+/// **Observed in a local binary** (`lomse.exe` 3.02): the period lives at object `+0x228AC`, which
+/// is `0x005CC9D8` if the object base is `0x5AA12C` -- that base comes from a parallel
+/// binary-analysis pass and was **not re-derived here**, so treat the absolute as **inferred** while
+/// the displacement is observed. The tick method at `0x00482230` calls `GetTickCount`, compares
 /// the elapsed time against that field and `idiv`s by it to find how many ticks to catch up. Its
 /// constructor default is `movl $0x64,0x228ac(%ebp)` at `0x0047F7EA` -- 100 ms, which is where this
 /// viewer's old unsourced 100 ms happened to land. That default is overwritten before gameplay.
@@ -4991,6 +4993,21 @@ const DEFAULT_SCREEN_TICK: ScreenTick = ScreenTick::Map;
 const TICK_STEP_MILLISECONDS: u64 = 11;
 const TICK_FLOOR_MILLISECONDS: u64 = 11;
 const TICK_CEILING_MILLISECONDS: u64 = 330;
+
+/// One press of `=` or `-`: step the interval by `TICK_STEP_MILLISECONDS` and clamp to the
+/// engine's own range.
+///
+/// Extracted from the key handlers so the clamp is falsifiable without the archive. The constants
+/// it clamps to are pinned against `gs/hotkey.gs` by the corpus-gated test; this function is the
+/// arithmetic those constants feed, which that test does not reach.
+fn step_interval(milliseconds: u64, steps: i64) -> u64 {
+    let stepped = if steps >= 0 {
+        milliseconds.saturating_add(TICK_STEP_MILLISECONDS.saturating_mul(steps.unsigned_abs()))
+    } else {
+        milliseconds.saturating_sub(TICK_STEP_MILLISECONDS.saturating_mul(steps.unsigned_abs()))
+    };
+    stepped.clamp(TICK_FLOOR_MILLISECONDS, TICK_CEILING_MILLISECONDS)
+}
 
 /// Where the viewer looks for the binary the rules come from when `--exe` is not given.
 ///
@@ -5145,6 +5162,21 @@ fn view_imp_archive(
                     repeat: false,
                     ..
                 } => {
+                    // Starting playback on a one-shot that has already run to its held last frame
+                    // would otherwise be a no-op: the first tick reports completion immediately and
+                    // the arm below switches playback straight back off, so the sequence could only
+                    // be replayed by scrubbing all the way back by hand. Rewind to the start of the
+                    // cycle instead. Viewer policy, not engine behaviour -- the engine's caller
+                    // changes action on completion and never replays in place.
+                    if !playing {
+                        let resolved =
+                            resolve(&rules, &sprite, head).map_err(|error| error.to_string())?;
+                        if resolved.end == CycleEnd::HoldLastFrame
+                            && head.position + 1 >= resolved.cycle_length
+                        {
+                            head.position = 0;
+                        }
+                    }
                     playing = !playing;
                     last_advance = Instant::now();
                 }
@@ -5165,20 +5197,12 @@ fn view_imp_archive(
                     keycode: Some(Keycode::Equals),
                     repeat: false,
                     ..
-                } => {
-                    interval_milliseconds = interval_milliseconds
-                        .saturating_add(TICK_STEP_MILLISECONDS)
-                        .min(TICK_CEILING_MILLISECONDS);
-                }
+                } => interval_milliseconds = step_interval(interval_milliseconds, 1),
                 Event::KeyDown {
                     keycode: Some(Keycode::Minus),
                     repeat: false,
                     ..
-                } => {
-                    interval_milliseconds = interval_milliseconds
-                        .saturating_sub(TICK_STEP_MILLISECONDS)
-                        .max(TICK_FLOOR_MILLISECONDS);
-                }
+                } => interval_milliseconds = step_interval(interval_milliseconds, -1),
                 _ => {}
             }
         }
@@ -7801,8 +7825,51 @@ mod tests {
         DEFAULT_SCREEN_TICK, ImpCatalog, ImpDisplayMode, ImpValidationReport, MapDisplayMode,
         ScreenTick, TERRAIN_PREVIEW_TILE_SIZE, TICK_CEILING_MILLISECONDS, TICK_FLOOR_MILLISECONDS,
         TICK_STEP_MILLISECONDS, flip_rgba_horizontally, imp_display_rgba, map_display_rgba,
-        terrain_preview_rgba, validate_imp_members,
+        step_interval, terrain_preview_rgba, validate_imp_members,
     };
+
+    /// The `=` and `-` handlers' arithmetic, which the corpus-gated test above does not exercise:
+    /// it pins the three constants against `gs/hotkey.gs` but never runs the stepping or the clamp.
+    ///
+    /// The bounds are reachable exactly, which is why they can be asserted as equalities: 66, 121,
+    /// 11 and 330 are all multiples of the 11 ms step, so stepping never overshoots into the clamp.
+    /// That is a property of the shipped numbers, **observed in the corpus** via the constants, not
+    /// an assumption of this function.
+    #[test]
+    fn stepping_the_interval_stays_inside_the_engines_range() {
+        // The default start point, stepped one press each way.
+        assert_eq!(step_interval(66, 1), 77);
+        assert_eq!(step_interval(66, -1), 55);
+
+        // Held down to the floor from the map default, and up to the ceiling from the combat one.
+        let mut down = 66;
+        for _ in 0..20 {
+            down = step_interval(down, -1);
+        }
+        assert_eq!(down, TICK_FLOOR_MILLISECONDS, "66 ms floors at 11 ms");
+
+        let mut up = 121;
+        for _ in 0..40 {
+            up = step_interval(up, 1);
+        }
+        assert_eq!(up, TICK_CEILING_MILLISECONDS, "121 ms ceilings at 330 ms");
+
+        // The clamp holds at the bounds themselves, so a press at either end is a no-op rather
+        // than a wrap or an overflow.
+        assert_eq!(step_interval(TICK_FLOOR_MILLISECONDS, -1), TICK_FLOOR_MILLISECONDS);
+        assert_eq!(step_interval(TICK_CEILING_MILLISECONDS, 1), TICK_CEILING_MILLISECONDS);
+
+        // A value already outside the range is pulled back into it rather than stepped out of it.
+        assert_eq!(step_interval(0, -1), TICK_FLOOR_MILLISECONDS);
+        assert_eq!(step_interval(u64::MAX, 1), TICK_CEILING_MILLISECONDS);
+
+        // The step is the engine's 11 ms, not a number of this function's own.
+        assert_eq!(
+            step_interval(66, 1) - 66,
+            TICK_STEP_MILLISECONDS,
+            "the step must be the value pinned against gs/hotkey.gs"
+        );
+    }
 
     /// The viewer's frame interval is the engine's, so the numbers have to come from the engine's
     /// own scripts rather than from this file. Asserted against `gs.mpq` by parsing every

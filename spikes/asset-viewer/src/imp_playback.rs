@@ -800,6 +800,7 @@ mod tests {
         let (rules, sprites) = corpus();
         let mut sequences = 0_usize;
         let mut resolutions = 0_usize;
+        let mut refusals = 0_usize;
         for (name, sprite) in &sprites {
             for index in 0..sprite.sequences.len() {
                 sequences += 1;
@@ -814,20 +815,21 @@ mod tests {
                     let first = match resolve(&rules, sprite, head) {
                         Ok(first) => first,
                         Err(error) => {
-                            // A facing with no frames has no cycle. The corpus holds such records
-                            // and the decoder reports them, so a refusal naming one is the correct
-                            // answer rather than a failure -- but only then, which is what this
-                            // asserts.
-                            let record = &sprite.sequences[index];
-                            let empty = record
-                                .facing_count
-                                .min(sprite.facings.len().saturating_sub(record.first_facing));
-                            assert!(
-                                sprite.facings[record.first_facing..record.first_facing + empty]
-                                    .iter()
-                                    .any(|facing| facing.frame_count == 0),
-                                "{name} sequence {index} direction {direction} refused with every \
-                                 facing populated: {error}"
+                            // **Observed in the corpus** 2026-09-19, by a byte-level walk of all
+                            // 1,800 `imp.mpq` members that does not share this decoder: of the
+                            // 14,921 facing records, **none** has `frame_count == 0` -- the same
+                            // walk found 6,552 zero-*dimension* frames across 107 files, so it is
+                            // not blind to the shape it is looking for. `resolve` therefore refuses
+                            // nothing here, which `refusals == 0` below asserts directly.
+                            //
+                            // **Inferred**, not observed: this arm is a guard for a build whose
+                            // archive does hold an empty facing, or whose dispatch covers fewer
+                            // modes. It is counted rather than excused, so a refusal of *any* cause
+                            // fails the test naming that cause instead of being diverted into a
+                            // claim about facings.
+                            refusals += 1;
+                            eprintln!(
+                                "{name} sequence {index} direction {direction} refused: {error}"
                             );
                             continue;
                         }
@@ -843,6 +845,11 @@ mod tests {
                 }
             }
         }
+        assert_eq!(
+            refusals, 0,
+            "`resolve` refused a sequence/direction this archive advertises; the refusals are \
+             printed above"
+        );
         assert_eq!(
             sequences, 4_667,
             "the archive is not the one this was measured on"
