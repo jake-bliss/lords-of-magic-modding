@@ -72,6 +72,7 @@ class Mechanism(Enum):
 
     PBM_PATCH = "tools/pbm_patch.py"
     PIPELINE_WRITER = "the mod pipeline's own writer"
+    WAVE_IMPORTER = "the WAVE importer"
 
 
 class StorageClass(Enum):
@@ -84,6 +85,10 @@ class StorageClass(Enum):
     IMPLODE_PROVED = (
         "The member carried flags 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), which is the only "
         "storage class any run has covered."
+    )
+    STORED_PROVED = (
+        "The members carried flags 0x80010000 (EXISTS | STORED), a storage class no earlier run "
+        "had covered."
     )
     IMPLODE_BY_CENSUS = (
         "The compression choice is not Inferred: all 1,071 baseline members carry flags "
@@ -151,14 +156,14 @@ class ArchiveAcceptance:
     """What is established for one archive, and what explicitly is not."""
 
     archive: str
-    run: EngineRun | None
+    runs: tuple[EngineRun, ...] = ()
     storage_class: StorageClass | None = None
     also_untested: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.archive.endswith(".mpq"):
             raise ValueError(f"{self.archive!r} is not an archive name")
-        if self.run is None and self.also_untested == ():
+        if not self.runs and self.also_untested == ():
             raise ValueError(
                 f"{self.archive} has no engine run and names no limit; an archive nothing is "
                 "known about still has to say so"
@@ -175,23 +180,44 @@ class ArchiveAcceptance:
 
     @property
     def not_established(self) -> tuple[str, ...]:
-        derived = self.run.derived_limits if self.run is not None else ()
-        return derived + self.also_untested
+        """What no run has shown, across every run this archive has had.
+
+        A limit stands only while EVERY run exhibits it. One run that changed a member's size
+        settles that question for this archive however many earlier runs did not -- and the
+        intersection is what makes that automatic rather than a judgement someone has to remember
+        to revisit. Recording a second run and leaving the first run's limits standing is exactly
+        how this file came to publish three limits that runs had already refuted.
+        """
+        if not self.runs:
+            return self.also_untested
+        common = set(self.runs[0].derived_limits)
+        for run in self.runs[1:]:
+            common &= set(run.derived_limits)
+        ordered: list[str] = []
+        for run in self.runs:
+            for limit in run.derived_limits:
+                if limit in common and limit not in ordered:
+                    ordered.append(limit)
+        return tuple(ordered) + self.also_untested
 
     def summary(self) -> str:
         """The sentence `build.json` carries. Rendered; never edited in place."""
         limits = "; ".join(self.not_established)
-        if self.run is None:
+        if not self.runs:
             return (
                 f"Never tested. No {self.archive} this pipeline wrote has been put in front of "
                 f"the engine. Not established: {limits}."
             )
-        run = self.run
-        established = (
-            f"Observed {run.date}, once: {run.members} member of {self.archive}, "
-            f"{run.disposition.value}, with a {run.edit_kind.value} edit made by "
-            f"{run.mechanism.value}. {run.observation}"
-        )
+        times = "once" if len(self.runs) == 1 else f"{len(self.runs)} times"
+        sentences = []
+        for run in self.runs:
+            member_word = "member" if run.members == 1 else "members"
+            sentences.append(
+                f"{run.date}: {run.members} {member_word} of {self.archive}, "
+                f"{run.disposition.value}, with a {run.edit_kind.value} edit made by "
+                f"{run.mechanism.value}. {run.observation}"
+            )
+        established = f"Observed {times}. " + " ".join(sentences)
         storage = f" {self.storage_class.value}" if self.storage_class else ""
         return f"{established} Not established: {limits}.{storage}"
 
@@ -201,17 +227,17 @@ class ArchiveAcceptance:
             "summary": self.summary(),
             "not_established": list(self.not_established),
         }
-        if self.run is None:
-            record["established"] = None
-        else:
-            record["established"] = {
-                "date": self.run.date,
-                "members": self.run.members,
-                "disposition": self.run.disposition.name.lower(),
-                "edit_kind": self.run.edit_kind.name.lower(),
-                "mechanism": self.run.mechanism.value,
-                "observation": self.run.observation,
+        record["established"] = [
+            {
+                "date": run.date,
+                "members": run.members,
+                "disposition": run.disposition.name.lower(),
+                "edit_kind": run.edit_kind.name.lower(),
+                "mechanism": run.mechanism.value,
+                "observation": run.observation,
             }
+            for run in self.runs
+        ] or None
         if self.storage_class:
             record["storage_class"] = self.storage_class.value
         return record
@@ -222,7 +248,8 @@ class ArchiveAcceptance:
 ACCEPTANCE: dict[str, ArchiveAcceptance] = {
     "gs.mpq": ArchiveAcceptance(
         archive="gs.mpq",
-        run=EngineRun(
+        runs=(
+            EngineRun(
             date="2026-09-16",
             members=1,
             disposition=Disposition.REPLACED,
@@ -232,13 +259,26 @@ ACCEPTANCE: dict[str, ArchiveAcceptance] = {
                 "The attended 2026-09-16 round trip of an MPQ_FILE_IMPLODE member "
                 "of gs.mpq."
             ),
+            ),
+            EngineRun(
+                date="2026-09-19",
+                members=1,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.SIZE_CHANGING,
+                mechanism=Mechanism.PIPELINE_WRITER,
+                observation=(
+                    "The cheat-keys ladder flipped a single token in a member of gs.mpq, which "
+                    "made the member shorter, and the debug hotkey tier it gates was then "
+                    "exercised in gameplay."
+                ),
+            ),
         ),
         storage_class=StorageClass.IMPLODE_PROVED,
         also_untested=("any flag combination other than 0x80010100",),
     ),
     "pic.mpq": ArchiveAcceptance(
         archive="pic.mpq",
-        run=EngineRun(
+        runs=(EngineRun(
             date="2026-09-18",
             members=1,
             disposition=Disposition.REPLACED,
@@ -248,24 +288,47 @@ ACCEPTANCE: dict[str, ArchiveAcceptance] = {
                 "The engine read an archive this pipeline built from pic.mpq, and a human read "
                 "the change off the screen."
             ),
-        ),
+        ),),
         storage_class=StorageClass.IMPLODE_BY_CENSUS,
         also_untested=("the full ByteRun1 encoder, which no run has used",),
     ),
     "imp.mpq": ArchiveAcceptance(
         archive="imp.mpq",
-        run=None,
         also_untested=("anything at all; no imp.mpq this pipeline wrote has been run",),
     ),
     "sndfx.mpq": ArchiveAcceptance(
         archive="sndfx.mpq",
-        run=None,
-        also_untested=("anything at all; no sndfx.mpq this pipeline wrote has been run",),
+        runs=(
+            EngineRun(
+                date="2026-09-19",
+                members=2,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism=Mechanism.WAVE_IMPORTER,
+                observation=(
+                    "The acceptance ladder wrote a tone into both audio archives and the listener named which "
+                    "archive the engine had opened; exchanging the two tones flipped the report."
+                ),
+            ),
+        ),
+        storage_class=StorageClass.STORED_PROVED,
     ),
     "special.mpq": ArchiveAcceptance(
         archive="special.mpq",
-        run=None,
-        also_untested=("anything at all; no special.mpq this pipeline wrote has been run",),
+        runs=(
+            EngineRun(
+                date="2026-09-19",
+                members=2,
+                disposition=Disposition.REPLACED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism=Mechanism.WAVE_IMPORTER,
+                observation=(
+                    "The acceptance ladder wrote a tone into both audio archives and the listener named which "
+                    "archive the engine had opened; exchanging the two tones flipped the report."
+                ),
+            ),
+        ),
+        storage_class=StorageClass.STORED_PROVED,
     ),
 }
 
@@ -294,13 +357,12 @@ def roadmap_paragraph(archive: str) -> str:
     and any sub-span of that quotation would have passed.
     """
     acceptance = ACCEPTANCE[archive]
-    run = acceptance.run
-    if run is None:
+    if not acceptance.runs:
         return (
             f"**Not established.** Nothing: no `{archive}` this pipeline wrote has been put in "
             "front of the engine."
         )
-    untested = [name for name, other in sorted(ACCEPTANCE.items()) if other.run is None]
+    untested = [name for name, other in sorted(ACCEPTANCE.items()) if not other.runs]
     remainder = ""
     if len(untested) == 1:
         remainder = f" `{untested[0]}` remains untested."
@@ -308,10 +370,14 @@ def roadmap_paragraph(archive: str) -> str:
         listed = ", ".join(f"`{name}`" for name in untested[:-1])
         remainder = f" {listed} and `{untested[-1]}` remain untested."
     storage = f" {acceptance.storage_class.value}" if acceptance.storage_class else ""
-    return (
-        f"**Not established.** {run.members} member of one `{archive}`, "
+    runs = " ".join(
+        f"{run.members} {'member' if run.members == 1 else 'members'} of one `{archive}`, "
         f"{run.disposition.value}, with a {run.edit_kind.value} edit made by "
-        f"{run.mechanism.value}, {run.date}. {run.observation} "
+        f"{run.mechanism.value}, {run.date}. {run.observation}"
+        for run in acceptance.runs
+    )
+    return (
+        f"**Not established.** {runs} "
         + " ".join(f"The engine has not been shown {limit}." for limit in acceptance.not_established)
         + storage
         + remainder
