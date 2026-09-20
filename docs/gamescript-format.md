@@ -784,13 +784,23 @@ The battery needs the shipped `gs\standard.gs`, which is not in Git, so its thre
 `#[ignore]`d — they report as `ignored` rather than not existing:
 
 ```sh
-LOM_GS_MPQ='/path/to/English/gs.mpq' LOM_GS_PROFILE=patch302 cargo test -- --ignored
+LOM_GS_MPQ='/path/to/English/gs.mpq' cargo test -- --ignored
 ```
 
-`LOM_GS_PROFILE` is asserted, not tolerated: `patch302` must disagree on nothing, `vanilla` on
-exactly the two 3.02 string helpers it does not ship, and `gs5r3` on those two plus `min` and `max`.
-A declared disagreement that stops happening fails the test too, which is what catches an
-expectation quietly rotting into agreement.
+**The lineage is derived from the archive, not declared** (changed 2026-09-19). `Lineage::derive`
+reads two independent signals out of the archive's own `gs\standard.gs` — whether it defines the
+3.02 string helpers, and whether `/min` is built on `gt` or `lt` — and refuses a combination no
+measured profile has. `LOM_GS_PROFILE` is still honoured but is now a *claim that must agree with
+the file*: declaring the wrong lineage fails the test instead of silently selecting the wrong
+expectations. **Verified on all four installed profiles on 2026-09-19**; all pass with no
+environment variable set.
+
+The previous design defaulted to `patch302` and tolerated a per-profile set of "declared
+disagreements", which meant four of the battery's exercises asserted **nothing at all** on GS5R3
+and two asserted nothing on vanilla. Each exercise now carries a real expectation in every lineage:
+GS5R3's reversed `min`/`max` are asserted to be reversed, and an archive that does not ship a 3.02
+helper is asserted to **stop** on the undefined name. A GS5R3 build whose `min` started returning
+the smaller operand now fails, where before it was tolerated.
 
 A *default* `cargo test` cannot touch the corpus, so what covers the primitives underneath is
 `gamescript_vm`'s own unit tests — in particular `trigonometry_is_not_self_consistent_under_a_swap`,
@@ -809,7 +819,11 @@ Three findings fell out of executing rather than reading:
 2. **`dump_flags` does nothing to its operand.** After the first iteration its `2 copy` reads the loop counter rather than the flags, and the trailing `pop` discards the one index it kept. `5 dump_flags` leaves `5`. Evidence class: Observed in a local binary, by execution.
 3. **GS5R3 ships `min` and `max` swapped.** Vanilla and 3.02 both define `/min{2 copy gt{exch pop}{pop}ifelse}`. GS5R3 comments that line out at `gs\standard.gs:68`/`:70` and redefines the gt-body as `max` and the lt-body as `min` at `:73`/`:74`, so under GS5R3 `3 7 min` is `7` and `3 7 max` is `3`. Evidence class: Observed in a local binary.
 
-  The GS5R3 run reports **four** failures, not two: `min` and `max` for the swap, plus `string_cvi` and `char_cvs`, which stop on an unknown name because GS5R3 does not ship them — they are 3.02 additions. The vanilla run reports those same two and nothing else. The committed transcripts in `reports/gs/standard-run-*.tsv` are the three runs verbatim.
+  All three runs now report **zero** failures, because each lineage asserts what its own archive does rather than tolerating a departure from 3.02's. GS5R3 asserts `min` leaves `[7 7]` and `max` leaves `[3 3]`; vanilla and GS5R3 both assert that `string_cvi` and `char_cvs` **stop on an undefined name**.
+
+  **That stop is not a gap in the VM.** `string_cvi`, `char_cvs` and the `/char_array` the second reads are *script procedures*, not engine primitives, and they are defined only in 3.02. **Observed in the corpus, 2026-09-19**, over each profile's `gs\standard.gs`: present in 3.02 (md5 `881a31838368e9a4e4bd74b48f69f852`), absent from the stock archive (`4786977e4ecf8b73028df2a3aa71fe3a`) and from GS5R3 (`34e4525f63bbd4832c38aa1153612bba`). An archive that does not define a name has no such name to call, so stopping is the correct behaviour and is now asserted as such — the property `no_exercise_that_should_stop_produces_a_value_instead` covers it.
+
+  The committed transcripts in `reports/gs/standard-run-*.tsv` are the three runs verbatim. They now record the **resolved expectation** beside each verdict (`exercise  min  ok  leaves [7 7]`), because a bare `ok` on an archive that stopped and a bare `ok` on one that computed a value are not the same event and a transcript that cannot tell them apart has lost what it exists to witness.
 
 The nine engine names the battery reached, with their `lomse.exe` entry points where the operator table lists them:
 

@@ -1,3 +1,5 @@
+lineage	patch302
+lineage-evidence	LineageEvidence { defines_string_helpers: true, minimum_comparison: "gt" }
 member	gs\standard.gs
 source-bytes	8933
 tokens	1335
@@ -42,67 +44,67 @@ module-defined-name	tab
 module-defined-name	temp_for_cvs
 module-defined-name	utilitystring
 module-defined-name	writestring
-exercise	min	ok
+exercise	min	ok	leaves [3 3]
 exercise-note	min	clamp helper, both operand orders
-exercise	max	ok
+exercise	max	ok	leaves [7 7]
 exercise-note	max	clamp helper, both operand orders
-exercise	between	ok
+exercise	between	ok	leaves [true false true]
 exercise-note	between	value low high; inclusive at the ends
-exercise	script-defined index shadows the primitive	ok
+exercise	script-defined index shadows the primitive	ok	leaves [10 20 30 20]
 exercise-note	script-defined index shadows the primitive	standard.gs redefines /index using roll; it must agree with the primitive
-exercise	getflagvalue	ok
+exercise	getflagvalue	ok	leaves [true false true]
 exercise-note	getflagvalue	bit test; its `and` yields an integer that `ifelse` consumes as a condition
-exercise	setflagvalue	ok
+exercise	setflagvalue	ok	leaves [5 4]
 exercise-note	setflagvalue	set and clear bit zero
-exercise	dump_flags is a no-op on its operand	ok
+exercise	dump_flags is a no-op on its operand	ok	leaves [5 4]
 exercise-note	dump_flags is a no-op on its operand	after the first iteration it tests the loop counter, not the flags, then drops it
-exercise	radians	ok
+exercise	radians	ok	leaves [3.141596]
 exercise-note	radians	the module's own degree-to-radian conversion, applied before every sin/cos
-exercise	polar	ok
+exercise	polar	ok	leaves [10 0]
 exercise-note	polar	x y distance angle; zero degrees is +x
-exercise	stack: push, pop, LIFO order	ok
+exercise	stack: push, pop, LIFO order	ok	leaves [9 7]
 exercise-note	stack: push, pop, LIFO order	the module's array-backed stack; every entry point consumes the array reference
-exercise	stack: layout after two pushes	ok
+exercise	stack: layout after two pushes	ok	leaves [[2 7 9 0 0]]
 exercise-note	stack: layout after two pushes	count in slot zero, values from slot one
-exercise	onstack?	ok
+exercise	onstack?	ok	leaves [true false]
 exercise-note	onstack?	linear search with an early exit
-exercise	popoffstack underflows to /null	ok
+exercise	popoffstack underflows to /null	ok	leaves [/null]
 exercise-note	popoffstack underflows to /null	an empty stack answers with a name, not an error
-exercise	retrievefromstack	ok
+exercise	retrievefromstack	ok	leaves [7]
 exercise-note	retrievefromstack	extract by index and close the gap
-exercise	dumpstack drains onto the operand stack	ok
+exercise	dumpstack drains onto the operand stack	ok	leaves [7]
 exercise-note	dumpstack drains onto the operand stack	it pops until /null and leaves every popped value behind
-exercise	get_if_known	ok
+exercise	get_if_known	ok	leaves [1 99]
 exercise-note	get_if_known	operands are dictionary, key, default -- the reverse of the header comment
-exercise	exec_if_known	ok
+exercise	exec_if_known	ok	leaves [42]
 exercise-note	exec_if_known	runs the value when the key is present and leaves nothing when it is not
-exercise	interpolate, between two keys	ok
+exercise	interpolate, between two keys	ok	leaves [50]
 exercise-note	interpolate, between two keys	numeric dictionary keys walked with forall, then linear interpolation
-exercise	interpolate, exact key	ok
+exercise	interpolate, exact key	ok	leaves [100]
 exercise-note	interpolate, exact key	an exact hit returns the stored value without interpolating
-exercise	string_cvi	ok
+exercise	string_cvi	ok	leaves [1234 -42]
 exercise-note	string_cvi	digit-by-digit conversion over the string's character codes
-exercise	char_cvs reads the procedure's attached array	ok
+exercise	char_cvs reads the procedure's attached array	ok	leaves ["A" "a"]
 exercise-note	char_cvs reads the procedure's attached array	/char_array is attached with `replace` and read as a literal name
-exercise	stackdump is empty	ok
+exercise	stackdump is empty	ok	leaves []
 exercise-note	stackdump is empty	the shipped body is `{}`
-exercise	makeregion needs the terrain host	ok
+exercise	makeregion needs the terrain host	ok	stops on rand
 exercise-note	makeregion needs the terrain host	map painting; the first engine call is the random source
-exercise	writestring needs file output	ok
+exercise	writestring needs file output	ok	stops on write
 exercise-note	writestring needs file output	byte output to an engine file handle
-exercise	eval needs the temporary-file host	ok
+exercise	eval needs the temporary-file host	ok	stops on gettemppath
 exercise-note	eval needs the temporary-file host	the module writes a scratch file and `run`s it
-exercise	free_stack_elements needs the allocator	ok
+exercise	free_stack_elements needs the allocator	ok	stops on free
 exercise-note	free_stack_elements needs the allocator	releases engine-owned handles held in a stack
-exercise	closeifopen needs the dialog host	ok
+exercise	closeifopen needs the dialog host	ok	stops on dialogisopen?
 exercise-note	closeifopen needs the dialog host	user interface state
-exercise	exitapplication needs the dialog host	ok
+exercise	exitapplication needs the dialog host	ok	stops on sysdlg
 exercise-note	exitapplication needs the dialog host	user interface state
-exercise	geteasyunitdata needs the unit tables	ok
+exercise	geteasyunitdata needs the unit tables	ok	stops on unitdictxref
 exercise-note	geteasyunitdata needs the unit tables	game data the engine owns
-exercise	addrect needs the dialog host	ok
+exercise	addrect needs the dialog host	ok	stops on additem
 exercise-note	addrect needs the dialog host	dialog layout
-exercise	retrievefromstack's error path needs the reporter	ok
+exercise	retrievefromstack's error path needs the reporter	ok	stops on build_statement
 exercise-note	retrievefromstack's error path needs the reporter	the out-of-range branch formats a message with an engine helper
 exercises	31
 exercise-failures	0

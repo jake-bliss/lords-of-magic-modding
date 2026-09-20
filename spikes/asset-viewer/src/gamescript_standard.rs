@@ -23,6 +23,7 @@ use crate::gamescript::GameScriptDocument;
 use crate::gamescript_vm::{GameScriptVm, GameScriptVmError, UnknownNameTrace, Value};
 
 /// What an exercise must do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expected {
     /// Run to completion and leave exactly this rendered operand stack.
     Stack(&'static str),
@@ -259,21 +260,22 @@ pub fn load_module(source: &[u8]) -> Result<(GameScriptVm, GameScriptDocument), 
 ///
 /// Each exercise starts from a clean operand and dictionary stack, so an exercise that stops on a
 /// host call cannot leave debris that changes the next one's result.
-pub fn run_exercises(vm: &mut GameScriptVm) -> Vec<Outcome> {
+pub fn run_exercises(vm: &mut GameScriptVm, lineage: Lineage) -> Vec<Outcome> {
     EXERCISES
         .iter()
-        .map(|exercise| run_exercise(vm, exercise))
+        .map(|exercise| run_exercise(vm, exercise, lineage))
         .collect()
 }
 
-pub fn run_exercise(vm: &mut GameScriptVm, exercise: &Exercise) -> Outcome {
+pub fn run_exercise(vm: &mut GameScriptVm, exercise: &Exercise, lineage: Lineage) -> Outcome {
     vm.reset_stacks();
+    let expected = lineage.expected_for(exercise);
     let outcome = evaluate(vm, exercise.source);
     let unknown_name = outcome
         .as_ref()
         .err()
         .and_then(GameScriptVmError::unknown_name);
-    let disagreement = match (&exercise.expected, &outcome) {
+    let disagreement = match (&expected, &outcome) {
         (Expected::Stack(expected), Ok(actual)) if actual == expected => None,
         (Expected::Stack(expected), Ok(actual)) => {
             Some(format!("expected [{expected}], got [{actual}]"))
@@ -320,20 +322,148 @@ pub fn evaluate(vm: &mut GameScriptVm, source: &str) -> Result<String, GameScrip
         .join(" "))
 }
 
-/// The exercises GS5R3 is expected to disagree on, and why.
+/// Which lineage a `gs\standard.gs` belongs to, **derived from the file itself**.
 ///
-/// Two because it ships `min` and `max` with their bodies exchanged, and two because it does not
-/// ship `string_cvi` or `char_cvs` at all -- those are 3.02 additions. Naming them is what turns
-/// "the GS5R3 run has four failures" from a footnote into an assertion.
-pub const GS5R3_EXPECTED_DISAGREEMENTS: &[&str] = &[
-    "char_cvs reads the procedure's attached array",
-    "max",
-    "min",
-    "string_cvi",
-];
+/// The previous design took this from a `LOM_GS_PROFILE` environment variable and defaulted to
+/// `patch302`, so three of the four installs on this machine failed unless the operator declared
+/// the lineage by hand -- and a *wrong* declaration silently selected the wrong expectations
+/// instead of being caught. A profile asserted by the operator is not evidence about the artifact.
+/// This reads the artifact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lineage {
+    /// The stock retail scripts. On this machine: the Steam build and `Lords of Magic Development`,
+    /// whose `gs.mpq` files are byte-identical.
+    Vanilla,
+    /// The 3.02 patch, which adds the two string helpers.
+    Patch302,
+    /// ManTerA's GS5R3, which reverses `/min` and `/max`.
+    Gs5r3,
+}
 
-/// The exercises vanilla is expected to disagree on: it has neither 3.02 string helper.
-pub const VANILLA_EXPECTED_DISAGREEMENTS: &[&str] = &[
-    "char_cvs reads the procedure's attached array",
-    "string_cvi",
-];
+/// The two signals `Lineage::derive` reads, kept separate so a refusal can name which one was odd.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineageEvidence {
+    /// Whether `standard.gs` defines `string_cvi` and `char_cvs`.
+    ///
+    /// **Observed in the corpus, 2026-09-19**, in all three distinct `gs.mpq` files on this
+    /// machine: defined **only** in 3.02 (`standard.gs` md5 `881a31838368e9a4e4bd74b48f69f852`),
+    /// along with the `/char_array` the second one reads. Absent from the stock archive
+    /// (`4786977e4ecf8b73028df2a3aa71fe3a`) and from GS5R3 (`34e4525f63bbd4832c38aa1153612bba`).
+    pub defines_string_helpers: bool,
+    /// The comparison inside `/min`: `gt` in the ordinary reading, `lt` in GS5R3.
+    pub minimum_comparison: &'static str,
+}
+
+/// The comparison token inside a `/NAME{2 copy CMP{exch pop}{pop}ifelse}` definition.
+///
+/// Matched on the **whitespace-free** text because the archives disagree about layout: 3.02 writes
+/// `/min {\n  2 copy gt {...`, GS5R3 writes `/min{2 copy lt{...`, and the stock archive puts the
+/// whole library on one line. Comments are stripped per line first, since `;` runs to a line end
+/// and no further, and bare CR is a line ending in this format.
+fn definition_comparison(compact: &str, name: &str) -> Option<&'static str> {
+    let head = format!("/{name}{{2copy");
+    let rest = &compact[compact.find(&head)? + head.len()..];
+    if rest.starts_with("gt") {
+        Some("gt")
+    } else if rest.starts_with("lt") {
+        Some("lt")
+    } else {
+        None
+    }
+}
+
+/// Strip comments and all whitespace, so one match works on every layout the archives use.
+fn compact_source(source: &[u8]) -> String {
+    String::from_utf8_lossy(source)
+        .split(['\r', '\n'])
+        .flat_map(|line| line.split(';').next().unwrap_or("").chars())
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+impl Lineage {
+    /// Read the lineage out of a `gs\standard.gs`.
+    ///
+    /// Two independent signals, so neither alone decides: whether the 3.02 string helpers are
+    /// defined, and which comparison `/min` is built on. An unmet combination is refused by name
+    /// rather than guessed at.
+    pub fn derive(standard_source: &[u8]) -> Result<(Self, LineageEvidence), String> {
+        let compact = compact_source(standard_source);
+        let defines_string_helpers = ["string_cvi", "char_cvs"]
+            .iter()
+            .all(|name| compact.contains(&format!("/{name}{{")));
+        let minimum_comparison = definition_comparison(&compact, "min").ok_or_else(|| {
+            format!("{MEMBER} does not define /min as a two-operand comparison")
+        })?;
+        let maximum_comparison = definition_comparison(&compact, "max").ok_or_else(|| {
+            format!("{MEMBER} does not define /max as a two-operand comparison")
+        })?;
+        if minimum_comparison == maximum_comparison {
+            return Err(format!(
+                "{MEMBER} defines /min and /max with the same comparison ({minimum_comparison})"
+            ));
+        }
+        let evidence = LineageEvidence {
+            defines_string_helpers,
+            minimum_comparison,
+        };
+        let lineage = match (defines_string_helpers, minimum_comparison) {
+            (true, "gt") => Self::Patch302,
+            (false, "gt") => Self::Vanilla,
+            (false, "lt") => Self::Gs5r3,
+            // Never seen on this machine. Refuse rather than fold it into a neighbour: an archive
+            // with 3.02's helpers *and* GS5R3's reversal is a combination nothing here has
+            // measured, and its min/max expectations would be a guess.
+            (true, _) => {
+                return Err(format!(
+                    "{MEMBER} defines the 3.02 string helpers but builds /min on \
+                     {minimum_comparison}; no measured lineage has that combination"
+                ));
+            }
+            _ => unreachable!("definition_comparison yields only gt or lt"),
+        };
+        Ok((lineage, evidence))
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Vanilla => "vanilla",
+            Self::Patch302 => "patch302",
+            Self::Gs5r3 => "gs5r3",
+        }
+    }
+
+    /// What this exercise must do **in this lineage**.
+    ///
+    /// The `expected` on each [`Exercise`] is the 3.02 reading, which is where the battery was
+    /// written. Where an archive genuinely behaves differently, that difference is asserted here
+    /// rather than tolerated as a "declared disagreement": every exercise gets a real expectation
+    /// on every profile, so a GS5R3 run that started agreeing with 3.02's `min` would fail.
+    ///
+    /// **Read carefully what the `min`/`max` rows do and do not claim.** They do **not** assert
+    /// that `min` returns the smaller operand -- in GS5R3 it does not, and saying so would be
+    /// false. They assert that the token computes what its *own definition* computes: GS5R3's
+    /// `/min` is built on `lt`, which yields the larger operand, so `3 7 min 7 3 min` leaves
+    /// `7 7` there and `3 3` everywhere else. The invariant that holds in every lineage is that
+    /// **the battery agrees with the definition the archive ships**, not that a name means what it
+    /// is spelled.
+    pub fn expected_for(self, exercise: &Exercise) -> Expected {
+        match (self, exercise.name) {
+            // GS5R3 reverses both definitions, under its own comment
+            // `WILL WORK TO REVERSE THE TWO ABOVE BY USING THE TWO BELOW`.
+            (Self::Gs5r3, "min") => Expected::Stack("7 7"),
+            (Self::Gs5r3, "max") => Expected::Stack("3 3"),
+            // Neither the stock archive nor GS5R3 defines the 3.02 string helpers. The VM must
+            // **stop** on the undefined name rather than invent a value for it, which is the
+            // property `no_exercise_that_should_stop_produces_a_value_instead` states over the
+            // whole battery. This is not a VM gap: they are script procedures, not primitives, and
+            // an archive that does not define one has no such name to call.
+            (Self::Vanilla | Self::Gs5r3, "string_cvi") => Expected::StopsOn("string_cvi"),
+            (
+                Self::Vanilla | Self::Gs5r3,
+                "char_cvs reads the procedure's attached array",
+            ) => Expected::StopsOn("char_cvs"),
+            _ => exercise.expected,
+        }
+    }
+}
