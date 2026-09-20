@@ -18,6 +18,8 @@ use lom_asset_viewer::gamescript_vm::{
 };
 use lom_asset_viewer::loose::{self, LomConfig, SettingsConfig};
 use lom_asset_viewer::imp;
+use lom_asset_viewer::imp_anim::{self, CycleEnd, EngineAddresses, mirrored_anchor_x};
+use lom_asset_viewer::imp_playback::{Navigator, resolve, usable_directions};
 use lom_asset_viewer::imp::{
     IMP_ORPHAN_NOTES, IMP_VALIDATION_EXCEPTIONS, ImpHeaderStats, ImpOrphanNote, ImpSprite,
     ImpValidationException, MAX_RLE_REPEAT, PackedSizes, encode_rle, frame_pixel_target,
@@ -279,6 +281,8 @@ enum Command {
         source: Source,
         member: String,
         frame: usize,
+        /// Where the animation rules are read from. Defaults to `lomse.exe` beside the archive.
+        executable: Option<PathBuf>,
     },
     ViewMap {
         path: PathBuf,
@@ -498,7 +502,8 @@ fn run() -> Result<(), String> {
             source,
             member,
             frame,
-        } => view_imp_archive(&source, &member, frame),
+            executable,
+        } => view_imp_archive(&source, &member, frame, executable.as_deref()),
         Command::ViewMap { path, tile_set } => view_map_file(&path, tile_set.as_ref()),
         Command::View { source, member } => view_archive(&source, member.as_deref()),
     }
@@ -1114,6 +1119,7 @@ fn parse_args() -> Result<Command, String> {
                 source: source(&args[1], listfile),
                 member: args[2].clone(),
                 frame,
+                executable,
             })
         }
         "--serve" => {
@@ -1342,7 +1348,7 @@ const USAGE_TIL: &[&str] = &[
 const USAGE_IMP: &[&str] = &[
     "lom-asset-viewer --validate-imp ARCHIVE.mpq [--listfile FILE]",
     "lom-asset-viewer --describe-imp ARCHIVE.mpq MEMBER [--listfile FILE]",
-    "lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE]",
+    "lom-asset-viewer --view-imp ARCHIVE.mpq MEMBER [FRAME] [--listfile FILE] [--exe lomse.exe]",
     "lom-asset-viewer --view-map FILE [TILESET.til TILE_ATLAS.lbm]",
     "lom-asset-viewer --serve --pic PIC.MPQ [--port N]",
     "lom-asset-viewer --serve TILESET.til TILE_ATLAS.lbm [--port N]",
@@ -4920,7 +4926,89 @@ fn clean_field(value: &str) -> String {
     value.replace(['\t', '\r', '\n'], " ")
 }
 
-fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Result<(), String> {
+/// The playback interval, in milliseconds, and where each number comes from.
+///
+/// The interval is **not** in the `.imp`. No field of one is read by `lomse.exe` as a duration,
+/// delay, rate or tick count (`docs/imp-format.md`, "Timing: there is none in the *file*",
+/// **Observed in a local binary**). It comes from the engine's screen mode instead: the asset says
+/// which frame comes next, the screen mode says how long to wait.
+///
+/// **Observed in a local binary** (`lomse.exe` 3.02): the period lives at `0x005CC9D8`, which is
+/// object `0x5AA12C` plus `0x228AC`. The tick method at `0x00482230` calls `GetTickCount`, compares
+/// the elapsed time against that field and `idiv`s by it to find how many ticks to catch up. Its
+/// constructor default is `movl $0x64,0x228ac(%ebp)` at `0x0047F7EA` -- 100 ms, which is where this
+/// viewer's old unsourced 100 ms happened to land. That default is overwritten before gameplay.
+///
+/// **Observed in the corpus** (`gs.mpq`, 1,691 members): `gs/modeinfo.gs` sets the tick time per
+/// screen mode at load. `COMBAT_SCREEN` and `LOCATION_SCREEN` take 121 ms; `SCROLLINGMAP_SCREEN`,
+/// `REGION_SCREEN`, `WORLD_SCREEN`, `INTRO_SCREEN` and `SETUP_SCREEN` take 66 ms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScreenTick {
+    /// The map screens' 66 ms.
+    Map,
+    /// The combat and location screens' 121 ms.
+    CombatOrLocation,
+}
+
+impl ScreenTick {
+    /// The milliseconds `gs/modeinfo.gs` assigns this group of screen modes.
+    fn milliseconds(self) -> u64 {
+        match self {
+            Self::Map => 66,
+            Self::CombatOrLocation => 121,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Map => "map screens",
+            Self::CombatOrLocation => "combat/location screens",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Map => Self::CombatOrLocation,
+            Self::CombatOrLocation => Self::Map,
+        }
+    }
+}
+
+/// Which screen mode's tick time the viewer starts at.
+///
+/// **Inferred, not observed.** Which of the five animation sites belongs to which screen mode was
+/// not traced. The terrain-sprite driver at `0x50C334` is a map-screen site, so sprite playback is
+/// started at the map screens' value -- that is reasoning from where the driver sits, not a
+/// measurement of which period it runs under. Press `T` for the other one.
+const DEFAULT_SCREEN_TICK: ScreenTick = ScreenTick::Map;
+
+/// The step, floor and ceiling the game's own speed hotkeys use.
+///
+/// **Observed in the corpus**: `gs/hotkey.gs:705-757` steps the tick time by 11 ms and clamps it to
+/// 11..=330; `gs/Dlg/opdlg.gs:547,579` is the same field behind the options dialog
+/// (`gamespeed setticktime`, `combatspeed setticktime`). The viewer offers the same range rather
+/// than a range of its own.
+const TICK_STEP_MILLISECONDS: u64 = 11;
+const TICK_FLOOR_MILLISECONDS: u64 = 11;
+const TICK_CEILING_MILLISECONDS: u64 = 330;
+
+/// Where the viewer looks for the binary the rules come from when `--exe` is not given.
+///
+/// The archive normally sits in the installed game directory next to the executable, so the
+/// ordinary invocation needs no new argument. Nothing is guessed beyond the location: whatever is
+/// found is put through `imp_anim::recover`, which refuses if the code at those addresses is not
+/// the decoder this repository read.
+fn default_engine_binary(archive: &Path) -> Option<PathBuf> {
+    let candidate = archive.parent()?.join("lomse.exe");
+    candidate.is_file().then_some(candidate)
+}
+
+fn view_imp_archive(
+    source: &Source,
+    member: &str,
+    requested_frame: usize,
+    executable: Option<&Path>,
+) -> Result<(), String> {
     let (archive, entries) = open_archive(source)?;
     let entry = entries
         .iter()
@@ -4937,7 +5025,50 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             sprite.frames.len()
         ));
     }
-    let mut frame_index = find_imp_frame(&sprite, requested_frame, 1, true)?;
+
+    // The rules are not optional and there is no fallback walk. A viewer with no rules can only
+    // invent an order, which is what this replaced: it showed 955 ping-pong sequences running
+    // forward and jumping back, held nothing for the 5 one-shots, and could not reach the three
+    // mirrored directions of a five-facing sequence at all.
+    let engine_binary = executable
+        .map(Path::to_path_buf)
+        .or_else(|| default_engine_binary(&source.archive))
+        .ok_or_else(|| {
+            format!(
+                "no lomse.exe next to {}; pass --exe PATH. The animation rules are read out of \
+                 the engine, and without them the viewer would be inventing the frame order",
+                source.archive.display()
+            )
+        })?;
+    let image_bytes = fs::read(&engine_binary).map_err(|error| {
+        format!(
+            "could not read executable {}: {error}",
+            engine_binary.display()
+        )
+    })?;
+    let image = native_table::PeImage::parse(&image_bytes)
+        .map_err(|error| format!("could not read {}: {error}", engine_binary.display()))?;
+    let rules = imp_anim::recover(&image, &EngineAddresses::default()).map_err(|error| {
+        format!(
+            "could not recover the IMP animation rules from {}: {error}",
+            engine_binary.display()
+        )
+    })?;
+
+    let visible = |frame: usize| {
+        sprite
+            .resolved_frame(frame)
+            .map(|frame| frame.width > 0 && frame.height > 0 && !frame.rgba.is_empty())
+            .unwrap_or(false)
+    };
+    let navigator = Navigator {
+        rules: &rules,
+        sprite: &sprite,
+        visible: &visible,
+    };
+    let mut head = navigator.playable_at(requested_frame).map_err(|error| error.to_string())?;
+    let mut screen_tick = DEFAULT_SCREEN_TICK;
+    let mut interval_milliseconds = screen_tick.milliseconds();
     let mut playing = false;
     let mut display_mode = ImpDisplayMode::Preview;
     let mut last_advance = Instant::now();
@@ -4966,7 +5097,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     repeat: false,
                     ..
                 } => {
-                    frame_index = step_imp_frame(&sprite, frame_index, 1)?;
+                    head = navigator.scrub(head, 1).map_err(|error| error.to_string())?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
@@ -4974,7 +5105,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     repeat: false,
                     ..
                 } => {
-                    frame_index = step_imp_frame(&sprite, frame_index, -1)?;
+                    head = navigator.scrub(head, -1).map_err(|error| error.to_string())?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
@@ -4982,7 +5113,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     repeat: false,
                     ..
                 } => {
-                    frame_index = step_imp_facing(&sprite, frame_index, 1)?;
+                    head = navigator.turn(head, 1).map_err(|error| error.to_string())?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
@@ -4990,7 +5121,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     repeat: false,
                     ..
                 } => {
-                    frame_index = step_imp_facing(&sprite, frame_index, -1)?;
+                    head = navigator.turn(head, -1).map_err(|error| error.to_string())?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
@@ -4998,7 +5129,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     repeat: false,
                     ..
                 } => {
-                    frame_index = step_imp_sequence(&sprite, frame_index, 1)?;
+                    head = navigator.change_action(head, 1).map_err(|error| error.to_string())?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
@@ -5006,7 +5137,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     repeat: false,
                     ..
                 } => {
-                    frame_index = step_imp_sequence(&sprite, frame_index, -1)?;
+                    head = navigator.change_action(head, -1).map_err(|error| error.to_string())?;
                     last_advance = Instant::now();
                 }
                 Event::KeyDown {
@@ -5022,25 +5153,59 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                     repeat: false,
                     ..
                 } => display_mode = display_mode.next(),
+                Event::KeyDown {
+                    keycode: Some(Keycode::T),
+                    repeat: false,
+                    ..
+                } => {
+                    screen_tick = screen_tick.next();
+                    interval_milliseconds = screen_tick.milliseconds();
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::Equals),
+                    repeat: false,
+                    ..
+                } => {
+                    interval_milliseconds = interval_milliseconds
+                        .saturating_add(TICK_STEP_MILLISECONDS)
+                        .min(TICK_CEILING_MILLISECONDS);
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::Minus),
+                    repeat: false,
+                    ..
+                } => {
+                    interval_milliseconds = interval_milliseconds
+                        .saturating_sub(TICK_STEP_MILLISECONDS)
+                        .max(TICK_FLOOR_MILLISECONDS);
+                }
                 _ => {}
             }
         }
-        if playing && last_advance.elapsed() >= Duration::from_millis(100) {
-            frame_index = step_imp_frame(&sprite, frame_index, 1)?;
+        if playing && last_advance.elapsed() >= Duration::from_millis(interval_milliseconds) {
+            let (next, ended) = navigator.tick(head).map_err(|error| error.to_string())?;
+            head = next;
             last_advance = Instant::now();
+            // The engine's caller switches action when a cycle reports completion. A one-shot's
+            // caller is the game and this viewer is not it, so playback stops on the held frame
+            // rather than pretending to be a game loop. Viewer policy, not engine behaviour.
+            if ended && resolve(&rules, &sprite, head).map_err(|error| error.to_string())?.end
+                == CycleEnd::HoldLastFrame
+            {
+                playing = false;
+            }
         }
 
+        let resolved = resolve(&rules, &sprite, head).map_err(|error| error.to_string())?;
         let frame = sprite
-            .resolved_frame(frame_index)
+            .resolved_frame(resolved.frame)
             .map_err(|error| error.to_string())?;
-        let logical_frame = &sprite.frames[frame_index];
-        let (sequence_index, facing_index, frame_in_facing) = sprite
-            .frame_location(frame_index)
-            .map_err(|error| error.to_string())?;
-        let sequence = &sprite.sequences[sequence_index];
-        let facing = &sprite.facings[facing_index];
+        let logical_frame = &sprite.frames[resolved.frame];
+        let sequence = &sprite.sequences[head.sequence];
+        let directions =
+            usable_directions(&rules, &sprite, head.sequence).map_err(|error| error.to_string())?;
         let sequence_label = sequence_labels
-            .get(sequence_index)
+            .get(head.sequence)
             .filter(|labels| !labels.is_empty())
             .map(|labels| labels.join("/"))
             .unwrap_or_else(|| "unnamed".to_owned());
@@ -5052,21 +5217,39 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
                 .collect::<Vec<_>>()
                 .join("|")
         } else if let (Some(x), Some(y)) = (logical_frame.origin_x, logical_frame.origin_y) {
-            format!("origin=({x},{y})")
+            // For a mirrored direction the engine does not reuse the stored x: it reflects it
+            // about the anchor, with an extra pixel on one width parity. Showing both is the only
+            // place a reader can see the flipped placement rule at work.
+            if resolved.flipped {
+                format!(
+                    "origin=({x},{y}) flipped-x={}",
+                    mirrored_anchor_x(&rules, frame.width, x)
+                )
+            } else {
+                format!("origin=({x},{y})")
+            }
         } else {
             "placement=inherited".to_owned()
         };
         let title = format!(
-            "Lords of Magic IMP viewer — {} — {} {}/{} — facing {}/{} — frame {}/{} (global {}/{}, {}×{}, {} bpp, {}, {}, seq={}, facing=0x{:04x}{})",
+            "Lords of Magic IMP viewer — {} — {} {}/{} — direction {}/{}{} — cycle {}/{} ({}, \
+             {} ms/frame, {}) \
+             — frame {}/{} ({}×{}, {} bpp, {}, {}, seq={}, facing=0x{:04x}{})",
             entry.name,
             sequence_label,
-            sequence_index + 1,
+            head.sequence + 1,
             sprite.sequences.len(),
-            facing_index - sequence.first_facing + 1,
-            sequence.facing_count,
-            frame_in_facing + 1,
-            facing.frame_count,
-            frame_index + 1,
+            head.direction + 1,
+            directions,
+            if resolved.flipped { " mirrored" } else { "" },
+            head.position + 1,
+            resolved.cycle_length,
+            cycle_mode_label(resolved.mode, resolved.end, rules.ping_pong_mode),
+            // Named on every frame with where it came from, because the interval comes from the
+            // engine's screen mode and not from the file on screen.
+            interval_milliseconds,
+            interval_label(interval_milliseconds, screen_tick),
+            resolved.frame + 1,
             sprite.frames.len(),
             frame.width,
             frame.height,
@@ -5074,7 +5257,7 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             display_mode.label(),
             placement,
             hex_bytes(&sequence.metadata),
-            facing.metadata,
+            sprite.facings[resolved.facing].metadata,
             if playing { ", playing" } else { "" }
         );
         canvas
@@ -5087,6 +5270,14 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
             display_mode,
             sprite.color_key,
         );
+        // The mirror fold's whole point: directions past the stored facings are the earlier
+        // facings drawn the other way round. Showing them unflipped would put the sprite's three
+        // synthesised facings on screen facing the wrong way.
+        let display_rgba = if resolved.flipped {
+            flip_rgba_horizontally(&display_rgba, frame.width, frame.height)
+        } else {
+            display_rgba
+        };
         draw_rgba_in_bounds(
             &mut canvas,
             frame.width,
@@ -5098,6 +5289,46 @@ fn view_imp_archive(source: &Source, member: &str, requested_frame: usize) -> Re
         thread::sleep(Duration::from_millis(16));
     }
     Ok(())
+}
+
+/// How the title names the interval: the screen mode it came from, and whether it still holds
+/// that mode's value or has been stepped away from it with the game's own speed hotkeys.
+fn interval_label(milliseconds: u64, screen_tick: ScreenTick) -> String {
+    if milliseconds == screen_tick.milliseconds() {
+        format!("{}, gs/modeinfo.gs", screen_tick.label())
+    } else {
+        format!(
+            "stepped from {} ({} ms, gs/modeinfo.gs)",
+            screen_tick.label(),
+            screen_tick.milliseconds()
+        )
+    }
+}
+
+/// How the title names a cycle mode: the number, and what the dispatch does at the end of it.
+fn cycle_mode_label(mode: u8, end: CycleEnd, ping_pong_mode: u8) -> String {
+    if mode == ping_pong_mode {
+        format!("mode {mode}: ping-pong")
+    } else {
+        format!("mode {mode}: {end}")
+    }
+}
+
+/// Mirror an RGBA buffer about its vertical centre line.
+fn flip_rgba_horizontally(rgba: &[u8], width: u16, height: u16) -> Vec<u8> {
+    let width = usize::from(width);
+    let height = usize::from(height);
+    let mut flipped = Vec::with_capacity(rgba.len());
+    for row in 0..height {
+        for column in (0..width).rev() {
+            let start = (row * width + column) * 4;
+            match rgba.get(start..start + 4) {
+                Some(pixel) => flipped.extend_from_slice(pixel),
+                None => return rgba.to_vec(),
+            }
+        }
+    }
+    flipped
 }
 
 fn load_imp_sequence_labels(
@@ -5126,105 +5357,6 @@ fn load_imp_sequence_labels(
         .and_then(|bytes| ImpHeaderStats::parse(&bytes).ok())
         .map(|stats| stats.sequence_labels)
         .unwrap_or_default()
-}
-
-fn find_imp_frame(
-    sprite: &ImpSprite,
-    current: usize,
-    direction: isize,
-    include_current: bool,
-) -> Result<usize, String> {
-    if sprite.frames.is_empty() {
-        return Err("IMP sprite contains no frames".to_owned());
-    }
-    let first_distance = usize::from(!include_current);
-    for distance in first_distance..first_distance + sprite.frames.len() {
-        let index = (current as isize + direction * distance as isize)
-            .rem_euclid(sprite.frames.len() as isize) as usize;
-        let frame = sprite
-            .resolved_frame(index)
-            .map_err(|error| error.to_string())?;
-        if frame.width > 0 && frame.height > 0 && !frame.rgba.is_empty() {
-            return Ok(index);
-        }
-    }
-    Err("IMP sprite contains no visible frames".to_owned())
-}
-
-fn step_imp_frame(sprite: &ImpSprite, current: usize, direction: isize) -> Result<usize, String> {
-    let (_, facing_index, frame_in_facing) = sprite
-        .frame_location(current)
-        .map_err(|error| error.to_string())?;
-    find_visible_in_facing(sprite, facing_index, frame_in_facing, direction, false)
-}
-
-fn step_imp_facing(sprite: &ImpSprite, current: usize, direction: isize) -> Result<usize, String> {
-    let (sequence_index, facing_index, _) = sprite
-        .frame_location(current)
-        .map_err(|error| error.to_string())?;
-    let sequence = &sprite.sequences[sequence_index];
-    let relative_facing = facing_index - sequence.first_facing;
-    for distance in 1..=sequence.facing_count {
-        let relative = (relative_facing as isize + direction * distance as isize)
-            .rem_euclid(sequence.facing_count as isize) as usize;
-        let candidate = sequence.first_facing + relative;
-        if let Ok(frame) = find_visible_in_facing(sprite, candidate, 0, 1, true) {
-            return Ok(frame);
-        }
-    }
-    Err("IMP sequence contains no visible facings".to_owned())
-}
-
-fn step_imp_sequence(
-    sprite: &ImpSprite,
-    current: usize,
-    direction: isize,
-) -> Result<usize, String> {
-    let (sequence_index, _, _) = sprite
-        .frame_location(current)
-        .map_err(|error| error.to_string())?;
-    for distance in 1..=sprite.sequences.len() {
-        let candidate = (sequence_index as isize + direction * distance as isize)
-            .rem_euclid(sprite.sequences.len() as isize) as usize;
-        let sequence = &sprite.sequences[candidate];
-        for relative_facing in 0..sequence.facing_count {
-            if let Ok(frame) =
-                find_visible_in_facing(sprite, sequence.first_facing + relative_facing, 0, 1, true)
-            {
-                return Ok(frame);
-            }
-        }
-    }
-    Err("IMP sprite contains no visible sequences".to_owned())
-}
-
-fn find_visible_in_facing(
-    sprite: &ImpSprite,
-    facing_index: usize,
-    current_offset: usize,
-    direction: isize,
-    include_current: bool,
-) -> Result<usize, String> {
-    let facing = sprite
-        .facings
-        .get(facing_index)
-        .ok_or_else(|| format!("IMP facing index {facing_index} is out of range"))?;
-    if facing.frame_count == 0 {
-        return Err("IMP facing contains no frames".to_owned());
-    }
-    let first_distance = usize::from(!include_current);
-    for distance in first_distance..first_distance + facing.frame_count {
-        let offset = (current_offset as isize + direction * distance as isize)
-            .rem_euclid(facing.frame_count as isize) as usize;
-        let index = facing.first_frame + offset;
-        let frame = sprite
-            .resolved_frame(index)
-            .map_err(|error| error.to_string())?;
-        if frame.width > 0 && frame.height > 0 && !frame.rgba.is_empty() {
-            return Ok(index);
-        }
-    }
-    Err("IMP facing contains no visible frames".to_owned())
 }
 
 fn view_map_file(path: &Path, tile_set_paths: Option<&(PathBuf, PathBuf)>) -> Result<(), String> {
@@ -7655,8 +7787,8 @@ mod tests {
     use std::path::PathBuf;
 
     use lom_asset_viewer::imp::{
-        ImpDisagreement, ImpExceptionClass, ImpFacing, ImpFrame, ImpOrphanFacts, ImpOrphanNote,
-        ImpSequence, ImpSprite, ImpStatistic, ImpValidationException, PackedSizes,
+        ImpDisagreement, ImpExceptionClass, ImpOrphanFacts, ImpOrphanNote, ImpSprite,
+        ImpStatistic, ImpValidationException, PackedSizes,
         write_frame_pixels,
     };
     use lom_asset_viewer::map::{MapAsset, MapCell};
@@ -7666,10 +7798,111 @@ mod tests {
     use lom_asset_viewer::tile::{TileDefinition, TileSelector, TileSetDefinition};
 
     use super::{
-        ImpCatalog, ImpDisplayMode, ImpValidationReport, MapDisplayMode,
-        TERRAIN_PREVIEW_TILE_SIZE, imp_display_rgba, map_display_rgba, step_imp_facing,
-        step_imp_frame, step_imp_sequence, terrain_preview_rgba, validate_imp_members,
+        DEFAULT_SCREEN_TICK, ImpCatalog, ImpDisplayMode, ImpValidationReport, MapDisplayMode,
+        ScreenTick, TERRAIN_PREVIEW_TILE_SIZE, TICK_CEILING_MILLISECONDS, TICK_FLOOR_MILLISECONDS,
+        TICK_STEP_MILLISECONDS, flip_rgba_horizontally, imp_display_rgba, map_display_rgba,
+        terrain_preview_rgba, validate_imp_members,
     };
+
+    /// The viewer's frame interval is the engine's, so the numbers have to come from the engine's
+    /// own scripts rather than from this file. Asserted against `gs.mpq` by parsing every
+    /// `setmodeticktime` and every clamped step, not by looking for the numbers this code already
+    /// holds: a wrong value in `modeinfo.gs` fails here, and so does a mode this viewer does not
+    /// know about.
+    ///
+    /// Run with `LOM_GS_MPQ=.../English/gs.mpq cargo test --release -- --ignored`.
+    #[test]
+    #[ignore = "needs LOM_GS_MPQ"]
+    fn the_viewer_ticks_at_the_rates_the_shipped_scripts_set() {
+        let path = std::env::var("LOM_GS_MPQ").expect("set LOM_GS_MPQ to the installed gs.mpq");
+        let archive =
+            lom_asset_viewer::mpq::Archive::open(std::path::Path::new(&path)).expect("open gs.mpq");
+
+        // Bare CR is a line ending in this game's text formats, so split on every flavour.
+        let lines = |bytes: Vec<u8>| -> Vec<String> {
+            String::from_utf8_lossy(&bytes)
+                .split(['\r', '\n'])
+                .map(|line| line.split(';').next().unwrap_or("").trim().to_owned())
+                .collect()
+        };
+
+        let modeinfo = lines(archive.read("gs\\modeinfo.gs").expect("read gs/modeinfo.gs"));
+        let mut assigned: Vec<(String, u64)> = Vec::new();
+        for line in &modeinfo {
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            // `MODE 66 setmodeticktime`. Only the literal form assigns a number here; the
+            // `getmodeticktime` lines copy one and are not assignments of a value.
+            if tokens.len() == 3
+                && tokens[2] == "setmodeticktime"
+                && let Ok(milliseconds) = tokens[1].parse::<u64>()
+            {
+                assigned.push((tokens[0].to_owned(), milliseconds));
+            }
+        }
+        assigned.sort();
+        assert_eq!(
+            assigned,
+            vec![
+                ("COMBAT_SCREEN".to_owned(), 121),
+                ("INTRO_SCREEN".to_owned(), 66),
+                ("LOCATION_SCREEN".to_owned(), 121),
+                ("REGION_SCREEN".to_owned(), 66),
+                ("SCROLLINGMAP_SCREEN".to_owned(), 66),
+                ("SETUP_SCREEN".to_owned(), 66),
+                ("WORLD_SCREEN".to_owned(), 66),
+            ],
+            "gs/modeinfo.gs no longer assigns the tick times this viewer offers"
+        );
+
+        // Every distinct value the scripts assign is one of the two the viewer exposes, and both
+        // of the viewer's are used.
+        let mut values: Vec<u64> = assigned.iter().map(|(_, ms)| *ms).collect();
+        values.sort_unstable();
+        values.dedup();
+        assert_eq!(
+            values,
+            vec![
+                ScreenTick::Map.milliseconds(),
+                ScreenTick::CombatOrLocation.milliseconds()
+            ]
+        );
+        assert_eq!(DEFAULT_SCREEN_TICK, ScreenTick::Map);
+
+        // The step and the clamp, from the game's own speed hotkeys.
+        let hotkeys = lines(archive.read("gs\\hotkey.gs").expect("read gs/hotkey.gs"));
+        let mut clamps: Vec<(u64, String, u64)> = Vec::new();
+        for line in &hotkeys {
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            for window in tokens.windows(5) {
+                // `getmodeticktime 11 sub 11 max` and `getmodeticktime 11 add 330 min`.
+                if let (Ok(step), Ok(bound)) =
+                    (window[0].parse::<u64>(), window[2].parse::<u64>())
+                    && matches!(window[1], "sub" | "add")
+                    && matches!(window[3], "max" | "min")
+                {
+                    clamps.push((step, window[1].to_owned(), bound));
+                }
+            }
+        }
+        clamps.sort();
+        clamps.dedup();
+        assert_eq!(
+            clamps,
+            vec![
+                (
+                    TICK_STEP_MILLISECONDS,
+                    "add".to_owned(),
+                    TICK_CEILING_MILLISECONDS
+                ),
+                (
+                    TICK_STEP_MILLISECONDS,
+                    "sub".to_owned(),
+                    TICK_FLOOR_MILLISECONDS
+                ),
+            ],
+            "gs/hotkey.gs no longer steps and clamps the tick time the way the viewer does"
+        );
+    }
 
     #[test]
     fn imp_display_modes_preserve_decoder_pixels() {
@@ -7690,16 +7923,26 @@ mod tests {
         );
     }
 
+    /// A mirrored direction is the stored facing drawn the other way round, so the viewer has to
+    /// reverse each row and only each row. A buffer flipped about the wrong axis, or flipped
+    /// whole, passes a symmetric fixture; this one is asymmetric in both axes.
     #[test]
-    fn imp_navigation_respects_facing_and_sequence_boundaries() {
-        let sprite = navigation_sprite();
+    fn a_mirrored_direction_reverses_rows_and_not_columns() {
+        // 3x2, one distinct value per pixel in the red channel.
+        let rgba: Vec<u8> = (0..6u8)
+            .flat_map(|pixel| [pixel, 0, 0, 255])
+            .collect();
+        let flipped = flip_rgba_horizontally(&rgba, 3, 2);
+        let reds: Vec<u8> = flipped.chunks_exact(4).map(|pixel| pixel[0]).collect();
+        assert_eq!(reds, vec![2, 1, 0, 5, 4, 3]);
+    }
 
-        assert_eq!(step_imp_frame(&sprite, 1, 1).unwrap(), 0);
-        assert_eq!(step_imp_frame(&sprite, 0, -1).unwrap(), 1);
-        assert_eq!(step_imp_facing(&sprite, 0, 1).unwrap(), 2);
-        assert_eq!(step_imp_facing(&sprite, 2, -1).unwrap(), 0);
-        assert_eq!(step_imp_sequence(&sprite, 2, 1).unwrap(), 4);
-        assert_eq!(step_imp_sequence(&sprite, 4, -1).unwrap(), 0);
+    /// A buffer that does not hold the pixels its dimensions claim is returned untouched rather
+    /// than half-flipped: the viewer would otherwise draw a torn frame and call it a mirror.
+    #[test]
+    fn a_short_buffer_is_not_flipped() {
+        let rgba = vec![9, 0, 0, 255, 8, 0, 0, 255];
+        assert_eq!(flip_rgba_horizontally(&rgba, 3, 2), rgba);
     }
 
     /// Corrected 2026-09-17: cells are packed `y * width + x`, so consecutive cells are one
@@ -9408,80 +9651,6 @@ TILE= 1, 1, *, *, *, *, *, *, *, *, 1\r\n"
         );
         assert!(LayoutObservability::for_frame(tall.tight_ceil, tall, 0, true).unobservable);
         assert!(!LayoutObservability::for_frame(tall.tight_ceil, tall, 0, true).not_cleared_by_gaps);
-    }
-
-    fn navigation_sprite() -> ImpSprite {
-        let frames = (0..6)
-            .map(|index| ImpFrame {
-                flags: 0,
-                width: 1,
-                height: 1,
-                origin_x: None,
-                origin_y: None,
-                hotspots: Vec::new(),
-                palette_indices: vec![2],
-                rgba: vec![1, 2, 3, 255],
-                source_frame: None,
-                record_offset: index * 16,
-                hotspot_offset: None,
-                packed_size: Some(1),
-                pixels_offset: Some(index * 16),
-                stored_size: Some(1),
-            })
-            .collect();
-        ImpSprite {
-            file_flags: 0,
-            record_variant: 1,
-            compressed: false,
-            bits_per_pixel: 8,
-            maximum_width: 1,
-            maximum_height: 1,
-            sequence_count: 2,
-            facing_count: 3,
-            frame_count: 6,
-            color_key: 0,
-            duplicate_frame_count: 0,
-            back_reference_frame_count: 0,
-            hotspot_count: 0,
-            hotspot_bytes: 0,
-            raw_pixel_bytes: 6,
-            stored_pixel_bytes: 6,
-            palette: vec![[0, 0, 0, 255]; 256],
-            sequences: vec![
-                ImpSequence {
-                    metadata: [0; 11],
-                    first_facing: 0,
-                    facing_count: 2,
-                    first_frame: 0,
-                    frame_count: 4,
-                },
-                ImpSequence {
-                    metadata: [0; 11],
-                    first_facing: 2,
-                    facing_count: 1,
-                    first_frame: 4,
-                    frame_count: 2,
-                },
-            ],
-            facings: vec![
-                ImpFacing {
-                    metadata: 0,
-                    first_frame: 0,
-                    frame_count: 2,
-                },
-                ImpFacing {
-                    metadata: 0,
-                    first_frame: 2,
-                    frame_count: 2,
-                },
-                ImpFacing {
-                    metadata: 0,
-                    first_frame: 4,
-                    frame_count: 2,
-                },
-            ],
-            frames,
-        }
     }
 
     use super::{gamescript_failure_lines, operator_signature_lines};
