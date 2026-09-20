@@ -27,8 +27,99 @@ whole file reassembles byte-identically with `LS_SPR_` regenerated in 31 of 31. 
 falsifiable". It is not.** Once `parse` succeeds the re-encode is an *identity*, so it proves
 **lossless preservation and correct container splicing** and nothing more. It does not prove any
 record's internal field boundaries and does not exclude compensating errors — see
-[what the round trip proves](#what-the-round-trip-proves-and-what-it-cannot). There is still no
-savegame writer; the other eight payloads are copied through unchanged.
+[what the round trip proves](#what-the-round-trip-proves-and-what-it-cannot).
+
+## There is now a savegame writer — 2026-09-19
+
+**All nine sections have an encoder and `SaveFile::encode` writes a whole file from the decoded
+sections with nothing spliced.** The previous sentence here — "there is still no savegame writer;
+the other eight payloads are copied through unchanged" — no longer holds. Every installed save on
+this machine is written back **byte-identically** from its decoded model: **31 of 31**.
+
+**Read the split before quoting that figure.** It is the same discipline `src/wave.rs` applies to
+its own round trip, and for the same reason: the result is only evidence about the part that is
+genuinely rebuilt.
+
+**Reconstructed, and therefore load-bearing** — every quantity that describes other bytes is
+recomputed from the bytes it describes, never copied out of the parse:
+
+| section | reconstructed |
+| --- | --- |
+| `LS_MULT` | `declared_setup_len`; whether the slot block is present |
+| `LS_MAP_` | the second plane's count word |
+| `LS_GAME` | the record count; the record-size word; the counted array's length; all six version gates |
+| `LS_PLR_` | every queue count, every army's unit count, the roster's slot count, every bitset's implied width; all seven version gates |
+| `LS_REGN` | `array_count`, as `regions.len() - 1`; every region's name-length byte |
+| `LS_ALRM` | all six queue counts, every callback name's length, every argument count |
+
+**Replayed, and therefore proving nothing** — `LS_USER`'s eight records, `LS_MAP_`'s cells,
+`LS_REGN`'s six-byte grid cells and 64-byte region blocks, `LS_PLR_`'s 3,200-byte block and army
+stats, every `Unknown` word, every `LS_SPR_` record body, and the **uninitialised name padding** in
+`LS_MULT`. The encoder cannot disagree with its input about any of them.
+
+**The encoders refuse rather than write a plausible file**: a `LS_USER` that is not eight records
+of 784, a region name past the `u8` length field, a bitset whose words do not match its bit count,
+a player record without sixteen armies, an alarm record whose shape does not match its queue's
+schedule, a map that is not in grid form, and — **in both directions** — any version-gated field
+present when the target version does not store it, or absent when it does.
+
+**No save this project has written has ever been loaded by the engine.** The claim is *composable
+offline*, and the engine test is an attended item that has not happened.
+
+## Corrected, 2026-09-19: `LS_GAME` had 71 phantom records in it
+
+**Refuted: the `N - live_count == 71` surplus.** It was this page's headline unexplained constant,
+held over ten game states, and it was **an artefact of a wrong model**.
+
+Walking the writer at `0x00482CF2` for the first time — the earlier pass followed the other eight
+tag pushes and not this one — shows `LS_GAME` does not end after its record table. It continues
+with six **version-gated** fields:
+
+```text
+  4 + 4 + 32 + 4 + (8 + 4*n) + 200 + 4  =  256 + 4*n
+```
+
+and `n == 150` in all 31 files, which makes that tail **856 bytes**, which is exactly
+`71 × 12 + 4` — seventy-one phantom records and the phantom trailer. The count word the old model
+called `live_count` is simply the number of records: `0x0052B3B0` walks a linked list to length
+and then writes that many nodes.
+
+**What let it survive was the shape of its check.** The old model's only test was a byte total and
+`(payload - 24) % 12 == 0`, and 856 satisfies both. This is the third time on this page that **an
+accounting check over a sum failed to see a regrouping of its terms** — see the
+[`128*128*12 + 16`](#corrected-1281281216-was-a-false-arithmetic-fit) note, which diagnosed the
+same failure and did not generalise it. The rule worth carrying: **an unexplained constant that
+appears in every file is a reading error until it is read out of the instruction stream.**
+
+The structural check is now a walk of the writer's field schedule, which lands on the payload's end
+or does not, and the regularity that replaces the surplus is `the counted array holds 150 words`.
+Both hold in 31 of 31.
+
+### The `LS_GAME` ladder
+
+**Observed in a local binary, 2026-09-19.** Six `cmp dword [esi], n / jl` gates in the handler at
+`0x00483342`; the writer at `0x00482CF2` has **none** and always emits the full section, the same
+asymmetry `LS_PLR_` has.
+
+```text
+  u32 turn                                            +0x5004
+  u32 unknown_5008
+  u32 unknown_228a8
+  V >= 80  : u32 count ; u32 record_size ; count * record_size bytes   0x0052B3B0 / 0x0052B2A0
+  V >= 82  : u32 +0x4fb4 ; u32 +0x4fc8                (the reader defaults both to 1 when absent)
+  V >= 87  : 32 bytes                                 +0x4fcc
+  V >= 97  : u32 +0x4dc4 ; u32 n ; u32 +0x4db4 ; n * u32   0x004C4010 / 0x004C3FA0
+  V >= 105 : 200 bytes                                +0x230cc
+  V >= 108 : u32                                      +0x23194
+```
+
+**The stored record size is a length the reader uses**, like `LS_MULT`'s 164 and unlike anything
+else in the format: `0x0052B2F8` is `cmp dword,0xc / jbe`, and the reader then `fread`s that many
+bytes per record. The previous note here — "there is no evidence the reader uses this as a length,
+so it is checked, not trusted" — is **Refuted**. The parser nonetheless **refuses** any size but
+12, and that is a deliberate difference from the engine: on a short record the engine copies three
+dwords out of a 12-byte stack buffer it does not clear between records, so its third field is the
+*previous* record's bytes. That is not a layout, and writing one back would be inventing it.
 
 ### The three new sections were decoded from the writer, not from the files
 
@@ -109,6 +200,12 @@ LOM_SAVE_DIRS="$APPS/Steambuild 32 64bit DXVK.app/$SUB/savegame:$APPS/Lords of M
 `LOM_GAME_DIR` alone surveys that install's `savegame/` only — 11 files under GS5R3, 8 under 3.02,
 6 under either stock install. `LOM_SAVE_DIRS` adds the rest; the two together were measured at
 **31 on 2026-09-19**, unchanged from the 2026-09-18 count.
+
+**Added 2026-09-19: the same test now also writes every file back.** For each save it calls
+`SaveFile::encode` — all nine payloads regenerated from the decoded sections, nothing spliced —
+and requires the result to equal the file byte for byte, and it checks the file's section order
+against `WRITER_SECTION_ORDER`. Measured across the union: **31 of 31 written byte-identically**,
+and all 31 store the sections in the engine's own writer order.
 
 **The test does not assert 31, and deliberately so.** This is a live directory: asserting a total
 is what made this headline wrong twice. It asserts a **floor**, the six shipped saves **pinned by
@@ -251,7 +348,11 @@ at the wrong directory — but it is a sanity bound, not a checksum. The format 
 | `0x00483120` | full loader |
 | `0x00483010` | header-peek reader: reads `LS_VER_` and `LS_MULT` only, then closes the file |
 
-**The writer is the map of the format, and it is worth reading before anything else.** It emits the
+**The writer is the map of the format, and it is worth reading before anything else.** It is also
+where the one section this page had wrong went wrong: the 2026-09-18 pass followed eight of these
+nine rows into their sub-writers and read `LS_GAME`'s as "inline + one call", stopping at the
+record table. The seven `fwrite`s after it are the 856 bytes that became
+[71 phantom records](#corrected-2026-09-19-ls_game-had-71-phantom-records-in-it). It emits the
 nine tags in a fixed order and, between them, calls one routine per owned sub-object. Every section
 below whose structure is known was recovered by following those calls:
 
@@ -262,7 +363,7 @@ below whose structure is known was recovered by following those calls:
 | `0x00482C63` `LS_MAP_` | `0x004A5440`, `0x004A54E0`, `0x004C8FC0` | the map |
 | `0x00482C97` `LS_SPR_` | `0x004F6BC0` | the sprite table |
 | `0x00482CB5` `LS_USER` | `0x0052D040` | eight user records |
-| `0x00482CE5` `LS_GAME` | inline + `0x0052B3B0` | turn and the record table |
+| `0x00482CE5` `LS_GAME` | inline + `0x0052B3B0` + `0x004C4010` | turn, the record table and six gated tail fields |
 | `0x00482E22` `LS_PLR_` | `0x004BCE20` per player | per-player state |
 | `0x00482F3A` `LS_REGN` | `0x004C7390` | grid and region table |
 | `0x00482F6A` `LS_ALRM` | six calls, `0x0040B7D0` .. `0x0040F600` | six alarm queues |
@@ -286,7 +387,7 @@ its I/O are a lock pair, and its bytes decode with no transform applied.
 | tag | payload | state | leading `u32` means |
 | --- | ---: | --- | --- |
 | `LS_VER_` | 4 | decoded | the format version |
-| `LS_MULT` | 744 | decoded | `sizeof` of the setup block (164) — **the only real length in the format** |
+| `LS_MULT` | 744 | decoded | `sizeof` of the setup block (164) — a length the reader uses |
 | `LS_MAP_` | 196,628 | decoded | map width |
 | `LS_SPR_` | varies | decoded | live record count |
 | `LS_USER` | 6,272 | decoded | record 0's own index (`0`) |
@@ -324,9 +425,12 @@ One version-gated behaviour is known: **below version 99 the reader synthesizes 
   576 bytes          16 x { u32 lord_code; char name[32] }   (36 bytes each)
 ```
 
-`4 + 164 + 576 = 744`. This is the one forward-compatible section, because the stored 164 is used as
-an actual length — so the parser reads the block at its *declared* length rather than at the
-constant, and a test drives that with declared lengths of 0, 100, 164 and 300.
+`4 + 164 + 576 = 744`. The stored 164 is used as an actual length, which makes this section
+forward-compatible. **Corrected, 2026-09-19: it is not the only such length.** `LS_GAME`'s stored
+record size reaches a `cmp dword,0xc / jbe` and then an `fread` of that width, so there are two,
+and the sentence "the only real length in the format" is withdrawn. The parser still reads this
+block at its *declared* length rather than at the constant, and a test drives that with declared
+lengths of 0, 100, 164 and 300.
 
 Slots 0..8 carry a code and slots 8..16 carry `0xFFFFFFFF` in every file. **Occupancy is the code,
 never the name**: in both turn-315 files, slots 1 and 4 carry live codes `0x43` and `0x35` with an
@@ -896,42 +1000,49 @@ Most of the remainder is a repeating `(-1, -1, 0)` 12-byte pattern.
 
 ---
 
-### `LS_GAME` — the turn counter and a record table
+### `LS_GAME` — the turn counter, a record table and a gated tail; **corrected 2026-09-19**
 
-**Observed in a local binary, 2026-09-18.** Holds in all 31 files with zero exceptions:
+**Observed in a local binary, 2026-09-19.** Writer `0x00482CF2`, handler `0x00483342`. The full
+schedule and the six version gates are in
+[the correction above](#corrected-2026-09-19-ls_game-had-71-phantom-records-in-it); in brief:
 
 ```text
-  u32 turn
-  u32 unknown_4
-  u32 0
-  u32 live_count
-  u32 12                  <- literally the record size, stored
-  N * 12 bytes            where N = (payload_len - 24) / 12
-  u32 trailer
+  u32 turn ; u32 +0x5008 ; u32 +0x228a8
+  V >= 80  : the record table   ( u32 count ; u32 record_size ; count * record_size )
+  V >= 82  : u32 ; u32
+  V >= 87  : 32 bytes
+  V >= 97  : u32 ; the counted array ( u32 n ; u32 ; n * u32 )
+  V >= 105 : 200 bytes
+  V >= 108 : u32
 ```
 
-`(payload_len - 24) % 12 == 0` in all 31, and **`N - live_count == 71` in all 31**:
+**Observed in the corpus, 2026-09-19.** The model accounts for the payload with **zero slack in
+all 31 files**, across both format versions present, and the count word is the record count
+exactly:
 
-| file | N | live_count | surplus |
+| file | records | counted array | slack |
 | --- | ---: | ---: | ---: |
-| `combat.sav` | 1528 | 1457 | 71 |
-| `experience.sav` | 1653 | 1582 | 71 |
-| `magic.sav` | 269 | 198 | 71 |
-| `merc.sav` | 269 | 198 | 71 |
-| `temple.sav` | 424 | 353 | 71 |
-| `quickstart` | 191 | 120 | 71 |
-| `lastsave.lom` / `Merlin I` (3.02) | 2691 | 2620 | 71 |
-| `combat.lom` / `lastsave.lom` / `Merlin I` (GS5R3) | 574 | 503 | 71 |
-| `endturn.lom` (GS5R3) | 470 | 399 | 71 |
+| `combat.sav` | 1457 | 150 | 0 |
+| `experience.sav` | 1582 | 150 | 0 |
+| `magic.sav` / `merc.sav` | 198 | 150 | 0 |
+| `temple.sav` | 353 | 150 | 0 |
+| `quickstart` (v108) | 120 | 150 | 0 |
+| `lastsave.lom` / `Merlin I` (3.02, turn 315) | 2620 | 150 | 0 |
+| `combat.lom` / `lastsave.lom` / `Merlin I` (GS5R3) | 997 | 150 | 0 |
+| `endturn.lom` (GS5R3) | 892 | 150 | 0 |
+| `temple.lom` (GS5R3) | 990 | 150 | 0 |
 
-The constant 71 is Observed — now over **ten** distinct game states, including three the previous
-pass did not have — and **unexplained**. The surplus is computed as a signed value and
-reported as a number, never as a boolean.
+Those record counts are the **same numbers** the previous model called `live_count` — it had them
+right and was reading 71 records of tail past them.
 
 The record is `i32 id; i32 a; i32 b`. Ids descend by one in long runs and then jump, which is what a
-free list looks like — that reading is **Inferred**.
+free list looks like — that reading is **Inferred**. Every other field's meaning is **Unknown**;
+`n == 150` is a **corpus regularity** and not a requirement, and the survey reports its measured
+value rather than failing on it.
 
-The trailer varies (1, 319, 801 observed) and its meaning is **Unknown**.
+**What is still not determined here**: what any of the tail fields *are*. The 32-byte and
+200-byte blocks are carried verbatim, and the counted array's 150 words are carried as words. A
+writer that preserves them is not a reader that understands them.
 
 ---
 
@@ -1208,10 +1319,12 @@ invent a turn.
 
 ## What is not determined
 
-Four gaps, stated as gaps. "Not determined" is the honest answer for each; a confident wrong answer
+Six gaps, stated as gaps. "Not determined" is the honest answer for each; a confident wrong answer
 would cost far more. **The previous pass's first gap — `LS_SPR_`'s record layouts — is closed**,
 and what replaces it is a narrower gap of a different kind: the layouts are decoded and the field
-meanings are not.
+meanings are not. Two further gaps were added on 2026-09-19 with the savegame writer, and one of
+them — that no save this project has written has ever been loaded by the engine — is the one that
+bounds every claim on this page about composability.
 
 ### 1. What every `LS_SPR_` field *means*
 
@@ -1244,6 +1357,33 @@ Three specific holes inside that:
   can see one, and the version sweep only sees one that a *gate* would move. Only re-reading the
   instruction stream can, which is why classes 4 and 9 having a second reader matters and class 8
   not having one is listed above.
+
+### 1b. What every `LS_GAME` tail field means, and the ladder below 108
+
+**Added 2026-09-19 with the corrected model.** The section's *structure* is decoded from the writer
+and accounts for every corpus file exactly; the *meaning* of its tail is not decoded at all. The
+32-byte block at `+0x4fcc`, the 200-byte block at `+0x230cc`, the counted array's 150 words and the
+four loose dwords are carried verbatim, exactly as `LS_SPR_`'s record bodies are.
+
+Two narrower holes inside that:
+
+- **`n == 150` is unexplained.** It is the same shape of fact the retracted 71 was, and it is now
+  filed where that one should have been: as a **corpus regularity** reported with its measured
+  value, not as a constant of the format.
+- **Gates 80, 82, 87, 97 and 105 are never exercised by a real file.** The corpus holds 108 and
+  111, both of which clear every gate. The unit tests sweep every gate and the version immediately
+  below it against a fixture that is a second transcription of the handler, and the raw-bytes
+  walker is driven across the same ladder — but a fixture transcribed from the same reading of the
+  same binary cannot confirm that a real pre-108 writer produced it. This is the same caution
+  already recorded for `LS_PLR_`'s ladder and for the pre-99 `LS_MULT` path.
+
+### 1c. No save this project has written has ever been loaded by the engine
+
+`SaveFile::encode` writes all 31 corpus saves back byte-identically, which establishes that the
+bytes are preserved and the container is assembled correctly. **It does not establish that the
+engine accepts anything this project writes**, and nothing here should be read as saying so. The
+one experiment that would settle it — load a re-written save in the game — is an attended item and
+has not been run. Until it has, the claim is *composable offline*.
 
 ### 2. The six-byte `LS_REGN` grid cell
 
@@ -1350,22 +1490,52 @@ All fixtures are synthetic and built in code; **no save data is committed**.
 Fixtures are deliberately **unlike the corpus** in every way the corpus is uniform: a non-square
 96×64 map and region grid, a permuted section order, an empty sprite table, versions far outside the
 observed range, **an occupied alarm queue 0**, **regions that carry names where the corpus's do
-not**, and **three `LS_PLR_` records of three different lengths**. Parametrised tests cover a
+not**, **three `LS_PLR_` records of three different lengths**, and an `LS_GAME` counted array of
+three words where every corpus file holds 150. Parametrised tests cover a
 missing section, a tag duplicated inside a payload, truncated payloads, five region-table shapes,
 a player section with no records at all, and thirteen format versions.
 
-The default fixture **deliberately breaks three corpus regularities** — the `LS_REGN` tail length,
-the "exactly one named region" pattern, and the empty alarm queue 0 — and a test asserts exactly
-which three break. That is the point of separating the two check classes: those three are things
-the shipped scenarios happen to do, and a fixture that copied them could not fail on a reader that
-depended on them. A separate test builds the corpus's own shape and shows that an empty queue 0 is
+The default fixture **deliberately breaks four corpus regularities** — the `LS_REGN` tail length,
+the "exactly one named region" pattern, the empty alarm queue 0, and (**new 2026-09-19**) the
+`LS_GAME` counted array's length of 150 — and a test asserts exactly which four break. That is the
+point of separating the two check classes: those four are things the shipped scenarios happen to
+do, and a fixture that copied them could not fail on a reader that depended on them. The fourth is
+the sharpest case: **150 is precisely the number that produced the retracted 71-record surplus**,
+so a fixture reproducing it could not fail on a model that hardcoded the tail's width. A separate test builds the corpus's own shape and shows that an empty queue 0 is
 the *only* reason the turn lands at payload word 2.
 
-**Assertions are structural, not literals lifted from the corpus.** `N - live_count` is computed and
-compared; the stride search is asserted to be the arithmetic it claims rather than a table of past
+**Assertions are structural, not literals lifted from the corpus.** The `LS_GAME` byte account is
+walked rather than divided; the stride search is asserted to be the arithmetic it claims rather than a table of past
 results; the plane-coverage check is independent of the byte total.
 
 **Every test was mutation-checked, and the first numbers reported were wrong.**
+
+### The 2026-09-19 sweep: 120 mutations, 117 killed, 3 expected survivors
+
+`PYTHONDONTWRITEBYTECODE=1 python3 tools/mutate_save_constants.py` now covers the `LS_SPR_` record
+model, the corrected `LS_GAME` model **and every RECONSTRUCTED field and refusal in the nine
+encoders**, each in both directions. Measured 2026-09-19: **120 mutations, 117 killed, 0 did not
+compile, 0 unmeasured, 3 survivors, all three expected and named by the harness** — the two
+`SPR_NESTED_LAST_WORD_MIN` moves behind a branch this build cannot reach, and the deliberate
+compensating `12+88 -> 16+84` pair.
+
+**The first run of the new set had three unexpected survivors, and all three were real coverage
+gaps.** Recorded rather than quietly fixed, because each is a distinct way for a writer's test to
+be weaker than it looks:
+
+| survivor | why it was invisible | what closed it |
+| --- | --- | --- |
+| `LS_PLR_ roster slot count replayed instead of reconstructed` | the fixture always writes a count that already equals its slots, so replaying it matches | a test that **adds a slot** and re-parses the output |
+| `game walker gate 80 -> 81` | the raw-bytes walker was only ever driven at version 111, where every gate is open | drive the structural check at **every rung and the version below it** |
+| `game walker gate 105 -> 104` | same | same |
+
+The first is the general shape: **a round trip cannot test a reconstruction whose input already
+agrees with it.** What tests a reconstructed count is changing the collection and watching the
+count follow.
+
+A mutation whose only effect is on a **replayed** field is deliberately absent from the sweep. It
+would be unkillable by construction, and adding unkillable mutants to inflate a denominator is the
+opposite of what the harness is for.
 
 The 2026-09-18 sweep over the three newly decoded sections is **53 mutations, 53 caught, 0
 survivors, 0 unapplied**, every constant tried in **both** directions. It is recorded here with its

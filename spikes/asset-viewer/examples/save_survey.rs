@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use lom_asset_viewer::save::{
-    SECTION_TAGS, SaveContainer, SaveError, SaveFile, TagCensus, UserRecord,
+    SECTION_TAGS, SaveContainer, SaveError, SaveFile, SectionTag, TagCensus, UserRecord,
 };
 
 /// How far the `LS_SPR_` fixed-stride search looks for a plausible per-section header.
@@ -76,6 +76,8 @@ fn main() -> ExitCode {
     let mut stride_intersection: Option<Vec<usize>> = None;
     let mut sprite_round_trips = 0_usize;
     let mut file_round_trips = 0_usize;
+    let mut file_writes = 0_usize;
+    let mut write_failures: Vec<String> = Vec::new();
     let mut sprite_files_with_no_echo_disagreement = 0_usize;
 
     for path in &paths {
@@ -212,6 +214,17 @@ fn main() -> ExitCode {
         if save.reencode_with_sprites(&bytes) == bytes {
             file_round_trips += 1;
         }
+        // The whole-file writer: every one of the nine payloads regenerated, nothing spliced.
+        match save.encode() {
+            Ok(written) if written == bytes => file_writes += 1,
+            Ok(written) => write_failures.push(format!(
+                "{}: wrote {} bytes for a {}-byte file",
+                path.display(),
+                written.len(),
+                bytes.len()
+            )),
+            Err(error) => write_failures.push(format!("{}: {error}", path.display())),
+        }
         if round_trips {
             sprite_round_trips += 1;
         }
@@ -262,13 +275,22 @@ fn main() -> ExitCode {
             );
         }
         println!(
-            "    LS_GAME  turn {}  unknown_4 {}  live_count {}  records {}  surplus {}  trailer {}",
+            "    LS_GAME  turn {}  +0x5008 {}  +0x228a8 {}  {} record(s)  counted array {}  \
+             accounts for {} of {}",
             save.game.turn,
-            save.game.unknown_4,
-            save.game.live_count,
-            save.game.records.len(),
-            save.game.record_surplus(),
-            save.game.trailer,
+            save.game.unknown_5008,
+            save.game.unknown_228a8,
+            save.game
+                .record_count()
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "absent".to_owned()),
+            save.game
+                .counted_array
+                .as_ref()
+                .map(|array| array.words.len().to_string())
+                .unwrap_or_else(|| "absent".to_owned()),
+            save.game.accounted_len(),
+            save.container.location(SectionTag::Game).payload_len,
         );
         println!(
             "    LS_PLR_  {} records, lengths {:?}, slots {:?}, terminator at +{}, lord codes {:?}",
@@ -372,6 +394,15 @@ fn main() -> ExitCode {
     );
     println!(
         "\nLS_SPR_ re-encoded byte-identically from its decoded records in {sprite_round_trips}/{parsed} file(s)\nwhole files reassembled byte-identically with LS_SPR_ regenerated: {file_round_trips}/{parsed}"
+    );
+    println!(
+        "whole files WRITTEN byte-identically from the decoded sections, nothing spliced: {file_writes}/{parsed}"
+    );
+    if !write_failures.is_empty() {
+        println!("  write failures: {write_failures:#?}");
+    }
+    println!(
+        "  -> the writer's RECONSTRUCTED half is load-bearing: every count word, every length\n     word and every version gate is recomputed and can disagree with the file. The\n     REPLAYED half -- opaque blocks, name padding, unknown words -- is carried and cannot.\n     See the module header in src/save.rs for the field-by-field split.\n     NO save this project has written has ever been loaded by the engine."
     );
     println!(
         "  -> proves LOSSLESS PRESERVATION and correct container splicing, and nothing more:\n     once parse succeeds the re-encode is an IDENTITY. It does not prove any record's\n     internal field boundaries and does not exclude compensating errors -- swap class 0's\n     12+88 for 16+84 and both trips still match byte for byte. The disassembly, and the\n     independently written fixture the version sweep drives, are the evidence for those."
@@ -498,16 +529,10 @@ fn normalized_state(save: &SaveFile) -> Vec<u8> {
         out.extend_from_slice(&record.raw);
     }
 
-    out.extend_from_slice(&save.game.turn.to_le_bytes());
-    out.extend_from_slice(&save.game.unknown_4.to_le_bytes());
-    out.extend_from_slice(&save.game.zero_8.to_le_bytes());
-    out.extend_from_slice(&save.game.live_count.to_le_bytes());
-    out.extend_from_slice(&save.game.declared_record_size.to_le_bytes());
-    out.extend_from_slice(&save.game.trailer.to_le_bytes());
-    for record in &save.game.records {
-        out.extend_from_slice(&record.id.to_le_bytes());
-        out.extend_from_slice(&record.a.to_le_bytes());
-        out.extend_from_slice(&record.b.to_le_bytes());
+    // The whole section, through its own encoder: every field of it is either carried or
+    // recomputed from carried data, so this is the same content by a shorter route.
+    if let Ok(game) = save.game.encode(&save.version) {
+        out.extend_from_slice(&game);
     }
 
     out.extend_from_slice(&save.players.records_raw);

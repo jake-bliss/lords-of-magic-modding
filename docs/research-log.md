@@ -6124,3 +6124,47 @@ anchor's whole safety argument depends on the game's own command line beginning 
 which is exactly the fact that is unmeasured for these two. An attended `ps -o command=` capture
 against both, while each is running, is the next thing this guard needs and is not something a
 closed-game measurement can substitute for.
+
+## 2026-09-19 — The savegame writer, and the 71 phantom records it found on the way
+
+`docs/save-format.md` said "there is still no savegame writer; the other eight payloads are copied
+through unchanged". All nine sections now have an encoder and `SaveFile::encode` writes a whole
+file from the decoded sections with **nothing spliced**: **31 of 31** installed saves come back
+byte-identical. That figure is split in the doc between what is **reconstructed** (every count
+word, every length word, every version gate) and what is **replayed** (every opaque block and the
+leaked `LS_MULT` name padding), because only the first half can fail.
+
+**The interesting result is not the writer.** Writing an encoder for `LS_GAME` meant reading its
+writer, and the writer says the section does not end where this project thought it did. Seven
+`fwrite`s follow the record table — `4 + 4 + 32 + 4 + (8 + 4*n) + 200 + 4`, all version-gated —
+and with `n == 150` in every corpus file that tail is **856 bytes**, which is exactly
+`71 × 12 + 4`. The page's headline unexplained constant, `N - live_count == 71`, held over ten
+game states because the old model was reading a fixed tail as seventy-one records and a trailer.
+The count word it called `live_count` is simply the record count: `0x0052B3B0` walks a linked list
+to length and writes that many nodes.
+
+**Why it survived**: the old model's only checks were a byte total and `(payload - 24) % 12 == 0`,
+and 856 satisfies both. That is the third time on that page that an accounting check over a *sum*
+failed to see a regrouping of its *terms* — the `128*128*12 + 16` note diagnosed the same failure
+in `LS_MAP_` and did not generalise it. The rule worth carrying out of this: **an unexplained
+constant that appears in every file is a reading error until it has been read out of the
+instruction stream.**
+
+Three smaller corrections came with it. `LS_GAME`'s stored record size **is** a length the reader
+uses (`cmp dword,0xc / jbe` at `0x0052B2F8`, then an `fread` of that width), so "there is no
+evidence the reader uses this as a length" is refuted and "`LS_MULT` is the only real length in the
+format" is withdrawn. And the parser now **refuses** a record size other than 12, which is a
+deliberate difference from an engine that would copy three dwords out of a stack buffer it does not
+clear between records.
+
+**The instrument was `objdump -d` against `lomse.exe`**, the same read-only route the previous
+passes used, and the method was the same: decode from the engine's own **writer**, then check the
+model as a byte account over the corpus. Every length in the new `LS_GAME` model is either a
+constant in the instruction stream or a count the file stores, so a merely plausible model stops
+short or overruns; this one lands exactly, in all 31 files, across both format versions present.
+
+**What this does not establish.** No save this project has written has ever been loaded by the
+engine — that run is still an attended item, and "composable offline" is the whole claim. Nothing
+here decodes the *meaning* of any `LS_GAME` tail field: the 32-byte and 200-byte blocks and the
+150-word array are carried verbatim, and a writer that preserves bytes is not a reader that
+understands them.
