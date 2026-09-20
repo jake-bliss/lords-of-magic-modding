@@ -626,7 +626,8 @@ writer was reached through `0x005AF130 + 4`. Both halves are wrong.
 ### What the screen modes set it to, Observed in the corpus
 
 `gs/modeinfo.gs` in `gs.mpq` assigns the tick time per screen mode at load. Read out of the shipped
-archive on 2026-09-19:
+archive on 2026-09-19, and **identical in all three distinct `gs.mpq` files on this machine** —
+stock (Steam build and `Lords of Magic Development`, byte-identical), 3.02, and GS5R3:
 
 ```
 SCROLLINGMAP_SCREEN 66 setmodeticktime
@@ -639,9 +640,35 @@ SETUP_SCREEN 66 setmodeticktime
 ```
 
 It is also **user-adjustable**, and the range is the game's own, not a viewer invention:
-`gs/hotkey.gs:705-738` steps the map and combat tick times by 11 ms and clamps them with
-`11 max` / `330 min`; `gs/hotkey.gs:750-758` restores 66 and 121; `gs/Dlg/opdlg.gs:547,579` drives
-the same field from the options dialog. All **Observed in the corpus**.
+`gs/hotkey.gs` steps the map and combat tick times by 11 ms and clamps them with
+`11 sub 11 max` / `11 add 330 min`; `gs/hotkey.gs` also restores 66 and 121 outright;
+`gs/Dlg/opdlg.gs:547,579` drives the same field from the options dialog. All **Observed in the
+corpus**.
+
+**The clamp is spelled differently in GS5R3, and the spelling is not the semantics.** Measured
+2026-09-19 across all three distinct archives, four occurrences of each form:
+
+| profile | `gs.mpq` members | faster key | slower key | `gs/standard.gs` defines |
+| --- | --- | --- | --- | --- |
+| stock (Steam build, `Lords of Magic Development`) | 1,688 | `11 sub 11 max` | `11 add 330 min` | `/min` with `gt`, `/max` with `lt` |
+| 3.02 | 1,691 | `11 sub 11 max` | `11 add 330 min` | `/min` with `gt`, `/max` with `lt` |
+| GS5R3 | 1,700 | `11 sub 11 min` | `11 add 330 max` | `/min` with `lt`, `/max` with `gt` |
+
+GS5R3 swaps the two call sites **and** reverses the two definitions, under ManTerA's own comment
+`WILL WORK TO REVERSE THE TWO ABOVE BY USING THE TWO BELOW`. The two changes cancel: in GS5R3 the
+token `min` computes a maximum, so `11 sub 11 min` is the same floor of 11 that `11 sub 11 max` is
+elsewhere, and `11 add 330 max` is the same ceiling of 330.
+
+**The effective clamp is therefore identical in all four installs: step 11, floor 11, ceiling 330**,
+which is what the viewer implements. An earlier revision of this section read the swapped tokens at
+face value and claimed GS5R3's speed keys "move to an extreme instead of stepping". That was an
+inference from the spelling presented as an observation, and it is **Refuted** — by
+`gs/standard.gs`, which defines what the spelling means.
+
+In GameScript both are `/NAME{2 copy CMP{exch pop}{pop}ifelse}bind def`. With `a b` on the stack,
+`2 copy` gives `a b a b`, `CMP` pops two and leaves a boolean, the true branch `{exch pop}` leaves
+`b` and the false branch `{pop}` leaves `a`. So the body returns `b` when the comparison holds:
+`gt` yields the smaller operand and `lt` the larger one. Read the comparison, never the name.
 
 ### The honest limit
 
@@ -788,7 +815,10 @@ Default:
   `docs/hotspots.md`'s rule, asserting the even-width discrepancy as well as the odd-width identity.
 
 Opt-in, with `LOM_GAME_DIR` set to the `English` directory and `LOM_LISTFILE` to a listfile, run via
-`cargo test --release -- --ignored`:
+`cargo test --release -- --ignored`. The IMP sweeps below were measured on the **GS5R3** profile and
+their pinned counts are that archive's; `the_viewer_ticks_at_the_rates_the_shipped_scripts_set` is
+separate, takes `LOM_GS_MPQ` rather than `LOM_GAME_DIR`, and is **profile-independent — it passes on
+all four installs**, keying the part that genuinely differs between them rather than pinning one:
 
 - `the_recovered_rules_match_the_installed_executable` — `recover` refuses on any disagreement with
   this module, so reaching the end is the check. It also asserts Part 1 (every `GetSequence` call
@@ -827,7 +857,8 @@ Opt-in, against the shipped archive:
 - `every_shipped_sequence_resolves_at_every_direction_and_position` — 4,667 sequences and 97,232
   frame resolutions, every one inside the decoded frame table, and **zero refusals**. The test used
   to allow a refusal wherever the sequence had a facing with no frames; a byte-level walk of all
-  1,800 members that does not share this decoder **refutes** the premise — **observed in the corpus**
+  1,800 members that does not share this decoder (`tools/imp_structure_scan.py`) **refutes** the
+  premise — **observed in the corpus**
   2026-09-19, none of the 14,921 facing records has `frame_count == 0`. (The same walk counts 6,552
   zero-*dimension* frames across 107 files, which is the separate fact behind the viewer's
   blank-skipping and is not the same thing.) The escape hatch was therefore dead code that also

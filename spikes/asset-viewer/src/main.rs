@@ -4986,10 +4986,18 @@ const DEFAULT_SCREEN_TICK: ScreenTick = ScreenTick::Map;
 
 /// The step, floor and ceiling the game's own speed hotkeys use.
 ///
-/// **Observed in the corpus**: `gs/hotkey.gs:705-757` steps the tick time by 11 ms and clamps it to
-/// 11..=330; `gs/Dlg/opdlg.gs:547,579` is the same field behind the options dialog
-/// (`gamespeed setticktime`, `combatspeed setticktime`). The viewer offers the same range rather
-/// than a range of its own.
+/// **Observed in the corpus**: `gs/hotkey.gs` steps the tick time by 11 ms and clamps it to
+/// 11..=330 with `11 sub 11 max` / `11 add 330 min`; `gs/Dlg/opdlg.gs:547,579` is the same field
+/// behind the options dialog (`gamespeed setticktime`, `combatspeed setticktime`). The viewer
+/// offers the same range rather than a range of its own.
+///
+/// **That is the stock and 3.02 spelling.** GS5R3 writes `11 sub 11 min` / `11 add 330 max`, but
+/// its `gs/standard.gs` also reverses the two definitions, so its `min` computes a maximum and the
+/// effective clamp is the same floor of 11 and ceiling of 330. The step, both bounds and the
+/// semantics are identical in all four installs; only the spelling differs, and
+/// `the_viewer_ticks_at_the_rates_the_shipped_scripts_set` derives it from each archive's own
+/// standard library rather than pinning one. See `docs/imp-format.md`, "What the screen modes set
+/// it to".
 const TICK_STEP_MILLISECONDS: u64 = 11;
 const TICK_FLOOR_MILLISECONDS: u64 = 11;
 const TICK_CEILING_MILLISECONDS: u64 = 330;
@@ -7871,13 +7879,73 @@ mod tests {
         );
     }
 
+    /// Which of `min`/`max` a given `gs.mpq` defines as the **maximum**, read out of that archive's
+    /// own `gs/standard.gs` rather than assumed from the token's name.
+    ///
+    /// Both are defined in GameScript as `/NAME{2 copy CMP{exch pop}{pop}ifelse}bind def`. With
+    /// `a b` on the stack, `2 copy` gives `a b a b`, the comparison pops two and leaves a boolean,
+    /// the true branch `{exch pop}` leaves `b` and the false branch `{pop}` leaves `a`. So the body
+    /// returns `b` when the comparison holds: `gt` yields the **smaller** operand and `lt` the
+    /// **larger** one. The token's spelling says nothing; the comparison inside it decides.
+    ///
+    /// **Observed in the corpus, 2026-09-19**, in all three distinct archives on this machine:
+    /// stock (Steam build and `Lords of Magic Development`, byte-identical) and 3.02 define `min`
+    /// with `gt` and `max` with `lt`, which is the ordinary reading. **GS5R3 reverses both**,
+    /// under ManTerA's own comment `WILL WORK TO REVERSE THE TWO ABOVE BY USING THE TWO BELOW`, so
+    /// in that archive the token `min` computes a maximum and `max` computes a minimum.
+    fn maximum_operator(standard: &str) -> &'static str {
+        // Matched on the **whitespace-free** text, because the archives disagree about layout:
+        // 3.02 writes `/min {\n  2 copy gt {...`, GS5R3 writes `/min{2 copy lt{...`, and the stock
+        // archive puts the whole library on one line. Stripping whitespace makes all three the
+        // same string, where a token-window match on any one of them fails on the others.
+        let comparison = |name: &str| -> &'static str {
+            let head = format!("/{name}{{2copy");
+            let rest = standard
+                .find(&head)
+                .map(|at| &standard[at + head.len()..])
+                .unwrap_or_else(|| panic!("gs/standard.gs does not define /{name}"));
+            if rest.starts_with("gt") {
+                "gt"
+            } else if rest.starts_with("lt") {
+                "lt"
+            } else {
+                panic!(
+                    "/{name} in gs/standard.gs is not the two-operand comparison this reads: {}",
+                    &rest[..rest.len().min(32)]
+                )
+            }
+        };
+        match (comparison("min"), comparison("max")) {
+            // The ordinary reading: `/min` returns the smaller operand.
+            ("gt", "lt") => "max",
+            // GS5R3's deliberate reversal: the token `min` returns the larger operand.
+            ("lt", "gt") => "min",
+            other => panic!("gs/standard.gs defines /min and /max with comparisons {other:?}"),
+        }
+    }
+
     /// The viewer's frame interval is the engine's, so the numbers have to come from the engine's
     /// own scripts rather than from this file. Asserted against `gs.mpq` by parsing every
     /// `setmodeticktime` and every clamped step, not by looking for the numbers this code already
     /// holds: a wrong value in `modeinfo.gs` fails here, and so does a mode this viewer does not
     /// know about.
     ///
-    /// Run with `LOM_GS_MPQ=.../English/gs.mpq cargo test --release -- --ignored`.
+    /// **This test is profile-independent, and the first revision was not.** It was green only on
+    /// `Lords of Magic 3.02` and red on the other three installs, for two independent reasons that
+    /// were both fixed rather than pinned:
+    ///
+    /// - It parsed line by line, and the stock and `Lords of Magic Development` archives ship
+    ///   `modeinfo.gs` and `hotkey.gs` as a **single line**. It now reads a flat token stream.
+    /// - Its clamp filter matched any `N op N op` run, and GS5R3's `hotkey.gs` holds three
+    ///   unrelated ones. The windows are now anchored on `getmodeticktime`.
+    ///
+    /// What genuinely differs between profiles is only the **spelling** of the clamp, and that is
+    /// derived from each archive's own `gs/standard.gs` rather than keyed by a hand-maintained
+    /// table. The **effective** clamp -- floor 11, ceiling 330, step 11 -- is identical in all
+    /// three archives and is asserted unconditionally.
+    ///
+    /// Run with `LOM_GS_MPQ=.../English/gs.mpq cargo test --release -- --ignored`. Verified on all
+    /// four installed profiles on 2026-09-19.
     #[test]
     #[ignore = "needs LOM_GS_MPQ"]
     fn the_viewer_ticks_at_the_rates_the_shipped_scripts_set() {
@@ -7885,28 +7953,45 @@ mod tests {
         let archive =
             lom_asset_viewer::mpq::Archive::open(std::path::Path::new(&path)).expect("open gs.mpq");
 
-        // Bare CR is a line ending in this game's text formats, so split on every flavour.
-        let lines = |bytes: Vec<u8>| -> Vec<String> {
+        // One flat token stream per member, **not** a line-oriented parse.
+        //
+        // Bare CR is a line ending in this game's text formats, so comments are still stripped per
+        // line -- `;` runs to the end of a line and nowhere further. But the stock and Development
+        // `gs.mpq` ship these members as a **single line** with no breaks at all, so any parse that
+        // requires a statement to be alone on its line finds nothing in them. That is exactly how
+        // the first revision came to report an empty result on two of the four profiles.
+        let tokens = |bytes: Vec<u8>| -> Vec<String> {
             String::from_utf8_lossy(&bytes)
                 .split(['\r', '\n'])
-                .map(|line| line.split(';').next().unwrap_or("").trim().to_owned())
+                .flat_map(|line| {
+                    line.split(';')
+                        .next()
+                        .unwrap_or("")
+                        .split_whitespace()
+                        .map(str::to_owned)
+                        .collect::<Vec<String>>()
+                })
                 .collect()
         };
 
-        let modeinfo = lines(archive.read("gs\\modeinfo.gs").expect("read gs/modeinfo.gs"));
+        let modeinfo = tokens(archive.read("gs\\modeinfo.gs").expect("read gs/modeinfo.gs"));
         let mut assigned: Vec<(String, u64)> = Vec::new();
-        for line in &modeinfo {
-            let tokens: Vec<&str> = line.split_whitespace().collect();
-            // `MODE 66 setmodeticktime`. Only the literal form assigns a number here; the
-            // `getmodeticktime` lines copy one and are not assignments of a value.
-            if tokens.len() == 3
-                && tokens[2] == "setmodeticktime"
-                && let Ok(milliseconds) = tokens[1].parse::<u64>()
+        for window in modeinfo.windows(3) {
+            // `MODE 66 setmodeticktime`, anchored on the opcode. The mode name is required to be a
+            // screen constant so that `... 11 max setmodeticktime`, which copies a value rather
+            // than assigning a literal, cannot enter the tally.
+            if window[2] == "setmodeticktime"
+                && window[0].ends_with("_SCREEN")
+                && let Ok(milliseconds) = window[1].parse::<u64>()
             {
-                assigned.push((tokens[0].to_owned(), milliseconds));
+                assigned.push((window[0].clone(), milliseconds));
             }
         }
         assigned.sort();
+
+        // **Observed in the corpus, 2026-09-19**: these seven assignments are the same in all three
+        // distinct `gs.mpq` files on this machine. GS5R3 changed the clamp's spelling and did not
+        // change these.
         assert_eq!(
             assigned,
             vec![
@@ -7935,39 +8020,68 @@ mod tests {
         );
         assert_eq!(DEFAULT_SCREEN_TICK, ScreenTick::Map);
 
+        // Which token means "maximum" in *this* archive, read from its own standard library.
+        let standard_bytes = archive.read("gs\\standard.gs").expect("read gs/standard.gs");
+        let standard: String = String::from_utf8_lossy(&standard_bytes)
+            .split(['\r', '\n'])
+            .flat_map(|line| line.split(';').next().unwrap_or("").chars())
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let maximum = maximum_operator(&standard);
+        let minimum = if maximum == "max" { "min" } else { "max" };
+
         // The step and the clamp, from the game's own speed hotkeys.
-        let hotkeys = lines(archive.read("gs\\hotkey.gs").expect("read gs/hotkey.gs"));
-        let mut clamps: Vec<(u64, String, u64)> = Vec::new();
-        for line in &hotkeys {
-            let tokens: Vec<&str> = line.split_whitespace().collect();
-            for window in tokens.windows(5) {
-                // `getmodeticktime 11 sub 11 max` and `getmodeticktime 11 add 330 min`.
-                if let (Ok(step), Ok(bound)) =
-                    (window[0].parse::<u64>(), window[2].parse::<u64>())
-                    && matches!(window[1], "sub" | "add")
-                    && matches!(window[3], "max" | "min")
-                {
-                    clamps.push((step, window[1].to_owned(), bound));
-                }
+        let hotkeys = tokens(archive.read("gs\\hotkey.gs").expect("read gs/hotkey.gs"));
+        let mut clamps: Vec<(u64, String, u64, String)> = Vec::new();
+        for window in hotkeys.windows(5) {
+            // `getmodeticktime 11 sub 11 max` and `getmodeticktime 11 add 330 min`, **anchored on
+            // `getmodeticktime`**. Without that anchor the window matches any `N op N op` run in
+            // the file, and in GS5R3's `hotkey.gs` three unrelated ones do -- `(1, add, 30)`,
+            // `(1, sub, 1)` and `(4, sub, 0)` -- which is what made this test red there.
+            if window[0] == "getmodeticktime"
+                && matches!(window[2].as_str(), "sub" | "add")
+                && matches!(window[4].as_str(), "max" | "min")
+                && let (Ok(step), Ok(bound)) = (window[1].parse::<u64>(), window[3].parse::<u64>())
+            {
+                clamps.push((step, window[2].clone(), bound, window[4].clone()));
             }
         }
         clamps.sort();
         clamps.dedup();
+
+        // The invariant, in every profile: stepping down clamps with the operand-maximum against
+        // 11, which is a floor, and stepping up clamps with the operand-minimum against 330, which
+        // is a ceiling. GS5R3 spells both the other way round *and* reverses what the spellings
+        // mean, so it satisfies this identically -- which is the point of deriving the spelling
+        // instead of pinning it.
         assert_eq!(
             clamps,
             vec![
                 (
                     TICK_STEP_MILLISECONDS,
                     "add".to_owned(),
-                    TICK_CEILING_MILLISECONDS
+                    TICK_CEILING_MILLISECONDS,
+                    minimum.to_owned()
                 ),
                 (
                     TICK_STEP_MILLISECONDS,
                     "sub".to_owned(),
-                    TICK_FLOOR_MILLISECONDS
+                    TICK_FLOOR_MILLISECONDS,
+                    maximum.to_owned()
                 ),
             ],
-            "gs/hotkey.gs no longer steps and clamps the tick time the way the viewer does"
+            "gs/hotkey.gs no longer steps and clamps the tick time the way this viewer does \
+             (this archive spells its operand-maximum `{maximum}`)"
+        );
+
+        // And that is exactly what `step_interval` implements, on every profile.
+        assert_eq!(
+            step_interval(TICK_FLOOR_MILLISECONDS, -1),
+            TICK_FLOOR_MILLISECONDS
+        );
+        assert_eq!(
+            step_interval(TICK_CEILING_MILLISECONDS, 1),
+            TICK_CEILING_MILLISECONDS
         );
     }
 

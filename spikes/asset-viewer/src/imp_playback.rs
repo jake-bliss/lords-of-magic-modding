@@ -816,7 +816,8 @@ mod tests {
                         Ok(first) => first,
                         Err(error) => {
                             // **Observed in the corpus** 2026-09-19, by a byte-level walk of all
-                            // 1,800 `imp.mpq` members that does not share this decoder: of the
+                            // 1,800 `imp.mpq` members that does not share this decoder (`tools/imp_structure_scan.py`):
+                            // of the
                             // 14,921 facing records, **none** has `frame_count == 0` -- the same
                             // walk found 6,552 zero-*dimension* frames across 107 files, so it is
                             // not blind to the shape it is looking for. `resolve` therefore refuses
