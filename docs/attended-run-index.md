@@ -23,7 +23,34 @@ nowhere in the corpus).
 
 ## Group A — costs two minutes, needs no build
 
-### A1. Measure the command line of the two unmeasured profiles 🔴 GATES EVERYTHING ELSE
+### A1. Measure the command line of the two unmeasured profiles ✅ RUN 2026-09-19
+
+> **GS5R3 measured and the guard verified in both directions.** The command line is
+> **`d:\lomse.exe /*`** (PID 6328) — a bare DOS path, the same form as 3.02. The anchor's premise
+> holds on the profile `scripts/restore-game-archives.sh` actually targets. **Observed in gameplay,
+> 2026-09-19.**
+>
+> `wineserver` and `winedevice.exe` run as separate processes; the game itself presents the DOS
+> path as argv[0], so the wrapper-prefix class the guard deliberately declined to cover does not
+> arise on this profile.
+>
+> Both arms of the guard were exercised, not just the one that was worrying:
+>
+> | condition | `refuse_if_game_running` |
+> |---|---|
+> | game at the main menu | `lomse.exe is running; quit the game first.` — exit 1 |
+> | game closed | exit 0 |
+>
+> **Vanilla remains unmeasured, deliberately.** It is the preserved baseline, the engine writes
+> `lom.cfg`/`settings.cfg`, and nothing in the pipeline restores *to* vanilla — it is the source the
+> other profiles are cloned from. Three of four profiles are now measured.
+>
+> **Side measurement, Observed in gameplay 2026-09-19:** a menu-only launch does **not** write
+> `lom.cfg`. GS5R3's digest was `c9fb19d9d16d8849d29d5f405009746d` before the launch and identical
+> after. The `development` config drift recorded in `docs/loose-files.md` therefore did not come
+> from merely starting the game.
+
+### A1 (as written before the run)
 
 **Why this is first.** `refuse_if_game_running` is the guard that refuses to write archives while
 the game is live. Its whole premise is that a Wine process presents `argv[0]` as a bare DOS path.
