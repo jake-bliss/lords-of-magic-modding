@@ -85,5 +85,8 @@ done
 
 echo
 echo "Reports regenerated and every corpus-gated check passed."
-echo "Review 'git diff reports/loose/' before committing: the gs5r3 profile is played, so its"
-echo "saves and logs move between runs and a diff there is not necessarily a regression."
+echo "Review 'git diff reports/loose/' before committing. Files the game writes -- its logs, its"
+echo "saves, lom.cfg, settings.cfg, gs5r.cfg and ddraw.ini -- carry 'runtime-written' instead of a"
+echo "size and digest, so playing the game no longer moves this diff. A diff here now means either"
+echo "the shipped tree really changed or a runtime-written file appeared or disappeared, and both"
+echo "are worth reading rather than waving through."

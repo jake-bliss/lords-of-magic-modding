@@ -3527,8 +3527,8 @@ fn loose_inventory(root: &Path, profile: &str) -> Result<(), String> {
             out,
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             row.relative_path,
-            row.size,
-            row.sha256,
+            row.reported_size(),
+            row.reported_sha256(),
             if row.extension.is_empty() {
                 "-"
             } else {
@@ -3558,8 +3558,20 @@ fn describe_loose_config(path: &Path) -> Result<(), String> {
     let bytes =
         fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
     println!("file\t{}", path.display());
-    println!("size\t{}", bytes.len());
-    println!("sha256\t{}", loose::sha256_hex(&bytes));
+    // Same rule as the inventory, and for the same reason: `lom.cfg` and `settings.cfg` in the
+    // game directory are written by the engine and by `gs/Dlg/opdlg.gs`, so their length and digest
+    // are the player's and not ours. A copy filed elsewhere -- `_vanilla_backup/` -- is still
+    // pinned.
+    match loose::runtime_writer_for_path(path) {
+        Some(_) => {
+            println!("size\t{}", loose::RUNTIME_WRITTEN);
+            println!("sha256\t{}", loose::RUNTIME_WRITTEN);
+        }
+        None => {
+            println!("size\t{}", bytes.len());
+            println!("sha256\t{}", loose::sha256_hex(&bytes));
+        }
+    }
     match LomConfig::parse(&bytes) {
         Ok(config) => {
             println!("format\tlom.cfg");

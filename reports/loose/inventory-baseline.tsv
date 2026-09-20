@@ -68,13 +68,13 @@ English/Wav/lou_scenarios/order_desc.wav	705612	e7d800d0f4faec45e7595258c504bd61
 English/Wav/lou_scenarios/order_intro.wav	2196594	150c700b2f3bbf0bf32466cdd5ac588fe67bd4487ba750990dd046788a31c133	wav	wave-audio	wave-audio	no	-
 English/cnc-ddraw config.exe	4915712	e21131cca40be055b9cf728ed822474f2560793635fc323127b63ba9a838d5d6	exe	ms-dos-executable	portable-executable	no	-
 English/ddraw.dll	411648	85e0f7d530dfda134793a57cb3e76b0287dcc96892ee57162dd68f47283b03a9	dll	ms-dos-executable	portable-executable	no	-
-English/ddraw.ini	29828	3d8d3105d144c14c5cf8c0ae06f16fa2acfef56df76d6f2097226015736206ba	ini	ascii-text	text	no	-
+English/ddraw.ini	runtime-written	runtime-written	ini	ascii-text	text	no	-
 English/goggame.dll	277824	85825c954c4533684902f6c9a9d9a90e38293dcc78566d22bd7bdb0993d62598	dll	ms-dos-executable	portable-executable	no	-
 English/gs/dlg/comb_dlg.gs	4951	da15dfff66912cc67087a90cf52b3dd6ee9ce2b8e5e674a9097a82e3fd3c7b0d	gs	ascii-text	game-script	no	-
 English/gs/dlg/scroldlg.gs	3658	b7a46e0310df51d2afcdb8fdad355bc65f3582ce2a4368360d16f5f489c1284f	gs	ascii-text	game-script	no	-
 English/gs.mpq	1795987	6b84ea4cfc7595b8b94b821eb6cc8cb8b2fdf10bbea68ca8e381e9098196f86a	mpq	mpq-archive	mpq-archive	no	-
 English/imp.mpq	51488090	cb5c1068ea21936e5c301ff54d3c498c9c1a8cc19007b7d2cc8ac724abc6e2b2	mpq	mpq-archive	mpq-archive	no	-
-English/lom.cfg	160	f4142b7507306309bd4e8a318cd8fed58fc0891a75d367093c0103a50f8fa1c9	cfg	unrecognised	unknown	no	-
+English/lom.cfg	runtime-written	runtime-written	cfg	unrecognised	unknown	no	-
 English/lomse.exe	1535488	a505f399d5be73fe0a2215633f663717f28daeb3075bbcc05b47d40653669052	exe	ms-dos-executable	portable-executable	no	-
 English/map/91gauntlet.smp	19681	43c67bc1db601c283640b4442099fdcfdf7c14e5a27edf8fe14e5eb2ba027e84	smp	unrecognised	map-component	no	-
 English/map/AIBLDG01.SMP	19336	68aa9d17da0a799a06bda12c26a361c42dea1f77ea9393b3e536384efdb6c802	smp	unrecognised	map-component	no	-
@@ -438,7 +438,7 @@ English/savegame/magic.sav	497553	8137cbbec55600ec811d140af4dfc462a8d61526c5c4a0
 English/savegame/merc.sav	495136	d71e0b56bc1f9454c025ae9708fd4ce4174bf1393cd897877b64d8ffbe53379c	sav	lom-serialised	unknown	no	-
 English/savegame/quickstart	486427	8b8328a3634a8a1ea0c701c74ede78db8a5b00daeae902ea0b65e4969b7a797d	-	lom-serialised	unknown	no	-
 English/savegame/temple.sav	553954	3872a558b47553a3eb0cdd67ffc30a62b5de638ecbad3a0b443a256ceebaec77	sav	lom-serialised	unknown	no	-
-English/settings.cfg	513	5ffb139f5fbb7006511f85628ae3345996215185a6f781a69962c8bae8a80145	cfg	ascii-text	text	no	-
+English/settings.cfg	runtime-written	runtime-written	cfg	ascii-text	text	no	-
 English/smackw32.dll	71680	bb909b8c25320ba9b443b9ac42eccfb36c7f1b7671b3e3e18799bef6abdf8526	dll	ms-dos-executable	portable-executable	no	-
 English/smk/Balkoth/BalkothDeath.smk	13366836	ea0d35e7b1363dab3f62639627ed89d41dc3aac00aa50f03b8fe8eee4777018e	smk	smacker-video	smacker-video	no	-
 English/smk/Balkoth/Balkothwin.smk	10648208	6c4b2fba9fa8b2c235235a5cda05aa164494174d89d1e3f14d2aba8fcf92e25c	smk	smacker-video	smacker-video	no	-
