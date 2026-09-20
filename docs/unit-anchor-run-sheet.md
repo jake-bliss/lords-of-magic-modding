@@ -1,5 +1,50 @@
 # `unitanchor` run sheet
 
+> **RUN 2026-09-19 on GS5R3 (ManTerA GS5R Enhanced 3.02.3243). The probe worked; the question is
+> still open, and the reason is a design flaw in this sheet rather than a bug in the probe.**
+>
+> All four rungs fired, both rung-2 cleanups ran, nothing was left on the map, and
+> `scripts/restore-game-archives.sh` verified both archives back to their recorded originals
+> (`gs.mpq 2d394279…`, `imp.mpq cb5c1068…`).
+>
+> | rung | measured union bbox | expected |
+> |---|---|---|
+> | 0 orchard | 60x70 at (358,152) | — |
+> | **1 licr2a via terrain path** | **30x122 at (374,136)** | **30x122** ✅ |
+> | 2a unit path | 47x72 at (365,165) | one of the six candidates |
+> | 2b unit path | 47x72 at (365,165) | — |
+>
+> **The control passed exactly** — frame 0, record 0 `(1,-25)`, reproducing the 2026-09-16 result on
+> a new cell in a new session. **Rungs 2a and 2b are pixel-identical**, so the unit path is drawing
+> reproducibly.
+>
+> **But 47x72 is not any frame of `licr2a.imp`.** Re-derived with `--describe-imp` over the whole
+> file: the nearest sizes are 53x70, 54x73, 41x83 and 45x97, and **no frame measures 47x72**. This is
+> stronger than the "matches none of the six candidates" case this sheet anticipated — a different
+> *sprite* drew, not a different frame. **Observed in gameplay, 2026-09-19.**
+>
+> **The probable cause, Inferred and not yet confirmed:** on the world map a unit added to a location
+> is drawn as an **army**, and `licr2a.imp` is the unit's combat sprite. That is the same ambiguity
+> that sank the first hotspot attempt -- an army banner "whose sequence, facing and cycle position
+> were all unknown". Rung 1 works precisely because `addterrainspritetype` bypasses that and draws
+> the IMP directly.
+>
+> **Two unexplained observations, recorded rather than interpreted:**
+> - `zprobe.log` reports `facing 4` for BOTH rung 2a and 2b, so this run carries one facing sampled
+>   twice, not the two independent facings the design asks for.
+> - A 10x26 component at (358,259) appears from `zu4` onward and persists through both cleanups. It
+>   is not part of either subject and its source is unknown.
+>
+> **An instrument defect found on the way:** `tools/probe_captures.py` reports *connected
+> components*, and `licr2a`'s frame 0 is split by a transparent gap into 30x111 plus 8x9. Read
+> component-wise, a control that passed exactly looks like it failed by 11 pixels. The first reading
+> of this run made that error. The tool should report the union alongside the components.
+>
+> **What would answer the original question:** a design that draws the unit through a path whose art
+> is known, or one that identifies whatever the army sprite actually is before assuming it. Until
+> then the caveat in [`hotspots.md`](hotspots.md#still-open) stands unnarrowed.
+
+
 One attended keypress. It closes the one limit [`hotspots.md`](hotspots.md#still-open) states
 about its own central result.
 
