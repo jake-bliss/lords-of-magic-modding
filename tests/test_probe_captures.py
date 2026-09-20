@@ -69,6 +69,69 @@ class ProbeCapturesTest(unittest.TestCase):
         self.assertEqual(components[0].bounds, (1, 2, 3, 3))
         self.assertEqual(components[1].bounds, (10, 8, 1, 1))
 
+    def test_union_spans_a_sprite_split_by_its_own_transparent_gap(self) -> None:
+        """One IMP frame can arrive as several components; the union is the silhouette.
+
+        This is the 2026-09-19 `unitanchor` control in miniature: `licr2a.imp` frame 0 is 30x122
+        and came back as 30x111 plus a detached 8x9 three rows lower. Read component-wise the
+        control looked 11 pixels short of the frame it had in fact reproduced exactly.
+        """
+        before = self.directory / "gap_before.bmp"
+        after = self.directory / "gap_after.bmp"
+        write_capture(before, self.width, self.height, self.blank)
+        pixels = [row[:] for row in self.blank]
+        for x in range(2, 5):  # the sprite's body
+            pixels[1][x] = (200, 200, 200)
+            pixels[2][x] = (200, 200, 200)
+        pixels[6][3] = (200, 200, 200)  # its detached tail, below a transparent band
+        write_capture(after, self.width, self.height, pixels)
+
+        components = probe_captures.changed_components(
+            probe_captures.read_capture(before), probe_captures.read_capture(after)
+        )
+        self.assertEqual([c.bounds for c in components], [(2, 1, 3, 2), (3, 6, 1, 1)])
+        # Neither component is the sprite. Their union is.
+        self.assertEqual(probe_captures.union_bounds(components), (2, 1, 3, 6))
+
+    def test_union_of_no_components_is_none(self) -> None:
+        self.assertIsNone(probe_captures.union_bounds([]))
+
+    def test_describe_reports_the_union_and_what_the_threshold_hid(self) -> None:
+        """The union line is the fix; the dropped-component line is what makes it trustworthy.
+
+        A sprite's outlying tail can be two or three pixels, which the reporting threshold hides.
+        A union over only the *listed* components would then be silently short, which is the same
+        class of error this whole change exists to stop.
+        """
+        before = self.directory / "thr_before.bmp"
+        after = self.directory / "thr_after.bmp"
+        write_capture(before, self.width, self.height, self.blank)
+        pixels = [row[:] for row in self.blank]
+        for y in range(1, 4):  # a 3x3 body, n=9
+            for x in range(1, 4):
+                pixels[y][x] = (200, 200, 200)
+        pixels[8][5] = (7, 7, 7)  # a 1-pixel tail, below any sensible threshold
+        write_capture(after, self.width, self.height, pixels)
+
+        text = probe_captures.describe(before, after, minimum=5)
+        self.assertIn("union of the reported components: top-left=(1,1) 3x3", text)
+        self.assertIn("1 component(s) below n=5 not listed", text)
+        self.assertIn("union including them: top-left=(1,1) 5x8", text)
+
+    def test_describe_omits_the_threshold_line_when_nothing_was_dropped(self) -> None:
+        before = self.directory / "clean_before.bmp"
+        after = self.directory / "clean_after.bmp"
+        write_capture(before, self.width, self.height, self.blank)
+        pixels = [row[:] for row in self.blank]
+        for y in range(1, 4):
+            for x in range(1, 4):
+                pixels[y][x] = (200, 200, 200)
+        write_capture(after, self.width, self.height, pixels)
+
+        text = probe_captures.describe(before, after, minimum=5)
+        self.assertIn("union of the reported components: top-left=(1,1) 3x3", text)
+        self.assertNotIn("not listed", text)
+
     def test_identical_captures_have_no_components(self) -> None:
         path = self.directory / "same.bmp"
         write_capture(path, self.width, self.height, self.blank)

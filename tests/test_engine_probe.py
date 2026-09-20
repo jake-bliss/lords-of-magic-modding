@@ -1334,69 +1334,127 @@ class UnitAnchorProbeTest(unittest.TestCase):
 
     hotspots.md states its own limit: record 0 was confirmed by placing a unit IMP through the
     *terrain sprite* path, which does not prove the *unit* draw path computes its anchor the same
-    way. These assertions hold the generated body to the shape the run sheet promises: one shared
-    cell, the shipped sanity control first, the same art through both paths, and a unit placed by a
-    verbatim shipped call site rather than a reconstructed one.
+    way. These assertions hold the generated body to the shape the run sheet promises: a control
+    rung and a unit rung sharing one cell, three such cells so three independent anchors are
+    recovered rather than one, the shipped sanity control first, and a unit placed by a verbatim
+    shipped call site rather than a reconstructed one.
+
+    The 2026-09-19 run is why several of these read the way they do. That run's probe was correct
+    and its captures were good; its *expectation* was wrong, because it measured a world-map draw
+    against a combat-zoom IMP. The assertions about the subject art below are what stop that
+    particular error from being reintroduced silently.
     """
 
     def setUp(self) -> None:
         self.body = engine_probe.unit_anchor_body()
+        self.cells = range(len(engine_probe.UNIT_ANCHOR_SEED_OFFSETS))
 
     def _at(self, needle: str) -> int:
         index = self.body.find(needle)
         self.assertNotEqual(index, -1, f"{needle!r} missing from the body")
         return index
 
-    def test_all_three_rungs_place_on_the_one_cell_findemptylocation_returned(self) -> None:
-        """The 2026-09-16 method: one cell, subjects placed and removed in turn.
+    def test_each_cell_is_found_once_and_every_rung_on_it_uses_that_one_cell(self) -> None:
+        """The 2026-09-16 method: one cell per observation, subjects placed and removed in turn.
 
-        Sharing the cell is what makes the rungs comparable without solving for the camera
-        anchor twice -- unknown constants common to all three cancel in the comparison.
+        Sharing a cell between the control rung and the unit rung is what makes them comparable
+        without solving for the camera twice -- the unknown constants common to both cancel.
         """
-        dx, dy = engine_probe.UNIT_ANCHOR_SEED_OFFSET
-        self.assertIn(
-            f"zax0 {dx} add zay0 {dy} add x_y_to_xy UNITTYPELAND findemptylocation "
-            "/zcell exch def",
-            self.body,
-        )
-        self.assertIn("zcell xy_to_x_y /zcy exch def /zcx exch def", self.body)
-        # Every placement -- both terrain-sprite rungs and the unit rung -- uses zcx/zcy/zcell,
-        # never a second, independently-derived cell.
-        self.assertEqual(self.body.count("zcx zcy zt0 addterrainsprite"), 1)
-        self.assertEqual(self.body.count("zcx zcy zt1 addterrainsprite"), 1)
-        self.assertIn("0{}0 zcell zowner add_unit_to_location", self.body)
-        self.assertIn("zcx zcy armyat /zarmy exch def", self.body)
+        for index, (dx, dy) in enumerate(engine_probe.UNIT_ANCHOR_SEED_OFFSETS):
+            self.assertIn(
+                f"zax0 {dx} add zay0 {dy} add x_y_to_xy UNITTYPELAND findemptylocation "
+                f"/zcell{index} exch def",
+                self.body,
+            )
+            self.assertIn(
+                f"zcell{index} xy_to_x_y /zcy{index} exch def /zcx{index} exch def", self.body
+            )
+            # Both placements on this cell -- the control sprite and the unit -- use this cell's
+            # own variables, never a second, independently-derived cell.
+            self.assertEqual(self.body.count(f"zcx{index} zcy{index} zt1 addterrainsprite"), 1)
+            self.assertIn(f"0{{}}0 zcell{index} zowner add_unit_to_location", self.body)
+            self.assertIn(f"zcx{index} zcy{index} armyat /zarmy{index} exch def", self.body)
+
+    def test_a_cell_findemptylocation_could_not_supply_is_refused_not_used(self) -> None:
+        """`findemptylocation` returns -1 when it finds nothing.
+
+        Running the rungs on -1 would place on, and later delete from, whatever cell -1 decomposes
+        to. Every cell's rungs sit behind a validity gate, and a refusal is logged rather than
+        passed over in silence.
+        """
+        for index in self.cells:
+            gate = f"zcell{index} -1 ne"
+            self.assertIn(gate, self.body, gate)
+            self.assertLess(self._at(gate), self._at(f"zcx{index} zcy{index} zt1 addterrainsprite"))
+            self.assertIn(f"cell{index} SKIPPED -- findemptylocation returned -1", self.body)
 
     def test_the_seed_is_never_the_armys_own_occupied_cell(self) -> None:
         """Regression: seeding `findemptylocation` from `zaloc` risks handing back `zaloc` itself.
 
         If `findemptylocation` can return its own seed when it judges that cell acceptable,
-        seeding from the army's own occupied cell risks `zcell == zaloc` -- the player's own
-        starting army's cell -- and rung 2 would then find and delete that army instead of the one
-        it placed. This cannot be verified without the engine (whether `findemptylocation` can
-        hand back its seed is GameScript semantics this project has no way to observe offline),
-        so the test asserts the generator-level fact that is actually checkable: the seed is an
-        OFFSET cell, matching the two sibling probes, never the bare `zaloc`.
+        seeding from the army's own occupied cell risks a target cell equal to the player's own
+        starting army's cell, and the unit rung would then find and delete that army instead of
+        the one it placed. This cannot be verified without the engine (whether `findemptylocation`
+        can hand back its seed is GameScript semantics this project has no way to observe
+        offline), so the test asserts the generator-level fact that is actually checkable: every
+        seed is an OFFSET cell, matching the two sibling probes, never the bare `zaloc`.
         """
         self.assertNotIn("zaloc UNITTYPELAND findemptylocation", self.body)
-        self.assertNotEqual(engine_probe.UNIT_ANCHOR_SEED_OFFSET, (0, 0))
+        for offset in engine_probe.UNIT_ANCHOR_SEED_OFFSETS:
+            self.assertNotEqual(offset, (0, 0))
+        self.assertEqual(
+            len(set(engine_probe.UNIT_ANCHOR_SEED_OFFSETS)),
+            len(engine_probe.UNIT_ANCHOR_SEED_OFFSETS),
+            "two seeds are identical, so two observations cannot be independent",
+        )
 
-    def test_rung_order_is_control_then_same_art_control_then_the_unit(self) -> None:
+    def test_rung_order_is_control_then_same_cell_control_then_the_unit(self) -> None:
         """A failure has to name its own rung, so the shipped sanity control comes first."""
         rung0 = self._at("zt0 addterrainsprite")
-        rung1 = self._at("zt1 addterrainsprite")
-        rung2 = self._at("add_unit_to_location")
-        self.assertLess(rung0, rung1)
-        self.assertLess(rung1, rung2)
+        for index in self.cells:
+            control = self._at(f"zcx{index} zcy{index} zt1 addterrainsprite")
+            unit = self._at(f"0{{}}0 zcell{index} zowner add_unit_to_location")
+            self.assertLess(rung0, control)
+            self.assertLess(control, unit)
 
     def test_rung0_is_the_ladder_runs_own_shipped_control(self) -> None:
         self.assertIn(engine_probe.UNIT_ANCHOR_CONTROL_TYPE, self.body)
         self.assertIn(f"{engine_probe.UNIT_ANCHOR_CONTROL_TYPE} /zt0 exch def", self.body)
 
-    def test_rung1_places_the_exact_same_art_the_unit_rung_uses(self) -> None:
-        """The whole comparison is void if rung 1's art differs from rung 2's."""
-        self.assertIn(f'["{engine_probe.UNIT_ANCHOR_IMP}"]cvx addterrainspritetype', self.body)
-        self.assertIn(engine_probe.UNIT_ANCHOR_TYPE_SYMBOL, engine_probe.UNIT_ANCHOR_IMP)
+    def test_the_control_art_is_the_one_whose_terrain_path_result_is_already_measured(self) -> None:
+        """The control rung's job is to recover the anchor, and only that.
+
+        It places `licr2a.imp` through the terrain-sprite path because that exact combination is
+        the measurement made on 2026-09-16 and reproduced to the pixel on 2026-09-19 -- 30x122 at
+        frame 0, record 0 `(1,-25)`. Its expected result is therefore known in advance, which is
+        what makes it a control rather than a second unknown.
+        """
+        self.assertIn(
+            f'["{engine_probe.UNIT_ANCHOR_CONTROL_IMP}"]cvx addterrainspritetype', self.body
+        )
+        self.assertEqual(engine_probe.UNIT_ANCHOR_CONTROL_FRAME, 0)
+        self.assertEqual(engine_probe.UNIT_ANCHOR_CONTROL_FRAME_SIZE, (30, 122))
+        self.assertEqual(engine_probe.UNIT_ANCHOR_CONTROL_FRAME_PLACEMENT, (1, -25))
+
+    def test_the_subject_art_is_the_world_map_zoom_variant_of_the_subject_unit(self) -> None:
+        """The 2026-09-19 error, encoded so it cannot come back.
+
+        `gs\\imps.gs`'s `unittype_imp_filename` appends `unit_zoom_letter` of the screen mode the
+        engine pushes: `A` for COMBAT_SCREEN and LOCATION_SCREEN, `B` for SCROLLINGMAP_SCREEN,
+        REGION_SCREEN and WORLD_SCREEN. A unit standing on the world map is therefore drawn from
+        `...b.imp`, and the previous version of this probe expected to recognise it against the
+        `...a.imp` frame table. The subject art must be the B variant of the subject unit's own
+        name, and it must never be registered as a terrain sprite type -- it is measured against,
+        not placed.
+        """
+        symbol = engine_probe.UNIT_ANCHOR_TYPE_SYMBOL
+        self.assertEqual(engine_probe.UNIT_ANCHOR_SUBJECT_IMP, f"units/imp/{symbol}b.imp")
+        self.assertNotIn(engine_probe.UNIT_ANCHOR_SUBJECT_IMP, self.body)
+        # The control art is a different file on purpose; asserting they are the same was the
+        # premise that made the last run uninterpretable.
+        self.assertNotEqual(
+            engine_probe.UNIT_ANCHOR_SUBJECT_IMP, engine_probe.UNIT_ANCHOR_CONTROL_IMP
+        )
 
     def test_unit_call_is_copied_from_the_shipped_call_site_not_reconstructed(self) -> None:
         """gs\\PLAYER5.gs:430 verbatim, `start_loc`/`2` swapped for this probe's own cell/owner.
@@ -1405,11 +1463,12 @@ class UnitAnchorProbeTest(unittest.TestCase):
         of the pop order in its own definition (`/owner /loc /this_name /this_artlist /this_str
         /this_type`) -- and this asserts the exact shipped token shape, not a paraphrase of it.
         """
-        self.assertIn(
-            f"unittypedict begin /{engine_probe.UNIT_ANCHOR_TYPE_SYMBOL} end 0{{}}0 "
-            "zcell zowner add_unit_to_location",
-            self.body,
-        )
+        for index in self.cells:
+            self.assertIn(
+                f"unittypedict begin /{engine_probe.UNIT_ANCHOR_TYPE_SYMBOL} end 0{{}}0 "
+                f"zcell{index} zowner add_unit_to_location",
+                self.body,
+            )
 
     def test_never_forces_or_assumes_a_facing(self) -> None:
         """Facing is read for information only; identification comes from the frame's own size.
@@ -1419,70 +1478,71 @@ class UnitAnchorProbeTest(unittest.TestCase):
         """
         self.assertNotIn("ARMY_FACING", self.body[: self._at("ARMY_FACING getarmydata")])
         self.assertNotIn("setarmydata", self.body)
-        self.assertIn("zarmy ARMY_FACING getarmydata /zfacing exch def", self.body)
+        for index in self.cells:
+            self.assertIn(
+                f"zarmy{index} ARMY_FACING getarmydata /zfacing{index} exch def", self.body
+            )
 
     def test_army_is_found_by_location_never_by_a_fabricated_return_value(self) -> None:
         """`add_unit_to_location`'s body ends on a boolean branch; it pushes nothing back."""
         after_call = self.body[self._at("add_unit_to_location") + len("add_unit_to_location") :]
         immediate = after_call.split("armyat", 1)[0]
         self.assertNotIn("exch def", immediate, "treats add_unit_to_location as if it returned")
-        self.assertIn("zcx zcy armyat", self.body)
+        for index in self.cells:
+            self.assertIn(f"zcx{index} zcy{index} armyat", self.body)
 
     def test_cleanup_is_the_exact_army_id_never_a_type_or_location_sweep(self) -> None:
-        self.assertIn("zarmy deletearmynow", self.body)
-        self.assertIn("zarmy2 deletearmynow", self.body)
-        # An army has no sprite type, so the terrain-sprite sweep idiom must never apply to it.
-        cleanup_zone = self.body[self._at("add_unit_to_location") :]
-        self.assertNotIn("getterrainspritetype", cleanup_zone)
+        for index in self.cells:
+            self.assertIn(f"zarmy{index} deletearmynow", self.body)
+            # An army has no sprite type, so the terrain-sprite sweep idiom must never appear
+            # between placing a unit and deleting it.
+            start = self._at(f"0{{}}0 zcell{index} zowner add_unit_to_location")
+            stop = self.body.index(f"zarmy{index} deletearmynow", start)
+            self.assertNotIn("getterrainspritetype", self.body[start:stop])
 
     def test_army_delete_is_gated_on_a_valid_id_and_a_matching_location(self) -> None:
-        """Regression: `zarmy deletearmynow` ran unconditionally, on whatever `armyat` returned.
+        """Regression: `deletearmynow` once ran unconditionally, on whatever `armyat` returned.
 
-        `zaloc2`/`zaloc3` were computed and logged but never checked, so a stale or foreign army
-        id -- or a cell that silently was not the one this probe placed into -- would still be
-        deleted. Whether `armyat` can ever hand back a foreign army, and what `deletearmynow` does
-        with an invalid id, are GameScript semantics no offline test can settle; what this test
-        can and does check is the generator-level fact: the delete for each observation sits
+        The reported location was computed and logged but never checked, so a stale or foreign
+        army id -- or a cell that silently was not the one this probe placed into -- would still
+        be deleted. Whether `armyat` can ever hand back a foreign army, and what `deletearmynow`
+        does with an invalid id, are GameScript semantics no offline test can settle; what this
+        test can and does check is the generator-level fact: the delete for each observation sits
         behind a boolean gate testing BOTH the id and the location, never bare.
         """
-        for army_var, aloc_var in (("zarmy", "zaloc2"), ("zarmy2", "zaloc3")):
-            gate = f"{army_var} -1 ne {aloc_var} zcell eq and"
-            self.assertIn(gate, self.body, army_var)
+        for index in self.cells:
+            gate = f"zarmy{index} -1 ne zaloc{index} zcell{index} eq and"
+            self.assertIn(gate, self.body, gate)
             gate_at = self._at(gate)
-            delete_at = self.body.index(f"{army_var} deletearmynow", gate_at)
+            delete_at = self.body.index(f"zarmy{index} deletearmynow", gate_at)
             between = self.body[gate_at + len(gate) : delete_at]
             # The delete must be the FIRST thing the true branch does -- not merely present
             # somewhere after the gate, which an unconditional delete placed later would satisfy.
-            self.assertNotIn("deletearmynow", between, army_var)
-            self.assertIn("{", between, f"{army_var}: delete is not inside a conditional branch")
-        # And a refusal is logged on the false branch, rather than silently doing nothing.
-        self.assertIn("cleanup REFUSED", self.body)
+            self.assertNotIn("deletearmynow", between, str(index))
+            self.assertIn("{", between, f"cell{index}: delete is not inside a conditional branch")
+            self.assertIn(f"cell{index} cleanup REFUSED", self.body)
 
     def test_rung0_checks_for_an_existing_orchard_before_placing_or_destroying(self) -> None:
         """Regression: rung 0 minted no distinguishing state, so its cleanup swept by type AND
-        cell alone -- indistinguishable from a shipped orchard the map generator already put on
-        `zcell`. `findemptylocation UNITTYPELAND` only rules out a land UNIT standing there, never
-        a decorative terrain sprite, so an existing orchard was not ruled out either.
+        cell alone -- indistinguishable from a shipped orchard the map generator already put
+        there. `findemptylocation UNITTYPELAND` only rules out a land UNIT standing on a cell,
+        never a decorative terrain sprite, so an existing orchard was not ruled out either.
 
         This cannot be exercised without a real map (the fixture here is the generated text, not
-        a map, exactly the blind spot called out for the existing type-and-location assertion
-        below), so what this test checks is the generator-level fact: a presence check runs BEFORE
-        the placement, and the placement/cleanup sequence is reachable only when it comes back
-        false. It cannot prove `enumterrainsprites` finds a real orchard at runtime -- only the
-        engine can -- but it does prove the placement is no longer unconditional.
+        a map, exactly the blind spot called out for the type-and-location assertion below), so
+        what this test checks is the generator-level fact: a presence check runs BEFORE the
+        placement, and the placement/cleanup sequence is reachable only when it comes back false.
         """
         presence_check = self._at("/zorchard_present false def")
-        placement = self._at("zcx zcy zt0 addterrainsprite")
+        placement = self._at("zcx0 zcy0 zt0 addterrainsprite")
         self.assertLess(presence_check, placement)
         self.assertIn(
             "{dup getterrainspritetype zt0 eq"
-            "{dup getterrainspritelocation zcell eq"
+            "{dup getterrainspritelocation zcell0 eq"
             "{pop /zorchard_present true def}{pop}ifelse}"
             "{pop}ifelse}enumterrainsprites",
             self.body,
         )
-        # The placement and its destroy sweep sit in the FALSE branch of `zorchard_present`,
-        # never running unconditionally.
         branch = self._at("zorchard_present")
         self.assertLess(branch, placement)
         self.assertIn("rung0 SKIPPED", self.body)
@@ -1490,91 +1550,158 @@ class UnitAnchorProbeTest(unittest.TestCase):
         self.assertLess(branch, skip_at)
         self.assertLess(skip_at, placement, "the skip branch must precede the placement branch")
 
-    def test_rung0_and_rung1_are_matched_by_type_and_cell_before_any_type_only_sweep(self) -> None:
+    def test_rung0_and_the_control_rung_are_swept_by_the_right_scope_each(self) -> None:
         """Rung 0 reuses the shipped orchard type; a type-only sweep on it would delete orchards.
 
         NOTE on what this cannot catch: the fixture here is the generated script text, not a map,
         so this only proves the destroy call is scoped by BOTH `getterrainspritetype zt0 eq` and
-        `getterrainspritelocation zcell eq` in the source. It cannot show that scoping actually
+        `getterrainspritelocation zcell0 eq` in the source. It cannot show that scoping actually
         spares a real shipped orchard at runtime -- only an attended run against a real map can.
         """
-        rung0_zone = self.body[self._at("zt0 addterrainsprite") : self._at("zt1")]
-        self.assertIn("getterrainspritelocation zcell eq", rung0_zone)
+        rung0_zone = self.body[self._at("zcx0 zcy0 zt0 addterrainsprite") : self._at("zt1 add")]
+        self.assertIn("getterrainspritelocation zcell0 eq", rung0_zone)
         self.assertNotIn(
             "{dup getterrainspritetype zt0 eq{destroyterrainsprite}{pop}ifelse}enumterrainsprites",
             rung0_zone,
         )
-        # Rung 1's type was minted this keypress, so it gets only the type-only sweep -- the
+        # The control type was minted this keypress, so it gets only the type-only sweep -- the
         # type-and-location sweep would be redundant, since nothing else on the map can carry an
-        # id this keypress just registered.
-        self.assertIn(
-            "{dup getterrainspritetype zt1 eq{destroyterrainsprite}{pop}ifelse}enumterrainsprites",
-            self.body,
+        # id this keypress just registered. One sweep per cell.
+        self.assertEqual(
+            self.body.count(
+                "{dup getterrainspritetype zt1 eq"
+                "{destroyterrainsprite}{pop}ifelse}enumterrainsprites"
+            ),
+            len(engine_probe.UNIT_ANCHOR_SEED_OFFSETS),
         )
 
     def test_every_capture_is_uniquely_named_and_this_probes_own(self) -> None:
         names = re.findall(r'"(z[^"]*\.bmp)"screencapture', self.body)
-        self.assertEqual(
-            names,
-            ["zu0.bmp", "zu1.bmp", "zu2.bmp", "zu3.bmp", "zu4.bmp", "zu5.bmp", "zu6.bmp"],
-        )
+        # plate, the orchard control, then three captures per cell: control, unit, post-cleanup.
+        self.assertEqual(len(names), 2 + 3 * len(engine_probe.UNIT_ANCHOR_SEED_OFFSETS))
+        self.assertEqual(names[0], "zu0.bmp")
         self.assertEqual(len(names), len(set(names)))
+        self.assertEqual(names, sorted(names, key=lambda n: int(n[2:-4])))
 
-    def test_plate_precedes_every_rung_and_final_capture_follows_cleanup(self) -> None:
+    def test_plate_precedes_every_rung_and_each_cell_ends_on_a_post_cleanup_capture(self) -> None:
+        names = re.findall(r'"(z[^"]*\.bmp)"screencapture', self.body)
         plate = self._at('"zu0.bmp"screencapture')
-        first_rung = self._at("zt0 addterrainsprite")
-        self.assertLess(plate, first_rung)
-        cleanup = self._at("zarmy2 deletearmynow")
-        final_shot = self._at('"zu6.bmp"screencapture')
-        self.assertLess(cleanup, final_shot)
+        self.assertLess(plate, self._at("zt0 addterrainsprite"))
+        for index in self.cells:
+            cleanup = self._at(f"zarmy{index} deletearmynow")
+            final_shot = self._at(f'"{names[1 + 3 * (index + 1)]}"screencapture')
+            self.assertLess(cleanup, final_shot)
 
-    def test_two_independent_unit_observations_are_taken_in_one_run(self) -> None:
+    def test_three_cells_give_three_independently_anchored_observations(self) -> None:
         """A single placement can only tell zero residual from non-zero; it cannot tell a constant
         non-zero residual from one that varies by facing, because facing is never forced (see
         `test_never_forces_or_assumes_a_facing`) and one draw samples exactly one facing.
 
-        This asserts the generator-level fact: the unit is placed, measured and removed TWICE on
-        the identical cell, with independent variable names and its own facing read each time, so
-        the two draws are free to land on different frames. It cannot prove the two facings
-        actually differ at runtime -- nothing here forces that, deliberately -- only that the run
-        collects a second, independent sample rather than generalizing from one.
+        The 2026-09-19 run placed the unit twice on ONE cell for exactly this reason and got the
+        same facing both times, pixel-identical captures included -- one facing sampled twice.
+        Different cells are the only lever this probe has, and they buy something a repeat cannot:
+        each observation gets its own control rung and therefore its own recovered anchor, so a
+        residual that is really a property of one cell's projection cannot masquerade as a
+        property of the unit draw path. It still cannot FORCE the facings to differ; nothing
+        offline can assert that, and the run sheet says so.
         """
-        self.assertEqual(self.body.count("add_unit_to_location"), 2)
-        self.assertIn("zarmy2 ARMY_FACING getarmydata /zfacing2 exch def", self.body)
-        first = self._at("zarmy ARMY_FACING getarmydata /zfacing exch def")
-        second = self._at("zarmy2 ARMY_FACING getarmydata /zfacing2 exch def")
-        self.assertLess(first, second)
-        # Both observations place on the SAME cell -- the whole point is comparability, not two
-        # independent measurements needing two independent anchors solved for.
+        self.assertGreaterEqual(len(engine_probe.UNIT_ANCHOR_SEED_OFFSETS), 3)
         self.assertEqual(
-            self.body.count("unittypedict begin /licr2 end 0{}0 zcell zowner add_unit_to_location"),
-            2,
+            self.body.count("add_unit_to_location"), len(engine_probe.UNIT_ANCHOR_SEED_OFFSETS)
+        )
+        # Each observation carries its own control rung, so each has its own anchor.
+        self.assertEqual(
+            self.body.count("zt1 addterrainsprite"), len(engine_probe.UNIT_ANCHOR_SEED_OFFSETS)
+        )
+        facings = [self._at(f"/zfacing{i} exch def") for i in self.cells]
+        self.assertEqual(facings, sorted(facings))
+
+    def test_every_candidate_frame_is_identifiable_from_the_capture_in_both_orientations(
+        self,
+    ) -> None:
+        """Identification must not depend on assuming the engine did not mirror the frame.
+
+        The engine mirrors: on 2026-09-19 the Unicorn was stored facing right and drawn facing
+        left, and its detached two-pixel bottom tail landed at sprite-relative columns 1-3 rather
+        than 43-45. So a candidate frame is only identifiable if its predicted top-left and its
+        silhouette size, taken together, are unique across every frame in the table in BOTH
+        orientations. For `licr2b` frame 33 they were not -- three MOVE frames mirrored predicted
+        the same top-left, and only the width separated them.
+
+        The predicted top-left is `anchor + placement - (w>>1, h>>1)`, so for a fixed anchor the
+        distinguishing quantity is `placement - (w>>1, h>>1)`, with `placement.x` negated in the
+        mirrored case.
+        """
+        signatures = []
+        for width, height, x, y in engine_probe.UNIT_ANCHOR_SUBJECT_FRAMES.values():
+            for placement_x in (x, -x):
+                signatures.append(
+                    (placement_x - (width >> 1), y - (height >> 1), width, height)
+                )
+        self.assertEqual(
+            len(signatures),
+            len(set(signatures)),
+            "two candidate frames are indistinguishable in the capture",
         )
 
-    def test_frame_size_table_is_internally_consistent_and_every_size_is_distinct(self) -> None:
-        """The whole identification method rests on these six sizes being pairwise distinct."""
+    def test_every_candidate_frames_record0_x_is_far_enough_from_zero_to_show_a_mirror(
+        self,
+    ) -> None:
+        """Record-0 x of 0 makes `+placement.x` and `-placement.x` predict the identical pixel.
+
+        That is precisely why the 2026-09-19 run could not settle whether the rule's placement x
+        is negated under mirroring: the frame that drew had record-0 x = 0. Every candidate frame
+        here is far enough from zero that the two predictions differ by at least 8 pixels.
+        """
+        for frame in engine_probe.UNIT_ANCHOR_SUBJECT_STAND_FRAMES:
+            _width, _height, x, _y = engine_probe.UNIT_ANCHOR_SUBJECT_FRAMES[frame]
+            self.assertGreaterEqual(abs(x), 4, f"frame {frame} cannot discriminate a mirror")
+        # Frame 0 is the MOVE fallback, deliberately not held to this: it is in the table so an
+        # unexpected MOVE draw is still identifiable, not because it can settle the mirror sign.
+        self.assertNotIn(0, engine_probe.UNIT_ANCHOR_SUBJECT_STAND_FRAMES)
         self.assertEqual(
-            set(engine_probe.UNIT_ANCHOR_FRAME_SIZES),
-            set(engine_probe.UNIT_ANCHOR_FRAME_PLACEMENTS),
+            set(engine_probe.UNIT_ANCHOR_SUBJECT_FRAMES)
+            - set(engine_probe.UNIT_ANCHOR_SUBJECT_STAND_FRAMES),
+            {0},
         )
-        sizes = list(engine_probe.UNIT_ANCHOR_FRAME_SIZES.values())
-        self.assertEqual(len(sizes), len(set(sizes)), "two candidate frames share a silhouette size")
-        # STAND: frames 30-34, one per facing; MOVE: frame 0, the frame the terrain-sprite path
-        # (which never animates) always draws.
-        self.assertEqual(set(engine_probe.UNIT_ANCHOR_FRAME_SIZES), {0, 30, 31, 32, 33, 34})
+
+    def test_frame_table_covers_the_move_frame_and_all_five_stand_facings(self) -> None:
+        self.assertEqual(set(engine_probe.UNIT_ANCHOR_SUBJECT_FRAMES), {0, 30, 31, 32, 33, 34})
+        sizes = [(w, h) for w, h, _, _ in engine_probe.UNIT_ANCHOR_SUBJECT_FRAMES.values()]
+        self.assertEqual(len(sizes), len(set(sizes)), "two candidate frames share a silhouette")
+
+    def test_the_flag_offset_is_the_shipped_one(self) -> None:
+        """A world-map army is a composite, and the flag is a second test of the same anchor.
+
+        `gs\\PLAYER5.gs`'s `setupplayergraphics` attaches the player's flag with
+        `"iface/liflagb.imp" 0 -40 setplayerflagimp`. The 2026-09-19 captures carry that flag as a
+        detached 12x21 component, and it is solved by the same anchor the body is -- so the offset
+        has to be recorded here rather than rediscovered each time.
+        """
+        self.assertEqual(engine_probe.UNIT_ANCHOR_FLAG_OFFSET, (0, -40))
+        self.assertIn("{faith}", engine_probe.UNIT_ANCHOR_FLAG_IMP_TEMPLATE)
+        self.assertTrue(
+            engine_probe.UNIT_ANCHOR_FLAG_IMP_TEMPLATE.endswith("flagb.imp"),
+            "the world-map flag is the b-zoom variant, like the unit body",
+        )
 
     def test_logs_carry_enough_to_solve_the_rule_backwards_offline(self) -> None:
         """Every quantity the offline analysis needs is in the log, not just the captures."""
-        for needle in (
+        needles = [
             '"army loc "zaloc" cell "zax0" "zay0" owner "zowner',
-            '"target cell "zcell" "zcx" "zcy',
+            '"owner faith "zowner getplayerfaith',
+            '"control terrain type "zt1',
             '"rung0 orchard type "zt0" done"',
-            '"rung1 licr2a-as-terrain type "zt1" done"',
-            '"rung2a unit army "zarmy" at "zaloc2" expected "zcell" facing "zfacing',
-            '"rung2a cleanup done"',
-            '"rung2b unit army "zarmy2" at "zaloc3" expected "zcell" facing "zfacing2',
-            '"rung2b cleanup done"',
-        ):
+        ]
+        for index in self.cells:
+            needles += [
+                f'"cell{index} target "zcell{index}" "zcx{index}" "zcy{index}',
+                f'"cell{index} control licr2a-as-terrain done"',
+                f'"cell{index} unit army "zarmy{index}" at "zaloc{index}'
+                f'" expected "zcell{index}" facing "zfacing{index}',
+                f'"cell{index} cleanup done"',
+            ]
+        for needle in needles:
             self.assertIn(needle, self.body, needle)
 
 

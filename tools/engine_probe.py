@@ -1275,92 +1275,156 @@ def terrain_rings_body() -> str:
 # terrain sprite type) computes its *anchor* the same way. A unit-specific constant offset in the
 # anchor is not ruled out, and if it exists every custom-unit modder's placement is off by it.
 #
-# The method is the one that already worked twice, on 2026-09-16: ONE cell, subjects placed and
-# removed in turn, each captured against a single shared plate, so the unknown camera/projection
-# constants cancel between rungs instead of having to be solved for. Two terrain-sprite-path rungs
-# reproduce that control; the third places a REAL unit through `add_unit_to_location` -- never used
-# by an engine probe here before -- and the comparison between rung 1's recovered anchor and rung
-# 2's is the whole experiment.
+# The method is the one that already worked on 2026-09-16 and again on 2026-09-19: subjects placed
+# and removed in turn on ONE cell, each captured against a single shared plate, so the unknown
+# camera position and cell-to-screen projection cancel between rungs instead of having to be solved
+# for. A terrain-sprite-path rung on that same cell recovers the cell's anchor; the unit rung on the
+# same cell is the experiment.
+#
+# ---------------------------------------------------------------------------------------------
+# WHAT THE 2026-09-19 RUN CHANGED IN THIS DESIGN
+#
+# The first version of this probe placed a Unicorn (`/licr2`) and expected to recognise its
+# silhouette against the six frame sizes of `units\imp\licr2a.imp`. The run worked; the expectation
+# was wrong, and wrong for a reason that is settled in the shipped scripts rather than a matter of
+# opinion. `gs\imps.gs`:
+#
+#     /unittype_imp_filename{imp_filename"units/imp/"strcpy imp_filename exch strcat
+#                            unit_zoom_letter imp_filename exch strcat imp_filename".imp"strcat
+#                            imp_filename}bind def
+#
+#     /unit_zoom_letter{...}/dummy << COMBAT_SCREEN"A" LOCATION_SCREEN"A"
+#                                     SCROLLINGMAP_SCREEN"B" REGION_SCREEN"B" WORLD_SCREEN"B"
+#                                     FAITHSELECT_SCREEN"A" >> replace bind def
+#
+# A unit type's `/impfile_proc{"licr2"unittype_imp_filename}` therefore resolves to a DIFFERENT file
+# per screen: `licr2a.imp` in combat and at a location, `licr2b.imp` on the world/region/scrolling
+# map. The screen mode is pushed by the engine -- `gs\imps.gs` documents it in the neighbouring
+# `citygate_imp_filename` comment as `<zoom_mode (from c++)>`, and `lomse.exe` carries `getzoommode`
+# (arity 0) and `setspritezoommode` (arity 1). **Observed in the corpus and in a local binary.**
+#
+# So a world-map unit is drawn from the `...b.imp` file, and the 2026-09-19 captures were being
+# matched against the wrong file's frame table. This design measures against the B file and says so.
+#
+# The second thing that run showed is that an army on the world map is a COMPOSITE, not one sprite.
+# `gs\PLAYER5.gs`'s `setupplayergraphics` attaches, per player: a flag
+# (`"iface/liflagb.imp" 0 -40 setplayerflagimp` -- four operands, matching `setplayerflagimp`'s
+# disassembled arity of 4), health bars (`setplayerbars`), and a group-number object drawn at
+# `0 -20 setplayergroupnumberoffset`. The 2026-09-19 diff came back as a 47x44 body plus a detached
+# 12x21 box 28 pixels above it; every frame of `liflagb.imp`'s UNIT_SELECTED and UNIT_UNSELECTED
+# sequences is exactly 21 pixels tall. A union box over the two reads 47x72, which is no frame of
+# anything. **The analysis must treat the body component and the flag component separately**, which
+# is why `tools/probe_captures.py` now reports the union AND the components AND what the reporting
+# threshold hid.
+# ---------------------------------------------------------------------------------------------
 #
 # `add_unit_to_location` (gs\ENC_TOOL5.gs) pops, in order, `/owner /loc /this_name /this_artlist
 # /this_str /this_type`, so the call pushes them in the OPPOSITE order:
 #
 #     TYPE STR ARTLIST NAME LOC OWNER add_unit_to_location
 #
-# where TYPE is the unittypedict KEY (a literal name, e.g. `/licr2`) -- the body itself does
+# where TYPE is the unittypedict KEY (a literal name, e.g. `/pyele`) -- the body itself does
 # `unittypedict this_type get`, so pushing the resolved record would be wrong. This is copied
 # verbatim from a shipped call site, not reconstructed: gs\PLAYER5.gs:430 reads
-# `unittypedict begin /licr2 end 0{}0 start_loc 2 add_unit_to_location`, which places a plain
-# Unicorn with no stat string, no artifact list and no champion name. Only `start_loc` and the
-# owner literal `2` are replaced below, with this probe's own cell and player.
+# `unittypedict begin /licr2 end 0{}0 start_loc 2 add_unit_to_location`, which places a plain unit
+# with no stat string, no artifact list and no champion name. Only the unit key, the location and
+# the owner literal `2` are replaced below, with this probe's own subject, cell and player.
 #
 # `add_unit_to_location` does not leave anything on the stack -- its body ends with
 # `this_army_num this_unit_num ischampion?{...}if`, a boolean branch, not a return value -- so the
 # created army is found afterward the same way three shipped call sites do it
-# (`gsandenc.gs`'s `x y armyat`, `gs\ai_defend.gs`'s `/a loc xy_to_x_y armyat def`): by its
+# (`gs\andenc.gs`'s `x y armyat`, `gs\ai_defend.gs`'s `/a loc xy_to_x_y armyat def`): by its
 # location. `findemptylocation` guaranteed the cell was empty of units at the moment it ran, but
-# that is not "immediately beforehand" -- two terrain-sprite rungs, each with its own
-# `rendermap refreshdirty` and `screencapture`, run in between. That the cell is still empty when
-# `armyat` is called is therefore an INFERENCE (evidence class per `docs/loose-files.md`), not an
-# observation: nothing else moves a unit onto the world map between hotkey presses, and this
-# probe never yields control back to the game loop mid-body. The gate added below (army id valid
-# AND reported location matches `zcell`) is what actually checks the inference instead of just
-# asserting it. `deletearmynow` is the shipped one-operand cleanup used by every spell-summon in
-# the corpus (`gs\GAMEUTIL5.gs`'s `summon_cleanup`, `gs\spells\AIR_raise_frozen_shade.gs`) --
-# `army_id deletearmynow`, an exact match on the id `armyat` handed back, never a location or type
-# sweep, and army objects have no type to sweep by regardless.
-#
-# The subject is the Unicorn, `/licr2`, because its world-map sprite `units/imp/licr2a.imp` is the
-# same shape of file as the aicr2a/aicr2b pair the record-0 experiment already used (hotspot count
-# 2 per frame: record 0 the draw placement, record 1 type 7), and its STAND sequence -- frames
-# 30-34, one static frame per facing, no animation cycle to land on mid-tick -- has FIVE DISTINCT
-# frame sizes (see UNIT_ANCHOR_FRAME_SIZES below). That is what lets the captured silhouette be
-# matched to an exact frame without knowing, or forcing, which facing a freshly placed army starts
-# on. Forcing it was considered and rejected: `setarmydata`'s three-operand shape is shipped
-# (`attacker ARMY_OWNER 0 setarmydata`) but no shipped call site sets ARMY_FACING specifically, so
-# constructing `... ARMY_FACING n setarmydata` would be exactly the kind of reconstruction-from-
-# resemblance the project's own rules forbid. Measuring the frame by its size costs nothing and
-# needs no such call; `getarmydata ARMY_FACING` is still logged afterward, purely as a bonus
-# cross-check if the size-based identification and the raw facing value turn out to agree.
-UNIT_ANCHOR_TYPE_SYMBOL = "licr2"  # unittypedict key: the Unicorn, race ELF, code CR2
-UNIT_ANCHOR_IMP = "units/imp/licr2a.imp"  # its world-map-zoom sprite; read-only, never modified
+# that is not "immediately beforehand" -- a terrain-sprite rung with its own `rendermap refreshdirty`
+# and `screencapture` runs in between. That the cell is still empty when `armyat` is called is
+# therefore an INFERENCE, not an observation, and the gate below (army id valid AND reported
+# location matches this cell) is what checks it instead of asserting it. `deletearmynow` is the
+# shipped one-operand cleanup used by every spell-summon in the corpus (`gs\GAMEUTIL5.gs`'s
+# `summon_cleanup`, `gs\spells\AIR_raise_frozen_shade.gs`) -- an exact match on the id `armyat`
+# handed back, never a location or type sweep, and army objects have no type to sweep by regardless.
+
+# The CONTROL art, drawn through the terrain-sprite path to recover each cell's anchor. It stays
+# `licr2a.imp` on purpose: this exact file through this exact path is the measurement that was made
+# on 2026-09-16 and reproduced exactly on 2026-09-19 (30x122 at (374,136), frame 0, record 0
+# `(1,-25)`), so it is the one rung in this probe whose expected result is already known to the
+# pixel. It has nothing to do with the subject's art any more, and must not be confused with it --
+# that confusion is what the 2026-09-19 run cost.
+UNIT_ANCHOR_CONTROL_IMP = "units/imp/licr2a.imp"  # read-only, never modified
+UNIT_ANCHOR_CONTROL_FRAME = 0  # a terrain sprite never animates, so frame 0 is what draws
+UNIT_ANCHOR_CONTROL_FRAME_SIZE = (30, 122)
+UNIT_ANCHOR_CONTROL_FRAME_PLACEMENT = (1, -25)  # hotspot record 0
+
 UNIT_ANCHOR_CONTROL_TYPE = "terrainsprites /orchard get"  # the ladder run's own sanity control
 
-# `findemptylocation` is seeded from an OFFSET cell, never from the army's own occupied cell --
-# the same choice the two sibling probes already make (`probe_body`'s SEED_OFFSETS, `elevation_
-# body`'s PLACEMENT_OFFSETS never seed from a cell a unit already stands on). If `findemptylocation`
-# can hand back its own seed when it judges that cell acceptable, seeding from `zaloc` risks
+# The SUBJECT. `/pyele` is the Elephant (`units\pyele.gs`: race LESSER_STONE_GIANT, faith EARTH,
+# flags `UNITTYPELAND CAN_ATTACK or`), loaded by `gs\unittype.gs`'s `units/pyele.gs` run, so the
+# key is live in `unittypedict`. Its world-map art follows from `unittype_imp_filename` above.
+UNIT_ANCHOR_TYPE_SYMBOL = "pyele"
+UNIT_ANCHOR_SUBJECT_IMP = "units/imp/pyeleb.imp"  # derived, never registered, only ever read
+
+# Why THIS unit, chosen by measurement over all 141 `units\imp\*b.imp` members rather than by
+# resemblance. 103 of them have a five-frame STAND sequence. The subject has to satisfy two
+# properties that `licr2b` does not, and only one file satisfies both:
+#
+# 1. **Every STAND frame is identifiable from the capture alone.** The offline analysis predicts a
+#    top-left per candidate frame from the recovered anchor; if two frames of the file predict the
+#    same top-left AND have the same size, the capture cannot say which drew. The engine also
+#    MIRRORS frames (2026-09-19: the Unicorn was stored facing right and drawn facing left, with its
+#    two-pixel bottom tail landing at sprite-relative columns 1-3 instead of 43-45), so the check has
+#    to admit both orientations. For `licr2b` frame 33 the predicted top-left is shared with frames
+#    19, 20, 23 and 33 mirrored, and only the silhouette WIDTH separated them. For `pyeleb` every
+#    STAND frame is separated in both orientations, by position or by size.
+# 2. **Record 0's x is far from zero on every STAND frame** (-4, 11, 18, 14, 4). `licr2b` frame 33's
+#    record-0 x is 0, so the 2026-09-19 run could not tell `+placement.x` from `-placement.x` under
+#    mirroring -- the two predict the identical pixel. Here the two predictions differ by 8 to 36
+#    pixels on every facing, so whichever facing turns up settles the sign.
+#
+# All values read with `--describe-imp` on the installed GS5R3 `imp.mpq`, offline, game not running.
+# Frame 0 is MOVE facing 0; frames 30-34 are STAND facings 0-4, one static pose each -- no animation
+# cycle to land on mid-tick, which is the ambiguity that sank the very first hotspot attempt.
+# `frame -> (width, height, record0_x, record0_y)`.
+UNIT_ANCHOR_SUBJECT_FRAMES: dict[int, tuple[int, int, int, int]] = {
+    0: (40, 74, -1, -26),
+    30: (40, 72, -4, -25),
+    31: (56, 71, 11, -26),
+    32: (77, 63, 18, -22),
+    33: (65, 61, 14, -10),
+    34: (44, 70, 4, -6),
+}
+
+# The STAND facings, and only those. A unit standing on a cell it was just placed on should draw a
+# STAND frame -- the 2026-09-19 run did -- but frame 0 is kept in the table above as the MOVE
+# fallback in case it does not. The mirror-discrimination property below is required of the STAND
+# frames; frame 0's record-0 x is -1, which is too close to zero to separate `+x` from `-x`, and
+# an observation that lands on it is therefore a weaker observation, not a broken one.
+UNIT_ANCHOR_SUBJECT_STAND_FRAMES: tuple[int, ...] = (30, 31, 32, 33, 34)
+
+# The player flag `gs\PLAYER5.gs` attaches to every army, and the offset it attaches it at. The
+# 2026-09-19 captures are solved by these: with the anchor recovered from the control rung, the
+# flag's own measured top-left is predicted by the same rule from `anchor + UNIT_ANCHOR_FLAG_OFFSET`.
+# The flag is a waving 8-frame cycle, so which frame drew is not predictable in advance -- but it is
+# identifiable afterward, and it is a SECOND, independent test of the same anchor.
+UNIT_ANCHOR_FLAG_IMP_TEMPLATE = "iface/{faith}flagb.imp"  # faith code per gs\PLAYER5.gs
+UNIT_ANCHOR_FLAG_OFFSET = (0, -40)  # `"iface/liflagb.imp" 0 -40 setplayerflagimp`
+
+# `findemptylocation` is seeded from OFFSET cells, never from the army's own occupied cell -- the
+# same choice the two sibling probes already make (`probe_body`'s SEED_OFFSETS, `elevation_body`'s
+# PLACEMENT_OFFSETS never seed from a cell a unit already stands on). If `findemptylocation` can
+# hand back its own seed when it judges that cell acceptable, seeding from `zaloc` risks
 # `zcell == zaloc`: the target cell would then be the player's OWN starting army's cell, and
-# `zcx zcy armyat` two rungs later would find that army, not the one this probe places. Nothing
-# downstream can tell the two apart by inspection, so the seed itself must not be able to collide.
-UNIT_ANCHOR_SEED_OFFSET = (2, 0)  # matches probe_body's first SEED_OFFSETS entry
-
-# Frame sizes for licr2a.imp, read with `--describe-imp` (offline; the game was not running).
-# Frame 0 is MOVE facing 0 -- the frame the ladder-style terrain-sprite path always draws, since a
-# terrain sprite never animates. Frames 30-34 are STAND facings 0-4, one static frame each. Every
-# one of these six sizes is distinct, so whichever frame the real unit draw path actually shows
-# (rung 2's whole open question) is identified from its measured bounding box alone, offline, by
-# `tools/probe_captures.py` against this table -- not assumed and not forced.
-UNIT_ANCHOR_FRAME_SIZES: dict[int, tuple[int, int]] = {
-    0: (30, 122),
-    30: (28, 124),
-    31: (100, 105),
-    32: (136, 81),
-    33: (93, 85),
-    34: (27, 99),
-}
-
-# Record 0 (the draw placement) for the frames above, read the same way. `hotspots.md`'s notation:
-# `type:x:y`. These are what the offline analysis solves `anchor = top_left - placement +
-# (w>>1, h>>1)` against, once the capture says which frame drew.
-UNIT_ANCHOR_FRAME_PLACEMENTS: dict[int, tuple[int, int]] = {
-    0: (1, -25),
-    30: (-1, -23),
-    31: (-2, -25),
-    32: (-1, -27),
-    33: (0, -15),
-    34: (0, -13),
-}
+# `zcx zcy armyat` would find that army, not the one this probe placed. Nothing downstream can tell
+# the two apart by inspection, so the seed itself must not be able to collide.
+#
+# There are THREE of them, and that is the 2026-09-19 run's other correction. That run placed the
+# unit twice on one cell to get two independent facing draws; both reported facing 4 and produced
+# pixel-identical captures, so it carried one facing sampled twice. Nothing in this probe can force
+# a facing -- `setarmydata`'s three-operand shape is shipped (`attacker ARMY_OWNER 0 setarmydata`)
+# but no shipped call site sets ARMY_FACING, and constructing that call would be exactly the kind of
+# reconstruction-from-resemblance `hotspots.md`'s "Do not" section forbids. Different CELLS are the
+# only lever this probe actually has, and they buy something a repeat on one cell cannot: three
+# independent anchors, each recovered by its own control rung, so a residual that is really a
+# property of one cell's projection cannot masquerade as a property of the unit draw path.
+UNIT_ANCHOR_SEED_OFFSETS: list[tuple[int, int]] = [(2, 0), (-2, 0), (0, 2)]
 
 
 def unit_anchor_body() -> str:
@@ -1391,144 +1455,136 @@ def unit_anchor_body() -> str:
     emit("\t\tzaloc xy_to_x_y /zay0 exch def /zax0 exch def")
     emit("\t\t/zowner currentplayer def")
     emit("\t\t" + _log('"army loc "zaloc" cell "zax0" "zay0" owner "zowner'))
+    emit("\t\t" + _log('"owner faith "zowner getplayerfaith'))
 
-    # ONE empty cell, reused by every rung in turn -- the 2026-09-16 method. `findemptylocation`
-    # takes (location, unittype), two operands, not three. The seed is an OFFSET cell, never
-    # `zaloc` itself -- see UNIT_ANCHOR_SEED_OFFSET above for why seeding from the army's own
-    # occupied cell is unsafe here specifically (this probe is the one rung that later looks up
-    # "whatever army is on the target cell" and deletes it).
-    _seed_dx, _seed_dy = UNIT_ANCHOR_SEED_OFFSET
-    emit(
-        f"\t\tzax0 {_seed_dx} add zay0 {_seed_dy} add x_y_to_xy UNITTYPELAND findemptylocation "
-        "/zcell exch def"
-    )
-    emit("\t\tzcell xy_to_x_y /zcy exch def /zcx exch def")
-    emit("\t\t" + _log('"target cell "zcell" "zcx" "zcy'))
+    # The control art is registered ONCE and reused on every cell. `zt1` is minted by this
+    # keypress, so it is safe to sweep by type ALONE: no sprite anywhere else on the map can carry
+    # an id this keypress just registered.
+    emit(f'\t\t["{UNIT_ANCHOR_CONTROL_IMP}"]cvx addterrainspritetype /zt1 exch def')
+    emit("\t\t" + _log('"control terrain type "zt1'))
 
-    # Rung 0: the shipped sanity control the ladder run itself uses. If this rung's silhouette does
-    # not land where the published rule predicts, the capture or the cell logic is wrong here and
-    # rungs 1-2 are not evidence of anything -- exactly hotspots.md's own "capture or cell logic is
-    # wrong" case.
+    capture = 1
+
+    # Rung 0: the shipped sanity control the ladder run itself uses, on the FIRST cell only. If its
+    # silhouette does not land where the published rule predicts, the capture or the cell logic is
+    # wrong here and nothing below is evidence of anything.
     #
     # `zt0` is the type id EVERY orchard on the map shares, and `findemptylocation UNITTYPELAND`
     # only answers "can a land unit stand here" -- it does not rule out a decorative terrain sprite
-    # already occupying the cell. If the map generator placed a shipped orchard on `zcell`, the
-    # destroy sweep two steps below (matched by type AND location, exactly like the ladder run's
-    # own rung 0) would delete it too, since the generator's orchard and this probe's would then
-    # share both. So check for one FIRST and skip the whole rung rather than place on top of it --
-    # the same class of loss as this repository's recorded village-deletion incident.
+    # already occupying the cell. If the map generator placed a shipped orchard there, the destroy
+    # sweep (matched by type AND location, exactly like the ladder run's own rung 0) would delete it
+    # too. So check for one FIRST and skip the whole rung rather than place on top of it -- the same
+    # class of loss as this repository's recorded village-deletion incident.
     emit(f"\t\t{UNIT_ANCHOR_CONTROL_TYPE} /zt0 exch def")
-    emit("\t\t/zorchard_present false def")
-    emit(
-        "\t\t{dup getterrainspritetype zt0 eq"
-        "{dup getterrainspritelocation zcell eq"
-        "{pop /zorchard_present true def}{pop}ifelse}"
-        "{pop}ifelse}enumterrainsprites"
-    )
-    emit("\t\tzorchard_present")
-    emit(
-        "\t\t\t{"
-        + _log(
-            '"rung0 SKIPPED -- an orchard already stands on zcell; not placing or destroying"'
-        )
-        + "}"
-    )
-    emit("\t\t\t{")
-    emit("\t\t\tzcx zcy zt0 addterrainsprite")
-    emit("\t\t\trendermap refreshdirty")
-    emit('\t\t\t"zu1.bmp"screencapture')
-    emit(
-        "\t\t\t{dup getterrainspritetype zt0 eq"
-        "{dup getterrainspritelocation zcell eq"
-        "{destroyterrainsprite}{pop}ifelse}"
-        "{pop}ifelse}enumterrainsprites"
-    )
-    emit("\t\t\trendermap refreshdirty")
-    emit("\t\t\t" + _log('"rung0 orchard type "zt0" done"'))
-    emit("\t\t\t}ifelse")
 
-    # Rung 1: the SAME art the unit rung uses (licr2a.imp), through the TERRAIN SPRITE path -- the
-    # control the 2026-09-16 record-0 confirmation itself used, reproduced here on the identical
-    # cell so it is directly comparable rather than merely similar. `zt1` is minted by this
-    # keypress, so (unlike rung 0's shipped orchard type) it is safe to sweep by type ALONE: no
-    # sprite anywhere else on the map can carry an id this keypress just registered, so the
-    # type-only sweep already catches everything a type-and-location sweep would, and a second,
-    # narrower pass over it is redundant rather than an extra safeguard.
-    emit(f'\t\t["{UNIT_ANCHOR_IMP}"]cvx addterrainspritetype /zt1 exch def')
-    emit("\t\tzcx zcy zt1 addterrainsprite")
-    emit("\t\trendermap refreshdirty")
-    emit('\t\t"zu2.bmp"screencapture')
-    emit(
-        "\t\t{dup getterrainspritetype zt1 eq"
-        "{destroyterrainsprite}{pop}ifelse}enumterrainsprites"
-    )
-    emit("\t\trendermap refreshdirty")
-    emit("\t\t" + _log('"rung1 licr2a-as-terrain type "zt1" done"'))
+    for index, (seed_dx, seed_dy) in enumerate(UNIT_ANCHOR_SEED_OFFSETS):
+        cell = f"zcell{index}"
+        cx, cy = f"zcx{index}", f"zcy{index}"
+        army, aloc, facing = f"zarmy{index}", f"zaloc{index}", f"zfacing{index}"
 
-    # Rung 2: THE QUESTION. A real Unicorn, placed through `add_unit_to_location` -- never a
-    # terrain sprite type -- on the identical cell. Copied verbatim from gs\PLAYER5.gs:430 with
-    # only the location and owner swapped for this probe's own.
-    #
-    # One placement can only ever tell "residual is zero" from "residual is non-zero" -- it cannot
-    # tell "non-zero and constant" from "non-zero and varies by facing", because facing is never
-    # forced (see the comment above UNIT_ANCHOR_FRAME_SIZES) and a single draw samples exactly one
-    # facing. So this places, measures and removes the Unicorn TWICE on the identical cell, in the
-    # same run: two independent draws, each free to land on any of the five STAND facings (or the
-    # MOVE frame) since nothing here controls which. Agreement between the two supports "the same
-    # constant regardless of facing"; disagreement means the residual is facing-dependent and no
-    # single offset can be published from this run -- see the run sheet for what each case means.
-    def _rung2_observation(
-        tag: str,
-        army_var: str,
-        aloc_var: str,
-        facing_var: str,
-        place_shot: str,
-        done_shot: str,
-    ) -> None:
         emit(
-            f"\t\tunittypedict begin /{UNIT_ANCHOR_TYPE_SYMBOL} end 0{{}}0 zcell zowner "
+            f"\t\tzax0 {seed_dx} add zay0 {seed_dy} add x_y_to_xy UNITTYPELAND findemptylocation "
+            f"/{cell} exch def"
+        )
+        # A cell of -1 means findemptylocation found nothing. Running the rungs anyway would place
+        # on, and later delete from, whatever cell -1 decomposes to. Refuse and say so.
+        emit(f"\t\t{cell} -1 ne")
+        emit("\t\t\t{")
+        emit(f"\t\t\t{cell} xy_to_x_y /{cy} exch def /{cx} exch def")
+        emit("\t\t\t" + _log(f'"cell{index} target "{cell}" "{cx}" "{cy}'))
+
+        if index == 0:
+            emit("\t\t\t/zorchard_present false def")
+            emit(
+                "\t\t\t{dup getterrainspritetype zt0 eq"
+                f"{{dup getterrainspritelocation {cell} eq"
+                "{pop /zorchard_present true def}{pop}ifelse}"
+                "{pop}ifelse}enumterrainsprites"
+            )
+            emit("\t\t\tzorchard_present")
+            emit(
+                "\t\t\t\t{"
+                + _log(
+                    '"rung0 SKIPPED -- an orchard already stands on cell0; not placing '
+                    'or destroying"'
+                )
+                + "}"
+            )
+            emit("\t\t\t\t{")
+            emit(f"\t\t\t\t{cx} {cy} zt0 addterrainsprite")
+            emit("\t\t\t\trendermap refreshdirty")
+            emit(f'\t\t\t\t"zu{capture}.bmp"screencapture')
+            capture += 1
+            emit(
+                "\t\t\t\t{dup getterrainspritetype zt0 eq"
+                f"{{dup getterrainspritelocation {cell} eq"
+                "{destroyterrainsprite}{pop}ifelse}"
+                "{pop}ifelse}enumterrainsprites"
+            )
+            emit("\t\t\t\trendermap refreshdirty")
+            emit("\t\t\t\t" + _log('"rung0 orchard type "zt0" done"'))
+            emit("\t\t\t\t}ifelse")
+
+        # The control rung for THIS cell: recovers this cell's anchor, through the path whose
+        # behaviour is already measured, in the same capture series as the subject.
+        emit(f"\t\t\t{cx} {cy} zt1 addterrainsprite")
+        emit("\t\t\trendermap refreshdirty")
+        emit(f'\t\t\t"zu{capture}.bmp"screencapture')
+        control_shot = capture
+        capture += 1
+        emit(
+            "\t\t\t{dup getterrainspritetype zt1 eq"
+            "{destroyterrainsprite}{pop}ifelse}enumterrainsprites"
+        )
+        emit("\t\t\trendermap refreshdirty")
+        emit("\t\t\t" + _log(f'"cell{index} control licr2a-as-terrain done"'))
+
+        # The subject rung: a real unit through the real unit draw path, on the same cell, against
+        # the same plate.
+        emit(
+            f"\t\t\tunittypedict begin /{UNIT_ANCHOR_TYPE_SYMBOL} end 0{{}}0 {cell} zowner "
             "add_unit_to_location"
         )
-        # `add_unit_to_location` returns nothing; find the army the same way three shipped call
-        # sites do, by the location it was just placed on -- exact here because that cell was
-        # empty a moment ago (findemptylocation for the first observation, this same rung's own
-        # cleanup for the second) and nothing else can have moved onto it in between.
-        emit(f"\t\tzcx zcy armyat /{army_var} exch def")
-        emit(f"\t\t{army_var} ARMY_LOCATION getarmydata /{aloc_var} exch def")
-        emit(f"\t\t{army_var} ARMY_FACING getarmydata /{facing_var} exch def")
+        emit(f"\t\t\t{cx} {cy} armyat /{army} exch def")
+        emit(f"\t\t\t{army} ARMY_LOCATION getarmydata /{aloc} exch def")
+        emit(f"\t\t\t{army} ARMY_FACING getarmydata /{facing} exch def")
         emit(
-            "\t\t"
+            "\t\t\t"
             + _log(
-                f'"{tag} unit army "{army_var}" at "{aloc_var}" expected "zcell'
-                f'" facing "{facing_var}'
+                f'"cell{index} unit army "{army}" at "{aloc}" expected "{cell}'
+                f'" facing "{facing}'
             )
         )
-        emit("\t\trendermap refreshdirty")
-        emit(f'\t\t"{place_shot}"screencapture')
+        emit("\t\t\trendermap refreshdirty")
+        emit(f'\t\t\t"zu{capture}.bmp"screencapture')
+        capture += 1
+
         # Cleanup is gated on BOTH the army id being valid and its reported location matching the
-        # cell this probe placed into -- never an unconditional `deletearmynow`. Both quantities
-        # are already computed above; only the branch was missing. Whether `armyat` can return a
-        # stale/foreign army id and what an invalid id does when handed to `deletearmynow` are
-        # GameScript semantics this project cannot verify without the engine -- the gate is correct
-        # regardless of the answer, which is the point of gating rather than assuming.
-        emit(f"\t\t{army_var} -1 ne {aloc_var} zcell eq and")
-        emit("\t\t\t{")
-        emit(f"\t\t\t{army_var} deletearmynow")
-        emit("\t\t\t" + _log(f'"{tag} cleanup done"'))
-        emit("\t\t\t}")
+        # cell this probe placed into -- never an unconditional `deletearmynow`.
+        emit(f"\t\t\t{army} -1 ne {aloc} {cell} eq and")
+        emit("\t\t\t\t{")
+        emit(f"\t\t\t\t{army} deletearmynow")
+        emit("\t\t\t\t" + _log(f'"cell{index} cleanup done"'))
+        emit("\t\t\t\t}")
         emit(
-            "\t\t\t{"
+            "\t\t\t\t{"
             + _log(
-                f'"{tag} cleanup REFUSED -- army "{army_var}" loc "{aloc_var}'
-                '" expected "zcell'
+                f'"cell{index} cleanup REFUSED -- army "{army}" loc "{aloc}'
+                f'" expected "{cell}'
             )
             + "}ifelse"
         )
-        emit("\t\trendermap refreshdirty")
-        emit(f'\t\t"{done_shot}"screencapture')
+        emit("\t\t\trendermap refreshdirty")
+        emit(f'\t\t\t"zu{capture}.bmp"screencapture')
+        capture += 1
+        assert control_shot < capture  # captures are emitted in rung order
 
-    _rung2_observation("rung2a", "zarmy", "zaloc2", "zfacing", "zu3.bmp", "zu4.bmp")
-    _rung2_observation("rung2b", "zarmy2", "zaloc3", "zfacing2", "zu5.bmp", "zu6.bmp")
+        emit("\t\t\t}")
+        emit(
+            "\t\t\t{"
+            + _log(f'"cell{index} SKIPPED -- findemptylocation returned -1"')
+            + "}ifelse"
+        )
 
     emit("\t\t}")
     emit("\t\t{" + _log('"no army found; nothing placed"') + "}ifelse")
