@@ -133,13 +133,19 @@ from a game. `LOM_PROBE=flatground` builds its own mesh to settle `map2screen`'s
 `LOM_PROBE=maptag` builds a 64x64 map, writes chosen tiles, terrain types and sprites into it, and
 saves it four ways for [issue #4](https://github.com/jake-bliss/lords-of-magic-modding/issues/4) —
 **run 2026-09-17, and it refuted two documented claims**; see below. `LOM_PROBE=mapload` and
-`LOM_PROBE=terrainrings` are documented in their own run sheets. `LOM_PROBE=unitanchor` (built, not
-yet run) closes the one limit `hotspots.md` states about its own central result: record 0 was
-confirmed as the draw placement by injecting a unit IMP through the *terrain sprite* path, not the
-*unit* path, so a unit-specific constant offset in the anchor was never ruled out. It places a real
-recruited unit (`add_unit_to_location`, copied verbatim from a shipped call site) alongside a
-same-art terrain-sprite control on one shared cell, in one capture — see
-[the run sheet](unit-anchor-run-sheet.md).
+`LOM_PROBE=terrainrings` are documented in their own run sheets. `LOM_PROBE=unitanchor` addresses
+the one limit `hotspots.md` states about its own central result: record 0 was confirmed as the draw
+placement by injecting a unit IMP through the *terrain sprite* path, not the *unit* path, so a
+unit-specific constant offset in the anchor was never ruled out. It places a real recruited unit
+(`add_unit_to_location`, copied verbatim from a shipped call site) alongside a terrain-sprite
+control on a shared cell. **It ran 2026-09-19 and the residual is zero in x and y**, for the unit
+body and independently for the player flag — *Inferred*, conditional on two frame identifications.
+It has since been **rebuilt** to three cells and a different subject unit, because that run carried
+one facing, one unit type, and a frame that could not settle the mirror sign. ⚠️ Its first reading
+was wrong for a reason worth carrying forward: the sheet *named* the drawn art instead of deriving
+it, and named the wrong file — `gs\imps.gs`'s `unit_zoom_letter` sends the world map to
+`units\imp\<name>b.imp`, not `...a.imp`, and a world-map army is a composite of body, flag, bars and
+group number rather than one sprite. See [the run sheet](unit-anchor-run-sheet.md).
 
 **The mapsize probe writes outside the archives, and that needs care.** The game directory has a
 loose `map/` folder holding 366 shipped files, and **no backup here covers it** — the manifest covers

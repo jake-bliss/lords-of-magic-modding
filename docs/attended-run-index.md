@@ -97,12 +97,22 @@ refusal. A silent pass is the failure, and it is the one that costs an archive.
 
 ### B1. Unit anchor probe — `docs/unit-anchor-run-sheet.md`
 
-Written, reviewed, and its two critical safety defects fixed. This closes whether the **unit draw
-path** uses the same anchor rule as the terrain-sprite path.
+**Ran 2026-09-19. The probe worked and half the question is answered; it has been rebuilt for the
+other half.** Read offline against the art the engine actually draws, the residual is **zero in x
+and y**, for the unit body *and* independently for the player flag, both solved from the anchor the
+terrain-sprite control rung recovered on the same cell. *Inferred*, conditional on two frame
+identifications.
 
-**Why it matters:** the hotspot rule `top_left = anchor + placement - (w>>1, h>>1)` was measured
-through the **terrain-sprite path only**. A unit-specific offset is not ruled out — and units are
-exactly the case modders hit. Read that sheet; it states its own expected values.
+**Why a second run:** that run carried **one facing sampled twice**, one unit type, and a frame
+whose record-0 `x` was `0` — so **mirroring's effect on the placement x sign is undetermined**. The
+probe now works three cells, each with its own control rung and therefore its own independently
+recovered anchor, and its subject was chosen by sweeping all 141 `units\imp\*b.imp` members for the
+two properties that failure showed are needed.
+
+⚠️ **The cost of the first run was a premise, not a bug.** The old sheet named the subject's art
+instead of deriving it, and named the wrong file — `unit_zoom_letter` in `gs\imps.gs` sends the
+world map to `...b.imp`, not `...a.imp`. Read the sheet's expected values *and* how it derives what
+it is measuring.
 
 ### B2. Anchor direction 0 to a compass bearing
 

@@ -6124,3 +6124,126 @@ anchor's whole safety argument depends on the game's own command line beginning 
 which is exactly the fact that is unmeasured for these two. An attended `ps -o command=` capture
 against both, while each is running, is the next thing this guard needs and is not something a
 closed-game measurement can substitute for.
+
+## 2026-09-19 — The `unitanchor` run: the probe was right, the subject was the wrong file
+
+The probe ran attended on GS5R3. All four rungs fired, both gated cleanups ran, nothing was left on
+the map, and `scripts/restore-game-archives.sh` verified both archives back to their recorded
+originals (`gs.mpq 2d394279…`, `imp.mpq cb5c1068…`). `zprobe.log`: army loc 185, cell (57,1),
+owner 0, target cell 58, both placements `facing 4`, both cleanups done.
+
+The first reading of the captures concluded the experiment had failed. It had not. Two mistakes,
+one in the instrument and one in the run sheet's own premise, are what made it look that way.
+
+### The instrument: components are not silhouettes
+
+`tools/probe_captures.py` reported *connected components*. `units\imp\licr2a.imp` frame 0 is 30x122
+and the engine draws it with a transparent band across the middle, so the control rung came back as
+**30x111 plus a detached 8x9 three rows lower**. Read component-wise, a control that had reproduced
+its frame **exactly** looked as though it had missed by 11 pixels.
+
+The tool now reports the union box alongside the components, and says how many components fell below
+the reporting threshold and what the union would be including them — a sprite's own outlying tail is
+often two or three pixels. `tests/test_probe_captures.py` carries the split-sprite case.
+
+### The premise: the world map draws the `b` file, not the `a` file
+
+**Observed in the corpus.** A unit type declares `/impfile_proc{"licr2"unittype_imp_filename}`, and
+`gs\imps.gs`'s `unittype_imp_filename` consumes two operands — the base name, and beneath it a
+**screen mode the engine pushes**, documented in that file's own `citygate_imp_filename` comment as
+`<zoom_mode (from c++)>`. `unit_zoom_letter` maps COMBAT_SCREEN and LOCATION_SCREEN to `"A"`, and
+SCROLLINGMAP_SCREEN, REGION_SCREEN and WORLD_SCREEN to `"B"`. **Observed in a local binary:**
+`lomse.exe` carries `getzoommode` (arity 0) and `setspritezoommode` (arity 1).
+
+So a unit standing on the world map draws `units\imp\licr2b.imp`. The run sheet had asserted
+`licr2a.imp` — the combat sprite — and the analysis was matching a world-map capture against a frame
+table from the wrong file. Nothing matched, which is exactly what should happen.
+
+**Observed in the corpus.** A world-map army is also a *composite*, not one sprite.
+`gs\PLAYER5.gs`'s `setupplayergraphics` attaches, per player, a faith flag
+(`"iface/liflagb.imp" 0 -40 setplayerflagimp` — four operands, matching `setplayerflagimp`'s
+disassembled arity of 4), health bars (`setplayerbars`), a group-number object at
+`0 -20 setplayergroupnumberoffset`, and an indicator aura and halo colour. A box drawn around a
+placed unit therefore encloses at least two independent sprites, and the "47x72" the first reading
+tried to match was a union of the body and the flag. It is no frame of anything, and never was.
+
+### What the captures actually say
+
+Control rung: union 30x122 at (374,136) — frame 0 of `licr2a.imp`, record 0 `(1,-25)`. So
+
+```
+anchor = (374,136) - (1,-25) + (15,61) = (388,222)
+```
+
+which reproduces the 2026-09-16 result on a new cell in a new session.
+
+**Body.** `licr2b.imp` frame 33 (STAND, facing record 8) is 47x46, record 0 `(0,-6)`:
+
+```
+predicted = (388,222) + (0,-6) - (23,23) = (365,193)      measured = (365,193)
+```
+
+Of all 86 frames of the file, admitting both orientations, exactly four predict `(365,193)`: frames
+19 (50x47), 20 (45x46) and 23 (49x46) mirrored, and frame 33 in either orientation. **Only frame 33
+is 47 wide, and 47 is the measured width.** Two facts not used to pick it agree: the 3-pixel
+component at `(366,237)` sits at sprite-relative columns 1-3 rows 44-45, where frame 33 is opaque
+**only when mirrored** (unmirrored those rows are opaque at columns 43-45); and the capture shows a
+unicorn facing left while frame 33 as stored faces right. **The engine mirrored the frame, and the
+rule still predicted its top-left to the pixel.**
+
+**Flag, an independent second test of the same anchor.** `iface\liflagb.imp` frame 111
+(UNIT_UNSELECTED, cycle offset 7) is 12x21, origin `(-5,-7)`, hanging off `anchor + (0,-40)`:
+
+```
+predicted = (388,182) + (-5,-7) - (6,10) = (377,165)      measured = (377,165)
+```
+
+Frame 111 is the **unique** frame of all 112 in that file predicting `(377,165)`, and its stored size
+matches the measured silhouette exactly rather than approximately.
+
+Two sprites, two files, two sub-paths of the army composite, one anchor recovered from the
+terrain-sprite rung, **zero residual in x and y for both**. **Inferred**, conditional on the two
+frame identifications; they are independent of each other, and a coincidence would have to hit both.
+
+### What stays open, and why the probe was rebuilt
+
+1. **One facing, sampled twice.** Both placements reported `facing 4` and produced pixel-identical
+   captures. The run carries one facing, not two.
+2. **The mirror sign is undetermined.** Frame 33's record-0 `x` is `0`, so `+placement.x` and
+   `-placement.x` predict the identical pixel.
+3. **One unit type.**
+
+The probe now works **three cells**, each with its own control rung and therefore its own
+independently recovered anchor, and its subject is `/pyele` (Elephant) — chosen by sweeping all 141
+`units\imp\*b.imp` members rather than by resemblance. It is the only one of the 103 with a
+five-frame STAND sequence that satisfies both properties the failure showed are needed: every STAND
+frame is separated from every other frame in the file **in both orientations** by position or size,
+and every STAND frame's record-0 `x` is at least 4 from zero, so the two mirror hypotheses differ by
+8 to 36 pixels on every facing. Both properties are asserted in `tests/test_engine_probe.py`; the old
+`licr2a` table fails both (10 distinct signatures of 12, minimum |x| of 0).
+
+### The persistent 10x26 component at (358,259)
+
+**Observed in gameplay.** Absent from `zu0`–`zu3`, present and *byte-identical* in `zu4`, `zu5` and
+`zu6`. It lies inside a green humanoid figure already present in the plate, 22 px left and 66 px
+below the probe's cell; only the figure's lower body changes.
+
+**Refuted as** anything the probe placed (absent from the two captures in which the probe's own
+sprites were on screen, and it survives both id-exact cleanups into `zu6`); as the army's
+group-number badge (that would land at `anchor + (0,-20) - (14,14) = (374,188)`); as a health or
+morale bar (32x5 and 24x4 doodads, not 10x26); and as an ordinary animation cycle (it advanced once
+and then held across three further redraws and three more captures).
+
+**Inferred:** a one-step advance of a pre-existing world-map figure. *Why* it stepped between `zu3`
+and `zu4` and then not again **cannot be established offline**, and is not established here.
+
+### The methodological lesson
+
+The run sheet stated what each outcome would mean before the run — including the case that occurred,
+"the silhouette matches none of the six candidate frames" — and correctly called that an
+identification failure rather than a result about the anchor. What it could not do was recover,
+because the candidate list itself was derived from an assumption the sheet never marked as one:
+*which file the engine draws*. **A sheet that names its subject's art without deriving it has a
+premise its own failure cases cannot reach.** The rebuilt sheet derives the file from
+`unit_zoom_letter` and requires the analysis to identify the frame from the capture, in both
+orientations, rather than confirm a guess.

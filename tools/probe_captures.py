@@ -14,6 +14,15 @@ reading:
 Differencing is by connected component rather than bounding box. The world map animates
 between captures, so a naive box around every changed pixel once reported a 110x191 subject
 that was really 49x67.
+
+**Components alone are not enough either, and reading them alone has already cost a wrong
+verdict.** One IMP frame is one sprite but need not be one component: `units\\imp\\licr2a.imp`
+frame 0 is 30x122, and the engine draws it with a transparent band across the middle, so the
+diff comes back as 30x111 plus a detached 8x9. Read component-wise on 2026-09-19 that control
+looked like it had failed by 11 pixels when it had in fact passed exactly. So `describe` now
+reports the **union** box over the components as well as each component, and says how many
+components fell below the reporting threshold and what the union would be including them --
+a sprite's own outlying tail is often only two or three pixels.
 """
 
 from __future__ import annotations
@@ -124,11 +133,38 @@ def changed_components(before: Capture, after: Capture) -> list[Component]:
     return components
 
 
+def union_bounds(components: list[Component]) -> tuple[int, int, int, int] | None:
+    """(left, top, width, height) covering every pixel of every component, or None if empty.
+
+    A single sprite can arrive as several components when its own art has a transparent gap, so
+    the union is what a measured silhouette should be compared against. It is deliberately *not*
+    the box over all changed pixels: the world map animates, and an unrelated ambient change
+    hundreds of pixels away would inflate it. Filter first, then union.
+    """
+    if not components:
+        return None
+    xs = [x for component in components for x, _ in component.pixels]
+    ys = [y for component in components for _, y in component.pixels]
+    return min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+
+
 def describe(before_path: Path | str, after_path: Path | str, minimum: int = 40) -> str:
     before = read_capture(before_path)
     after = read_capture(after_path)
-    components = [c for c in changed_components(before, after) if c.size >= minimum]
+    every = changed_components(before, after)
+    components = [c for c in every if c.size >= minimum]
+    dropped = [c for c in every if c.size < minimum]
     lines = [f"{Path(before_path).name} -> {Path(after_path).name}: {len(components)} components"]
+    reported = union_bounds(components)
+    if reported is not None:
+        left, top, width, height = reported
+        lines.append(f"  union of the reported components: top-left=({left},{top}) {width}x{height}")
+    if dropped:
+        left, top, width, height = union_bounds(every)  # type: ignore[misc]
+        lines.append(
+            f"  {len(dropped)} component(s) below n={minimum} not listed; union including them: "
+            f"top-left=({left},{top}) {width}x{height}"
+        )
     for component in components:
         left, top, width, height = component.bounds
         colours = sorted(

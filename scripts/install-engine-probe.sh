@@ -254,11 +254,13 @@ elif [[ "${probe}" == "mapsize" ]]; then
 elif [[ "${probe}" == "unitanchor" ]]; then
   echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map"
   echo "with your starting army visible on screen and NOT adjacent to a hostile stack, and TAP z"
-  echo "once. In order, on one empty cell next to your army: a shipped orchard sprite appears and"
-  echo "is removed, the SAME art the Unicorn uses (units/imp/licr2a.imp) appears as a terrain"
-  echo "sprite and is removed, and then a real Unicorn is recruited to your side, captured, and"
-  echo "deleted. Expect one new unit to flash into existence and vanish next to your army --"
-  echo "that is the probe's own cleanup, not a bug. See docs/unit-anchor-run-sheet.md."
+  echo "once. It works THREE empty cells around your army in turn. On the first only, a shipped"
+  echo "orchard appears and is removed. Then, on each of the three: units/imp/licr2a.imp appears"
+  echo "as a terrain sprite and is removed (the control that recovers that cell's anchor), and an"
+  echo "Elephant is recruited to your side, captured, and deleted. Expect three units to flash"
+  echo "into existence and vanish -- that is the probe's own gated cleanup, not a bug. Read"
+  echo "zprobe.log before quitting: any 'cleanup REFUSED' line means that unit is STILL on the"
+  echo "map and must be removed by hand. See docs/unit-anchor-run-sheet.md."
   echo "Do not save the game afterwards."
 else
   echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map,"

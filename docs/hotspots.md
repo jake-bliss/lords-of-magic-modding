@@ -146,12 +146,27 @@ wobble by cropping. That is the gap the rule above closes.
 - Related, on the reader side: `screencapture` writes its pixel bytes as R, G, B rather than the
   BMP-standard B, G, R. Confirmed numerically on known materials — carved stone, wood and parchment
   come out first-byte-dominant 62-91% against 0.8-2.4%. Use `tools/probe_captures.py`.
-- **A unit-path caveat.** Record 0 was confirmed by placing a unit IMP through the *terrain sprite*
-  draw path. The sign, the centre-relative form and the choice of record 0 are settled; a
-  unit-specific constant in the *anchor* is not ruled out. **A probe to close this is built and
-  ready to run:** [`LOM_PROBE=unitanchor`](unit-anchor-run-sheet.md) places a real recruited unit
-  through the actual unit draw path, on the same cell as a same-art terrain-sprite control, in one
-  capture. Not yet run.
+- **A unit-path caveat, now narrowed rather than closed.** Record 0 was confirmed by placing a unit
+  IMP through the *terrain sprite* draw path, which left a unit-specific constant in the *anchor*
+  unruled-out. [`LOM_PROBE=unitanchor`](unit-anchor-run-sheet.md) ran attended on 2026-09-19 and,
+  read offline against the art the engine actually draws, the residual is **zero in x and y** — for
+  the unit body (`units\imp\licr2b.imp` frame 33) *and*, independently, for the player flag
+  (`iface\liflagb.imp` frame 111, at the shipped `(0,-40)` offset), both solved from the anchor the
+  terrain-sprite control rung recovered on the same cell. **Inferred**, conditional on those two
+  frame identifications; see [the run sheet](unit-anchor-run-sheet.md#what-the-2026-09-19-run-established-read-offline-afterwards).
+  Three things stay open: one facing was sampled (twice), one unit type, and the frame that drew had
+  record-0 `x = 0` so **mirroring's effect on the placement x sign is undetermined**. The probe has
+  been rebuilt around all three and is ready to run again.
+- **The engine mirrors frames, and this file does not say what that does to `placement`.** On
+  2026-09-19 a stored right-facing STAND frame drew facing left: its detached bottom tail landed at
+  sprite-relative columns 1-3 rather than 43-45. Whether the rule then uses `placement.x` or
+  `-placement.x` cannot be told from that run, because the frame's record-0 x was 0.
+- **The world-map unit sprite is the `...b.imp` zoom variant, not `...a.imp`.** `gs\imps.gs`'s
+  `unit_zoom_letter` maps COMBAT_SCREEN and LOCATION_SCREEN to `A` and SCROLLINGMAP_SCREEN,
+  REGION_SCREEN and WORLD_SCREEN to `B`, and the engine pushes the screen mode. A world-map army is
+  also a **composite** — body, faith flag at `(0,-40)`, health bars, group number at `(0,-20)` —
+  so a bounding box around a placed unit is several sprites, not one. Both facts cost a wrong
+  reading of the 2026-09-19 captures.
 - **Out-of-vocabulary types in searchable slots.** `units\imp\eacr5a.imp` carries types 106, 138 and
   143 in slots 1 and 2, which the engine does search. Unexplained. (Its record-0 tag of 136, and
   `aiwm1b.imp`'s 190, are accounted for: record 0's tag is never read.)
