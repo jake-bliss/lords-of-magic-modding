@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import http.server
 import json
+import os
 import pathlib
 import socketserver
 import threading
@@ -104,9 +105,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 data.pop(pid, None)
             else:
                 data[pid] = payload["verdict"]
+            # Atomic against a process crash via os.replace, and fsync'd so a power loss cannot
+            # leave the rename visible with the contents missing. The reviewer may have hundreds of
+            # verdicts in here; the cost of two fsyncs per keystroke is irrelevant next to that.
             tmp = self.verdict_file.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, indent=1, sort_keys=True))
-            tmp.replace(self.verdict_file)   # atomic: a crash mid-write cannot truncate the review
+            with open(tmp, "w") as handle:
+                json.dump(data, handle, indent=1, sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            tmp.replace(self.verdict_file)
+            directory = os.open(self.data_dir, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
         self.send_response(204)
         self.end_headers()
 

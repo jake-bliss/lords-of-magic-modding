@@ -8,7 +8,9 @@
 # -- then doubling the UI's coordinates produces an interface that looks right and cannot be used,
 # and that would be discovered after redrawing 1,300 images rather than before.
 #
-# ONE literal, in a member the engine is PROVEN to load:
+# ONE literal, in `NEWBUILD5b.gs`. Its sibling `NEWBUILD5a.gs` was MEASURED live in run 2 and
+# `gs\dlg\NEWBUILD5.gs` `run`s both by name, so 5b's liveness going in is INFERRED, not measured --
+# rung A is what confirms it:
 #
 #   gs\dlg\NEWBUILD5b.gs   ; TRAIN/HIRE UP ARROW
 #     building_dialog_panel up_arrow_button 273 320   ->   ... 60 320

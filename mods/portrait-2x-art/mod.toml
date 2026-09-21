@@ -38,9 +38,11 @@
 # this time, unlike `portrait-2x-doodad`, because the point is to look at whole portraits rather
 # than to make two slots disagree.
 #
-# 🔴 One rect in `INFOPAN5.gs` is deliberately NOT raised:
+# 🔴 One rect in `INFOPAN5.gs` is deliberately NOT raised -- the one the substring replace would
+# otherwise have caught. (Eight further `70x67` cuts remain in that file, the `faiths_array` icon
+# cuts from `intspr1_page`; they are correctly untouched and do NOT collide with the literal.)
 #
-#     /infopan_portatrait unitinfo_staticon5R3A 180 0 70 67 doodad def      (line 1949)
+#     /infopan_portatrait unitinfo_staticon5R3A 180 0 70 67 doodad def      (line 975)
 #
 # That cuts 70x67 out of a static ICON SHEET, not a portrait page, and a naive replace of the
 # literal `0 0 70 67 doodad` catches it by substring -- `18|0 0 70 67`. Raising it would silently

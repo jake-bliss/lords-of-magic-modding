@@ -57,9 +57,13 @@ may not need a binary patch at all. **Untested.**
 
   🔴 **The two counts in this bullet were estimates and both were wrong.** Measured 2026-09-21:
   **1,012 literal `doodad` rects and 975 `additem` placements across 127 of the 1,491 `.gs`
-  members** (not "~5,000 literals"), and **749 portrait members, of which 353 are nameable by
-  `portrait_file_names`** (not 149). The conclusion survives the correction — 749 UI images against
-  **41,373 IMP frames** for a 2x world is still about a 30x difference — but the estimates should
+  members of GS5R3's `gs.mpq`** (not "~5,000 literals"). *Counted 2026-09-21* over the extracted
+  tree with `grep -oE '[0-9]+ [0-9]+ [0-9]+ [0-9]+ doodad'` and
+  `grep -oE '[0-9]+ [0-9]+\{\}\{\}\{\}additem'`; the repo's standing 4,692 figure counts `.gs`
+  members across all three profiles, so it is not the same population, and **749 portrait members, of which 387 are nameable by
+  `portrait_file_names`** (not 149). The conclusion survives the correction — 1,377 PBM members against
+  **41,373 IMP frames** for a 2x world is still about a 30x difference (portraits alone are 749,
+  which is 55x) — but the estimates should
   not be quoted.
 - ⚠️ That path still needs the shared UI sheets (`intspr1_page` and the dialog backgrounds) redrawn
   as one coherent batch, because their contents are cut by literal coordinates.
@@ -90,7 +94,13 @@ sections, not two: `.text` VA `0x401000` (raw `0x400`), **`.rdata` VA `0x54d000`
 live in `.rdata`, which was undocumented — converting their VA with the `.data` formula reads a page
 of zeros, which it duly did on the first attempt.
 
-## ⭐ CLOSED: the 70x67 portrait was never an engine limit
+## ⭐ CLOSED: the 70x67 portrait was never an engine limit (GS5R3)
+
+🔴 **Profile scope, stated once and meant throughout this section.** Every run below was on
+**GS5R3**, and the members patched -- `NEWBUILD5a.gs`, `NEWBUILD5b.gs`, `INFOPAN5.gs` -- are GS5R3's
+variants. Vanilla and 3.02 ship `newbuild.gs` and have no `portrait_file_names` at all
+([new-units.md](new-units.md)). Nothing here is established for them, and this repository has twice
+refuted a GS5R3 result that had been quoted as universal.
 
 **Observed in gameplay, 2026-09-21, two attended runs.** The 2x-UI path above stopped being a
 prediction. Both halves of it were put in front of the engine and both held.
@@ -99,8 +109,8 @@ prediction. Both halves of it were put in front of the engine and both held.
 
 All **749** `portrait\` members in GS5R3's `pic.mpq` are **exactly 70x67** — zero variance on the
 one axis in question — and both call sites cut them with `... 0 0 70 67 doodad`. A corpus with no
-variance on an axis cannot be interrogated about that axis, which is the same shape as the
-[fixture problem](../CLAUDE.md): a body of evidence that agrees with itself teaches nothing.
+variance on an axis cannot be interrogated about that axis, which is the same shape as a fixture built to
+resemble the corpus: a body of evidence that agrees with itself teaches nothing.
 
 Two other corpus facts made a *prediction* possible, and the runs were designed to break it rather
 than to go looking:
@@ -153,8 +163,9 @@ changed — so that is the one the engine loads.
 
 ### What this settles
 
-**The 70x67 portrait is a number in a script, not a property of the engine.** Both the loader and
-the blit are size-agnostic. A 2x UI needs no binary patch for the portrait path at all.
+**The 70x67 portrait is a number in a script, not a property of the engine.** Measured precisely:
+a 140x134 page loaded, and a 140x134 rect painted 140x134 screen pixels. That is one image type at
+one ratio -- *not* a general proof that the loader and blit accept any size. A 2x UI needs no binary patch for the portrait path at all.
 
 ### What it does not settle
 
@@ -171,8 +182,9 @@ the blit are size-agnostic. A 2x UI needs no binary patch for the portrait path 
 
 ### Run 3 — a click follows the drawn position
 
-**Observed in gameplay, 2026-09-21.** `mods/button-hit-rect`. **One literal**, in a member proven
-live by run 2:
+**Observed in gameplay, 2026-09-21.** `mods/button-hit-rect`. **One literal**, in `gs\dlg\NEWBUILD5b.gs` --
+whose sibling `NEWBUILD5a.gs` was measured live in run 2, and which `gs\dlg\NEWBUILD5.gs` `run`s by
+name. That is liveness **inferred**, not measured; rung A below is what confirms it:
 
 ```
 gs\dlg\NEWBUILD5b.gs   ; TRAIN/HIRE UP ARROW
@@ -188,7 +200,8 @@ Only x moves, so the button travels on one axis and two displacements cannot con
 | **B** | click the **empty spot** it used to occupy | nothing | **nothing** ✅ |
 | **C** | click the unmoved down arrow | count falls | **falls** ✅ |
 
-⭐ **A button's hit rectangle comes from its `additem` placement — the same literal that draws it.**
+⭐ **This button's hit rectangle came from its `additem` placement — the same literal that draws
+it.** One button, one dialog, one profile; the generalisation to every UI element is *Inferred*.
 B is the rung that carries the result: had the hit rect been held separately, the old position would
 still have responded. It did not.
 
@@ -200,7 +213,7 @@ have had two causes. The barracks pair is live by measurement, not assumption.
 
 ### The art, settled separately
 
-**353 of 353 kept.** Every portrait `portrait_file_names` can name was upscaled with Real-ESRGAN
+**353 of 353 kept.** 353 of the **387** portraits `portrait_file_names` can name were upscaled with Real-ESRGAN
 ncnn `ultrasharp-4x` to 140x134 and quantised back into **that portrait's own 256 colours**, then
 reviewed one by one against the original at the same physical size
 (`artifacts/portrait-review/`, verdicts in `verdicts.json`). The verdict was *better or no worse*,
@@ -229,7 +242,9 @@ honoured is still **Unknown**.
 | upscaled portrait art is worth having | 353/353 reviewed |
 
 **A 2x UI is a coordinate transform plus art.** No binary patch beyond the six resolution
-immediates, and no engine work at all.
+immediates *for the portrait and button paths measured here* -- the map viewport clip rect is a
+binary constant and is still unidentified, so it is a known-unknown binary dependency rather than
+zero binary work.
 
 ### What is left, and it is not a blocker
 
@@ -245,14 +260,19 @@ immediates, and no engine work at all.
 
 **Measured 2026-09-21, offline.** The portrait result invites the obvious question — run the model
 over `imp.mpq` and get a 2x world for the cost of GPU time. The cost is indeed not the obstacle:
-`ultrasharp-4x` takes ~0.8s a frame, so **41,373 frames is about 11 hours**, which is one overnight
-run rather than an art department.
+`ultrasharp-4x` takes ~0.8s a frame, so **41,373 frames is about 9.2 hours**, which is one overnight
+run rather than an art department. ⚠️ 41,373 counts frame *records*, and
+[imp-format.md](imp-format.md) warns two records may share one payload -- the number of distinct
+images is strictly lower, so this is an upper bound.
 
 Two things stop it being the same job, and both are properties of the format rather than of the
 model.
 
 🔴 **IMP transparency is 1-bit, and the model produces 240 levels.** `units\imp\lifita.imp`
-frame 0 has **2 distinct alpha values** (0 and 255) — a cutout. The 4x result has **240**. IMP has
+frame 0 has **2 distinct alpha values** (0 and 255) — a cutout. The 4x result has **240**.
+(*Measured 2026-09-21* with `--export-imp-frame` into a PNG, then
+`magick … -channel A -separate` and a histogram; no tool in this repo carries that step, so it is a
+one-off rather than something the pipeline reproduces.) IMP has
 no alpha channel; a pixel is the transparent index or it is not. Every one of those intermediate
 values has to be thresholded back to binary, which discards exactly the softened silhouette the
 model was adding, and makes the threshold itself a visible choice on every sprite edge. Portraits
@@ -280,7 +300,7 @@ written.
 ### 🔴 A rect that must not be raised
 
 ```
-/infopan_portatrait unitinfo_staticon5R3A 180 0 70 67 doodad def      (INFOPAN5.gs:1949)
+/infopan_portatrait unitinfo_staticon5R3A 180 0 70 67 doodad def      (INFOPAN5.gs:975)
 ```
 
 That cuts 70x67 out of a static **icon sheet**, not a portrait page — and a replace of the literal

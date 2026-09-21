@@ -28,6 +28,8 @@
   button:hover{border-color:#3d4250}
   button.on{background:var(--accent);color:#1a1a1a;border-color:var(--accent);font-weight:600}
 
+  #warn{display:none;background:#5a1f25;color:#ffd9dd;border-bottom:1px solid #8b2f38;
+        padding:9px 16px;font-size:13px;font-weight:600}
   main{flex:1;display:flex;min-height:0}
   #stage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:18px;min-width:0}
   .pair{display:flex;gap:28px;align-items:flex-start}
@@ -73,6 +75,7 @@
   <button id="export">Export JSON</button>
 </header>
 
+<div id="warn" role="alert"></div>
 <main>
   <div id="stage">
     <div id="name"></div>
@@ -100,6 +103,22 @@
 </main>
 
 <script>
+// Two sinks on purpose: the POST is the record that can be read back off disk, localStorage is the
+// fallback if the page is opened without the server. A silent POST failure is the dangerous case --
+// the reviewer sees green ticks while nothing reaches disk -- so every failure raises a banner that
+// does not clear itself.
+function warn (message) {
+  const bar = $('warn');
+  bar.textContent = message;
+  bar.style.display = 'block';
+}
+
+function persist (id, verdict) {
+  fetch('/verdict', { method: 'POST', body: JSON.stringify({ id, verdict }) })
+    .then(res => { if (!res.ok) warn(`Saving to disk failed (HTTP ${res.status}). Verdicts are only in this browser \u2014 use Export before closing.`); })
+    .catch(() => warn('Saving to disk failed (server unreachable). Verdicts are only in this browser \u2014 use Export before closing.'));
+}
+
 const S = { items: [], verdicts: {}, i: 0, zoom: 2, filter: 'all', flipping: false };
 const $ = id => document.getElementById(id);
 
@@ -110,8 +129,17 @@ const SIDE = { w: 140, h: 134 };
 
 async function boot () {
   S.items = await (await fetch('manifest.json')).json();
-  try { S.verdicts = await (await fetch('/verdicts')).json(); }
-  catch { try { S.verdicts = JSON.parse(localStorage.getItem('lom.portrait.verdicts') || '{}'); } catch { S.verdicts = {}; } }
+  // MERGE both sinks; never let one silently win. If a POST failed earlier the server copy can be
+  // empty or stale while localStorage still holds the review, and taking the server's answer
+  // unconditionally would destroy it on the next keystroke.
+  let fromServer = {}, fromLocal = {};
+  try { const r = await fetch('/verdicts'); if (r.ok) fromServer = await r.json(); }
+  catch { S.offline = true; }
+  try { fromLocal = JSON.parse(localStorage.getItem('lom.portrait.verdicts') || '{}'); } catch {}
+  S.verdicts = Object.assign({}, fromLocal, fromServer);
+  const lost = Object.keys(fromLocal).filter(k => !(k in fromServer));
+  if (lost.length) warn(`${lost.length} verdict(s) were in this browser but not on disk \u2014 re-saving them.`);
+  for (const id of lost) persist(id, fromLocal[id]);
   buildGrid();
   const firstTodo = S.items.findIndex(it => !S.verdicts[it.id]);
   S.i = firstTodo === -1 ? 0 : firstTodo;
@@ -170,10 +198,8 @@ function setVerdict (v) {
   const it = S.items[S.i];
   if (!it) return;
   if (v === null) delete S.verdicts[it.id]; else S.verdicts[it.id] = v;
-  // Two sinks on purpose: the POST is the record I can read back, localStorage is the fallback if
-  // the page is ever opened without the server.
   try { localStorage.setItem('lom.portrait.verdicts', JSON.stringify(S.verdicts)); } catch {}
-  fetch('/verdict', { method: 'POST', body: JSON.stringify({ id: it.id, verdict: v }) }).catch(() => {});
+  persist(it.id, v);
   if (v !== null) step(1); else render();
 }
 

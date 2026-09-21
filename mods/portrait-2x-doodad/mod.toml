@@ -25,15 +25,24 @@
 # is what made the 2026-09-21 panel run decisive and is the reason the rects are split rather than
 # both raised.
 #
-# ALL 749 `portrait\` members are replaced, not three.
+# 353 `portrait\` members are replaced, not three -- every member `portrait_file_names` spells with
+# the uppercase `PORTRAIT\` prefix.
 #
 # That is a safety property, not thoroughness. A doodad rect larger than its page is a case with no
 # precedent anywhere in this corpus -- every one of the hundreds of existing sites cuts a rect out
 # of a page at least as large -- and the build dialog picks its page from whichever unit is
 # selected. Leaving 746 members at 70x67 behind a 140x134 rect would mean every unit but three
 # exercises that unprecedented case, with a crash or garbage as the likely reading and no way to
-# tell it from a real answer. With every page at 140x134, no rect in the game exceeds its page and
-# the only variable left is the rect itself.
+# tell it from a real answer.
+#
+# 🔴 **The cover is PARTIAL, and the run depended on that being enough.** 353 of the 749 members
+# were raised. The remaining ~396 -- unnamed by the table, or spelled `portrait\` in lowercase,
+# which a case-insensitive filesystem cannot hold alongside `PORTRAIT\` in one mod tree -- stayed
+# at 70x67 behind the raised rect. The 34 lowercase ones are all non-LIFE, so confining the run to
+# a Life city is what kept the undersized case out of reach. **That is a scoping decision, not a
+# guarantee**, and a later run in a captured enemy city walks straight into it. An earlier draft of
+# this file claimed all 749 were replaced and that "no rect in the game exceeds its page"; neither
+# was true.
 id = "portrait-2x-doodad"
 name = "The barracks portrait at 140x134"
 version = "0.1.0"

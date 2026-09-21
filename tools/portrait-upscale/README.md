@@ -47,7 +47,9 @@ the choice.
 ## Reviewing the output
 
 `tools/portrait-review/` serves a local side-by-side page with keyboard verdicts that persist to
-disk. All 353 nameable portraits were reviewed this way on 2026-09-21 and all 353 were kept.
+disk. 353 of the 387 nameable portraits were reviewed this way on 2026-09-21 and all 353 were kept; the
+other 34 are spelled `portrait\` lowercase and a case-insensitive filesystem cannot hold both
+spellings in one mod tree.
 
 ## This does NOT transfer to sprites
 
