@@ -434,6 +434,29 @@ Note that painting has never been verified by a probe loading a painted map, and
 family, road in either role, and painting across an existing boundary are refused rather than
 approximated.
 
+## Capability answers, 2026-09-21
+
+Three questions were asked directly and answered against the binary and the corpus rather than by
+estimate. Each has its own document; the headlines:
+
+- **[Creating new units](new-units.md) — yes, and the cap everyone assumes does not exist.** The
+  unit-type table is heap-allocated at a size the *script* picks (`200 maxunittypes` in
+  `gs\unittype.gs`, 155 slots used); the engine's only bounds are `count >= 1` and
+  `used < capacity`. The real constraint is that this project has an IMP frame **repainter**, not
+  an IMP **author**, so a new unit's art must be a repainted clone of a donor. Also established:
+  `pic.mpq` **does** accept a brand-new member name at the repack layer, which had been recorded as
+  the weakest link in the chain.
+- **[Screen resolution and upscaling](resolution-and-upscaling.md) — 2x art will not work, and the
+  blocker is absolute.** `SetDisplayMode(640, 480, 16)` is two `push` immediates at `0x00475263`
+  with no config key, no registry value and no command-line switch; `push imm32 600` and
+  `push imm32 768` occur **zero** times in the image. The formats would mostly take the art; the
+  renderer will not use it.
+- **[The engine rewrite](native-engine-plan.md#decision-status) — still a candidate, and this
+  document's own estimates are measurably wrong.** Stages 0 and 1 closed in 9 days against a
+  2-6 week estimate that assumed full-time work. The recommendation is to finish the Stage 2 module
+  loader and re-run the execution census first, because the 25x gap between "operators named by a
+  script" and "operators execution stands on" is the single input that decides the whole question.
+
 ## Phase 6 — Larger mod direction
 
 After the toolchain and one vertical slice are proven, select a product direction:

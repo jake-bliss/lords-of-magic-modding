@@ -751,6 +751,159 @@ Two pointers for whoever picks it up, from a parallel pass and **not** verified 
 `locationindirection` is **Refuted** as the anchor; the better target is whatever builds the
 runtime neighbour table behind the pointer at `0x5AE970`.
 
+## The animation ACTION enum, and the remap between action and sequence slot
+
+**Observed in a local binary, 2026-09-21.** The engine registers its script-visible constants as
+`{char* name; int32 value}` 8-byte records. One contiguous run gives the animation actions:
+
+| value | name | value | name | value | name |
+| ---: | --- | ---: | --- | ---: | --- |
+| 0 | `MOVE` | 5 | `SUBDUE_ATTACK` | 10 | `MAJOR_SPELL` |
+| 1 | `RIDE` | 6 | `DEFEND` | 11 | `MINOR_SPELL` |
+| 2 | `STAND` | 7 | `GET_HIT` | 12 | `INVISIBLE` |
+| 3 | `MELEE_ATTACK` | 8 | `DIE` | 13 | `RALLY` |
+| 4 | `RANGED_ATTACK` | 9 | `CORPSE` | 14 | `BERSERK` |
+
+The run begins at VA **`0x0055f150`** and continues past the animation actions into the sound
+actions — `SELECT` 23, `MOVE_ACKNOWLEDGE` 24, `ATTACK_ACKNOWLEDGE` 25 — which is corroborated
+independently of the sprite subsystem by `setunittypesound` (`0x00525430`), which uses the raw
+action integer as a direct index and bound-checks it with `cmp eax,0x1A` (26).
+
+⚠️ An earlier write-up of this finding placed the run at `0x0055d350`. That address holds debug
+strings; it was a transcription error and is recorded here so the wrong address does not get
+re-derived.
+
+### The lookup
+
+`Imp::GetSequence` (`0x0049ADB0`), which resolves an action to a sequence:
+
+```
+0049adbe  mov edx,[ecx+4]      ; optional int32[] REMAP table
+0049adc7  je  0049ADD5h        ; remap == NULL -> use the action as the index
+0049adcd  cmp eax,[ecx+8]      ; else bound against remap_count
+0049add2  mov eax,[edx+eax*4]  ; index = remap[action]
+0049addb  mov cx,[esi+1Ah]     ; sequence count, from the .imp header at +0x1A
+0049ade1  jge FAIL             ; index >= count -> return NULL
+0049adeb  shl eax,4 ; add eax,ecx
+```
+
+**Out of range returns NULL.** It does not clamp to slot 0 and does not read out of bounds;
+`Imp::SetAction` (`0x0049DA84`) caches the NULL and every consumer null-checks it. So a missing
+action draws **nothing**, never the wrong sprite.
+
+### The remap must be populated for shipped units
+
+**Inferred, but forced by arithmetic.** `units\imp\orinfa.imp` has **7** sequences, labelled
+MOVE..CORPSE at slots 0-6 by its generated `.h`. Under direct indexing `DIE` = 8 and `CORPSE` = 9
+both exceed 7 and would return NULL, so Footmen would have no death animation — and they visibly
+die. An independent second check: `BERSERK` = 14 would need 15 sequences, the corpus maximum is 11,
+and 46 units carry `CAN_BERSERK`.
+
+So the remap array **is** populated for shipped units, the `.h` slot order is the physical order,
+and the `.h` names are the labels the remap resolves to. That also explains the 51 distinct slot
+orderings measured across the corpus, and why a unit's A and B files agree on order in 128 of 139
+cases.
+
+### 🔴 The remap is parsed from the `.H` companion member at load time
+
+**Answered 2026-09-21. The `.H` files in `imp.mpq` are a LIVE ENGINE INPUT, not build residue.**
+
+This document, [game architecture](game-architecture.md), [the native asset stage](native-asset-stage.md)
+and [the engine plan](native-engine-plan.md) all describe them as "generated C headers" and use them
+only to cross-check frame statistics. **The engine reads them itself, every time it loads a sprite.**
+
+**Observed in a local binary.** `Imp::BuildActionRemap` (`0x0049AE00`), called from `Imp::Load`
+(`0x0049B450`) at `0x0049B5B2`:
+
+1. Allocates `enum->count * 4` bytes -> wrapper `+4`, count -> `+8` (`0x0049AE68`-`0x0049AE79`).
+2. Fills every slot with **0 if `enum->flags & 1`, else -1** (`0x0049AED4`-`0x0049AEE2`).
+3. Copies the imp name, truncates at the last `'.'` (`strrchr`, `0x0049AF25`), appends the literal
+   at `0x0055C728` = **`".H"`**, and opens that member through the same archive-aware stream opener
+   the `.imp` itself used (`0x004FE720`).
+4. Reads it line by line with a reader accepting a bare `\r` **or** a bare `\n`
+   (`0x0049AFF9`-`0x0049B036`) -- the [bare-CR convention](gamescript-format.md) again.
+5. Per line: `strncmp(line, "#define", 7)` (literal `0x0055C730`); `strchr(line, '_')`;
+   `sscanf(p+1, "%s %d", name, &val)` (literal `0x0055C73C`), requiring **exactly 2** conversions.
+6. `idx = EnumDesc::FindIndex(name)` (`0x0049DD80`), a linear `strcmp` over a `char**`.
+7. `remap[idx] = val` (`0x0049B0CF`).
+
+Its error strings name the mechanism outright: `0x0055C744` `"%s: failed to load header %s\r\n"`,
+`0x0055C764` `"%s: sequence_table_size<1\r\n"`.
+
+**The action-name array is at `0x00574008`** -- a NULL-terminated `char**`, 22 entries, index ==
+ACTION value. It extends past the 15 animation actions into the gate states:
+
+```
+15 CLOSED_100  16 CLOSED_75  17 CLOSED_50  18 CLOSED_25  19 DESTROYED  20 OPENING  21 OPEN
+```
+
+⚠️ This is **not** the `0x0055F150` `{name, value}` table above -- that is the *GameScript* enum, a
+different consumer. Note slot 14 is spelled **`BERSERK_ATTACK`** here, and **appears zero times in
+the entire `.h` corpus**.
+
+### Worked example, verified end to end
+
+**Observed in the corpus.** `imp.mpq` member `units\imp\orinfa.h` is real, bare-CR, and holds:
+
+```
+#define	ORINFA_MOVE	0          #define	ORINFA_GET_HIT	4
+#define	ORINFA_STAND	1          #define	ORINFA_DIE	5
+#define	ORINFA_MELEE_ATTACK	2      #define	ORINFA_CORPSE	6
+#define	ORINFA_DEFEND	3          // Total number of 'Sequences':	7
+```
+
+The `#define __ORINFA_H__` include guard also passes the `"#define"` test, but `sscanf` returns 1
+rather than 2 and it is discarded (`0x0049B0A6 cmp eax,2`).
+
+So **`remap[8] = 5` (DIE) and `remap[9] = 6` (CORPSE)** -- which is exactly the arithmetic the
+forced-remap argument above required, now read out of the shipped data rather than inferred.
+
+### The fallback table, `0x00521CD0`
+
+The `.H` alone does not explain `BERSERK`. This does. Two accessors sit beside `GetSequence`:
+`Imp::HasAction` (`0x0049B110`) and `Imp::AliasAction` (`0x0049B150`, `remap[dst] = remap[src]`).
+`0x00521CD0` applies, in order:
+
+```
+!Has(MAJOR_SPELL)   -> MAJOR_SPELL   = MINOR_SPELL      !Has(DIE)           -> DIE    = DESTROYED
+!Has(MINOR_SPELL)   -> MINOR_SPELL   = MAJOR_SPELL      !Has(CORPSE)        -> CORPSE = DESTROYED
+!Has(MOVE)          -> MOVE          = RIDE             !Has(BERSERK)       -> BERSERK       = MELEE_ATTACK
+!Has(RIDE)          -> RIDE          = MOVE             !Has(RANGED_ATTACK) -> RANGED_ATTACK = MELEE_ATTACK
+!Has(STAND)         -> STAND         = MOVE             !Has(SUBDUE_ATTACK) -> SUBDUE_ATTACK = MELEE_ATTACK
+!Has(STAND)         -> STAND         = CLOSED_100       for i in 0..21: !Has(i) -> i = STAND
+```
+
+So an orc footman's `BERSERK` plays the melee sequence, and everything else unnamed plays `STAND`.
+That is how 46 units carry `CAN_BERSERK` with no BERSERK cycle.
+
+⚠️ **A real limit, stated rather than papered over.** `0x00521CD0` runs only when the table was
+filled with `-1`, i.e. `flags = 0`. Ten call sites in `0x005229xx`-`0x0052313x` use the 2-arg
+`EnumDesc` ctor with explicit `flags = 0` and *do* call it. A **second** family (`0x00421A45`,
+`0x0049B807`, `0x004B0CA1`, ...) uses the 1-arg ctor `0x0049DD20`, which sets `flags = 1` -> fill
+**0** -> `HasAction` is vacuously true, the fallbacks are a no-op, and every unnamed action resolves
+to sequence 0. **Which family loads `units\imp\orinfa.imp` in a live game is Inferred, not
+observed.** The `flags=0` family is the strong candidate for combat units.
+
+### What this means for modding
+
+🔴 **Adding a sequence to an `.imp` is inert unless the matching
+`#define <PREFIX>_<ACTION> <n>` is added to the `.H` and the `.H` is repacked into `imp.mpq`.**
+A mod pipeline that ships the binary and drops the header silently loses every animation.
+
+- The recognised token set is exactly `0x00574008`. The berserk spelling is `BERSERK_ATTACK`.
+- `strchr(line, '_')` takes the **first** underscore, so an imp basename containing `_` would
+  mis-parse every line. No shipped file does this.
+- Sequence indices are bounds-checked against header `+0x1A`, so an out-of-range `#define` yields a
+  NULL sequence rather than a crash.
+- Cloning a donor `.imp` **and its `.H` together** inherits a working remap, so the
+  [new-unit path](new-units.md) is unaffected.
+
+**Refuted: IMP header bytes 12-25 are not the remap.** Nothing in the IMP module reads them, and
+they could not hold a 22-entry `int32` table in 14 bytes. **Observed in the corpus:** across all
+1,800 members, bytes `0x10`-`0x19` are zero and `0x0C`-`0x0F` hold uninitialised leftovers --
+`'Buil'` in 100 files, `'Read'` in 25, stack addresses like `0x0012f6cc` in 34. `orinfa.imp` holds
+the ASCII `'Buil'`. Same class of scratch already documented for sequence bytes 5-10.
+
 ## What is still open
 
 1. **Which screen mode each of the five animation sites runs under.** The period itself is
