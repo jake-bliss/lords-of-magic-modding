@@ -1861,3 +1861,157 @@ class PaintRefusalReachabilityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnitIndexProbeTest(unittest.TestCase):
+    """The `unitindex` probe: does a unit type above index 154 register and draw?
+
+    Its offline half is already settled -- the engine has no unit-type cap and nothing downstream
+    narrows the index (`docs/new-units.md`). What this probe adds is the one thing no disassembly
+    can supply: a unit type existing AT RUNTIME above 154.
+
+    The assertions below are the ones whose absence would waste a sitting. Two matter most. The
+    subject definition must sit inside `unittypedict begin ... end`, because `units\\easyunit.gs`'s
+    machinery was loaded into that dict at boot and `add_unit_to_location` looks the symbol up
+    there -- define it anywhere else and the probe fails for a reason that looks exactly like the
+    answer being "no". And the control rung must use a SHIPPED unit, so that "declaring a type at
+    hotkey time does not work" can never be mistaken for "index 155 does not work".
+    """
+
+    def setUp(self) -> None:
+        self.body = engine_probe.unit_index_body()
+
+    def _at(self, needle: str) -> int:
+        index = self.body.find(needle)
+        self.assertNotEqual(index, -1, f"{needle!r} missing from the body")
+        return index
+
+    def test_the_subject_is_defined_inside_unittypedict(self) -> None:
+        """`begin_unit_definition` resolves only from inside `unittypedict`, and so must the key.
+
+        **Observed in the corpus:** `gs\\unittype.gs` runs every `units/*.gs` inside
+        `soundfxdict begin unittypedict begin ... end end`, so both the definition machinery and
+        every unit symbol live in `unittypedict`. `add_unit_to_location`'s body does
+        `unittypedict this_type get`, so a symbol defined anywhere else is invisible to it.
+        """
+        opened = self._at("unittypedict begin\nbegin_unit_definition".replace("\n", "\n\t\t\t"))
+        defined = self._at(
+            f"end_unit_definition /{engine_probe.UNIT_INDEX_SUBJECT_SYMBOL} exch def"
+        )
+        self.assertLess(opened, defined, "the definition must sit inside unittypedict begin")
+        # ... and the dict is closed again before anything else runs.
+        self.assertLess(defined, self._at("/zafter numunittypes def"))
+
+    def test_the_control_rung_places_a_shipped_unit(self) -> None:
+        """The control exists to separate two failures that look identical on screen.
+
+        If declaring a unit type at hotkey time does not work, the subject draws nothing. If the
+        placement path itself is broken in this session, the subject also draws nothing. The
+        control -- a type that existed at boot, through the same `add_unit_to_location` -- tells
+        them apart, so it must NOT be the type this probe defines.
+        """
+        self.assertNotEqual(
+            engine_probe.UNIT_INDEX_CONTROL_SYMBOL,
+            engine_probe.UNIT_INDEX_SUBJECT_SYMBOL,
+        )
+        control = self._at(
+            f"unittypedict begin /{engine_probe.UNIT_INDEX_CONTROL_SYMBOL} end "
+            f"0{{}}0 zcell0 zowner add_unit_to_location"
+        )
+        subject = self._at(
+            f"unittypedict begin /{engine_probe.UNIT_INDEX_SUBJECT_SYMBOL} end "
+            f"0{{}}0 zcell1 zowner add_unit_to_location"
+        )
+        # The control runs FIRST: a control observed after the subject cannot rescue it.
+        self.assertLess(control, subject)
+        # And the subject is not even defined until after the control has been placed.
+        self.assertLess(control, self._at("begin_unit_definition"))
+
+    def test_the_baseline_is_logged_before_anything_is_defined(self) -> None:
+        """Every count in this run is read against `zbase`, so it must precede the definition.
+
+        A baseline captured afterwards would already include the probe's own unit and the run
+        would silently measure nothing.
+        """
+        self.assertLess(
+            self._at("/zbase numunittypes def"), self._at("begin_unit_definition")
+        )
+        self.assertIn(
+            f'expected "{engine_probe.UNIT_INDEX_EXPECTED_BASELINE}', self.body
+        )
+
+    def test_the_subject_is_not_placed_unless_the_count_actually_moved(self) -> None:
+        """A silent append failure must not be captured and read as a negative result.
+
+        `unittype` returns -1 from the append helper when `used == capacity`. If the count did not
+        move, the type does not exist, and placing its symbol would photograph an empty cell that
+        looks exactly like "index 155 does not draw".
+        """
+        gate = self._at("zafter zbase gt")
+        self.assertLess(
+            gate,
+            self._at(
+                f"unittypedict begin /{engine_probe.UNIT_INDEX_SUBJECT_SYMBOL} end"
+            ),
+        )
+        self.assertIn("rung2 REFUSED -- numunittypes did not move", self.body)
+
+    def test_every_placed_army_is_cleaned_up_behind_an_id_and_location_gate(self) -> None:
+        """Never an unconditional `deletearmynow`, and never a sweep.
+
+        The unit TYPE cannot be cleaned up -- there is no `deleteunittype` -- but every ARMY this
+        probe places must be, by exact id, gated on that id being valid AND its reported location
+        matching the cell this probe placed into.
+        """
+        for index in range(len(engine_probe.UNIT_INDEX_SEED_OFFSETS)):
+            gate = f"zarmy{index} -1 ne zaloc{index} zcell{index} eq and"
+            self.assertIn(gate, self.body, gate)
+            self.assertLess(self._at(gate), self._at(f"zarmy{index} deletearmynow"))
+            self.assertIn("cleanup REFUSED", self.body)
+        # Exactly as many deletes as placements -- no stray, ungated cleanup.
+        self.assertEqual(
+            self.body.count("deletearmynow"),
+            len(engine_probe.UNIT_INDEX_SEED_OFFSETS),
+        )
+
+    def test_the_subject_reuses_shipped_art_so_no_archive_gains_a_member(self) -> None:
+        """The whole point of the cheap design: this run touches `gs\\hotkey.gs` and nothing else.
+
+        `impfile_proc` merely NAMES an art file. Pointing it at a shipped one keeps `imp.mpq` and
+        `pic.mpq` out of the run entirely, so a failure cannot be an archive-acceptance failure
+        wearing a unit-index costume.
+        """
+        self.assertIn(
+            f'/impfile_proc{{"{engine_probe.UNIT_INDEX_CONTROL_SYMBOL}"'
+            "unittype_imp_filename}def",
+            self.body,
+        )
+
+    def test_the_subject_field_set_matches_the_shipped_unit_it_was_copied_from(self) -> None:
+        """`unitdict`'s key order IS the engine's field enum, so fields may not be invented.
+
+        `end_unit_definition` writes each key at the index `unitdictxref` gives it. A field this
+        project made up would be written into whatever slot it happened to land in. This asserts
+        the field NAMES are a subset of those the shipped Elephant declares -- the file the set was
+        copied from -- rather than checking the values, which are ours to choose.
+        """
+        shipped = {
+            "name", "code", "flags", "race", "faith", "attack", "armor", "strength",
+            "dexterity", "wisdom", "hit_points", "mps", "sight_radius",
+            "stealth_noise_factor", "attack_recovery_ticks", "get_hit_recovery_ticks",
+            "frames_per_grid", "health_bar_x", "health_bar_y", "morale_bar_x",
+            "morale_bar_y", "impfile_proc", "level_procedure",
+        }
+        declared = {
+            re.match(r"/(\w+)", field).group(1)
+            for field in engine_probe.UNIT_INDEX_SUBJECT_FIELDS
+        }
+        self.assertEqual(declared - shipped, set(), "invented field names")
+
+    def test_the_subject_code_is_one_no_shipped_unit_uses(self) -> None:
+        """Keeps this run clear of the separately-open duplicate-(faith, code) question.
+
+        **Observed in the corpus:** of the 37 values in `gs\\champion.gs`'s closed
+        `unit_code_strings` enum, `WMT` is the one used by no shipped unit in any faith.
+        """
+        self.assertIn("/code WMT def", engine_probe.UNIT_INDEX_SUBJECT_FIELDS)

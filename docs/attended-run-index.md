@@ -7,7 +7,7 @@
 | **A1** command line of the unmeasured profiles | ✅ **DONE** 09-19 — GS5R3 runs `d:\lomse.exe /*`; premise holds |
 | **A2** guard refuses per profile | ✅ **DONE** 09-19 — refuses exit 1 running, permits exit 0 closed |
 | **B1** unit anchor probe | ✅ **DONE 09-20** — three cells, three anchors, residual **zero**; and the mirror sign fell: `placement.x` is negated |
-| **D1** a unit type above index 154 | 📋 **DESIGNED, NOT RUN** — [run sheet](unit-index-run-sheet.md); needs one probe body written |
+| **D1** a unit type above index 154 | 🟢 **BUILT, READY TO RUN** — [run sheet](unit-index-run-sheet.md). `LOM_PROBE=unitindex`, one keypress, patches `gs\hotkey.gs` only |
 | **B2** direction 0 to a bearing | 🟡 **MOSTLY CLOSED OFFLINE 09-20** — direction 0 = the `.til` column `s`, from a static table in `.data`. What is left is *screen orientation*, not the table |
 | **C1** PBM ByteRun1 encoder | ✅ **DONE 09-20** — ladder rungs 3+4; member shrank, `TINY` dropped, stripe rendered clean |
 | **C2** a size-changing edit | ✅ **DONE 09-19** — cheat-keys ladder, 21→20 bytes |

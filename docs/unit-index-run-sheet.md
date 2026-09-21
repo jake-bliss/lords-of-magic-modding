@@ -1,7 +1,6 @@
 # `unitindex` run sheet — does a unit type above 154 register and draw?
 
-**Status: designed, not implemented, never run.** The probe body is the remaining work; see
-[what still has to be built](#what-still-has-to-be-built). Written 2026-09-21.
+**Status: built and ready to run. Never run.** Written 2026-09-21.
 
 This closes open question 1 of [new units](new-units.md#open-questions). Everything else in that
 document is settled offline: the engine has **no** unit-type cap (the table is heap-allocated at a
@@ -91,22 +90,54 @@ Stated here because a clean pass is exactly when a limit gets rounded away:
 - **Nothing about the three adjacent caps** — `maxauratypes` is **70 of 70 with zero headroom**,
   which will bite a real new unit long before the unit-type count does.
 
-## What still has to be built
+## What it writes, and what removes it
 
-One function, in the shape the harness already expects:
+**Writes, if every guard passes:** nothing persistent on disk. `gs\hotkey.gs` and `START.GS` are
+patched in place and restored byte-identically afterwards. No archive gains a member. Each placed
+army exists for one capture before its own gated cleanup.
 
-1. A `unit_index_body()` in `tools/engine_probe.py`, returning the GameScript for the four rungs
-   above, registered in the `PROBES` dict as `"unitindex"`. `capture_names_for` reads its capture
-   names straight out of the generated body, so nothing else needs updating.
-2. The field set for the subject definition, copied from `units\pyele.gs` and **not invented** —
-   the required keys are listed in [the checklist](new-units.md#1-the-gs-declaration), and
-   `unitdict`'s key order *is* the engine's field enum, so nothing may be added or reordered.
-3. A `/code` for the subject. `WMT` is **used by no shipped unit in any faith**
-   ([new units](new-units.md#code-is-a-closed-37-value-engine-enum)), so it avoids the
-   duplicate-`(faith, code)` question (open question 5) rather than entangling with it.
-4. Tests in `tests/test_engine_probe.py` in the style of the existing probe tests — asserting the
-   generated body places and cleans up with the id-and-location gate, and that its expected values
-   are derived rather than typed.
+🔴 **One thing cannot be cleaned up: the unit TYPE.** There is no `deleteunittype`, and the append
+helper only ever increments `used`. The type persists for the rest of the session and vanishes when
+the game exits. **This is why the sheet says DO NOT SAVE** — the type exists in no archive, so a
+save referencing it would carry an index nothing on disk defines.
+
+**Removes it:** `scripts/restore-game-archives.sh`, which also collects `zi0`–`zi4.bmp` and
+`zprobe.log` into a fresh per-run directory. `capture_names_for("unitindex")` is the exact list, so
+nothing is collected or cleared by glob.
+
+## How the dictionary scoping works, because it is what would silently go wrong
+
+**Observed in the corpus.** `gs\unittype.gs` runs every `units/*.gs` inside
+`soundfxdict begin unittypedict begin ... end end`. So a unit's `/pyele exch def` lands in
+**unittypedict** — and so does all of `units\easyunit.gs`'s machinery. `begin_unit_definition`,
+`end_unit_definition`, `unitdict` and `unitdictxref` are reachable **only** from inside
+`unittypedict begin ... end`, and `add_unit_to_location`'s body does `unittypedict this_type get`,
+so a symbol defined anywhere else is invisible to it. The probe wraps its definition accordingly,
+and a test asserts it.
+
+The dict stack balances, and that was checked rather than assumed:
+
+```
+/begin_unit_definition{missiledict begin unitdict begin default_unit}
+/end_unit_definition{... end end pop dup userdict begin /lastunittype exch def end}
+```
+
+`begin` opens two, `end end` closes two, and the tail leaves exactly **one** handle on the stack —
+which is why every shipped unit reads `end_unit_definition /<name> exch def`. It also parks that
+handle in `userdict /lastunittype`, which the probe logs: the handle **is** the table index
+(`end_unit_definition` feeds it straight to `setunittypedata`, whose guard at `0x00524959` bounds it
+against the live `used` count), so that line should read back exactly the pre-definition count. It
+is the sharpest single line in the log.
+
+## Verification before the run
+
+```sh
+python3 -m unittest tests.test_engine_probe
+```
+
+Eight `UnitIndexProbeTest` cases, plus the shared safety suite that runs against every probe. All
+eight were mutation-verified: removing the count gate, pointing the control at the subject's own
+symbol, and moving the definition outside `unittypedict` each make the suite fail.
 
 ## Before, during, after
 
