@@ -2258,15 +2258,14 @@ halves together and leaves the pairing of direction 0 with the column named `s` 
 
 ### ⚠️ What this does NOT establish
 
-**It does not give a compass bearing, and it does not close [issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)'s last box.** Three separate
-gaps:
+**It does not close [issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)'s last box**, which is about the *IMP facing index*. Of the three
+gaps below, the first closed on 2026-09-21 and the other two did not:
 
-- **The `.til` column names are the tileset authors' vocabulary, not the engine's.** A full string
-  scan of `lomse.exe` finds **no** compass or facing vocabulary anywhere in the image. That `s`
-  points toward the bottom of the screen is not established by anything here; it rests on the names
-  plus the derived geometry. Converting direction 0 to a screen direction still needs the attended
-  run this document's [run index](attended-run-index.md#b2-anchor-direction-0-to-a-compass-bearing)
-  describes.
+- ~~**The `.til` column names are the tileset authors' vocabulary, not the engine's.**~~
+  ✅ **Answered 2026-09-21 without another run** — see [the screen bearing of each
+  direction](#the-screen-bearing-of-each-direction) below. It remains true that a full string scan
+  of `lomse.exe` finds **no** compass or facing vocabulary anywhere in the image; the bearing comes
+  from the projection instead.
 - **This is the *stored map* direction field (`+0x44`), not the IMP facing index.** The script-to-stored
   path at `0x0049DCC0` is `stored = (arg + [0x5AEC3C]) mod 8`, with a `+1` at `0x0049DCDD`.
   `0x5AEC3C` is BSS with seven references, all reads, so its runtime value is unknown offline.
@@ -2274,6 +2273,62 @@ gaps:
 - **The runtime table behind `0x5AE970` is only *Inferred* to share this order.** It is 8-wide and
   3-bit-masked like this one, and the function beginning near `0x0041AE90` contains both the static
   table use at `0x41B190` and both reads of `[0x5AE970]`. Suggestive; not proof.
+
+### The screen bearing of each direction
+
+**Derived, 2026-09-21**, from the 2026-09-17 flatground capture — no new engine run. The capture
+varied the two cell operands **independently** and the drawn top was read off the screen each time:
+
+| varied | cells | screen x per +1 | drawn top per +1 |
+| --- | --- | ---: | ---: |
+| first operand | `(26,32)` .. `(41,32)` | `+33.94` | `+14.40` |
+| second operand | `(35,32)` -> `(35,41)` | `-33.94` | `+14.44` |
+
+⭐ **Both operands move the cell DOWN the screen by the same amount.** That is what settles the
+question, and it is **immune to this document's x/y labelling ambiguity**: `map2screen`'s vertical
+output is proportional to `(first + second)`, which is symmetric, so relabelling which operand is
+"x" cannot move any direction between up-screen and down-screen. Combining it with the direction
+table gives, on flat ground:
+
+| direction | `.til` column | screen x | drawn top | reads on screen as |
+| ---: | --- | ---: | ---: | --- |
+| 0 | `s` | `-33.94` | `+14.40` | down and left |
+| 1 | `sw` | `-67.88` | `0` | **straight left** |
+| 2 | `w` | `-33.94` | `-14.40` | up and left |
+| 3 | `nw` | `0` | `-28.80` | **straight up** |
+| 4 | `n` | `+33.94` | `-14.40` | up and right |
+| 5 | `ne` | `+67.88` | `0` | **straight right** |
+| 6 | `e` | `+33.94` | `+14.40` | down and right |
+| 7 | `se` | `0` | `+28.80` | **straight down** |
+
+So **direction 0 does point toward the bottom of the screen**, at 45 degrees to the left of
+straight down, and the `.til` names are not mirrored. The compass they describe is the *world's*,
+rotated 45 degrees from the screen: screen-down is `se`, screen-up is `nw`, screen-right is `ne`,
+screen-left is `sw`. This is the ordinary isometric arrangement, which is worth saying out loud
+because "south is down" is the assumption a reader brings and it is wrong by 45 degrees.
+
+The executable form is `map_projection.direction_screen_step`, whose tests recompute every number
+above from the capture rather than comparing against a constant typed beside them.
+
+🔴 **This is the stored map direction (`+0x44`), not the IMP facing index.** The second bullet
+above still stands in full: a rotation sits between them (`stored = (arg + [0x5AEC3C]) mod 8` at
+`0x0049DCC0`, with `0x5AEC3C` unknown offline), and B1's single data point already refutes the
+obvious reading of it. Knowing where `s` is drawn says nothing about which IMP frame the engine
+picks for a facing.
+
+#### How strong each half is
+
+- **Up versus down: strong.** It needs only that the vertical output is symmetric in the two
+  operands, which the capture shows twice, with each operand varied alone.
+- **Left versus right: weaker.** It rides on `(first - second)`, whose sign a global operand swap
+  flips. The chain that fixes it — `forcetexture`'s first operand is `map2screen`'s first operand,
+  from the painted bands at lines 70-83 — is recorded above and is **Derived**, not Observed. If
+  that one link is ever refuted, the table's `screen x` column mirrors and its `drawn top` column
+  does not.
+- **Flat ground is assumed.** `map2screen` subtracts `PIXELS_PER_ELEVATION * z`, so a step that
+  climbs is drawn higher than the table says. The term is vertical only and cannot reach `screen x`;
+  at 20.36 pixels per elevation unit it can outrun the 14.4-pixel vertical step, so on steep ground
+  a downhill-facing direction can still be drawn upward.
 
 ### Why the `0x5AE970` builder cannot be reached with byte-level tools
 

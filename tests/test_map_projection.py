@@ -128,3 +128,88 @@ class EffectiveElevationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DirectionBearingTest(unittest.TestCase):
+    """The eight stored directions, checked against the capture rather than against literals.
+
+    Every number these tests compare to is recomputed from `OBSERVED` -- the 2026-09-17 run's
+    logged outputs and the drawn tops read off its capture -- so a wrong rule cannot pass by
+    agreeing with a constant someone typed beside it.
+    """
+
+    @staticmethod
+    def _per_operand_step() -> tuple[tuple[float, float], tuple[float, float]]:
+        """`(screen x, drawn top)` per +1 of each operand, measured two ways in the capture.
+
+        The first operand is isolated by the row of cells at second = 32; the second operand by the
+        pair that share first = 35. Nothing here comes from the module under test.
+        """
+        # Phase matters: (35,41) appears three times, and only the flat row shares flat ground
+        # with the rest. Reading the spike row here puts 16.67 pixels per step into the answer.
+        by_cell = {cell: (output3, top) for phase, cell, _, _, output3, top in OBSERVED
+                   if phase == "flat"}
+        (x0, t0), (x1, t1) = by_cell[(26, 32)], by_cell[(41, 32)]
+        first = ((x1 - x0) / 15, (t1 - t0) / 15)
+        (x0, t0), (x1, t1) = by_cell[(35, 32)], by_cell[(35, 41)]
+        second = ((x1 - x0) / 9, (t1 - t0) / 9)
+        return first, second
+
+    def test_both_operands_were_varied_independently(self) -> None:
+        """The premise of everything below: the capture moved each operand with the other fixed."""
+        firsts = {cell[0] for _, cell, _, _, _, _ in OBSERVED if cell[1] == 32}
+        seconds = {cell[1] for _, cell, _, _, _, _ in OBSERVED if cell[0] == 35}
+        self.assertGreater(len(firsts), 1, "no row varies the first operand alone")
+        self.assertGreater(len(seconds), 1, "no column varies the second operand alone")
+
+    def test_each_operand_step_moves_the_cell_down_the_screen(self) -> None:
+        """Why the vertical answer survives the x/y labelling ambiguity.
+
+        Both operands add the SAME positive amount to the drawn top, so a global relabelling of
+        which operand is "x" cannot flip any direction between up-screen and down-screen.
+        """
+        first, second = self._per_operand_step()
+        self.assertGreater(first[1], 0.0)
+        self.assertGreater(second[1], 0.0)
+        self.assertAlmostEqual(first[1], second[1], delta=0.1)
+
+    def test_the_two_operands_move_the_cell_opposite_ways_horizontally(self) -> None:
+        first, second = self._per_operand_step()
+        self.assertAlmostEqual(first[0], -second[0], delta=0.01)
+
+    def test_every_direction_matches_the_measured_per_operand_steps(self) -> None:
+        first, second = self._per_operand_step()
+        for direction, (d_first, d_second) in enumerate(mp.DIRECTION_DELTAS):
+            want = (d_first * first[0] + d_second * second[0],
+                    d_first * first[1] + d_second * second[1])
+            got = mp.direction_screen_step(direction)
+            self.assertAlmostEqual(got[0], want[0], delta=0.1, msg=f"direction {direction} screen x")
+            self.assertAlmostEqual(got[1], want[1], delta=0.1, msg=f"direction {direction} drawn top")
+
+    def test_direction_zero_is_the_til_column_s_and_it_moves_down_the_screen(self) -> None:
+        """The question B2 was built to answer."""
+        self.assertEqual(mp.TIL_COLUMN_NAMES[0], "s")
+        self.assertGreater(mp.direction_screen_step(0)[1], 0.0)
+        self.assertLess(mp.direction_screen_step(4)[1], 0.0, "`n` must be the other way")
+
+    def test_se_and_nw_are_screen_vertical_and_sw_and_ne_are_screen_horizontal(self) -> None:
+        """Mirror-immune: these four hold under either labelling of the operands."""
+        names = {name: index for index, name in enumerate(mp.TIL_COLUMN_NAMES)}
+        for name in ("se", "nw"):
+            self.assertAlmostEqual(mp.direction_screen_step(names[name])[0], 0.0, delta=0.01,
+                                   msg=name)
+        for name in ("sw", "ne"):
+            self.assertAlmostEqual(mp.direction_screen_step(names[name])[1], 0.0, delta=0.01,
+                                   msg=name)
+
+    def test_se_is_the_steepest_descent_and_the_ring_is_eight_distinct_steps(self) -> None:
+        steps = [mp.direction_screen_step(d) for d in range(8)]
+        self.assertEqual(len(set(steps)), 8)
+        self.assertEqual(max(range(8), key=lambda d: steps[d][1]),
+                         mp.TIL_COLUMN_NAMES.index("se"))
+
+    def test_the_direction_index_wraps_at_eight(self) -> None:
+        """The engine masks the direction to three bits; the module must not index past the end."""
+        for direction in range(8):
+            self.assertEqual(mp.direction_screen_step(direction + 8),
+                             mp.direction_screen_step(direction))

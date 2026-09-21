@@ -6504,3 +6504,63 @@ failed registration was not traced.
 **The lesson is the one already on file.** A bound measured in one table is a fact about that table;
 the same question asked of the neighbours took one `objdump` pass each. The warning stood for a day
 because nobody asked the cheap version of the question.
+
+## 2026-09-21 — B2's last half was already in a capture taken four days earlier
+
+B2 asked what direction 0 means on the screen. On 09-20 the offline chase gave the ring —
+`0=s, 1=sw, ... 7=se` — from a static table in `.data`, and stopped there: `lomse.exe` contains no
+compass vocabulary anywhere, so "the column named `s` points toward the bottom of the screen" was
+the tileset authors' naming plus geometry, and the run index kept an attended run open for it.
+
+That run is cancelled. The answer was in the 2026-09-17 flatground projection capture.
+
+**Derived, 2026-09-21.** That capture varied the two cell operands **independently** — a row of
+five cells at second operand 32, and a pair sharing first operand 35 — and the drawn top was read
+off the screen for each. Per +1 of the first operand: screen x `+33.94`, drawn top `+14.40`. Per +1
+of the second: screen x `-33.94`, drawn top `+14.44`.
+
+**Both operands move a cell down the screen by the same amount**, which is the whole answer.
+`map2screen`'s vertical output is proportional to `(first + second)` — symmetric — so relabelling
+which operand is "x" cannot move any direction between up-screen and down-screen. Direction 0 is
+`(0, +1)`, so it is drawn **down and to the left**. `se` is straight down the screen, `nw` straight
+up, `ne` straight right, `sw` straight left: the `.til` compass is the *world's*, rotated 45 degrees
+from the screen. Worth stating plainly, because "south is down" is the assumption a reader brings
+and it is wrong by 45 degrees.
+
+The horizontal half is the weaker one and is marked as such: it rides on `(first - second)`, whose
+sign a global operand swap flips, and the link that fixes it is the painted-band argument, which is
+Derived rather than Observed. If that link ever falls, the screen-x column mirrors and the drawn-top
+column does not.
+
+🔴 **What this does not close, and I nearly published that it did.** The first draft of this entry
+cancelled B2's attended run. That run measures the **IMP facing index**, which is a *different
+direction space* from the stored map direction `+0x44` that the table above describes — a rotation
+sits between them (`stored = (arg + [0x5AEC3C]) mod 8`, `0x5AEC3C` unknown offline), and B1's one
+data point already refutes its obvious reading. Reading the sheet's own body before editing its
+status is what caught it. What the new result does buy that run is a **readout**: a unit at a known
+stored direction now has a predicted screen position, so "the facing did not change" and "I misread
+the screen" stop looking alike.
+
+`map_projection.direction_screen_step` is the executable form. Its tests recompute every number
+from the capture rather than comparing against constants typed beside them, and six mutations —
+including a flipped vertical sign, a rotated delta table, a renamed column 0 and a dropped
+three-bit mask — are each killed, against a baseline verified green before and after.
+
+**One thing the test harness caught about itself.** The first version of the helper that recovers
+the per-operand step built a dict over all of `OBSERVED` and silently kept the *spike* row for cell
+`(35,41)`, because that cell appears three times under different elevations. It put 16.67 pixels
+per step into the answer instead of 14.44 and the suite failed — correctly, and for a reason that
+took a minute to see. The phase filter is now explicit and carries a comment saying why.
+
+**A second harness note, and this one is the reusable lesson.** My first mutation sweep ran the
+mutants through a shell loop that interpolated Python source into a `python3 -c` string. Every
+mutant raised `SyntaxError` before touching the file, and every one reported **OK** — a clean sweep
+that had tested nothing. It looked exactly like a passing result. The rewrite verifies the baseline
+first, asserts each pattern is actually present before substituting, prints a per-mutant verdict and
+restores the file afterwards; see [[feedback-a-mutation-score-is-a-property-of-the-harness]].
+
+**The pattern across today's two results.** Both `maxauratypes` and the map-direction bearing were answered
+from evidence this project already held — one in the binary it disassembles daily, one in a capture
+taken four days earlier for a different question. Neither needed instrument time. What they needed
+was someone to ask whether the evidence already in hand reached further than the heading it was
+filed under.

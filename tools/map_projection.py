@@ -153,3 +153,37 @@ def is_in_frame(cell: tuple[int, int], camera: tuple[int, int]) -> bool:
         abs(offset_x) + PROBE_SPRITE_WIDTH <= CAPTURE_WIDTH / 2
         and abs(offset_y) + PROBE_SPRITE_HEIGHT <= EDITOR_PANEL_TOP / 2
     )
+
+
+# --- The eight stored directions, in screen terms -------------------------------------------
+#
+# `docs/map-format.md` recovers a static 8-entry direction table from `.data` and pairs direction 0
+# with the `.til` column named `s`. What it could not say was where `s` points on the screen: the
+# column names are the tileset authors' vocabulary, and a full string scan of `lomse.exe` finds no
+# compass word anywhere in the image.
+#
+# The projection answers it without another engine run, because the 2026-09-17 capture varied the
+# two operands INDEPENDENTLY and the drawn top was read off the screen both times:
+#
+#     +1 first operand   -> screen x +33.94, drawn top +14.4   (cells (26,32)..(41,32))
+#     +1 second operand  -> screen x -33.94, drawn top +14.4   (cells (35,32) -> (35,41))
+#
+# The vertical half is immune to this document's x/y labelling ambiguity: `drawn top` grows by the
+# same +14.4 for EITHER operand, so relabelling which one is "x" cannot change whether a direction
+# moves up or down the screen. The horizontal half is not -- it rides on `(first - second)`, whose
+# sign a global swap flips -- so it is marked below as the weaker of the two.
+DIRECTION_DELTAS: tuple[tuple[int, int], ...] = (
+    (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1), (1, 0), (1, 1),
+)
+TIL_COLUMN_NAMES: tuple[str, ...] = ("s", "sw", "w", "nw", "n", "ne", "e", "se")
+
+
+def direction_screen_step(direction: int) -> tuple[float, float]:
+    """Pixels the drawn cell moves per step in `direction`, on flat ground.
+
+    Returns `(screen x, drawn top)`; drawn top grows DOWNWARD, as screen coordinates do. Flat
+    ground matters: `map2screen` subtracts `PIXELS_PER_ELEVATION * z`, so a step that climbs is
+    drawn higher than this says. That term is vertical only and cannot change the screen x.
+    """
+    first, second = DIRECTION_DELTAS[direction & 7]
+    return (SCREEN_X_PER_STEP * (first - second), X_PER_ISO_STEP * (first + second))

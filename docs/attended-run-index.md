@@ -8,7 +8,7 @@
 | **A2** guard refuses per profile | ✅ **DONE** 09-19 — refuses exit 1 running, permits exit 0 closed |
 | **B1** unit anchor probe | ✅ **DONE 09-20** — three cells, three anchors, residual **zero**; and the mirror sign fell: `placement.x` is negated |
 | **D1** a unit type above index 154 | ✅ **DONE 09-21** — defined at runtime at index **160** and drew. Also found GS5R3 already ships 160 types, so 155-159 already existed |
-| **B2** direction 0 to a bearing | 🟡 **MOSTLY CLOSED OFFLINE 09-20** — direction 0 = the `.til` column `s`, from a static table in `.data`. What is left is *screen orientation*, not the table |
+| **B2** direction 0 to a bearing | 🟡 **HALF CLOSED — read carefully, there are two direction spaces.** The **stored map direction** (`+0x44`) is fully closed offline: 09-20 gave the ring, 09-21 gave its screen bearing from the 09-17 capture (`s` is down-and-left, `se` straight down — [table](map-format.md#the-screen-bearing-of-each-direction)). The **IMP facing index** is what the sheet below still runs, and it is untouched by any of that |
 | **C1** PBM ByteRun1 encoder | ✅ **DONE 09-20** — ladder rungs 3+4; member shrank, `TINY` dropped, stripe rendered clean |
 | **C2** a size-changing edit | ✅ **DONE 09-19** — cheat-keys ladder, 21→20 bytes |
 | **C3** a member added, not replaced | ✅ **DONE 09-20** — ladder rung 5; `imp.mpq` grew to 3,601 members |
@@ -25,9 +25,19 @@ audio, GameScript and savegames all now have a proven path from this pipeline in
 engine. `docs/roadmap.md`'s per-archive regions carry the exact limits that remain, derived from the
 runs rather than typed beside them.
 
-**What is left on this sheet:** B2 alone, and it wants an offline chase before any run. B1 and C6
-both closed on 2026-09-20. Nothing remaining here is an acceptance question — they are measurement
-questions.
+**What is left on this sheet:** B2's **IMP facing** half, and nothing else. Its *stored map
+direction* half closed offline on 2026-09-21, from a capture taken on 2026-09-17 for a different
+purpose.
+
+🔴 **Do not let the two collapse into one.** They are different direction spaces with a rotation
+between them: `stored = (arg + [0x5AEC3C]) mod 8` at `0x0049DCC0`, and `0x5AEC3C`'s runtime value is
+unknown offline. Everything 09-20 and 09-21 established is about the **stored map direction**.
+Knowing where `s` is drawn says nothing about which IMP frame the engine picks for a facing — the
+one data point on that is B1's, below, and it already refutes the obvious reading.
+
+⚠️ **The pattern worth carrying, though, is real.** Both the map-direction bearing and the
+`maxauratypes` verdict were reachable from evidence this project already held — the cost was not
+instrument time, but that the evidence sat under the heading of the question it was gathered for.
 
 **B1's two surviving limits are not the ones it was built for.** Its residual and its mirror sign
 both came back clean. What did *not* close is that only **one unit type** has ever been measured,
@@ -203,11 +213,27 @@ it is measuring.
 > `map-format.md` warns about. Full derivation, addresses and limits:
 > [map-format.md — the eight-direction table](map-format.md#the-eight-direction-table-and-what-direction-0-means).
 >
-> **What is still open is the screen orientation, not the table.** A full string scan of
-> `lomse.exe` finds **no compass vocabulary at all**, so "the column named `s` points toward the
-> bottom of the screen" is the tileset authors' naming plus derived geometry — not something the
-> binary states. That, and only that, is what the attended run below would settle. It is a much
-> smaller run than it was.
+> ## ✅ The *stored map direction's* screen orientation closed offline, 2026-09-21
+>
+> 🔴 **This does NOT cancel the run below, which measures the IMP facing index.** What closed — "does the column named `s` point toward
+> the bottom of the screen" — was already measured, on 2026-09-17, by the flatground projection
+> run. That capture varied the two cell operands **independently** and read the drawn top off the
+> screen each time, and both operands move a cell **down** by the same 14.4 pixels. Direction 0 is
+> `(0, +1)`, so it is drawn **down and to the left**; `se` is straight down the screen and `nw`
+> straight up. The vertical half is immune to the x/y labelling ambiguity because the projection's
+> vertical output is symmetric in the two operands.
+>
+> Table, strength of each half, and the one link the left/right answer rides on:
+> [map-format.md — the screen bearing of each direction](map-format.md#the-screen-bearing-of-each-direction).
+> Executable form: `map_projection.direction_screen_step`.
+>
+> It remains true that `lomse.exe` contains **no compass vocabulary at all**. The bearing comes
+> from the projection, not from the binary's words.
+>
+> **What this buys the run below.** Not its answer, but its readout: a unit faced at a known stored
+> direction can now be checked against a predicted screen position, so "the facing did not change"
+> and "the facing changed and I misread the screen" stop looking alike. Log the stored direction
+> beside each screenshot and compare against `direction_screen_step`.
 >
 > **The `0x5AE970` builder is out of reach until the disassembly phase**, and now for a stated
 > reason rather than as a guess: the dword occurs 36 times in `.text` and **every one is a read
