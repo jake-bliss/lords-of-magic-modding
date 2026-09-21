@@ -1,5 +1,150 @@
 # `unitanchor` run sheet
 
+> # ✅ ANSWERED 2026-09-20
+>
+> **The rebuilt three-cell probe ran, and both of the questions it was rebuilt for came back
+> clean.** The unit draw path's residual against the published rule is **zero in x and y on three
+> independently anchored cells**, and the frame that drew settles the mirror sign: under mirroring
+> the x half of the rule becomes `anchor.x - (width >> 1) - placement.x`. Full reading in
+> [the 2026-09-20 run](#the-2026-09-20-run). [`hotspots.md`](hotspots.md) has been updated — the
+> rule there now states both orientations, and both of the "Still open" entries this sheet existed
+> to close are closed.
+>
+> 🔴 **The repository already knew the rule, more precisely than this run does.**
+> `imp_anim::mirrored_anchor_x` has carried it since it was read out of `ImpPlayer::GetPlacement`
+> (`0x0049CC80`), **including one more pixel subtracted when the width is even** — a detail this
+> run cannot see, because its frame is 65 wide. The rule lived in that one module and had never
+> reached `hotspots.md`, the file that calls itself the single source of truth for sprite
+> placement. Publishing the run's simpler reading would have been wrong on every even-width frame.
+> `spikes/asset-viewer/src/imp_anim.rs` now carries a test pointing the two instruments at each
+> other.
+>
+> **What did not close:** one unit type; the facing (all four placements across both runs reported
+> `facing 4`); and the **even-width `dec`**, which still rests on the disassembly alone.
+
+## The 2026-09-20 run
+
+`zprobe.log`: army loc 185, cell (57,1), owner 0, owner faith 0, control terrain type 470. All
+three cells ran, all three cleanups **done**, zero `REFUSED`, all 11 captures written. Collected to
+`artifacts/engine-probe-captures/run-20260920-210403`.
+
+| cell | loc | (x,y) | army | facing |
+| ---: | ---: | --- | ---: | ---: |
+| 0 | 58 | (58,0) | 1102 | 4 |
+| 1 | 183 | (55,1) | 1102 | 4 |
+| 2 | 441 | (57,3) | 1102 | 4 |
+
+### The anchors, one per cell
+
+Each from its own control rung — `units/imp/licr2a.imp` frame 0, `30x122`, record 0 `(1,-25)`,
+through the terrain-sprite path — via `anchor = top_left - (1,-25) + (15,61)`:
+
+| cell | control top-left | anchor |
+| ---: | --- | --- |
+| 0 | (374,136) `30x122` | **(388,222)** |
+| 1 | (238, 75) `30x122`, see below | **(252,161)** |
+| 2 | (238,168) `30x122` | **(252,254)** |
+
+### The subjects, and the residual
+
+The measured value is the **union** of the composite (body plus the faith flag above it). The flag
+lies wholly inside the body's x-span and above its bottom, so the union's left edge, right edge and
+bottom edge are the body's; that is what the fit below is tested against.
+
+| cell | measured union | predicted body | residual |
+| ---: | --- | --- | ---: |
+| 0 | (342,165) `65x78` | (342,182) `65x61` | **0, 0** |
+| 1 | (206,104) `65x78` | (206,121) `65x61` | **0, 0** |
+| 2 | (206,197) `65x78` | (206,214) `65x61` | **0, 0** |
+
+**The frame is identified, not assumed.** Sweeping all 86 frames of `units\imp\pyeleb.imp` in
+**both** orientations against each cell's own anchor, requiring the predicted box to share the
+union's left edge, its bottom edge and its width, **exactly one** (frame, orientation) pair fits,
+and it is the same one on all three cells: **frame 33 — STAND, stored facing record 8 — MIRRORED**,
+`65x61`, record 0 `(14,-10)`. The file's other 50 frames are `0x04;source:0`, every one inheriting
+**frame 0**'s `40x74` geometry, so none of them can produce this box either.
+
+### ⭐ The mirror sign
+
+Frame 33's record-0 `x` is **+14**, which is why this subject was chosen:
+
+```
+as stored:  388 + 14 - (65>>1) = 370
+mirrored:   388 - 14 - (65>>1) = 342        measured: 342
+```
+
+A **28-pixel** discrimination, reproduced on three independent anchors. `placement.y` and the
+height term are unchanged — the predicted top matches on all three cells using the stored `y`.
+
+⚠️ **65 is odd, so this run exercises only the odd-width branch.** The engine subtracts one further
+pixel when the width is **even** (`0x0049CCC8`..`0x0049CCD3`), which no run has ever put in front
+of it. See [`hotspots.md`](hotspots.md#the-rule).
+
+### The flag cross-check is weaker than this sheet expected
+
+Across all nine `iface\??flagb.imp` files, the **15 origin-bearing frames in the range 96..111** —
+the unit-attached band, the one the flag draws from — are **byte-for-byte identical in geometry**,
+and every one of them gives `py - (h>>1) = -17`. So the flag's predicted top is `anchor.y - 57`
+regardless of which of those frames drew and regardless of which faith owns it.
+
+(The nine files are *not* identical overall: each differs from the others at one to three frames,
+all of them at indices 61, 65, 89 or 93 — outside this band, and so irrelevant here. Stated because
+"the flag files are identical" is the tempting shorthand and it is false.)
+
+That predicted top matches the measured union top on all three cells (165, 104, 197 against body
+tops 182, 121, 214 — a constant 17), which is a genuine independent confirmation of the **vertical** anchor
+through a second attachment at the shipped `(0,-40)` offset. It is **not** a test of x: the flag is
+at most 15 wide and sits inside the body's 65-wide span, so it cannot move the union's left or
+right edge. The 2026-09-19 write-up's claim that the flag was an independent test of *the anchor*
+should be read as an independent test of the anchor's **y** only.
+
+### cell 1's control came back 29 wide, and this sheet says that voids the cell
+
+It does not void it here, and the reason is an observation rather than a judgement call. Comparing
+the per-column changed-pixel profile of cell 1's control against cell 2's over each one's own
+122-row band:
+
+```
+cell2  x251:2  x252:15  x253:42  x254:63  x255:67  x256:69  x257:72  x258:74  x259:77  x260:85  x261:99
+cell1     -    x252:10  x253:29  x254:50  x255:55  x256:61  x257:67  x258:72  x259:77  x260:85  x261:99
+```
+
+cell 1's profile is a **strict subset of cell 2's at the same x**, column for column, converging to
+equality from x259 onward. A one-pixel shift would have made cell 1's x253 match cell 2's x252
+(29 against 15); it does not. So the sprite is at the same left edge and its leftmost column is
+**occluded by terrain that already matched the plate** — the diff cannot see a sprite pixel that
+happens to equal what was behind it. cell 1's true left is 238, not 239.
+
+Two facts support that independently: cell 1 and cell 2 then share an anchor **x** of 252, which is
+what the isometric projection predicts for `(-2,0)` and `(0,+2)` from the same army cell; and the
+fit at that anchor is exact in both axes, which a one-pixel error would have broken.
+
+**The sheet's rule is still right and should not be weakened.** "Not 30x122 → void" is the correct
+default. What licenses the exception is a *positive* demonstration of where the missing column
+went, not the absence of an alternative.
+
+### Contaminants, and what was left behind
+
+Nothing was left behind. Two components appear that the probe did not place:
+
+| component | first seen | behaviour |
+| --- | --- | --- |
+| `9x17` at (309,194) | `zu3` | present in every control and subject capture, **absent from all three post-cleanup captures** — an animation toggling with the render passes |
+| `9x17` at (360,316) | `zu4` | advanced once and then held across every later capture, the same class as the 2026-09-19 run's `10x26` |
+
+Both are ordinary map animation. Every post-cleanup capture (`zu4`, `zu7`, `zu10`) differs from the
+plate by nothing else.
+
+### ⚠️ A by-product, filed where it belongs
+
+The log reports `ARMY_FACING 4` and the art that drew is STAND **stored facing index 3, mirrored**.
+That is a direction-to-stored-facing observation, and it is evidence for **B2** (anchor direction 0
+to a compass bearing), which is a different question from the one this run was built for. It is
+recorded in [the attended run index](attended-run-index.md#b2-anchor-direction-0-to-a-compass-bearing)
+as well as here. One data point does not determine the mapping; it constrains it.
+
+---
+
 > **Status, 2026-09-19.** The probe ran attended on GS5R3 and worked. Its captures were then
 > re-read offline against the art the engine actually draws, and **they answer the first half of
 > the question**: on that one cell, with that one facing, the unit draw path's residual against the
@@ -142,6 +287,13 @@ measured width.** Two further facts point the same way and were not used to pick
 - the capture shows a unicorn facing left; frame 33 as stored faces right.
 
 So the engine drew frame 33 **mirrored**, and the rule predicted its top-left to the pixel.
+
+> ⚠️ **Corrected 2026-09-20: the flag tests the anchor's `y` only.** All nine
+> `iface\??flagb.imp` files share geometry across the 15 origin-bearing frames in 96..111, every
+> one giving `py - (h>>1) = -17`, so the predicted top is `anchor.y - 57` whichever frame and
+> whichever faith drew — and the flag is at most 15 wide inside a 65-wide body, so it cannot move
+> the union's left or right edge. The paragraph below overstates it; the *uniqueness* claim it
+> makes about frame 111 is a claim about that file's frames, not a test of the anchor's x.
 
 **The flag, an independent second test of the same anchor.** `iface\liflagb.imp` frame 111 —
 UNIT_UNSELECTED, cycle offset 7 — is 12x21 with origin `(-5,-7)`, and the flag hangs off

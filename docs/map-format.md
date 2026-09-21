@@ -2204,6 +2204,100 @@ this survey has no reading of it beyond that. Two neighbouring fields are better
   does not.** See [The two header forms](#the-two-header-forms). The corpus does exercise the path
   after all -- `English/map/e3map2.map` is a grid-form file and every profile holds it.
 
+## The eight-direction table, and what direction 0 means
+
+**Observed in a local binary, 2026-09-20.** `lomse.exe` carries a static 8-entry direction table in
+`.data`, in two identical copies:
+
+| VA | file offset | contents |
+| --- | --- | --- |
+| `0x005557E8` | `0x1539E8` | `[ 0, -1, -1, -1,  0,  1,  1,  1]` |
+| `0x00555808` | `0x153A08` | `[ 1,  1,  0, -1, -1, -1,  0,  1]` |
+| `0x00555828` | `0x153A28` | identical to `0x5557E8` |
+| `0x00555848` | `0x153A48` | identical to `0x555808` |
+
+The array boundaries are pinned rather than guessed: `0x5557E0` and `0x5557E4` are separate scalars
+(`mov [0x5557E0],3` at `0x004816FD`, read with `cmp eax,2` at `0x0047E101`) and `0x555870` is a
+separate bitfield global, so the arrays occupy `0x5557E8`..`0x555867` exactly.
+
+Two call sites index them by `direction * 4`:
+
+- `0x0041B183` — `mov eax,[esi+0x44]; shl eax,2; mov ebp,[eax+0x5557E8]; mov eax,[eax+0x555808]`.
+  The direction is object field `+0x44`.
+- `0x004212D0`..`0x00421303` — the linear cell index is `idiv`'d twice by `[ecx+0x6c]`; the
+  **remainder** receives the `0x555828` entry and the **quotient** receives the `0x555848` entry.
+
+Since a cell index is `second_operand * width + first_operand`, the remainder is the first operand
+and the quotient the second. So the **lower** array is the first-operand delta and the **upper**
+array the second-operand delta:
+
+| direction | (Δ first, Δ second) | `.til` column |
+| ---: | --- | --- |
+| 0 | `( 0, +1)` | **`s`** |
+| 1 | `(-1, +1)` | `sw` |
+| 2 | `(-1,  0)` | `w` |
+| 3 | `(-1, -1)` | `nw` |
+| 4 | `( 0, -1)` | `n` |
+| 5 | `(+1, -1)` | `ne` |
+| 6 | `(+1,  0)` | `e` |
+| 7 | `(+1, +1)` | `se` |
+
+### Direction 0 is the `.til` column `s`
+
+**Inferred, 2026-09-20**, from two measured halves:
+
+1. the table above — **Observed in a local binary**; and
+2. `n = (0, -1)` in the `.til` neighbour columns — **Derived, 2026-09-17**, at 576/576 engine-written
+   ring tiles against 0/576 for the mirrored reading.
+
+**This does not inherit the x/y ambiguity this document records at lines 76-89.** Both halves are
+stated in the same `(first operand, second operand)` frame: `Map::cell_index` is
+`y * width + x`, so the writer's `x` *is* the first operand, and `tile.rs`'s `(dx, dy)` is
+therefore `(Δ first, Δ second)` directly. A global relabelling of which operand is "x" moves both
+halves together and leaves the pairing of direction 0 with the column named `s` unchanged.
+
+### ⚠️ What this does NOT establish
+
+**It does not give a compass bearing, and it does not close [issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)'s last box.** Three separate
+gaps:
+
+- **The `.til` column names are the tileset authors' vocabulary, not the engine's.** A full string
+  scan of `lomse.exe` finds **no** compass or facing vocabulary anywhere in the image. That `s`
+  points toward the bottom of the screen is not established by anything here; it rests on the names
+  plus the derived geometry. Converting direction 0 to a screen direction still needs the attended
+  run this document's [run index](attended-run-index.md#b2-anchor-direction-0-to-a-compass-bearing)
+  describes.
+- **This is the *stored map* direction field (`+0x44`), not the IMP facing index.** The script-to-stored
+  path at `0x0049DCC0` is `stored = (arg + [0x5AEC3C]) mod 8`, with a `+1` at `0x0049DCDD`.
+  `0x5AEC3C` is BSS with seven references, all reads, so its runtime value is unknown offline.
+  `imp-format.md`'s open item 2 is **narrowed, not closed**.
+- **The runtime table behind `0x5AE970` is only *Inferred* to share this order.** It is 8-wide and
+  3-bit-masked like this one, and the function beginning near `0x0041AE90` contains both the static
+  table use at `0x41B190` and both reads of `[0x5AE970]`. Suggestive; not proof.
+
+### Why the `0x5AE970` builder cannot be reached with byte-level tools
+
+**Observed in a local binary, 2026-09-20.** The dword `0x5AE970` occurs **36 times in `.text`, and
+every one is a read encoding** (`A1`, `8B 0D`, `8B 15`, `8B 1D`, `8B 35`). There is no `A3`, no
+`C7 05` and no `89 xx` absolute-store form anywhere in the image — **nothing writes `0x5AE970` by
+absolute displacement.**
+
+`.data` has `rsz=0x23200`, so raw initialised data stops at VA `0x578200` and `0x5AE970` lies in the
+BSS tail: it must be written at runtime. It is a **field of a global singleton based at
+`0x5AE958`** — the immediate form `mov ecx, 0x5AE958` occurs **499** times in `.text`, and
+`0x5AE970 = 0x5AE958 + 0x18`. The builder therefore stores through `[reg+0x18]` inside one of that
+object's methods, which no byte scan can see. `loadmap` (`0x004DFAD0`) is the likely entry —
+`reports/natives/operator-bodies.tsv` records it reading `0x5AE958` — but that is **Inferred and
+unverified**.
+
+⚠️ `reports/natives/global-clusters.tsv` marks this cluster `read_only=no`. That flag means "not in
+a read-only PE section" (`spikes/asset-viewer/src/operator_bodies.rs:614,2219`), **not** "something
+writes it". It carries no writer information and must not be read as if it did.
+
+**Finding the actual builder needs the executable-disassembly phase** — a real disassembler plus
+data-flow over the 499 `mov ecx, 0x5AE958` sites. That is the one part of B2 no byte-level
+technique reaches.
+
 ## Commands
 
 ```sh

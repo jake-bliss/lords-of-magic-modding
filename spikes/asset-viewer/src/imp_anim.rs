@@ -1430,6 +1430,48 @@ mod tests {
         }
     }
 
+    /// The 2026-09-20 `unitanchor` run, against the rule read out of the binary.
+    ///
+    /// **Observed in gameplay, 2026-09-20.** Three cells, three independently recovered anchors,
+    /// one Elephant each. The body that drew is `units\imp\pyeleb.imp` frame 33 -- 65 wide, record
+    /// 0 `(14, -10)` -- drawn **mirrored**, and its measured top-left was 46 pixels left of the
+    /// anchor on every one of the three cells (342 from 388, 206 from 252, 206 from 252).
+    ///
+    /// This test exists because the run and the disassembly are independent instruments that had
+    /// never been pointed at each other. They agree -- and the run only reaches the **odd**-width
+    /// branch, because 65 is odd. The even-width `dec` at `0x0049CCC8`..`0x0049CCD3` has never
+    /// been put in front of the engine, which is why the assertion below says so rather than
+    /// quietly covering both.
+    #[test]
+    fn the_measured_mirrored_placement_matches_the_rule_read_from_the_binary() {
+        let rules = AnimRules {
+            cycle_modes: CycleModeTable {
+                advance: 0,
+                dispatch_site: 0,
+                table_address: 0,
+                modes: Vec::new(),
+            },
+            ping_pong_mode: PING_PONG_MODE,
+            ping_pong_length_site: 0,
+            ping_pong_reflection_site: 0,
+            mirror_bit: SEQUENCE_MIRROR_BIT,
+            mirror_test_sites: Vec::new(),
+            mirror_decrements_when: Parity::Even,
+            mirror_parity_site: 0,
+        };
+
+        // pyeleb.imp frame 33.
+        let (width, placement_x) = (65_u16, 14_i16);
+        assert_eq!(width % 2, 1, "the measured frame is odd-width; see the doc comment");
+
+        // The measurement: 46 pixels left of the anchor, on all three cells.
+        assert_eq!(mirrored_anchor_x(&rules, width, placement_x), -46);
+
+        // And it is genuinely a discriminating observation -- the unflipped rule predicts a
+        // different pixel, 28 away, which is why this subject was chosen.
+        assert_eq!(anchor_x(width, placement_x), -18);
+    }
+
     /// The shape every cached-pointer reload in this engine has: load, null-check, dereference.
     ///
     /// `test ecx,ecx` has a register first operand and writes nothing. A walk that cleared taint on

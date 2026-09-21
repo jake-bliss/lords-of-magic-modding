@@ -6,8 +6,8 @@
 |---|---|
 | **A1** command line of the unmeasured profiles | ✅ **DONE** 09-19 — GS5R3 runs `d:\lomse.exe /*`; premise holds |
 | **A2** guard refuses per profile | ✅ **DONE** 09-19 — refuses exit 1 running, permits exit 0 closed |
-| **B1** unit anchor probe | ⚠️ **RUN, NOT ANSWERED** — control passed, subject was wrong art. Rebuilt around `/pyele`; ready to run. |
-| **B2** direction 0 to a bearing | ⏸ **OFFLINE FIRST** — script route refuted; chase the table builder behind `0x5AE970` |
+| **B1** unit anchor probe | ✅ **DONE 09-20** — three cells, three anchors, residual **zero**; and the mirror sign fell: `placement.x` is negated |
+| **B2** direction 0 to a bearing | 🟡 **MOSTLY CLOSED OFFLINE 09-20** — direction 0 = the `.til` column `s`, from a static table in `.data`. What is left is *screen orientation*, not the table |
 | **C1** PBM ByteRun1 encoder | ✅ **DONE 09-20** — ladder rungs 3+4; member shrank, `TINY` dropped, stripe rendered clean |
 | **C2** a size-changing edit | ✅ **DONE 09-19** — cheat-keys ladder, 21→20 bytes |
 | **C3** a member added, not replaced | ✅ **DONE 09-20** — ladder rung 5; `imp.mpq` grew to 3,601 members |
@@ -24,9 +24,14 @@ audio, GameScript and savegames all now have a proven path from this pipeline in
 engine. `docs/roadmap.md`'s per-archive regions carry the exact limits that remain, derived from the
 runs rather than typed beside them.
 
-**What is left on this sheet:** B1 (rerun, the redesigned probe) and B2 (offline chase first).
-C6 closed on 2026-09-20. None of them is an acceptance question any more — they are measurement
+**What is left on this sheet:** B2 alone, and it wants an offline chase before any run. B1 and C6
+both closed on 2026-09-20. Nothing remaining here is an acceptance question — they are measurement
 questions.
+
+**B1's two surviving limits are not the ones it was built for.** Its residual and its mirror sign
+both came back clean. What did *not* close is that only **one unit type** has ever been measured,
+and that all four placements across both runs reported the same facing — nothing in this probe can
+force a facing, and different cells did not buy different ones.
 
 ### Limits that survived the sitting
 
@@ -134,7 +139,36 @@ refusal. A silent pass is the failure, and it is the one that costs an archive.
 
 ## Group B — existing ladders, sheets already written
 
-### B1. Unit anchor probe — `docs/unit-anchor-run-sheet.md` ⚠️ RUN 2026-09-19, NOT ANSWERED
+### B1. Unit anchor probe — `docs/unit-anchor-run-sheet.md` ✅ ANSWERED 2026-09-20
+
+> **The rebuilt three-cell probe ran, and both questions it was rebuilt for came back clean.**
+> All three cells ran, all three cleanups gated and done, zero `REFUSED`, all 11 captures written.
+>
+> **The residual is zero in x and y on three independently recovered anchors** — so the unit draw
+> path computes its anchor the same way the terrain-sprite path does, and no additive
+> unit-specific offset survives three anchors agreeing. The caveat `hotspots.md` states about its
+> own central result is closed as answered rather than narrowed.
+>
+> ⭐ **The mirror sign fell.** The body is `units\imp\pyeleb.imp` frame 33 **mirrored** — the
+> unique fit among all 86 frames in both orientations, on each of the three anchors. Its record-0
+> `x` is `+14`: as stored the rule predicts a left edge of 370, mirrored it predicts 342, and 342
+> was measured. `hotspots.md` previously said mirroring's effect was undetermined and now states
+> both orientations.
+>
+> 🔴 **But the repository already knew the rule, more precisely.** `imp_anim::mirrored_anchor_x`
+> has carried it since it was read out of `ImpPlayer::GetPlacement` — **including one more pixel
+> subtracted on even widths**, which this run cannot see because its frame is 65 wide. Derived
+> knowledge that lives in one module is not published. The even-width `dec` has still never faced
+> the engine.
+>
+> **What did not close:** one unit type, and the facing — all four placements across both runs
+> reported `facing 4`. Different *cells* did not buy different facings, which is the one thing this
+> design hoped for and could not guarantee.
+>
+> Captures in `artifacts/engine-probe-captures/run-20260920-210403`.
+
+The brief this box was written against:
+
 
 **Ran 2026-09-19. The probe worked and half the question is answered; it has been rebuilt for the
 other half.** Read offline against the art the engine actually draws, the residual is **zero in x
@@ -154,6 +188,52 @@ world map to `...b.imp`, not `...a.imp`. Read the sheet's expected values *and* 
 it is measuring.
 
 ### B2. Anchor direction 0 to a compass bearing
+
+> ## 🟡 The offline chase paid off, 2026-09-20
+>
+> **This sheet said "prefer the offline chase first — it is free, and it may make this run
+> unnecessary." It did, for most of the question.**
+>
+> **Direction 0 is the `.til` column `s`**, and the whole ring is
+> `0=s, 1=sw, 2=w, 3=nw, 4=n, 5=ne, 6=e, 7=se`. The engine carries a **static** 8-entry direction
+> table in `.data` at `0x005557E8`/`0x00555808` (duplicated at `0x555828`/`0x555848`), indexed by
+> `direction * 4`, and composing it with this project's own `n = (0,-1)` derivation gives the ring
+> directly. Both halves are in the same operand frame, so it does **not** inherit the x/y ambiguity
+> `map-format.md` warns about. Full derivation, addresses and limits:
+> [map-format.md — the eight-direction table](map-format.md#the-eight-direction-table-and-what-direction-0-means).
+>
+> **What is still open is the screen orientation, not the table.** A full string scan of
+> `lomse.exe` finds **no compass vocabulary at all**, so "the column named `s` points toward the
+> bottom of the screen" is the tileset authors' naming plus derived geometry — not something the
+> binary states. That, and only that, is what the attended run below would settle. It is a much
+> smaller run than it was.
+>
+> **The `0x5AE970` builder is out of reach until the disassembly phase**, and now for a stated
+> reason rather than as a guess: the dword occurs 36 times in `.text` and **every one is a read
+> encoding**. It is field `+0x18` of a singleton based at `0x5AE958`, written through a register,
+> which no byte-level technique can find.
+>
+> ⚠️ **One trap recorded.** `reports/natives/global-clusters.tsv` marks the cluster `read_only=no`.
+> That means "not in a read-only PE section", **not** "something writes it". Reading it as writer
+> information would have sent the next chase in the wrong direction.
+>
+> ### A by-product from B1's run, filed here
+>
+> B1's run logged `ARMY_FACING 4` for all three placements, and the art the engine drew was
+> `pyeleb.imp` frame 33 — STAND, **stored facing index 3**, **mirrored**. So direction 4 does not
+> select stored facing 4 unmirrored, which is what the five-stored-facings layout most obviously
+> suggests. **Observed in gameplay, 2026-09-20**, conditional on the frame identification in
+> [the run sheet](unit-anchor-run-sheet.md#the-2026-09-20-run).
+>
+> This is the *IMP facing index*, which the static table above does **not** cover — that table is
+> the stored map-direction field `+0x44`. The script-to-stored path at `0x0049DCC0` is
+> `stored = (arg + [0x5AEC3C]) mod 8`, and `0x5AEC3C` is BSS with seven references, all reads, so
+> its runtime value is unknown offline. One data point constrains this mapping; it does not
+> determine it.
+>
+> It is recorded here, and not only in B1's run sheet, because a by-product filed under its own run
+> is how this project three times went on publishing a question it had already answered.
+
 
 The last open piece of the `AnimRules` box (issue #2). The other two jobs close offline.
 

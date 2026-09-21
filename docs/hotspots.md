@@ -16,6 +16,31 @@ top_left = anchor + placement - (width >> 1, height >> 1)
 The stored `placement` pair is the vector from the anchor point to the **centre** of the frame, in
 screen pixels with **`+y` downward**, and it is **added**. Halving is `floor`, i.e. a plain shift.
 
+**When the engine mirrors a frame, the x half of the rule changes** — and it is not simply the
+same expression with a sign flipped:
+
+```
+unflipped:  top_left.x = anchor.x + placement.x - (width >> 1)
+flipped:    top_left.x = anchor.x - (width >> 1) - placement.x - (1 if width is EVEN else 0)
+```
+
+`placement.y` and the height term are unchanged; mirroring is horizontal only.
+
+**Observed in a local binary.** `ImpPlayer::GetPlacement` (`0x0049CC80`) computes the unflipped
+value at `0x0049CD01` and the flipped value at `0x0049CCC8..0x0049CCD3`. The even-width `dec` is
+read from the instruction stream, not deduced: reflecting the unflipped span about the anchor
+column reproduces the odd-width result exactly and lands **two** pixels away on even widths, so
+that extra pixel is an engine convention rather than a consequence of the mirror. Implement
+`imp_anim::mirrored_anchor_x`, not the algebra.
+
+**Observed in gameplay, 2026-09-20 — the odd-width branch only.** Three independently recovered
+anchors, a 65-wide frame with `placement.x = +14`: unflipped predicts a left edge of 370, flipped
+predicts 342, and 342 was measured, three times. A 28-pixel discrimination. See
+[the run sheet](unit-anchor-run-sheet.md#the-2026-09-20-run).
+
+⚠️ **The even-width `dec` has never been put in front of the engine.** It rests on the
+disassembly alone. A mirrored frame of even width is the next rung for anyone extending this.
+
 Two consequences worth stating plainly:
 
 - **Shipped `y` values are negative** because art grows upward from where the object stands.
@@ -146,21 +171,24 @@ wobble by cropping. That is the gap the rule above closes.
 - Related, on the reader side: `screencapture` writes its pixel bytes as R, G, B rather than the
   BMP-standard B, G, R. Confirmed numerically on known materials — carved stone, wood and parchment
   come out first-byte-dominant 62-91% against 0.8-2.4%. Use `tools/probe_captures.py`.
-- **A unit-path caveat, now narrowed rather than closed.** Record 0 was confirmed by placing a unit
-  IMP through the *terrain sprite* draw path, which left a unit-specific constant in the *anchor*
-  unruled-out. [`LOM_PROBE=unitanchor`](unit-anchor-run-sheet.md) ran attended on 2026-09-19 and,
-  read offline against the art the engine actually draws, the residual is **zero in x and y** — for
-  the unit body (`units\imp\licr2b.imp` frame 33) *and*, independently, for the player flag
-  (`iface\liflagb.imp` frame 111, at the shipped `(0,-40)` offset), both solved from the anchor the
-  terrain-sprite control rung recovered on the same cell. **Inferred**, conditional on those two
-  frame identifications; see [the run sheet](unit-anchor-run-sheet.md#what-the-2026-09-19-run-established-read-offline-afterwards).
-  Three things stay open: one facing was sampled (twice), one unit type, and the frame that drew had
-  record-0 `x = 0` so **mirroring's effect on the placement x sign is undetermined**. The probe has
-  been rebuilt around all three and is ready to run again.
-- **The engine mirrors frames, and this file does not say what that does to `placement`.** On
-  2026-09-19 a stored right-facing STAND frame drew facing left: its detached bottom tail landed at
-  sprite-relative columns 1-3 rather than 43-45. Whether the rule then uses `placement.x` or
-  `-placement.x` cannot be told from that run, because the frame's record-0 x was 0.
+- ~~A unit-path caveat.~~ **Answered 2026-09-20: the unit draw path computes its anchor the same
+  way the terrain-sprite path does.** Record 0 was originally confirmed by placing a unit IMP
+  through the *terrain sprite* path, which left a unit-specific constant in the *anchor*
+  unruled-out. [`LOM_PROBE=unitanchor`](unit-anchor-run-sheet.md) ran on **three cells**, each with
+  its own control rung and therefore its own independently recovered anchor, and the residual is
+  **zero in x and y on all three**. Three anchors agreeing leaves no room for an additive
+  unit-specific offset. **Inferred**, conditional on one frame identification that is unique among
+  all 86 frames of the file in both orientations; see
+  [the run sheet](unit-anchor-run-sheet.md#the-2026-09-20-run). Two things stay open and are not
+  this caveat: only **one unit type** has been measured, and all four placements across both runs
+  reported the same facing.
+- ~~The engine mirrors frames, and this file does not say what that does to `placement`.~~
+  **Answered 2026-09-20: `placement.x` is negated.** Stated in [the rule](#the-rule) above. The
+  2026-09-19 run could not tell `+placement.x` from `-placement.x` because the frame that drew had
+  record-0 `x = 0` and the two predict the identical pixel; the 2026-09-20 subject was chosen for a
+  record-0 `x` far from zero on every STAND frame, and the frame that drew had `x = +14`.
+  Unmirrored predicts a left edge of 370, mirrored predicts 342, and 342 was measured — a
+  **28-pixel** discrimination, reproduced on all three cells.
 - **The world-map unit sprite is the `...b.imp` zoom variant, not `...a.imp`.** `gs\imps.gs`'s
   `unit_zoom_letter` maps COMBAT_SCREEN and LOCATION_SCREEN to `A` and SCROLLINGMAP_SCREEN,
   REGION_SCREEN and WORLD_SCREEN to `B`, and the engine pushes the screen mode. A world-map army is
