@@ -1,11 +1,88 @@
 # Screen resolution, and whether upscaled art would work
 
-**Verdict: the formats would mostly take 2x art; the renderer will not use it.** The framebuffer is
-hard-coded 640x480x16 with no configuration path anywhere in the image, so doubled art is a zoom,
-not a remaster. Getting real detail out of this game is a patched-binary or reimplementation
+**Verdict: the framebuffer patches fine and the game runs at 1280x960 — but terrain and sprites
+decouple, so a bigger world needs all 41,373 sprite frames redrawn.** ⭐ **Measured by an attended
+binary patch on 2026-09-21, not argued.** The framebuffer is hard-coded 640x480x16 with no
+*configuration* path, but it is seven constants wide and they were patched and run. Getting real detail out of this game is a patched-binary or reimplementation
 project, which is what [the native engine plan](native-engine-plan.md) is for.
 
 Written 2026-09-21. Every assertion carries an evidence class.
+
+## ⭐ The 2026-09-21 spike: patched to 1280x960 and played
+
+**Observed in gameplay, 2026-09-21.** `lomse.exe` was backed up, patched and restored (all
+checksums verified). Three tiers.
+
+| tier | patched | result |
+| --- | --- | --- |
+| 1-2 | `SetDisplayMode`, primary surface, app-object fields (6 immediates) | ✅ **boots, renders, fully playable.** Window is a true 1280x960; the UI draws at native 1:1 in the **top-left quadrant**; menus and the loaded game are clickable and **input coordinates still line up with the drawing** |
+| 3 | the three NDC-to-viewport floats at `0x0054D7D4` (`320/-320/192` -> `640/-640/384`) | ⚠️ **terrain scaled 2x; sprites did not** |
+
+**Tier 1-2 is an unambiguous pass.** DirectDraw under DXVK accepts a non-640x480 mode, the engine
+runs in it, and the mouse-to-screen mapping is not separately hardcoded — so the input path follows
+the layout for free. The UI sitting in one quadrant is the *expected* outcome and is a
+script-coordinate problem, not an engine one.
+
+**`playvideo` is already resolution-derived.** The intro video drew at a new offset without being
+touched (*Observed in gameplay*), so at least one blit path computes position from the screen
+dimensions rather than a literal.
+
+### 🔴 The finding that decides the strategy: terrain and sprites decouple
+
+**Observed in gameplay.** With the camera constants doubled, **terrain rendered twice as large while
+every unit sprite stayed its original pixel size.** Riders on a magnified landscape.
+
+*Derived:* the terrain is a 3D mesh drawn through the parameterised camera, so it follows the
+projection. Units, trees and buildings are **IMP sprites blitted at native pixel size**, positioned
+by `map2screen` but not *scaled* by it — their position follows the camera and their size does not.
+
+**Therefore any change that scales the world requires every sprite redrawn at the new scale.** That
+is **41,373 IMP frames**, plus 1,377 PBMs and 26 tilesets. This is no longer an inference from asset
+counts; it was put on screen.
+
+⚠️ **And the "three constants" framing was wrong.** The NDC floats are the **zoom**, not the viewport
+extent: they map NDC `[-1,1]` onto a half-width in pixels, so doubling them magnifies the same world
+rather than revealing more of it. The map's clip/viewport rectangle is a *separate* constant, still
+unidentified — plausibly among the four unaccounted `push 640` / `push 480` sites (`0x4b293d`,
+`0x4c945d`, `0x504c6c`, `0x531145`). Showing **more world at the same detail** would mean widening
+the projection frustum, which `perspective` / `orthographic` / `create3dmap` expose to script and
+may not need a binary patch at all. **Untested.**
+
+### What this makes viable, and what it kills
+
+- 🔴 **A 2x *world* is not a patch project.** It is an art project of the original game's scale.
+- ✅ **A 2x *UI* is viable and independent.** Hold the map at 1x (leave the camera constants alone),
+  double the ~5,000 script layout literals, and redraw only the UI chrome and the **149 portrait
+  members**. Portraits go from 4,690 to 18,760 pixels — the difference between a thumbnail and a
+  portrait — for tens of images rather than tens of thousands.
+- ⚠️ That path still needs the shared UI sheets (`intspr1_page` and the dialog backgrounds) redrawn
+  as one coherent batch, because their contents are cut by literal coordinates.
+
+### The patch manifest, for whoever repeats this
+
+*Observed in a local binary.* Offsets are file offsets; all seven were verified against their
+expected current bytes before writing.
+
+| constant | file offset | 640x480 | 1280x960 |
+| --- | --- | --- | --- |
+| `SetDisplayMode` height | `0x7466d` | `480` | `960` |
+| `SetDisplayMode` width | `0x74674` | `640` | `1280` |
+| primary surface height | `0x7470e` | `480` | `960` |
+| primary surface width | `0x74713` | `640` | `1280` |
+| app-object width | `0xfcf44` | `640` | `1280` |
+| app-object height | `0xfcf4e` | `480` | `960` |
+| NDC x scale | `0x14c1d4` | `320.0f` | `640.0f` |
+| NDC y scale | `0x14c1d8` | `-320.0f` | `-640.0f` |
+| NDC y offset | `0x14c1dc` | `192.0f` | `384.0f` |
+
+`ddraw.ini`'s cnc-ddraw window was set to 1280x960 so the frame was judged 1:1 rather than
+letterboxed.
+
+🔴 **The PE layout note this project had been using was incomplete.** `lomse.exe` has **four**
+sections, not two: `.text` VA `0x401000` (raw `0x400`), **`.rdata` VA `0x54d000` (raw `0x14ba00`)**,
+`.data` VA `0x555000` (raw `0x153200`), `.rsrc` VA `0x5d7000` (raw `0x176400`). The float constants
+live in `.rdata`, which was undocumented — converting their VA with the `.data` formula reads a page
+of zeros, which it duly did on the first attempt.
 
 ## The blocker: 640x480 is two `push` immediates
 
@@ -65,6 +142,12 @@ in principle; neither is suggested by anything found.
 finished 640x480 frame in a window, downstream of everything above.
 
 ## Why that kills 2x art rather than merely limiting it
+
+⚠️ **Scope, added 2026-09-21.** The three reasons below are all about **doubling art while the
+framebuffer stays 640x480**. They do *not* argue against doubling the framebuffer too — reasons 1
+and 3 dissolve at 1280x960, and reason 2 is a camera matrix that responds to its constants. The
+spike above is the answer to that separate question. Do not quote this section against a
+patched-framebuffer proposal, which is a mistake made once already.
 
 Three independent reasons, any one sufficient.
 
