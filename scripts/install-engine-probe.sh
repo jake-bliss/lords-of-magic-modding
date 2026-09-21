@@ -262,6 +262,23 @@ elif [[ "${probe}" == "unitanchor" ]]; then
   echo "zprobe.log before quitting: any 'cleanup REFUSED' line means that unit is STILL on the"
   echo "map and must be removed by hand. See docs/unit-anchor-run-sheet.md."
   echo "Do not save the game afterwards."
+elif [[ "${probe}" == "unitindex" ]]; then
+  echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map"
+  echo "with your starting army CENTRED and room around it, and TAP z once. It works two empty"
+  echo "cells. On the first it places a shipped Elephant and removes it -- that is the CONTROL,"
+  echo "and it proves the placement path works this session. It then DEFINES A NEW UNIT TYPE at"
+  echo "runtime and places that on the second cell. Both should look like an Elephant; the new"
+  echo "type deliberately reuses the shipped art, so the question is whether it draws AT ALL."
+  echo "Expect two units to flash into existence and vanish. Five captures."
+  echo
+  echo "Read zprobe.log BEFORE quitting. The line that matters most is:"
+  echo "    rung2 lastunittype <n> expected <n>"
+  echo "Those two numbers should be equal, and should be 155. Any 'cleanup REFUSED' line means"
+  echo "that unit is STILL on the map and must be removed by hand."
+  echo
+  echo "DO NOT SAVE. The new unit type exists in no archive, so a save would reference an index"
+  echo "nothing on disk defines. It disappears by itself when the game exits."
+  echo "See docs/unit-index-run-sheet.md."
 else
   echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map,"
   echo "and TAP z once. The probe now fires only once per launch even if the key repeats."

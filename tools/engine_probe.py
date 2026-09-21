@@ -1596,6 +1596,277 @@ def unit_anchor_body() -> str:
     return "\n".join(lines) + "\n"
 
 
+# --- unitindex: does a unit type above index 154 register and draw? ----------------------------
+#
+# `docs/new-units.md` establishes offline that the engine has NO unit-type cap: the table is
+# heap-allocated at a size the SCRIPT chooses (allocator 0x00524100 bounds only `count >= 1`; the
+# append helper 0x005241e0 bounds only `used < capacity`), and nothing downstream narrows the index
+# -- the savegame stores it as the first u32 of LS_SPR_ class 0's 76-byte slot, and a byte sweep
+# found 57 bound-checks against the live `used` count with zero narrowing instructions nearby.
+#
+# What has never happened is a unit type EXISTING AT RUNTIME above index 154. That is this probe.
+#
+# ---------------------------------------------------------------------------------------------
+# WHY THIS RUN IS MUCH SMALLER THAN IT LOOKS
+#
+# The obvious design -- "add a 156th unit" -- sounds like it needs a new `.gs` member, two new
+# `.imp` members, their two `.H` companions, a `pic.mpq` portrait and an edit to `gs\unittype.gs`.
+# That touches three archives and confounds at least five independent questions into one run.
+#
+# None of it is needed. **Observed in the corpus:** `gs\unittype.gs` declares `200 maxunittypes`
+# and uses 155 slots, so slots 155-199 are ALREADY FREE AT RUNTIME in the shipped game.
+# `maxunittypes` needs raising only to pass 199, which is a different and later question. And a
+# unit type does not need its own art -- `impfile_proc` merely NAMES one -- so the subject reuses
+# `pyele`'s. This probe therefore patches `gs\hotkey.gs` only, like every other probe here.
+#
+# ---------------------------------------------------------------------------------------------
+# THE DICTIONARY SCOPING, WHICH IS THE PART THAT WOULD SILENTLY GO WRONG
+#
+# **Observed in the corpus.** `gs\unittype.gs` runs every `units/*.gs` inside
+# `soundfxdict begin unittypedict begin ... end end`, so a unit's `/pyele exch def` lands in
+# **unittypedict** -- and so does all of `units\easyunit.gs`'s machinery. `begin_unit_definition`,
+# `end_unit_definition`, `unitdict` and `unitdictxref` are therefore reachable only from inside
+# `unittypedict begin ... end`, which is why the subject definition below is wrapped in it. Defining
+# the unit outside that scope would either fail to resolve the machinery or define the symbol
+# somewhere `add_unit_to_location` cannot see, since its body does `unittypedict this_type get`.
+#
+# The dict stack balances, and that was checked rather than assumed:
+#
+#     /begin_unit_definition{missiledict begin unitdict begin default_unit}
+#     /end_unit_definition{... end end pop dup userdict begin /lastunittype exch def end}
+#
+# `begin` opens two, `end end` closes two, and the tail leaves exactly ONE handle on the stack --
+# which is why every shipped unit reads `end_unit_definition /<name> exch def`. It also parks the
+# same handle in `userdict /lastunittype`, which this probe logs as an independent cross-check.
+#
+# ---------------------------------------------------------------------------------------------
+# THE ONE PREMISE, STATED SO A FAILURE CANNOT BE MISREAD
+#
+# `begin_unit_definition` and `end_unit_definition` are SCRIPT definitions, declared in a member
+# that boot runs. That they still work at hotkey time is **Inferred, not observed**. If rung 2
+# fails, that is a finding about WHEN unit types can be declared -- it says nothing about index 155.
+# The control rung exists so the two can never be confused: it places a SHIPPED unit through the
+# same `add_unit_to_location` path, on its own cell, against the same plate.
+#
+# ---------------------------------------------------------------------------------------------
+# WHAT THIS PROBE CANNOT CLEAN UP
+#
+# A unit TYPE, once appended, cannot be removed -- there is no `deleteunittype`, and the append
+# helper only ever increments `used`. The type therefore persists for the rest of the session. That
+# is why the run sheet says DO NOT SAVE: the type exists in no archive, so a save referencing it
+# would carry an index nothing on disk defines. The placed ARMIES are cleaned up normally, by exact
+# id, gated on the id being valid AND its reported location matching the cell.
+
+# Shipped, and used for the control rung: `units\pyele.gs`, an ordinary land unit with no special
+# flags. The control's whole job is to prove `add_unit_to_location` works this session, on this
+# map, through a type that already existed at boot.
+UNIT_INDEX_CONTROL_SYMBOL = "pyele"
+
+# The subject's unittypedict key. `z`-prefixed like every other symbol this probe mints, so it
+# cannot collide with a shipped name.
+UNIT_INDEX_SUBJECT_SYMBOL = "zutest"
+
+# The subject's field set, copied from `units\pyele.gs` and NOT invented. `unitdict`'s key order IS
+# the engine's field enum (`end_unit_definition` writes each key at the index `unitdictxref` gives
+# it), so a field this project made up would be written into whatever slot it happened to land in.
+# Only `/name`, `/code` and `/impfile_proc` differ from the shipped Elephant:
+#
+#   * `/code WMT` -- **Observed in the corpus:** of the 37 values in `gs\champion.gs`'s closed
+#     `unit_code_strings` enum, `WMT` is the ONE used by no shipped unit in any faith. Choosing it
+#     keeps this run clear of the duplicate-(faith, code) question, which is separately open.
+#   * `/impfile_proc{"pyele"...}` -- reuses shipped art, so no archive gains a member.
+UNIT_INDEX_SUBJECT_FIELDS = (
+    '/name"ZUnitIndexProbe"def',
+    "/code WMT def",
+    "/flags UNITTYPELAND CAN_ATTACK or def",
+    "/race LESSER_STONE_GIANT def",
+    "/faith EARTH def",
+    "/attack 10 def",
+    "/armor 4 def",
+    "/strength 12 def",
+    "/dexterity 6 def",
+    "/wisdom 3 def",
+    "/hit_points 20 def",
+    "/mps 7 def",
+    "/sight_radius 3 def",
+    "/stealth_noise_factor 12 def",
+    "/attack_recovery_ticks 18 def",
+    "/get_hit_recovery_ticks 8 def",
+    "/frames_per_grid 7 def",
+    "/health_bar_x -16 def",
+    "/health_bar_y -80 def",
+    "/morale_bar_x -12 def",
+    "/morale_bar_y -80 def",
+    '/impfile_proc{"pyele"unittype_imp_filename}def',
+    "/level_procedure{pop pop 3}bind def",
+)
+
+# Two cells, seeded as OFFSETS from the army's own location and never from the occupied cell
+# itself -- the same rule every sibling probe follows, for the same reason: if
+# `findemptylocation` can return its own seed, seeding from the army's cell would hand a rung the
+# player's own starting army instead of the one it placed.
+UNIT_INDEX_SEED_OFFSETS: list[tuple[int, int]] = [(2, 0), (-2, 0)]
+
+# The count this project measured in `gs\unittype.gs`. It is logged and compared IN THE PROBE so a
+# baseline that has moved shows up as a log line rather than as a silently wrong conclusion.
+UNIT_INDEX_EXPECTED_BASELINE = 155
+
+
+def unit_index_body() -> str:
+    lines: list[str] = []
+    emit = lines.append
+
+    emit("; ---- BEGIN UNIT INDEX LADDER (generated by tools/engine_probe.py) ----")
+    emit(f'ASCII_VAL"{HOTKEY}"0 get')
+    emit("{")
+    emit("userdict /zdone known not")
+    emit("\t{")
+    emit("\tuserdict begin")
+    emit("\t/zdone true def")
+    emit('\t"zprobe.log""abw"file /zlog exch def')
+    emit("\trendermap refreshdirty")
+    emit('\t"zi0.bmp"screencapture')
+
+    # Rung 0. The baseline, logged before anything is defined. Every later count is read against
+    # this, so if it is not what the corpus says, nothing below is measured against the right
+    # number -- and the log says so rather than the analysis assuming it.
+    emit("\t/zbase numunittypes def")
+    emit(
+        "\t"
+        + _log(
+            f'"rung0 numunittypes "zbase" expected "{UNIT_INDEX_EXPECTED_BASELINE}'
+        )
+    )
+
+    emit("\t/zaloc -1 def /zseen false def")
+    emit(
+        "\tcurrentplayer{zseen not{anythinglocation /zaloc exch def /zseen true def}"
+        "{pop}ifelse}enumplayerarmies"
+    )
+    emit("\tzseen")
+    emit("\t\t{")
+    emit("\t\tzaloc xy_to_x_y /zay0 exch def /zax0 exch def")
+    emit("\t\t/zowner currentplayer def")
+    emit("\t\t" + _log('"army loc "zaloc" cell "zax0" "zay0" owner "zowner'))
+
+    capture = 1
+
+    for index, (seed_dx, seed_dy) in enumerate(UNIT_INDEX_SEED_OFFSETS):
+        cell = f"zcell{index}"
+        cx, cy = f"zcx{index}", f"zcy{index}"
+        army, aloc = f"zarmy{index}", f"zaloc{index}"
+        is_subject = index == 1
+        rung = "subject" if is_subject else "control"
+
+        emit(
+            f"\t\tzax0 {seed_dx} add zay0 {seed_dy} add x_y_to_xy UNITTYPELAND findemptylocation "
+            f"/{cell} exch def"
+        )
+        emit(f"\t\t{cell} -1 ne")
+        emit("\t\t\t{")
+        emit(f"\t\t\t{cell} xy_to_x_y /{cy} exch def /{cx} exch def")
+        emit("\t\t\t" + _log(f'"{rung} cell target "{cell}" "{cx}" "{cy}'))
+
+        if is_subject:
+            # Rung 2. Define the new type, INSIDE `unittypedict begin ... end` so the machinery
+            # resolves and the symbol lands where `add_unit_to_location` will look for it.
+            emit("\t\t\tunittypedict begin")
+            emit("\t\t\tbegin_unit_definition")
+            for field in UNIT_INDEX_SUBJECT_FIELDS:
+                emit(f"\t\t\t{field}")
+            emit(
+                f"\t\t\tend_unit_definition /{UNIT_INDEX_SUBJECT_SYMBOL} exch def"
+            )
+            emit("\t\t\tend")
+            emit("\t\t\t/zafter numunittypes def")
+            emit(
+                "\t\t\t"
+                + _log('"rung2 defined; numunittypes "zbase" -> "zafter" index "zbase')
+            )
+            # `end_unit_definition` parks the same handle in `userdict /lastunittype`. The handle
+            # is the table INDEX -- `end_unit_definition` feeds it straight to `setunittypedata`,
+            # whose disassembled guard (0x00524959) bounds it against the live `used` count -- so
+            # this line should read back exactly the pre-definition count, and it is the sharpest
+            # single line in the log.
+            emit(
+                "\t\t\t"
+                + _log('"rung2 lastunittype "lastunittype" expected "zbase')
+            )
+            # If the count did not move, the append silently failed and the subject rung below
+            # would be placing a type that does not exist. Say so and skip rather than capture a
+            # picture of nothing and call it a negative result.
+            emit("\t\t\tzafter zbase gt")
+            emit("\t\t\t\t{")
+
+        indent = "\t\t\t\t" if is_subject else "\t\t\t"
+        symbol = (
+            UNIT_INDEX_SUBJECT_SYMBOL if is_subject else UNIT_INDEX_CONTROL_SYMBOL
+        )
+
+        # The placement itself, copied verbatim from the shipped call site at gs\PLAYER5.gs:430
+        # with only the unit key, the location and the owner replaced --
+        # `TYPE STR ARTLIST NAME LOC OWNER add_unit_to_location`.
+        emit(
+            f"{indent}unittypedict begin /{symbol} end 0{{}}0 {cell} zowner "
+            "add_unit_to_location"
+        )
+        emit(f"{indent}{cx} {cy} armyat /{army} exch def")
+        emit(f"{indent}{army} ARMY_LOCATION getarmydata /{aloc} exch def")
+        emit(
+            indent
+            + _log(
+                f'"{rung} army "{army}" at "{aloc}" expected "{cell}'
+            )
+        )
+        emit(f"{indent}rendermap refreshdirty")
+        emit(f'{indent}"zi{capture}.bmp"screencapture')
+        capture += 1
+
+        emit(f"{indent}{army} -1 ne {aloc} {cell} eq and")
+        emit(indent + "\t{")
+        emit(f"{indent}\t{army} deletearmynow")
+        emit(indent + "\t" + _log(f'"{rung} cleanup done"'))
+        emit(indent + "\t}")
+        emit(
+            indent
+            + "\t{"
+            + _log(
+                f'"{rung} cleanup REFUSED -- army "{army}" loc "{aloc}'
+                f'" expected "{cell}'
+            )
+            + "}ifelse"
+        )
+        emit(f"{indent}rendermap refreshdirty")
+        emit(f'{indent}"zi{capture}.bmp"screencapture')
+        capture += 1
+
+        if is_subject:
+            emit("\t\t\t\t}")
+            emit(
+                "\t\t\t\t{"
+                + _log(
+                    '"rung2 REFUSED -- numunittypes did not move; nothing placed"'
+                )
+                + "}ifelse"
+            )
+
+        emit("\t\t\t}")
+        emit(
+            "\t\t\t{"
+            + _log(f'"{rung} SKIPPED -- findemptylocation returned -1"')
+            + "}ifelse"
+        )
+
+    emit("\t\t}")
+    emit("\t\t{" + _log('"no army found; nothing placed"') + "}ifelse")
+    emit("\tzlog closefile")
+    emit("\tend")
+    emit("\t}if")
+    emit("}addhotkey")
+    emit("; ---- END UNIT INDEX LADDER ----")
+    return "\n".join(lines) + "\n"
+
+
 PROBES = {
     "ladder": lambda: probe_body(),
     "elevation": elevation_body,
@@ -1605,6 +1876,7 @@ PROBES = {
     "mapload": mapload_body,
     "terrainrings": terrain_rings_body,
     "unitanchor": unit_anchor_body,
+    "unitindex": unit_index_body,
 }
 
 
