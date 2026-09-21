@@ -6798,3 +6798,120 @@ panel does not. Both were observations I had the screenshots to make and did not
   `reports/member-names/` holds only *recovered* names, and GS5R3's `pic.mpq` listing contains no
   `p00` members at all — so the absence I first cited was drawn with an instrument that could not
   have seen the thing either way.
+
+## 2026-09-21 — the panel portrait, and the ceiling that is actually 1000 (offline)
+
+Two offline questions, both closed against the corpus and the binary. No game was launched and no
+archive was touched.
+
+### The unit-info panel does use `get_unit_portrait_name`, and yesterday's retraction was wrong
+
+**Observed in the corpus, all three installed profiles.** `gs\Dlg\lescsys.gs`'s `/show_portrait`
+takes an **army id** and hard-codes **unit index 0** of that army in every lookup. It branches three
+ways on unit 0: a champion goes to `champion_portrait_filename`; a non-champion in an army of more
+than one draws a **faith badge cut from the `intspr1_page` sprite sheet**, which is no `pic.mpq`
+member at all; a non-champion in an army of exactly **1** goes to `load_military_unit_portrait`,
+whose body is `lbm_name unit_type f building_dict begin get_unit_portrait_name end strcpy`. (The
+size test in that middle arm reads `currentarmy`, not `army_id` — see below.)
+
+That is the same namer the barracks uses. **There is no second naming scheme**, and the observations
+that produced the retraction all fall out of *which unit* is read: the lord's face because the lord
+is unit 0; the lone Rider because an army of 1 reaches the third branch; the probe unit unchanged
+because it never sat alone in a championless army.
+
+🔴 **The failure was reading one line too few.** The run sheet cited
+`/f unit_type UNITTYPE_FAITH getunittypedata def` at `INFOPAN5.gs:3222` as evidence *against*
+`get_unit_portrait_name`. That line is inside `load_military_unit_portrait`, immediately above the
+call to it. A grep that had asked "what does this procedure do next" rather than "does this
+procedure mention the name" would have caught it.
+
+**The one thing that is profile-scoped is the champion namer.** Vanilla and 3.02 compose
+`portrait/<FF><CODE>P<NN>.LBM` from a per-unit-instance `UNIT_CHAMPION_PORTRAIT` index. GS5R3
+replaced that with `gs\PORTRAITS5.gs`'s `/portrait_file_names` table, whose **unknown-type fallback
+is the faith banner** `portrait/<FAITH>.lbm` rather than a composed name — which is exactly what a
+newly defined champion type would hit. The three-branch structure of `show_portrait` itself is
+identical in all three profiles; that was checked rather than assumed.
+
+🔴 **A "latent defect" I reported on the way, and refuted the same day.** I read GS5R3's champion
+index `dd portrait_file_names ut get length 1 sub max get` as always yielding `len-1`, on the
+grounds that `gs\standard.gs` defines `max` as a true maximum. **Wrong, and wrong against this
+repository's own prior work.** GS5R3 **swaps** `min` and `max` relative to vanilla: vanilla has
+`/min{2 copy gt…}` and `/max{2 copy lt…}`, GS5R3 has them the other way round, so GS5R3's `max`
+returns the **smaller** operand — a clamp *to* a maximum, which is what its own comment
+("MAXIMUM LIMITOR") says. `dd (len-1) max` is therefore `min(dd, len-1)`, a correct clamp.
+
+This is the **fourth** time a fresh derivation here has contradicted a rule the repository had
+already established more precisely. [GameScript format](gamescript-format.md) records the
+commented-out/redefined pair in GS5R3's `standard.gs`; the acceptance battery **asserts** the
+reversal, with the note that "a GS5R3 build whose `min` started returning the smaller operand now
+fails"; and the swap was measured against raw bytes in this log. The check that would have caught it
+costs one grep and precedes the derivation, not follows it.
+
+**The reusable fact is worth more than the non-defect:** every `min`/`max` reading anywhere in this
+corpus is **profile-scoped**, and two identical-looking expressions in GS5R3 and vanilla compute
+opposite things.
+
+⚠️ **A second subject not established.** `show_portrait`'s *type* lookups read `army_id`
+(`getcurrdisplayingarmy` at the call site), but its *size* test reads
+`currentarmy ARMY_NUM_UNITS getarmydata`. Whether those are the same army at this call is
+**Unknown**, and it is the difference between the attended test below reading a clean negative and
+reading an ambiguous one.
+
+**The next attended test is now one in-game action** with no archive change: the replaced
+`PORTRAIT\LIINFP00.LBM` is already in `pic.mpq`, so splitting a single Life Infantry into its own
+championless army and selecting it must draw the replacement bottom-left. The lord's army is the
+control that must *not* change.
+
+### `maxunittypes` can be raised, and the ceiling that matters is 1000, not 200
+
+**Observed in a local binary, 2026-09-21.** The existing write-up was right that nothing *bounds*
+the count — but there is a function that **assumes** one. `0x0052BE20` opens a fixed 1000-dword
+stack histogram and indexes it with the raw unit-type value, unchecked:
+
+```
+52be20  sub   esp,0xfa8            ; 4008, + 4 pushes = 4024-byte frame
+52be29  mov   ecx,[0x5cd2f0]       ; numunittypes, the LIVE count
+52be3d  lea   edi,[esp+0x18]
+52be41  rep   stosl                ; fill numunittypes dwords with -1
+52be93  mov   ecx,[esi+eax*4+0xc4] ; a unit's TYPE out of the army slot
+52be9a  lea   eax,[esp+ecx*4+0x18] ; no bound on ecx
+52be9e  mov   ecx,[esp+ecx*4+0x18]
+52bea2  inc   ecx
+52bea3  mov   [eax],ecx            ; ++histogram[type]
+```
+
+The buffer is `4024 - 0x18 = 4000` bytes — **exactly 1000 entries**, and entry 1000 is the return
+address. Eight call sites. It is **silent**: no compare, no error string, no `-1`, unlike every
+other limit in this document. It is reached by the type **value** rather than the count, so it bites
+on the first unit of a high type that reaches one of those callers; and `numunittypes > 1000`
+smashes the frame on entry, because the `rep stosl` is itself sized by the live count. I
+disassembled this myself rather than taking the delegated read — it is the load-bearing claim of the
+whole audit, and the frame arithmetic is what makes it a number rather than a worry.
+
+**What the function is *for* is Unknown.** Its behaviour decodes cleanly — given up to 30 army
+references (stride 12, the other 8 bytes of each element unread), find the most common unit type — but it carries no RTTI and no string, so
+how readily a high type reaches it is not established.
+
+**The second ceiling is the dict, and it fails loudly.** `/unittypedict 200 dict` is independent,
+not decoration: a GameScript dict is a fixed array of 16-byte slots with no growth path, and `def`
+(`0x004ca180`) raises error `0x0D`, the string `"Dictionary Full"` at `0x0055e588` — confirmed in
+the image. So raising `maxunittypes` alone gives "Dictionary Full" on the 201st definition, raising
+the dict alone gives `-1` and "unittype failed", and the failure names which number you forgot.
+
+**Nothing else must change.** The per-type sounds (`+0x290`), terrain delays (`+0x168`), terrain
+costs (`+0x1E8`) and per-faith counts (`+0x380`) all live *inside* the 1000-byte heap record —
+`0x380 + 16*4 = 0x3C0 < 0x3E8` — not in parallel static arrays, which was the failure mode the audit
+existed to look for. Every script consumer is already runtime-sized.
+
+⚠️ Two adjacent findings. `gs/dlg/menu_cheat.gs`'s `0 1 total_unittypes` is correct today only by
+coincidence — `total_unittypes` counts `run` statements (159 in GS5R3), not definitions (160), and
+the inclusive `for` nets out only because `gate.gs` contributes +2 and `easyunit.gs` -1. And new
+`run` lines must be **appended, never inserted**: slots are sequential and the savegame stores the
+numeric index, so an insert silently reinterprets every existing save.
+
+🔴 **What the sweep could not see.** It finds code that computes a unit-type record address, which
+needs `[0x5cd2f4]`, and code reading a type out of an army slot at `+0xC4`. It cannot see a static
+array indexed by a type that arrives as a return value, a deep parameter, or another structure's
+field. `0x0052BE20` proves such code exists here *and* that the instrument caught it only by luck —
+it was found because it also loaded the count for its `rep stosl`. A sibling sizing its buffer with
+a literal would be invisible to both sweeps.
