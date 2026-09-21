@@ -439,10 +439,14 @@ approximated.
 Three questions were asked directly and answered against the binary and the corpus rather than by
 estimate. Each has its own document; the headlines:
 
-- **[Creating new units](new-units.md) — yes, and the cap everyone assumes does not exist.** The
-  unit-type table is heap-allocated at a size the *script* picks (`200 maxunittypes` in
-  `gs\unittype.gs`, 155 slots used); the engine's only bounds are `count >= 1` and
-  `used < capacity`. The real constraint is that this project has an IMP frame **repainter**, not
+- **[Creating new units](new-units.md) — yes, and the cap everyone assumes does not exist, though
+  a different one, at 1000, does.** The unit-type table is heap-allocated at a size the *script*
+  picks (`200 maxunittypes` in `gs\unittype.gs`; **155 slots used in vanilla and 3.02, 160 in
+  GS5R3** — name the profile); the allocator's only bounds are `count >= 1` and `used < capacity`,
+  and a raise needs `/unittypedict N dict` moved in lockstep or the 201st definition raises
+  "Dictionary Full". 🔴 **The real ceiling is 1000**, imposed by a fixed 1000-dword stack histogram
+  at `0x0052BE20` that indexes on the raw type value with no bounds check, and unlike every other
+  limit here it fails **silently**. The real constraint is that this project has an IMP frame **repainter**, not
   an IMP **author**, so a new unit's art must be a repainted clone of a donor. Also established:
   `pic.mpq` **does** accept a brand-new member name at the repack layer, which had been recorded as
   the weakest link in the chain.

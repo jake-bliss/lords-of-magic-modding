@@ -1,7 +1,7 @@
 # Creating new units
 
-**Verdict: yes, and the cap everyone assumes does not exist.** The engine's unit-type table is
-heap-allocated at a size the *script* chooses. The real constraint is on this project's side — we
+**Verdict: yes, and the cap everyone assumes does not exist — though a different one, at 1000,
+does.** The engine's unit-type table is heap-allocated at a size the *script* chooses. The real constraint is on this project's side — we
 have an IMP frame *repainter*, not an IMP *author* — so a new unit's sprite must be a repainted
 clone of an existing unit's art.
 
@@ -231,6 +231,24 @@ Portraits are authorable: `pbm.rs::encode_with_indices` re-encodes a parsed PBM 
 palette indices at the same dimensions and palette, and a re-encoded member rendered in the engine
 at a length that *shrank* (**Observed in gameplay, 2026-09-20**).
 
+**One member is enough only for a non-champion unit.** *Observed in the corpus, all three
+profiles.* Which namer fires is decided by `UNIT_CHAMPION_TYPE` on the unit being displayed —
+and the bottom-left slot has a third case that uses no namer at all:
+
+- **Non-champion** -> `get_unit_portrait_name` -> the single `portrait/<FF><CODE>P00.LBM` above.
+- **Champion** (lord, wizard, warrior, thief, heir) -> `gs\champion.gs`'s
+  `champion_portrait_filename`, which wants a **numbered series**: vanilla and 3.02 compose
+  `portrait/<FF><CODE>P<NN>.LBM` from a per-unit-instance `UNIT_CHAMPION_PORTRAIT` index, while
+  GS5R3 looks the type up in `gs\PORTRAITS5.gs`'s `/portrait_file_names` table. A new type absent
+  from that table falls back to the faith banner `portrait/<FAITH>.lbm` — it does **not** fall back
+  to a composed name.
+
+The bottom-left HUD slot's third case draws no member at all: when unit 0 is not a champion and
+**`currentarmy`**'s `ARMY_NUM_UNITS > 1`, it draws a faith badge cut from the `intspr1_page` sprite
+sheet. (That the size test reads `currentarmy` while the type lookups read the *displayed* army is
+noted as **Unknown** in the run sheet — nothing establishes they are the same army.) Full trail and the code in
+[the portrait run sheet](portrait-member-run-sheet.md#-and-one-retraction-that-was-itself-wrong).
+
 ### 5. Sounds — optional
 
 **Observed in the corpus.** `gs\soundfx.gs` declares symbols
@@ -304,8 +322,8 @@ name** by a script (2026-09-17, `imp\zzpal.imp`).
 | 6 | What does `NO_DEFEND_ANIM` actually mean? | **open** — of 27 units carrying it, 26 *have* a DEFEND cycle |
 | 7 | ~~Does a build with `maxauratypes` above 70 boot?~~ | ✅ **answered 2026-09-21 — YES.** A `gs.mpq` with `100 maxauratypes` booted and registered two aura types at **70 and 71**. See [the run sheet](unit-cap-run-sheet.md). Durability across save/load is still open. |
 | 8 | Does a unit type at index **199** register and place? | ✅ **answered 2026-09-21 — YES.** The table filled to exactly 200 and an army was placed at the subject cell, `armyat` returning the expected location. ⚠️ `armyat` proves *an army occupies that cell*; it does **not** read back that army's type index, so "the army there is the type at 199" is **Derived** from the two readings, not directly observed. One definition past capacity returned **-1**, left the count at 200, and did not crash the session. |
-| 8b | Does raising `maxunittypes` **above** 200 work? | **open** — the 2026-09-21 run filled the shipped 200 and confirmed the overflow is refused; it never raised the declaration. The allocator says it should work ([above](#raising-a-full-cap-nothing-in-the-engine-stops-you)); no run has tried. |
-| 9 | ~~Does the engine's portrait lookup match `get_unit_portrait_name`?~~ | ✅ **answered 2026-09-21 — YES, in the recruit dialog.** `PORTRAIT\LIINFP00.LBM` was replaced and the barracks drew the replacement for Elven Staffmen (LIFE + INF). So the engine reads a modified `pic.mpq`, and the `(faith, code)` rule holds in the engine. The **army roster figure** is `(faith, code)`-keyed too. 🔴 The **unit-info panel** portrait is **not** from this lookup — a unit whose member provably draws in the barracks showed an unchanged panel portrait. See [the run sheet](portrait-member-run-sheet.md). |
+| 8b | Does raising `maxunittypes` **above** 200 work? | **open to a run, closed on the static audit 2026-09-21.** Nothing bounds it: the allocator checks only `count >= 1`, the stored index is a dword everywhere reachable, and the per-type sounds / terrain costs / faith counts live inside the 1000-byte heap record rather than in parallel static arrays. Two numbers must move together — `maxunittypes` **and** `/unittypedict N dict`, which fail differently if you forget one. 🔴 **The real ceiling is 1000**, imposed by a fixed 1000-dword stack histogram at `0x0052BE20` that indexes on the raw type value with no bounds check, and it fails **silently**. See [the ceiling audit](#-the-real-ceiling-is-1000-unit-types--and-it-is-silent). No run has tried. |
+| 9 | ~~Does the engine's portrait lookup match `get_unit_portrait_name`?~~ | ✅ **answered 2026-09-21 — YES, in the recruit dialog.** `PORTRAIT\LIINFP00.LBM` was replaced and the barracks drew the replacement for Elven Staffmen (LIFE + INF). So the engine reads a modified `pic.mpq`, and the `(faith, code)` rule holds in the engine. The **army roster figure** is `(faith, code)`-keyed too. The **unit-info panel** uses this lookup too — the claim that it does not was **withdrawn the same day**. `gs\Dlg\lescsys.gs`'s `/show_portrait` reads **unit index 0** of the displayed army and branches three ways: champion -> `champion_portrait_filename`; non-champion with `currentarmy`'s `ARMY_NUM_UNITS > 1` -> a faith badge cut from `intspr1_page`, which is no `pic.mpq` member at all; non-champion in an army of **1** -> `get_unit_portrait_name`. The probe unit never sat alone in a championless army, so the branch that would have loaded its member never ran (*Observed in the corpus*). See [the run sheet](portrait-member-run-sheet.md#-and-one-retraction-that-was-itself-wrong). |
 
 ### Nothing downstream caps the unit-type count
 
@@ -359,6 +377,109 @@ touches the header would also be invisible.
 the run list, and `File00000001.xxx` / `File00000006.xxx` are alternate boot scripts with
 **different** `maxpalettes`/`maxdialogs` literals. Which boot script the shipping executable
 actually runs was not traced, so the active cap set could differ from the retail path assumed here.
+
+### 🔴 The real ceiling is 1000 unit types — and it is silent
+
+**Observed in a local binary, 2026-09-21.** The allocator read above ([there is no unit-type
+cap](#there-is-no-unit-type-cap)) is correct that nothing *bounds* the count. It is not the whole story: there is a function that **assumes** one. `0x0052BE20` opens a
+**fixed 1000-dword stack histogram indexed by the raw unit-type value**, with no bounds check at
+all:
+
+```
+52be20  81 ec a8 0f..   sub   esp,0xfa8          ; 4008, + 4 pushes = 4024-byte frame
+52be29  8b 0d f0 d2..   mov   ecx,[0x5cd2f0]     ; numunittypes  (the LIVE count)
+52be3d  8d 7c 24 18     lea   edi,[esp+0x18]     ; buffer base
+52be41  f3 ab           rep   stosl              ; fill numunittypes dwords with -1
+...
+52be93  8b 8c 86 c4..   mov   ecx,[esi+eax*4+0xc4]   ; a unit's TYPE, straight out of the army slot
+52be9a  8d 44 8c 18     lea   eax,[esp+ecx*4+0x18]   ; NO bound on ecx
+52bea3  89 08           mov   [eax],ecx              ; ++histogram[type]
+```
+
+**The buffer is exactly 1000 dwords.** From the post-push `esp` the frame runs 4,024 bytes to the
+return address; the buffer starts at `+0x18`, leaving **4,000 bytes = 1,000 entries**. Entry 1000
+*is* the return address. The loop walks 30 army references at `this+0x18`, stride 12 (`cmp ebx,0x1e`) — only the **first
+dword** of each element is read, and the unit index comes from `[esi+0x50]` on the resolved object,
+so the other 8 bytes are untouched. There are **8 call sites**: `0x4fc122`, `0x4fc20f`, `0x52b90a`, `0x52c4db`,
+`0x52c7a3`, `0x52e2e7`, `0x52e455`, `0x52e4d5`.
+
+Three properties make this the number that matters:
+
+- **It is silent.** No `cmp`, no error string, no `-1`. Past 1000 it writes through the return
+  address and the process does whatever the smashed frame does next. Every other limit in this
+  document fails *loudly*.
+- **It is reached by the type VALUE, not by the count.** It bites on the first unit of a high-numbered
+  type that reaches one of those eight callers — not at load, and not deterministically.
+- **`numunittypes > 1000` corrupts the frame on entry**, before any unit is examined, because the
+  `rep stosl` at `0x52be41` is itself sized by the live count.
+
+⚠️ **What this function is for is Unknown.** Its behaviour decodes cleanly — *given up to 30 army
+references, find the most common unit type* — but it carries no RTTI and no string,
+so which feature it serves, and therefore how readily a high type reaches it, is not established.
+
+**Practical reading: treat 1000 as a hard wall and stay far below it.** 300 or 400 is safe on this
+audit. `0x0052BE20` is one instruction away from being safe for more, but patching `lomse.exe` is a
+different project and outside this pipeline.
+
+### The second ceiling is the dict, and it fails loudly
+
+**Observed in the corpus and in a local binary, 2026-09-21.** `/unittypedict 200 dict` on line 1 of
+`gs\unittype.gs` is an **independent** hard ceiling, not decoration. A GameScript dict is a fixed
+array of 16-byte slots; `def` (`0x004ca180`) linearly scans `[dict+0]` for `[dict+4]` slots and,
+finding none free, raises error `0x0D` — the string **`"Dictionary Full"` at `0x0055e588`**, which I
+confirmed in the image. There is no growth path.
+
+So the two numbers fail differently, and the failure names which one you forgot:
+
+| edit | what happens on the 201st definition |
+| --- | --- |
+| raise `maxunittypes` only | `/name exch def` raises **"Dictionary Full"** |
+| raise `/unittypedict N dict` only | `end_unit_definition` gets **-1** from `0x005241e0`, prints "unittype failed" |
+| raise both | it registers |
+
+### What a raise actually requires
+
+**Observed in the corpus, GS5R3.** Two numbers, the **first two statements** of `gs\unittype.gs`
+(pretty-printed and CRLF-delimited in GS5R3: line 1 and line 3), moved together:
+
+```
+/unittypedict 200 dict def   ->   /unittypedict <N> dict def
+200 maxunittypes             ->   <N> maxunittypes
+```
+
+**Nothing else in the corpus must change.** There is no second parallel table sized to 200 — the
+per-type sounds, terrain costs, terrain delays and per-faith counts all live *inside* the 1000-byte
+heap record (`+0x290`, `+0x1E8`, `+0x168`, `+0x380`; `0x380 + 16*4 = 0x3C0 < 0x3E8`), not in static
+arrays, and every script consumer is already runtime-sized off `numunittypes` / `countunittypes` /
+`getunittypecount`.
+
+Two things worth fixing while you are in there, neither strictly required:
+
+- ⚠️ **`gs/dlg/menu_cheat.gs`'s `0 1 total_unittypes` is right today by coincidence.**
+  `total_unittypes` counts `"units/….gs"run` **statements** (159 in GS5R3), not definitions (160),
+  and the inclusive `for` gives 160 iterations only because `gate.gs` contributes +2 and
+  `easyunit.gs` -1, netting `files = defs - 1`. A new file holding two definitions breaks it.
+  `0 1 numunittypes 1 sub` is correct by construction. *Observed in the corpus, GS5R3.*
+- 🔴 **Append new `run` lines after every existing one; never insert.** Slots are assigned
+  sequentially and **the savegame stores the numeric index** (the unit type is the first dword of
+  the 76-byte unit record). Inserting renumbers every later unit and silently reinterprets every
+  existing save and scenario. *Derived.*
+
+### What the ceiling audit could not see
+
+Stated because a negative is only as strong as its instrument. The `.text` sweep finds code that
+*computes a unit-type record address*, since that needs `[0x5cd2f4]`, and code that reads a type out
+of an army slot at `+0xC4`. It **cannot** see a static array indexed by a unit type that arrives
+another way — as a return value, through a parameter several frames deep, or from some other
+structure field. `0x0052BE20` is the proof that such code exists here *and* that the instrument
+catches it only by luck: it was found because it also loaded the count for its `rep stosl`. A
+sibling that sized its buffer with a literal would be invisible to both sweeps.
+
+Also not established: whether `/run undef` reclaims its `unittypedict` slot (a +/-1 on the free-slot
+count); the other 72 bytes of the 76-byte unit record, so a second narrower copy of the type inside
+that blob is not ruled out; and the multiplayer wire widths — the 45-message list contains no
+unit-type-bearing message *by name*, but that is an argument from names, not from bytes.
+
 
 ## Raising a full cap: nothing in the engine stops you
 
