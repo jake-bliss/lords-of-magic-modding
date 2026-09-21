@@ -77,26 +77,57 @@ rather than the **outcome**. A human had to walk the map and say "nothing there"
   leaves nothing on the stack and reports nothing**, so logging "placed" after calling it records
   an intention, not an outcome.
 
-## A by-product, filed under the question it also settles
+## A by-product: a unit has at least three art channels
 
-**A unit type has at least three art channels, and `gs.mpq` supplies only one.**
+**Observed in gameplay, 2026-09-21.** The placed unit drew as an **Elephant on the overworld** --
+correct, from its `/impfile_proc{"pyele"unittype_imp_filename}` -- while its **detail-panel
+portrait** and its **roster figure** were neither an elephant nor each other. The portrait was an
+elf face; the observer reported the roster figure as dwarf infantry.
 
-The placed unit drew as an **Elephant on the overworld** -- correct, from the
-`/impfile_proc{"pyele"unittype_imp_filename}` field -- while its **detail-panel portrait** and its
-**roster figure** were neither an elephant nor each other.
+**Observed in the corpus**, and this is the part I got wrong first: the portrait name comes from
+**`(faith, code)`**, not from the unit's symbol. `gs\Dlg\newbuild.gs`'s `get_unit_portrait_name`
+builds `portrait/<FF><CODE>P00.LBM`, with codes CHI/GOA/COW/ELE taking the literal prefix `Py`
+instead -- all of which [new units](new-units.md#4-portrait--one-member) already recorded. The
+recovered names bear it out: the prefixes group by faith (`ch` 22, `or` 20, `wa` 18, `de` 18,
+`ai` 18, `fi` 15, `ea` 14, `li` 12) with exactly **4** `py` members, matching the four special
+codes.
 
-**Observed in the corpus.** Portraits are members of `pic.mpq` named `portrait\<symbol>p00.lbm`:
-the shipped Elephant has `portrait\pyelep00.lbm`, and this profile holds **87** such members. The
-probe's unit has the symbol `zutest`, for which **no portrait member exists**.
+This probe's unit is `/faith EARTH` + `/code WMT`, so its portrait would be
+**`portrait\EAWMTP00.LBM`**. Probed **by name hash against GS5R3's own `pic.mpq`** -- the archive
+this run actually used -- on 2026-09-21:
 
-**Inferred**, and the gap worth naming: that the engine *looks these up by the unit's symbol* has
-not been traced. The naming pattern and the absence of `zutest` are corpus facts; the lookup is
-not. See [new units](new-units.md#open-questions).
+| name | status | block | size |
+| --- | --- | ---: | ---: |
+| `portrait\EAWMTP00.LBM` | **absent** | — | — |
+| `portrait\PyELEP00.LBM` | present | 663 | 10,610 |
+| `portrait\ORINFP00.LBM` | present | 612 | 10,594 |
+| `portrait\zutestp00.lbm` | **absent** | — | — |
 
-⭐ **One future run closes two open questions at once.** Adding `portrait\zutestp00.lbm` to
-`pic.mpq` and seeing whether the panel face changes would settle both the symbol-lookup inference
-**and** open question 2 -- whether the engine loads a `pic.mpq` with an added member, which is
-currently proven only at the repack layer.
+No portrait exists for this unit, so the engine drew a fallback -- which is what was on screen. The
+two present rows are the `(faith, code)` rule's own predictions (`OR`+`INF`, and `ELE` taking the
+`Py` prefix), so the same probe that confirms the absence confirms the naming.
+
+⚠️ **Why the hash probe and not the recovered listing.** `reports/member-names/` records names this
+project *recovered*; GS5R3's `pic.mpq` has no listfile, and its recovered listing contains **no**
+`p00` members at all. Concluding "absent" from that file would have been a negative drawn with an
+instrument that cannot see the archive the run used. A direct hash lookup can, and does.
+
+🔴 **I first published this as "portraits are named after the unit's symbol."** `portrait\pyelep00.lbm`
+looks symbol-shaped only because `ELE` is one of the four codes that take the `Py` prefix; the
+coincidence is total. The correct rule was **already in the document I was editing, ninety lines
+above my edit, marked Observed in the corpus**. Two reviewers caught it. See
+[[feedback-check-the-code-before-publishing-a-measurement]] -- third instance.
+
+⭐ **What that changes about the next run.** The name is confirmed absent from the live archive, so
+the test is to add **`portrait\EAWMTP00.LBM`** to
+`pic.mpq` -- not `portrait\zutestp00.lbm`, which the engine would never look for. If the panel
+face changes, that settles the `(faith, code)` lookup **in the engine** rather than in the script
+that builds the name, **and** closes open question 2 -- whether the engine loads a `pic.mpq` with
+an added member, currently proven only at the repack layer.
+
+**What this by-product does not establish.** Nothing about the **roster figure**, whose source was
+not traced at all; it is a third channel, named here only because it was visibly different from
+the other two.
 
 ## Running it again
 

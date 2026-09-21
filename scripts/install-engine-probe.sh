@@ -19,6 +19,10 @@ app_dir="${1:-${HOME}/Applications/Lords of Magic GS5R3.app}"
 # script-assigned sprite-type table), or "unitanchor" (does the UNIT draw path apply the same
 # hotspot-record-0 anchor as the terrain-sprite path hotspots.md's own record-0 confirmation used?).
 #
+# "unitindex" (does a unit type above index 154 register and draw?) and "unitcap" (the two
+# declared caps at their boundaries: an aura past 70, a unit type at 199, and one definition past
+# capacity that must be refused cleanly).
+#
 # "mapload" is the only probe with prerequisites: its rungs 1-6 load files that must already be in
 # the game's map/ directory, built by scripts/build-mapload-inputs.sh. Installing it without them
 # would spend the user's attended session loading files that are not there, so this script refuses.
@@ -312,8 +316,12 @@ elif [[ "${probe}" == "unitcap" ]]; then
   echo "    rung1 zaura71 70          <- the 71st aura registered"
   echo "    rung1 zaura72 71"
   echo "    rung3 numunittypes 200 expected 200; last index 199 expected 199"
-  echo "    rung4 placed index 199 at cell <n>"
+  echo "    rung2 control army <n> at <loc>  expected <loc>   <- the CONTROL; both must match"
+  echo "    rung4 subject army <n> at <loc>  expected <loc>   <- the two <loc> MUST be equal"
   echo "    rung5 numunittypes 200 (expected still 200); index -1 (expected -1)"
+  echo
+  echo "A 'NOT PLACED -- armyat returned -1' line on rung2 or rung4 is a real reading, not a"
+  echo "crash: it means the call was made and nothing landed. Report it as-is."
   echo
   echo "rung5 is EXPECTED TO FAIL -- that is its job. It asks one definition past the declared"
   echo "capacity and the prediction is that it is refused cleanly. If the game is still running"

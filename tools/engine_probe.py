@@ -1895,7 +1895,10 @@ def unit_index_body() -> str:
 # The cap this probe writes into `gs\aura.gs` in place of the shipped 70.
 UNIT_CAP_AURA_CAPACITY = 100
 
-# The shipped file's own last line, reused verbatim as the template for the two appended
+# ⚠️ **Transcribed from** the shipped file's last line, not read from it: this is a typed constant
+# and nothing checks it against the archive. `patched_aura_source` refuses a file whose first line
+# is not the expected `70 maxauratypes`, which catches a profile mismatch, but a drift in THIS line
+# would not be caught. Used as the template for the two appended
 # registrations. Copying a line the engine already accepted 70 times at boot is what keeps a failed
 # `addauratype` attributable to the CAP rather than to a call form this project invented: every
 # helper in it (`SPELL_ORIGIN2_HOTSPOT`, `modifier_aura_imp_filename`) resolves in that file's own
@@ -1980,7 +1983,14 @@ def _unit_cap_rungs() -> list[str]:
     emit("\t\t\t{")
     define_subject("Control")
     emit("\t\t\t/zctlidx lastunittype def")
-    emit("\t\t\t" + _log('"rung2 control index "zctlidx" (expected "zbase")"'))
+    emit("\t\t\t/zafterc numunittypes def")
+    emit("\t\t\t" + _log('"rung2 control index "zctlidx" (expected "zbase") count "zafterc'))
+    # The guard `unit_index_body` carries and this probe had dropped: if the count did not move,
+    # the append silently failed and `/zutest` is bound to -1. Placing then calls
+    # `add_unit_to_location` with a type the engine never issued, and the readback would run
+    # `getarmydata` on a handle that does not exist -- mid attended session.
+    emit("\t\t\tzafterc zbase gt")
+    emit("\t\t\t\t{")
     emit("\t\t\tzcellc xy_to_x_y /zccy exch def /zccx exch def")
     emit(
         f"\t\t\tunittypedict begin /{UNIT_INDEX_SUBJECT_SYMBOL} end 0{{}}0 zcellc zowner "
@@ -1991,8 +2001,18 @@ def _unit_cap_rungs() -> list[str]:
     # could not work. A log line that reports an intention rather than an outcome cost a whole
     # attended sitting. This is the proven `unitindex` readback, copied.
     emit("\t\t\tzccx zccy armyat /zcarmy exch def")
-    emit("\t\t\tzcarmy ARMY_LOCATION getarmydata /zcgot exch def")
-    emit("\t\t\t" + _log('"rung2 control army "zcarmy" at "zcgot" expected "zcellc'))
+    # Never ask `getarmydata` about army -1. The negative reading IS the result this rung can
+    # return, and calling an accessor on a nonexistent handle could abort the body before the log
+    # line that reports it -- turning "not placed" back into the silence this rung exists to end.
+    emit("\t\t\tzcarmy -1 ne")
+    emit("\t\t\t\t{")
+    emit("\t\t\t\tzcarmy ARMY_LOCATION getarmydata /zcgot exch def")
+    emit("\t\t\t\t" + _log('"rung2 control army "zcarmy" at "zcgot" expected "zcellc'))
+    emit("\t\t\t\t}")
+    emit("\t\t\t\t{" + _log('"rung2 control NOT PLACED -- armyat returned -1"') + "}ifelse")
+    emit("\t\t\t\t}")
+    emit("\t\t\t\t{" + _log('"rung2 REFUSED -- numunittypes did not move; nothing placed"')
+         + "}ifelse")
     emit("\t\t\trendermap refreshdirty")
     emit('\t\t\t"zc1.bmp"screencapture')
     emit("\t\t\t}")
@@ -2025,17 +2045,30 @@ def _unit_cap_rungs() -> list[str]:
     emit("\t\tzcells -1 ne")
     emit("\t\t\t{")
     emit("\t\t\tzcells xy_to_x_y /zssy exch def /zssx exch def")
+    emit("\t\t\t/zsubidx lastunittype def")
+    emit("\t\t\t" + _log('"rung4 about to place index "zsubidx" (rung3 last was "zlast")"'))
+    emit("\t\t\tzsubidx 0 ge")
+    emit("\t\t\t\t{")
     emit(
         f"\t\t\tunittypedict begin /{UNIT_INDEX_SUBJECT_SYMBOL} end 0{{}}0 zcells zowner "
         "add_unit_to_location"
     )
     emit("\t\t\tzssx zssy armyat /zsarmy exch def")
-    emit("\t\t\tzsarmy ARMY_LOCATION getarmydata /zsgot exch def")
     emit("\t\t\trendermap refreshdirty")
     emit('\t\t\t"zc2.bmp"screencapture')
-    emit("\t\t\t" + _log('"rung4 subject army "zsarmy" at "zsgot" expected "zcells'))
-    emit("\t\t\t" + _log('"rung4 an army of -1, or a location that is not the expected cell, '
-                          'means NOT PLACED"'))
+    emit("\t\t\tzsarmy -1 ne")
+    emit("\t\t\t\t{")
+    emit("\t\t\t\tzsarmy ARMY_LOCATION getarmydata /zsgot exch def")
+    emit("\t\t\t\t" + _log('"rung4 subject army "zsarmy" at "zsgot" expected "zcells'))
+    emit("\t\t\t\t}")
+    emit("\t\t\t\t{" + _log('"rung4 subject NOT PLACED -- armyat returned -1"') + "}ifelse")
+    # ⚠️ What this rung can and cannot say. `armyat` reports that AN ARMY occupies the cell; it
+    # does not read back that army's unit-type index. "The army here is the type at index 199" is
+    # therefore DERIVED from this reading plus rung 3's `lastunittype`, not directly observed.
+    emit("\t\t\t" + _log('"rung4 note armyat proves an army is on the cell, not its type index"'))
+    emit("\t\t\t\t}")
+    emit("\t\t\t\t{" + _log('"rung4 REFUSED -- lastunittype is negative; nothing placed"')
+         + "}ifelse")
     emit("\t\t\t}")
     emit("\t\t\t{" + _log('"rung4 NO EMPTY CELL -- subject not placed"') + "}ifelse")
 
@@ -2087,7 +2120,8 @@ def unit_cap_body() -> str:
     for name in (UNIT_CAP_AURA_SENTINEL,) + UNIT_CAP_AURA_NAMES:
         emit(f"\tuserdict /{name} known")
         emit("\t\t{" + _log(f'"rung1 {name} "{name}') + "}")
-        emit("\t\t{" + _log(f'"rung1 {name} ABSENT -- patched aura.gs did not run"') + "}")
+        emit("\t\t{" + _log(f'"rung1 {name} ABSENT -- patched aura.gs did not run, '
+                             'OR ran and aborted before this line"') + "}")
         emit("\t\tifelse")
     emit(
         "\t"

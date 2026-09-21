@@ -2032,6 +2032,30 @@ class UnitCapProbeTest(unittest.TestCase):
         body = [first, "", "; a comment", '/some_aura NO_HOTSPOT -1{}0 0 0 addauratype def ']
         return terminator.join(body) + terminator
 
+    def test_the_appended_template_matches_a_line_the_shipped_file_actually_has(self) -> None:
+        """The template is transcribed; this checks the transcription against the archive.
+
+        Its whole justification is being a form the engine already accepted 70 times at boot. A
+        typed constant that has drifted from the shipped file would forfeit that, and a failed
+        `addauratype` would stop being attributable to the cap. Skipped where no extracted corpus
+        is present, and the skip says so rather than passing silently.
+        """
+        candidates = sorted(
+            Path("/private/tmp").glob("claude-*/*/*/scratchpad/*/gs/aura.gs")
+        ) + sorted((Path(__file__).resolve().parents[1] / "artifacts").glob("**/gs/aura.gs"))
+        if not candidates:
+            self.skipTest("no extracted gs/aura.gs available to check the template against")
+        source = candidates[0].read_text(encoding="latin-1", newline="")
+        registrations = [
+            line for line in source.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            if "addauratype" in line and not line.lstrip().startswith(";")
+        ]
+        self.assertTrue(registrations, f"no registrations found in {candidates[0]}")
+        self.assertTrue(
+            any(engine_probe.UNIT_CAP_AURA_TEMPLATE in line for line in registrations),
+            "UNIT_CAP_AURA_TEMPLATE matches no line in the shipped aura.gs",
+        )
+
     def test_the_cap_is_raised_and_the_rest_of_the_file_survives(self) -> None:
         patched = engine_probe.patched_aura_source(self._fixture())
         self.assertTrue(patched.startswith(f"{engine_probe.UNIT_CAP_AURA_CAPACITY} maxauratypes"))
@@ -2147,6 +2171,36 @@ class ProbeVocabularyTest(unittest.TestCase):
                 names |= {line.split("\t")[0] for line in handle if line.strip()}
         return names
 
+    def test_the_injected_aura_script_invents_no_operator_either(self) -> None:
+        """🔴 The template is injected into `gs\\aura.gs`, which runs at BOOT, not at keypress.
+
+        `test_no_probe_invents_an_operator` iterates `PROBES`, and the aura template is in none of
+        them -- it is appended by `patched_aura_source`. A reviewer proved the gap by putting
+        `bindauratype` in the template: the whole suite stayed green. That is the `}bindhotkey` bug
+        again, except it would break the game at BOOT, and the probe's own rung-1 branch would
+        report it as "patched aura.gs did not run" -- a typo recorded as an engine finding.
+        """
+        vocabulary = self._vocabulary()
+        fixture = "70 maxauratypes \r\n; a comment\r\n"
+        patched = engine_probe.patched_aura_source(fixture)
+        appended = patched[len(fixture.split("\r\n")[0]) :]
+        tokens = list(gs_syntax.tokens(appended))
+        depth = 0
+        for token in tokens:
+            depth += (token == "{") - (token == "}")
+        self.assertEqual(depth, 0, "the appended aura script does not balance")
+        unknown = sorted({
+            token for token in tokens
+            if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", token)
+            and token not in vocabulary
+            and not token.startswith("z")
+        })
+        self.assertEqual(unknown, [], f"the aura template uses undefined names: {unknown}")
+
+    def test_the_raised_aura_cap_is_above_the_shipped_one(self) -> None:
+        """A cap BELOW the 70 registrations already in the file would break the shipped auras."""
+        self.assertGreater(engine_probe.UNIT_CAP_AURA_CAPACITY, 70)
+
     def test_no_probe_invents_an_operator(self) -> None:
         vocabulary = self._vocabulary()
         self.assertIn("addhotkey", vocabulary, "the vocabulary report itself looks wrong")
@@ -2167,8 +2221,15 @@ class ProbeVocabularyTest(unittest.TestCase):
     def test_every_probe_ends_by_registering_its_hotkey(self) -> None:
         for name in engine_probe.PROBES:
             body = engine_probe.PROBES[name]()
-            statements = [line for line in body.splitlines() if line.strip().endswith("addhotkey")]
-            self.assertEqual(len(statements), 1, f"{name} must register exactly one hotkey")
+            # `endswith("addhotkey")` alone is not enough: `}/addhotkey` also ends that way, and
+            # a SLASH-prefixed name pushes a literal instead of calling the operator. The
+            # vocabulary check cannot see it either, because it skips slash-prefixed tokens.
+            tokens = list(gs_syntax.tokens(body))
+            self.assertEqual(tokens.count("addhotkey"), 1,
+                             f"{name} must CALL addhotkey exactly once")
+            self.assertEqual(tokens.count("/addhotkey"), 0,
+                             f"{name} pushes /addhotkey as a literal instead of calling it")
+            self.assertEqual(tokens[-1], "addhotkey", f"{name} must end by registering its hotkey")
 
 
 class ProbeNameDefinitionTest(unittest.TestCase):
@@ -2194,15 +2255,62 @@ class ProbeNameDefinitionTest(unittest.TestCase):
         for name in engine_probe.PROBES:
             defined = set(self.ENGINE_WRITTEN)
             undefined = []
-            for token in gs_syntax.tokens(engine_probe.PROBES[name]()):
-                if token.startswith("/") and re.fullmatch(r"/z[A-Za-z_0-9]*", token):
+            # A literal name is NOT a definition. `/zowner pop` pushes `/zowner` and throws it
+            # away; only `/name ... def` binds it. Counting the literal as a definition let a
+            # reviewer's mutation through.
+            tokens = list(gs_syntax.tokens(engine_probe.PROBES[name]()))
+            # A name supplied by a script OUTSIDE this body -- the patched `gs\aura.gs` defines
+            # `zauracap` and the aura handles -- is legitimate, but only when the body TESTS for it
+            # with `userdict /<name> known` first. An unguarded read of an external name is the
+            # dangerous case, because a script that did not run turns into a silent failure rather
+            # than a logged one. So `known` admits a name; nothing else outside the body does.
+            for index, token in enumerate(tokens[:-1]):
+                if re.fullmatch(r"/z[A-Za-z_0-9]*", token) and tokens[index + 1] == "known":
                     defined.add(token[1:])
-                elif re.fullmatch(r"z[A-Za-z_0-9]*", token) and token not in defined:
+            pending = None
+            for token in tokens:
+                if re.fullmatch(r"/z[A-Za-z_0-9]*", token):
+                    pending = token[1:]
+                    continue
+                if token == "def" and pending is not None:
+                    defined.add(pending)
+                    pending = None
+                    continue
+                if re.fullmatch(r"z[A-Za-z_0-9]*", token) and token not in defined:
                     undefined.append(token)
             self.assertEqual(
                 sorted(set(undefined)), [],
                 f"{name} reads names it never defines: {sorted(set(undefined))}",
             )
+
+    def test_every_placement_is_guarded_by_a_definition_that_succeeded(self) -> None:
+        """A placement must be inside a branch that checked the definition actually landed.
+
+        🔴 `end_unit_definition` binds the symbol to **-1** when the append is refused, which is
+        precisely what rung 5 provokes on purpose. Placing then calls `add_unit_to_location` with a
+        type the engine never issued, and the readback runs `getarmydata` on a handle that does not
+        exist -- inside an attended session. `unit_index_body` guards with `zafter zbase gt`; an
+        adapted probe dropped it, and a reviewer proved removing it left the suite green.
+        """
+        for name in engine_probe.PROBES:
+            lines = engine_probe.PROBES[name]().splitlines()
+            for index, line in enumerate(lines):
+                if "add_unit_to_location" not in line:
+                    continue
+                preceding = lines[:index]
+                definition = max(
+                    (i for i, earlier in enumerate(preceding)
+                     if "end_unit_definition" in earlier),
+                    default=None,
+                )
+                if definition is None:
+                    continue  # placing a SHIPPED type needs no definition guard
+                between = " ".join(preceding[definition:])
+                self.assertTrue(
+                    re.search(r"\bgt\b|\bge\b", between),
+                    f"{name}: the placement at line {index} is not guarded by a check that the "
+                    f"definition succeeded",
+                )
 
     def test_every_placement_is_read_back(self) -> None:
         """A probe that places a unit must ask the engine whether it is there.
@@ -2216,7 +2324,49 @@ class ProbeNameDefinitionTest(unittest.TestCase):
             placements = body.count("add_unit_to_location")
             if not placements:
                 continue
-            self.assertGreaterEqual(
-                body.count("armyat"), placements,
-                f"{name} places {placements} unit(s) but reads back fewer",
-            )
+            # Counting is not enough: moving each `armyat` ABOVE its placement keeps the counts
+            # equal while reading back nothing. Every placement must be FOLLOWED by a readback.
+            lines = body.splitlines()
+            placement_lines = [i for i, line in enumerate(lines) if "add_unit_to_location" in line]
+            readback_lines = [i for i, line in enumerate(lines) if "armyat" in line]
+            self.assertGreaterEqual(len(readback_lines), placements,
+                                    f"{name} places {placements} unit(s) but reads back fewer")
+            for placed_at in placement_lines:
+                after = [read_at for read_at in readback_lines if read_at > placed_at]
+                self.assertTrue(
+                    after, f"{name}: the placement at line {placed_at} is never read back AFTER it"
+                )
+                # 🔴 Pair them, do not merely count them. A reviewer showed that pointing rung 4's
+                # `armyat` at rung 2's cell keeps every count equal while reporting success for a
+                # placement that never happened -- the same "reports the call, not the outcome"
+                # class this guard exists to end.
+                cell = re.search(r"0\{\}0 (z[A-Za-z_0-9]+) zowner", lines[placed_at])
+                self.assertIsNotNone(cell, f"{name}: cannot find the cell in {lines[placed_at]!r}")
+                suffix = cell.group(1)[len("zcell"):] if cell.group(1).startswith("zcell") else None
+                self.assertIsNotNone(suffix, f"{name}: unexpected cell name {cell.group(1)!r}")
+                readback = lines[after[0]]
+                self.assertIn(
+                    suffix, re.search(r"(z\S+) (z\S+) armyat", readback).group(1),
+                    f"{name}: the readback after line {placed_at} reads a DIFFERENT cell: "
+                    f"{readback.strip()!r} does not match {cell.group(1)!r}",
+                )
+
+
+class ProbeLogHygieneTest(unittest.TestCase):
+    """Two ways a run comes back with nothing to read, neither previously guarded."""
+
+    def test_every_body_that_opens_the_log_closes_it(self) -> None:
+        """An unflushed `"abw"` buffer at process exit is attempt 1's empty log in a new coat."""
+        for name in engine_probe.PROBES:
+            body = engine_probe.PROBES[name]()
+            if '"zprobe.log""abw"file' not in body:
+                continue
+            self.assertIn("zlog closefile", body, f"{name} opens the log and never closes it")
+
+    def test_an_unterminated_last_line_does_not_glue_onto_the_appended_script(self) -> None:
+        """The fixup at the end of `patched_aura_source`, which no fixture previously exercised."""
+        unterminated = "70 maxauratypes \r\n/some_aura NO_HOTSPOT -1{}0 0 0 addauratype def "
+        patched = engine_probe.patched_aura_source(unterminated)
+        first_appended = f"/{engine_probe.UNIT_CAP_AURA_NAMES[0]} "
+        self.assertIn("addauratype def \r\n" + first_appended, patched,
+                      "the first appended registration is glued onto the shipped last line")

@@ -6601,7 +6601,7 @@ taken four days earlier for a different question. Neither needed instrument time
 was someone to ask whether the evidence already in hand reached further than the heading it was
 filed under.
 
-## 2026-09-21 — The `unitcap` run: both caps fell, and two probe bugs cost two sittings
+## 2026-09-21 — The `unitcap` run: the aura cap fell, and two probe bugs cost two sittings
 
 Four predictions made this morning from the disassembly alone, all four confirmed in the engine
 this evening ([run sheet](unit-cap-run-sheet.md)):
@@ -6616,14 +6616,23 @@ rung4 subject army 1106 at 16311  expected 16311
 rung5 numunittypes 200 (expected still 200); index -1 (expected -1)
 ```
 
+⚠️ **Only one cap was actually raised.** `maxauratypes` went 70 -> 100 and registrations past 70
+succeeded. `maxunittypes` was **not** raised: the run filled the shipped 200 and checked the 201st
+definition is refused. So "the declaration can be raised" is measured for auras and remains
+*Observed in a local binary* only for unit types. A reviewer caught the headline claiming both.
+
 **`maxauratypes` is not a cap** is now *Observed in gameplay*, not merely read out of an allocator:
 a `gs.mpq` with one number changed booted and registered two aura types above the shipped 70. The
 same run settled, as a by-product, that **`gs\aura.gs` runs at boot** — a question I could not
-answer offline this morning. **A unit type at index 199 registers and draws**, verified with an
-`armyat` readback rather than assumed. And **one definition past the declared capacity is refused
-cleanly**: index -1, count unchanged at 200, game still running. That last one was the prediction
-from `cmp used,capacity` at `0x005241e4`, and it is the one I would have been least willing to bet
-a human's evening on.
+answer offline this morning. **A unit type at index 199 registers, and an army is placed at the
+subject cell**, `armyat` returning the expected location rather than the call being assumed to have
+worked. ⚠️ `armyat` reports that *an army occupies the cell*; it does not read back that army's type
+index, so "the army there is the type at 199" is **Derived** from that reading plus rung 3's
+`lastunittype`. The probe now logs a line saying exactly that. And **one definition past the
+declared capacity is refused cleanly**: index -1, count unchanged at 200, game still running.
+"Cleanly" reaches exactly that far -- the instrument could not see latent corruption, and it saw
+nothing about saving or about later turns. That last one was the prediction from `cmp used,capacity`
+at `0x005241e4`, and it is the one I would have been least willing to bet a human's evening on.
 
 ### Two probe bugs, two wasted sittings, and what now catches them
 
@@ -6647,8 +6656,9 @@ nothing, so "I called it" and "it worked" are indistinguishable unless the probe
 `unitindex` body does ask, with `armyat`; I dropped that when I adapted it. A human walked the map
 and said "nothing there" — which is the reading the probe should have produced itself.
 
-**Three guards now exist, each mutation-verified against a baseline checked green before and
-after.** Reintroduce any of the three bugs and the suite fails:
+**Eight guards now exist, each mutation-verified against a baseline checked green before and
+after.** The first three came from the two failed sittings; the other five came from the two review
+passes, and every one of them was demonstrated with a mutant that kept the suite green:
 
 - every bare name in every probe body must appear in the corpus vocabulary **union** the natives
   recovered from `lomse.exe`. Neither report alone is the right instrument — the vocabulary report
@@ -6658,6 +6668,29 @@ after.** Reintroduce any of the three bugs and the suite fails:
   and `ASCII_VAL"z"` are strings and not reads;
 - a probe that calls `add_unit_to_location` must read the placement back with `armyat`.
 
+And, from the reviews:
+
+- `addhotkey` must be **called**, not pushed: `}/addhotkey` ends the line the same way, and the
+  vocabulary check skips slash-prefixed tokens, so the original guard admitted it;
+- a `/zname` **literal is not a definition** -- only `/zname … def` binds it, and counting the
+  literal let `/zowner currentplayer` (no `def`) through, which is the second failed sitting exactly;
+- each placement must be read back **at its own cell**, not merely followed by some `armyat`:
+  pointing rung 4's readback at rung 2's cell kept every count equal while reporting success for a
+  placement that never happened;
+- each placement must sit inside a branch that checked the definition **succeeded**, because
+  `end_unit_definition` binds the symbol to -1 when refused -- which rung 5 provokes deliberately --
+  and placing then calls the engine with a type it never issued;
+- the **aura template** must be tokenised and vocabulary-checked too. It is injected into
+  `gs\aura.gs`, which runs at **boot**, and it belongs to no probe body, so the vocabulary guard
+  never saw it. A reviewer put `bindauratype` in it and the whole suite stayed green: the
+  `}bindhotkey` bug again, except breaking the game at boot, and rung 1 would have reported it as
+  "patched aura.gs did not run" -- a typo recorded as an engine finding.
+
+Three smaller ones came with them: the raised cap must exceed the shipped 70 (a cap of 50 would
+break the auras already in the file), the unterminated-last-line fixup needed a fixture that
+exercises it, and any body that opens the log must close it -- an unflushed buffer at exit is
+attempt 1's empty log wearing a different coat.
+
 **The lesson is narrower than "test more".** Every check this project already had passed on both
 broken builds, because they all examined the *shape* of the script — balance, structure,
 byte-identical injection — and none examined whether its **names resolve** or whether its
@@ -6666,13 +6699,38 @@ they are precisely the two that cost a person's evening rather than a test run.
 
 ### A by-product: a unit has at least three art channels
 
-The placed unit drew as an Elephant on the overworld — correct, from its `impfile_proc` — while its
-panel portrait and its roster figure were neither an elephant nor each other. **Observed in the
-corpus:** portraits are `pic.mpq` members named `portrait\<symbol>p00.lbm`, the Elephant has
-`portrait\pyelep00.lbm`, this profile holds 87 of them, and `zutest` has none.
+The placed unit drew as an Elephant on the overworld -- correct, from its `impfile_proc` -- while
+its panel portrait and its roster figure were neither an elephant nor each other
+(*Observed in gameplay*).
 
-So `gs.mpq` supplies a unit's stats and its overworld sprite; `pic.mpq` supplies the rest, and a
-made-up symbol gets fallback art. That the lookup is *by symbol* is **Inferred** — the naming
-pattern and the absence are corpus facts, the lookup is not traced. Adding `portrait\zutestp00.lbm`
-would settle it **and** close the separately-open question of whether the engine loads a `pic.mpq`
-with an added member, which is currently proven only at the repack layer. Filed under both.
+**And then I published the wrong explanation for it.** I wrote that portraits are `pic.mpq` members
+named after the unit's **symbol**, on the strength of `portrait\pyelep00.lbm` sitting next to a unit
+called `pyele` and `zutest` having no member. Both reviewers refuted it against this repository's
+own evidence: `gs\Dlg\newbuild.gs`'s `get_unit_portrait_name` derives the name entirely from
+**`(faith, code)`** -- `portrait/<FF><CODE>P00.LBM`, with CHI/GOA/COW/ELE taking the literal prefix
+`Py`. `pyele` only *looks* symbol-shaped because `ELE` is one of those four. The recovered names
+settle it: prefixes group by faith (`ch` 22, `or` 20, `wa` 18, `de` 18, `ai` 18, `fi` 15, `ea` 14,
+`li` 12) and there are exactly **4** `py` members.
+
+The conclusion about the run survives -- this probe's unit is `EARTH` + `WMT`, so its portrait
+would be `portrait\EAWMTP00.LBM`, which appears **zero** times, so the engine drew a fallback. The
+*mechanism* I published did not, and the follow-up run it implied would have been useless: adding
+`portrait\zutestp00.lbm` tests a name the engine never asks for. The right member is
+`portrait\EAWMTP00.LBM`, and that run still closes open question 2 as a by-product.
+
+**The negative was also drawn with the wrong instrument, and a reviewer caught that too.** I wrote
+that `portrait\EAWMTP00.LBM` "appears zero times in either recovered listing" -- but
+`reports/member-names/` holds names this project *recovered*, and GS5R3's `pic.mpq` listing contains
+**no `p00` members at all**. The negative was true and the instrument could not have seen it either
+way. Re-probed by **name hash against GS5R3's own `pic.mpq`**: `EAWMTP00` absent, `zutestp00`
+absent, and `PyELEP00` (block 663, 10,610 bytes) and `ORINFP00` (block 612) both present -- so the
+same probe that establishes the absence confirms the `(faith, code)` naming it rests on.
+
+🔴 **The rule was in the file I was editing, ninety lines above the section I was writing, under
+its own heading, marked Observed in the corpus.** This is the third time this project has published
+an inference it already had a better answer for, and the second time the better answer was in the
+same document. The standing lesson says to grep the code before publishing a measurement; the
+amendment is that **the document you are editing is part of what you must read**, not the thing you
+are writing over. Reading the section immediately above my insertion point would have caught it,
+and the cost of not doing so is that a reviewer had to.
+
