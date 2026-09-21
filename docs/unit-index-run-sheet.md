@@ -55,8 +55,9 @@
 >
 > Unchanged from the list below: nothing about passing **199**, nothing about durability across
 > save/load (the type exists in no archive), nothing about new art, and nothing about the three
-> adjacent caps -- of which `maxauratypes` is 70 of 70 with **zero headroom** and will bite a real
-> new unit long before the unit-type count does.
+> adjacent caps -- of which `maxauratypes` is 70 of 70. Those caps have since been shown to be
+> script literals rather than engine bounds (2026-09-21, disassembly only); see
+> [new units](new-units.md#raising-a-full-cap-is-a-one-token-script-edit).
 
 **Status: ran 2026-09-21, passed.** Written 2026-09-21.
 
@@ -145,8 +146,10 @@ Stated here because a clean pass is exactly when a limit gets rounded away:
   question with its own separate unknowns (`imp.mpq` added members are proven; `pic.mpq` added
   members are proven at the repack layer but **not** in front of the engine).
 - **Nothing about recruitment, AI production, or combat.** Placement only.
-- **Nothing about the three adjacent caps** — `maxauratypes` is **70 of 70 with zero headroom**,
-  which will bite a real new unit long before the unit-type count does.
+- **Nothing about the three adjacent caps** — `maxauratypes` is **70 of 70**. Raising it was
+  afterwards shown to be a one-token script edit, since no allocator bounds the count
+  ([new units](new-units.md#raising-a-full-cap-is-a-one-token-script-edit)) — but that is
+  disassembly, and no run has raised a cap.
 
 ## What it writes, and what removes it
 

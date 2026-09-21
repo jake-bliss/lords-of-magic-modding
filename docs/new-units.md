@@ -302,6 +302,7 @@ name** by a script (2026-09-17, `imp\zzpal.imp`).
 | 4 | ~~Where does the action-to-sequence remap come from?~~ | ✅ **answered 2026-09-21** — parsed from the `.H` companion member; see [imp format](imp-format.md#-the-remap-is-parsed-from-the-h-companion-member-at-load-time) |
 | 5 | With a duplicate `(faith, code)`, which unit does `unitcodegettype` return? | **open** — attended run. `unitcodegettype` (`0x004447C0`) linearly scans all `used` records and returns the **first** match, so "the lower index" is the likely answer, but that is *Inferred*. |
 | 6 | What does `NO_DEFEND_ANIM` actually mean? | **open** — of 27 units carrying it, 26 *have* a DEFEND cycle |
+| 7 | Does a build with `maxauratypes` above 70 boot, and does a save survive it? | **open** — attended run. The allocator has no upper bound ([below](#raising-a-full-cap-is-a-one-token-script-edit)), but nothing has raised a cap in front of the engine, and aura ids were never looked for in a savegame. |
 
 ### Nothing downstream caps the unit-type count
 
@@ -329,16 +330,18 @@ The only script structure that must grow in lockstep is its sibling `/unittypedi
 same line. Every other `200 dict` in the archive is a namespace dict. Two members already do it
 right, sizing from the live count: `/unit_array numunittypes array def`.
 
-🔴 **Three adjacent caps will bind long before 200 does** (Observed in the corpus):
+**Three adjacent declarations are exactly or nearly full** (Observed in the corpus):
 
-| Cap | Declared | Used | Headroom |
+| Declaration | Declared | Used | Slack |
 | --- | ---: | ---: | ---: |
-| `maxauratypes` | 70 | 70 | **zero today** |
+| `maxauratypes` (`gs\aura.gs`) | 70 | 70 | **none** |
 | `maxmissiletypes` | 51 | 47 | 4 |
 | `maxmounttypes` | 50 | 28 | 22 |
 | `maxgraphics` (`START.GS`) | 3,500 | — | `imp.mpq` alone holds 3,600 members |
 
-A new unit that needs its own **aura** cannot have one without raising `maxauratypes` first.
+**None of these is an engine cap.** Each is a literal the boot script hands to an allocator, and the
+allocator accepts any count. See [raising a full cap](#raising-a-full-cap-is-a-one-token-script-edit)
+below.
 
 **What this search could not see.** No empirical corpus check was made that `LS_SPR_` slot+0 values
 actually fall in `0..154` across the savegame corpus — the claim rests on the disassembly alone,
@@ -351,6 +354,87 @@ touches the header would also be invisible.
 the run list, and `File00000001.xxx` / `File00000006.xxx` are alternate boot scripts with
 **different** `maxpalettes`/`maxdialogs` literals. Which boot script the shipping executable
 actually runs was not traced, so the active cap set could differ from the retail path assumed here.
+
+## Raising a full cap is a one-token script edit
+
+**Observed in a local binary, 2026-09-21.** Every `max*` declaration is a literal the boot script
+hands to an allocator method, and **no allocator carries an upper bound**. The only guard any of
+them applies is `count >= 1`:
+
+| Operator | Body | Allocator | Table header | Stride |
+| --- | --- | --- | --- | ---: |
+| `maxauratypes` | `0x0042e1e0` | `0x0042e080` | `0x005cd334` | 72 |
+| `maxmissiletypes` | `0x004af560` | `0x004af3e0` | `0x005cd2f8` | 52 |
+| `maxmounttypes` | `0x004b0f40` | `0x004b0e30` | `0x005cd328` | 48 |
+| `maxterrainspritetypes` | `0x0050d1f0` | `0x0050d030` | `0x005cd304` | 48 |
+| `maxreferencepalettes` | `0x004b9eb0` | `0x004b9d60` | `0x005cd34c` | 4 |
+| `maxunittypes` | `0x00524720` | `0x00524100` | `0x005cd2ec` | 1000 |
+
+Each allocator opens with `cmp <count>, 1` / `jge`, computes `count * stride` by `lea`/`shl`, calls
+the allocator at `0x00533864` (`C:\lomse\source\storm.h`), runs the per-element constructor where
+there is one, then writes a three-field header. **Each of the six function bodies contains exactly
+one compare against a literal, and it is that `cmp <count>, 1`** — checked across each whole body,
+not just its entry.
+
+Five of the six share one header layout — **`+0` capacity, `+4` used, `+8` base**.
+`maxreferencepalettes` does **not**: `0x004b9d94` writes the base to `+0` and `0x004b9d9d` writes the
+capacity to `+8`, with `used` still at `+4`. It also has no per-element constructor loop, its
+elements being 4 bytes. Do not carry the aura layout across to it.
+
+The aura path in full, since it is the one that is exactly full today:
+
+```
+0042e1e0  maxauratypes           ; pops n, ecx = 0x5cd334, call 0x42e080
+0042e256  push 0x555ea0          ; "maxauratypes failed" on a false return
+
+0042e0a0  cmp  ebx,1
+0042e0a7  jge  0x42e0ad          ; count < 1 fails -- THE ONLY BOUND
+0042e0b4  lea  eax,[ebx+ebx*8]   ; x9
+0042e0c3  shl  eax,3             ;  => count * 72 bytes
+0042e0ea  call 0x42dcc0          ; per-element ctor, esi += 0x48 each pass
+0042e103  mov  [edi+8],eax       ; base
+0042e108  mov  [edi],ebx         ; capacity
+0042e10a  mov  [edi+4],0         ; used
+```
+
+**Overflow is loud, not fatal.** `addauratype` (`0x0042e290`) pops five operands and appends through
+`0x0042e160`, which is the same idiom the unit-type table uses:
+
+```
+0042e164  mov  eax,[edx+4]       ; used
+0042e167  mov  ecx,[edx]         ; capacity
+0042e169  cmp  eax,ecx
+0042e16b  jl   0x42e175          ; else return -1
+0042e193  rep  movsl             ; ecx = 0x12 -> 72 bytes copied in
+```
+
+A 71st `addauratype` against a capacity of 70 therefore returns **-1**, the operator prints
+`"addauratype failed"` (`0x00555eb4`), and the script's `def` binds the name to -1. Nothing faults at
+registration time. That exact byte sequence for the append guard occurs at **5** sites in `.text` —
+`0x0042e164` (aura), `0x0043c434`, `0x004af4d4` (missile), `0x0050d144` (terrain sprite),
+`0x005241e4` (unit type) — so the tables share one implementation, not five similar ones.
+
+Lookup (`0x0042e130`) takes a **full 32-bit** index, rejects negatives, and compares against
+`[ecx+4]` — the live **used** count, never the capacity and never a literal — then scales by 72.
+Same shape as `getunittypedata`. No aura index is narrowed anywhere.
+
+**Observed in the corpus.** `gs\aura.gs` is the only member that mentions auras at all. Line 1 is
+`70 maxauratypes`; below it are exactly **70** non-comment `addauratype` calls binding **64** names
+(several auras are registered without a name). So the table is exactly full, and raising it means
+editing one literal on line 1.
+
+### What this does not settle
+
+- **No attended run has raised any cap.** The verdict rests on the disassembly alone.
+- **Savegames were never examined for aura ids.** The savegame work covered `LS_SPR_` / `LS_PLR_`
+  and never touched the aura table, so a save written by a build with more than 70 aura types is
+  untested in both directions.
+- 🔴 **One unchecked dereference.** `0x0042d6b0` calls the lookup and immediately executes
+  `mov eax,[eax+0x24]` with **no null test**, while its sibling setter `0x0042d750` does null-check
+  (`test edi,edi` at `0x0042d775`). An object still carrying an out-of-range aura id would fault
+  there. Whether that path is reachable after a failed registration was **not traced** — the setter
+  writes the id into `+8` before validating it, which is what makes the question live.
+- **Memory is not the constraint.** 72 bytes per entry: 70 -> 200 costs 9,360 bytes.
 
 ## The build, concretely — one new unit (LIFE + `WMT`)
 

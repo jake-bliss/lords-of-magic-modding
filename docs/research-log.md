@@ -6441,3 +6441,52 @@ through a different probe built for a different question, and it is recorded in 
 **Still not established:** anything about passing **199**; durability across save/load, since the
 type exists in no archive; new art; and the three adjacent caps, of which `maxauratypes` is 70 of
 70 with zero headroom.
+
+## 2026-09-21 — `maxauratypes` is not a cap: six tables, one allocator, no upper bound
+
+The closing note of the previous entry named `maxauratypes` — 70 of 70 — as the live constraint on a
+real new unit, ahead of the unit-type count. Chasing it offline dissolves it.
+
+**Observed in a local binary.** `maxauratypes` (`0x0042e1e0`) pops one operand and calls an
+allocator at `0x0042e080` with `this = 0x005cd334`. That allocator's only guard is `cmp ebx,1` /
+`jge`: a count below 1 fails, and nothing else is compared. It computes `count * 72` through
+`lea eax,[ebx+ebx*8]` / `shl eax,3`, runs a per-element constructor, and writes a three-field header
+— capacity at `+0`, used at `+4`, base at `+8`. The five sibling operators (`maxmissiletypes`,
+`maxmounttypes`, `maxterrainspritetypes`, `maxreferencepalettes`, `maxunittypes`) are the same shape
+with different strides, and **each of the six whole bodies contains exactly one literal compare, the
+`cmp <count>, 1`**.
+
+One sibling breaks the pattern in a way worth recording, because assuming otherwise would misread
+its memory: `maxreferencepalettes` writes the **base** to `+0` and the **capacity** to `+8`, the
+reverse of the other five, and has no per-element constructor at all. The self-check that caught it
+was re-running the literal-compare scan over the *whole* body of each of the six rather than the
+entry, which is the version of the check that also had to be right for the headline claim.
+
+So every `max*` figure in the corpus is a **script literal**, not an engine bound. The unit-type
+result from 2026-09-21 was not the special case it looked like; it was one instance of the general
+rule, and I published the general rule as a per-table warning because I had only disassembled the
+one table.
+
+**Overflow is loud.** `addauratype` (`0x0042e290`) appends through `0x0042e160`, which returns -1
+when `used >= capacity`; the operator then prints `"addauratype failed"` (`0x00555eb4`) and the
+script binds the name to -1. A 71st aura today does not crash at registration. The exact eight-byte
+append guard occurs at **5** sites in `.text` — aura, `0x0043c434`, missile, terrain sprite, unit
+type — so these tables share one implementation.
+
+Lookup (`0x0042e130`) takes a full 32-bit index, rejects negatives, and bounds against the live
+**used** count. No aura index is narrowed anywhere in the image.
+
+**Observed in the corpus.** `gs\aura.gs` is the only member that mentions auras: line 1 is
+`70 maxauratypes`, and below it sit exactly 70 non-comment `addauratype` calls binding 64 names. The
+"70 of 70" reading was correct; the inference drawn from it was not.
+
+**What is still open, and one thing worth watching.** No run has raised any cap — this is
+disassembly alone. Savegames were never examined for aura ids, so a save written above 70 is
+untested in both directions. And `0x0042d6b0` calls the lookup and immediately dereferences
+`[eax+0x24]` with no null test, while its sibling setter at `0x0042d750` does check — and that setter
+stores the id into `+8` *before* validating it. Whether the unchecked path is reachable after a
+failed registration was not traced.
+
+**The lesson is the one already on file.** A bound measured in one table is a fact about that table;
+the same question asked of the neighbours took one `objdump` pass each. The warning stood for a day
+because nobody asked the cheap version of the question.
