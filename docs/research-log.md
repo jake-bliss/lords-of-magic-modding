@@ -6974,3 +6974,77 @@ though this run sheet claimed it did. `--replace 'portrait\LIINFP00.LBM=…'` fa
 archive has no member named portrait\LIINFP00.LBM"* while `probe-names` reported that exact name
 **present**; the listfile spells it `PORTRAIT\LIINFP00.LBM` and only that spelling works. A claim
 about a tool is a claim like any other, and this one had been written without being exercised.
+
+## 2026-09-21 — the added-member question closes, and the portrait rule is refuted (attended, runs 5-7)
+
+Three more attended builds on top of the morning's. One closes the oldest open question in this
+line of work. One refutes the conclusion published in PR #81 the same day.
+
+### ⭐ The engine reads an ADDED `pic.mpq` member
+
+**Observed in gameplay.** `gs\PORTRAITS5.gs`'s `licav["licavp01.lbm" "licavp00.lbm"]` became
+`licav["zzadd001.lbm" "licavp00.lbm"]` — twelve characters for twelve — and `PORTRAIT\zzadd001.lbm`
+was **added** to `pic.mpq`. The name had never existed in the shipped game. **The engine resolved
+and drew it**, in the unit-info panel and in the barracks, while `LIINFP00` held a cow as the
+live-archive control and `LICAVp00`/`LICAVp01` were left pristine so the stock face stayed a
+meaningful signal.
+
+That closes **open question 2** and the last structural unknown about new-unit art. Scope: one
+member, one archive, one name. Nothing here measures hash-table exhaustion, or **adding** to
+`gs.mpq`.
+
+### 🔴 REFUTED: portraits in GS5R3 do not resolve through `get_unit_portrait_name`
+
+Both the panel and the barracks resolve through `/portrait_file_names`, keyed by **unit type**.
+
+**The discriminating case.** `portrait_file_names[licav]` lists `licavp01.lbm` as element **0**,
+while the composed namer produces `LICAVP00.LBM`. A build with a goat on `LICAVp01`, a chicken on
+`LICAVp00` and an elephant on the composed-name target drew **the goat**.
+
+**Why three earlier runs missed it, including a clean six-rung ladder with controls.** They all
+measured Elven Staffmen, and `portrait_file_names[liinf]` is `["liinfp00.lbm"]` — byte-for-byte the
+name the composed path builds. **Both models predict the same member for that unit.** Every rung of
+run 4 was green, controlled, and consistent with *both* hypotheses; I reported one of them.
+
+🔴 **This is the day's recurring failure, three times in one session:**
+
+1. A control on the Warrior lord that replaced `lifitp00` while the lord uses one of **nine**
+   variants by per-unit index — the mechanism I had documented that morning.
+2. A subject recoded to `WMI`, which is in the `iswild?` dict, so the unit stopped being
+   recruitable and **deleted itself as an observable**.
+3. Three portrait runs on the one unit whose two candidate paths **name the same file**.
+
+Each time the build was verified, installed byte-identically, and run correctly. The engine did
+exactly what it was asked. **The defect was always that the test could not tell the hypotheses
+apart**, which no amount of control rigour detects — a control shows the instrument is connected,
+never that the question discriminates. The habit that would have caught all three: before running,
+state what each competing model predicts for *this specific subject*, and if the predictions match,
+change the subject.
+
+⚠️ **Profile, again.** `portrait_file_names` appears in **six GS5R3 members and zero vanilla or
+3.02 members** (*Observed in the corpus*). Vanilla and 3.02 have no table, so the composed rule is
+presumably theirs — but every engine run this project has ever done is GS5R3, so the composed
+`(faith, code)` rule has **never been confirmed in a running engine**. It is corpus evidence only.
+
+**The new top open question for new-unit art:** in GS5R3, is `get_unit_portrait_name` reached at all
+for a unit type **absent** from the table? `champion_portrait_filename`'s unknown-type arm falls
+back to the **faith banner**, not to a composed name — so a brand-new type may have no route to a
+composed portrait, and adding a table entry may be mandatory. Invisible before today.
+
+### By-product: the unit-code constants are no longer Inferred
+
+**Observed in a local binary.** The `{char* name, int value}` table at VA `0x0055f218` gives the
+code constants directly: `INF=0, MIS=1, CAV=2, GAT=14, SHP=15, CHI=16, ELE=19, FT2=20, TF1=21,
+LD1=24, WM1=27, WMI=32, WMT=34`. This confirms the `unit_code_strings` index mapping that
+`new-units.md` had carried as *Inferred*, and it killed a live hypothesis mid-run: `FT2=20 > ELE=19`,
+so the namer takes the faith branch rather than the `"Py"` branch.
+
+### Instrument notes
+
+- 🔴 **`--replace` is case-sensitive**, despite the run sheet's earlier claim. `pic.mpq` spells the
+  same class of member three different ways — `PORTRAIT\LIINFP00.LBM`, `PORTRAIT\LICAVp00.lbm`,
+  `PORTRAIT\pyelep00.lbm` — and only the exact `lom-mpq list` spelling works.
+- **A loose `gs\dlg` directory exists** in the GS5R3 install (two files). No document mentions a
+  loose-file override path for `gs.mpq`. Not investigated; it was ruled out as the cause here.
+- **A `gs.mpq` script edit does take effect on a loaded save** — recoding a unit changed its
+  recruitability immediately, and reverting the code restored it.
