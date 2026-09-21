@@ -357,9 +357,9 @@ actually runs was not traced, so the active cap set could differ from the retail
 
 ## Raising a full cap is a one-token script edit
 
-**Observed in a local binary, 2026-09-21.** Every `max*` declaration is a literal the boot script
-hands to an allocator method, and **no allocator carries an upper bound**. The only guard any of
-them applies is `count >= 1`:
+**Observed in a local binary, 2026-09-21.** Six `max*` declarations were followed into the engine.
+Each is a literal the boot script hands to an allocator method, and **none of the six allocators
+carries an upper bound**. The only guard any of them applies is `count >= 1`:
 
 | Operator | Body | Allocator | Table header | Stride |
 | --- | --- | --- | --- | ---: |
@@ -416,16 +416,22 @@ registration time. That exact byte sequence for the append guard occurs at **5**
 
 Lookup (`0x0042e130`) takes a **full 32-bit** index, rejects negatives, and compares against
 `[ecx+4]` — the live **used** count, never the capacity and never a literal — then scales by 72.
-Same shape as `getunittypedata`. No aura index is narrowed anywhere.
+Same shape as `getunittypedata`. Nothing reaches the aura table except through it: the constant
+`0x005cd334` appears at **9** sites in `.text`, all of them `mov ecx` for a method call, and the
+header words `0x005cd338` / `0x005cd33c` appear at **none**, so no code reads `used` or the base by
+absolute displacement. No aura index is narrowed at any site this search reached.
 
-**Observed in the corpus.** `gs\aura.gs` is the only member that mentions auras at all. Line 1 is
-`70 maxauratypes`; below it are exactly **70** non-comment `addauratype` calls binding **64** names
-(several auras are registered without a name). So the table is exactly full, and raising it means
-editing one literal on line 1.
+**Observed in the corpus (GS5R3).** `gs\aura.gs` is the only member of the 1,700 that mentions
+auras at all. Line 1 is `70 maxauratypes`; below it are exactly **70** non-comment `addauratype`
+calls — **62** of the form `/name ... addauratype def`, and **8** more (one per faith) whose results
+go into the `/aura_dict << ... >>` dictionary instead of a name. So the table is exactly full, and
+raising it means editing one literal on line 1.
 
 ### What this does not settle
 
 - **No attended run has raised any cap.** The verdict rests on the disassembly alone.
+- **Six allocators, not every cap.** `setmaxartifacttypes`, `setmaxquesttypes`, `maxpalettes`,
+  `maxdialogs` and `maxgraphics` were **not** examined; nothing here says they share the shape.
 - **Savegames were never examined for aura ids.** The savegame work covered `LS_SPR_` / `LS_PLR_`
   and never touched the aura table, so a save written by a build with more than 70 aura types is
   untested in both directions.

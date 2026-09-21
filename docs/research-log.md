@@ -6462,7 +6462,9 @@ reverse of the other five, and has no per-element constructor at all. The self-c
 was re-running the literal-compare scan over the *whole* body of each of the six rather than the
 entry, which is the version of the check that also had to be right for the headline claim.
 
-So every `max*` figure in the corpus is a **script literal**, not an engine bound. The unit-type
+So each of those six figures is a **script literal**, not an engine bound. (`setmaxartifacttypes`,
+`setmaxquesttypes`, `maxpalettes`, `maxdialogs` and `maxgraphics` were not followed; the shape is
+not claimed for them.) The unit-type
 result from 2026-09-21 was not the special case it looked like; it was one instance of the general
 rule, and I published the general rule as a per-table warning because I had only disassembled the
 one table.
@@ -6477,8 +6479,9 @@ Lookup (`0x0042e130`) takes a full 32-bit index, rejects negatives, and bounds a
 **used** count. No aura index is narrowed anywhere in the image.
 
 **Observed in the corpus.** `gs\aura.gs` is the only member that mentions auras: line 1 is
-`70 maxauratypes`, and below it sit exactly 70 non-comment `addauratype` calls binding 64 names. The
-"70 of 70" reading was correct; the inference drawn from it was not.
+`70 maxauratypes`, and below it sit exactly 70 non-comment `addauratype` calls — 62 bound to a name
+with `def`, 8 more (one per faith) collected into the `/aura_dict` dictionary. The "70 of 70"
+reading was correct; the inference drawn from it was not.
 
 **What is still open, and one thing worth watching.** No run has raised any cap — this is
 disassembly alone. Savegames were never examined for aura ids, so a save written above 70 is
