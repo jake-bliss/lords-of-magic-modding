@@ -7,7 +7,7 @@
 # a tautology that would happily certify a backup which had been overwritten by a probed archive.
 # MANIFEST.sha256 is that independent record.
 
-ARCHIVE_NAMES=(gs imp)
+ARCHIVE_NAMES=(gs imp pic)
 
 # Echo the hash MANIFEST.sha256 records for a backup file, matched by basename.
 manifest_hash() {

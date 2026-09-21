@@ -1951,12 +1951,22 @@ def patched_aura_source(original: str) -> str:
     return patched
 
 
+# The portrait ladder's control fields. A runtime-defined type whose `(faith, code)` names a
+# portrait member that EXISTS and that this build has REPLACED. If its panel shows the replacement,
+# the portrait lookup runs for a runtime-defined unit exactly as it does for a shipped one -- which
+# is the fact the added-member subject needs and did not have on 2026-09-21. Without it, "the added
+# member was not read" cannot be separated from "the engine never asked for that name".
+UNIT_CAP_PORTRAIT_CONTROL_FAITH = "LIFE"
+UNIT_CAP_PORTRAIT_CONTROL_CODE = "INF"
+
+
 def _unit_cap_rungs() -> list[str]:
     """Rungs 2-4: fill the unit-type table to its declared capacity, place 199, then overflow it."""
     lines: list[str] = []
     emit = lines.append
 
-    def define_subject(name_suffix: str) -> None:
+    def define_subject(name_suffix: str, faith: str | None = None,
+                       code: str | None = None) -> None:
         """One `begin_unit_definition ... end_unit_definition`, inside `unittypedict`.
 
         The definition MUST sit inside `unittypedict begin ... end`: `gs\\unittype.gs` runs every
@@ -1970,6 +1980,10 @@ def _unit_cap_rungs() -> list[str]:
         for field in UNIT_INDEX_SUBJECT_FIELDS:
             if field.startswith('/name'):
                 emit(f'\t\t\t/name"ZUnitCap{name_suffix}"def')
+            elif faith is not None and field.startswith("/faith"):
+                emit(f"\t\t\t/faith {faith} def")
+            elif code is not None and field.startswith("/code"):
+                emit(f"\t\t\t/code {code} def")
             else:
                 emit(f"\t\t\t{field}")
         emit(f"\t\t\tend_unit_definition /{UNIT_INDEX_SUBJECT_SYMBOL} exch def")
@@ -1981,10 +1995,14 @@ def _unit_cap_rungs() -> list[str]:
     emit("\t\tzax0 2 add zay0 x_y_to_xy UNITTYPELAND findemptylocation /zcellc exch def")
     emit("\t\tzcellc -1 ne")
     emit("\t\t\t{")
-    define_subject("Control")
+    define_subject("Portrait", faith=UNIT_CAP_PORTRAIT_CONTROL_FAITH,
+                   code=UNIT_CAP_PORTRAIT_CONTROL_CODE)
     emit("\t\t\t/zctlidx lastunittype def")
     emit("\t\t\t/zafterc numunittypes def")
     emit("\t\t\t" + _log('"rung2 control index "zctlidx" (expected "zbase") count "zafterc'))
+    emit("\t\t\t" + _log(f'"rung2 this unit is {UNIT_CAP_PORTRAIT_CONTROL_FAITH} '
+                          f'{UNIT_CAP_PORTRAIT_CONTROL_CODE} -- its portrait member is one this '
+                          'build REPLACED, so its panel is the portrait CONTROL"'))
     # The guard `unit_index_body` carries and this probe had dropped: if the count did not move,
     # the append silently failed and `/zutest` is bound to -1. Placing then calls
     # `add_unit_to_location` with a type the engine never issued, and the readback would run

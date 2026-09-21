@@ -399,7 +399,8 @@ void add_member(HANDLE archive, const std::string &archived_name,
 int repack_archive(const fs::path &source_path, const fs::path &output_path,
                    const std::vector<std::string> &assignments,
                    const std::vector<std::string> &additions, bool compact,
-                   const fs::path &extra_listfile) {
+                   const fs::path &extra_listfile,
+                   const std::string &storage_donor) {
   if (fs::exists(output_path)) {
     throw std::runtime_error("output archive already exists: " +
                              output_path.string());
@@ -465,7 +466,56 @@ int repack_archive(const fs::path &source_path, const fs::path &output_path,
       throw std::runtime_error("added file is not a regular file: " +
                                parsed.second.string());
     }
-    if (flag_histogram.size() != 1) {
+    // `--add-storage-of NAME` names an EXISTING member whose storage class the
+    // added member should copy. It is the answer to a mixed archive: rather
+    // than the tool picking a modal value, the caller points at the member the
+    // new one is modelled on -- which for a copied or repainted asset is its
+    // own donor, and is therefore a fact about the mod rather than a guess.
+    //
+    // 🔴 The claim this comment used to make -- "all 1,071 members are
+    // 0x80010100" of `pic.mpq` -- is PER PROFILE. GS5R3's `pic.mpq` holds
+    // 1,405 members, 995 at 0x200 and 410 at 0x10100, and the 750 named
+    // `portrait\` members are themselves split 662/88. Measured 2026-09-21.
+    std::uint32_t chosen_flags = 0;
+    std::string provenance;
+    if (!storage_donor.empty()) {
+      // MPQ pathnames are case-insensitive and `\` / `/` are interchangeable,
+      // so the donor is matched that way rather than by exact bytes: the
+      // manifest prints `PORTRAIT\pyelep00.lbm` for a member a caller would
+      // reasonably name `portrait\PyELEP00.LBM`, and refusing that is a
+      // usability bug wearing a correctness costume.
+      const auto normalise = [](std::string value) {
+        for (char &character : value) {
+          character = static_cast<char>(
+              std::tolower(static_cast<unsigned char>(character)));
+          if (character == '/') {
+            character = '\\';
+          }
+        }
+        return value;
+      };
+      const std::string wanted = normalise(storage_donor);
+      auto donor = storage_flags.end();
+      for (auto entry = storage_flags.begin(); entry != storage_flags.end();
+           ++entry) {
+        if (normalise(entry->first) == wanted) {
+          donor = entry;
+          break;
+        }
+      }
+      if (donor == storage_flags.end()) {
+        throw std::runtime_error(
+            "refusing to add " + parsed.first + ": --add-storage-of names " +
+            storage_donor + ", which the source archive does not hold under "
+            "that name (it must be a member the archive resolves, so a "
+            "recovered name may need --listfile)");
+      }
+      chosen_flags = donor->second;
+      provenance = ", copied from " + storage_donor;
+    } else if (flag_histogram.size() == 1) {
+      chosen_flags = flag_histogram.begin()->first;
+      provenance = ", inherited from every member of the source archive";
+    } else {
       std::string observed;
       for (const auto &entry : flag_histogram) {
         observed += (observed.empty() ? "" : ", ") + std::to_string(entry.second) +
@@ -476,14 +526,14 @@ int repack_archive(const fs::path &source_path, const fs::path &output_path,
           ": the source archive does not store all its members the same way (" +
           observed +
           "), so there is no storage class an added member could inherit "
-          "without this tool choosing one for you");
+          "without this tool choosing one for you; name a member to copy with "
+          "--add-storage-of NAME");
     }
     replacements.emplace_back(parsed.first, parsed.second);
-    storage_flags.emplace(parsed.first, flag_histogram.begin()->first);
+    storage_flags.emplace(parsed.first, chosen_flags);
     std::cout << "Adding " << parsed.first << " with storage flags 0x"
               << std::hex << std::setw(8) << std::setfill('0')
-              << flag_histogram.begin()->first << std::dec
-              << ", inherited from every member of the source archive\n";
+              << chosen_flags << std::dec << provenance << "\n";
   }
   // Applying replacements in a fixed order keeps repeated runs comparable.
   std::sort(replacements.begin(), replacements.end());
@@ -625,7 +675,7 @@ void print_usage(const char *program) {
             << "  " << program
             << " repack SOURCE.mpq OUTPUT.mpq [--compact] "
                "[--listfile NAMES.txt] [--replace 'NAME=LOCAL'] "
-               "[--add 'NAME=LOCAL'] ...\n"
+               "[--add 'NAME=LOCAL'] [--add-storage-of NAME] ...\n"
             << "  " << program
             << " create OUTPUT.mpq [--implode|--compress|--store] "
                "[--no-listfile] [--add 'NAME=LOCAL'] "
@@ -725,6 +775,7 @@ int main(int argc, char **argv) {
       std::vector<std::string> additions;
       bool compact = false;
       fs::path repack_listfile;
+      std::string storage_donor;
       for (int index = 4; index < argc; ++index) {
         const std::string option(argv[index]);
         if (option == "--compact") {
@@ -735,13 +786,15 @@ int main(int argc, char **argv) {
           additions.emplace_back(argv[++index]);
         } else if (option == "--listfile" && index + 1 < argc) {
           repack_listfile = argv[++index];
+        } else if (option == "--add-storage-of" && index + 1 < argc) {
+          storage_donor = argv[++index];
         } else {
           print_usage(argv[0]);
           return 2;
         }
       }
       return repack_archive(argv[2], argv[3], assignments, additions, compact,
-                            repack_listfile);
+                            repack_listfile, storage_donor);
     }
     if (argc >= 3 && std::string(argv[1]) == "create") {
       std::vector<std::pair<std::string, std::uint32_t>> assignments;
