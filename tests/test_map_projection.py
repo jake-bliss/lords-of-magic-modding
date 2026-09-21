@@ -4,6 +4,7 @@ Every number here is an observation from the 2026-09-17 flatground run, logged b
 off a capture. If the module drifts from what the engine did, these fail.
 """
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -126,9 +127,6 @@ class EffectiveElevationTest(unittest.TestCase):
             self.assertAlmostEqual(predicted, observed, delta=1.1)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class DirectionBearingTest(unittest.TestCase):
     """The eight stored directions, checked against the capture rather than against literals.
@@ -208,8 +206,57 @@ class DirectionBearingTest(unittest.TestCase):
         self.assertEqual(max(range(8), key=lambda d: steps[d][1]),
                          mp.TIL_COLUMN_NAMES.index("se"))
 
+    def test_the_deltas_are_the_tables_read_out_of_the_binary(self) -> None:
+        """The one test here that does not let the module define its own expectation.
+
+        Every other assertion composes `DIRECTION_DELTAS` with the measured per-operand steps, so a
+        module that permuted its own table would agree with itself. This reads the two static
+        arrays back from `reports/natives/direction-table.tsv`, which was extracted from
+        `lomse.exe` at the file offsets that report records, and rebuilds the pairing from them.
+
+        To re-extract after a rebuild, read 8 little-endian int32 at each `file_offset`.
+        """
+        report = Path(__file__).resolve().parents[1] / "reports" / "natives" / "direction-table.tsv"
+        rows = [line.split("\t") for line in report.read_text().strip().splitlines()[1:]]
+        self.assertEqual(len(rows), 4, "the table ships in two identical copies")
+        by_operand: dict[str, list[list[int]]] = {"first": [], "second": []}
+        for row in rows:
+            by_operand[row[2]].append([int(value) for value in row[3:]])
+        for operand, copies in by_operand.items():
+            self.assertEqual(len(copies), 2, operand)
+            self.assertEqual(copies[0], copies[1], f"the two {operand} copies must agree")
+        expected = tuple(zip(by_operand["first"][0], by_operand["second"][0]))
+        self.assertEqual(mp.DIRECTION_DELTAS, expected)
+
+    def test_the_column_names_agree_with_the_rust_crate_that_derived_them(self) -> None:
+        """The names have no anchor in the binary, so they are checked against the other instrument.
+
+        `spikes/asset-viewer/src/tile.rs` carries the `.til` column names and the `(dx, dy)` each
+        one means, derived on 2026-09-17 against 576/576 engine-written ring tiles. That is a
+        different artifact from the `.data` arrays this module's deltas come from, so agreeing with
+        it is evidence; restating the names here would not be.
+
+        A reviewer's mutation that swapped `w` and `e` survived every other test in this class.
+        """
+        source = (Path(__file__).resolve().parents[1]
+                  / "spikes" / "asset-viewer" / "src" / "tile.rs").read_text()
+        offsets = {variant: (int(dx), int(dy)) for variant, dx, dy
+                   in re.findall(r"Direction::(\w+) => \((-?\d+), (-?\d+)\)", source)}
+        names = dict(re.findall(r'Direction::(\w+) => "(\w+)"', source))
+        self.assertEqual(len(offsets), 8, "tile.rs's offset table changed shape")
+        self.assertEqual(len(names), 8, "tile.rs's name table changed shape")
+        by_name = {names[variant]: offset for variant, offset in offsets.items()}
+        for index, name in enumerate(mp.TIL_COLUMN_NAMES):
+            self.assertIn(name, by_name, f"{name} is not a column tile.rs knows")
+            self.assertEqual(mp.DIRECTION_DELTAS[index], by_name[name],
+                             f"direction {index} is called {name} here and {by_name[name]} there")
+
     def test_the_direction_index_wraps_at_eight(self) -> None:
         """The engine masks the direction to three bits; the module must not index past the end."""
         for direction in range(8):
             self.assertEqual(mp.direction_screen_step(direction + 8),
                              mp.direction_screen_step(direction))
+
+
+if __name__ == "__main__":
+    unittest.main()

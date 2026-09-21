@@ -2261,11 +2261,13 @@ halves together and leaves the pairing of direction 0 with the column named `s` 
 **It does not close [issue #2](https://github.com/jake-bliss/lords-of-magic-modding/issues/2)'s last box**, which is about the *IMP facing index*. Of the three
 gaps below, the first closed on 2026-09-21 and the other two did not:
 
-- ~~**The `.til` column names are the tileset authors' vocabulary, not the engine's.**~~
-  ✅ **Answered 2026-09-21 without another run** — see [the screen bearing of each
-  direction](#the-screen-bearing-of-each-direction) below. It remains true that a full string scan
-  of `lomse.exe` finds **no** compass or facing vocabulary anywhere in the image; the bearing comes
-  from the projection instead.
+- **The `.til` column names are still the tileset authors' vocabulary, not the engine's.** A full
+  string scan of `lomse.exe` finds **no** compass or facing vocabulary anywhere in the image, and
+  that has not changed. What closed on 2026-09-21 is the sub-claim that used to sit here — *where
+  each direction is drawn on the screen* — see [the screen bearing of each
+  direction](#the-screen-bearing-of-each-direction) below. Note the answer is **not** "`s` points
+  down": `s` is drawn down *and to the left*, and it is `se` that is straight down. Nothing here
+  says the author's letter `s` means south to the engine, because the engine has no word for it.
 - **This is the *stored map* direction field (`+0x44`), not the IMP facing index.** The script-to-stored
   path at `0x0049DCC0` is `stored = (arg + [0x5AEC3C]) mod 8`, with a `+1` at `0x0049DCDD`.
   `0x5AEC3C` is BSS with seven references, all reads, so its runtime value is unknown offline.
@@ -2279,10 +2281,21 @@ gaps below, the first closed on 2026-09-21 and the other two did not:
 **Derived, 2026-09-21**, from the 2026-09-17 flatground capture — no new engine run. The capture
 varied the two cell operands **independently** and the drawn top was read off the screen each time:
 
-| varied | cells | screen x per +1 | drawn top per +1 |
-| --- | --- | ---: | ---: |
-| first operand | `(26,32)` .. `(41,32)` | `+33.94` | `+14.40` |
-| second operand | `(35,32)` -> `(35,41)` | `-33.94` | `+14.44` |
+| varied | cells | screen x per +1 | logged output 1 per +1 | drawn top per +1 |
+| --- | --- | ---: | ---: | ---: |
+| first operand | `(26,32)` .. `(41,32)`, 5 points | `+33.94` | `+14.400` | `+14.400` |
+| second operand | `(35,32)` -> `(35,41)`, 2 points | `-33.94` | `+14.400` | `+14.444` |
+
+The two vertical columns are the same measurement read two ways. **`output 1` is the logged float
+and is exactly `14.4` for both operands**; the drawn top is read off the screen in whole pixels, so
+its second-operand figure is `130/9 = 14.44` — the same number to within the rounding of a pixel.
+The bearing table below uses `14.4`, the logged value, not the rounded one.
+
+⚠️ **The two rows are not equally supported.** The first operand has five points, the second has
+two, and one of those two is the `(35,41)` control. A one-pixel misread there moves the
+second-operand step by `0.11` and nothing in the capture would catch it. The logged `output 1`
+agreeing exactly is the redundancy that makes this tolerable, and it is why the argument below is
+built on `output 1` rather than on the pixel reading.
 
 ⭐ **Both operands move the cell DOWN the screen by the same amount.** That is what settles the
 question, and it is **immune to this document's x/y labelling ambiguity**: `map2screen`'s vertical
@@ -2320,11 +2333,15 @@ picks for a facing.
 
 - **Up versus down: strong.** It needs only that the vertical output is symmetric in the two
   operands, which the capture shows twice, with each operand varied alone.
-- **Left versus right: weaker.** It rides on `(first - second)`, whose sign a global operand swap
-  flips. The chain that fixes it — `forcetexture`'s first operand is `map2screen`'s first operand,
-  from the painted bands at lines 70-83 — is recorded above and is **Derived**, not Observed. If
-  that one link is ever refuted, the table's `screen x` column mirrors and its `drawn top` column
-  does not.
+- **Left versus right: weaker, and Inferred.** It rides on `(first - second)`, whose sign a global
+  operand swap flips. Two links fix it, and they are not equally strong:
+  1. *the direction table's first operand is the cell-index remainder* — **Observed**, from the
+     packing `second_operand x width + first_operand` and the `idiv` at `0x004212D0`; and
+  2. *`forcetexture`'s first operand is `map2screen`'s first operand* — from the painted bands at
+     lines 70-83, and this document's own Confidence ledger files which operand is *x* as
+     **Inferred**. The `screen x` column inherits that, so treat it as **Inferred**, not Derived.
+
+  If link 2 ever falls, the table's `screen x` column mirrors and its `drawn top` column does not.
 - **Flat ground is assumed.** `map2screen` subtracts `PIXELS_PER_ELEVATION * z`, so a step that
   climbs is drawn higher than the table says. The term is vertical only and cannot reach `screen x`;
   at 20.36 pixels per elevation unit it can outrun the 14.4-pixel vertical step, so on steep ground

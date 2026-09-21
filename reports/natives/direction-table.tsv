@@ -1,0 +1,5 @@
+va	file_offset	operand	d0	d1	d2	d3	d4	d5	d6	d7
+0x005557e8	0x1539e8	first	0	-1	-1	-1	0	1	1	1
+0x00555808	0x153a08	second	1	1	0	-1	-1	-1	0	1
+0x00555828	0x153a28	first	0	-1	-1	-1	0	1	1	1
+0x00555848	0x153a48	second	1	1	0	-1	-1	-1	0	1

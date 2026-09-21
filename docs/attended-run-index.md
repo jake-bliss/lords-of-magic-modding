@@ -219,8 +219,8 @@ it is measuring.
 > the bottom of the screen" — was already measured, on 2026-09-17, by the flatground projection
 > run. That capture varied the two cell operands **independently** and read the drawn top off the
 > screen each time, and both operands move a cell **down** by the same 14.4 pixels. Direction 0 is
-> `(0, +1)`, so it is drawn **down and to the left**; `se` is straight down the screen and `nw`
-> straight up. The vertical half is immune to the x/y labelling ambiguity because the projection's
+> `(0, +1)`, so it is drawn **down and to the left** — 45 degrees off straight down, not straight
+> down; `se` is the one drawn straight down the screen, and `nw` straight up. The vertical half is immune to the x/y labelling ambiguity because the projection's
 > vertical output is symmetric in the two operands.
 >
 > Table, strength of each half, and the one link the left/right answer rides on:
@@ -230,10 +230,16 @@ it is measuring.
 > It remains true that `lomse.exe` contains **no compass vocabulary at all**. The bearing comes
 > from the projection, not from the binary's words.
 >
-> **What this buys the run below.** Not its answer, but its readout: a unit faced at a known stored
-> direction can now be checked against a predicted screen position, so "the facing did not change"
-> and "the facing changed and I misread the screen" stop looking alike. Log the stored direction
-> beside each screenshot and compare against `direction_screen_step`.
+> ⚠️ **What this does NOT buy the run below.** A first draft of this note claimed the result gives
+> the run a readout — compare each facing's screenshot against a predicted screen position. **That
+> is wrong, and a reviewer caught it.** `direction_screen_step` returns the pixels a drawn cell
+> moves when you step one cell in a direction. A unit that changes *facing* stands on the same
+> cell, so all eight facings put it at the identical screen position and the comparison would
+> separate nothing. Acting on it would have burned a sitting.
+>
+> What the result does buy, if the run wants it, is a **movement** readout: step the unit one cell
+> in a stored direction and the screen displacement identifies which of the eight the engine took.
+> That is a different measurement from the facing question this sheet asks.
 >
 > **The `0x5AE970` builder is out of reach until the disassembly phase**, and now for a stated
 > reason rather than as a guess: the dword occurs 36 times in `.text` and **every one is a read
