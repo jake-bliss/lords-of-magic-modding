@@ -6600,3 +6600,79 @@ from evidence this project already held — one in the binary it disassembles da
 taken four days earlier for a different question. Neither needed instrument time. What they needed
 was someone to ask whether the evidence already in hand reached further than the heading it was
 filed under.
+
+## 2026-09-21 — The `unitcap` run: both caps fell, and two probe bugs cost two sittings
+
+Four predictions made this morning from the disassembly alone, all four confirmed in the engine
+this evening ([run sheet](unit-cap-run-sheet.md)):
+
+```
+rung1 zauracap  100          <- the patched gs\aura.gs ran at boot
+rung1 zaura71   70           <- an aura type registered PAST the shipped 70
+rung1 zaura72   71
+rung2 control army 1105 at 16315  expected 16315
+rung3 numunittypes 200; last index 199
+rung4 subject army 1106 at 16311  expected 16311
+rung5 numunittypes 200 (expected still 200); index -1 (expected -1)
+```
+
+**`maxauratypes` is not a cap** is now *Observed in gameplay*, not merely read out of an allocator:
+a `gs.mpq` with one number changed booted and registered two aura types above the shipped 70. The
+same run settled, as a by-product, that **`gs\aura.gs` runs at boot** — a question I could not
+answer offline this morning. **A unit type at index 199 registers and draws**, verified with an
+`armyat` readback rather than assumed. And **one definition past the declared capacity is refused
+cleanly**: index -1, count unchanged at 200, game still running. That last one was the prediction
+from `cmp used,capacity` at `0x005241e4`, and it is the one I would have been least willing to bet
+a human's evening on.
+
+### Two probe bugs, two wasted sittings, and what now catches them
+
+**The first attempt produced no log at all.** The body ended `}bindhotkey`. No such operator exists
+— the working probes end `}addhotkey` — so `hotkey.gs` failed to *load*, the `z` binding was never
+registered, and the keypress had nothing to hit. The braces balanced, the tokenizer was content,
+and the install verified the member read back byte-identical. Not one of those checks asks whether
+a name I used is a name the engine has.
+
+**The second attempt produced a complete log with every rung green, and an empty map.** `zowner`
+was passed to `add_unit_to_location` twice and never defined. The edit that was meant to add it had
+landed on the first matching line *in the file*, which belonged to a different probe —
+`str.replace(a, b, 1)` takes the first match in the file, not the first match in the function. So
+two probes were wrong at once: one silently gained a line it should not have, and mine never got
+the line it needed.
+
+The second failure is the worse one, and not because of the placement. Rung 4 logged
+`"placed index 199 at cell 183"` while nothing had been placed, because it reported the **call**
+rather than the **outcome**. `add_unit_to_location` leaves nothing on the stack and reports
+nothing, so "I called it" and "it worked" are indistinguishable unless the probe asks. The proven
+`unitindex` body does ask, with `armyat`; I dropped that when I adapted it. A human walked the map
+and said "nothing there" — which is the reading the probe should have produced itself.
+
+**Three guards now exist, each mutation-verified against a baseline checked green before and
+after.** Reintroduce any of the three bugs and the suite fails:
+
+- every bare name in every probe body must appear in the corpus vocabulary **union** the natives
+  recovered from `lomse.exe`. Neither report alone is the right instrument — the vocabulary report
+  misses a tool-facing native no shipped script calls, and `map2screen`, the operator this
+  project's whole projection was measured through, is exactly that;
+- no probe may read a `z`-name it never defines, tokenised rather than grepped so `"zprobe.log"`
+  and `ASCII_VAL"z"` are strings and not reads;
+- a probe that calls `add_unit_to_location` must read the placement back with `armyat`.
+
+**The lesson is narrower than "test more".** Every check this project already had passed on both
+broken builds, because they all examined the *shape* of the script — balance, structure,
+byte-identical injection — and none examined whether its **names resolve** or whether its
+**claims are outcomes**. Those are the two classes of defect that survive to the keyboard, and
+they are precisely the two that cost a person's evening rather than a test run.
+
+### A by-product: a unit has at least three art channels
+
+The placed unit drew as an Elephant on the overworld — correct, from its `impfile_proc` — while its
+panel portrait and its roster figure were neither an elephant nor each other. **Observed in the
+corpus:** portraits are `pic.mpq` members named `portrait\<symbol>p00.lbm`, the Elephant has
+`portrait\pyelep00.lbm`, this profile holds 87 of them, and `zutest` has none.
+
+So `gs.mpq` supplies a unit's stats and its overworld sprite; `pic.mpq` supplies the rest, and a
+made-up symbol gets fallback art. That the lookup is *by symbol* is **Inferred** — the naming
+pattern and the absence are corpus facts, the lookup is not traced. Adding `portrait\zutestp00.lbm`
+would settle it **and** close the separately-open question of whether the engine loads a `pic.mpq`
+with an added member, which is currently proven only at the repack layer. Filed under both.

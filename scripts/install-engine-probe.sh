@@ -153,6 +153,29 @@ print(f"  {os.environ.get('LOM_PROBE', 'ladder')} probe installed into hotkey.gs
       "intro movies disabled in START.GS")
 PY
 
+# The unitcap probe is the only one that edits a script OTHER than hotkey.gs: it rewrites
+# `gs\aura.gs`'s first token from 70 to a raised cap and appends two registrations plus a
+# sentinel. The registrations are appended to THAT file rather than issued from hotkey.gs on
+# purpose -- every helper they use resolves in aura.gs's own scope, so a failure can be attributed
+# to the cap rather than to a call form this project invented.
+if [[ "${probe}" == "unitcap" ]]; then
+  "${viewer}" --extract "${game_dir}/gs.mpq" 'gs\aura.gs' "${work_dir}/aura.gs" \
+    --listfile "${listfile}" >/dev/null
+  PYTHONPATH="${project_dir}/tools" python3 - "${work_dir}" <<'PY'
+import pathlib
+import sys
+
+import engine_probe
+
+work = pathlib.Path(sys.argv[1])
+original = (work / "aura.gs").read_text(encoding="latin-1", newline="")
+patched = engine_probe.patched_aura_source(original)
+(work / "aura_probe.gs").write_text(patched, encoding="latin-1", newline="")
+print(f"  aura.gs patched: cap -> {engine_probe.UNIT_CAP_AURA_CAPACITY}, "
+      f"{len(engine_probe.UNIT_CAP_AURA_NAMES)} registrations appended")
+PY
+fi
+
 # `screencapture` refuses to overwrite, so a stale capture from an earlier attempt would survive the
 # run and be collected as if it were this run's output -- a plate diffed against itself reads as
 # "the sprite did not render", which is the exact conclusion this probe exists to test.
@@ -193,6 +216,9 @@ if [[ "${probe}" == "ladder" ]]; then
   "${mpq_replace}" "${game_dir}/imp.mpq" 'imp\zzctl.imp' "${work_dir}/zzctl.imp"
   "${mpq_replace}" "${game_dir}/imp.mpq" 'imp\zzpal.imp' "${work_dir}/zzpal.imp"
 fi
+if [[ "${probe}" == "unitcap" ]]; then
+  "${mpq_replace}" "${game_dir}/gs.mpq" 'gs\aura.gs' "${work_dir}/aura_probe.gs"
+fi
 "${mpq_replace}" "${game_dir}/gs.mpq" 'gs\hotkey.gs' "${work_dir}/hotkey_probe.gs"
 "${mpq_replace}" "${game_dir}/gs.mpq" 'START.GS' "${work_dir}/START_fast.GS"
 
@@ -201,6 +227,12 @@ echo "== verifying read-back =="
   --listfile "${listfile}" >/dev/null
 "${viewer}" --extract "${game_dir}/gs.mpq" 'START.GS' "${work_dir}/rb_START.GS" \
   --listfile "${listfile}" >/dev/null
+if [[ "${probe}" == "unitcap" ]]; then
+  "${viewer}" --extract "${game_dir}/gs.mpq" 'gs\aura.gs' "${work_dir}/rb_aura.gs" \
+    --listfile "${listfile}" >/dev/null
+  cmp "${work_dir}/rb_aura.gs" "${work_dir}/aura_probe.gs"
+  echo "  patched aura.gs reads back byte-identical"
+fi
 cmp "${work_dir}/rb_hotkey.gs" "${work_dir}/hotkey_probe.gs"
 cmp "${work_dir}/rb_START.GS" "${work_dir}/START_fast.GS"
 echo "  scripts read back byte-identical"
@@ -262,6 +294,36 @@ elif [[ "${probe}" == "unitanchor" ]]; then
   echo "zprobe.log before quitting: any 'cleanup REFUSED' line means that unit is STILL on the"
   echo "map and must be removed by hand. See docs/unit-anchor-run-sheet.md."
   echo "Do not save the game afterwards."
+elif [[ "${probe}" == "unitcap" ]]; then
+  echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map"
+  echo "with your starting army CENTRED and room around it, and TAP z once."
+  echo
+  echo "Two units will appear, two cells either side of your army. Both look like an Elephant --"
+  echo "they reuse the shipped art on purpose, so the question is whether they draw AT ALL."
+  echo "Between them the probe defines about forty more unit types that are never placed, so"
+  echo "expect a pause. Four captures."
+  echo
+  echo "THEY ARE NOT CLEANED UP. Unlike unitanchor and unitindex, this probe leaves both units on"
+  echo "the map. They exist only until you quit, and quitting without saving removes them."
+  echo
+  echo "Read zprobe.log BEFORE quitting. The lines that matter, with what they should say:"
+  echo "    rung0 numunittypes 160 expected 160"
+  echo "    rung1 zauracap 100        <- the patched aura.gs ran"
+  echo "    rung1 zaura71 70          <- the 71st aura registered"
+  echo "    rung1 zaura72 71"
+  echo "    rung3 numunittypes 200 expected 200; last index 199 expected 199"
+  echo "    rung4 placed index 199 at cell <n>"
+  echo "    rung5 numunittypes 200 (expected still 200); index -1 (expected -1)"
+  echo
+  echo "rung5 is EXPECTED TO FAIL -- that is its job. It asks one definition past the declared"
+  echo "capacity and the prediction is that it is refused cleanly. If the game is still running"
+  echo "when you read the log, that half is already answered."
+  echo
+  echo "If zauracap says ABSENT, gs\\aura.gs does not run at boot on this profile -- which is"
+  echo "itself an open question this run would settle. Say so; it is a result, not a failure."
+  echo
+  echo "DO NOT SAVE. None of these types exists in any archive, so a save would reference indices"
+  echo "nothing on disk defines. See docs/unit-cap-run-sheet.md."
 elif [[ "${probe}" == "unitindex" ]]; then
   echo "Ready. Launch 'Lords of Magic GS5R3.app', start a single-player game, reach the world map"
   echo "with your starting army CENTRED and room around it, and TAP z once. It works two empty"
@@ -273,7 +335,7 @@ elif [[ "${probe}" == "unitindex" ]]; then
   echo
   echo "Read zprobe.log BEFORE quitting. The line that matters most is:"
   echo "    rung2 lastunittype <n> expected <n>"
-  echo "Those two numbers should be equal, and should be 155. Any 'cleanup REFUSED' line means"
+  echo "Those two numbers should be equal, and should be 160 on GS5R3. Any 'cleanup REFUSED' line means"
   echo "that unit is STILL on the map and must be removed by hand."
   echo
   echo "DO NOT SAVE. The new unit type exists in no archive, so a save would reference an index"

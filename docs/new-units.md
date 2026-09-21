@@ -302,7 +302,9 @@ name** by a script (2026-09-17, `imp\zzpal.imp`).
 | 4 | ~~Where does the action-to-sequence remap come from?~~ | ✅ **answered 2026-09-21** — parsed from the `.H` companion member; see [imp format](imp-format.md#-the-remap-is-parsed-from-the-h-companion-member-at-load-time) |
 | 5 | With a duplicate `(faith, code)`, which unit does `unitcodegettype` return? | **open** — attended run. `unitcodegettype` (`0x004447C0`) linearly scans all `used` records and returns the **first** match, so "the lower index" is the likely answer, but that is *Inferred*. |
 | 6 | What does `NO_DEFEND_ANIM` actually mean? | **open** — of 27 units carrying it, 26 *have* a DEFEND cycle |
-| 7 | Does a build with `maxauratypes` above 70 boot, and does a save survive it? | **open** — attended run. The allocator has no upper bound ([below](#raising-a-full-cap-nothing-in-the-engine-stops-you)), but nothing has raised a cap in front of the engine, and aura ids were never looked for in a savegame. |
+| 7 | ~~Does a build with `maxauratypes` above 70 boot?~~ | ✅ **answered 2026-09-21 — YES.** A `gs.mpq` with `100 maxauratypes` booted and registered two aura types at **70 and 71**. See [the run sheet](unit-cap-run-sheet.md). Durability across save/load is still open. |
+| 8 | Does a unit type at index **199** register and draw? | ✅ **answered 2026-09-21 — YES.** The table filled to exactly 200 and the type at index 199 placed and drew, verified with `armyat`. One definition past capacity returned **-1**, left the count at 200, and did not crash. |
+| 9 | Where do a unit's **portrait** and **roster** art come from? | **open** — `pic.mpq` holds `portrait\<symbol>p00.lbm` (87 members here; the Elephant has `portrait\pyelep00.lbm`), and a type whose symbol has none draws a fallback face — Observed in gameplay 2026-09-21. That the lookup is **by symbol** is Inferred. Adding `portrait\zutestp00.lbm` would settle this **and** question 2. |
 
 ### Nothing downstream caps the unit-type count
 
@@ -339,8 +341,10 @@ right, sizing from the live count: `/unit_array numunittypes array def`.
 | `maxmounttypes` | 50 | 28 | 22 |
 | `maxgraphics` (`START.GS`) | 3,500 | — | `imp.mpq` alone holds 3,600 members |
 
-**None of these is an engine cap.** Each is a literal the boot script hands to an allocator, and the
-allocator accepts any count. See [raising a full cap](#raising-a-full-cap-nothing-in-the-engine-stops-you)
+**None of these is an engine cap**, and that is no longer only disassembly: on 2026-09-21 a
+`gs.mpq` carrying `100 maxauratypes` booted and registered aura types at **70 and 71**
+(*Observed in gameplay* — [run sheet](unit-cap-run-sheet.md)). Each figure is a literal the boot
+script hands to an allocator, and the allocator accepts any count. See [raising a full cap](#raising-a-full-cap-nothing-in-the-engine-stops-you)
 below.
 
 **What this search could not see.** No empirical corpus check was made that `LS_SPR_` slot+0 values
@@ -442,7 +446,9 @@ raising it means editing one literal on line 1.
 
 ### What this does not settle
 
-- **No attended run has raised any cap.** The verdict rests on the disassembly alone.
+- ~~**No attended run has raised any cap.**~~ ✅ **One has, 2026-09-21** — `maxauratypes` to 100,
+  with two registrations past the shipped 70, and one unit-type definition past `maxunittypes`
+  refused cleanly with index **-1** and no crash. The other four caps remain disassembly-only.
 - **The size multiplication is unchecked.** `count * stride` (and `count * 1000 + 4` for unit
   types) is computed with no overflow test, so "no upper bound" means no *engine-enforced* bound,
   not that any count is safe. Nothing in the corpus goes anywhere near it.

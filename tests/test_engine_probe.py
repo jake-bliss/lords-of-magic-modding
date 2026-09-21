@@ -2015,3 +2015,208 @@ class UnitIndexProbeTest(unittest.TestCase):
         `unit_code_strings` enum, `WMT` is the one used by no shipped unit in any faith.
         """
         self.assertIn("/code WMT def", engine_probe.UNIT_INDEX_SUBJECT_FIELDS)
+
+
+class UnitCapProbeTest(unittest.TestCase):
+    """The unit/aura cap ladder, and the aura.gs patch it installs.
+
+    The patch tests use the SHIPPED member as their fixture wherever one is reachable, because a
+    fixture shaped the way this project expects `aura.gs` to look could not have caught the thing
+    that actually surprised it: the file is CRLF, not bare CR.
+    """
+
+    SHIPPED_FIRST_LINE = "70 maxauratypes "
+
+    def _fixture(self, terminator: str = "\r\n", first: str | None = None) -> str:
+        first = self.SHIPPED_FIRST_LINE if first is None else first
+        body = [first, "", "; a comment", '/some_aura NO_HOTSPOT -1{}0 0 0 addauratype def ']
+        return terminator.join(body) + terminator
+
+    def test_the_cap_is_raised_and_the_rest_of_the_file_survives(self) -> None:
+        patched = engine_probe.patched_aura_source(self._fixture())
+        self.assertTrue(patched.startswith(f"{engine_probe.UNIT_CAP_AURA_CAPACITY} maxauratypes"))
+        self.assertNotIn("70 maxauratypes", patched)
+        self.assertIn("; a comment", patched)
+        self.assertIn("/some_aura", patched, "a shipped registration was dropped")
+
+    def test_it_appends_a_registration_per_name_plus_the_sentinel(self) -> None:
+        patched = engine_probe.patched_aura_source(self._fixture())
+        for name in engine_probe.UNIT_CAP_AURA_NAMES:
+            self.assertIn(f"/{name} {engine_probe.UNIT_CAP_AURA_TEMPLATE} def", patched)
+        self.assertIn(
+            f"/{engine_probe.UNIT_CAP_AURA_SENTINEL} {engine_probe.UNIT_CAP_AURA_CAPACITY} def",
+            patched,
+        )
+
+    def test_crlf_input_stays_crlf(self) -> None:
+        """The shipped member's actual shape, measured 2026-09-21: 157 CR, 157 LF, 157 CRLF."""
+        patched = engine_probe.patched_aura_source(self._fixture("\r\n"))
+        self.assertEqual(patched.count("\r"), patched.count("\n"))
+        self.assertEqual(patched.count("\r"), patched.count("\r\n"))
+
+    def test_bare_cr_input_stays_bare_cr(self) -> None:
+        """The project's standing rule still has to work, for any member that does follow it."""
+        patched = engine_probe.patched_aura_source(self._fixture("\r"))
+        self.assertNotIn("\n", patched)
+        self.assertIn("\r", patched)
+
+    def test_mixed_line_endings_are_refused(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            engine_probe.patched_aura_source("70 maxauratypes \r\nsecond\rthird\r\n")
+        self.assertIn("mixed line endings", str(caught.exception))
+
+    def test_an_unexpected_first_line_is_refused(self) -> None:
+        """A profile whose cap is not 70 must stop the install, not be silently rewritten."""
+        with self.assertRaises(ValueError) as caught:
+            engine_probe.patched_aura_source(self._fixture(first="90 maxauratypes "))
+        self.assertIn("unexpected first line", str(caught.exception))
+
+    def test_the_body_logs_every_aura_name_with_an_absent_branch(self) -> None:
+        body = engine_probe.PROBES["unitcap"]()
+        for name in (engine_probe.UNIT_CAP_AURA_SENTINEL,) + engine_probe.UNIT_CAP_AURA_NAMES:
+            self.assertIn(f"userdict /{name} known", body)
+            self.assertIn(f"rung1 {name} ABSENT", body,
+                          "a missing name must be logged, not skipped")
+
+    def test_the_fill_count_is_computed_from_the_live_count(self) -> None:
+        """Never from a literal: a profile with a different baseline must still land on 200."""
+        body = engine_probe.PROBES["unitcap"]()
+        self.assertIn(f"/zwant {engine_probe.UNIT_CAP_UNIT_CAPACITY} numunittypes sub def", body)
+
+    def test_the_overflow_rung_runs_after_the_subject_is_placed(self) -> None:
+        """Order matters: an overflow that crashed before rung 4 would cost the whole sitting."""
+        body = engine_probe.PROBES["unitcap"]()
+        self.assertLess(body.index("rung4 subject army"), body.index("rung5 attempting"))
+
+    def test_every_definition_sits_inside_unittypedict(self) -> None:
+        """The trap the 2026-09-21 run recorded: defining outside it looks exactly like a 'no'."""
+        body = engine_probe.PROBES["unitcap"]()
+        self.assertEqual(body.count("begin_unit_definition"),
+                         body.count("unittypedict begin") - body.count("unittypedict begin /"))
+
+    def test_the_placements_use_the_shipped_call_form(self) -> None:
+        body = engine_probe.PROBES["unitcap"]()
+        placements = [line for line in body.splitlines() if "add_unit_to_location" in line]
+        self.assertEqual(len(placements), 2, "one control placement and one subject placement")
+        for line in placements:
+            self.assertIn(f"unittypedict begin /{engine_probe.UNIT_INDEX_SUBJECT_SYMBOL} end 0{{}}0",
+                          line)
+            self.assertIn("zowner", line)
+
+    def test_its_captures_are_registered_for_cleanup(self) -> None:
+        names = engine_probe.capture_names_for("unitcap")
+        self.assertIn("zprobe.log", names)
+        self.assertTrue(all(name.startswith("z") for name in names))
+        self.assertTrue(set(names) <= set(engine_probe.all_capture_names()))
+
+
+class ProbeVocabularyTest(unittest.TestCase):
+    """Every bare name a probe body uses must be a name the engine actually has.
+
+    🔴 **This test exists because of a wasted attended session, 2026-09-21.** The `unitcap` body
+    ended `}bindhotkey`. No such operator exists -- the working probes end `}addhotkey` -- so
+    `hotkey.gs` failed to LOAD, the `z` binding was never registered, and the keypress did nothing
+    at all. Nothing else caught it: the braces balanced, the tokenizer was happy, and the install
+    verified the member read back byte-identical. The failure was invisible until a human had
+    started a game, walked to the world map and pressed a key.
+
+    The vocabulary report is the corpus, so this is a check against the engine rather than against
+    a list of names someone typed here.
+    """
+
+    # Names the probes MINT rather than call. `lastunittype` is parked in `userdict` by
+    # `end_unit_definition`, so it is a key this project creates, not an operator it calls -- and
+    # the 2026-09-21 `unitindex` run proved it resolves at runtime.
+    MINTED_NAMES = {"lastunittype"}
+
+    @staticmethod
+    def _vocabulary() -> set:
+        """Names the corpus uses, UNION the natives the binary defines.
+
+        Neither report alone is the right instrument. The vocabulary report lists names the
+        shipped scripts mention, so it misses a tool-facing native no script happens to call --
+        `map2screen` is exactly that, and it is the operator this project's whole projection was
+        measured through. The operator-bodies report lists natives recovered from `lomse.exe`, so
+        it misses names defined by GameScript itself. A probe may legitimately use either.
+        """
+        root = Path(__file__).resolve().parents[1]
+        names = set()
+        for relative in ("reports/gs/vocabulary-gs5r3.tsv",
+                         "reports/natives/operator-bodies.tsv"):
+            with (root / relative).open(encoding="utf-8") as handle:
+                names |= {line.split("\t")[0] for line in handle if line.strip()}
+        return names
+
+    def test_no_probe_invents_an_operator(self) -> None:
+        vocabulary = self._vocabulary()
+        self.assertIn("addhotkey", vocabulary, "the vocabulary report itself looks wrong")
+        for name in engine_probe.PROBES:
+            body = engine_probe.PROBES[name]()
+            tokens = [
+                token for token in gs_syntax.tokens(body)
+                if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", token)
+            ]
+            unknown = sorted({
+                token for token in tokens
+                if token not in vocabulary
+                and token not in self.MINTED_NAMES
+                and not token.startswith("z")
+            })
+            self.assertEqual(unknown, [], f"{name} uses names the engine does not define: {unknown}")
+
+    def test_every_probe_ends_by_registering_its_hotkey(self) -> None:
+        for name in engine_probe.PROBES:
+            body = engine_probe.PROBES[name]()
+            statements = [line for line in body.splitlines() if line.strip().endswith("addhotkey")]
+            self.assertEqual(len(statements), 1, f"{name} must register exactly one hotkey")
+
+
+class ProbeNameDefinitionTest(unittest.TestCase):
+    """Every `z`-name a body READS must be written earlier in that same body.
+
+    🔴 **This test exists because of a second wasted attended session, 2026-09-21.** The `unitcap`
+    body passed `zowner` to `add_unit_to_location` twice, and never defined it -- an edit meant for
+    that body had landed on the first matching line in the file, which belonged to a different
+    probe. The run produced a full log, every rung reported success, and **nothing was placed on
+    the map**. The human had to walk the map and say "nothing there" before anyone knew.
+
+    Nothing else in this suite could see it: the braces balanced, the vocabulary check passes
+    because `z`-names are minted by the probes themselves, and the install verified byte-identical.
+    """
+
+    # Written by the engine into `userdict`, not by the probe, so a read with no local write is
+    # correct for these. `lastunittype` is parked there by `end_unit_definition`; `zdone` is the
+    # fire-once flag, which is deliberately READ before it is written.
+    ENGINE_WRITTEN = {"zdone", "zlog"}
+
+    def test_no_probe_reads_a_name_it_never_defines(self) -> None:
+        """Tokenised, not grepped: `"zprobe.log"` and `ASCII_VAL"z"` are strings, not reads."""
+        for name in engine_probe.PROBES:
+            defined = set(self.ENGINE_WRITTEN)
+            undefined = []
+            for token in gs_syntax.tokens(engine_probe.PROBES[name]()):
+                if token.startswith("/") and re.fullmatch(r"/z[A-Za-z_0-9]*", token):
+                    defined.add(token[1:])
+                elif re.fullmatch(r"z[A-Za-z_0-9]*", token) and token not in defined:
+                    undefined.append(token)
+            self.assertEqual(
+                sorted(set(undefined)), [],
+                f"{name} reads names it never defines: {sorted(set(undefined))}",
+            )
+
+    def test_every_placement_is_read_back(self) -> None:
+        """A probe that places a unit must ask the engine whether it is there.
+
+        `add_unit_to_location` leaves nothing on the stack and reports nothing. Logging "placed"
+        after calling it records an intention, not an outcome -- which is exactly how a run came
+        back with a clean log and an empty map.
+        """
+        for name in engine_probe.PROBES:
+            body = engine_probe.PROBES[name]()
+            placements = body.count("add_unit_to_location")
+            if not placements:
+                continue
+            self.assertGreaterEqual(
+                body.count("armyat"), placements,
+                f"{name} places {placements} unit(s) but reads back fewer",
+            )

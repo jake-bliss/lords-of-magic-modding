@@ -1879,6 +1879,246 @@ def unit_index_body() -> str:
     return "\n".join(lines) + "\n"
 
 
+# --- unitcap: the two declared caps, at their boundaries ---------------------------------------
+#
+# Two questions in one sitting, both of which the 2026-09-21 disassembly says should work and
+# neither of which has ever been put in front of the engine:
+#
+#   * unit types up to index **199**, the last slot `200 maxunittypes` allocates -- and then one
+#     definition past it, which must fail CLEANLY rather than corrupt anything; and
+#   * an aura type past **70**, on a `gs\aura.gs` whose first token this probe rewrites.
+#
+# `docs/new-units.md` records the allocators: the only bound any of them puts on the count is
+# `count >= 1`, the append helper returns -1 when `used >= capacity`, and the operator then prints
+# "<name> failed". So the predictions are specific, and each one is logged beside its expectation.
+
+# The cap this probe writes into `gs\aura.gs` in place of the shipped 70.
+UNIT_CAP_AURA_CAPACITY = 100
+
+# The shipped file's own last line, reused verbatim as the template for the two appended
+# registrations. Copying a line the engine already accepted 70 times at boot is what keeps a failed
+# `addauratype` attributable to the CAP rather than to a call form this project invented: every
+# helper in it (`SPELL_ORIGIN2_HOTSPOT`, `modifier_aura_imp_filename`) resolves in that file's own
+# scope, which a call made later from `hotkey.gs` could not rely on.
+UNIT_CAP_AURA_TEMPLATE = (
+    'SPELL_ORIGIN2_HOTSPOT -1{"chcr5"modifier_aura_imp_filename}0 0 0 addauratype'
+)
+
+# The two names the appended registrations bind, and the sentinel that proves the patched file ran
+# at all. `zauracap` is a plain `def`, so it says "this file executed", NOT "the allocation
+# succeeded" -- those are deliberately two different readings. See the run sheet.
+UNIT_CAP_AURA_NAMES = ("zaura71", "zaura72")
+UNIT_CAP_AURA_SENTINEL = "zauracap"
+
+# `200 maxunittypes` is the shipped declaration, so 199 is the last slot and the 201st definition
+# is the one that must fail.
+UNIT_CAP_UNIT_CAPACITY = 200
+
+
+def patched_aura_source(original: str) -> str:
+    """`gs\aura.gs` with a raised cap, two extra registrations and a sentinel.
+
+    🔴 **This member is CRLF, and that is not what the project's standing rule predicts.** The
+    docs record that GameScript members end their lines with a **bare CR**; `gs\aura.gs`, measured
+    2026-09-21, has 157 CR, 157 LF and 157 CRLF -- every terminator is a full CRLF. The rule is
+    per-member, not universal. This function therefore DETECTS the terminator and reuses it rather
+    than assuming either, and refuses a file that mixes them: appending the wrong one would hand
+    the engine a file it reads as one enormous line.
+    """
+    crlf = original.count("\r\n")
+    bare_cr = original.count("\r")
+    lf = original.count("\n")
+    if crlf and crlf == bare_cr == lf:
+        terminator = "\r\n"
+    elif bare_cr and lf == 0:
+        terminator = "\r"
+    else:
+        raise ValueError(
+            f"aura.gs has mixed line endings: {bare_cr} CR, {lf} LF, {crlf} CRLF"
+        )
+    first, _, rest = original.partition(terminator)
+    if first.strip() != "70 maxauratypes":
+        raise ValueError(f"unexpected first line of aura.gs: {first.strip()!r}")
+    patched = f"{UNIT_CAP_AURA_CAPACITY} maxauratypes " + terminator + rest
+    if not patched.endswith(terminator):
+        patched += terminator
+    for name in UNIT_CAP_AURA_NAMES:
+        patched += f"/{name} {UNIT_CAP_AURA_TEMPLATE} def " + terminator
+    patched += f"/{UNIT_CAP_AURA_SENTINEL} {UNIT_CAP_AURA_CAPACITY} def " + terminator
+    return patched
+
+
+def _unit_cap_rungs() -> list[str]:
+    """Rungs 2-4: fill the unit-type table to its declared capacity, place 199, then overflow it."""
+    lines: list[str] = []
+    emit = lines.append
+
+    def define_subject(name_suffix: str) -> None:
+        """One `begin_unit_definition ... end_unit_definition`, inside `unittypedict`.
+
+        The definition MUST sit inside `unittypedict begin ... end`: `gs\\unittype.gs` runs every
+        `units/*.gs` in that scope, so `easyunit.gs`'s machinery lives there and
+        `add_unit_to_location` looks the symbol up with `unittypedict this_type get`. Defining it
+        anywhere else fails in a way that looks exactly like the answer being "no" -- which is the
+        trap the 2026-09-21 run recorded.
+        """
+        emit("\t\t\tunittypedict begin")
+        emit("\t\t\tbegin_unit_definition")
+        for field in UNIT_INDEX_SUBJECT_FIELDS:
+            if field.startswith('/name'):
+                emit(f'\t\t\t/name"ZUnitCap{name_suffix}"def')
+            else:
+                emit(f"\t\t\t{field}")
+        emit(f"\t\t\tend_unit_definition /{UNIT_INDEX_SUBJECT_SYMBOL} exch def")
+        emit("\t\t\tend")
+
+    # Rung 2. The control: one type at the next free index, placed. This is the rung that was
+    # proven on 2026-09-21, so it is what says "the mechanism still works this session" before any
+    # reading from rung 3 is believed.
+    emit("\t\tzax0 2 add zay0 x_y_to_xy UNITTYPELAND findemptylocation /zcellc exch def")
+    emit("\t\tzcellc -1 ne")
+    emit("\t\t\t{")
+    define_subject("Control")
+    emit("\t\t\t/zctlidx lastunittype def")
+    emit("\t\t\t" + _log('"rung2 control index "zctlidx" (expected "zbase")"'))
+    emit("\t\t\tzcellc xy_to_x_y /zccy exch def /zccx exch def")
+    emit(
+        f"\t\t\tunittypedict begin /{UNIT_INDEX_SUBJECT_SYMBOL} end 0{{}}0 zcellc zowner "
+        "add_unit_to_location"
+    )
+    # 🔴 READ THE PLACEMENT BACK. The 2026-09-21 run logged "placed" having only CALLED
+    # `add_unit_to_location`, and nothing was on the map -- `zowner` was undefined, so the call
+    # could not work. A log line that reports an intention rather than an outcome cost a whole
+    # attended sitting. This is the proven `unitindex` readback, copied.
+    emit("\t\t\tzccx zccy armyat /zcarmy exch def")
+    emit("\t\t\tzcarmy ARMY_LOCATION getarmydata /zcgot exch def")
+    emit("\t\t\t" + _log('"rung2 control army "zcarmy" at "zcgot" expected "zcellc'))
+    emit("\t\t\trendermap refreshdirty")
+    emit('\t\t\t"zc1.bmp"screencapture')
+    emit("\t\t\t}")
+    emit("\t\t\t{" + _log('"rung2 NO EMPTY CELL -- control skipped"') + "}ifelse")
+
+    # Rung 3. Fill to the declared capacity. The loop count is computed from the LIVE count, never
+    # from a literal, so a profile whose baseline differs still lands on exactly 200.
+    emit(f"\t\t/zwant {UNIT_CAP_UNIT_CAPACITY} numunittypes sub def")
+    emit("\t\t" + _log('"rung3 filling "zwant" more types to reach "'
+                       f'{UNIT_CAP_UNIT_CAPACITY}'))
+    emit("\t\tzwant 0 gt")
+    emit("\t\t\t{")
+    emit("\t\t\tzwant{")
+    define_subject("Filler")
+    emit("\t\t\t}repeat")
+    emit("\t\t\t}if")
+    emit("\t\t/zfull numunittypes def")
+    emit("\t\t/zlast lastunittype def")
+    emit(
+        "\t\t"
+        + _log(
+            f'"rung3 numunittypes "zfull" expected {UNIT_CAP_UNIT_CAPACITY}'
+            f'; last index "zlast" expected {UNIT_CAP_UNIT_CAPACITY - 1}"'
+        )
+    )
+
+    # Rung 4. Place the type at the last slot. Same art as the control, so the question is whether
+    # an index at the very top of the table draws AT ALL -- not whether it looks different.
+    emit("\t\tzax0 -2 add zay0 x_y_to_xy UNITTYPELAND findemptylocation /zcells exch def")
+    emit("\t\tzcells -1 ne")
+    emit("\t\t\t{")
+    emit("\t\t\tzcells xy_to_x_y /zssy exch def /zssx exch def")
+    emit(
+        f"\t\t\tunittypedict begin /{UNIT_INDEX_SUBJECT_SYMBOL} end 0{{}}0 zcells zowner "
+        "add_unit_to_location"
+    )
+    emit("\t\t\tzssx zssy armyat /zsarmy exch def")
+    emit("\t\t\tzsarmy ARMY_LOCATION getarmydata /zsgot exch def")
+    emit("\t\t\trendermap refreshdirty")
+    emit('\t\t\t"zc2.bmp"screencapture')
+    emit("\t\t\t" + _log('"rung4 subject army "zsarmy" at "zsgot" expected "zcells'))
+    emit("\t\t\t" + _log('"rung4 an army of -1, or a location that is not the expected cell, '
+                          'means NOT PLACED"'))
+    emit("\t\t\t}")
+    emit("\t\t\t{" + _log('"rung4 NO EMPTY CELL -- subject not placed"') + "}ifelse")
+
+    # Rung 5. One definition past the declared capacity. THIS RUNG IS EXPECTED TO FAIL, and the
+    # question is whether it fails cleanly: `end_unit_definition` feeds the index to
+    # `setunittypedata`, whose guard at 0x00524959 bounds it against the live `used` count, and the
+    # append helper returns -1 when `used >= capacity`. A count that does not move and an index of
+    # -1 is the predicted, safe outcome.
+    emit("\t\t" + _log('"rung5 attempting one definition PAST the declared capacity"'))
+    define_subject("Overflow")
+    emit("\t\t/zover numunittypes def")
+    emit("\t\t/zoveridx lastunittype def")
+    emit(
+        "\t\t"
+        + _log(
+            f'"rung5 numunittypes "zover" (expected still {UNIT_CAP_UNIT_CAPACITY}'
+            '); index "zoveridx" (expected -1)"'
+        )
+    )
+    emit("\t\t" + _log('"rung5 if the game is still running and this line was written, the '
+                       'overflow did not crash it"'))
+    return lines
+
+
+def unit_cap_body() -> str:
+    lines: list[str] = []
+    emit = lines.append
+
+    emit("; ---- BEGIN UNIT/AURA CAP LADDER (generated by tools/engine_probe.py) ----")
+    emit(f'ASCII_VAL"{HOTKEY}"0 get')
+    emit("{")
+    emit("userdict /zdone known not")
+    emit("\t{")
+    emit("\tuserdict begin")
+    emit("\t/zdone true def")
+    emit('\t"zprobe.log""abw"file /zlog exch def')
+    emit("\trendermap refreshdirty")
+    emit('\t"zc0.bmp"screencapture')
+
+    # Rung 0. The baseline, logged against what this profile is expected to report. A baseline that
+    # has moved shows up here as a log line rather than as a silently wrong conclusion about
+    # indices -- which is exactly what it did on 2026-09-21.
+    emit("\t/zbase numunittypes def")
+    emit("\t" + _log(f'"rung0 numunittypes "zbase" expected "{UNIT_INDEX_EXPECTED_BASELINE}'))
+
+    # Rung 1. The aura readings, taken FIRST because they need no map state and no army: if the
+    # session dies later, these still came back. All three are read out of the patched aura.gs's
+    # own scope, so a missing name is itself a result.
+    for name in (UNIT_CAP_AURA_SENTINEL,) + UNIT_CAP_AURA_NAMES:
+        emit(f"\tuserdict /{name} known")
+        emit("\t\t{" + _log(f'"rung1 {name} "{name}') + "}")
+        emit("\t\t{" + _log(f'"rung1 {name} ABSENT -- patched aura.gs did not run"') + "}")
+        emit("\t\tifelse")
+    emit(
+        "\t"
+        + _log(
+            f'"rung1 expected {UNIT_CAP_AURA_SENTINEL} {UNIT_CAP_AURA_CAPACITY}'
+            f', {UNIT_CAP_AURA_NAMES[0]} 70, {UNIT_CAP_AURA_NAMES[1]} 71"'
+        )
+    )
+
+    emit("\t/zaloc -1 def /zseen false def")
+    emit(
+        "\tcurrentplayer{zseen not{anythinglocation /zaloc exch def /zseen true def}"
+        "{pop}ifelse}enumplayerarmies"
+    )
+    emit("\tzseen")
+    emit("\t\t{")
+    emit("\t\tzaloc xy_to_x_y /zay0 exch def /zax0 exch def")
+    emit("\t\t/zowner currentplayer def")
+    emit("\t\t" + _log('"army loc "zaloc" cell "zax0" "zay0" owner "zowner'))
+    lines.extend(_unit_cap_rungs())
+    emit("\t\t}")
+    emit("\t\t{" + _log('"no army found -- rungs 2..5 skipped"') + "}ifelse")
+    emit("\tzlog closefile")
+    emit('\t"zc9.bmp"screencapture')
+    emit("\tend")
+    emit("\t}if")
+    emit("}addhotkey")
+    emit("; ---- END UNIT/AURA CAP LADDER ----")
+    return "\n".join(lines)
+
+
 PROBES = {
     "ladder": lambda: probe_body(),
     "elevation": elevation_body,
@@ -1889,6 +2129,7 @@ PROBES = {
     "terrainrings": terrain_rings_body,
     "unitanchor": unit_anchor_body,
     "unitindex": unit_index_body,
+    "unitcap": unit_cap_body,
 }
 
 
