@@ -20,7 +20,25 @@ twice — which between them hold **155** `begin_unit_definition` blocks (`units
 three: `gate`, `rgate`, `lgate`). It is the only member in the entire corpus that calls
 `maxunittypes`.
 
-**So 155 of 200 declared slots are used, and ~45 are free today.**
+**So 155 of 200 declared slots are used in vanilla, and ~45 are free.**
+
+🔴 **That count is per profile, and the difference is not small. Observed in the corpus and in
+gameplay, 2026-09-21:**
+
+| profile | `units/*.gs` runs | unique | unit types at runtime |
+| --- | ---: | ---: | ---: |
+| **GS5R3** | **159** | **159** | **160** (measured by `numunittypes` in a running game) |
+| 3.02 | 153 | 152 | not measured |
+| vanilla | 153 | 152 | not measured |
+
+**GS5R3 therefore already ships unit types at indices 155-159**, and has 40 free slots rather than
+45. The runtime figure is the authoritative one; the run-list count is a proxy, because one member
+can hold several definitions (`units/gate.gs` holds three).
+
+⚠️ **Always name the profile when quoting this number.** The [`unitindex` run](unit-index-run-sheet.md)
+was designed against the vanilla count and executed on GS5R3, and its baseline assertion failed for
+exactly that reason. It failed *loudly*, because the probe logs the baseline rather than assuming
+it — which is the only reason the discrepancy was noticed rather than silently absorbed.
 
 **Observed in a local binary.** The `200` is a number the *script* picks, and nothing in the engine
 bounds it. `maxunittypes` (`0x00524720`) passes its operand to the allocator at `0x00524100`:
@@ -114,7 +132,7 @@ unusable as a donor even though `orinfa.imp` is 97/97 direct.
 Exactly 37, each an engine constant (`reports/gs/vocabulary-vanilla.tsv`: `INF 32`, `ELE 4`, …).
 **You cannot invent a 38th.**
 
-**Observed in the corpus:** 36 of the 37 are in use across the 155 shipped definitions, and **`WMT`
+**Observed in the corpus** (vanilla; see the profile caveat above): 36 of the 37 are in use across the 155 shipped definitions, and **`WMT`
 is used by no unit in any faith** — 8 immediately free `(faith, code)` pairs. Duplicates are legal:
 `orcav`/`orcav2` are both ORDER+CAV, `deldw`/`deldr` both DEATH+LDW, and the three gates share
 NONE+GAT.
@@ -278,7 +296,7 @@ name** by a script (2026-09-17, `imp\zzpal.imp`).
 
 | # | Question | State |
 | ---: | --- | --- |
-| 1 | Does a unit type at index 155+ register and draw? Nothing above 154 has ever existed at runtime. | **open** — attended run |
+| 1 | ~~Does a unit type at index 155+ register and draw?~~ | ✅ **answered 2026-09-21 — YES.** A type defined at runtime at index **160** drew a sprite indistinguishable from the shipped control's. See [the run sheet](unit-index-run-sheet.md). The question's premise was also wrong: GS5R3 already ships types at 155-159. |
 | 2 | Does the engine load a `pic.mpq` with an added member? | **open** — attended run (the repack layer is [settled](#adding-members-to-picmpq-works)) |
 | 3 | ~~Does raising `maxunittypes` past 200 break a downstream consumer?~~ | ✅ **answered 2026-09-21 — see below** |
 | 4 | ~~Where does the action-to-sequence remap come from?~~ | ✅ **answered 2026-09-21** — parsed from the `.H` companion member; see [imp format](imp-format.md#-the-remap-is-parsed-from-the-h-companion-member-at-load-time) |

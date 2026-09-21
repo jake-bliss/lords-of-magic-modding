@@ -1,6 +1,64 @@
 # `unitindex` run sheet — does a unit type above 154 register and draw?
 
-**Status: built and ready to run. Never run.** Written 2026-09-21.
+> # ✅ RAN AND PASSED 2026-09-21
+>
+> **A unit type above index 154 registers and draws.** The probe defined one at runtime at index
+> **160**, placed it, and it drew a sprite indistinguishable from the shipped control's. Both
+> cleanups gated and done, zero `REFUSED`, all five captures written.
+>
+> ```
+> rung0 numunittypes  160  expected  155          <-- the baseline was wrong; see below
+> control army 1104 at 58   expected 58    control cleanup done
+> rung2 defined; numunittypes 160 -> 161  index 160
+> rung2 lastunittype 160  expected 160            <-- exact
+> subject army 1104 at 183  expected 183   subject cleanup done
+> ```
+>
+> | capture | result |
+> | --- | --- |
+> | `zi1` control, cell 0 | 65x78 at (342,165) |
+> | `zi2` after control cleanup | **0 components** |
+> | `zi3` subject, cell 1 | **65x78 at (206,104)** -- same size as the control |
+> | `zi4` after subject cleanup | one 10x27 map animation, nothing of ours |
+>
+> ## 🔴 The baseline was wrong, and that is the bigger finding
+>
+> `numunittypes` reported **160**, not the 155 this sheet predicted -- and the prediction was
+> measured from the wrong archive. `gs\unittype.gs` was read out of the **Development profile's
+> pristine `gs.mpq`, which is vanilla**; the probe ran on **GS5R3**. **Observed in the corpus,
+> 2026-09-21:**
+>
+> | profile | `units/*.gs` runs | unique |
+> | --- | ---: | ---: |
+> | **GS5R3** | **159** | **159** |
+> | 3.02 | 153 | 152 |
+> | vanilla | 153 | 152 |
+>
+> **So GS5R3 already ships unit types at indices 155-159, and this sheet's own premise --
+> "nothing above 154 has ever existed at runtime" -- was false when it was written.** The shipped
+> game had already answered the question; nobody had looked, because the count was measured on one
+> profile and the engine run happened on another.
+>
+> That does not weaken the result. The probe still put a type at index **160**, above anything any
+> profile ships, and it drew. But the honest statement of what was learned is *"we confirmed
+> directly what GS5R3 was already demonstrating"*, not *"we did something the game has never done"*.
+>
+> ## A by-product, filed where it belongs
+>
+> The control landed at **(342,165)** and the subject at **(206,104)** -- *exactly* the cell-0 and
+> cell-1 positions the [2026-09-20 `unitanchor` run](unit-anchor-run-sheet.md#the-2026-09-20-run)
+> measured, on the same map with the army in the same place. Same 65x78 silhouette, which is
+> `pyeleb.imp` frame 33 mirrored. So this run **independently reproduces the mirror-sign result**
+> through a different probe built for a different question.
+>
+> ## What it did NOT establish
+>
+> Unchanged from the list below: nothing about passing **199**, nothing about durability across
+> save/load (the type exists in no archive), nothing about new art, and nothing about the three
+> adjacent caps -- of which `maxauratypes` is 70 of 70 with **zero headroom** and will bite a real
+> new unit long before the unit-type count does.
+
+**Status: ran 2026-09-21, passed.** Written 2026-09-21.
 
 This closes open question 1 of [new units](new-units.md#open-questions). Everything else in that
 document is settled offline: the engine has **no** unit-type cap (the table is heap-allocated at a

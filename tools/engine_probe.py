@@ -1707,9 +1707,21 @@ UNIT_INDEX_SUBJECT_FIELDS = (
 # player's own starting army instead of the one it placed.
 UNIT_INDEX_SEED_OFFSETS: list[tuple[int, int]] = [(2, 0), (-2, 0)]
 
-# The count this project measured in `gs\unittype.gs`. It is logged and compared IN THE PROBE so a
-# baseline that has moved shows up as a log line rather than as a silently wrong conclusion.
-UNIT_INDEX_EXPECTED_BASELINE = 155
+# The unit-type count this probe expects to find, logged and compared IN THE PROBE so a baseline
+# that has moved shows up as a log line rather than as a silently wrong conclusion.
+#
+# 🔴 **This is a PER-PROFILE number, and getting that wrong is exactly what the 2026-09-21 run
+# caught.** That run was designed against `gs\unittype.gs` read out of the *Development profile's
+# pristine `gs.mpq`*, which is **vanilla** (153 runs, 155 definitions) -- and then executed on
+# **GS5R3**, which runs 159 unit files and reported **160** types. The assertion failed loudly
+# instead of silently, which is the entire reason the discrepancy was noticed rather than absorbed
+# into a wrong conclusion about indices.
+#
+# `install-engine-probe.sh` targets GS5R3, so the value below is GS5R3's, and it is **Observed in
+# gameplay, 2026-09-21** (`numunittypes` in a running game) rather than counted from the corpus --
+# the run list is only a proxy, since one member can hold several definitions (`units/gate.gs`
+# holds three). Re-measure it before running this probe against any other profile.
+UNIT_INDEX_EXPECTED_BASELINE = 160
 
 
 def unit_index_body() -> str:

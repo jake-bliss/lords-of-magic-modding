@@ -135,6 +135,15 @@ Nothing was left behind. Two components appear that the probe did not place:
 Both are ordinary map animation. Every post-cleanup capture (`zu4`, `zu7`, `zu10`) differs from the
 plate by nothing else.
 
+### ✅ Independently reproduced, 2026-09-21
+
+The [`unitindex` probe](unit-index-run-sheet.md) — built for a different question entirely — placed
+Elephants on the same two cells of the same map with the army in the same place, and its captures
+landed at **(342,165)** and **(206,104)**: *exactly* this run's cell-0 and cell-1 subject positions,
+with the same **65x78** silhouette. Since that silhouette is `pyeleb.imp` frame 33 **mirrored**, and
+no other (frame, orientation) pair predicts it, the mirror-sign result above is reproduced by a
+second, independent run.
+
 ### ⚠️ A by-product, filed where it belongs
 
 The log reports `ARMY_FACING 4` and the art that drew is STAND **stored facing index 3, mirrored**.
