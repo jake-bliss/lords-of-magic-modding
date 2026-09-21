@@ -6857,6 +6857,14 @@ opposite things.
 **Unknown**, and it is the difference between the attended test below reading a clean negative and
 reading an ambiguous one.
 
+🔴 **The retraction covers the bottom-left slot only; the pop-out panel is still unexplained.**
+The run recorded both as unchanged. `show_portrait` accounts for the bottom-left. The pop-out takes
+a different path with **no faith-badge branch** — outside combat it goes straight to
+`load_military_unit_portrait` on the selected unit's own index — so it should have drawn the
+replacement. Either the selected unit was not the probe unit (plausibly index 0, the lord), or the
+probe was not `LIFE`+`INF` when the panel was read, or the pop-out resolves elsewhere. **Unknown**,
+and reopened rather than closed.
+
 **The next attended test is now one in-game action** with no archive change: the replaced
 `PORTRAIT\LIINFP00.LBM` is already in `pic.mpq`, so splitting a single Life Infantry into its own
 championless army and selecting it must draw the replacement bottom-left. The lord's army is the
@@ -6882,9 +6890,17 @@ stack histogram and indexes it with the raw unit-type value, unchecked:
 
 The buffer is `4024 - 0x18 = 4000` bytes — **exactly 1000 entries**, and entry 1000 is the return
 address. Eight call sites. It is **silent**: no compare, no error string, no `-1`, unlike every
-other limit in this document. It is reached by the type **value** rather than the count, so it bites
-on the first unit of a high type that reaches one of those callers; and `numunittypes > 1000`
-smashes the frame on entry, because the `rep stosl` is itself sized by the live count. I
+other limit in this document. **Two independent triggers**, not one — a first draft of this entry
+said it was "reached by the type value, not the count", which is wrong: `numunittypes > 1000`
+overruns during initialization, because the `rep stosl` is sized by the live count and fires before
+any unit type is read; and separately a stored type above 999 overruns during histogram access,
+which can happen with a much smaller count.
+
+🔴 **The same function has an off-by-one**: its winner scan seeds from `histogram[0]` and loops
+while `ecx < count-1`, so `ecx` runs `1 .. count-2` and **index `count-1` is never examined**. The
+highest-numbered registered type can never win — and appending types, the only safe way to add them,
+puts the newest one in exactly that slot. Found by the Codex side of the cross-review; the Claude
+side missed it. I
 disassembled this myself rather than taking the delegated read — it is the load-bearing claim of the
 whole audit, and the frame arithmetic is what makes it a number rather than a worry.
 

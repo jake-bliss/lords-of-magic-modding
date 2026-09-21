@@ -59,7 +59,8 @@ tested on unit 0:**
 | not a champion, and **`currentarmy`**'s `ARMY_NUM_UNITS > 1` | **no LBM at all** — `get_faith_dd`, a doodad cut from the `intspr1_page` sprite sheet, keyed on the **player's** faith |
 | not a champion, army of exactly 1 | `load_military_unit_portrait` -> **`get_unit_portrait_name`** |
 
-**That accounts for every observation in the run, with no second naming scheme:**
+**That accounts for the bottom-left observations, with no second naming scheme** (the pop-out is a
+separate path — see below):
 
 - The lord's face for most selections — the lord is unit 0 of his army.
 - A lone Rider isolated into its own army showed the Rider — army of 1, non-champion, third branch.
@@ -82,6 +83,26 @@ lbm_name unit_type f building_dict begin get_unit_portrait_name end strcpy
 The line this run sheet originally cited as evidence *against* `get_unit_portrait_name` —
 `/f unit_type UNITTYPE_FAITH getunittypedata def` — is the line immediately **above** that call,
 inside the same procedure. The read stopped one line short.
+
+🔴 **The retraction above covers the bottom-left slot only. The pop-out panel is still
+unexplained — reopened 2026-09-21 after review.**
+
+The run recorded **both** the bottom-left slot *and* the pop-out panel as showing an unchanged
+portrait. `show_portrait` accounts for the bottom-left. It does **not** account for the pop-out,
+because the pop-out takes a different path with **no faith-badge branch at all**: outside combat
+`get_real_unit` is the identity, so selecting a non-champion unit sends `setupunitpanel` straight to
+`load_military_unit_portrait` on that unit's own index, regardless of army size — which composes
+`LIINFP00.LBM` and should have drawn the replacement.
+
+**So one of these is true, and the run cannot distinguish them** (*Unknown*):
+
+- the unit whose panel was open was not the probe unit — plausibly `unit_index` was 0, the lord, if
+  the army rather than a specific unit was selected;
+- the probe unit was not `LIFE`+`INF` at the moment the panel was read;
+- or the pop-out resolves its portrait somewhere this trail does not reach.
+
+⚠️ **Do not record the pop-out as explained.** The attended test below must read the **pop-out** as
+well as the bottom-left, and must note which unit was selected when it did.
 
 ⚠️ **The pop-out panel branches on the same test but on the selected index**, not on 0:
 `gs\Dlg\INFOPAN5.gs`'s `/setupunitpanel` uses
@@ -186,6 +207,11 @@ causes, not one: either the split did not take, or `currentarmy` is not the army
 Confirm the split army is the selected army before reading the slot, or the run cannot tell those
 apart.
 
+**Read the pop-out panel in the same action, and write down which unit is selected.** The pop-out
+has no faith-badge branch, so it should draw the replacement for *any* selected non-champion Life
+Infantry, in an army of any size — which makes it the stronger of the two readings, and the one the
+last run left unexplained.
+
 As a control in the same sitting, select an army whose unit 0 **is** the lord: that must take the
 champion branch and be unaffected by the `LIINFP00` replacement. A control that also changed would
 mean the branch test is not what decides the draw.
@@ -200,6 +226,23 @@ provably reads `pic.mpq`. Six `(faith, code)` pairs used by shipped unit definit
 portrait member in GS5R3's `pic.mpq` -- `CHLD2`, `DELD1`, `DEWM2`, `EALD1`, `WALD1`, `WALD2`.
 Adding one of those and reaching a dialog that displays that unit is the clean test. All six are
 non-LIFE, so it needs a game of the matching faith.
+
+## The cross-review disagreed on the `max` reading — how it was settled
+
+Both models reviewed this document's first draft. They reached **opposite** verdicts on the GS5R3
+champion index `dd (len-1) max get`: the Claude pass called the "latent defect" refuted, the Codex
+pass agreed with the original claim that the expression always selects the final entry.
+
+**Adjudicated against the corpus, not by vote.** `{2 copy gt{exch pop}{pop}ifelse}` on `a b` leaves
+`b` when `a > b` and `a` otherwise — the **smaller** operand. Vanilla binds that body to `/min` and
+`{2 copy lt…}` to `/max`; GS5R3 binds them the other way round. Three independent confirmations that
+GS5R3's `max` is a minimum: the bodies themselves, GS5R3's own comment calling it a "MAXIMUM
+LIMITOR" (a clamp *to* a maximum), and this repository's acceptance battery, which **asserts** the
+reversal and would fail if it stopped holding. The Claude pass was right; the Codex pass was wrong.
+
+**The Codex pass was right about four other things the Claude pass missed**, including the winner-scan
+off-by-one at `0x0052BE20` and the fact that the retraction below covers only the bottom-left slot.
+Neither model is the reviewer of record — the disagreement is what made the decisive line get read.
 
 ## Instrument notes worth keeping
 
