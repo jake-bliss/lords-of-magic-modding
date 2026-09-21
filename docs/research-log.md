@@ -6389,3 +6389,55 @@ and no byte scan can see it. This needs the disassembly phase.
 `read_only=no`, which reads like "something writes it". It means only "not in a read-only PE
 section" (`operator_bodies.rs:614,2219`) and carries **no writer information**. Every one of the
 five operators that touch `0x5AE970` has `globals_written=0`.
+
+## 2026-09-21 — A unit type at index 160 draws, and the baseline that caught itself being wrong
+
+The `unitindex` probe ran attended on GS5R3. Both cells placed, both gated cleanups done, zero
+`REFUSED`, all five captures written. Collected to
+`artifacts/engine-probe-captures/run-20260921-093451`.
+
+**The question is answered.** A unit type defined at runtime at index **160** — above anything any
+installed profile ships — placed and drew a 65x78 sprite at `(206,104)`, the same silhouette and
+the same size as the shipped control at `(342,165)`. `lastunittype` read back **160** against a
+predicted 160, and `numunittypes` moved 160 → 161. The post-cleanup capture for the control rung
+differs from the plate by **zero components**.
+
+**🔴 And the baseline assertion failed, which is the more useful result.** `numunittypes` reported
+**160**, not the **155** the sheet predicted. The prediction was measured from the wrong archive:
+`gs\unittype.gs` was read out of the *Development profile's pristine `gs.mpq`* — which is **vanilla**
+— while the probe ran on **GS5R3**. Re-measured across all three:
+
+| profile | `units/*.gs` runs | unique |
+| --- | ---: | ---: |
+| **GS5R3** | **159** | **159** |
+| 3.02 | 153 | 152 |
+| vanilla | 153 | 152 |
+
+**So GS5R3 already ships unit types at indices 155-159, and this run sheet's own premise —
+"nothing above 154 has ever existed at runtime" — was false when it was written.** The shipped game
+had already been demonstrating the answer. Nobody had looked, because the count came from one
+profile and the engine run happened on another.
+
+This is the profile-scoping trap again, and it is the fourth time this project has been bitten by a
+figure that was true of one installed variant and quoted as though it were universal. The
+difference this time is that **it failed loudly**. The probe logs its baseline and states the
+expected value beside it, so the discrepancy arrived as a log line rather than being silently
+absorbed into a wrong conclusion about indices. That is exactly what stating an expected value
+*beside* a reading, rather than in a document nobody re-reads, buys you. A probe that had merely
+**assumed** 155 would have placed at 160, drawn correctly, and produced a write-up claiming
+something subtly false — and nothing in the run would have contradicted it.
+
+The constant now carries GS5R3's measured runtime value, marked **Observed in gameplay** rather
+than counted from the corpus: the run list is only a proxy, because one member can hold several
+definitions (`units/gate.gs` holds three).
+
+**A by-product, filed under the question it also settles.** The control landed at `(342,165)` and
+the subject at `(206,104)` — *exactly* the cell-0 and cell-1 positions the 2026-09-20 `unitanchor`
+run measured, on the same map with the army in the same place, with the same 65x78 silhouette
+(`pyeleb.imp` frame 33, mirrored). So this run **independently reproduces the mirror-sign result**
+through a different probe built for a different question, and it is recorded in the
+[unit anchor sheet](unit-anchor-run-sheet.md) as well as here.
+
+**Still not established:** anything about passing **199**; durability across save/load, since the
+type exists in no archive; new art; and the three adjacent caps, of which `maxauratypes` is 70 of
+70 with zero headroom.
