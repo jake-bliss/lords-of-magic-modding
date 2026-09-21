@@ -6300,3 +6300,92 @@ because the candidate list itself was derived from an assumption the sheet never
 premise its own failure cases cannot reach.** The rebuilt sheet derives the file from
 `unit_zoom_letter` and requires the analysis to identify the frame from the capture, in both
 orientations, rather than confirm a guess.
+
+## 2026-09-20 — The rebuilt `unitanchor` run: zero residual on three anchors, and the mirror sign
+
+The three-cell probe ran attended on GS5R3. All three cells placed, all three gated cleanups
+**done**, zero `REFUSED`, all 11 captures written. Collected to
+`artifacts/engine-probe-captures/run-20260920-210403`.
+
+**The unit draw path has no unit-specific anchor offset.** Each cell's control rung recovered its
+own anchor through the terrain-sprite path, and each cell's Elephant was then solved against that
+anchor alone. The residual is **zero in x and y on all three** — (388,222), (252,161) and
+(252,254). Three independently recovered anchors agreeing leaves no room for an additive constant,
+which is exactly what `hotspots.md`'s unit-path caveat was reserving judgement on. Closed as
+answered.
+
+**The mirror sign fell, and the subject was chosen so it could.** The body is
+`units\imp\pyeleb.imp` frame 33 — the unique fit among all 86 frames in both orientations, on each
+of the three anchors independently. Its record-0 `x` is `+14`: as stored the rule predicts a left
+edge of 370, mirrored it predicts 342, and 342 was measured three times. A 28-pixel discrimination,
+where the 2026-09-19 run had zero because its frame's record-0 `x` was `0`.
+
+**🔴 And then the repository turned out to already know the answer, more precisely than the run
+did.** `imp_anim::mirrored_anchor_x` has carried the flipped placement rule since it was read out of
+`ImpPlayer::GetPlacement` (`0x0049CC80`), including a detail this run cannot see: the flipped value
+at `0x0049CCC8..0x0049CCD3` is `-((width >> 1) + placement_x)`, **minus one more pixel when the
+width is even**. Frame 33 is 65 wide — odd — so the run exercised the branch without the `dec` and
+would have published a simpler rule that is wrong on every even-width frame.
+
+It was caught only by grepping for `mirror` before writing the doc. The rule was in `imp_anim.rs`
+and in nothing else; `hotspots.md`, the file that calls itself *the single source of truth for how
+the engine places a sprite frame*, said only that mirroring's effect "is undetermined". **Derived
+knowledge that lives in one module is not published**, and the single-source-of-truth document is
+the thing it has to reach. `hotspots.md` now states both branches, with the binary for the rule and
+this run for the odd branch, and marks the even-width `dec` as never having faced the engine.
+
+**What did not close:** one unit type, and the facing. All four placements across both runs
+reported `facing 4`. Different *cells* did not buy different facings — the one thing the three-cell
+design hoped for and could not guarantee, and the sheet said so in advance.
+
+**A capture-level lesson.** cell 1's control came back `29x122`, and the sheet's own rule is that
+anything but `30x122` voids the cell. It was not void: cell 1's per-column changed-pixel profile is
+a strict subset of cell 2's *at the same x*, column for column, converging to equality from x259 —
+whereas a one-pixel shift would have made cell 1's x253 match cell 2's x252 (29 against 15), and it
+does not. The leftmost column was **occluded by terrain that already matched the plate**; a
+difference image cannot see a sprite pixel equal to what was behind it. The exception was licensed
+by a positive demonstration of where the column went, not by the absence of an alternative, and the
+sheet's rule stays as written.
+
+**A cross-check that turned out to be weaker than advertised.** The 2026-09-19 write-up called the
+player flag an independent test of *the anchor*. It is an independent test of the anchor's **y**
+only. All nine `iface\??flagb.imp` files share geometry across the 15 origin-bearing frames in
+96..111, every one giving `py - (h>>1) = -17`, so the predicted flag top is `anchor.y - 57` no
+matter which frame or faith drew — and the flag is at most 15 wide inside a 65-wide body, so it
+cannot move the union's left or right edge at all.
+
+## 2026-09-20 — Direction 0, chased offline: a static table in `.data` closes most of B2
+
+The run sheet said to prefer the offline chase because it was free and might make the attended run
+unnecessary. It did, for most of the question.
+
+**`lomse.exe` carries a static 8-entry direction table**, twice: `0x005557E8`/`0x00555808`, and an
+identical pair at `0x555828`/`0x555848`. Indexed by `direction * 4` at `0x0041B183` (direction from
+object field `+0x44`) and at `0x004212D0..0x00421303`, where the linear cell index is `idiv`'d by
+`[ecx+0x6c]` and the **remainder** takes the lower array while the **quotient** takes the upper one.
+A cell index is `second_operand * width + first_operand`, so the lower array is the first-operand
+delta. Composed with this project's own **Derived** `n = (0,-1)` (576/576 engine-written ring tiles
+against 0/576 mirrored):
+
+> **Direction 0 is the `.til` column `s`**; the ring is `0=s, 1=sw, 2=w, 3=nw, 4=n, 5=ne, 6=e, 7=se`.
+
+**This does not inherit the x/y ambiguity**, and that was worth checking rather than asserting:
+`Map::cell_index` is `y * width + x`, so the writer's `x` *is* the first operand and `tile.rs`'s
+`(dx, dy)` is `(Δ first, Δ second)` directly. A relabelling of the axes moves both halves together.
+
+**What is still open is the screen orientation, and only that.** A full string scan of the image
+finds **no compass vocabulary anywhere**. That the column named `s` points down-screen is the
+tileset authors' naming plus derived geometry, not something the binary says. The attended run is
+now much smaller than it was: it has one thing to settle.
+
+**Why the `0x5AE970` builder is unreachable, stated as a measurement rather than a shrug.** The
+dword occurs **36 times in `.text` and every one is a read encoding** — no `A3`, no `C7 05`, no
+`89 xx`. `.data` has `rsz=0x23200`, so raw data stops at `0x578200` and `0x5AE970` is in the BSS
+tail, written at runtime. It is field `+0x18` of a singleton based at `0x5AE958`, whose
+`mov ecx, 0x5AE958` immediate appears **499** times in `.text`. The store goes through a register
+and no byte scan can see it. This needs the disassembly phase.
+
+**🔴 A trap worth recording.** `reports/natives/global-clusters.tsv` marks this cluster
+`read_only=no`, which reads like "something writes it". It means only "not in a read-only PE
+section" (`operator_bodies.rs:614,2219`) and carries **no writer information**. Every one of the
+five operators that touch `0x5AE970` has `globals_written=0`.
