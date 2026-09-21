@@ -209,7 +209,17 @@ Facings: 5 stored, mirrored to 8 directions (`Imp::DirectionCount` `0x0049D920`)
 carrying it, 26 *have* a DEFEND cycle, and 18 units without the flag have none. The flag means
 something else, currently unknown.
 
-### 4. Portrait — one member
+### 4. Portrait — one member in vanilla; a table entry in GS5R3
+
+🔴 **Read this first if you are modding GS5R3.** Portrait resolution there goes through
+`gs\PORTRAITS5.gs`'s `/portrait_file_names`, keyed by **unit type**, for both the unit-info panel
+and the barracks (*Observed in gameplay, 2026-09-21*). A new unit type absent from that table falls
+back to the **faith banner**, not to a composed name — so in GS5R3, adding the `(faith, code)`
+member alone may give a new unit no portrait at all. Adding a table entry is what worked.
+The composed rule below is *Observed in the corpus* and is presumably what vanilla and 3.02 use;
+it has never been confirmed in a running engine, because every run here has been GS5R3.
+
+#### The composed rule
 
 **Observed in the corpus.** `gs\Dlg\newbuild.gs`'s `get_unit_portrait_name` derives the filename
 **entirely from `(faith, code)`** — there is no per-unit portrait field:
@@ -316,7 +326,7 @@ name** by a script (2026-09-17, `imp\zzpal.imp`).
 | # | Question | State |
 | ---: | --- | --- |
 | 1 | ~~Does a unit type at index 155+ register and draw?~~ | ✅ **answered 2026-09-21 — YES.** A type defined at runtime at index **160** drew a sprite indistinguishable from the shipped control's. See [the run sheet](unit-index-run-sheet.md). The question's premise was also wrong: GS5R3 already ships types at 155-159. |
-| 2 | Does the engine load a `pic.mpq` with an **added** member? | **open**, and now properly framed. ✅ A **replaced** member *is* read (2026-09-21, [run sheet](portrait-member-run-sheet.md)) — so the engine reads a modified `pic.mpq` at all, which was never shown before. An **added** member (`portrait\EAWMTP00.LBM`) never appeared, but **no UI was shown to request it**, so that says nothing. 🔴 An earlier draft concluded added members are unreadable; that is **withdrawn**. The settling design is in the run sheet: six shipped `(faith, code)` pairs have no portrait member, and the barracks provably requests by that key. |
+| 2 | ~~Does the engine load a `pic.mpq` with an **added** member?~~ | ✅ **ANSWERED 2026-09-21 — YES.** `gs\PORTRAITS5.gs`'s portrait table was pointed at `zzadd001.lbm`, a name that has never existed in the game, and that member was **added** to `pic.mpq`. The engine resolved and drew it, in both the unit-info panel and the barracks, with a live-archive control (*Observed in gameplay*). This was the last structural unknown blocking new unit art. ⚠️ Scope: one member, one archive, one name — nothing measured about hash-table exhaustion or about **adding** to `gs.mpq`. See [the run sheet](portrait-member-run-sheet.md#-closed-the-engine-reads-an-added-picmpq-member). |
 | 3 | ~~Does raising `maxunittypes` past 200 break a downstream consumer?~~ | ✅ **answered 2026-09-21 — see below** |
 | 4 | ~~Where does the action-to-sequence remap come from?~~ | ✅ **answered 2026-09-21** — parsed from the `.H` companion member; see [imp format](imp-format.md#-the-remap-is-parsed-from-the-h-companion-member-at-load-time) |
 | 5 | With a duplicate `(faith, code)`, which unit does `unitcodegettype` return? | **open** — attended run. `unitcodegettype` (`0x004447C0`) linearly scans all `used` records and returns the **first** match, so "the lower index" is the likely answer, but that is *Inferred*. |
@@ -324,7 +334,7 @@ name** by a script (2026-09-17, `imp\zzpal.imp`).
 | 7 | ~~Does a build with `maxauratypes` above 70 boot?~~ | ✅ **answered 2026-09-21 — YES.** A `gs.mpq` with `100 maxauratypes` booted and registered two aura types at **70 and 71**. See [the run sheet](unit-cap-run-sheet.md). Durability across save/load is still open. |
 | 8 | Does a unit type at index **199** register and place? | ✅ **answered 2026-09-21 — YES.** The table filled to exactly 200 and an army was placed at the subject cell, `armyat` returning the expected location. ⚠️ `armyat` proves *an army occupies that cell*; it does **not** read back that army's type index, so "the army there is the type at 199" is **Derived** from the two readings, not directly observed. One definition past capacity returned **-1**, left the count at 200, and did not crash the session. |
 | 8b | Does raising `maxunittypes` **above** 200 work? | **open to a run, closed on the static audit 2026-09-21.** Nothing bounds it: the allocator checks only `count >= 1`, the stored index is a dword everywhere reachable, and the per-type sounds / terrain costs / faith counts live inside the 1000-byte heap record rather than in parallel static arrays. Two numbers must move together — `maxunittypes` **and** `/unittypedict N dict`, which fail differently if you forget one. 🔴 **The real ceiling is 1000**, imposed by a fixed 1000-dword stack histogram at `0x0052BE20` that indexes on the raw type value with no bounds check, and it fails **silently**. See [the ceiling audit](#-the-real-ceiling-is-1000-unit-types--and-it-is-silent). No run has tried. |
-| 9 | ~~Does the engine's portrait lookup match `get_unit_portrait_name`?~~ | ✅ **answered 2026-09-21 — YES, in the recruit dialog.** `PORTRAIT\LIINFP00.LBM` was replaced and the barracks drew the replacement for Elven Staffmen (LIFE + INF). So the engine reads a modified `pic.mpq`, and the `(faith, code)` rule holds in the engine. The **army roster figure** is `(faith, code)`-keyed too. The **unit-info panel** uses this lookup too — the claim that it does not was **withdrawn the same day**. `gs\Dlg\lescsys.gs`'s `/show_portrait` reads **unit index 0** of the displayed army and branches three ways: champion -> `champion_portrait_filename`; non-champion with `currentarmy`'s `ARMY_NUM_UNITS > 1` -> a faith badge cut from `intspr1_page`, which is no `pic.mpq` member at all; non-champion in an army of **1** -> `get_unit_portrait_name`. ✅ **Confirmed in the engine 2026-09-21**: all three branches were observed with a control, and in one army the two slots *disagreed* — faith emblem bottom-left, replaced portrait in the pop-out (*Observed in gameplay*). See [the run sheet](portrait-member-run-sheet.md#-and-one-retraction-that-was-itself-wrong). |
+| 9 | Does the engine's portrait lookup match `get_unit_portrait_name`? | 🔴 **REFUTED for GS5R3, 2026-09-21.** Both the unit-info panel **and the barracks** resolve through `gs\PORTRAITS5.gs`'s `/portrait_file_names`, a table keyed by **unit type**, not through the composed `(faith, code)` name. The discriminating unit was `licav`, whose table lists `licavp01.lbm` as element 0 while the composed name is `LICAVP00.LBM`: the engine drew element 0 (*Observed in gameplay*). Three earlier runs used Elven Staffmen, for which `liinf["liinfp00.lbm"]` and the composed name are **the same file**, so every rung was consistent with both models. ⚠️ `portrait_file_names` exists in **6 GS5R3 members and 0 vanilla/3.02 members**, and every engine run this project has done is GS5R3 — so the composed rule has **never been confirmed in a running engine**. See [the run sheet](portrait-member-run-sheet.md#-refuted-portraits-in-gs5r3-do-not-resolve-through-get_unit_portrait_name). |
 
 ### Nothing downstream caps the unit-type count
 

@@ -1,8 +1,9 @@
 # The portrait ladder — what `pic.mpq` art a unit actually uses
 
-**Status: ran four times, 2026-09-21.** The fourth run closed it. Every branch of the panel's
-portrait selection is now **Observed in gameplay**, with a control, and the reopened pop-out
-question is settled.
+**Status: ran seven times, 2026-09-21.** ⭐ The added-member question is **CLOSED — the engine
+reads an added `pic.mpq` member.** 🔴 And the central claim of runs 4-6 is **REFUTED**: in GS5R3
+portraits resolve through a unit-type-keyed **table**, not through the composed `(faith, code)`
+name. Three consecutive runs measured a unit for which both models name the same file.
 
 ## ⭐ What it settled
 
@@ -192,6 +193,70 @@ unit_portrait_name = "portrait/"
 `f` is the unit's **own** faith at the info-panel call site (`gs\dlg\INFOPAN5.gs:3222`,
 `/f unit_type UNITTYPE_FAITH getunittypedata def`) and the **building's** faith in the build dialog.
 `unit_code_strings` has 37 entries; `SHP` is 15, `ELE` is 19, `WMT` is 34.
+
+## ⭐ CLOSED: the engine reads an ADDED `pic.mpq` member
+
+**Observed in gameplay, 2026-09-21.** The decisive build named a member that **has never existed in
+this game** and added it:
+
+- `gs\PORTRAITS5.gs`: `licav["licavp01.lbm" "licavp00.lbm"]` -> `licav["zzadd001.lbm" "licavp00.lbm"]`
+  (12 characters for 12; file length unchanged).
+- `pic.mpq`: **added** `PORTRAIT\zzadd001.lbm` (the elephant portrait) at a new block; `LIINFP00`
+  replaced with a cow as the live-archive control; **`LICAVp00` and `LICAVp01` both left pristine**,
+  so the stock Rider face stayed a meaningful signal.
+
+**The Elven Rider's info panel drew the elephant.** So did its barracks entry. A name the shipped
+game never contained, added to the archive by this project's repack, was resolved and rendered by
+the engine.
+
+**This closes open question 2**, and with it the last structural unknown about whether a new unit
+can have new art. It also generalises the earlier result: the engine reads a **modified** `pic.mpq`
+(run 4) *and* an **added** member (run 7).
+
+⚠️ **Scope.** One added member, one archive (`pic.mpq`, GS5R3), one name. Nothing here measures how
+many members can be added, whether the hash table can be exhausted, or whether `gs.mpq`/`imp.mpq`
+behave the same on *addition* (`imp.mpq` has precedent; `gs.mpq` has none).
+
+## 🔴 REFUTED: portraits in GS5R3 do not resolve through `get_unit_portrait_name`
+
+**Observed in gameplay, 2026-09-21.** Both the unit-info panel **and the barracks** resolve through
+`gs\PORTRAITS5.gs`'s `/portrait_file_names`, a table keyed by **unit type**, not through the
+composed `(faith, code)` name.
+
+**The discriminating run.** `portrait_file_names[licav]` is `["licavp01.lbm" "licavp00.lbm"]` —
+element **0** is `p01`. The composed namer would produce `LICAVP00.LBM`. Replacing `LICAVp01` with a
+goat while `LICAVp00` held a chicken and the composed-name target held an elephant, the panel drew
+**the goat**. Element 0 of the table. Not the composed name.
+
+**Why three earlier runs missed it.** Every one of them measured **Elven Staffmen**, and
+`portrait_file_names[liinf]` is `["liinfp00.lbm"]` — byte-for-byte the name the composed path
+builds. *Both models predict the identical member for that unit.* The six-rung ladder of run 4 was
+clean, controlled and fully green, and **every rung was consistent with both hypotheses**. A control
+proves the instrument is connected; it cannot separate two models that agree.
+
+`licav` is the first unit tested whose two candidate paths disagree, and it disagreed immediately.
+
+### What survives, and what it is scoped to
+
+| claim | status |
+| --- | --- |
+| The engine reads a **modified** `pic.mpq` | ✅ holds — Observed in gameplay |
+| The engine reads an **added** `pic.mpq` member | ✅ **new, holds** — Observed in gameplay |
+| The panel's portrait is keyed on the unit, not the army-wide faith emblem | ✅ holds |
+| `show_portrait`'s three-way branch on unit 0 | ✅ holds — the faith-emblem arm was observed |
+| Portraits are keyed on `(faith, code)` **in the engine** | 🔴 **NOT established in GS5R3.** The table overrides it for every unit the table names |
+| `get_unit_portrait_name` is used by the barracks | 🔴 **refuted for GS5R3** |
+
+🔴 **And the profile matters, again.** `portrait_file_names` appears in **six GS5R3 members and in
+zero vanilla or 3.02 members** (*Observed in the corpus*). Vanilla and 3.02 have no table, so the
+composed `(faith, code)` rule is presumably theirs — but **every engine run this project has ever
+done was on GS5R3**, so the composed rule has never been confirmed in a running engine at all. It
+remains *Observed in the corpus* only.
+
+⚠️ **Unknown:** whether `get_unit_portrait_name` is reached in GS5R3 for a unit type **absent** from
+the table. `champion_portrait_filename`'s unknown-type arm falls back to the faith banner, not to
+the composed name — so a brand-new unit type may have no route to a composed portrait at all. That
+is now the most important open question for new-unit art, and it was invisible before today.
 
 ## ⭐ The fourth run: all three branches observed, with a control
 
