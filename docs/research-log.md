@@ -6473,7 +6473,18 @@ one table.
 when `used >= capacity`; the operator then prints `"addauratype failed"` (`0x00555eb4`) and the
 script binds the name to -1. A 71st aura today does not crash at registration. The exact eight-byte
 append guard occurs at **5** sites in `.text` — aura, `0x0043c434`, missile, terrain sprite, unit
-type — so these tables share one implementation.
+type. A Codex pass over the same binary corrected the reading I first wrote: these are five
+*separate* bodies, not one shared function, each with its own `rep movsl` count — `0x12`, `0x16`,
+`0x0d`, `0x0c`, `0xfa`, which are exactly 72, 88, 52, 48 and 1000 bytes, each table's stride. One
+template instantiated per element type. The guard generalises; the code does not, and saying
+otherwise would have invited someone to patch "the" function.
+
+That pass confirmed all eight claims put to it and returned four other corrections, of which two I
+had already made in a self-review (the reference-palette layout, and the reach of "narrowed
+nowhere") and two I had not: `count * stride` is computed with **no overflow check**, so "no upper
+bound" means no engine-*enforced* bound rather than "any count is safe"; and the section heading
+"a one-token script edit" claimed operational sufficiency the disassembly cannot carry. Both are
+fixed.
 
 Lookup (`0x0042e130`) takes a full 32-bit index, rejects negatives, and bounds against the live
 **used** count. No aura index is narrowed anywhere in the image.
