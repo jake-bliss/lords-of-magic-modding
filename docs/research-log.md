@@ -6931,3 +6931,46 @@ array indexed by a type that arrives as a return value, a deep parameter, or ano
 field. `0x0052BE20` proves such code exists here *and* that the instrument caught it only by luck —
 it was found because it also loaded the count for its `rep stosl`. A sibling sizing its buffer with
 a literal would be invisible to both sweeps.
+
+## 2026-09-21 — the portrait panel, settled in the engine (attended, fourth run)
+
+**Observed in gameplay.** A `pic.mpq`-only build — `PORTRAIT\LIINFP00.LBM` (Elven Staffmen,
+LIFE + INF) replaced with the elephant portrait, byte-verified on install, `gs.mpq` and `imp.mpq`
+untouched. **No script, no probe, no hotkey.** That is why it worked first time: the three sittings
+this question previously cost were all lost to probe bugs, and this run had no probe to be buggy.
+
+| rung | expected | observed |
+| --- | --- | --- |
+| A barracks (instrument) | elephant | **elephant** |
+| B pop-out, army of 1 | elephant | **elephant** |
+| B' bottom-left, army of 1 | elephant | **elephant** |
+| C bottom-left, 2 units, no lord | **faith emblem**, no member | **faith emblem** |
+| C' pop-out, same army | elephant | **elephant** |
+| D control, lord's army | unchanged | **unchanged** |
+
+**Rung C is the result.** In one army the two slots **disagree** — an emblem bottom-left and the
+replaced portrait in the pop-out. No single-branch model produces that, so it separates the
+bottom-left's three-way branch from the pop-out's two-way one in a single screen. The corpus trail
+predicted it before the game was launched.
+
+**Rung D earns its place.** It rules out the alternative that a replaced member leaks into every
+portrait slot, which would have made every other rung vacuous. The lord's face was unaffected
+throughout.
+
+🔴 **The original run's "pop-out unchanged" is positively contradicted, not merely explained.** A
+controlled reading of the same panel with the same member replaced draws the replacement. *Derived:*
+the unit whose panel was open that evening was not the probe unit — plausibly index 0, the lord. The
+reopened question closes on the **instrument**, not on a second naming scheme. That is the second
+time in two days that a null reading here turned out to be a panel that was never asked the
+question, which is what [[feedback-control-proves-the-instrument-is-connected]] is about.
+
+**What it does not settle.** `currentarmy` versus `getcurrdisplayingarmy` is still **Unknown** — the
+run is consistent with their being the same army but cannot show that they must be. The
+**added-member** question is untouched: every member read here already existed. And only one
+`(faith, code)` pair was exercised.
+
+🔴 **A tool-documentation defect found while building it.** `--replace` does **not** normalise case,
+though this run sheet claimed it did. `--replace 'portrait\LIINFP00.LBM=…'` failed with *"source
+archive has no member named portrait\LIINFP00.LBM"* while `probe-names` reported that exact name
+**present**; the listfile spells it `PORTRAIT\LIINFP00.LBM` and only that spelling works. A claim
+about a tool is a claim like any other, and this one had been written without being exercised.

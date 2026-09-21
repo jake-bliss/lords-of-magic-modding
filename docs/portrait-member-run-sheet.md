@@ -1,7 +1,8 @@
 # The portrait ladder — what `pic.mpq` art a unit actually uses
 
-**Status: ran three times, 2026-09-21; re-read offline the same day.** Two results, three
-retractions — one of them a retraction *of* a retraction — and one question reopened.
+**Status: ran four times, 2026-09-21.** The fourth run closed it. Every branch of the panel's
+portrait selection is now **Observed in gameplay**, with a control, and the reopened pop-out
+question is settled.
 
 ## ⭐ What it settled
 
@@ -192,9 +193,56 @@ unit_portrait_name = "portrait/"
 `/f unit_type UNITTYPE_FAITH getunittypedata def`) and the **building's** faith in the build dialog.
 `unit_code_strings` has 37 entries; `SHP` is 15, `ELE` is 19, `WMT` is 34.
 
-## The cheapest test of the panel, now that the branch is known
+## ⭐ The fourth run: all three branches observed, with a control
 
-**One in-game action, no archive change.** The replaced `PORTRAIT\LIINFP00.LBM` is already proven
+**Observed in gameplay, 2026-09-21.** Build: `pic.mpq` only — `PORTRAIT\LIINFP00.LBM` (Elven
+Staffmen, LIFE + INF) replaced with the elephant portrait, byte-verified on install. `gs.mpq` and
+`imp.mpq` untouched, so **no script, no probe, no hotkey** was involved in this run at all.
+
+| rung | what was done | expected | observed |
+| --- | --- | --- | --- |
+| **A** instrument | barracks recruit entry for Elven Staffmen | elephant | **elephant** ✅ |
+| **B** pop-out | Staffmen selected, army of 1 | elephant | **elephant** ✅ |
+| **B'** bottom-left | same army of 1 | elephant | **elephant** ✅ |
+| **C** bottom-left | Staffmen + one other non-champion, **no lord** | **faith emblem**, no member | **faith emblem** ✅ |
+| **C'** pop-out | same army, Staffmen selected | elephant | **elephant** ✅ |
+| **D** control | army whose unit 0 is the Warrior lord | lord's face, unchanged | **unchanged** ✅ |
+
+**All three `show_portrait` branches fired as the corpus said they would**, and the pop-out's
+separate path was distinguished from the bottom-left in the same screen: in rung C the two slots
+**disagree** — emblem bottom-left, elephant in the pop-out — which is the single most discriminating
+reading available, because no single-branch model can produce it.
+
+**Rung D matters as much as the subjects.** It rules out the alternative that a replaced member
+leaks into every portrait slot; the lord's portrait was unaffected throughout.
+
+### What this settles
+
+- **The unit-info panel uses `get_unit_portrait_name`.** Confirmed in the engine, not just in the
+  corpus. *Observed in gameplay.*
+- **The bottom-left slot's three-way branch on unit 0 is real**, including the faith-emblem arm that
+  draws no `pic.mpq` member. *Observed in gameplay.*
+- **The pop-out has no faith-emblem arm** — it drew the replacement in an army of more than one,
+  where the bottom-left drew an emblem. *Observed in gameplay.*
+- 🔴 **The original run's "pop-out unchanged" observation is positively contradicted.** A controlled
+  reading of the same panel, with the same member replaced, draws the replacement. *Derived:* the
+  unit whose panel was open in that run was not the probe unit — plausibly index 0, the lord. The
+  reopened question closes on the *instrument*, not on a second naming scheme.
+
+### What it does not settle
+
+- **`currentarmy` vs `getcurrdisplayingarmy` is still not separated.** Rung C is consistent with
+  them being the same army, but a run in which they agree cannot show that they must. Still
+  **Unknown**.
+- **The added-member question is untouched by this run.** Every member read here already existed.
+- ⚠️ **No LIFE unit type was tested other than INF**, and only one faith. The branch logic is
+  `(faith, code)`-independent in the corpus, but this run exercised one pair.
+
+## ~~The cheapest test of the panel~~ — designed, then run
+
+✅ **Executed 2026-09-21; results above.** Kept for the design record.
+
+**One in-game action.** The replaced `PORTRAIT\LIINFP00.LBM` is already proven
 to reach the engine through the barracks. Split a single Life Infantry unit into an army of its own
 with no champion in it and select that army: `show_portrait` then takes the
 `ARMY_NUM_UNITS == 1`, non-champion branch and **must** draw the replacement bottom-left.
@@ -257,8 +305,11 @@ Neither model is the reviewer of record — the disagreement is what made the de
   996 plus the added one, while **every member's bytes stayed identical**. Members resolve by hash,
   so no run here was affected, but any archive this pipeline ships carries the loss. Not measured
   for `gs.mpq` or `imp.mpq`.
-- **Name lookups are case-insensitive in MPQ but were not in this tool.** `--replace` and
-  `--add-storage-of` now normalise case and `/` vs `\`.
+- 🔴 **`--replace` does NOT normalise case, despite this file previously claiming it does.**
+  Building the 2026-09-21 archive, `--replace 'portrait\LIINFP00.LBM=…'` failed with *"source
+  archive has no member named portrait\LIINFP00.LBM"* while `probe-names` reported that very name
+  **present**. The listfile spells it `PORTRAIT\LIINFP00.LBM`, and only the exact spelling works.
+  Whatever normalisation exists does not cover this guard. Use the spelling `lom-mpq list` prints.
 - **`probe-names` is the right instrument for a negative** about an archive with no listfile.
   `reports/member-names/` holds only names this project *recovered*, and GS5R3's `pic.mpq` listing
   contains no `p00` members at all.
