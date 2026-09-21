@@ -6734,3 +6734,67 @@ amendment is that **the document you are editing is part of what you must read**
 are writing over. Reading the section immediately above my insertion point would have caught it,
 and the cost of not doing so is that a reviewer had to.
 
+
+## 2026-09-21 — The portrait ladder: pic.mpq reaches the engine, and two of my conclusions do not
+
+Three runs in one sitting, chasing where a unit's portrait comes from. The headline is real and so
+is the retraction, and the retraction is the more instructive half.
+
+**Observed in gameplay.** `PORTRAIT\LIINFP00.LBM` replaced with the Elephant's portrait, and the
+**barracks recruit dialog for Elven Staffmen drew the elephant**. Two things follow. **The engine
+reads a modified `pic.mpq`** — that archive had never been put in front of it in any form, while
+`gs.mpq` and `imp.mpq` had. And the **`(faith, code)` naming rule holds in the engine**, not just in
+`get_unit_portrait_name`, which is the script that composes the name.
+
+**Observed in gameplay, second result.** The **army roster figure** is `(faith, code)`-keyed: the
+same probe unit showed a dwarf-infantry figure as `EARTH`+`WMT` and an Elven Staffmen figure as
+`LIFE`+`INF`. That was the third art channel, and it had been sitting untraced since the morning.
+
+### What I withdrew, and how far the error ran
+
+**First: "a unit's portrait is named after its symbol."** Refuted by this repository's own corpus
+before it ever reached a run — `get_unit_portrait_name` builds the name from `(faith, code)`, and
+`portrait\pyelep00.lbm` only looks symbol-shaped because `ELE` is one of four codes taking a literal
+`Py` prefix. Already recorded; both reviewers caught it.
+
+**Second, and this one survived two more runs before dying: "the engine does not read an added
+`pic.mpq` member."** I added `portrait\EAWMTP00.LBM` under a name I had verified by reading the
+builder end to end, confirmed it present by hash in the installed archive, watched the panel not
+change, and started drafting the negative. Then a control killed it: a probe unit defined as
+`LIFE`+`INF`, whose portrait member is the one this build **replaced** and which provably draws the
+replacement in the barracks, showed an **unchanged** panel portrait. So the panel does not ask for
+that name at all, and every reading I had taken was of a channel that was never going to answer the
+question.
+
+**The chain of mistakes is worth naming, because each link looked like diligence.** I verified the
+name against the source. I verified the member was in the archive. I ruled out a full hash table
+(2,048 slots, 68.7% load). What I never verified was that **the instrument I was reading was
+connected to the thing I was testing** — and no amount of care about the subject substitutes for a
+control that proves the measurement path works. This project wrote that lesson down after a failed
+run in September and I skipped it anyway, because the subject felt so well-established that a
+control seemed like ceremony.
+
+The user found the discriminator, twice: first that the bottom-left portrait tracks the selected
+unit rather than always showing the lord, and then that the barracks shows the replacement while the
+panel does not. Both were observations I had the screenshots to make and did not.
+
+### Instrument work this required
+
+- 🔴 **`pic.mpq` had no backup.** The manifest covered `gs.mpq` and `imp.mpq` only, and
+  `ARCHIVE_NAMES` listed two archives. Backed up, hash-verified, restore round-trip tested before
+  anything was written. A digest snapshot is not a backup; bytes are.
+- 🔴 **GS5R3's `pic.mpq` has mixed storage classes** — 995 members at `0x200`, 410 at `0x10100`,
+  and the named `portrait\` members split 662/88. `lom_mpq` refused the add, correctly. Its own
+  comment claimed every `pic.mpq` member shares one class; that was measured on a different
+  profile, and this is the **fifth** time a per-profile figure has been quoted as universal here.
+  The verb now takes `--add-storage-of NAME`, copying a named member's class — a fact about the mod
+  rather than a modal guess.
+- ⚠️ **A repack rewrites `(listfile)` and loses names**: 1,081 -> 996 plus the added one, with every
+  member's bytes identical. Members resolve by hash so nothing here was affected, but any archive
+  this pipeline ships carries that loss, and it has not been measured for `gs.mpq` or `imp.mpq`.
+- **MPQ name lookups are case-insensitive; this tool's were not.** `--replace` and
+  `--add-storage-of` now normalise case and `/` against `\`.
+- **`probe-names` is the right instrument for a negative** about an archive with no listfile.
+  `reports/member-names/` holds only *recovered* names, and GS5R3's `pic.mpq` listing contains no
+  `p00` members at all — so the absence I first cited was drawn with an instrument that could not
+  have seen the thing either way.

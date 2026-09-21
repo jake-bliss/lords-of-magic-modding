@@ -214,8 +214,33 @@ while IFS= read -r map_name; do
 done < <(PYTHONPATH="${project_dir}/tools" python3 -c \
   'import engine_probe; print("\n".join(engine_probe.generated_map_outputs()))')
 
+# `unitcap` optionally ships a modified `pic.mpq` as well, named by LOM_PIC_ARCHIVE. It is built
+# OUTSIDE this script (see docs/portrait-member-run-sheet.md) so the archive that goes in front of
+# the engine is the exact file whose manifest was compared member-by-member against the pristine
+# one -- rebuilding it here would put a different, unverified file in its place.
+pic_archive="${LOM_PIC_ARCHIVE:-}"
+if [[ -n "${pic_archive}" ]]; then
+  if [[ ! -r "${pic_archive}" ]]; then
+    echo "LOM_PIC_ARCHIVE is set but not readable: ${pic_archive}" >&2
+    exit 1
+  fi
+  echo "== pic.mpq override =="
+  echo "  ${pic_archive}"
+  echo "  $(shasum -a 256 "${pic_archive}" | cut -d' ' -f1)"
+fi
+
 echo "== injecting =="
 writing=1
+if [[ -n "${pic_archive}" ]]; then
+  cp "${pic_archive}" "${game_dir}/pic.mpq"
+  installed_pic="$(shasum -a 256 "${game_dir}/pic.mpq" | cut -d' ' -f1)"
+  expected_pic="$(shasum -a 256 "${pic_archive}" | cut -d' ' -f1)"
+  if [[ "${installed_pic}" != "${expected_pic}" ]]; then
+    echo "pic.mpq did not copy intact; aborting." >&2
+    exit 1
+  fi
+  echo "  pic.mpq installed and verified byte-identical"
+fi
 if [[ "${probe}" == "ladder" ]]; then
   "${mpq_replace}" "${game_dir}/imp.mpq" 'imp\zzctl.imp' "${work_dir}/zzctl.imp"
   "${mpq_replace}" "${game_dir}/imp.mpq" 'imp\zzpal.imp' "${work_dir}/zzpal.imp"
