@@ -1,0 +1,60 @@
+# Portraits at 140x134, upscaled with a learned model -- the first build whose point is how the
+# art LOOKS rather than what the engine does.
+#
+# The mechanism is already settled, in two attended runs on 2026-09-21:
+#   * `mods/portrait-oversize`  -- an oversize portrait LOADS, and a 70x67 doodad crops it.
+#   * `mods/portrait-2x-doodad` -- a doodad rect paints its own size at 1:1. The barracks slot and
+#     the panel slot drew the SAME member at different sizes in one sitting.
+# So nothing here is testing the engine. It is testing whether 4x the pixels is worth having.
+#
+# ART. All 353 `PORTRAIT\`-spelled members that `portrait_file_names` can name, run through
+# Real-ESRGAN ncnn `ultrasharp-4x` at 4x, resampled to 140x134, and quantised back to THAT
+# portrait's own 256 colours with Floyd-Steinberg.
+#
+# The palette is carried across rather than re-optimised, and that is a deliberate refusal to
+# assume something unmeasured. There are 193 distinct palettes across the 749 portraits and NOT ONE
+# palette entry is common to all of them, so the corpus cannot say whether the engine honours a
+# portrait's CMAP or remaps it onto a screen palette. Every colour used here already displays
+# correctly today, which is true under either answer.
+#
+# ⚠️ The model INVENTS, and the amount was measured rather than eyeballed. Each candidate was
+# downscaled back to 70x67 and compared against the original, over three portraits:
+#
+#     variant             mean abs error /255      worst local error
+#     no new art                        0.0                       0
+#     classical resample                4.8                      17
+#     ultrasharp-4x                     9.7                      56
+#     blend of the two                  6.5                      28
+#
+# `ultrasharp-4x` deviates about twice as much as faithful resampling, with local deviations up to
+# 56/255. At 300% those read as blemishes on faces that are not in the original; at 140x134 they
+# read as detail. The blend halves the deviation and was the recommendation. **Jake compared all
+# four columns on three portraits and chose ultrasharp anyway** -- so the invention is a known,
+# accepted cost here, not an oversight. `digital-art-4x` was rejected: it posterised faces and
+# destroyed the parchment texture.
+#
+# SCRIPT. 17 portrait doodad rects raised from 70x67 to 140x134 -- 1 in `gs\dlg\NEWBUILD5a.gs`
+# (the barracks) and 16 in `gs\dlg\INFOPAN5.gs` (`unit_portrait_page0`..`3`). Both slots are raised
+# this time, unlike `portrait-2x-doodad`, because the point is to look at whole portraits rather
+# than to make two slots disagree.
+#
+# 🔴 One rect in `INFOPAN5.gs` is deliberately NOT raised:
+#
+#     /infopan_portatrait unitinfo_staticon5R3A 180 0 70 67 doodad def      (line 1949)
+#
+# That cuts 70x67 out of a static ICON SHEET, not a portrait page, and a naive replace of the
+# literal `0 0 70 67 doodad` catches it by substring -- `18|0 0 70 67`. Raising it would silently
+# double an unrelated interface element. The edit matches on the page NAME for exactly this reason,
+# and asserts the sheet cut still reads 70x67 afterwards.
+#
+# ⚠️ Every portrait will OVERFLOW its frame at 640x480; there is no room for it until the
+# framebuffer is 1280x960 as well (PR #83). That is expected and is not the thing being judged.
+id = "portrait-2x-art"
+name = "Portraits at 140x134, upscaled"
+version = "0.1.0"
+description = "All 353 nameable portraits upscaled to 140x134 with ultrasharp-4x, and the 17 portrait doodad rects raised to match."
+
+base_profile = "gs5r3"
+
+new_members = []
+allow_new_members = false

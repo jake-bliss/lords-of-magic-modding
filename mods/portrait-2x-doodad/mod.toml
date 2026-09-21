@@ -1,0 +1,45 @@
+# Does a doodad rect LARGER than 70x67 paint more screen pixels at 1:1?
+#
+# This is the question the 2x-UI idea actually turns on, and it is the follow-on to
+# `mods/portrait-oversize`, which ran on 2026-09-21 and confirmed its prediction on all three
+# rungs: a 140x134 portrait LOADS, and `... 0 0 70 67 doodad` shows its top-left quadrant.
+# Cropping is settled. What is not settled is whether the UI will draw a bigger rect at all.
+#
+# ONE script change, in the one member that is live:
+#
+#   gs\dlg\NEWBUILD5a.gs   /load_unit_portrait's
+#     `unit_portrait_page 0 0 70 67 doodad`  ->  `unit_portrait_page 0 0 140 134 doodad`
+#
+# `gs\dlg\NEWBUILD5.gs` `run`s `NEWBUILD5a.gs` and `NEWBUILD5b.gs` by name, and `NEWBUILD5a.gs`
+# holds the build dialog's only portrait doodad. `NEWBUILD50.gs` is byte-identical to it (both
+# 87,143 bytes) and `newbuild.gs` is the vanilla original; NEITHER is patched, on purpose. If the
+# barracks portrait changes, that also establishes which of the three the engine loads.
+#
+# `gs\dlg\INFOPAN5.gs` is deliberately LEFT AT 70x67. So one archive feeds two call sites with
+# different rects and the two slots must DISAGREE:
+#
+#   barracks recruit portrait  (rect 140x134)  -> the whole card, at double size
+#   pop-out unit panel         (rect  70x67)   -> solid green, as it already draws today
+#
+# No single-mechanism story produces a disagreement between two slots reading the same member, which
+# is what made the 2026-09-21 panel run decisive and is the reason the rects are split rather than
+# both raised.
+#
+# ALL 749 `portrait\` members are replaced, not three.
+#
+# That is a safety property, not thoroughness. A doodad rect larger than its page is a case with no
+# precedent anywhere in this corpus -- every one of the hundreds of existing sites cuts a rect out
+# of a page at least as large -- and the build dialog picks its page from whichever unit is
+# selected. Leaving 746 members at 70x67 behind a 140x134 rect would mean every unit but three
+# exercises that unprecedented case, with a crash or garbage as the likely reading and no way to
+# tell it from a real answer. With every page at 140x134, no rect in the game exceeds its page and
+# the only variable left is the rect itself.
+id = "portrait-2x-doodad"
+name = "The barracks portrait at 140x134"
+version = "0.1.0"
+description = "Raise the build dialog's portrait doodad to 140x134 and make every portrait member 140x134, leaving the info panel at 70x67 so the two slots disagree."
+
+base_profile = "gs5r3"
+
+new_members = []
+allow_new_members = false

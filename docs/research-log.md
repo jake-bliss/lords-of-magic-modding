@@ -7128,3 +7128,89 @@ rewrote `ddraw.ini` on exit**, persisting `width=1280` over the file that had ju
 verified. The verification passed at the time and the file was wrong ten minutes later. *A restore
 verified while the writing process is still alive proves nothing.* Restore after the process exits,
 and re-verify then -- which is exactly what the pipeline's own guard would have enforced.
+
+## 2026-09-21f — the 70x67 portrait was a script literal all along
+
+Two attended runs, `mods/portrait-oversize` then `mods/portrait-2x-doodad`. Full write-up in
+[resolution-and-upscaling.md](resolution-and-upscaling.md#-closed-the-70x67-portrait-was-never-an-engine-limit).
+Headline: **an oversize portrait LOADS, `doodad` CROPS it to its rect, and a bigger rect PAINTS
+more screen pixels at 1:1.** The 2x-UI path is therefore a data-and-script job for the portrait
+channel, with no binary patch.
+
+### The instrument was the interesting part
+
+The corpus could not answer this. All 749 portraits are **exactly 70x67** — zero variance on the
+axis in question — so no amount of reading settles it. What made a *prediction* possible was
+evidence from a different part of the same archive: `pic.mpq` holds **120 distinct image
+dimensions**, and hundreds of `doodad` sites already cut a rect out of a larger sheet. The runs were
+then built to break that prediction rather than to confirm it.
+
+**The test card carried its own diagnosis.** Four solid quadrants, a black cross on the seams, a
+black border — so the possible outcomes are distinguishable without a graded judgement: one solid
+colour means cropped, four colours means scaled, stripes mean a wrong row stride, the shipped
+portrait means not read. This is the [ask only what the sensor can report](#) discipline applied to
+image content: the observer reports *which picture*, never *how sharp*.
+
+⭐ **And the border did work the card was not designed for.** In the 70x67 crop, black on the right
+and bottom comes from the cross at x=69 / y=66 — geometry that exists *only* in a 140-wide image. So
+"green with a black border" is positive evidence of the oversize source, not merely the absence of
+the original. A control that rules out a fallback path without being asked to is worth more than one
+that only proves the wire is connected.
+
+### Three process notes
+
+🔴 **A build stacks on the INSTALLED archive, not the pristine one.** `scripts/mod-build.sh` reads
+its base from `profile_game_dir`, so the second experiment was packed against the first
+experiment's `pic.mpq`. The shape check caught it — `declared_change_not_applied` on the two
+members that were already the card — and refused. **Restore to pristine before building the next
+experiment in a series**, or the diff is against the wrong thing.
+
+🔴 **A literal replace can hit a rect that merely ENDS with the literal.**
+`INFOPAN5.gs:1949` reads `unitinfo_staticon5R3A 180 0 70 67 doodad` — a cut from a static icon
+sheet — and `180 0 70 67` ends with `0 0 70 67`. Replacing the bare literal doubles an unrelated
+interface element silently. Match on the page name and assert the sheet cut is unchanged afterwards.
+
+⚠️ **A case-insensitive filesystem cannot hold this corpus.** `pic.mpq` spells the portrait
+directory both `PORTRAIT\` (353 of the nameable members) and `portrait\` (34), and a mod tree
+addresses members by path. APFS collapses the two, so a tree covering both is not expressible here;
+`mod_validate` refuses the mismatch rather than letting a rename happen by accident. The 34 are all
+non-LIFE, which is why the runs were scoped to a Life game.
+
+## 2026-09-21g — the click follows the drawing, so 2x UI is a coordinate transform
+
+`mods/button-hit-rect`. One literal: the barracks train/hire up arrow moved from `273 320` to
+`60 320` in `gs\dlg\NEWBUILD5b.gs`. It drew at the far left, **it worked there, and the spot it used
+to occupy did nothing.** The unmoved down arrow in the same dialog still worked. Full table in
+[resolution-and-upscaling.md](resolution-and-upscaling.md#run-3--a-click-follows-the-drawn-position).
+
+That was the last thing that could have killed the 2x-UI plan, and it cost one number.
+
+### Choosing a subject whose LIVENESS is established
+
+The main menu was the obvious test: reachable on launch, no game to set up, buttons with visible
+effects. It was abandoned after a search found that **nothing in `gs.mpq` mentions `newdlg.gs` or
+`NEWDLG5.gs`, and `lomse.exe` contains no such string either.** Where the main menu comes from is
+still **Unknown**.
+
+That is not a detail. The decisive rung here is a **negative** — clicking the vacated position does
+nothing — and a negative is only as strong as the certainty that the subject was wired up at all. On
+an unproven subject, "nothing happened" has two causes and the run says nothing. The barracks pair
+was chosen because the 2026-09-21 `portrait-2x-doodad` run had already changed something through
+`NEWBUILD5a.gs` and seen it on screen. **Liveness by measurement, not by plausibility.**
+
+This is the same lesson as [a control proves the instrument is connected](#), arriving from the
+other direction: there, a control was needed to trust a null reading; here, the subject itself had
+to be pre-qualified before a null reading could mean anything.
+
+### The art question closed too, and a number worth keeping
+
+353 of 353 upscaled portraits accepted on a one-by-one review against the original at equal physical
+size. The review tool is `artifacts/portrait-review/` — a local page and a local server, not a
+hosted artifact, because publishing it would mean uploading 706 of the game's own portrait images
+to an external service.
+
+⭐ **Hallucination is measurable, and cheaply.** Downscale each candidate back to the source
+resolution and compare against the original: faithful resampling lands at **4.8/255** mean
+deviation, `ultrasharp-4x` at **9.7** with local deviations to **56**. That converts "does the model
+invent?" from an argument into a number, and it took one Box resize per candidate. Any future
+upscaling work should report it.
