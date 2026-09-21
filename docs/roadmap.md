@@ -408,14 +408,25 @@ observer reported the change. That is the engine reading our IMP pixels.
 repaint, and the repainted pointer still drew -- so the hash table, the block table and all 3,600
 original members survived the archive growing by one.
 
-**The limit, stated plainly.** This establishes that the engine **tolerates** an added member, not
-that it can **read** one: nothing in the game asks for `iface\ladder.imp`, and no observation on
-screen could. What is established offline is that `lom-mpq probe-names` resolves that name through
-the archive's own hash table -- the same lookup Storm performs -- and that the member reads back as
-the bytes it was added from.
+**The limit rung 5 leaves, stated plainly.** Rung 5 establishes that the engine **tolerates** an
+added member, not that it can **read** one: nothing in the game asks for `iface\ladder.imp`, and no
+observation on screen could. What is established offline is that `lom-mpq probe-names` resolves that
+name through the archive's own hash table -- the same lookup Storm performs -- and that the member
+reads back as the bytes it was added from.
+
+⚠️ **Readability was already established by a different run, and this project published the
+opposite for three days.** The 2026-09-17 sprite-ladder probe added `imp\zzpal.imp` and
+`imp\zzctl.imp` -- names no shipped archive holds, confirmed 2026-09-20 by `read_member` failing on
+the pristine archive while the donor reads fine -- and a script asked for one **by name** through
+`addterrainspritetype`. The engine registered a terrain sprite type from it and **painted its
+pixels**: that is how the stored palette order was recovered, because the authored entries
+(`ff 00 00` rendering blue) exist in no other member. So the engine **can** read an added member.
+What rung 5 adds is that one added by the **mod pipeline** is tolerated; the 09-17 member was added
+with `mpq_replace`, and no single run has yet done both. This is the third time a limit was
+republished after a run had refuted it, which is why the record derives from the runs.
 
 <!-- engine-acceptance:imp.mpq -->
-**Not established.** 1 member of one `imp.mpq`, replaced rather than added, with a length-preserving edit made by the IMP pixel encoder, 2026-09-20. The repack control: the cursor member was re-emitted by the IMP encoder byte for byte, the archive was repacked under the recovered names, and the observer reported the shipped pointer unchanged. 1 member of one `imp.mpq`, replaced rather than added, with a length-preserving edit made by the IMP pixel encoder, 2026-09-20. Disjoint palette-index swaps repainted the cursor frame at unchanged payload length, and the observer reported the pointer had changed colour. 2 members of one `imp.mpq`, added rather than replaced, with a length-preserving edit made by the IMP pixel encoder, 2026-09-20. A member no shipped archive holds was added alongside the repainted cursor; the archive grew, and the observer reported the repainted pointer still drawn, so every original member survived the hash and block tables growing. The engine has not been shown an edit that changes a member's size. The engine has not been shown an added member that the engine then READS; nothing in the game asks for one, so the added member was shown to resolve only through the archive's own hash table. The member carried flags 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), which is the only storage class any run has covered.
+**Not established.** 2 members of one `imp.mpq`, added rather than replaced, with a length-preserving edit made by the IMP pixel encoder, 2026-09-17. The sprite-ladder probe added two members no shipped archive holds and a script asked for one of them BY NAME; the engine registered a terrain sprite type from it and painted its pixels, which is how the stored palette order was recovered -- the authored entries exist in no other member. 1 member of one `imp.mpq`, replaced rather than added, with a length-preserving edit made by the IMP pixel encoder, 2026-09-20. The repack control: the cursor member was re-emitted by the IMP encoder byte for byte, the archive was repacked under the recovered names, and the observer reported the shipped pointer unchanged. 1 member of one `imp.mpq`, replaced rather than added, with a length-preserving edit made by the IMP pixel encoder, 2026-09-20. Disjoint palette-index swaps repainted the cursor frame at unchanged payload length, and the observer reported the pointer had changed colour. 2 members of one `imp.mpq`, added rather than replaced, with a length-preserving edit made by the IMP pixel encoder, 2026-09-20. A member no shipped archive holds was added alongside the repainted cursor; the archive grew, and the observer reported the repainted pointer still drawn, so every original member survived the hash and block tables growing. The engine has not been shown an edit that changes a member's size. The engine has not been shown an added member reaching the engine through the MOD PIPELINE and being read; the 2026-09-17 probe added its member with mpq_replace, and rung 5's pipeline-built member was never asked for by anything in the game. The member carried flags 0x80010100 (EXISTS | ENCRYPTED | IMPLODE), which is the only storage class any run has covered.
 <!-- /engine-acceptance:imp.mpq -->
 
 

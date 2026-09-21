@@ -13,7 +13,7 @@
 | **C3** a member added, not replaced | ✅ **DONE 09-20** — ladder rung 5; `imp.mpq` grew to 3,601 members |
 | **C4** two members in one build | ✅ **DONE 09-19** — acceptance rungs 6–9 |
 | **C5** first `imp.mpq` run | ✅ **DONE 09-20** — ladder rungs 0+1, 2; repack accepted and our IMP pixels rendered |
-| **C6** load a savegame we wrote | 🔴 **QUEUED, NOW UNBLOCKED** — all nine sections encode, 31/31 byte-identical |
+| **C6** load a savegame we wrote | ✅ **DONE 09-20** — control loaded and played; an authored `LS_PLR_` name reached the screen; found a lord's name is stored **three times** and two screens read different copies |
 
 **Group C is closed.** Every engine-acceptance gap on this sheet has been run. The ladder that
 `docs/engine-acceptance-ladder.md` describes is complete — all ten rungs, across four sittings.
@@ -24,8 +24,9 @@ audio, GameScript and savegames all now have a proven path from this pipeline in
 engine. `docs/roadmap.md`'s per-archive regions carry the exact limits that remain, derived from the
 runs rather than typed beside them.
 
-**What is left on this sheet:** B1 (rerun, the redesigned probe), B2 (offline chase first), and C6
-(newly unblocked). None of them is an acceptance question any more — they are measurement questions.
+**What is left on this sheet:** B1 (rerun, the redesigned probe) and B2 (offline chase first).
+C6 closed on 2026-09-20. None of them is an acceptance question any more — they are measurement
+questions.
 
 ### Limits that survived the sitting
 
@@ -291,7 +292,28 @@ by nothing in this repo. A pointer hiding there would be adjusted by nobody, and
 round-trip sweep would not catch it — because it only catches a stale pointer that one of *our*
 readers follows, not one only the engine follows. That is precisely what this run tests.
 
-### C6. Load a savegame this project wrote
+### C6. Load a savegame this project wrote ✅ CLOSED 2026-09-20
+
+> **Three rungs, all passed.** Rung 0 -- a re-encode asserted byte-identical to `quickstart` --
+> **loaded and played**; the lord's army moved on the map. Rung 1 rewrote eight `LS_PLR_` names
+> through the decoded model (54 bytes, length unmoved) and the **Party Roster** header showed
+> `ZEBRA`. **Observed in gameplay, 2026-09-20.**
+>
+> ⭐ **The unplanned result is the better one.** Rung 1's rename moved the roster header and left
+> the **overworld panel still reading `LYLENDNAR`** -- so a lord's name is stored **three times**,
+> and two screens read different copies. Rung 2 gave each copy its own value: `LS_PLR_` feeds the
+> party roster, `LS_SPR_` feeds the overworld unit panel, and `LS_MULT`'s copy is displayed by
+> neither. Those are the first `LS_PLR_`/`LS_SPR_` field meanings established by observation rather
+> than by reading the writer.
+>
+> **Safety:** the subject was copied out of the profile, never edited in place; all three rungs were
+> installed under new filenames; the six shipped saves were backed up, `cmp`-verified before and
+> after, and the game wrote nothing.
+>
+> **Still open:** whether `LS_MULT`'s copy is used at all (the multiplayer path was not exercised),
+> and a save whose section lengths *move* -- all three rungs were length-preserving.
+
+The brief this box was written against:
 
 **No save we wrote has ever been loaded.** Currently only 1 of 9 sections has an encoder
 (`LS_SPR_`); the other eight are copied through. So this tests splicing, not authoring.

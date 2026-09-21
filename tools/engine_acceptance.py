@@ -315,6 +315,19 @@ ACCEPTANCE: dict[str, ArchiveAcceptance] = {
         archive="imp.mpq",
         runs=(
             EngineRun(
+                date="2026-09-17",
+                members=2,
+                disposition=Disposition.ADDED,
+                edit_kind=EditKind.LENGTH_PRESERVING,
+                mechanism=Mechanism.IMP_ENCODER,
+                observation=(
+                    "The sprite-ladder probe added two members no shipped archive holds and a "
+                    "script asked for one of them BY NAME; the engine registered a terrain "
+                    "sprite type from it and painted its pixels, which is how the stored palette "
+                    "order was recovered -- the authored entries exist in no other member."
+                ),
+            ),
+            EngineRun(
                 date="2026-09-20",
                 members=1,
                 disposition=Disposition.REPLACED,
@@ -352,8 +365,9 @@ ACCEPTANCE: dict[str, ArchiveAcceptance] = {
         ),
         storage_class=StorageClass.IMPLODE_PROVED,
         also_untested=(
-            "an added member that the engine then READS; nothing in the game asks for one, so "
-            "the added member was shown to resolve only through the archive's own hash table",
+            "an added member reaching the engine through the MOD PIPELINE and being read; the "
+            "2026-09-17 probe added its member with mpq_replace, and rung 5's pipeline-built "
+            "member was never asked for by anything in the game",
         ),
     ),
     "sndfx.mpq": ArchiveAcceptance(

@@ -1859,10 +1859,14 @@ class EngineAcceptanceCaveatTest(unittest.TestCase):
         # imp.mpq was the one archive never run, until rungs 0-5 on 2026-09-20. Its record is
         # now what makes "added rather than replaced" sayable anywhere in this module.
         imp = metadata["imp.mpq"]
-        self.assertEqual(len(imp["established"]), 3)
+        # Four runs: the 2026-09-17 sprite-ladder probe, whose added member a script asked for BY
+        # NAME and whose pixels the engine painted, and rungs 0+1 / 2 / 5 on 2026-09-20. The
+        # 09-17 run is why "the engine cannot read an added member" is not among the limits --
+        # it was recorded here three days after the run that refuted it.
+        self.assertEqual(len(imp["established"]), 4)
         self.assertEqual(
             [entry["disposition"] for entry in imp["established"]],
-            ["replaced", "replaced", "added"],
+            ["added", "replaced", "replaced", "added"],
         )
         self.assertNotIn(
             "a member added to an archive rather than replaced",

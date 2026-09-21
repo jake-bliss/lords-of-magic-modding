@@ -63,8 +63,52 @@ a player record without sixteen armies, an alarm record whose shape does not mat
 schedule, a map that is not in grid form, and — **in both directions** — any version-gated field
 present when the target version does not store it, or absent when it does.
 
-**No save this project has written has ever been loaded by the engine.** The claim is *composable
-offline*, and the engine test is an attended item that has not happened.
+## Observed in gameplay, 2026-09-20: the engine loads a save this project wrote
+
+**Closed.** Three rungs, run attended against `Lords of Magic Development.app`. The subject was
+`quickstart`, copied out of the profile's `savegame/` directory, decoded, re-encoded and installed
+under a **new** filename so that not one shipped save was touched. All six originals were compared
+byte-for-byte against a backup afterwards and the game wrote nothing.
+
+| Rung | File | What it established |
+| ---: | --- | --- |
+| **0** | `zzrung0.sav` | The control: a re-encode asserted byte-identical to its input **loaded, and the game played** -- the lord's army moved on the map. Container, section framing and every reconstructed count are accepted by the engine. |
+| **1** | `zzrung1.sav` | Eight `LS_PLR_` names rewritten through the decoded model, 54 bytes changed, length unmoved. The **Party Roster** header read `ZEBRA`. The engine read a field this project authored. |
+| **2** | `zzrung2.sav` | One lord named three different ways, one per storage site, to find out which screen reads which section. |
+
+### A lord's name is stored three times, and two screens read different copies
+
+Rung 1 was meant only to make the edit visible. It did something better: the Party Roster changed
+to `ZEBRA` while the **overworld panel went on showing `LYLENDNAR`**. A name we had treated as *the*
+player name is one of three copies, and `quickstart` holds each lord's name at three offsets --
+36 bytes apart in `LS_MULT` (the `4 + 32` lord-slot stride) and once each in `LS_SPR_` and
+`LS_PLR_`.
+
+Rung 2 gave each copy a distinct value and read the answer off the screen:
+
+| Copy | Written as | Screen that displays it |
+| --- | --- | --- |
+| `LS_PLR_` +0x44 | `ZEBRA` | **Party roster header** |
+| `LS_SPR_` record body | `XRAYXRAYX` | **Overworld unit panel** |
+| `LS_MULT` lord slot | `YANKEE` | **Neither** -- not displayed by either screen |
+
+**Observed in gameplay, 2026-09-20.** These are the first `LS_PLR_` and `LS_SPR_` field meanings
+established by observation rather than by reading the writer.
+
+**How each was written, because they are not the same kind of claim.** The `LS_PLR_` and `LS_MULT`
+names were assigned on the decoded model and re-serialised by their sections' own encoders. The
+`LS_SPR_` name was a **raw byte patch at a known offset**: that section's record bodies are
+replayed verbatim (see the replayed list above), so there is no decoded field to assign to. The
+patch is sound only because the encode is byte-identical to the input, which makes an offset
+measured in the shipped file valid in the rebuilt one -- the control assertion is load-bearing for
+the edit, not decoration. `examples/save_roundtrip.rs` refuses a patch whose existing bytes are not
+ASCII, and refuses any length change.
+
+**What this does not establish.** That `LS_MULT`'s copy is unused -- only that neither screen looked
+at showed it; the multiplayer setup path was not exercised. That any *other* field means anything:
+the name was chosen precisely because it was the one field in `LS_PLR_` whose meaning was already
+established. And the rungs were all length-preserving, so a save whose section lengths move has
+still never been put in front of the engine.
 
 ## Corrected, 2026-09-19: `LS_GAME` had 71 phantom records in it
 
