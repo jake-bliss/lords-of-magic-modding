@@ -132,6 +132,29 @@ repacked at all. Both ways round fail, **Observed 2026-09-18**:
   pseudo-name is a read-side convenience that resolves by *block position*; nothing hashes it into
   the hash table, so there is nothing for a write to replace.
 
+> ### ⚠️ Both of those refusals are about REPLACING, not ADDING
+>
+> **Observed in a local binary, 2026-09-21.** Adding a name the archive has **never held** works,
+> and was measured directly against the pristine `pic.mpq`:
+>
+> ```
+> lom-mpq repack pic.mpq OUT.mpq --listfile NAMES.txt --add 'portrait\LIWMTP00.LBM=donor.lbm'
+> ```
+>
+> - the add succeeded, inheriting storage flags `0x00010100` from every member of the source;
+> - `probe-names` resolves the new name **through the archive's own hash table** — the lookup Storm
+>   performs — at block index 1071, hash index 653;
+> - the member reads back **byte-identical** and inspects as a valid `70x67` IFF-PBM;
+> - a full manifest comparison shows **all 1,071 originals unchanged** — block index, hash index,
+>   size, compressed size, flags, locale *and* sha256 — with exactly one member added.
+>
+> So "an archive that names none of its own members" constrains *replacement*, which needs a
+> storage-flags key for an existing name, and constrains the `File%08u.xxx` pseudo-name, which
+> nothing hashes. Neither constrains a genuinely new name. `imp.mpq` — the same class of archive —
+> had already shown this at the **engine** layer: an added member was tolerated (rung 5,
+> 2026-09-20) and read by name by a script (2026-09-17). No `pic.mpq` with an added member has yet
+> been put in front of the engine.
+
 A recovered name does hash to the member's existing hash-table entry, which is what makes the
 replacement a replacement rather than an addition. `scripts/repack-archive.sh` passes the same list
 to the repack **and to both manifests** — naming one side and not the other would compare two

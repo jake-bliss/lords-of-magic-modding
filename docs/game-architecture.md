@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | `gs.mpq` | Gameplay scripts and definitions | Units, spells, artifacts, buildings, encounters, balance, UI text, scripted behavior | Low–medium after extraction |
 | `pic.mpq` | Primarily paletted IFF PBM images plus a small number of BMP/unknown resources | Portraits, icons, panels, menus | Low–medium for inspection; repacking semantics remain unknown |
-| `imp.mpq` | 1,800 IMP sprite/animation binaries paired with 1,800 generated C headers in GS5R3 | Units, buildings, effects, missiles, interface sprites, palettes, animation metadata | Medium–high |
+| `imp.mpq` | 1,800 IMP sprite/animation binaries paired with 1,800 `.H` companion headers in GS5R3 (**the engine parses these at load time** -- see [imp format](imp-format.md#-the-remap-is-parsed-from-the-h-companion-member-at-load-time); they are not build residue) | Units, buildings, effects, missiles, interface sprites, palettes, animation metadata | Medium–high |
 | `sndfx.mpq` | 1,880 WAVE members in GS5R3 | Sound-effect replacement and remastering | Medium |
 | `special.mpq` | 1,218 WAVE members in GS5R3 | Special Edition voice/audio replacement and remastering | Medium |
 | `map/*.scn` | Custom worlds | Terrain, factions, starts, structures, encounters | Low–medium |

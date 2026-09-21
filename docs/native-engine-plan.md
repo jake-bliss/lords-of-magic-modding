@@ -2,6 +2,55 @@
 
 ## Decision status
 
+> ### Reassessed 2026-09-21
+>
+> **Still a candidate, but the estimates below are measurably wrong and should not be quoted as
+> they stand.** The table further down says Stage 1 is 2-6 weeks and assumes *one experienced
+> developer working full-time*. Stage 0 and Stage 1 both closed in **9 days** (first commit
+> 2026-09-11), not full-time, and in the same window the project also shipped the entire modding
+> toolkit, decoded the savegame container, walked 1,905 operator bodies, recovered 23,005 MPQ
+> names and ran ten engine-acceptance rungs — none of which was in Stage 1's scope.
+>
+> **The only two stages with data came in roughly 4-8x faster than this document predicted.** Its
+> later figures inherit that error and are quoted at your own risk.
+>
+> **Why it does not extrapolate cleanly.** Stages 0-1 are discovery against a *perfect oracle*:
+> byte-identity. That runs thousands of times a day, needs no human, and reports failure
+> instantly. Stages 3-5 contain a category that behaves nothing like it — **fidelity against a
+> human-gated oracle.** The evidence class "Observed in gameplay" exists precisely because macOS
+> will not let this project drive the Wine window, so every such measurement costs an attended
+> sitting. Nine days produced about six. That number does not improve with more compute, and it is
+> the only clock that matters for a fidelity claim.
+>
+> **Revised, by work type rather than one multiplier:**
+>
+> | Term | Character | Revision |
+> | --- | --- | --- |
+> | Operator implementation (~1,450 built-ins; bodies already walked, 1,198 fields across 100 structures recovered) | discovery-like, testable offline | apply the observed speedup — **months, not years** |
+> | Simulation fidelity (combat, pathfinding, AI, diplomacy) | no cheap oracle; the expensive one is human-gated | **stays large**; most of the residual risk |
+> | Integration, UI, packaging, compatibility | ordinary engineering | modest speedup |
+>
+> Honest revised figure for Stage 5: **8-18 months at the observed cadence**, with the spread
+> dominated by the fidelity term rather than the coding term, and that term bounded by operator
+> availability rather than throughput.
+>
+> **The decision this should turn on has not changed, and it is cheap to buy.** The gap between
+> "operators named by some script" (1,445-1,480) and "operators execution actually stands on"
+> (33-43) is **25x wide**, and it is the single input that decides whether the operator term is
+> months or years. Nine of the top twelve VM blockers are *script-defined names*, not engine
+> operators — module-loading and dependency-ordering work, no simulation. Closing those and
+> re-running the execution census would converge that range hard, is useful to the modding toolkit
+> regardless, and at the observed rate is days of work.
+>
+> **Recommendation: do not commit to or abandon the rewrite yet. Finish the Stage 2 module loader,
+> re-run the census, and decide on a measured number instead of a discredited estimate.**
+>
+> One thing has changed on the *demand* side, and it is recorded in
+> [resolution and upscaling](resolution-and-upscaling.md): the original engine is architecturally
+> incapable of rendering above 640x480, because the mode is two `push` immediates with no
+> configuration path. Any ambition that needs a higher resolution has no path through the original
+> binary. That is a much firmer basis for the decision than a scope estimate.
+
 **Candidate, not a commitment.** The goal would be a clean-room, 64-bit native engine that loads a user's legally obtained Lords of Magic: Special Edition data. The existing Windows executable remains the behavioral reference while we replace bounded capabilities behind testable interfaces.
 
 The evolving asset tool removes one early uncertainty: native Rust code can open all five core MPQ archives, classify their contents, decode the primary picture and sprite formats, render PBM images and IMP animations, and resolve map cells through original terrain art. It does not yet establish that the simulation or GameScript runtime can be reproduced economically. Current Stage 1 evidence and gaps are tracked in the [native asset layer record](native-asset-stage.md).

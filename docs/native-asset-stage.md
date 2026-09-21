@@ -40,7 +40,7 @@ Measured on the preserved local GS5R3 profile on 2026-09-11:
 | `pic.mpq` | 1,406 | 1,377 PBM, 2 BMP, 26 tile-set definitions, 1 listfile | 0 |
 | `special.mpq` | 1,218 | 1,218 WAVE | 0 |
 | `gs.mpq` | 1,700 | 1,689 GameScript, 7 empty, 2 text, 1 URL, 1 listfile | 0 |
-| `imp.mpq` | 3,600 | 1,800 IMP binaries, 1,800 generated C headers | 0 |
+| `imp.mpq` | 3,600 | 1,800 IMP binaries, 1,800 `.H` companion headers (**a live engine input**, see [imp format](imp-format.md#-the-remap-is-parsed-from-the-h-companion-member-at-load-time)) | 0 |
 | `sndfx.mpq` | 1,880 | 1,880 WAVE | 0 |
 | **Total** | **9,804** | | **0** |
 
@@ -187,7 +187,7 @@ The paired generated `.h` files provide unusually valuable ground truth. The cur
 - a 256-entry palette stored **blue, red, green, pad** (measured in the engine, 2026-09-17);
 - maximum dimensions, sequences, facings, logical frames, and frame dimensions;
 - explicit sequence-to-facing and facing-to-frame ranges, retained with their still-unknown raw metadata fields;
-- action labels recovered from generated-header `#define` values cover 4,649 of 4,666 declared sequence slots; aliases are retained, and 1,799 of 1,800 headers provide at least one label;
+- action labels recovered from `.H` `#define` values cover 4,649 of 4,666 declared sequence slots (**and the engine reads the same `#define`s itself** to build its action-to-sequence remap, 2026-09-21); aliases are retained, and 1,799 of 1,800 headers provide at least one label;
 - six-byte hotspot records padded per frame to an eight-byte boundary;
 - direct duplicate-frame references and a compact repeated-facing representation;
 - shared-pixel flag `0x04`, carried by individual records inside an ordinary frame-record array (a facing is never a repetition of one record — see the 2026-09-17 correction below);
