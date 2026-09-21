@@ -7048,3 +7048,83 @@ so the namer takes the faith branch rather than the `"Py"` branch.
   loose-file override path for `gs.mpq`. Not investigated; it was ruled out as the cause here.
 - **A `gs.mpq` script edit does take effect on a loaded save** — recoding a unit changed its
   recruitability immediately, and reverting the code restored it.
+
+## 2026-09-21 — the resolution spike: patched to 1280x960, played it, and found the real blocker
+
+**Observed in gameplay.** `lomse.exe` was backed up (checksummed), patched, run, and restored. The
+question was whether a higher-resolution mode is reachable at all, because an earlier test had just
+proved the portrait budget cannot be improved by reprocessing: both a median and an edge-preserving
+requantisation of shipped 70x67 art came out **worse than the original**. The dither is not noise
+sitting on the image -- it *is* how the 1997 artists encoded tone at 8 bits, so it is not separable
+from the signal. Density was the only remaining lever.
+
+### Tier 1-2: it runs
+
+Six immediates -- `SetDisplayMode`, the primary surface pair, the two app-object fields -- and the
+engine **boots, renders and plays at 1280x960**. The UI draws at native 1:1 in the top-left quadrant
+and is fully clickable: **input coordinates still line up with the drawing**, so the mouse path is
+not separately hardcoded and follows the layout for free. DirectDraw under DXVK accepts the mode.
+
+`playvideo` moved without being touched -- the intro video drew at a new offset -- so at least one
+blit path already computes position from the screen dimensions rather than a literal.
+
+### Tier 3: the finding that decides the strategy
+
+Doubling the three NDC-to-viewport floats **scaled the terrain 2x and left every unit sprite at its
+original pixel size.** Riders standing on a magnified landscape.
+
+*Derived:* terrain is a 3D mesh through the parameterised camera and follows the projection; units,
+trees and buildings are IMP sprites **blitted at native size**, positioned by `map2screen` but not
+scaled by it. **So any change that scales the world requires all 41,373 IMP frames redrawn**, plus
+1,377 PBMs and 26 tilesets. That was previously an inference from asset counts; it is now on screen.
+
+🔴 **My "the map half is three constants" framing was wrong, and the spike is what showed it.** The
+NDC floats are the **zoom**, not the viewport extent -- they map NDC `[-1,1]` onto a half-width in
+pixels, so doubling them magnifies the same world instead of revealing more of it. The clip/viewport
+rectangle is a separate, still-unidentified constant. Showing *more world at the same detail* means
+widening the frustum, which `perspective`/`orthographic`/`create3dmap` expose to **script** and might
+need no patch at all. Untested, and now the most interesting thread here.
+
+### What it makes viable
+
+A 2x **world** is an art project of the original game's scale, not a patch. A 2x **UI** is
+independent and cheap: hold the map at 1x, double the ~5,000 script layout literals, and redraw the
+UI chrome plus the **149 portrait members** -- portraits go from 4,690 to 18,760 pixels for tens of
+images rather than tens of thousands.
+
+### Two corrections this produced
+
+🔴 **I quoted a verdict out of its scope.** `resolution-and-upscaling.md`'s three reasons against 2x
+art are each explicitly premised on a **fixed** 640x480 framebuffer; I used them to answer a question
+about doubling the framebuffer *too*, which they do not address. At 1280x960 two of the three
+dissolve outright. The section now carries a scope warning.
+
+🔴 **The PE layout note was incomplete and it cost a wrong read.** The project's note listed `.text`
+and `.data`. `lomse.exe` has **four** sections, and the float constants live in an undocumented
+**`.rdata` at VA `0x54d000`, raw `0x14ba00`**. Converting their VA with the `.data` formula returned
+a page of zeros, which is exactly what happened on the first attempt. Corrected wherever the
+two-section model appeared.
+
+### 🔴 Instrument note: the "is the game running" guard I used was decorative
+
+Every manual archive install and the `lomse.exe` restore in this session were gated on
+`pgrep -x lomse`, which matches a process named exactly `lomse`. Wine's process is
+`d:\lomse.exe /*`, so **the guard never fired once.** The `lomse.exe` restore ran while the game
+still had the file open. No damage -- replacing a mapped file leaves the running process intact and
+the restored bytes verified against the manifest -- but the safety check was not a safety check.
+
+**`scripts/lib-mod-pipeline.sh` already contains the correct detector**, with a comment block
+recording the observed command lines (`d:\lomse.exe /*` and the Development profile's full path) and
+explaining why the obvious regex misses one of them. It was written because this exact problem was
+already solved here once. Use `PIPELINE` helpers or the same pattern; do not hand-roll a `pgrep`.
+
+The repository's own test suite caught it: `test_mod_pipeline` skipped **27** tests with the reason
+`the game is running, so install/restore refuse`, which is the only reason the broken guard was
+noticed at all. A run reporting `OK (skipped=28)` where it normally reports `skipped=1` is a signal,
+not noise.
+
+**It had a second consequence.** Because the restore ran while the game was live, **cnc-ddraw
+rewrote `ddraw.ini` on exit**, persisting `width=1280` over the file that had just been restored and
+verified. The verification passed at the time and the file was wrong ten minutes later. *A restore
+verified while the writing process is still alive proves nothing.* Restore after the process exits,
+and re-verify then -- which is exactly what the pipeline's own guard would have enforced.
