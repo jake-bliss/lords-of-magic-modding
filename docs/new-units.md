@@ -403,23 +403,51 @@ dword** of each element is read, and the unit index comes from `[esi+0x50]` on t
 so the other 8 bytes are untouched. There are **8 call sites**: `0x4fc122`, `0x4fc20f`, `0x52b90a`, `0x52c4db`,
 `0x52c7a3`, `0x52e2e7`, `0x52e455`, `0x52e4d5`.
 
-Three properties make this the number that matters:
+**There are two independent triggers**, and they fire at different moments
+(*Observed in a local binary*):
 
-- **It is silent.** No `cmp`, no error string, no `-1`. Past 1000 it writes through the return
-  address and the process does whatever the smashed frame does next. Every other limit in this
-  document fails *loudly*.
-- **It is reached by the type VALUE, not by the count.** It bites on the first unit of a high-numbered
-  type that reaches one of those eight callers — not at load, and not deterministically.
-- **`numunittypes > 1000` corrupts the frame on entry**, before any unit is examined, because the
-  `rep stosl` at `0x52be41` is itself sized by the live count.
+1. **The count.** `numunittypes > 1000` overruns during *initialization*: the `rep stosl` at
+   `0x52be41` is sized by the live count, so it writes past the buffer before a single unit type is
+   read. Deterministic — it fires on the first call, whatever the units are.
+2. **The stored type value.** The write at `0x52bea3` is indexed by the raw type out of the army
+   slot with no bound of its own, so a type index above 999 overruns during *histogram access*.
+   This can fire with a count well under 1000 — a stale or corrupt index in a savegame written by a
+   higher-capacity build is the obvious way in, and that case is **not analysed here**.
+
+An earlier draft of this section said the ceiling "is reached by the type VALUE, not by the count".
+That was wrong: both reach it independently.
+
+**And it is silent on both paths.** No `cmp`, no error string, no `-1`. Past the end it writes
+through the return address and the process does whatever the smashed frame does next. Every other
+limit in this document fails *loudly*.
+
+🔴 **The same function has an off-by-one that matters to anyone adding types at the top of the
+range.** *Observed in a local binary, 2026-09-21.* The scan that picks the winning type seeds from
+`histogram[0]` and loops while `ecx < count-1`:
+
+```
+52beb2  8b 74 24 18   mov esi,[esp+0x18]   ; seed = histogram[0], best index ebp = 0
+52beb6  b9 01 ..      mov ecx,1            ; index starts at 1
+52bebd  8d 5a ff      lea ebx,[edx-1]      ; ebx = numunittypes - 1
+52bed8  3b cb         cmp ecx,ebx
+52beda  7c ee         jl  0x52beca         ; continue while ecx < count-1
+```
+
+`ecx` therefore runs `1 .. count-2`, and **index `count-1` is never examined**. The highest-numbered
+registered unit type can never be selected as the winner, whatever the histogram holds for it.
+*Derived:* a modder who **appends** new types — which is the only safe way to add them, since the
+savegame stores the numeric index — puts the newest type in exactly the slot this scan skips, so
+whatever feature `0x0052BE20` serves behaves as though the last-registered type were absent.
 
 ⚠️ **What this function is for is Unknown.** Its behaviour decodes cleanly — *given up to 30 army
 references, find the most common unit type* — but it carries no RTTI and no string,
 so which feature it serves, and therefore how readily a high type reaches it, is not established.
 
 **Practical reading: treat 1000 as a hard wall and stay far below it.** 300 or 400 is safe on this
-audit. `0x0052BE20` is one instruction away from being safe for more, but patching `lomse.exe` is a
-different project and outside this pipeline.
+audit. Raising it in the binary is **not** a one-instruction change, and an earlier draft of this
+section said it was: bounding the type index leaves the count-sized `rep stosl` overflow, clamping
+the count leaves the raw index write, and enlarging the frame means matching changes in **both**
+epilogues (`0x52bf2d` and `0x52bf3a`). Patching `lomse.exe` is outside this pipeline in any case.
 
 ### The second ceiling is the dict, and it fails loudly
 
