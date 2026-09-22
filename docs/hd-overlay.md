@@ -105,9 +105,17 @@ build the pack, install the DLL. No game art is distributed.
    cnc-ddraw's context recreation, the writer not enforcing the reader's limits, and no parser
    tests. All fixed (fork `ff9605c`, `cecf1fd`), with `tests/lomhd_pack_test.c` whose control
    build fails the wraparound and oversized-upscale cases against the pre-fix parser.
-   🔴 **Codex's pass ended before writing its summary**, so it has NOT reviewed the fixes. A second
-   Codex pass over `134eaae..HEAD` is owed before release.
-2. Live test on GS5R3 with all 748 portraits -- the dev profile is staged for it.
+   **Second Codex pass (2026-09-22) found three more, all confirmed and fixed (fork `700e952`):**
+   a GL 3.0 state query ran before the context was vetted, so in a 2.x context cnc-ddraw's own
+   error check would turn the OpenGL renderer off; `make CFLAGS=...` dropped the new dependency
+   flags; and the wraparound test passed with the 64-bit check reverted, because the 512 cap also
+   refused it. The test now asserts the refusal offset, and a mutant restoring the 32-bit check
+   fails it.
+2. Live test on GS5R3 with all 748 portraits -- **run 2026-09-22 on a clean build, no errors**;
+   lord (strip and info panel) and recruitment detected. 🔴 The runs before it used a DLL linked
+   from two layouts of `LOMHD_PACK` (the Makefile tracked no headers; the log's "probe width
+   11964208" gave it away) -- fixed in `1412b7d`. The other 745 GS5R3 portraits have not been on
+   screen yet.
 3. A wider playtest across every portrait consumer (barracks, alchemist, character screens, spy
    panel, combat) and a longer session.
 4. Windows: untested. The code has no Wine dependency, but nothing has run there.
