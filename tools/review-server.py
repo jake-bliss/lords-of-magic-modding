@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Serve the side-by-side image review page and persist verdicts to disk.
 
-    python3 tools/portrait-review/server.py [DATA_DIR] [--port N]
+    python3 tools/review-server.py DATA_DIR --page tools/portrait-review [--port N]
+    python3 tools/review-server.py artifacts/sprite-review --page tools/sprite-review --port 8778
 
-DATA_DIR defaults to `artifacts/portrait-review` and must contain `manifest.json` plus an `images/`
-directory holding `<id>.orig.png` and `<id>.new.png` for every entry. Verdicts land in
-`DATA_DIR/verdicts.json`.
+DATA_DIR must contain `manifest.json` plus an `images/` directory. `--page` is the directory holding
+the `index.html` to serve; the two review pages share this server because both want the same three
+things -- a manifest, images, and verdicts that survive the tab closing.
 
-The code lives here and the data lives under `artifacts/` on purpose: `artifacts/` is gitignored, so
-the game's own images never reach the repository, while the page and this server -- which are ours
--- stay version controlled.
+The code lives under `tools/` and the data under `artifacts/` on purpose: `artifacts/` is gitignored,
+so the game's own images never reach the repository, while the pages and this server -- which are
+ours -- stay version controlled.
 
 **Why a server rather than opening the .html directly.** On a `file://` origin browsers give the
 page an opaque origin, so `localStorage` either throws or silently isolates per load. A review of
@@ -36,11 +37,12 @@ LOCK = threading.Lock()
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     data_dir: pathlib.Path = HERE
+    page_dir: pathlib.Path = HERE
 
     def __init__(self, *a, **kw):
-        # The page is served from this directory; images/manifest/verdicts come from data_dir,
-        # routed explicitly below.
-        super().__init__(*a, directory=str(HERE), **kw)
+        # The page comes from page_dir; images/manifest/verdicts come from data_dir, routed
+        # explicitly below.
+        super().__init__(*a, directory=str(type(self).page_dir), **kw)
 
     def log_message(self, *a):
         pass
@@ -125,7 +127,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("data_dir", nargs="?", default="artifacts/portrait-review")
+    parser.add_argument("data_dir")
+    parser.add_argument("--page", type=pathlib.Path, default=HERE / "portrait-review",
+                        help="directory holding the index.html to serve")
     parser.add_argument("--port", type=int, default=8777)
     args = parser.parse_args()
 
@@ -135,7 +139,11 @@ def main() -> int:
         parser.error(f"no manifest.json in {data_dir}")
     count = len(json.loads(manifest.read_text()))
 
+    page_dir = args.page.resolve()
+    if not (page_dir / "index.html").is_file():
+        parser.error(f"no index.html in {page_dir}")
     Handler.data_dir = data_dir
+    Handler.page_dir = page_dir
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("127.0.0.1", args.port), Handler) as httpd:
         print(f"review {count} pairs at http://127.0.0.1:{args.port}/")
