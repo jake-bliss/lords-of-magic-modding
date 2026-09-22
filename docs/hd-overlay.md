@@ -119,10 +119,25 @@ build the pack, install the DLL. No game art is distributed.
 3. A wider playtest across every portrait consumer (barracks, alchemist, character screens, spy
    panel, combat) and a longer session.
 4. Windows: untested. The code has no Wine dependency, but nothing has run there.
-5. Packaging: a player-side extractor (the pipeline's tools are dev builds), the upscaler
-   (ImageMagick + Real-ESRGAN ncnn + the 4x-UltraSharp model -- **check that model's licence**,
-   believed non-commercial share-alike), the cnc-ddraw MIT notice, a README, and an uninstaller
-   that restores the original `ddraw.dll`.
+5. Packaging -- **built 2026-09-22** (`release/hd-overlay/`, `scripts/build-hd-overlay-release.sh`,
+   zip 196 KB, no game art). The player runs `lomhd_setup.py`: it reads the portraits with
+   `tools/mpq_read.py` (pure-stdlib MPQ reader, byte-identical to StormLib on every named member of
+   vanilla and GS5R3 `pic.mpq`), fetches Real-ESRGAN ncnn v0.2.5.0 and `ultrasharp-4x` with pinned
+   SHA-256s, upscales, packs, backs up `ddraw.dll` and installs; `--uninstall` restores it.
+   Reviewed by Claude and Codex (all findings fixed: Steam "Verify integrity", a locked DLL on a
+   running game, torn writes, strict explode, SECTOR_CRC). End to end on a copy of the dev
+   profile's files: 749 portraits in 11.5 minutes, uninstall restored the original DLL byte for
+   byte. Licences: the model is **CC BY-NC-SA 4.0**, so it is downloaded, never shipped;
+   Real-ESRGAN ncnn and cnc-ddraw are MIT; the explode port credits zlib's `blast.c`. The release
+   build compiles the DLL twice with no PE timestamp and refuses if the two differ (one build in
+   ten differed once, cause not found).
+
+🔴 **The pack played on 2026-09-22 was only 353/748 real upscales.** The other 395 -- mostly
+artifact and item art -- were 2x2 pixel repeats copied from the 2x UI experiment
+(`mods/ui-2x-infopan/.../PORTRAIT_lowercase` and friends), which look exactly like the original
+once drawn. Nothing seen in play was among them, so no run could notice; a byte comparison against
+a fresh recipe run did. `hd_portrait_pack.py` now leaves any pixel-repeat "upscale" out with a
+reason. The release recipe makes real upscales for all 749.
 
 ## Known gaps
 

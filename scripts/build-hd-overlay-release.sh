@@ -16,10 +16,18 @@ OUT=$ROOT/dist/$NAME
 # struct into a DLL that still loaded and ran (docs/hd-overlay.md).
 [ -z "$(git -C "$FORK" status --porcelain)" ] || { echo "cnc-ddraw fork has uncommitted changes" >&2; exit 1; }
 COMMIT=$(git -C "$FORK" rev-parse --short HEAD)
-make -C "$FORK" clean >/dev/null
+LDFLAGS_REPRO="-Wl,--enable-stdcall-fixup -s -static -shared -Wl,--no-insert-timestamp"
+build_dll() {
+  make -C "$FORK" clean >/dev/null
+  make -C "$FORK" -j8 LDFLAGS="$LDFLAGS_REPRO" >/dev/null
+  shasum -a 256 "$FORK/ddraw.dll" | cut -d' ' -f1
+}
 # --no-insert-timestamp: without it every build of one commit differs, so nobody could check the
-# shipped DLL against the source. With it, two clean builds are byte-identical.
-make -C "$FORK" -j8 LDFLAGS="-Wl,--enable-stdcall-fixup -s -static -shared -Wl,--no-insert-timestamp" >/dev/null
+# shipped DLL against the source. Built twice and compared, because the claim is only worth making
+# per release: on 2026-09-22 one build in ten came out different for a reason not yet found.
+FIRST=$(build_dll)
+SECOND=$(build_dll)
+[ "$FIRST" = "$SECOND" ] || { echo "refusing: two clean builds of $COMMIT differ ($FIRST vs $SECOND)" >&2; exit 1; }
 
 rm -rf "$OUT" "$OUT.zip"
 mkdir -p "$OUT/tools"
