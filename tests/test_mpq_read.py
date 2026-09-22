@@ -31,10 +31,16 @@ ARCHIVES = {
 class Explode(unittest.TestCase):
     def test_the_blast_c_reference_vector(self) -> None:
         """blast.c's own example: literal mode 0, 4-bit dictionary, one back-reference."""
-        self.assertEqual(mpq_read.explode(bytes.fromhex("00048224258f807f"), 100), b"AIAIAIAIAIAIA")
+        self.assertEqual(mpq_read.explode(bytes.fromhex("00048224258f807f"), 13), b"AIAIAIAIAIAIA")
 
-    def test_output_stops_at_the_expected_size(self) -> None:
-        self.assertEqual(mpq_read.explode(bytes.fromhex("00048224258f807f"), 5), b"AIAIA")
+    def test_a_size_that_disagrees_with_the_stream_is_an_error(self) -> None:
+        """Stopping at the expected size handed back truncated data as whole. (Codex review.)"""
+        for wrong in (5, 12, 14):
+            with self.subTest(wrong), self.assertRaises(mpq_read.MpqError):
+                mpq_read.explode(bytes.fromhex("00048224258f807f"), wrong)
+
+    def test_sector_crc_members_are_refused_not_half_read(self) -> None:
+        self.assertFalse(mpq_read.KNOWN_FLAGS & mpq_read.FLAG_SECTOR_CRC)
 
     def test_a_truncated_stream_is_an_error_not_short_output(self) -> None:
         with self.assertRaises(mpq_read.MpqError):

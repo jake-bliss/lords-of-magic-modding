@@ -47,6 +47,8 @@ Real-ESRGAN ncnn Vulkan v0.2.5.0 from its GitHub release, and the 4x-UltraSharp 
 python lomhd_setup.py --uninstall
 ```
 
+If you installed with `--game`, uninstall with the same `--game "..."` too.
+
 This puts your original `ddraw.dll` back (it was saved as `ddraw.dll.lomhd-backup`) and removes the
 portrait pack. To turn the portraits off without uninstalling, delete `lomhd_portraits.pack` from
 the game folder.

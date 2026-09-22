@@ -37,8 +37,9 @@ FLAG_FIX_KEY = 0x00020000
 FLAG_SINGLE_UNIT = 0x01000000
 FLAG_SECTOR_CRC = 0x04000000
 FLAG_EXISTS = 0x80000000
-KNOWN_FLAGS = (FLAG_IMPLODE | FLAG_COMPRESS | FLAG_ENCRYPTED | FLAG_FIX_KEY | FLAG_SECTOR_CRC
-               | FLAG_EXISTS)
+# SECTOR_CRC is refused, not parsed: no Lords of Magic archive uses it, and reading past the
+# checksums without verifying them would return corrupt sectors as good ones. (Codex review.)
+KNOWN_FLAGS = FLAG_IMPLODE | FLAG_COMPRESS | FLAG_ENCRYPTED | FLAG_FIX_KEY | FLAG_EXISTS
 
 HASH_EMPTY = 0xFFFFFFFF
 HASH_DELETED = 0xFFFFFFFE
@@ -162,7 +163,9 @@ class _Bits:
 
 
 def explode(data: bytes, expected: int) -> bytes:
-    """PKWARE DCL -> bytes. Stops at the end code or at `expected` bytes, whichever comes first."""
+    """PKWARE DCL -> bytes. Decodes to the end code, as blast.c does, and requires exactly
+    `expected` bytes: a stream that ends early or runs long means the block's size is wrong, and
+    stopping at `expected` would hand back truncated data as if it were whole. (Codex review.)"""
     s = _Bits(data)
     lit = s.bits(8)
     if lit > 1:
@@ -171,7 +174,9 @@ def explode(data: bytes, expected: int) -> bytes:
     if not 4 <= dict_bits <= 6:
         raise MpqError(f"imploded data: dictionary size {dict_bits}")
     out = bytearray()
-    while len(out) < expected:
+    while True:
+        if len(out) > expected:
+            raise MpqError(f"imploded data runs past its {expected} bytes")
         if s.bits(1):
             symbol = s.decode(_LENCODE)
             length = _BASE[symbol] + s.bits(_EXTRA[symbol])
@@ -185,7 +190,9 @@ def explode(data: bytes, expected: int) -> bytes:
                 out.append(out[-dist])
         else:
             out.append(s.decode(_LITCODE) if lit else s.bits(8))
-    return bytes(out[:expected])
+    if len(out) != expected:
+        raise MpqError(f"imploded data holds {len(out)} bytes, {expected} expected")
+    return bytes(out)
 
 
 # --- archive ------------------------------------------------------------------------------------
@@ -257,13 +264,13 @@ class Archive:
         sectors = (size + self.sector_size - 1) // self.sector_size
         packed = flags & (FLAG_IMPLODE | FLAG_COMPRESS)
         if packed:
-            entries = sectors + 1 + (1 if flags & FLAG_SECTOR_CRC else 0)
+            entries = sectors + 1
             table = raw[:entries * 4]
             if len(table) != entries * 4:
                 raise MpqError(f"{name}: sector table runs past the member")
             if key is not None:
                 table = decrypt(table, (key - 1) & M32)
-            bounds = struct.unpack(f"<{entries}I", table)[:sectors + 1]
+            bounds = struct.unpack(f"<{entries}I", table)
         else:
             bounds = [min(i * self.sector_size, packed_size) for i in range(sectors + 1)]
 

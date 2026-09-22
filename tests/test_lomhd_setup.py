@@ -172,18 +172,32 @@ class InstallUninstall(unittest.TestCase):
     def test_the_record_exists_before_our_dll_does(self) -> None:
         """So an interruption during the copy leaves something uninstall can act on."""
         (self.game / "ddraw.dll").write_bytes(ORIGINAL)
-        real_copy = setup.shutil.copy2
-        def copy_but_fail_on_the_dll(src, dst, *a, **k):
-            if pathlib.Path(dst).name == "ddraw.dll" and pathlib.Path(src).parent == self.release_dir:
+        real_replace = setup.os.replace
+        def replace_but_fail_on_the_dll(src, dst):
+            if pathlib.Path(dst).name == "ddraw.dll":
                 raise PermissionError("locked")
-            return real_copy(src, dst, *a, **k)
-        setup.shutil.copy2 = copy_but_fail_on_the_dll
+            return real_replace(src, dst)
+        setup.os.replace = replace_but_fail_on_the_dll
         try:
             with self.assertRaises(PermissionError):
                 setup.install(self.game, PACK, self.record)
         finally:
-            setup.shutil.copy2 = real_copy
+            setup.os.replace = real_replace
+        self.assertEqual(self.dll(), ORIGINAL, "a failed replace must leave the original whole")
         self.assertTrue((self.game / setup.RECORD_NAME).exists())
+        setup.uninstall(self.game)
+        self.assertEqual(self.dll(), ORIGINAL)
+        self.assertEqual(sorted(p.name for p in self.game.iterdir()), ["ddraw.dll"])
+
+    def test_a_damaged_record_is_recovered_from_the_backup(self) -> None:
+        """A crash mid-write once left an empty record, and both commands died on JSONDecodeError."""
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        setup.install(self.game, PACK, self.record)
+        (self.game / setup.RECORD_NAME).write_text("{\"ddraw_sha")
+        with self.assertRaises(SystemExit):
+            setup.uninstall(self.game)              # says to re-run install; removes nothing
+        self.assertEqual(self.dll(), OURS)
+        setup.install(self.game, PACK, self.record)
         setup.uninstall(self.game)
         self.assertEqual(self.dll(), ORIGINAL)
         self.assertEqual(sorted(p.name for p in self.game.iterdir()), ["ddraw.dll"])

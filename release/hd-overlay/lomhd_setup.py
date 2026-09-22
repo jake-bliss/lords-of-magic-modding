@@ -225,6 +225,26 @@ def upscale(src_root: pathlib.Path, names: list[str], exe: pathlib.Path,
 
 # --- install / uninstall -------------------------------------------------------------------------
 
+def write_atomically(path: pathlib.Path, data: bytes) -> None:
+    """Whole or not at all: an interruption leaves the old file, never a half-written one."""
+    part = path.with_name(path.name + ".lomhd-part")
+    with part.open("wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(part, path)
+
+
+def read_record(game: pathlib.Path) -> dict:
+    """The install record, or {} when there is none or it is damaged. A damaged record is treated
+    as missing: install then recovers from the verified backup, as for an interrupted install."""
+    try:
+        record = json.loads((game / RECORD_NAME).read_text())
+        return record if {"ddraw_sha256", "had_ddraw", "backup_sha256"} <= set(record) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def file_hash(path: pathlib.Path) -> str | None:
     return sha256(path) if path.is_file() else None
 
@@ -254,7 +274,7 @@ def install(game: pathlib.Path, pack: bytes, record: dict) -> None:
     was interrupted, and Steam putting the original ddraw.dll back ("Verify integrity")."""
     dll, backup, record_path = game / "ddraw.dll", game / BACKUP_NAME, game / RECORD_NAME
     ours = record["ddraw_sha256"]
-    previous = json.loads(record_path.read_text()) if record_path.is_file() else {}
+    previous = read_record(game)
     current, saved = file_hash(dll), file_hash(backup)
     ours_any = {ours, previous.get("ddraw_sha256")} - {None}
 
@@ -287,23 +307,25 @@ def install(game: pathlib.Path, pack: bytes, record: dict) -> None:
     else:
         had, backup_sha = False, None
 
-    record_path.write_text(json.dumps({
+    write_atomically(record_path, json.dumps({
         "release": record["version"],
         "ddraw_sha256": ours,
         "had_ddraw": had,
         "backup_sha256": backup_sha,
         "pack_sha256": hashlib.sha256(pack).hexdigest(),
-    }, indent=2) + "\n")
-    (game / (PACK_NAME + ".part")).write_bytes(pack)
-    (game / (PACK_NAME + ".part")).replace(game / PACK_NAME)
-    shutil.copy2(HERE / "ddraw.dll", dll)
+    }, indent=2).encode() + b"\n")
+    write_atomically(game / PACK_NAME, pack)
+    write_atomically(dll, (HERE / "ddraw.dll").read_bytes())
 
 
 def uninstall(game: pathlib.Path) -> None:
     record_path = game / RECORD_NAME
-    if not record_path.is_file():
+    record = read_record(game)
+    if not record:
+        if record_path.exists() and (game / BACKUP_NAME).is_file():
+            fail(f"{RECORD_NAME} is damaged. Run the install again (it recovers from the backup), "
+                 "then --uninstall.")
         fail(f"no {RECORD_NAME} in {game}; the overlay does not look installed there.")
-    record = json.loads(record_path.read_text())
     dll, backup = game / "ddraw.dll", game / BACKUP_NAME
     had, backup_sha = record["had_ddraw"], record["backup_sha256"]
     current = file_hash(dll)
@@ -323,7 +345,8 @@ def uninstall(game: pathlib.Path) -> None:
 
     if had and file_hash(backup) == backup_sha:
         backup.unlink()
-    for name in (PACK_NAME, PACK_NAME + ".part", "lomhd.log", RECORD_NAME):
+    for name in (PACK_NAME, PACK_NAME + ".lomhd-part", "ddraw.dll.lomhd-part",
+                 RECORD_NAME + ".lomhd-part", "lomhd.log", RECORD_NAME):
         if (game / name).exists():
             (game / name).unlink()
     say(f"Uninstalled. ddraw.dll is {'your original again' if had else 'removed'}.")
