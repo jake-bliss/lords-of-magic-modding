@@ -103,6 +103,91 @@ class InstallUninstall(unittest.TestCase):
         self.assertEqual(record["pack_sha256"], hashlib.sha256(PACK).hexdigest())
         self.assertTrue(record["had_ddraw"])
 
+    # --- states a real player reaches (Claude review of 11d5d5f) --------------------------------
+
+    def test_steam_restoring_the_original_neither_blocks_uninstall_nor_reinstall(self) -> None:
+        """'Verify integrity' puts the shipped ddraw.dll back while the record and backup remain."""
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        setup.install(self.game, PACK, self.record)
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        setup.uninstall(self.game)
+        self.assertEqual(self.dll(), ORIGINAL)
+        self.assertEqual(sorted(p.name for p in self.game.iterdir()), ["ddraw.dll"])
+
+        setup.install(self.game, PACK, self.record)
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        setup.install(self.game, PACK, self.record)
+        self.assertEqual(self.dll(), OURS)
+        setup.uninstall(self.game)
+        self.assertEqual(self.dll(), ORIGINAL)
+
+    def test_steam_restoring_the_original_after_the_backup_was_lost_backs_it_up_again(self) -> None:
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        setup.install(self.game, PACK, self.record)
+        (self.game / setup.BACKUP_NAME).unlink()
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        setup.install(self.game, PACK, self.record)
+        setup.uninstall(self.game)
+        self.assertEqual(self.dll(), ORIGINAL)
+
+    def test_an_install_interrupted_after_the_backup_is_finished_by_the_next_run(self) -> None:
+        """Game running on Windows: the backup is taken, then the copy fails."""
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        (self.game / setup.BACKUP_NAME).write_bytes(ORIGINAL)
+        setup.install(self.game, PACK, self.record)
+        self.assertEqual(self.dll(), OURS)
+        setup.uninstall(self.game)
+        self.assertEqual(self.dll(), ORIGINAL)
+
+    def test_our_dll_copied_but_no_record_is_still_undoable(self) -> None:
+        (self.game / "ddraw.dll").write_bytes(OURS)
+        (self.game / setup.BACKUP_NAME).write_bytes(ORIGINAL)
+        setup.install(self.game, PACK, self.record)
+        setup.uninstall(self.game)
+        self.assertEqual(self.dll(), ORIGINAL)
+
+    def test_an_interrupted_uninstall_can_be_run_again(self) -> None:
+        """The original was copied back; the backup and record were not yet removed."""
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        setup.install(self.game, PACK, self.record)
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        setup.uninstall(self.game)
+        self.assertEqual(sorted(p.name for p in self.game.iterdir()), ["ddraw.dll"])
+
+    def test_upgrading_from_an_older_release_keeps_the_original_backup(self) -> None:
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        older = dict(self.record, ddraw_sha256=hashlib.sha256(b"old overlay").hexdigest())
+        setup.install(self.game, PACK, self.record)
+        # pretend the installed one is an older release's
+        (self.game / "ddraw.dll").write_bytes(b"old overlay")
+        record = json.loads((self.game / setup.RECORD_NAME).read_text())
+        record["ddraw_sha256"] = older["ddraw_sha256"]
+        (self.game / setup.RECORD_NAME).write_text(json.dumps(record))
+
+        setup.install(self.game, PACK, self.record)
+        self.assertEqual(self.dll(), OURS)
+        setup.uninstall(self.game)
+        self.assertEqual(self.dll(), ORIGINAL)
+
+    def test_the_record_exists_before_our_dll_does(self) -> None:
+        """So an interruption during the copy leaves something uninstall can act on."""
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        real_copy = setup.shutil.copy2
+        def copy_but_fail_on_the_dll(src, dst, *a, **k):
+            if pathlib.Path(dst).name == "ddraw.dll" and pathlib.Path(src).parent == self.release_dir:
+                raise PermissionError("locked")
+            return real_copy(src, dst, *a, **k)
+        setup.shutil.copy2 = copy_but_fail_on_the_dll
+        try:
+            with self.assertRaises(PermissionError):
+                setup.install(self.game, PACK, self.record)
+        finally:
+            setup.shutil.copy2 = real_copy
+        self.assertTrue((self.game / setup.RECORD_NAME).exists())
+        setup.uninstall(self.game)
+        self.assertEqual(self.dll(), ORIGINAL)
+        self.assertEqual(sorted(p.name for p in self.game.iterdir()), ["ddraw.dll"])
+
 
 if __name__ == "__main__":
     unittest.main()

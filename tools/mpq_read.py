@@ -259,6 +259,8 @@ class Archive:
         if packed:
             entries = sectors + 1 + (1 if flags & FLAG_SECTOR_CRC else 0)
             table = raw[:entries * 4]
+            if len(table) != entries * 4:
+                raise MpqError(f"{name}: sector table runs past the member")
             if key is not None:
                 table = decrypt(table, (key - 1) & M32)
             bounds = struct.unpack(f"<{entries}I", table)[:sectors + 1]

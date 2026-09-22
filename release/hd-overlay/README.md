@@ -21,7 +21,8 @@ The portraits are sharper, not bigger: each one fills the same space on screen a
 
 ## Install
 
-1. Unzip this folder anywhere.
+1. **Close the game.** Windows will not let a running game's `ddraw.dll` be replaced.
+   Then unzip this folder anywhere.
 2. Open a terminal in it and run:
 
    ```

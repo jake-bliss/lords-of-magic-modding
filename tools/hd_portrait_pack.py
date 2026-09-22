@@ -110,6 +110,9 @@ def build(originals: pathlib.Path, upscaled: list[pathlib.Path],
             continue
         w, h, idx, pal, _ = lbm_png.decode(small[name])
         hw, hh, hidx, hpal, _ = lbm_png.decode(large[name])
+        if is_pixel_multiple(w, h, idx, pal, hw, hh, hidx, hpal):
+            skipped.append(f"{name}: the upscale is the original with each pixel repeated, not an upscale")
+            continue
         check_reader_limits(name, w, h, hw, hh, first_width)
         first_width = w if first_width is None else first_width
         encoded = name.encode("ascii")
@@ -120,6 +123,20 @@ def build(originals: pathlib.Path, upscaled: list[pathlib.Path],
         raise SystemExit(f"{len(records)} portraits; the overlay accepts at most {MAX_PORTRAITS}")
 
     return MAGIC + struct.pack("<I", len(records)) + b"".join(records), skipped
+
+
+def is_pixel_multiple(w: int, h: int, idx, pal, hw: int, hh: int, hidx, hpal) -> bool:
+    """An 'upscale' that only repeats each original pixel k x k looks exactly like the original once
+    drawn at the slot's size -- the overlay would draw it and change nothing. Observed 2026-09-22:
+    395 of the 748 portraits in the pack played that day were 2x2 repeats copied from the 2x UI
+    experiment (`double_indices`), and only a byte-level comparison against a fresh recipe run
+    exposed it. Compared as colours, so a different palette order cannot hide one."""
+    if hw % w or hh % h or hw // w != hh // h or hw == w:
+        return False
+    k = hw // w
+    colour = lambda p, i: tuple(p[i])
+    return all(colour(hpal, hidx[y * hw + x]) == colour(pal, idx[(y // k) * w + x // k])
+               for y in range(hh) for x in range(hw))
 
 
 def check_reader_limits(name: str, w: int, h: int, hw: int, hh: int, first_width: int | None) -> None:

@@ -29,6 +29,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -124,8 +125,15 @@ def fetch(key: str, dest: pathlib.Path) -> pathlib.Path:
         return dest
     say(f"  downloading {url.rsplit('/', 1)[-1]} ...")
     part = dest.with_suffix(dest.suffix + ".part")
-    with urllib.request.urlopen(url) as response, part.open("wb") as f:
-        shutil.copyfileobj(response, f)
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response, part.open("wb") as f:
+            shutil.copyfileobj(response, f)
+    except (OSError, urllib.error.URLError) as error:
+        hint = ""
+        if "CERTIFICATE" in str(error).upper() and platform.system() == "Darwin":
+            hint = ("\n  macOS with python.org Python: run 'Install Certificates.command' from the "
+                    "Python folder in Applications, then try again.")
+        fail(f"could not download {url}: {error}{hint}")
     got = sha256(part)
     if got != want:
         part.unlink()
@@ -217,33 +225,78 @@ def upscale(src_root: pathlib.Path, names: list[str], exe: pathlib.Path,
 
 # --- install / uninstall -------------------------------------------------------------------------
 
+def file_hash(path: pathlib.Path) -> str | None:
+    return sha256(path) if path.is_file() else None
+
+
+def check_writable(game: pathlib.Path) -> None:
+    """Before the long step, not after it. Windows locks the ddraw.dll a running game has loaded,
+    and a copy that fails there would do so after twenty minutes of upscaling."""
+    dll = game / "ddraw.dll"
+    probe = game / "lomhd_write_test.tmp"
+    try:
+        probe.write_bytes(b"")
+        probe.unlink()
+        if dll.is_file():
+            with dll.open("r+b"):
+                pass
+    except OSError:
+        fail(f"cannot write to {game}. Close the game (and cnc-ddraw's config tool) and run again; "
+             "if it still fails, run the terminal as administrator.")
+
+
 def install(game: pathlib.Path, pack: bytes, record: dict) -> None:
-    dll, backup = game / "ddraw.dll", game / BACKUP_NAME
+    """Back up the player's ddraw.dll once, record what was done, then install.
+
+    The record is written BEFORE our DLL is copied, so an interruption at any point leaves either
+    the original in place or a record that says how to restore it. Every state a real player can
+    reach is recognised rather than refused: a re-run, an upgrade from an older release, a run that
+    was interrupted, and Steam putting the original ddraw.dll back ("Verify integrity")."""
+    dll, backup, record_path = game / "ddraw.dll", game / BACKUP_NAME, game / RECORD_NAME
     ours = record["ddraw_sha256"]
-    previous = json.loads((game / RECORD_NAME).read_text()) if (game / RECORD_NAME).is_file() else {}
+    previous = json.loads(record_path.read_text()) if record_path.is_file() else {}
+    current, saved = file_hash(dll), file_hash(backup)
+    ours_any = {ours, previous.get("ddraw_sha256")} - {None}
 
-    if dll.is_file() and sha256(dll) != ours and not previous:
-        if backup.exists():
-            fail(f"{backup} already exists but no install record does. Move it aside by hand so "
-                 "nothing is overwritten.")
+    if previous:
+        had, backup_sha = previous["had_ddraw"], previous["backup_sha256"]
+        restored = had and current == backup_sha        # Steam restored it, or an undo half-ran
+        if current not in ours_any and not restored and not (current is None and not had):
+            fail("ddraw.dll is neither the overlay's nor your original -- another mod replaced it. "
+                 "Left untouched. Remove that mod first, or put your original back by hand.")
+        if had and saved != backup_sha:
+            if restored:                                # the original is right here: back it up again
+                shutil.copy2(dll, backup)
+            else:
+                fail(f"{BACKUP_NAME} is missing or changed, so your original could not be restored "
+                     "later. Nothing was installed.")
+    elif saved is not None:
+        # A backup with no record: a run interrupted between the backup and the record.
+        if current == saved:
+            had, backup_sha = True, saved
+        elif current in ours_any:
+            had, backup_sha = True, saved               # ours was copied; the record was not written
+        else:
+            fail(f"{backup} already exists and is not a backup of the current ddraw.dll. Move it "
+                 "aside by hand so nothing is overwritten.")
+    elif current is not None and current not in ours_any:
         shutil.copy2(dll, backup)
-        if sha256(backup) != sha256(dll):
+        if file_hash(backup) != current:
             fail("the backup of ddraw.dll did not verify. Nothing was installed.")
-    elif dll.is_file() and sha256(dll) != ours and previous:
-        fail("ddraw.dll changed since the overlay was installed (another mod?). Run --uninstall "
-             "first, or restore it by hand.")
+        had, backup_sha = True, current
+    else:
+        had, backup_sha = False, None
 
+    record_path.write_text(json.dumps({
+        "release": record["version"],
+        "ddraw_sha256": ours,
+        "had_ddraw": had,
+        "backup_sha256": backup_sha,
+        "pack_sha256": hashlib.sha256(pack).hexdigest(),
+    }, indent=2) + "\n")
     (game / (PACK_NAME + ".part")).write_bytes(pack)
     (game / (PACK_NAME + ".part")).replace(game / PACK_NAME)
     shutil.copy2(HERE / "ddraw.dll", dll)
-    (game / RECORD_NAME).write_text(json.dumps({
-        "release": record["version"],
-        "ddraw_sha256": ours,
-        "had_ddraw": previous.get("had_ddraw", backup.exists()),
-        "backup_sha256": previous.get("backup_sha256",
-                                      sha256(backup) if backup.exists() else None),
-        "pack_sha256": hashlib.sha256(pack).hexdigest(),
-    }, indent=2) + "\n")
 
 
 def uninstall(game: pathlib.Path) -> None:
@@ -252,21 +305,28 @@ def uninstall(game: pathlib.Path) -> None:
         fail(f"no {RECORD_NAME} in {game}; the overlay does not look installed there.")
     record = json.loads(record_path.read_text())
     dll, backup = game / "ddraw.dll", game / BACKUP_NAME
+    had, backup_sha = record["had_ddraw"], record["backup_sha256"]
+    current = file_hash(dll)
 
-    if dll.is_file() and sha256(dll) != record["ddraw_sha256"]:
+    if had and current == backup_sha:
+        pass                                            # the original is already back
+    elif current == record["ddraw_sha256"]:
+        if had:
+            if file_hash(backup) != backup_sha:
+                fail(f"{BACKUP_NAME} is missing or changed, so the original cannot be restored "
+                     "safely. Nothing was removed.")
+            shutil.copy2(backup, dll)
+        else:
+            dll.unlink()
+    elif not (current is None and not had):
         fail("ddraw.dll is no longer the overlay's (another mod replaced it). Left as it is.")
-    if record["had_ddraw"]:
-        if not backup.is_file() or sha256(backup) != record["backup_sha256"]:
-            fail(f"{BACKUP_NAME} is missing or changed, so the original cannot be restored "
-                 "safely. Nothing was removed.")
-        shutil.copy2(backup, dll)
+
+    if had and file_hash(backup) == backup_sha:
         backup.unlink()
-    elif dll.is_file():
-        dll.unlink()
-    for name in (PACK_NAME, "lomhd.log", RECORD_NAME):
+    for name in (PACK_NAME, PACK_NAME + ".part", "lomhd.log", RECORD_NAME):
         if (game / name).exists():
             (game / name).unlink()
-    say(f"Uninstalled. ddraw.dll is {'your original again' if record['had_ddraw'] else 'removed'}.")
+    say(f"Uninstalled. ddraw.dll is {'your original again' if had else 'removed'}.")
 
 
 def main() -> int:
@@ -286,6 +346,7 @@ def main() -> int:
 
     record = release()
     check_magick()
+    check_writable(game)
     say("1/4  Getting the upscaler")
     exe, models = upscaler()
     say("2/4  Reading portraits from your pic.mpq")

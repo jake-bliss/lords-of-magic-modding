@@ -107,6 +107,20 @@ class Pack(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     pack.build(small, [large])
 
+    def test_a_pixel_doubled_upscale_is_left_out_and_reported(self) -> None:
+        """395 of the portraits in the pack played on 2026-09-22 were 2x2 repeats: drawn at the
+        slot's size they are the original, so the overlay changed nothing for them."""
+        indices = write_lbm(self.small / "d1_great_axe.lbm", 4, 4, 1)
+        doubled = bytes(indices[(y // 2) * 4 + x // 2] for y in range(8) for x in range(8))
+        header = struct.pack(">HHhhBBBBHBBhh", 8, 8, 0, 0, 8, 0, 1, 0, 0, 1, 1, 8, 8)
+        lbm_png.encode(self.large / "d1_great_axe.lbm", 8, 8, doubled, PALETTE,
+                       [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+        write_lbm(self.small / "real.lbm", 4, 4, 2)
+        write_lbm(self.large / "real.lbm", 8, 8, 5)
+        data, skipped = pack.build(self.small, [self.large])
+        self.assertEqual([n for n, _, _ in pack.read(data)], ["real.lbm"])
+        self.assertEqual(skipped, ["d1_great_axe.lbm: the upscale is the original with each pixel repeated, not an upscale"])
+
     def test_trailing_bytes_are_an_error(self) -> None:
         write_lbm(self.small / "a.lbm", 4, 4, 1)
         write_lbm(self.large / "a.lbm", 8, 8, 1)
