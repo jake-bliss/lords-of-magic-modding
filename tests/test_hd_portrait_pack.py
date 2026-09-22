@@ -89,9 +89,27 @@ class Pack(unittest.TestCase):
         self.assertEqual([name for name, _, _ in pack.read(data)], ["lildwp00.lbm"])
         self.assertEqual(skipped, ["life.lbm: installed original differs from the one the upscale was made from"])
 
+    def test_what_the_overlay_would_refuse_fails_at_build_time(self) -> None:
+        """The C reader refuses these; the writer must refuse them first, or the game loads a
+        pack it calls corrupt and the overlay is silently off."""
+        cases = {
+            "a different width": [("a.lbm", 4, 4, 8, 8), ("b.lbm", 5, 4, 10, 8)],
+            "too few rows for three probes": [("a.lbm", 4, 3, 8, 6)],
+            "an upscale larger than the overlay's buffer": [("a.lbm", 4, 4, 513, 8)],
+        }
+        for label, portraits in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                small, large = pathlib.Path(tmp) / "s", pathlib.Path(tmp) / "l"
+                small.mkdir(); large.mkdir()
+                for seed, (name, w, h, hw, hh) in enumerate(portraits):
+                    write_lbm(small / name, w, h, seed)
+                    write_lbm(large / name, hw, hh, seed)
+                with self.assertRaises(SystemExit):
+                    pack.build(small, [large])
+
     def test_trailing_bytes_are_an_error(self) -> None:
-        write_lbm(self.small / "a.lbm", 2, 2, 1)
-        write_lbm(self.large / "a.lbm", 4, 4, 1)
+        write_lbm(self.small / "a.lbm", 4, 4, 1)
+        write_lbm(self.large / "a.lbm", 8, 8, 1)
         data, _ = pack.build(self.small, [self.large])
         with self.assertRaises(ValueError):
             pack.read(data + b"\0")

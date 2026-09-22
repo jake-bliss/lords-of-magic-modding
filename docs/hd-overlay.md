@@ -99,7 +99,14 @@ same in both) and silently missed the Life banner. Vanilla: 440 portraits. GS5R3
 The player's machine does the derivation: extract portraits from their own `pic.mpq`, upscale,
 build the pack, install the DLL. No game art is distributed.
 
-1. Cross-model review (Claude + Codex) of the wrapper -- in progress 2026-09-22.
+1. Cross-model review (Claude + Codex) of the wrapper -- **first round done 2026-09-22.** Both
+   found the draw reading the game's surface outside the lock (a use-after-free on surface
+   release) and 32-bit overflow in the pack parser; Claude alone found GL objects reused across
+   cnc-ddraw's context recreation, the writer not enforcing the reader's limits, and no parser
+   tests. All fixed (fork `ff9605c`, `cecf1fd`), with `tests/lomhd_pack_test.c` whose control
+   build fails the wraparound and oversized-upscale cases against the pre-fix parser.
+   🔴 **Codex's pass ended before writing its summary**, so it has NOT reviewed the fixes. A second
+   Codex pass over `134eaae..HEAD` is owed before release.
 2. Live test on GS5R3 with all 748 portraits -- the dev profile is staged for it.
 3. A wider playtest across every portrait consumer (barracks, alchemist, character screens, spy
    panel, combat) and a longer session.

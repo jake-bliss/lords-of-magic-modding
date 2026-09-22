@@ -43,6 +43,13 @@ import lbm_png  # noqa: E402
 
 MAGIC = b"LOMHDPK1"
 
+# What the overlay's reader (src/lomhd_match.c in the cnc-ddraw fork) accepts. A pack it would
+# refuse must fail HERE, at build time, not load as "corrupt" in the game with the overlay silently
+# off. (Found by cross-model review, 2026-09-22: the writer checked none of these.)
+MAX_PORTRAITS = 1365        # count * 2 rules * 3 probe rows must stay under half of 16384 slots
+MIN_HEIGHT = 4              # three probe rows at h/4, h/2 and 3h/4 need at least four rows
+MAX_UPSCALE_SIDE = 512      # the overlay's per-placement buffer
+
 
 def lbm_files(directory: pathlib.Path) -> dict[str, pathlib.Path]:
     """Basename -> path, keyed lowercase. 8 of the 748 shipped portraits are spelled `.LBM`, and
@@ -93,6 +100,7 @@ def build(originals: pathlib.Path, upscaled: list[pathlib.Path],
     skipped += [f"{name}: upscale with no original" for name in sorted(set(large) - set(small))]
 
     records = []
+    first_width: int | None = None
     for name in sorted(set(small) & set(large)):
         if name not in made_from:
             skipped.append(f"{name}: no source original to verify the upscale against")
@@ -102,11 +110,26 @@ def build(originals: pathlib.Path, upscaled: list[pathlib.Path],
             continue
         w, h, idx, pal, _ = lbm_png.decode(small[name])
         hw, hh, hidx, hpal, _ = lbm_png.decode(large[name])
+        check_reader_limits(name, w, h, hw, hh, first_width)
+        first_width = w if first_width is None else first_width
         encoded = name.encode("ascii")
         records.append(struct.pack("<B", len(encoded)) + encoded
                        + encode_image(w, h, idx, pal) + encode_image(hw, hh, hidx, hpal))
 
+    if len(records) > MAX_PORTRAITS:
+        raise SystemExit(f"{len(records)} portraits; the overlay accepts at most {MAX_PORTRAITS}")
+
     return MAGIC + struct.pack("<I", len(records)) + b"".join(records), skipped
+
+
+def check_reader_limits(name: str, w: int, h: int, hw: int, hh: int, first_width: int | None) -> None:
+    """Refuse what the overlay would refuse, with the reason, before any byte is written."""
+    if first_width is not None and w != first_width:
+        raise SystemExit(f"{name}: {w} wide, but the overlay scans one fixed width ({first_width})")
+    if h < MIN_HEIGHT:
+        raise SystemExit(f"{name}: {h} rows; the overlay needs at least {MIN_HEIGHT}")
+    if hw > MAX_UPSCALE_SIDE or hh > MAX_UPSCALE_SIDE:
+        raise SystemExit(f"{name}: upscale {hw}x{hh} exceeds the overlay's {MAX_UPSCALE_SIDE}x{MAX_UPSCALE_SIDE}")
 
 
 def read(pack: bytes):
