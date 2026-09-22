@@ -3,3 +3,4 @@ target/
 artifacts/
 reports/**/*.csv
 __pycache__/
+dist/
