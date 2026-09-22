@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sprite Review</title>
+<style>
+  /* image-rendering: pixelated is load-bearing. Browsers smooth upscaled images by default, which
+     would blur the ORIGINAL row into looking like a resample and make the comparison meaningless. */
+  :root{
+    --bg:#15161a; --panel:#1d1f25; --line:#2c2f38; --ink:#e8e9ec; --dim:#9aa0ab;
+    --keep:#34c36b; --reject:#e05260; --accent:#ffd77a; --stage:#39424d;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+       display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);
+         background:var(--panel);flex-wrap:wrap;position:sticky;top:0;z-index:5}
+  h1{font-size:15px;margin:0;font-weight:650}
+  .spacer{flex:1}
+  .stat{color:var(--dim);font-variant-numeric:tabular-nums;font-size:13px}
+  .stat b{color:var(--ink)} .stat .k{color:var(--keep)} .stat .r{color:var(--reject)}
+  button,select{background:#262933;color:var(--ink);border:1px solid var(--line);border-radius:7px;
+                padding:6px 11px;font:inherit;font-size:13px;cursor:pointer}
+  button:hover{border-color:#3d4250}
+  #warn{display:none;background:#5a1f25;color:#ffd9dd;border-bottom:1px solid #8b2f38;
+        padding:9px 16px;font-size:13px;font-weight:600}
+
+  main{flex:1;display:flex;min-height:0}
+  #stage{flex:1;overflow-y:auto;padding:18px 20px 90px}
+  #unit{font:600 17px ui-monospace,SFMono-Regular,Menlo,monospace;margin:0 0 2px}
+  #member{color:var(--dim);font:12px ui-monospace,Menlo,monospace;margin-bottom:16px}
+  .seq{margin:0 0 22px}
+  .seqname{font-size:12px;letter-spacing:.8px;color:var(--accent);text-transform:uppercase;
+           margin-bottom:6px;font-weight:600}
+  .rows{display:flex;flex-direction:column;gap:3px}
+  .row{display:flex;gap:6px;align-items:flex-end}
+  .rowtag{width:64px;flex:none;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  .cell{background:var(--stage);border:1px solid #2b333c;border-radius:3px;
+        display:flex;align-items:flex-end;justify-content:center;overflow:hidden}
+  .cell img{image-rendering:pixelated;display:block}
+
+  #verdictbar{position:fixed;left:0;right:290px;bottom:0;background:var(--panel);
+              border-top:1px solid var(--line);padding:10px 20px;display:flex;gap:10px;
+              align-items:center;z-index:4}
+  .vbtn{padding:9px 20px;font-weight:600;font-size:14px}
+  .vbtn.keep.on{background:var(--keep);border-color:var(--keep);color:#0c1a10}
+  .vbtn.reject.on{background:var(--reject);border-color:var(--reject);color:#1d0b0d}
+  .hint{color:var(--dim);font-size:12px}
+  kbd{background:#2b2f3a;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;
+      padding:1px 5px;font:11px ui-monospace,Menlo,monospace}
+
+  aside{width:290px;flex:none;border-left:1px solid var(--line);background:var(--panel);
+        overflow-y:auto;padding:10px}
+  .tile{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;
+        border:2px solid transparent;font:12px ui-monospace,Menlo,monospace}
+  .tile img{width:30px;image-rendering:pixelated}
+  .tile.cur{border-color:var(--accent)}
+  .tile.keep{background:rgba(52,195,107,.14)} .tile.reject{background:rgba(224,82,96,.14)}
+  @media (max-width:980px){aside{display:none} #verdictbar{right:0}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Sprite review</h1>
+  <span class="stat" id="pos"></span>
+  <span class="stat" id="tally"></span>
+  <span class="spacer"></span>
+  <select id="filter"><option value="all">All</option><option value="todo">Unreviewed only</option>
+    <option value="keep">Kept</option><option value="reject">Rejected</option></select>
+  <button id="zoom">Zoom 2&times;</button>
+  <button id="flip">Show: BOTH</button>
+  <button id="export">Export TSV</button>
+</header>
+<div id="warn" role="alert"></div>
+
+<main>
+  <div id="stage">
+    <h2 id="unit"></h2>
+    <div id="member"></div>
+    <div id="grids"></div>
+  </div>
+  <aside id="list"></aside>
+</main>
+
+<div id="verdictbar">
+  <button class="vbtn keep" id="bKeep">Keep</button>
+  <button class="vbtn reject" id="bReject">Reject</button>
+  <button class="vbtn" id="bClear">Unmark</button>
+  <span class="hint">
+    <kbd>&larr;</kbd><kbd>&rarr;</kbd> unit &nbsp; <kbd>K</kbd> keep &nbsp; <kbd>X</kbd> reject &nbsp;
+    <kbd>U</kbd> unmark &nbsp; <kbd>Space</kbd> hold = originals only &nbsp; <kbd>Z</kbd> zoom
+  </span>
+</div>
+
+<script>
+const S = { units: [], verdicts: {}, i: 0, zoom: 2, filter: 'all', only: null };
+const $ = id => document.getElementById(id);
+
+function warn (message) { const b = $('warn'); b.textContent = message; b.style.display = 'block'; }
+
+// Two sinks: the POST is the record that can be read off disk, localStorage is the fallback. A
+// silent POST failure is the dangerous case -- green ticks while nothing persists -- so every
+// failure raises a banner that does not clear itself.
+function persist (id, verdict) {
+  fetch('/verdict', { method: 'POST', body: JSON.stringify({ id, verdict }) })
+    .then(r => { if (!r.ok) warn(`Saving to disk failed (HTTP ${r.status}). Use Export before closing.`); })
+    .catch(() => warn('Saving to disk failed (server unreachable). Use Export before closing.'));
+}
+
+async function boot () {
+  S.units = await (await fetch('manifest.json')).json();
+  let fromServer = {}, fromLocal = {};
+  try { const r = await fetch('/verdicts'); if (r.ok) fromServer = await r.json(); } catch {}
+  try { fromLocal = JSON.parse(localStorage.getItem('lom.sprite.verdicts') || '{}'); } catch {}
+  S.verdicts = Object.assign({}, fromLocal, fromServer);   // merge; never let an empty server win
+  const lost = Object.keys(fromLocal).filter(k => !(k in fromServer));
+  if (lost.length) { warn(`${lost.length} verdict(s) were in this browser but not on disk — re-saving.`); }
+  for (const id of lost) persist(id, fromLocal[id]);
+  buildList();
+  const todo = S.units.findIndex(u => !S.verdicts[u.id]);
+  S.i = todo === -1 ? 0 : todo;
+  render();
+}
+
+function visible () {
+  if (S.filter === 'all') return S.units;
+  if (S.filter === 'todo') return S.units.filter(u => !S.verdicts[u.id]);
+  return S.units.filter(u => S.verdicts[u.id] === S.filter);
+}
+
+function buildList () {
+  const el = $('list');
+  el.innerHTML = '';
+  S.units.forEach((u, idx) => {
+    const first = Object.keys(u.sizes)[0];
+    const d = document.createElement('div');
+    d.className = 'tile';
+    d.dataset.id = u.id;
+    d.innerHTML = `<img src="images/${u.id}__${String(first).padStart(3, '0')}.new.png" loading="lazy" alt=""><span>${u.id}</span>`;
+    d.onclick = () => { S.i = idx; render(); };
+    el.appendChild(d);
+  });
+}
+
+function render () {
+  const u = S.units[S.i];
+  if (!u) return;
+  $('unit').textContent = u.id;
+  $('member').textContent = u.member;
+
+  const z = S.zoom;
+  const grids = $('grids');
+  grids.innerHTML = '';
+  for (const seq of u.sequences) {
+    const box = document.createElement('div');
+    box.className = 'seq';
+    const rows = ['<div class="rows">'];
+    // Both rows are drawn at the SAME physical size: the original is nearest-scaled by the same
+    // factor as the upscale, so the only difference on screen is the pixels themselves.
+    for (const [which, tag] of [['orig', 'original'], ['new', 'AI 2×']]) {
+      if (S.only && S.only !== which) continue;
+      let row = `<div class="row"><div class="rowtag">${tag}</div>`;
+      for (const facing of seq.facings) {
+        for (const f of facing) {
+          const [w, h] = u.sizes[String(f)] || [40, 60];
+          const cw = Math.round(w * 2 * z / 2), ch = Math.round(h * 2 * z / 2);
+          row += `<div class="cell" style="width:${cw + 2}px;height:${ch + 2}px">`
+               + `<img src="images/${u.id}__${String(f).padStart(3, '0')}.${which}.png" `
+               + `width="${cw}" height="${ch}" loading="lazy" alt=""></div>`;
+        }
+      }
+      rows.push(row + '</div>');
+    }
+    rows.push('</div>');
+    box.innerHTML = `<div class="seqname">${seq.label} · ${seq.facings.length} facings</div>` + rows.join('');
+    grids.appendChild(box);
+  }
+
+  const v = S.verdicts[u.id] || null;
+  $('bKeep').classList.toggle('on', v === 'keep');
+  $('bReject').classList.toggle('on', v === 'reject');
+  const done = Object.keys(S.verdicts).length;
+  const keeps = Object.values(S.verdicts).filter(x => x === 'keep').length;
+  $('pos').innerHTML = `<b>${S.i + 1}</b> / ${S.units.length}`;
+  $('tally').innerHTML = `reviewed <b>${done}</b> &middot; <span class="k">keep ${keeps}</span> &middot; <span class="r">reject ${done - keeps}</span>`;
+  $('zoom').textContent = `Zoom ${z}×`;
+  $('flip').textContent = 'Show: ' + (S.only === 'orig' ? 'ORIGINAL' : S.only === 'new' ? 'AI' : 'BOTH');
+
+  document.querySelectorAll('.tile').forEach((d, idx) => {
+    d.className = 'tile' + (idx === S.i ? ' cur' : '') + (S.verdicts[d.dataset.id] ? ' ' + S.verdicts[d.dataset.id] : '');
+  });
+  const cur = document.querySelector('.tile.cur');
+  if (cur) cur.scrollIntoView({ block: 'nearest' });
+  $('stage').scrollTop = 0;
+}
+
+function setVerdict (v) {
+  const u = S.units[S.i];
+  if (!u) return;
+  if (v === null) delete S.verdicts[u.id]; else S.verdicts[u.id] = v;
+  try { localStorage.setItem('lom.sprite.verdicts', JSON.stringify(S.verdicts)); } catch {}
+  persist(u.id, v);
+  if (v !== null) step(1); else render();
+}
+
+function step (d) {
+  const list = visible();
+  if (!list.length) { render(); return; }
+  const here = list.findIndex(x => x.id === S.units[S.i].id);
+  const next = Math.max(0, Math.min(list.length - 1, (here === -1 ? 0 : here) + d));
+  S.i = S.units.indexOf(list[next]);
+  render();
+}
+
+$('bKeep').onclick = () => setVerdict('keep');
+$('bReject').onclick = () => setVerdict('reject');
+$('bClear').onclick = () => setVerdict(null);
+$('zoom').onclick = () => { S.zoom = S.zoom >= 4 ? 1 : S.zoom + 1; render(); };
+$('flip').onclick = () => { S.only = S.only === null ? 'orig' : S.only === 'orig' ? 'new' : null; render(); };
+$('filter').onchange = e => { S.filter = e.target.value; step(0); };
+$('export').onclick = () => {
+  const rows = S.units.map(u => `${u.member}\t${S.verdicts[u.id] || ''}`).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['member\tverdict\n' + rows], { type: 'text/tab-separated-values' }));
+  a.download = 'sprite-verdicts.tsv';
+  a.click();
+};
+
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT') return;
+  const k = e.key.toLowerCase();
+  if (k === 'arrowright') { step(1); e.preventDefault(); }
+  else if (k === 'arrowleft') { step(-1); e.preventDefault(); }
+  else if (k === 'k' || k === 'y') setVerdict('keep');
+  else if (k === 'x' || k === 'n') setVerdict('reject');
+  else if (k === 'u') setVerdict(null);
+  else if (k === 'z') { S.zoom = S.zoom >= 4 ? 1 : S.zoom + 1; render(); }
+  else if (e.code === 'Space' && S.only !== 'orig') { S.only = 'orig'; render(); e.preventDefault(); }
+});
+addEventListener('keyup', e => { if (e.code === 'Space') { S.only = null; render(); } });
+
+boot();
+</script>
+</body>
+</html>

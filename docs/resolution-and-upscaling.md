@@ -52,9 +52,19 @@ may not need a binary patch at all. **Untested.**
 
 - 🔴 **A 2x *world* is not a patch project.** It is an art project of the original game's scale.
 - ✅ **A 2x *UI* is viable and independent.** Hold the map at 1x (leave the camera constants alone),
-  double the ~5,000 script layout literals, and redraw only the UI chrome and the **149 portrait
-  members**. Portraits go from 4,690 to 18,760 pixels — the difference between a thumbnail and a
-  portrait — for tens of images rather than tens of thousands.
+  double the script layout literals, and redraw only the UI chrome and the portrait members.
+  Portraits go from 4,690 to 18,760 pixels — the difference between a thumbnail and a portrait.
+
+  🔴 **The two counts in this bullet were estimates and both were wrong.** Measured 2026-09-21:
+  **1,012 literal `doodad` rects and 975 `additem` placements across 127 of the 1,491 `.gs`
+  members of GS5R3's `gs.mpq`** (not "~5,000 literals"). *Counted 2026-09-21* over the extracted
+  tree with `grep -oE '[0-9]+ [0-9]+ [0-9]+ [0-9]+ doodad'` and
+  `grep -oE '[0-9]+ [0-9]+\{\}\{\}\{\}additem'`; the repo's standing 4,692 figure counts `.gs`
+  members across all three profiles, so it is not the same population, and **749 portrait members, of which 387 are nameable by
+  `portrait_file_names`** (not 149). The conclusion survives the correction — 1,377 PBM members against
+  **41,373 IMP frames** for a 2x world is still about a 30x difference (portraits alone are 749,
+  which is 55x) — but the estimates should
+  not be quoted.
 - ⚠️ That path still needs the shared UI sheets (`intspr1_page` and the dialog backgrounds) redrawn
   as one coherent batch, because their contents are cut by literal coordinates.
 
@@ -83,6 +93,221 @@ sections, not two: `.text` VA `0x401000` (raw `0x400`), **`.rdata` VA `0x54d000`
 `.data` VA `0x555000` (raw `0x153200`), `.rsrc` VA `0x5d7000` (raw `0x176400`). The float constants
 live in `.rdata`, which was undocumented — converting their VA with the `.data` formula reads a page
 of zeros, which it duly did on the first attempt.
+
+## ⭐ CLOSED: the 70x67 portrait was never an engine limit (GS5R3)
+
+🔴 **Profile scope, stated once and meant throughout this section.** Every run below was on
+**GS5R3**, and the members patched -- `NEWBUILD5a.gs`, `NEWBUILD5b.gs`, `INFOPAN5.gs` -- are GS5R3's
+variants. Vanilla and 3.02 ship `newbuild.gs` and have no `portrait_file_names` at all
+([new-units.md](new-units.md)). Nothing here is established for them, and this repository has twice
+refuted a GS5R3 result that had been quoted as universal.
+
+**Observed in gameplay, 2026-09-21, two attended runs.** The 2x-UI path above stopped being a
+prediction. Both halves of it were put in front of the engine and both held.
+
+### Why the corpus could not answer this
+
+All **749** `portrait\` members in GS5R3's `pic.mpq` are **exactly 70x67** — zero variance on the
+one axis in question — and both call sites cut them with `... 0 0 70 67 doodad`. A corpus with no
+variance on an axis cannot be interrogated about that axis, which is the same shape as a fixture built to
+resemble the corpus: a body of evidence that agrees with itself teaches nothing.
+
+Two other corpus facts made a *prediction* possible, and the runs were designed to break it rather
+than to go looking:
+
+- **`lbm` is not size-constrained.** `pic.mpq` holds **120 distinct image dimensions**, 46 of them
+  in `building\` alone. The loader reads `BMHD` and allocates from it.
+- **`doodad page x y w h` cuts a rect out of a LARGER page.** Hundreds of sites do exactly that
+  against sprite sheets — `unitinfo_staticon5R3A 503 33 127 34`, `intspr1_page 313 126 27 18`. A
+  page bigger than its rect is the normal case everywhere in the UI *except* portraits.
+
+### Run 1 — an oversize portrait loads, and the rect crops it
+
+`mods/portrait-oversize`. Three Life portraits replaced with a quadrant test card — four solid
+colours, a black cross on the seams, a black border. `gs.mpq` and `imp.mpq` untouched, so no probe,
+hotkey or edited dialog could explain the reading.
+
+| rung | member | card | predicted | observed |
+| --- | --- | --- | --- | --- |
+| **A** writer control | `LIMISP00.LBM` Archers | **70x67** | the whole card | **whole card** ✅ |
+| **B** subject | `LICAVp01.lbm` Riders | **140x134** | solid green, black frame | **green, black border** ✅ |
+| **C** subject | `LIINFP00.LBM` Staffmen | **140x134** | solid green, black frame | **green, black border** ✅ |
+
+**Rung A is what makes B and C mean anything.** Same writer, same palette, same chunk shape, native
+size — so a failure at 140x134 could not have been blamed on the encoder.
+
+⭐ **The black border is the load-bearing detail.** In the crop, black on the top and left is the
+card's own border, but black on the **right and bottom** is the cross at x=69 and y=66 — and the
+cross exists *only because the image is 140 wide and 134 tall*. A 70x67 image cannot produce it. So
+the reading is specifically the top-left quadrant of the oversize card, not a green square from some
+fallback path.
+
+### Run 2 — a bigger rect paints more screen pixels, at 1:1
+
+`mods/portrait-2x-doodad`. **One** script change: `gs\dlg\NEWBUILD5a.gs`'s barracks portrait rect,
+`0 0 70 67` -> `0 0 140 134`. `gs\dlg\INFOPAN5.gs` deliberately left at 70x67.
+
+| slot | rect | observed |
+| --- | --- | --- |
+| barracks recruit portrait | 140x134 | **the whole card, at double size, overflowing its frame** |
+| pop-out unit panel | 70x67 | **solid green** — the crop, unchanged |
+
+⭐ **The two slots disagreed, reading the same member, in the same sitting.** No single-mechanism
+story produces that; it is the same discriminating pattern that settled the portrait panel on
+2026-09-21, and it is why the rects were split rather than both raised.
+
+**It also establishes which barracks module is live.** `gs\dlg\NEWBUILD5.gs` `run`s `NEWBUILD5a.gs`
+and `NEWBUILD5b.gs` by name; `NEWBUILD50.gs` is byte-identical to `NEWBUILD5a.gs` (both 87,143
+bytes) and `newbuild.gs` is the vanilla original. Only `NEWBUILD5a.gs` was patched, and the barracks
+changed — so that is the one the engine loads.
+
+### What this settles
+
+**The 70x67 portrait is a number in a script, not a property of the engine.** Measured precisely:
+a 140x134 page loaded, and a 140x134 rect painted 140x134 screen pixels. That is one image type at
+one ratio -- *not* a general proof that the loader and blit accept any size. A 2x UI needs no binary patch for the portrait path at all.
+
+### What it does not settle
+
+- ✅ **Mouse hit-testing was the last open risk and it is now CLOSED.** See the run below.
+- ⚠️ **Fonts.** 39 bitmap font members in `pic.mpq`. Doubled panels with un-doubled text will look
+  wrong, and fonts are the least automatable art in the set.
+- ⚠️ **Not every UI rect is in script.** The map viewport clip rect is a binary constant and remains
+  unidentified.
+- 🔴 **Whether the engine honours a portrait's own `CMAP`.** There are **193 distinct palettes**
+  across the 749 portraits and **not one palette entry is common to all of them**, so the corpus
+  cannot say whether the engine reads each file's palette or remaps it onto a screen palette. Every
+  portrait build so far has stayed inside colours that already display correctly, which is true
+  under either answer — so nothing has tested it.
+
+### Run 3 — a click follows the drawn position
+
+**Observed in gameplay, 2026-09-21.** `mods/button-hit-rect`. **One literal**, in `gs\dlg\NEWBUILD5b.gs` --
+whose sibling `NEWBUILD5a.gs` was measured live in run 2, and which `gs\dlg\NEWBUILD5.gs` `run`s by
+name. That is liveness **inferred**, not measured; rung A below is what confirms it:
+
+```
+gs\dlg\NEWBUILD5b.gs   ; TRAIN/HIRE UP ARROW
+  building_dialog_panel up_arrow_button 273 320   ->   ... 60 320
+```
+
+Only x moves, so the button travels on one axis and two displacements cannot confound the reading.
+`down_arrow_button` stays at `273 337` as a control in the same dialog, driving the same counter.
+
+| rung | action | predicted | observed |
+| --- | --- | --- | --- |
+| **A** | click the up arrow **where it now draws**, far left | count rises | **rises** ✅ |
+| **B** | click the **empty spot** it used to occupy | nothing | **nothing** ✅ |
+| **C** | click the unmoved down arrow | count falls | **falls** ✅ |
+
+⭐ **This button's hit rectangle came from its `additem` placement — the same literal that draws
+it.** One button, one dialog, one profile; the generalisation to every UI element is *Inferred*.
+B is the rung that carries the result: had the hit rect been held separately, the old position would
+still have responded. It did not.
+
+**Why the subject had to be changed first.** The main menu was the obvious test — reachable on
+launch, no setup. It was abandoned because **nothing in `gs.mpq` references `newdlg.gs` or
+`NEWDLG5.gs`, and `lomse.exe` contains no such string**. Where the main menu is loaded from is
+**Unknown**, and a subject whose liveness is unknown cannot carry rung B: "nothing happened" would
+have had two causes. The barracks pair is live by measurement, not assumption.
+
+### The art, settled separately
+
+**353 of 353 kept.** 353 of the **387** portraits `portrait_file_names` can name were upscaled with Real-ESRGAN
+ncnn `ultrasharp-4x` to 140x134 and quantised back into **that portrait's own 256 colours**, then
+reviewed one by one against the original at the same physical size
+(`artifacts/portrait-review/`, verdicts in `verdicts.json`). The verdict was *better or no worse*,
+unanimously, across every faith and unit class.
+
+⚠️ **The model invents, and the amount is measured.** Downscaling each candidate back to 70x67 and
+comparing against the original, over three portraits: faithful resampling deviates **4.8/255** mean;
+`ultrasharp-4x` deviates **9.7/255** with local deviations to **56**. That is a known, accepted cost
+— the alternative (a 50/50 blend, 6.5/255) was offered and declined after a side-by-side. It is not
+an oversight and should not be "fixed" without asking.
+
+**An engine result fell out of it.** A portrait decoded, upscaled, requantised and **re-encoded** by
+this pipeline renders correctly. Re-encoded portrait palettes work. That is narrower than it sounds
+— every colour used was already in the member's own `CMAP` — so whether a *new* palette would be
+honoured is still **Unknown**.
+
+### So the whole chain is closed
+
+| link | evidence |
+| --- | --- |
+| `lbm` loads arbitrary dimensions | corpus — 120 distinct sizes in `pic.mpq` |
+| `doodad` crops a rect from a larger page | **gameplay, run 1** |
+| a bigger rect paints more screen pixels at 1:1 | **gameplay, run 2** |
+| a click follows the drawn position | **gameplay, run 3** |
+| the framebuffer can be 1280x960, UI still clickable | gameplay, PR #83 |
+| upscaled portrait art is worth having | 353/353 reviewed |
+
+**A 2x UI is a coordinate transform plus art.** No binary patch beyond the six resolution
+immediates *for the portrait and button paths measured here* -- the map viewport clip rect is a
+binary constant and is still unidentified, so it is a known-unknown binary dependency rather than
+zero binary work.
+
+### What is left, and it is not a blocker
+
+- ⚠️ **Fonts.** 39 bitmap font members in `pic.mpq`. Doubled panels with un-doubled text will look
+  wrong, and fonts are the least automatable art in the set. This is now the largest open item.
+- ⚠️ **Shared sheets are cut by literal coordinates** (`intspr1_page`, the dialog backgrounds), so
+  they have to be redrawn and re-cut as one coherent batch rather than piecemeal.
+- ⚠️ **Not every UI rect is in script.** The map viewport clip rect is a binary constant, still
+  unidentified.
+- 🔴 **Whether the engine honours a NEW portrait `CMAP`** — untested, see above.
+
+### ⚠️ The same upscaler on SPRITES: tried, and it is a different problem
+
+**Measured 2026-09-21, offline.** The portrait result invites the obvious question — run the model
+over `imp.mpq` and get a 2x world for the cost of GPU time. The cost is indeed not the obstacle:
+`ultrasharp-4x` takes ~0.8s a frame, so **41,373 frames is about 9.2 hours**, which is one overnight
+run rather than an art department. ⚠️ 41,373 counts frame *records*, and
+[imp-format.md](imp-format.md) warns two records may share one payload -- the number of distinct
+images is strictly lower, so this is an upper bound.
+
+Two things stop it being the same job, and both are properties of the format rather than of the
+model.
+
+🔴 **IMP transparency is 1-bit, and the model produces 240 levels.** `units\imp\lifita.imp`
+frame 0 has **2 distinct alpha values** (0 and 255) — a cutout. The 4x result has **240**.
+(*Measured 2026-09-21* with `--export-imp-frame` into a PNG, then
+`magick … -channel A -separate` and a histogram; no tool in this repo carries that step, so it is a
+one-off rather than something the pipeline reproduces.) IMP has
+no alpha channel; a pixel is the transparent index or it is not. Every one of those intermediate
+values has to be thresholded back to binary, which discards exactly the softened silhouette the
+model was adding, and makes the threshold itself a visible choice on every sprite edge. Portraits
+never hit this because a portrait is an opaque rectangle.
+
+🔴 **Palette index 1 is the shadow, keyed by INDEX not by colour** — measured in the running engine
+2026-09-17, see [hotspots](hotspots.md) and [the native asset stage](native-asset-stage.md). An
+RGB upscale followed by re-quantisation has no way to know that index 1 means "draw the background
+at half intensity": it will interpolate the shadow against its neighbours and scatter the result
+across whatever indices are nearest in colour. The shadow has to be lifted out as its own mask,
+scaled as a mask, and stamped back — not carried through the colour pipeline at all.
+
+⚠️ **And the hotspots move.** Placement is `top_left = anchor + placement - (w>>1, h>>1)`
+([hotspots](hotspots.md)); doubling a frame without doubling its anchor and hotspot records puts
+every unit in the wrong place. That is a data edit in the `.imp` itself, not a re-encode.
+
+**So the PR #83 verdict should be read more precisely.** "A 2x world is an art project of the
+original game's scale" is right that it is not a patch, and **wrong if it is taken to mean 41,373
+hand-drawn frames**. It is: solve the alpha threshold once, solve the shadow-mask path once, scale
+the hotspot records, then spend a night of GPU. That is a real project and an order of magnitude
+smaller than redrawing. **None of it is verified in the engine** — no upscaled sprite has been put
+in front of the game, and the alpha and shadow handling above are the reasons not to until they are
+written.
+
+### 🔴 A rect that must not be raised
+
+```
+/infopan_portatrait unitinfo_staticon5R3A 180 0 70 67 doodad def      (INFOPAN5.gs:975)
+```
+
+That cuts 70x67 out of a static **icon sheet**, not a portrait page — and a replace of the literal
+`0 0 70 67 doodad` catches it **by substring**, because `180 0 70 67` ends with `0 0 70 67`. Raising
+it silently doubles an unrelated interface element. Match on the page NAME
+(`unit_portrait_page0`..`3`, `unit_portrait_page`) and assert the sheet cut still reads 70x67
+afterwards.
 
 ## The blocker: 640x480 is two `push` immediates
 

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Repaint a rectangle of a compressed PBM image without changing the file's length.
 
-Why this exists at all: there is no PBM/LBM encoder in this repository. `spikes/asset-viewer`
-decodes `.lbm` and exports PNG, and nothing goes the other way. An edit that has to re-compress the
-image is therefore an edit that cannot currently be made, which would have left `pic.mpq` with no
-demonstrable change to put in front of the engine.
+Why this exists at all: when it was written there was no PBM/LBM encoder in this repository, so an
+edit that had to re-compress the image could not be made at all.
+
+**That is no longer the reason.** `spikes/asset-viewer/src/pbm.rs` and
+`tools/portrait-upscale/lbm_png.py` both encode. What survives is the narrower guarantee below: this
+tool is the only way to change pixels **without changing the file's length**, which is what makes an
+edit provable by a positional byte comparison against the shipped member.
 
 ByteRun1 makes one class of edit available anyway. The BODY chunk is a sequence of packets:
 

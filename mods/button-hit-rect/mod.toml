@@ -1,0 +1,54 @@
+# Does a button's CLICK TARGET follow the coordinate it is DRAWN at?
+#
+# This is the one unknown that can still kill the 2x-UI plan, and it is worth a whole run on its
+# own because nothing measured so far touches it. The 1280x960 spike (PR #83) showed the interface
+# stays clickable when the FRAMEBUFFER doubles, but every element was still at its shipped
+# coordinate. Rounds 1 and 2 of the portrait work moved DRAWING only. If a button's hit rectangle
+# comes from somewhere other than its `additem` placement -- a second literal, a table, the binary
+# -- then doubling the UI's coordinates produces an interface that looks right and cannot be used,
+# and that would be discovered after redrawing 1,300 images rather than before.
+#
+# ONE literal, in `NEWBUILD5b.gs`. Its sibling `NEWBUILD5a.gs` was MEASURED live in run 2 and
+# `gs\dlg\NEWBUILD5.gs` `run`s both by name, so 5b's liveness going in is INFERRED, not measured --
+# rung A is what confirms it:
+#
+#   gs\dlg\NEWBUILD5b.gs   ; TRAIN/HIRE UP ARROW
+#     building_dialog_panel up_arrow_button 273 320   ->   ... 60 320
+#
+# `gs\dlg\NEWBUILD5.gs` `run`s `NEWBUILD5a.gs` and `NEWBUILD5b.gs` by name, and the 2026-09-21
+# `portrait-2x-doodad` run changed the barracks portrait through `NEWBUILD5a.gs` and saw it on
+# screen -- so this pair is live, *measured*, not assumed. That mattered: the main menu was the
+# obvious subject and had to be abandoned, because NOTHING in `gs.mpq` references `newdlg.gs` or
+# `NEWDLG5.gs` and the binary holds no such string either. Where the main menu is loaded from is
+# **Unknown**, and a subject whose liveness is unknown cannot carry a negative result.
+#
+# Only x moves. y stays at 320 so the button travels along a single axis and the reading is not
+# confounded by two displacements at once.
+#
+# THE CONTROL IS IN THE SAME DIALOG. `down_arrow_button` stays at `273 337`, directly below where
+# the up arrow used to be, and the edit asserts it did not move. It decrements the same counter the
+# up arrow increments, so it exercises the identical machinery at an unchanged coordinate.
+#
+# Expected readings, stated before the run:
+#
+#   1. up arrow DRAWN at the far left, same row     -> drawing follows the literal (already known)
+#   2. clicking it THERE raises the train/hire count -> the hit rect follows the same literal. 2x UI
+#                                                       is a coordinate transform and nothing more.
+#   3. clicking the EMPTY spot at 273,320 raises it  -> the hit rect is held separately from the
+#                                                       draw. 2x UI needs that second source found
+#                                                       first, and this run has located the problem
+#                                                       for the price of one literal.
+#   4. neither position responds                     -> the hit rect is neither; look in the binary.
+#   5. down arrow still decrements                   -> control. Without it, a dead up arrow cannot
+#                                                       be told from a dialog that stopped working.
+#
+# No art, no `pic.mpq`, no resolution patch, nothing else in `gs.mpq`. One number.
+id = "button-hit-rect"
+name = "Does a click follow the drawn position?"
+version = "0.1.0"
+description = "Move the barracks train/hire up arrow from x=273 to x=60 and find out whether its click target moves with it."
+
+base_profile = "gs5r3"
+
+new_members = []
+allow_new_members = false

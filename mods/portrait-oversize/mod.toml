@@ -1,0 +1,53 @@
+# Does the engine load a portrait LBM BIGGER than 70x67 -- and what does the call site do with it?
+#
+# Every one of the 749 `portrait\` members in GS5R3's `pic.mpq` is exactly 70x67, and the panel and
+# barracks both cut them with `... 0 0 70 67 doodad`. Zero variance on the axis being asked about,
+# so the corpus cannot answer this by itself and an engine reading is required.
+#
+# Two corpus facts make a prediction possible, and this build is designed to CONFIRM or BREAK it
+# rather than to go fishing:
+#
+#   * `lbm` is not size-constrained. `pic.mpq` holds 120 distinct image dimensions, 46 of them in
+#     `building\` alone, so the loader reads BMHD and allocates from it.
+#   * `doodad page x y w h` cuts a w-by-h rect at (x,y) out of a LARGER page. Hundreds of call
+#     sites do exactly that against sprite sheets -- `unitinfo_staticon5R3A 503 33 127 34`,
+#     `intspr1_page 313 126 27 18`. A page bigger than its rect is the normal case everywhere in
+#     this UI except portraits.
+#
+# **Predicted: the oversize members load, and `0 0 70 67` shows their TOP-LEFT QUADRANT.**
+#
+# The card is built to tell the competing outcomes apart without asking for a graded judgement.
+# Four solid quadrants, a black cross on the seams, a black border:
+#
+#   one solid GREEN field   -> cropped to the doodad rect. The prediction holds.
+#   four colours            -> the page was SCALED to fit the rect instead of cropped.
+#   stripes / colour mush   -> read with the wrong row stride: the size reached the loader but not
+#                              the blit.
+#   the shipped portrait    -> the member was not read at all.
+#
+# Three members, because a single oversize subject cannot separate "oversize is rejected" from
+# "this writer produces a file the engine dislikes":
+#
+#   PORTRAIT\LIMISP00.LBM  70x67   Elven Archers -- WRITER CONTROL. Same writer, same chunk shape
+#                                  (BMHD/CMAP/BODY, copied from the shipped LIINFP00), same
+#                                  palette, native size. If this draws the card and the 140x134
+#                                  members do not, the variable is the SIZE and nothing else.
+#   PORTRAIT\LICAVp01.lbm  140x134 Elven Riders   -- subject. Element 0 of `licav`'s table entry,
+#                                  confirmed in gameplay on 2026-09-21 to be what both slots draw.
+#   PORTRAIT\LIINFP00.LBM  140x134 Elven Staffmen -- second subject, so one unit's quirk cannot
+#                                  carry the result on its own.
+#
+# NO SCRIPT CHANGES. `gs.mpq` and `imp.mpq` are untouched, so nothing here can be explained by a
+# probe, a hotkey, or an edited dialog -- the same discipline that made the 2026-09-21 added-member
+# run work first try. Whether a doodad rect LARGER than 70x67 paints more screen pixels is the next
+# question and deliberately not this one: it needs a rect wider than some pages in the same dialog,
+# which is a risk this build does not take.
+id = "portrait-oversize"
+name = "Portraits at double resolution"
+version = "0.1.0"
+description = "Replace three Life portraits with quadrant test cards, two of them 140x134, to find out whether the engine loads an oversize portrait and whether the doodad crops it."
+
+base_profile = "gs5r3"
+
+new_members = []
+allow_new_members = false
