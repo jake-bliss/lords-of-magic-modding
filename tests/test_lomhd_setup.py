@@ -180,6 +180,32 @@ class InstallUninstall(unittest.TestCase):
         setup.uninstall(self.game)
         self.assertEqual(self.dll(), ORIGINAL)
 
+    def test_an_upgrade_interrupted_before_the_new_dll_is_still_undoable(self) -> None:
+        """The upgrade writes its record (naming the new DLL), then stops before copying the DLL: the
+        OLD overlay DLL is left in place. Re-running and uninstalling must both still know it as
+        ours. (Codex review, 2026-09-23.)"""
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        old = dict(self.record, ddraw_sha256=hashlib.sha256(b"old overlay").hexdigest())
+        (self.release_dir / "ddraw.dll").write_bytes(b"old overlay")
+        setup.install(self.game, PACK, old)                 # the older release, installed
+        (self.release_dir / "ddraw.dll").write_bytes(OURS)
+        real_write = setup.write_atomically
+
+        def stop_at_the_dll(path, data):
+            if path.name == "ddraw.dll":
+                raise KeyboardInterrupt
+            real_write(path, data)
+
+        setup.write_atomically = stop_at_the_dll
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                setup.install(self.game, PACK, self.record)
+        finally:
+            setup.write_atomically = real_write
+        self.assertEqual(self.dll(), b"old overlay")
+        setup.uninstall(self.game)
+        self.assertEqual(self.dll(), ORIGINAL)
+
     def test_the_record_exists_before_our_dll_does(self) -> None:
         """So an interruption during the copy leaves something uninstall can act on."""
         (self.game / "ddraw.dll").write_bytes(ORIGINAL)
@@ -353,6 +379,9 @@ class UpscalePlan(unittest.TestCase):
         self.extract(200)
         setup.render_review(found, pathlib.Path("esrgan"), pathlib.Path("models"))
         self.assertFalse(render.exists(), "a changed picture must lose its old renders")
+        setup.render_review({"building": []}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertEqual(list((review / "original").iterdir()), [],
+                         "a picture this install does not have leaves the page")
 
 
 if __name__ == "__main__":

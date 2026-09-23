@@ -69,7 +69,7 @@ function recall(key) { try { return localStorage.getItem("hdreview." + key); } c
 
 async function load() {
   state = await (await fetch("/api/state")).json();
-  $("bulkopt").innerHTML = state.options.map(o => `<option value="${o}">${LABELS[o]}</option>`).join("") + `<option value="original">Keep original</option>`;
+  $("bulkopt").innerHTML = state.options.filter(o => o !== "approved").map(o => `<option value="${o}">${LABELS[o]}</option>`).join("") + `<option value="original">Keep original</option>`;
   for (const id of ["group", "show", "zoom"]) { const v = recall(id); if (v !== null) $(id).value = v; }
   // A player starts from the shipped picks, so "Unpicked" would open on an empty page.
   if (recall("show") === null && state.images.every(im => im.key in state.choices)) $("show").value = "all";

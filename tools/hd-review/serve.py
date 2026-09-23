@@ -110,6 +110,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             keys, choice = body["keys"], body["choice"]
             assert isinstance(keys, list) and all(isinstance(k, str) and k in known for k in keys)
             assert choice in VALID or choice is None
+            # The palette pipeline exists only where it was rendered (character portraits); a
+            # pick of it elsewhere would be silently swapped for another option at install.
+            assert choice != "approved" or all((self.renders / "approved" / f"{k}.png").exists() for k in keys)
         except (ValueError, KeyError, TypeError, AssertionError):
             return self.send(400, b"bad request", "text/plain")
         with SAVING:

@@ -347,6 +347,13 @@ def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathli
             inputs.setdefault(group, {})[key] = png
             if hd_upscale.default_choice(group, stem) == hd_upscale.APPROVED:
                 characters.append(stem)
+    # Pictures from an install reviewed before (or a mod since removed) are not this game's: off the
+    # page, or a pick could be saved for art this install never installs. (Codex review.)
+    current = {key for batch in inputs.values() for key in batch}
+    for folder in [originals, *(review / option for option in options)]:
+        for stale in folder.glob("*.*") if folder.is_dir() else []:
+            if stale.stem not in current:
+                stale.unlink()
     total = sum(len(v) for v in inputs.values())
     for option in hd_upscale.OPTIONS:
         say(f"     {option}: {total} pictures")
@@ -453,7 +460,7 @@ def install(game: pathlib.Path, pack: "bytes | pathlib.Path", record: dict) -> N
     ours = record["ddraw_sha256"]
     previous = read_record(game)
     current, saved = file_hash(dll), file_hash(backup)
-    ours_any = {ours, previous.get("ddraw_sha256")} - {None}
+    ours_any = {ours, previous.get("ddraw_sha256"), *previous.get("overlay_sha256s", [])} - {None}
 
     if previous:
         had, backup_sha = previous["had_ddraw"], previous["backup_sha256"]
@@ -487,6 +494,10 @@ def install(game: pathlib.Path, pack: "bytes | pathlib.Path", record: dict) -> N
     write_atomically(record_path, json.dumps({
         "release": record["version"],
         "ddraw_sha256": ours,
+        # Every overlay DLL this game has had. An upgrade interrupted after this record but before
+        # the new DLL is copied leaves the OLD overlay DLL in place; without its hash here, both a
+        # re-run and --uninstall took it for another mod's. (Codex review, 2026-09-23.)
+        "overlay_sha256s": sorted(ours_any),
         "had_ddraw": had,
         "backup_sha256": backup_sha,
         "pack_sha256": sha256(pack) if isinstance(pack, pathlib.Path) else hashlib.sha256(pack).hexdigest(),
@@ -512,7 +523,7 @@ def uninstall(game: pathlib.Path) -> None:
 
     if had and current == backup_sha:
         pass                                            # the original is already back
-    elif current == record["ddraw_sha256"]:
+    elif current in {record["ddraw_sha256"], *record.get("overlay_sha256s", [])}:
         if had:
             if file_hash(backup) != backup_sha:
                 fail(f"{BACKUP_NAME} is missing or changed, so the original cannot be restored "
