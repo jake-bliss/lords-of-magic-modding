@@ -1,12 +1,15 @@
 """Tests for the sprite export's stale-export guard."""
 
+import io
 import stat
 import struct
+import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
 import zlib
+from contextlib import redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "hd-review"))
@@ -182,6 +185,93 @@ class ViewerCheckTest(unittest.TestCase):
     def test_neither_decode_refuses_rather_than_guessing(self) -> None:
         with self.assertRaises(SystemExit):
             self.check(self.viewer(b"\x10\x20\x30" * 256))
+
+
+def fake_png_bytes() -> bytes:
+    """A structurally valid, minimal PNG `clear_shadow` can parse (it only reads chunk framing,
+    never decodes pixels): IHDR, IDAT, IEND, each followed by 4 placeholder CRC bytes clear_shadow
+    never checks."""
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return struct.pack(">I", len(payload)) + kind + payload + b"\0\0\0\0"
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", b"\0" * 13) + chunk(b"IDAT", b"\0" * 4) + chunk(b"IEND", b"")
+
+
+class MembershipResolutionTest(unittest.TestCase):
+    """Fix: membership must be resolved (every spelling of a name tried against the archive)
+    before names are deduplicated by basename, and two different members sharing a name must be
+    reported as an ambiguous collision rather than one being silently exported under the other's
+    name -- the same bug, and the same fix, as `sprite_pack.py`'s own (both now share
+    `imp_members.py`)."""
+
+    def setUp(self) -> None:
+        self.out = Path(tempfile.mkdtemp())
+        (self.out / "original").mkdir()
+        self.listfile = self.out / "names.txt"
+        for attr in ("viewer_decodes_bgr", "describe"):
+            self.addCleanup(setattr, sprite_originals, attr, getattr(sprite_originals, attr))
+        self.addCleanup(setattr, sprite_originals.subprocess, "run", sprite_originals.subprocess.run)
+        sprite_originals.viewer_decodes_bgr = lambda *a, **k: True
+
+    def run_main(self, describes: dict[str, list], exports: set[str]) -> str:
+        def fake_describe(viewer, archive, member, listfile):
+            if member not in describes:
+                raise SystemExit(f"{member}: not in this archive")
+            return describes[member]
+
+        def fake_run(cmd, **kwargs):
+            if cmd[0] == "magick":
+                if cmd[1] == "identify":
+                    return subprocess.CompletedProcess(cmd, 0, stdout="20 20", stderr="")
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            member = cmd[3]                  # --export-imp-frame ARCHIVE MEMBER FRAME OUTPUT ...
+            if member not in exports:
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="export failed")
+            Path(cmd[5]).write_bytes(fake_png_bytes())
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        sprite_originals.describe = fake_describe
+        sprite_originals.subprocess.run = fake_run
+        argv = sys.argv
+        sys.argv = ["sprite_originals.py", "imp.mpq", str(self.out), "--listfile", str(self.listfile)]
+        buf = io.StringIO()
+        try:
+            with redirect_stdout(buf):
+                sprite_originals.main()
+        finally:
+            sys.argv = argv
+        return buf.getvalue()
+
+    def test_a_present_spelling_is_found_even_when_a_different_spelling_is_not(self) -> None:
+        """`aura\\agx06b.imp` and `imp\\agx06b.imp` both come from the recovered listfile; this
+        archive only has the second. Deduplicating by basename before checking membership can pick
+        the absent spelling and skip the name outright."""
+        self.listfile.write_text("aura\\agx06b.imp\nimp\\agx06b.imp\n")
+        sequences = [{"label": "STAND", "facings": [[0]]}]
+        output = self.run_main({"imp\\agx06b.imp": sequences}, exports={"imp\\agx06b.imp"})
+        self.assertTrue((self.out / "original" / "sprite__agx06b.png").exists())
+        self.assertIn("1 sprites written, 0 skipped", output)
+
+    def test_two_present_members_sharing_a_name_are_reported_as_a_collision(self) -> None:
+        """If BOTH spellings are present, they may be two unrelated sprites that happen to share a
+        basename -- exporting either one under the shared name would be a guess."""
+        self.listfile.write_text("aura\\agx06b.imp\nimp\\agx06b.imp\n")
+        sequences = [{"label": "STAND", "facings": [[0]]}]
+        output = self.run_main({"aura\\agx06b.imp": sequences, "imp\\agx06b.imp": sequences}, exports=set())
+        self.assertFalse((self.out / "original" / "sprite__agx06b.png").exists())
+        self.assertIn("agx06b:", output)
+        self.assertIn("ambiguous", output)
+        self.assertIn("0 sprites written, 1 skipped", output)
+
+    def test_an_already_exported_name_is_not_re_resolved(self) -> None:
+        """Resumability: a name whose PNG already exists must not cost a --describe-imp call at
+        all, membership-collision or not. The stamp must already match, or `discard_stale` (which
+        `main` runs first) would clear the PNG for an unrelated reason before this is tested."""
+        self.listfile.write_text("aura\\agx06b.imp\nimp\\agx06b.imp\n")
+        (self.out / "original" / sprite_originals.STAMP).write_text(sprite_originals.EXPORT_VERSION + "\n")
+        (self.out / "original" / "sprite__agx06b.png").write_bytes(b"already there")
+        output = self.run_main({}, exports=set())          # describe() would raise for every member
+        self.assertEqual((self.out / "original" / "sprite__agx06b.png").read_bytes(), b"already there")
+        self.assertIn("1 sprites written, 0 skipped", output)
 
 
 if __name__ == "__main__":

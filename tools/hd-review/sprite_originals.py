@@ -30,6 +30,8 @@ from generate import describe  # noqa: E402  -- the parser the sprite review alr
 sys.path.insert(0, str(ROOT / "tools"))
 import hd_upscale  # noqa: E402  -- the option names are the render folders
 from png_index_patch import PngError, read_indexed_png  # noqa: E402
+sys.path.insert(0, str(HERE))
+from imp_members import candidate_members, resolve_members  # noqa: E402
 
 MIN_SIDE = 16                    # smaller than this is a spark or a dot: nothing to upscale
 # Bumped whenever the viewer's decoding of IMP art changes. Originals already on disk are reused,
@@ -140,6 +142,16 @@ def viewer_decodes_bgr(viewer: pathlib.Path, archive: pathlib.Path, members: lis
                      "sprites both exported and read back")
 
 
+def describe_or_none(viewer: pathlib.Path, archive: pathlib.Path, member: str,
+                     listfile: pathlib.Path) -> list[dict] | None:
+    """`describe`, or `None` if `member` is not in this archive -- the presence probe
+    `imp_members.resolve_members` needs to resolve a name to the one member THIS archive holds."""
+    try:
+        return describe(viewer, archive, member, listfile)
+    except SystemExit:
+        return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("archive", type=pathlib.Path)
@@ -153,29 +165,35 @@ def main() -> int:
     if originals.is_symlink():
         raise SystemExit(f"{originals} is a symlink: refusing to write sprites through it")
     originals.mkdir(parents=True, exist_ok=True)
-    members = sorted({m.strip() for m in args.listfile.read_text().splitlines()
-                      if m.strip().lower().endswith(".imp")}, key=str.lower)
-    if not viewer_decodes_bgr(args.viewer, args.archive, members, args.listfile):
+    grouped = candidate_members(args.listfile)
+    all_paths = [member for candidates in grouped.values() for member in candidates]
+    if not viewer_decodes_bgr(args.viewer, args.archive, all_paths, args.listfile):
         raise SystemExit(f"{args.viewer} predates the palette fix and would export red and green "
                          "swapped: rebuild it (cargo build --release in spikes/asset-viewer)")
     discard_stale(args.out)
     (originals / STAMP).write_text(EXPORT_VERSION + "\n")
-    written = skipped = 0
-    seen = set()
-    for n, member in enumerate(members, 1):
-        name = member.split("\\")[-1].rsplit(".", 1)[0].lower()
+
+    # Names already exported keep their PNG without paying for a --describe-imp call at all --
+    # membership is only resolved for names this run actually needs to do something for.
+    written = sum(1 for name in grouped if (originals / f"sprite__{name}.png").exists())
+    to_resolve = {name: candidates for name, candidates in grouped.items()
+                 if not (originals / f"sprite__{name}.png").exists()}
+
+    # Try every spelling a name has anywhere in the listfile: which of them, if any, THIS
+    # particular archive actually holds is not known until now. Deduplicating to one candidate
+    # before this point (as an earlier version did) can silently keep a spelling absent from this
+    # archive while a present one under a different folder is never even tried; if more than one
+    # spelling is present, that is reported as an ambiguous collision rather than a silent pick.
+    resolved, resolve_skipped = resolve_members(
+        to_resolve, lambda member: describe_or_none(args.viewer, args.archive, member, args.listfile))
+    skipped = len(resolve_skipped)
+    for line in resolve_skipped:
+        print(f"  left out -- {line}", flush=True)
+
+    names = list(resolved)
+    for n, name in enumerate(names, 1):
+        member, sequences = resolved[name]
         png = originals / f"sprite__{name}.png"
-        if name in seen:
-            continue
-        seen.add(name)
-        if png.exists():
-            written += 1
-            continue
-        try:
-            sequences = describe(args.viewer, args.archive, member, args.listfile)
-        except SystemExit:
-            skipped += 1                     # not in this install's archive
-            continue
         if not sequences or not any(s["facings"] for s in sequences):
             skipped += 1
             continue
@@ -210,7 +228,7 @@ def main() -> int:
             continue
         written += 1
         if n % 100 == 0:
-            print(f"  {n}/{len(members)}", flush=True)
+            print(f"  {n}/{len(names)}", flush=True)
     print(f"{written} sprites written, {skipped} skipped", flush=True)
     return 0
 
