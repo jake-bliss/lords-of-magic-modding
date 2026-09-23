@@ -69,17 +69,16 @@ def discard_stale(out: pathlib.Path) -> int:
     Only the review's own folders -- `original` and one per upscale option. A symlinked one stops the
     run: it is not ours to delete through, and skipping it would leave old renders under a current
     stamp."""
+    folders = [out / name for name in ("original", *hd_upscale.OPTIONS)]
+    for folder in folders:                   # all of them first, stamp or not, before deleting any
+        if folder.is_symlink():
+            raise SystemExit(f"{folder} is a symlink and may hold images from the old decode: "
+                             "clear its sprite__*.png by hand, replace it with a folder, then rerun")
     stamp = out / "original" / STAMP
     if stamp.exists() and stamp.read_text().strip() == EXPORT_VERSION:
         return 0
     removed = 0
-    for name in ("original", *hd_upscale.OPTIONS):
-        folder = out / name
-        if folder.is_symlink():
-            raise SystemExit(f"{folder} is a symlink and may hold images from the old decode: "
-                             "clear its sprite__*.png by hand, then rerun")
-        if not folder.is_dir():
-            continue
+    for folder in (f for f in folders if f.is_dir()):
         for png in folder.glob("sprite__*.png"):
             png.unlink()
             removed += 1
@@ -131,7 +130,7 @@ def viewer_decodes_bgr(viewer: pathlib.Path, archive: pathlib.Path, members: lis
                 continue                     # every entry has red equal to green: says nothing
             try:
                 plte = read_indexed_png(png.read_bytes()).palette()[:768]
-            except PngError:
+            except (PngError, zlib.error):
                 continue
             if plte == fixed:
                 return True

@@ -69,13 +69,24 @@ class DiscardStaleTest(unittest.TestCase):
         sprite_originals.discard_stale(self.out)
         self.assertTrue((self.out / "notes" / "sprite__tree2b.png").exists())
 
-    def test_a_symlinked_review_folder_stops_the_run(self) -> None:
+    def symlink_anime4x(self) -> Path:
         elsewhere = Path(tempfile.mkdtemp())
         (elsewhere / "sprite__tree2b.png").write_bytes(b"not ours to delete")
         (self.out / "anime4x").symlink_to(elsewhere, target_is_directory=True)
+        return elsewhere
+
+    def test_a_symlinked_review_folder_stops_the_run_before_anything_is_deleted(self) -> None:
+        elsewhere = self.symlink_anime4x()     # sorts after folders that would be cleared first
         with self.assertRaises(SystemExit):
             sprite_originals.discard_stale(self.out)
         self.assertTrue((elsewhere / "sprite__tree2b.png").exists())
+        self.assertEqual(len(list(self.out.glob("*/sprite__*.png"))), 4)
+
+    def test_a_current_stamp_does_not_excuse_a_symlinked_folder(self) -> None:
+        self.stamp(sprite_originals.EXPORT_VERSION + "\n")
+        self.symlink_anime4x()
+        with self.assertRaises(SystemExit):
+            sprite_originals.discard_stale(self.out)
 
 
 class MainOrderTest(unittest.TestCase):
