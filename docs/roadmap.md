@@ -419,8 +419,10 @@ opposite for three days.** The 2026-09-17 sprite-ladder probe added `imp\zzpal.i
 `imp\zzctl.imp` -- names no shipped archive holds, confirmed 2026-09-20 by `read_member` failing on
 the pristine archive while the donor reads fine -- and a script asked for one **by name** through
 `addterrainspritetype`. The engine registered a terrain sprite type from it and **painted its
-pixels**: that is how the stored palette order was recovered, because the authored entries
-(`ff 00 00` rendering blue) exist in no other member. So the engine **can** read an added member.
+pixels**: that is how the stored palette order was measured, because the authored entries
+(`ff 00 00` rendering blue) exist in no other member. (**Corrected 2026-09-23:** the order that
+measurement gave was wrong — it was read through a capture reader that swapped red and green; see the
+[research log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green). That the engine read the added member stands.) So the engine **can** read an added member.
 What rung 5 adds is that one added by the **mod pipeline** is tolerated; the 09-17 member was added
 with `mpq_replace`, and no single run has yet done both. This is the third time a limit was
 republished after a run had refuted it, which is why the record derives from the runs.

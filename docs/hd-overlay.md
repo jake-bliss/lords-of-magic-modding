@@ -123,7 +123,11 @@ only, no art); a picture the review never saw gets `approved` if it is a charact
 otherwise `ultrasharp-tta`. The review page: `tools/hd-review/render_variants.py` then
 `tools/hd-review/serve.py` (127.0.0.1:8765, game art stays local). Jake picked all 2,845 on
 2026-09-23 -- including sprites (one frame each, `sprite_originals.py`, shadow index cleared),
-terrain sheets and icons, which the overlay cannot draw yet.
+terrain sheets and icons, which the overlay cannot draw yet. **The 1,512 sprite picks were made on
+red/green-swapped originals** (the viewer decoded IMP palettes wrongly until 2026-09-23; see the
+[research log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green)): the originals and renders have since been regenerated, and
+the sprite picks must be re-checked on them before sprites ship. Terrain cannot use the overlay at
+all -- the overland map is drawn in 3D, so no tile reaches the screen as a pixel copy.
 
 **Players choose too.** The release ships the page: `lomhd_setup.py --review` renders every option
 from the player's own game into `lomhd_work/review` (plus the palette pipeline for character

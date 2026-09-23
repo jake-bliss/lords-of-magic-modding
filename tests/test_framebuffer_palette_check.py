@@ -15,11 +15,15 @@ def chunk(kind: bytes, payload: bytes) -> bytes:
     return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
 
 
-def indexed_png(width: int, height: int, indices: list[int], palette: list[tuple[int, int, int]]) -> bytes:
+def indexed_png(width: int, height: int, indices: list[int], palette: list[tuple[int, int, int]],
+                key: int = 0) -> bytes:
+    """An indexed PNG shaped like the viewer's IMP export: tRNS marks the colour key transparent."""
     rows = b"".join(b"\x00" + bytes(indices[y * width:(y + 1) * width]) for y in range(height))
+    trns = bytes(0 if i == key else 255 for i in range(key + 1))
     return (b"\x89PNG\r\n\x1a\n"
             + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 3, 0, 0, 0))
             + chunk(b"PLTE", b"".join(bytes(c) for c in palette))
+            + chunk(b"tRNS", trns)
             + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 
 
@@ -57,6 +61,24 @@ class FramebufferPaletteCheckTest(unittest.TestCase):
         result = check.check(self.screen(order=(1, 0, 2)), self.sprite(), 4, 3)
         self.assertEqual(result["orderings"]["GRB"], 1.0)
         self.assertLess(result["orderings"]["RGB"], 1.0)
+
+    def test_the_orderings_are_named_by_what_lands_in_framebuffer_red_green_blue(self) -> None:
+        # A 3-cycle is not its own inverse, so a label flipped the other way round fails here.
+        result = check.check(self.screen(order=(1, 2, 0)), self.sprite(), 4, 3)
+        self.assertEqual(result["orderings"]["GBR"], 1.0)
+        self.assertLess(result["orderings"]["BRG"], 1.0)
+
+    def test_the_transparent_index_is_the_pngs_colour_key_not_index_0(self) -> None:
+        # Key 3: its pixel shows background in game, so it must not count; index 0 is drawn.
+        sprite = indexed_png(3, 2, [0, 2, 3, 4, 1, 2], PALETTE, key=3)
+        pixels = {}
+        for (sx, sy), index in {(0, 0): 0, (1, 0): 2, (0, 1): 4, (2, 1): 2}.items():
+            pixels[(4 + sx, 3 + sy)] = check.rgb565(*PALETTE[index])
+        pixels[(6, 3)] = 0xFFFF                    # background under the keyed pixel
+        result = check.check(frame(10, 8, pixels), sprite, 4, 3)
+        self.assertEqual(result["pixels"], 4)
+        self.assertEqual(result["orderings"]["RGB"], 1.0)
+        self.assertTrue(result["one_colour_per_index"])
 
     def test_transparent_and_shadow_pixels_are_not_compared(self) -> None:
         # Garbage under indices 0 and 1 changes nothing.

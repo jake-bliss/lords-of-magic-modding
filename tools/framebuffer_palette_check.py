@@ -9,9 +9,12 @@ writer in between. SPRITE.png is one frame exported with `lom-asset-viewer --exp
 X Y is where that frame sits on screen.
 
 Prints, for each of the six orderings of the exported palette's channels, the share of the sprite's
-drawn pixels (every index but 0, transparency, and 1, the shadow) whose colour, truncated to RGB565,
-equals the framebuffer. The identity ordering winning outright means the viewer decodes IMP palettes
-the way the engine draws them. It also prints whether every index maps to a single framebuffer
+drawn pixels whose colour, truncated to RGB565, equals the framebuffer. Drawn means every index but
+the transparent ones (whatever the PNG's tRNS marks: the sprite's own colour key, which is not
+always 0) and 1, the shadow. An ordering is named by which exported channel lands in the
+framebuffer's red, green and blue: `GRB` means the framebuffer's red is the export's green. The
+identity ordering winning outright means the viewer decodes IMP palettes the way the engine draws
+them. It also prints whether every index maps to a single framebuffer
 colour, which separates a channel-order error (it does) from a different palette altogether (it
 does not).
 
@@ -31,7 +34,7 @@ from collections import defaultdict
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from png_index_patch import read_indexed_png  # noqa: E402
 
-TRANSPARENT, SHADOW = 0, 1
+SHADOW = 1
 
 
 def read_frame(data: bytes) -> tuple[int, int, list[int]]:
@@ -57,9 +60,11 @@ def check(frame: bytes, sprite_png: bytes, x: int, y: int) -> dict:
         raise ValueError("the sprite does not fit in the frame at that position")
     plte = sprite.palette()
     palette = [tuple(plte[i * 3:i * 3 + 3]) for i in range(len(plte) // 3)]
+    trns = next((payload for kind, payload in sprite.chunks if kind == b"tRNS"), b"")
+    skip = {i for i, alpha in enumerate(trns) if alpha == 0} | {SHADOW}
     drawn = [(sprite.at(sx, sy), pixels[(y + sy) * width + x + sx])
              for sy in range(sprite.height) for sx in range(sprite.width)
-             if sprite.at(sx, sy) not in (TRANSPARENT, SHADOW)]
+             if sprite.at(sx, sy) not in skip]
     if not drawn:
         raise ValueError("the sprite has no drawn pixels")
     orderings = {}
