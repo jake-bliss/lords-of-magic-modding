@@ -33,7 +33,7 @@ SHADOW_INDEX = 1                 # keyed by index, whatever colour the palette g
 
 def clear_shadow(png: pathlib.Path) -> None:
     """Make the shadow index transparent in the exported (indexed) PNG. The engine draws index 1
-    as a darkening, not as its colour -- usually lime -- and an upscaler would smear that colour
+    as a darkening, not as its colour -- usually pure red -- and an upscaler would smear that colour
     into the sprite. A shadow would be drawn as its own mask; the art is upscaled without it."""
     data = png.read_bytes()
     out, pos, trns_seen = [data[:8]], 8, False
@@ -99,7 +99,7 @@ def main() -> int:
             skipped += 1
             continue
         clear_shadow(png)
-        # Transparent pixels keep the key colour (red) underneath, and the upscaler bleeds what is
+        # Transparent pixels keep the key colour (green) underneath, and the upscaler bleeds what is
         # under the edge into it. A neutral dark grey bleeds least visibly.
         subprocess.run(["magick", str(png), "-background", "#202228", "-alpha", "background",
                         f"PNG32:{png}"], check=True)

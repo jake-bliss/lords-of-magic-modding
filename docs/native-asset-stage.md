@@ -120,18 +120,20 @@ and shares nothing with `bmp.rs` -- and 57,600 of 57,600 against 12-20% is real 
 it is not is independent of `pbm`'s own **convention**. Had `pbm` been R/B-swapped, the true reading
 would have failed this comparison and the natural response would have been to flip the BMP decoder,
 producing a confident and exactly wrong result. [The research
-log](research-log.md#the-bmp-byte-order-settled-numerically) names that as the anticipated hazard for
-a palette-channel measurement; this section *is* that measurement, so the dependency is stated here
-rather than left for a reader to discover.
+log](research-log.md#the-bmp-byte-order-settled-numerically--corrected-2026-09-23) names that as the
+anticipated hazard for a palette-channel measurement; this section *is* that measurement, so the
+dependency is stated here rather than left for a reader to discover.
 
 **What would settle it absolutely:** a `screencapture` of a frame the engine drew from a known
 `.lbm`, or an operator body traced to the palette load. Neither has been done.
 
 **This is not the same claim as the `screencapture` one.** [The research
-log](research-log.md#the-bmp-byte-order-settled-numerically) records that the engine's
-`screencapture` operator writes R,G,B into a file whose header says otherwise. That is a property of
-*that operator's output*, measured on captures. These two members are authored art shipped inside an
-archive, and they are B,G,R. Neither finding may be used to predict the other.
+log](research-log.md#the-bmp-byte-order-settled-numerically--corrected-2026-09-23) records that the
+engine's `screencapture` operator writes non-standard bytes into a file whose header also lies.
+**Corrected 2026-09-23: `screencapture`'s pixel bytes are G,R,B, not the R,G,B this section
+originally said** — see the research log entry above. That is a property of *that operator's
+output*, measured on captures. These two members are authored art shipped inside an archive, and
+they are B,G,R. Neither finding may be used to predict the other.
 
 ### What two files can and cannot establish
 
@@ -184,7 +186,7 @@ The paired generated `.h` files provide unusually valuable ground truth. The cur
 
 - a 32-byte file header with palette and sequence-table offsets;
 - 16-byte sequence, 8-byte facing, and 16-byte frame records;
-- a 256-entry palette stored **blue, red, green, pad** (measured in the engine, 2026-09-17);
+- a 256-entry palette stored **blue, green, red, pad** (plain BGRA; measured in the engine, 2026-09-17, **corrected 2026-09-23** — the 2026-09-17 measurement had red and green swapped by its capture reader, see [research log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green));
 - maximum dimensions, sequences, facings, logical frames, and frame dimensions;
 - explicit sequence-to-facing and facing-to-frame ranges, retained with their still-unknown raw metadata fields;
 - action labels recovered from `.H` `#define` values cover 4,649 of 4,666 declared sequence slots (**and the engine reads the same `#define`s itself** to build its action-to-sequence remap, 2026-09-21); aliases are retained, and 1,799 of 1,800 headers provide at least one label;
@@ -381,7 +383,7 @@ The CLI can export any resolved logical frame as an 8-bit indexed PNG. Its synth
 - **Inferred:** IMP file-flag depth bits select 1/2/4/8-bit packing, sub-byte pixels are most-significant-bit first, common five-facing action groups represent directions, which a community tool attributes to five stored facings plus engine mirroring. These interpretations explain the corpus and visible output but are not yet an original-engine specification.
 - **Observed:** header byte 3 is a transparency colour key, nonzero in 94 of 300 sampled files; on those files palette index 0 is absent from the pixel data entirely.
 - **Observed:** across the full 1,800-member corpus the file types are 9 (8-bit RLE, 957), 8 (8-bit raw, 606), 57 (4-bit RLE, 188), 25 (1-bit RLE, 27), 10 unclassified, and 12 that crash the community parser. An independent community decoder reaches 100% of non-duplicate frames on types 8, 9, and 25 — exact agreement with ours — but 0% on type 57 and on the 12 crash cases, for 91.6% overall against our 100%. Type 57 alone is 188 files and 3,388 frames that no public tool decodes.
-- **Documented:** a community specification agrees with our header offsets, record sizes, and RLE algorithm exactly, including the `control + 3` bias; its claim that the palette is stored BGRA and swapped to RGB is **refuted** — entries are stored blue, red, green, pad, measured in the running engine on 2026-09-17, and our implementation agreed with the claim and was therefore also wrong; it names palette index 1 the shadow and our facings facings. Its guesses at a per-frame delay byte and a checksum dword are refuted by our hotspot decoding, which matches generated-header ground truth for all 1,800 pairs.
+- **Documented:** a community specification agrees with our header offsets, record sizes, and RLE algorithm exactly, including the `control + 3` bias; its claim that the palette is stored BGRA and swapped to RGB is **refuted** — entries are stored blue, red, green, pad, measured in the running engine on 2026-09-17, and our implementation agreed with the claim and was therefore also wrong; it names palette index 1 the shadow and our facings facings. Its guesses at a per-frame delay byte and a checksum dword are refuted by our hotspot decoding, which matches generated-header ground truth for all 1,800 pairs. **Corrected 2026-09-23: the community specification was right, and the 2026-09-17 refutation was wrong.** Entries are stored blue, green, red, pad — plain BGRA — and the 2026-09-17 measurement had red and green swapped by the capture reader it went through. See [research log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).
 - **Documented, since corrected:** the hotspot ID is a type tag; the vocabulary is nine values 0-8, not 19 names (see above), and frame byte `+1` is a **count** of hotspot records rather than a type tag — settled by ozz on the board and confirmed here by measurement. Sequence-record byte 1 is a mirror flag: values `>= 128` mirror, and no unmirrored sequence in the corpus has more than two facings. See [community research](community-research.md#the-hotspot-mechanism-thread-2176).
 - **Observed:** the engine draws a frame at `top_left = anchor + placement - (width >> 1, height >> 1)` — the stored pair is the vector from the anchor to the **centre** of the frame, in screen pixels with `+y` down, and it is **added**. Measured in the running engine on 2026-09-16; see [hotspots](hotspots.md).
 - **Unknown:** how the shadow index is blended or recolored, what the remaining sequence/facing metadata fields mean, and whether exceptional metadata cases use additional sharing rules. Animation timing appears to be carried solely by duplicate-frame repetition, since no delay field survives scrutiny on either side.

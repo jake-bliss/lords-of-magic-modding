@@ -11,14 +11,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import probe_captures  # noqa: E402
 
 
+def stored(pixel) -> bytes:
+    """One pixel as the engine's writer lays it out: green, red, blue."""
+    r, g, b = pixel
+    return bytes((g, r, b))
+
+
 def write_capture(path: Path, width: int, height: int, pixels) -> None:
-    """Write a BMP the way the engine does: bfOffBits lying, pixel bytes in R, G, B order."""
+    """Write a BMP the way the engine does: bfOffBits lying, pixel bytes in G, R, B order."""
     stride = (width * 3 + 3) // 4 * 4
     body = bytearray()
     for y in range(height - 1, -1, -1):  # bottom-up
         row = bytearray()
         for x in range(width):
-            row += bytes(pixels[y][x])
+            row += stored(pixels[y][x])
         row += b"\x00" * (stride - len(row))
         body += row
     header = bytearray(probe_captures.PIXEL_OFFSET)
@@ -47,7 +53,7 @@ class ProbeCapturesTest(unittest.TestCase):
         capture = probe_captures.read_capture(path)
         self.assertEqual(capture.width, self.width)
         self.assertEqual(capture.height, self.height)
-        # Read back unswapped: a red pixel written stays red, which is the whole point.
+        # A red pixel written comes back red, which is the whole point.
         self.assertEqual(capture.pixel(0, 0), (255, 0, 0))
         self.assertEqual(capture.pixel(self.width - 1, self.height - 1), (0, 0, 255))
 
@@ -164,7 +170,7 @@ class ProbeCapturesTest(unittest.TestCase):
         for y in range(self.height):
             row = bytearray()
             for x in range(self.width):
-                row += bytes(pixels[y][x])
+                row += stored(pixels[y][x])
             row += b"\x00" * (stride - len(row))
             body += row
         raw[probe_captures.PIXEL_OFFSET:] = body

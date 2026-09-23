@@ -348,8 +348,11 @@ regardless of which struct it touches. This is reporting, not the negative — r
 
 - **Displacement 2: 1 byte-sized read and 27 wider ones.** The byte-sized one is `0x0049B25D`,
   inside the 1,024-byte palette copy loop at `0x0049B220` (which reaches the palette through header
-  offset 8 at `0x0049B247`), not on any record. That loop is also the subject of a recorded
-  channel-order contradiction — see the research log; `imp.rs` is deliberately unchanged. The 27
+  offset 8 at `0x0049B247`), not on any record. That loop was also the subject of a recorded
+  channel-order contradiction — **resolved 2026-09-23 in favour of this disassembly**, see the
+  [research
+  log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green)
+  — and `imp.rs` now matches it. The 27
   wider ones are 24 word reads with a plain base, 2 word reads with a base and index, and 1 dword
   read with a base and index — frame widths at frame `+2` and facing frame counts at facing `+2`,
   mostly.

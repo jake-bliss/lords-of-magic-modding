@@ -5,11 +5,13 @@ reading:
 
 - `bfOffBits` says 14 while the pixel data actually starts at byte 54, so the header field
   cannot be trusted and the offset is fixed here.
-- **The pixel bytes are stored R, G, B, not the BMP-standard B, G, R.** Decoded per the
-  standard the interface stone comes out blue and the terrain purple; decoded as written, the
-  stone is brown and the grass green. Equality-only differencing is blind to this, which is why
-  it survived earlier runs, but any colour conclusion drawn through a standards-compliant
-  reader would be exactly wrong.
+- **The pixel bytes are stored G, R, B -- neither the BMP-standard B, G, R nor R, G, B.**
+  Measured 2026-09-23 against the game's raw framebuffer: the same world map averages bytes
+  (96, 50, 37) in a capture and R, G, B (50, 96, 37) in the framebuffer, and the interface bar
+  matches its LBM art only in this order. Equality-only differencing is blind to channel order,
+  which is why it survived earlier runs. It did not survive colour readings: from 2026-09-17 this
+  file read the bytes as R, G, B, swapping red and green in every colour it reported, and the IMP
+  palette order was fitted through it (research log, 2026-09-23).
 
 Differencing is by connected component rather than bounding box. The world map animates
 between captures, so a naive box around every changed pixel once reported a 110x191 subject
@@ -94,7 +96,7 @@ def read_capture(path: Path | str) -> Capture:
         base = PIXEL_OFFSET + row_index * stride
         rows.append(
             [
-                (data[base + x * 3], data[base + x * 3 + 1], data[base + x * 3 + 2])
+                (data[base + x * 3 + 1], data[base + x * 3], data[base + x * 3 + 2])
                 for x in range(width)
             ]
         )
