@@ -1,14 +1,15 @@
-# Lords of Magic HD Portraits
+# Lords of Magic HD Art
 
-Sharp, redrawn portraits for Lords of Magic Special Edition, everywhere the game shows one: the
-lord in the corner, the info panel, recruitment, buildings. The game itself is not modified. A
-replacement `ddraw.dll` (a fork of cnc-ddraw, which the game already uses) spots each portrait as it
+Sharp, redrawn art for Lords of Magic Special Edition: every character portrait, every item and
+artifact picture, and every building picture, everywhere the game shows one. The game itself is not modified. A
+replacement `ddraw.dll` (a fork of cnc-ddraw, which the game already uses) spots each picture as it
 is drawn and paints a 2x-resolution version over it.
 
-**No game art is included.** The setup reads the portraits from your own copy of the game and
-upscales them on your machine.
+**No game art is included.** The setup reads the pictures from your own copy of the game and
+upscales them on your machine, each with the upscaler that was picked for it by hand when the mod
+was made (the choices ship as `upscale-choices.json`).
 
-The portraits are sharper, not bigger: each one fills the same space on screen as before.
+The art is sharper, not bigger: each picture fills the same space on screen as before.
 
 ## What you need
 
@@ -17,7 +18,7 @@ The portraits are sharper, not bigger: each one fills the same space on screen a
 - **ImageMagick 7.** Windows: `winget install ImageMagick.ImageMagick`, then open a new terminal.
   macOS: `brew install imagemagick`.
 - A graphics card with Vulkan (any recent NVIDIA, AMD or Intel GPU; Apple Silicon works).
-- About 200 MB of disk and 10-20 minutes, most of it upscaling.
+- About 1 GB of disk while it runs, and 20-60 minutes, almost all of it upscaling.
 
 ## Install
 

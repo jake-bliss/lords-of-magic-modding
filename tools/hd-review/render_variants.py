@@ -23,26 +23,19 @@ from __future__ import annotations
 
 import argparse
 import pathlib
-import shutil
 import subprocess
 import sys
-import tempfile
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "portrait-upscale"))
+TOOLS = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(TOOLS))
+sys.path.insert(0, str(TOOLS / "portrait-upscale"))
+import hd_upscale  # noqa: E402  -- the options themselves, shared with the player's setup
 import lbm_png  # noqa: E402
 
 GROUPS = {                       # group -> directory in pic.mpq, and the size every member has
     "portrait": ("portrait", (70, 67)),
     "building": ("lbm/building", None),
 }
-OPTIONS = {                      # name -> (model, scale, extra esrgan args)
-    "ultrasharp": ("ultrasharp-4x", 4, []),
-    "anime2x": ("realesr-animevideov3-x2", 2, []),
-    "anime4x": ("realesr-animevideov3-x4", 4, []),
-    "ultrasharp-tta": ("ultrasharp-4x", 4, ["-x"]),     # last: about 8x slower than the rest
-}
-
-
 def find_dir(root: pathlib.Path, rel: str) -> pathlib.Path | None:
     """pic.mpq spells directories in both cases (PORTRAIT\\ and portrait\\)."""
     here = root
@@ -81,53 +74,20 @@ def write_originals(src: pathlib.Path, out: pathlib.Path) -> list[str]:
     return keys
 
 
-def render(option: str, keys: list[str], out: pathlib.Path, esrgan: pathlib.Path,
-           models: pathlib.Path) -> int:
-    model, scale, extra = OPTIONS[option]
-    dest = out / option
-    dest.mkdir(exist_ok=True)
-    todo = [k for k in keys if not (dest / f"{k}.png").exists()]
-    if not todo:
-        return 0
-    with tempfile.TemporaryDirectory() as tmp:
-        stage, raw = pathlib.Path(tmp) / "in", pathlib.Path(tmp) / "out"
-        stage.mkdir(); raw.mkdir()
-        for k in todo:
-            shutil.copy(out / "original" / f"{k}.png", stage / f"{k}.png")
-        subprocess.run([str(esrgan), "-i", str(stage), "-o", str(raw), "-n", model, "-m", str(models),
-                        "-s", str(scale), "-f", "png", *extra], check=True, capture_output=True)
-        for k in todo:
-            got = raw / f"{k}.png"
-            if not got.exists():
-                raise SystemExit(f"{option}: no output for {k}")
-            if scale == 4:
-                # Exactly 2x the original, whatever rounding the model applied.
-                w, h = png_size(out / "original" / f"{k}.png")
-                subprocess.run(["magick", str(got), "-filter", "MagicKernelSharp2021",
-                                "-resize", f"{w * 2}x{h * 2}!", str(dest / f"{k}.png")], check=True)
-            else:
-                shutil.move(str(got), dest / f"{k}.png")
-    return len(todo)
-
-
-def png_size(path: pathlib.Path) -> tuple[int, int]:
-    data = path.read_bytes()[16:24]
-    return int.from_bytes(data[:4], "big"), int.from_bytes(data[4:], "big")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("src", type=pathlib.Path)
     parser.add_argument("out", type=pathlib.Path)
     parser.add_argument("--esrgan", type=pathlib.Path, required=True)
     parser.add_argument("--models", type=pathlib.Path, required=True)
-    parser.add_argument("--only", choices=sorted(OPTIONS), action="append")
+    parser.add_argument("--only", choices=sorted(hd_upscale.OPTIONS), action="append")
     args = parser.parse_args()
 
     keys = write_originals(args.src, args.out)
     print(f"{len(keys)} images", flush=True)
-    for option in args.only or OPTIONS:
-        n = render(option, keys, args.out, args.esrgan, args.models)
+    inputs = {k: args.out / "original" / f"{k}.png" for k in keys}
+    for option in args.only or hd_upscale.OPTIONS:
+        n = hd_upscale.render(option, inputs, args.out / option, args.esrgan, args.models)
         print(f"{option}: {n} rendered", flush=True)
     return 0
 

@@ -32,8 +32,8 @@ SECOND=$(build_dll)
 rm -rf "$OUT" "$OUT.zip"
 mkdir -p "$OUT/tools"
 cp "$FORK/ddraw.dll" "$OUT/"
-cp "$ROOT/release/hd-overlay/"{lomhd_setup.py,README.md,NOTICES.md,portrait-names.txt} "$OUT/"
-cp "$ROOT/tools/"{mpq_read.py,hd_portrait_pack.py} "$ROOT/tools/portrait-upscale/"{upscale.py,lbm_png.py} "$OUT/tools/"
+cp "$ROOT/release/hd-overlay/"{lomhd_setup.py,README.md,NOTICES.md,overlay-names.txt,upscale-choices.json} "$OUT/"
+cp "$ROOT/tools/"{mpq_read.py,hd_portrait_pack.py,hd_upscale.py} "$ROOT/tools/portrait-upscale/"{upscale.py,lbm_png.py} "$OUT/tools/"
 cp "$FORK/LICENSE" "$OUT/LICENSE-cnc-ddraw.txt"
 python3 - "$OUT" "$VERSION" "$COMMIT" <<'PY'
 import hashlib, json, pathlib, sys
