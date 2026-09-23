@@ -95,6 +95,17 @@ class InstallUninstall(unittest.TestCase):
         self.assertTrue((self.game / setup.PACK_NAME).exists())
         self.assertTrue((self.game / setup.RECORD_NAME).exists())
 
+    def test_a_pack_installed_from_a_file_arrives_whole(self) -> None:
+        """Setup installs the pack from the file the writer streamed to; every other test passes
+        bytes. (Claude review, 2026-09-23: copying nothing, or hashing the path, passed.)"""
+        pack = self.release_dir / "made.pack"
+        pack.write_bytes(PACK * 1000)
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        setup.install(self.game, pack, self.record)
+        self.assertEqual((self.game / setup.PACK_NAME).read_bytes(), PACK * 1000)
+        record = json.loads((self.game / setup.RECORD_NAME).read_text())
+        self.assertEqual(record["pack_sha256"], hashlib.sha256(PACK * 1000).hexdigest())
+
     def test_the_record_names_what_was_installed(self) -> None:
         (self.game / "ddraw.dll").write_bytes(ORIGINAL)
         setup.install(self.game, PACK, self.record)
@@ -252,7 +263,7 @@ class UpscalePlan(unittest.TestCase):
             return len(inputs)
 
         def run(cmd, check=False):         # magick PPM -> PNG, stubbed as a copy
-            pathlib.Path(cmd[2]).write_bytes(pathlib.Path(cmd[1]).read_bytes())
+            pathlib.Path(cmd[2].removeprefix("PNG:")).write_bytes(pathlib.Path(cmd[1]).read_bytes())
 
         for target, name, value in ((setup.hd_upscale, "render", render), (setup.subprocess, "run", run)):
             self.addCleanup(setattr, target, name, getattr(target, name))
@@ -283,11 +294,12 @@ class UpscalePlan(unittest.TestCase):
         members = {}
         for name, (w, h) in {"portrait\\aicavp00.lbm": (70, 67), "lbm\\building\\aagtwr0a.lbm": (228, 180),
                              "lbm\\building\\huge.lbm": (641, 67), "lbm\\building\\flat.lbm": (70, 3),
-                             "lbm\\plain.lbm": (640, 480)}.items():
+                             "lbm\\plain.lbm": (640, 480), "lbm\\start01.lbm": (640, 480),
+                             "portrait\\black.lbm": (70, 67), "lbm\\black.lbm": (640, 480)}.items():
             buf = io.BytesIO()
             header = self.struct.pack(">HHhhBBBBHBBhh", w, h, 0, 0, 8, 0, 1, 0, 0, 1, 1, w, h)
             path = self.work.parent / "member.lbm"
-            pixels = bytes(w * h) if "plain" in name else bytes(i % 251 for i in range(w * h))
+            pixels = bytes(w * h) if "plain" in name else bytes((i * 7 + w) % 251 for i in range(w * h))
             self.lbm_png.encode(path, w, h, pixels, self.palette,
                                 [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
             members[name] = path.read_bytes()
@@ -302,8 +314,9 @@ class UpscalePlan(unittest.TestCase):
         setup.mpq_read.Archive = Archive
         found = setup.extract_images(self.work.parent)
         self.assertEqual({g: v for g, v in found.items() if v},
-                         {"portrait": ["aicavp00"], "building": ["aagtwr0a"]},
-                         "too big, too short and too plain (a flat 640x480) are all left out")
+                         {"portrait": ["aicavp00", "black"], "building": ["aagtwr0a"], "screen": ["start01"]},
+                         "too big, too short and too plain are left out; a real screen is kept; of two "
+                         "pictures named black, the portrait is kept and the screen left out")
 
     def test_the_players_own_picks_win_over_the_shipped_ones(self) -> None:
         """--review saves to my-upscale-choices.json; a plain run must install with it, and
@@ -323,6 +336,23 @@ class UpscalePlan(unittest.TestCase):
         mine.unlink()
         setup.upscale_all({"building": ["aagtwr0a"]}, pathlib.Path("esrgan"), pathlib.Path("models"))
         self.assertEqual(options, ["anime2x", "anime4x", "anime2x"])
+
+    def test_review_renders_survive_a_rerun_and_go_when_the_picture_changes(self) -> None:
+        """--review resumes: an unchanged picture keeps its renders; a changed one loses them."""
+        setup.hd_upscale.render = lambda *a, **k: 0
+        self.extract(10)
+        found = {"building": ["aagtwr0a"]}
+        review = setup.render_review(found, pathlib.Path("esrgan"), pathlib.Path("models"))
+        render = review / "anime2x" / "building__aagtwr0a.png"
+        render.parent.mkdir(parents=True, exist_ok=True)
+        render.write_bytes(b"a finished render")
+        setup.render_review(found, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertTrue(render.exists(), "an unchanged picture must keep its renders")
+        self.assertEqual(sorted(p.name for p in (review / "original").iterdir()),
+                         ["building__aagtwr0a.lbm", "building__aagtwr0a.png"], "no stray temp files")
+        self.extract(200)
+        setup.render_review(found, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertFalse(render.exists(), "a changed picture must lose its old renders")
 
 
 if __name__ == "__main__":

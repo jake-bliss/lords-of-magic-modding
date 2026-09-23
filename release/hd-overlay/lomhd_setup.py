@@ -65,6 +65,7 @@ GROUPS = {                       # group -> (folder in pic.mpq, the one size its
     "sky": ("lbm\\skies", None),
     "library": ("library", None),
 }
+PLURAL = {"sky": "skies", "library": "library pages"}
 MIN_COLOURS = 16                 # a picture plainer than this is found anywhere, and costs every frame
 
 ESRGAN = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/"
@@ -235,9 +236,17 @@ def extract_images(game: pathlib.Path) -> dict[str, list[str]]:
             out.unlink()
             continue
         found[group].append(stem)
-    stems = [s for names in found.values() for s in names]
-    if len(stems) != len(set(stems)):
-        fail("two overlay images share a name across folders; this pack format cannot hold both.")
+    # The pack keys pictures by name alone. Two folders holding one name (portrait\\black.lbm and
+    # lbm\\black.lbm in the shipped archives) keep the first group's and report the other, rather
+    # than stopping every install over one picture. (Claude review, 2026-09-23.)
+    claimed: set[str] = set()
+    for group in GROUPS:
+        for stem in list(found[group]):
+            if stem in claimed:
+                found[group].remove(stem)
+                (root / group / f"{stem}.lbm").unlink()
+                say(f"     left out {GROUPS[group][0]}\\{stem}.lbm: another folder has a picture of that name")
+            claimed.add(stem)
     if not found["portrait"]:
         fail("no portraits found in pic.mpq -- is this Lords of Magic Special Edition?")
     return found
@@ -259,7 +268,7 @@ def lbm_to_png(lbm: pathlib.Path, png: pathlib.Path) -> None:
     w, h, px, pal, _ = lbm_png.decode(lbm)
     ppm = png.with_suffix(".ppm")
     ppm.write_bytes(f"P6 {w} {h} 255\n".encode() + b"".join(bytes(pal[i]) for i in px))
-    subprocess.run(["magick", str(ppm), str(png)], check=True)
+    subprocess.run(["magick", str(ppm), f"PNG:{png}"], check=True)
     ppm.unlink()
 
 
@@ -323,12 +332,18 @@ def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathli
         for stem in stems:
             key = f"{group}__{stem}"
             png = originals / f"{key}.png"
-            fresh = png.with_name(png.name + ".new.png")
-            lbm_to_png(WORK / "originals" / group / f"{stem}.lbm", fresh)
-            if png.exists() and png.read_bytes() != fresh.read_bytes():
+            lbm = WORK / "originals" / group / f"{stem}.lbm"
+            # Compared by the picture's own bytes, kept beside its PNG: ImageMagick stamps every
+            # PNG it writes with the time, so comparing PNGs made every run look changed and
+            # re-render everything. (Claude review, 2026-09-23.)
+            kept = originals / f"{key}.lbm"
+            if not (png.exists() and kept.exists() and kept.read_bytes() == lbm.read_bytes()):
                 for option in options:
                     (review / option / f"{key}.png").unlink(missing_ok=True)
-            os.replace(fresh, png)
+                part = originals / f"{key}.part"          # not *.png: the page lists those
+                lbm_to_png(lbm, part)
+                os.replace(part, png)
+                shutil.copyfile(lbm, kept)
             inputs.setdefault(group, {})[key] = png
             if hd_upscale.default_choice(group, stem) == hd_upscale.APPROVED:
                 characters.append(stem)
@@ -355,8 +370,18 @@ def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathli
 
 
 def serve_review(review: pathlib.Path, port: int) -> None:
-    """The review page, on this computer only, until Ctrl+C. Picks save as they are made."""
+    """The review page, on this computer only, until Ctrl+C. Picks save as they are made. The
+    browser opens only once the server has said it is listening; if it cannot start (the port is
+    taken, say), setup stops and says so rather than showing whatever else answers there."""
     url = f"http://127.0.0.1:{port}"
+    cmd = [sys.executable, str(HERE / "tools" / "serve.py"), "--renders", str(review),
+           "--port", str(port), "--choices", str(MY_CHOICES), "--seed", str(SHIPPED_CHOICES)]
+    server = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    first = server.stdout.readline()
+    if not first.startswith(url):
+        server.wait()
+        fail(f"the review page could not start on port {port} (is something else using it? "
+             "try --port 8766).")
     say(f"\nReview page: {url}  (Ctrl+C here when you are done)")
     say(f"Your picks are saved to {MY_CHOICES.name}; the next plain run installs with them.")
     try:
@@ -364,12 +389,10 @@ def serve_review(review: pathlib.Path, port: int) -> None:
         webbrowser.open(url)
     except Exception:
         pass
-    cmd = [sys.executable, str(HERE / "tools" / "serve.py"), "--renders", str(review),
-           "--port", str(port), "--choices", str(MY_CHOICES), "--seed", str(SHIPPED_CHOICES)]
     try:
-        subprocess.run(cmd)
+        server.wait()
     except KeyboardInterrupt:
-        pass
+        server.terminate()
 
 
 # --- install / uninstall -------------------------------------------------------------------------
@@ -560,7 +583,7 @@ def main() -> int:
     exe, models = upscaler()
     say("2/4  Reading portraits and building pictures from your pic.mpq")
     found = extract_images(game)
-    say("     " + ", ".join(f"{len(v)} {k}s" for k, v in found.items()))
+    say("     " + ", ".join(f"{len(v)} {PLURAL.get(k, k + 's')}" for k, v in found.items() if v))
     say("3/4  Upscaling (the long step)")
     upscaled = upscale_all(found, exe, models)
     say("4/4  Building the pack and installing")

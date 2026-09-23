@@ -177,6 +177,15 @@ class Pack(unittest.TestCase):
         with self.assertRaises(SystemExit):
             pack.build(self.small, [self.large])
 
+    def test_the_limits_are_the_overlays(self) -> None:
+        """Tied to src/lomhd_match.c: count x 2 rules x 3 probes must fit half of 65,536 slots, and a
+        640x480 screen at 2x (1280 wide) must be accepted."""
+        self.assertLessEqual(pack.MAX_IMAGES * 6, 65536 // 2)
+        self.assertGreater((pack.MAX_IMAGES + 1) * 6, 65536 // 2)
+        pack.check_reader_limits("screen", 640, 480, 1280, 960)
+        with self.assertRaises(SystemExit):
+            pack.check_reader_limits("screen", 640, 480, 1281, 960)
+
     def test_trailing_bytes_are_an_error(self) -> None:
         write_lbm(self.small / "a.lbm", W, H, 1)
         write_lbm(self.large / "a.lbm", W * 2, H * 2, 1)
