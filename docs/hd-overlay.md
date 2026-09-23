@@ -118,7 +118,21 @@ build the pack, install the DLL. No game art is distributed.
    screen yet.
 3. A wider playtest across every portrait consumer (barracks, alchemist, character screens, spy
    panel, combat) and a longer session.
-4. Windows: untested. The code has no Wine dependency, but nothing has run there.
+4. Windows -- **passed 2026-09-22** (Windows 11 26200, RTX 3070, driver 591.86, vanilla Steam
+   install, release 0.1.1). The setup found the game itself, the pinned downloads verified, the 3070
+   upscaled all 445 portraits, and the elven archer in recruitment matched its upscale on screen.
+   What Windows taught us:
+   - 🔴 **The Windows Steam install ships no `ddraw.dll` and no `ddraw.ini`.** cnc-ddraw then runs
+     with `renderer=auto`, which picks **Direct3D 9 on real Windows** (OpenGL only under Wine), so
+     the overlay would have loaded and never drawn. Fork `e815726`: a pack beside the game tips
+     `auto` to OpenGL; an explicit renderer is never overridden. cnc-ddraw writes a default
+     `ddraw.ini` on first run; the install record notes it did not exist and uninstall removes it.
+   - **Upscales are visually equivalent across GPUs, not bit-identical.** The 3070's 440 shared
+     portraits differ from the Mac's in about half their pixel indices, but by 3.5/255 per pixel,
+     and 1.0/255 after a 3x3 blur: fp16 rounding amplified by Floyd-Steinberg dither.
+   - Driving it remotely: OpenSSH runs in session 0, so a program started there is invisible.
+     `steam://` from session 0 started `LOMLauncher.exe` in session 0. A one-off `schtasks /it`
+     task runs in the logged-in desktop session instead. Scp needs `-O` (no SFTP subsystem).
 5. Packaging -- **built 2026-09-22** (`release/hd-overlay/`, `scripts/build-hd-overlay-release.sh`,
    zip 196 KB, no game art). The player runs `lomhd_setup.py`: it reads the portraits with
    `tools/mpq_read.py` (pure-stdlib MPQ reader, byte-identical to StormLib on every named member of

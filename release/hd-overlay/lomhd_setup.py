@@ -313,6 +313,9 @@ def install(game: pathlib.Path, pack: bytes, record: dict) -> None:
         "had_ddraw": had,
         "backup_sha256": backup_sha,
         "pack_sha256": hashlib.sha256(pack).hexdigest(),
+        # cnc-ddraw writes a default ddraw.ini on its first run when there is none -- the case on a
+        # Windows Steam install, which ships no ddraw.dll at all. Uninstall removes it only then.
+        "had_ini": previous.get("had_ini", (game / "ddraw.ini").exists()),
     }, indent=2).encode() + b"\n")
     write_atomically(game / PACK_NAME, pack)
     write_atomically(dll, (HERE / "ddraw.dll").read_bytes())
@@ -345,6 +348,8 @@ def uninstall(game: pathlib.Path) -> None:
 
     if had and file_hash(backup) == backup_sha:
         backup.unlink()
+    if record.get("had_ini") is False and (game / "ddraw.ini").is_file():
+        (game / "ddraw.ini").unlink()
     for name in (PACK_NAME, PACK_NAME + ".lomhd-part", "ddraw.dll.lomhd-part",
                  RECORD_NAME + ".lomhd-part", "lomhd.log", RECORD_NAME):
         if (game / name).exists():

@@ -202,6 +202,22 @@ class InstallUninstall(unittest.TestCase):
         self.assertEqual(self.dll(), ORIGINAL)
         self.assertEqual(sorted(p.name for p in self.game.iterdir()), ["ddraw.dll"])
 
+    def test_the_ddraw_ini_cnc_ddraw_creates_is_removed_with_it(self) -> None:
+        """Windows Steam installs ship no ddraw.dll or ddraw.ini; cnc-ddraw writes an ini on its
+        first run, and the folder should come back exactly as it was."""
+        setup.install(self.game, PACK, self.record)
+        (self.game / "ddraw.ini").write_text("[ddraw]\nrenderer=auto\n")   # the game ran once
+        setup.install(self.game, PACK, self.record)                          # a re-run keeps had_ini
+        setup.uninstall(self.game)
+        self.assertEqual(list(self.game.iterdir()), [])
+
+    def test_a_players_own_ddraw_ini_is_kept(self) -> None:
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        (self.game / "ddraw.ini").write_text("[ddraw]\nrenderer=opengl\n")
+        setup.install(self.game, PACK, self.record)
+        setup.uninstall(self.game)
+        self.assertEqual((self.game / "ddraw.ini").read_text(), "[ddraw]\nrenderer=opengl\n")
+
 
 if __name__ == "__main__":
     unittest.main()
