@@ -72,17 +72,31 @@ IMAGE_SUFFIXES = {".lbm", ".png"}
 FLAG_MASKED = 0x01          # the record has a transparent colour key and a shadow index to skip
 VALID_FLAGS = FLAG_MASKED
 
-# The DLL's probe table is LOMHD_TABLE (65,536) entries, and a pack fails to load past half of it
-# (src/lomhd_match.c: `probes += 2 * bands * nrows`, checked per image before it is inserted). A
-# picture always costs exactly 2 rules x 1 band x 3 rows = 6. A sprite's own transparency can hide
-# any given row or band, so the DLL widens a sprite's search to 3 bands and up to 4 rows -- but
-# `nrows` there is `min(its own eligible row count, 4)`, so a sprite actually costs anywhere from
-# 2*3*3=18 (the fewest eligible rows this module ever packs, MASKED_MIN_OPAQUE_ROWS) up to 24.
-# MASKED_PROBE_SLOTS charges every sprite the worst case (24): the writer's total can only be an
-# OVER-estimate of the DLL's, so this refuses everything the DLL would and nothing it would not.
+# The DLL's probe table is LOMHD_TABLE (65,536) entries, and a pack fails to load past half of it.
+# Its own check, in src/lomhd_match.c, is: for each image in turn, RESERVE `2 * bands * nrows`
+# slots (bands=1, nrows=LOMHD_PROBES=3 for a picture; bands=3, nrows=min(its own eligible row
+# count, LOMHD_SPRITE_PROBE_ROWS=4) for a sprite), and refuse the WHOLE pack if the running total
+# of reservations, including this one, exceeds TABLE_SLOTS -- checked BEFORE the image is actually
+# inserted. A picture's reservation is always exactly PICTURE_PROBE_SLOTS (6); write_records
+# charges each masked (sprite) record its own EXACT reservation via `record_probe_slots` (2 * 3 *
+# its own eligible-row count, capped at 4), not the flat worst case: a pack of many 3-row sprites
+# (each costing 18, not 24) must not be refused for nothing -- 1,366 such sprites cost 24,588, well
+# under half the table, and a flat 24-per-sprite bound refused that pack with no real DLL reason.
+#
+# What this arithmetic guarantees, precisely: **the writer refuses every pack the DLL would
+# refuse.** It is not exact the other way -- the writer's running total sums each image's
+# RESERVATION, while the DLL's own running total sums what each image ACTUALLY inserts, which can
+# be less (a band with no fully opaque 16-pixel window, or a probe that duplicates an earlier
+# slice, inserts fewer than its share). Since actual insertions <= the reservation for every image,
+# the DLL's running total can only be <= the writer's at every point, so the writer can refuse a
+# pack the DLL would in fact still open, but never the reverse. That asymmetry is the safe
+# direction for a build-time check to be wrong in, and it is what summing reservations (rather than
+# trying to predict actual insertions) buys: never accepting what the DLL refuses.
 TABLE_SLOTS = 65536 // 2
 PICTURE_PROBE_SLOTS = 6
-MASKED_PROBE_SLOTS = 24
+MASKED_PROBE_BANDS = 3
+MASKED_PROBE_ROWS_CAP = 4    # LOMHD_SPRITE_PROBE_ROWS
+MASKED_PROBE_SLOTS = 2 * MASKED_PROBE_BANDS * MASKED_PROBE_ROWS_CAP  # 24: a sprite's worst case
 
 # A masked (sprite) record's own floor -- smaller than a picture's, because a sprite's own art is
 # smaller too. The matcher still needs a run of opaque pixels long enough to hash; sprites carry
@@ -252,13 +266,22 @@ def unmasked_records(originals, upscaled, skipped: list[str], sources=None):
         yield encode_record(name, w, h, idx, pal, hw, hh, rgb)
 
 
-def record_probe_slots(entry: bytes) -> int:
-    """How many of the DLL's probe-table entries one already-encoded record costs, read back out
-    of the entry's own flags byte. A masked (sprite) record costs MASKED_PROBE_SLOTS, an unmasked
-    (picture) one PICTURE_PROBE_SLOTS -- see TABLE_SLOTS."""
+def record_probe_slots(entry: bytes, zidx: bytes) -> int:
+    """The DLL's own reservation for one already-encoded record: PICTURE_PROBE_SLOTS for an
+    unmasked (picture) record, always; for a masked (sprite) one, `2 * MASKED_PROBE_BANDS *
+    min(masked_opaque_rows(...), MASKED_PROBE_ROWS_CAP)` -- the record's OWN eligible-row count,
+    not the worst case, so a pack of many 3-row sprites is not charged for rows it does not have.
+    `zidx` is the record's own compressed indices stream (`encode_record`'s second return value),
+    decompressed here to count rows; a picture record never needs it."""
     name_len = entry[0]
-    flags = entry[1 + name_len + 8]
-    return MASKED_PROBE_SLOTS if flags & FLAG_MASKED else PICTURE_PROBE_SLOTS
+    pos = 1 + name_len
+    w, h, hw, hh = struct.unpack_from("<HHHH", entry, pos)
+    flags, key = struct.unpack_from("<BB", entry, pos + 8)
+    if not flags & FLAG_MASKED:
+        return PICTURE_PROBE_SLOTS
+    indices = zlib.decompress(zidx)
+    rows = min(masked_opaque_rows(w, h, indices, key), MASKED_PROBE_ROWS_CAP)
+    return 2 * MASKED_PROBE_BANDS * rows
 
 
 def write_records(out: pathlib.Path, records) -> int:
@@ -275,7 +298,7 @@ def write_records(out: pathlib.Path, records) -> int:
     slots = 0
     with tempfile.TemporaryFile(dir=out.parent) as streams:
         for entry, zidx, zhd in records:
-            slots += record_probe_slots(entry)
+            slots += record_probe_slots(entry, zidx)
             if slots > TABLE_SLOTS:
                 raise SystemExit(f"{slots} probe-table entries; the overlay accepts at most {TABLE_SLOTS}")
             entries.append(entry)

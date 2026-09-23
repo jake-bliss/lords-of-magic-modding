@@ -343,27 +343,56 @@ class MaskedRecords(unittest.TestCase):
     # --- the DLL's probe-table capacity ---------------------------------------------------------
 
     def test_a_sprite_costs_more_probe_slots_than_a_picture(self) -> None:
+        """This sprite has 6 rows, all of them eligible: `min(6, MASKED_PROBE_ROWS_CAP) == 4`, so
+        its exact cost coincides with the worst case, MASKED_PROBE_SLOTS."""
         indices, rgba = self.sprite()
-        sprite_entry, _, _ = pack.encode_record("sprite__x", 20, 6, indices, PALETTE, 40, 12,
-                                                rgba, flags=pack.FLAG_MASKED, key=5)
+        sprite_entry, sprite_zidx, _ = pack.encode_record("sprite__x", 20, 6, indices, PALETTE, 40, 12,
+                                                          rgba, flags=pack.FLAG_MASKED, key=5)
         picture_indices = bytes((x + y) % 256 for y in range(H) for x in range(W))
-        picture_entry, _, _ = pack.encode_record(
+        picture_entry, picture_zidx, _ = pack.encode_record(
             "a", W, H, picture_indices, PALETTE, W * 2, H * 2,
             rgb_of(bytes((x + y) % 256 for y in range(H * 2) for x in range(W * 2))))
-        self.assertEqual(pack.record_probe_slots(picture_entry), pack.PICTURE_PROBE_SLOTS)
-        self.assertEqual(pack.record_probe_slots(sprite_entry), pack.MASKED_PROBE_SLOTS)
+        self.assertEqual(pack.record_probe_slots(picture_entry, picture_zidx), pack.PICTURE_PROBE_SLOTS)
+        self.assertEqual(pack.record_probe_slots(sprite_entry, sprite_zidx), pack.MASKED_PROBE_SLOTS)
 
     def test_a_pack_that_would_cost_too_many_probe_slots_is_refused(self) -> None:
         indices, rgba = self.sprite()
         one_sprite = pack.encode_record("sprite__x", 20, 6, indices, PALETTE, 40, 12, rgba,
                                         flags=pack.FLAG_MASKED, key=5)
-        # TABLE_SLOTS // MASKED_PROBE_SLOTS sprites fit exactly; one more must be refused.
+        # This sprite's exact cost is MASKED_PROBE_SLOTS (see the test above), so
+        # TABLE_SLOTS // MASKED_PROBE_SLOTS of them fit exactly; one more must be refused.
         fits = pack.TABLE_SLOTS // pack.MASKED_PROBE_SLOTS
         out = pathlib.Path(self.tmp.name) / "fits.pack"
         pack.write_records(out, [one_sprite] * fits)
         self.assertEqual(pack.count(out), fits)
         with self.assertRaises(SystemExit):
             pack.write_records(pathlib.Path(self.tmp.name) / "too-many.pack", [one_sprite] * (fits + 1))
+
+    def test_the_boundary_is_each_sprites_own_cost_not_a_flat_worst_case(self) -> None:
+        """1,366 sprites with exactly three eligible rows (18 slots each, not the worst-case 24)
+        must not be refused as if they cost 24: the real boundary is TABLE_SLOTS // 18 = 1,820 of
+        them (32,760 slots, accepted), with the 1,821st (32,778) refused."""
+        w, h, key = 20, 4, 5
+        good_row = bytes([key, key] + [3] * (w - 4) + [key, key])
+        empty_row = bytes([key] * w)
+        indices = good_row * 3 + empty_row * (h - 3)     # exactly 3 rows with a qualifying run
+        self.assertEqual(pack.masked_opaque_rows(w, h, indices, key), 3)
+        self.assertTrue(pack.masked_is_eligible(w, h, indices, key))
+
+        rgba = bytes(w * 2 * h * 2 * 4)
+        entry, zidx, zhd = pack.encode_record("sprite__x", w, h, indices, PALETTE, w * 2, h * 2,
+                                              rgba, flags=pack.FLAG_MASKED, key=key)
+        self.assertEqual(pack.record_probe_slots(entry, zidx), 18, "2 * 3 bands * 3 rows, not 24")
+
+        fits = pack.TABLE_SLOTS // 18
+        self.assertEqual(fits, 1820)
+        self.assertEqual(fits * 18, 32760)
+        out = pathlib.Path(self.tmp.name) / "fits3.pack"
+        pack.write_records(out, [(entry, zidx, zhd)] * fits)
+        self.assertEqual(pack.count(out), fits)
+        with self.assertRaises(SystemExit):
+            pack.write_records(pathlib.Path(self.tmp.name) / "too-many3.pack",
+                               [(entry, zidx, zhd)] * (fits + 1))
 
 
 class Choices(unittest.TestCase):

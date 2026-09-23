@@ -171,17 +171,33 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         self.renders = self.root / "renders"
         self.renders.mkdir()
 
+        # `identify_size` and `load_rgba` (not `load_hd_rgba` itself) are what stand in for
+        # ImageMagick, so `load_hd_rgba`'s own real logic -- refusing a render whose size is not
+        # exactly (2w, 2h) -- runs for real in every test. A "render" is a text file holding its
+        # own claimed "WxH"; `write_render` below writes it that size for real.
         for attr, value in (("viewer_decodes_bgr", lambda *a, **k: True),
-                            ("load_hd_rgba", self.fake_load_hd_rgba)):
+                            ("identify_size", self.fake_identify_size),
+                            ("load_rgba", self.fake_load_rgba)):
             self.addCleanup(setattr, sprite_pack, attr, getattr(sprite_pack, attr))
             setattr(sprite_pack, attr, value)
         self.addCleanup(setattr, sprite_pack, "WORK", sprite_pack.WORK)
         sprite_pack.WORK = self.root / "work"
 
     @staticmethod
-    def fake_load_hd_rgba(render, w, h):
-        """Standing in for ImageMagick: any existing render file is "the right size already"."""
-        return w * 2, h * 2, bytes(w * 2 * h * 2 * 4)
+    def fake_identify_size(render: pathlib.Path) -> tuple[int, int]:
+        w, h = render.read_text().split("x")
+        return int(w), int(h)
+
+    @staticmethod
+    def fake_load_rgba(render: pathlib.Path) -> bytes:
+        w, h = BuildSpriteRecordsTest.fake_identify_size(render)
+        return bytes(w * h * 4)
+
+    def write_render(self, choice: str, record_name: str, w: int, h: int) -> None:
+        """A stand-in render claiming to be `w`x`h`, for `fake_identify_size`/`fake_load_rgba`."""
+        folder = self.renders / choice
+        folder.mkdir(exist_ok=True)
+        (folder / f"{record_name}.png").write_text(f"{w}x{h}")
 
     def install_viewer(self, describes: dict[str, str], exports: dict[str, bytes]) -> FakeViewer:
         viewer = FakeViewer(describes, exports)
@@ -208,8 +224,7 @@ class BuildSpriteRecordsTest(unittest.TestCase):
     def test_a_static_eligible_sprite_with_a_pick_and_a_render_is_packed(self) -> None:
         self.write_listfile("tree.imp")
         self.install_viewer({"unit\\tree.imp": describe(1)}, {"unit\\tree.imp": self.eligible_sprite_png()})
-        (self.renders / "anime2x").mkdir()
-        (self.renders / "anime2x" / "sprite__tree.png").write_bytes(b"stand-in")
+        self.write_render("anime2x", "sprite__tree", 40, 12)
         records, considered, skipped = self.run_build({"sprite__tree": "anime2x"})
         self.assertEqual(considered, 1)
         self.assertEqual(skipped, [])
@@ -307,10 +322,10 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         self.write_listfile("tree.imp")
         sprite_pack.WORK.mkdir(parents=True, exist_ok=True)
         fingerprint = sprite_pack.archive_fingerprint(self.archive)
-        (sprite_pack.WORK / f"{fingerprint}__tree.png").write_bytes(self.eligible_sprite_png())
+        member_hash = sprite_pack.member_fingerprint("unit\\tree.imp")
+        (sprite_pack.WORK / f"{fingerprint}__{member_hash}__tree.png").write_bytes(self.eligible_sprite_png())
         viewer = self.install_viewer({"unit\\tree.imp": describe(1)}, {})   # no export entry needed
-        (self.renders / "anime2x").mkdir()
-        (self.renders / "anime2x" / "sprite__tree.png").write_bytes(b"stand-in")
+        self.write_render("anime2x", "sprite__tree", 40, 12)
         records, considered, skipped = self.run_build({"sprite__tree": "anime2x"})
         self.assertEqual(len(records), 1)
         self.assertEqual(viewer.export_calls, [], "a cached frame export must not be re-exported")
@@ -323,8 +338,7 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         self.write_listfile("wide.imp")
         png = self.masked_png(640, 16)
         self.install_viewer({"unit\\wide.imp": describe(1)}, {"unit\\wide.imp": png})
-        (self.renders / "anime2x").mkdir()
-        (self.renders / "anime2x" / "sprite__wide.png").write_bytes(b"stand-in")
+        self.write_render("anime2x", "sprite__wide", 1280, 32)
         records, considered, skipped = self.run_build({"sprite__wide": "anime2x"})
         self.assertEqual(skipped, [])
         self.assertEqual(len(records), 1)
@@ -336,12 +350,24 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         self.write_listfile("toowide.imp")
         png = self.masked_png(641, 16)
         self.install_viewer({"unit\\toowide.imp": describe(1)}, {"unit\\toowide.imp": png})
-        (self.renders / "anime2x").mkdir()
-        (self.renders / "anime2x" / "sprite__toowide.png").write_bytes(b"stand-in")
+        self.write_render("anime2x", "sprite__toowide", 1282, 32)
         records, considered, skipped = self.run_build({"sprite__toowide": "anime2x"})
         self.assertEqual(records, [])
         self.assertEqual(len(skipped), 1)
         self.assertIn("exceeds", skipped[0])
+
+    def test_a_render_of_the_wrong_size_is_refused_not_resized(self) -> None:
+        """A render that is not exactly (2w, 2h) was made from a different original -- a stale
+        render, or the classic case of two different members sharing a record name -- and must be
+        refused, not silently resized into shipping the wrong picture."""
+        self.write_listfile("tree.imp")
+        self.install_viewer({"unit\\tree.imp": describe(1)}, {"unit\\tree.imp": self.eligible_sprite_png()})
+        self.write_render("anime2x", "sprite__tree", 41, 13)          # not exactly (40, 12)
+        records, considered, skipped = self.run_build({"sprite__tree": "anime2x"})
+        self.assertEqual(records, [])
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("render is 41x13, expected 40x12", skipped[0])
+        self.assertIn("different original", skipped[0])
 
     # --- the frame-export cache must not mix pixels from two different archives ------------------
 
@@ -349,8 +375,7 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         self.write_listfile("tree.imp")
         archive_a = self.root / "a.mpq"; archive_a.write_bytes(b"archive-a-bytes")
         archive_b = self.root / "b.mpq"; archive_b.write_bytes(b"a-different-archive-entirely")
-        (self.renders / "anime2x").mkdir()
-        (self.renders / "anime2x" / "sprite__tree.png").write_bytes(b"stand-in")
+        self.write_render("anime2x", "sprite__tree", 40, 12)
 
         self.install_viewer({"unit\\tree.imp": describe(1)},
                             {"unit\\tree.imp": self.masked_png(20, 6, opaque=3)})
@@ -381,8 +406,7 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         self.listfile.write_text("aura\\agx06b.imp\nimp\\agx06b.imp\n")
         self.install_viewer({"imp\\agx06b.imp": describe(1)},
                             {"imp\\agx06b.imp": self.eligible_sprite_png()})
-        (self.renders / "anime2x").mkdir()
-        (self.renders / "anime2x" / "sprite__agx06b.png").write_bytes(b"stand-in")
+        self.write_render("anime2x", "sprite__agx06b", 40, 12)
         records, considered, skipped = self.run_build({"sprite__agx06b": "anime2x"})
         self.assertEqual(skipped, [])
         self.assertEqual(len(records), 1)
@@ -397,6 +421,34 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         self.assertEqual(len(skipped), 1)
         self.assertIn("agx06b:", skipped[0])
         self.assertIn("ambiguous", skipped[0])
+
+    def test_the_frame_cache_is_also_keyed_by_which_member_was_resolved(self) -> None:
+        """One archive, two different members sharing a record name: building once with a listfile
+        naming only the aura\\ spelling and once naming only the imp\\ spelling must not let the
+        second build reuse the first build's cached export just because the archive and the
+        resulting record NAME are the same -- the member path actually resolved must be part of
+        the cache key too."""
+        self.write_render("anime2x", "sprite__agx06b", 40, 12)
+
+        self.listfile.write_text("aura\\agx06b.imp\n")
+        self.install_viewer({"aura\\agx06b.imp": describe(1)},
+                            {"aura\\agx06b.imp": self.masked_png(20, 6, opaque=3)})
+        records_aura, _, skipped_aura = self.run_build({"sprite__agx06b": "anime2x"})
+        self.assertEqual(skipped_aura, [])
+
+        self.listfile.write_text("imp\\agx06b.imp\n")
+        self.install_viewer({"imp\\agx06b.imp": describe(1)},
+                            {"imp\\agx06b.imp": self.masked_png(20, 6, opaque=9)})
+        records_imp, _, skipped_imp = self.run_build({"sprite__agx06b": "anime2x"})
+        self.assertEqual(skipped_imp, [])
+
+        out_aura, out_imp = self.root / "aura.pack", self.root / "imp.pack"
+        pack.write_records(out_aura, records_aura)
+        pack.write_records(out_imp, records_imp)
+        [(_, small_aura, *_)] = pack.read(out_aura.read_bytes())
+        [(_, small_imp, *_)] = pack.read(out_imp.read_bytes())
+        self.assertNotEqual(bytes(small_aura[3]), bytes(small_imp[3]),
+                            "the imp\\ build must not reuse the aura\\ build's cached export")
 
 
 if __name__ == "__main__":
