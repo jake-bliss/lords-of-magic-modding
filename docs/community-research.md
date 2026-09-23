@@ -89,7 +89,7 @@ value. We were hardcoding 0 and rendering those backgrounds opaque. Fixed; see
 [native asset stage](native-asset-stage.md). This is the single most valuable thing the survey found.
 
 **The palette is stored BGRA and swapped to RGB on load.** **Refuted 2026-09-17** — entries are stored **blue, red, green, pad**, measured in the running engine. We accepted this claim, so our decoder inherited the same red/green swap. It had appeared to confirm our channel order, which we had
-been unable to test.
+been unable to test. **The 2026-09-17 refutation is itself corrected 2026-09-23: this claim was right.** Entries are stored blue, green, red, pad — plain BGRA — and the 2026-09-17 measurement had red and green swapped by the capture reader it depended on. See the [research log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).
 
 **Frame type 4 with size 0 is also a duplicate**, pointing back at a shared bitmap. Matches our
 `0x04` shared-pixels handling exactly, independently derived.
@@ -114,7 +114,8 @@ for the dword at `+8` is that it is **overloaded**: when the count is zero those
 observation of *"a separate index for a 1,651-pixel silhouette beneath the creature"*
 independently corroborates it. Compositing is keyed by palette **index**, not by colour, and the RGB in slots 0 and 1 is ignored
 outright — proved by rewriting index 1 to magenta and rendering it unchanged. Index 0 holds pure
-**red** and index 1 pure **green**. This retires the "not a single
+**green** and index 1 pure **red** (**corrected 2026-09-23**: this said red then green, read through
+the red/green-swapped decoder; see the [research log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green)). This retires the "not a single
 universal chroma key" framing.
 
 **Our "cycle" is a facing — a direction — and facings are ordered clockwise.** Clockwise ordering is
@@ -278,6 +279,12 @@ this thread never says "BGRA"; that wording came from IMP Studio's help text, wh
 confirming our channel order. Two community sources, two different orders, and neither matches the
 engine.
 
+**Corrected 2026-09-23: the engine matches IMP Studio's wording after all.** Entries are stored blue,
+green, red, pad — plain BGRA — which is exactly the order IMP Studio's help text names. snv's `RGBA`
+declaration has the right size and, on the order, is off by the same red/green transposition that
+this repository's own 2026-09-17-to-2026-09-23 decoder carried. See the [research
+log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).
+
 The same post says: *"index 0 used for transparency, index 1 is shadow index 0xff is RLE special
 value"*. Read as a claim that palette index 255 is reserved, it is **refuted**: index 255 carries
 ordinary pixel data in **164 of 1,800 files, 7,070 frames and 6.25 million pixels**, spread across
@@ -293,8 +300,9 @@ special. Either way, do not treat index 255 as reserved.
 
 We can answer the order, and correct the requirement.
 
-**Where the convention holds, index 0 is pure red (transparency) and index 1 is pure green
-(translucency)** — and *translucent* is the better word, because it is measured as the background
+**Where the convention holds, index 0 is pure green (transparency) and index 1 is pure red
+(translucency)** (**Corrected 2026-09-23:** this said red then green, read through the red/green-swapped
+decoder; see [the research log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green)) — and *translucent* is the better word, because it is measured as the background
 drawn at half brightness, not a black shadow. Both orderings look like "red and green", so his
 uncertainty was not resolvable from the files alone; it needed the engine.
 
@@ -303,9 +311,9 @@ well"* is **not a requirement**, measured across all 1,800 shipped IMPs:
 
 | Slots 0 and 1 | Files |
 | --- | --- |
-| pure red then pure green | 1,542 (85.7%) |
+| pure green then pure red | 1,542 (85.7%) |
 | black then `(8,8,8)` | 167 |
-| pure red then a cyan | 56 |
+| pure green then a magenta | 56 |
 | other | 35 |
 
 258 shipped files break the convention and work fine, because **the engine keys on the index and
@@ -325,6 +333,14 @@ a reversal, where the engine's layout requires `[p[i*4+1], p[i*4+2], p[i*4]]`. S
 tool has ever displayed or exported has red and green transposed, exactly as ours did. That is worth
 telling the board, and it explains how the wrong order survived: the tool and our decoder agreed with
 each other, and agreement was mistaken for confirmation.
+
+**Corrected 2026-09-23: IMP Studio never had this swap.** `[p[i*4+2], p[i*4+1], p[i*4]]` is a plain
+reversal of an entry stored blue, green, red, pad, which is exactly what the engine's own
+`0x0049B220` loop does. The "engine's layout requires" line above named the wrong requirement — that
+requirement came from this repository's own decoder, in place from 2026-09-17 to 2026-09-23, which
+really was transposed. IMP Studio was never checked against the engine at the time this was written;
+now it has been, and it was right. See the [research
+log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).
 
 **Hexdragon's `LOM_Sprite_Tool`, November 2023, is described as handling placement correctly** — and
 that alone qualifies our headline framing. This is a **community claim, not verified here**: the tool

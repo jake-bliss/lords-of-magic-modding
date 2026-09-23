@@ -283,8 +283,9 @@ So this needs either an engine run or an offline chase of that table builder. **
 chase first** — it is free, and it may make this run unnecessary.
 
 If run attended: place a unit at a known map cell, face it at each of directions 0–7, and
-screenshot each. Note `map2screen`'s third value is screen x, and `screencapture` writes R,G,B
-not BGR.
+screenshot each. Note `map2screen`'s third value is screen x, and `screencapture` writes G,R,B
+— neither R,G,B nor the BMP-standard B,G,R (**corrected 2026-09-23**; see [research
+log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green)).
 
 ⚠️ `docs/map-format.md:76-79, 598-601` records that which map operand is x versus y, and how the
 isometric axes relate to compass directions, is itself only **Inferred**. A bearing derived

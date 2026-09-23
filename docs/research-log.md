@@ -52,7 +52,7 @@ Conclusion: the 32-bit process was reading the redirected registry view. The Ste
 ### IMP format findings
 
 - **Observed:** all 1,800 IMP binaries pass bounded table, palette, frame-reference, and packed-pixel decoding, including RLE expansion where applicable.
-- **Observed:** the format contains 32-byte file headers, animation sequences/facings/frames, 256-entry BGRA palettes, six-byte padded hotspots, direct duplicate frames, and `0x04` shared-pixel frame records. (**Corrected 2026-09-17:** this entry said "repeated facings". There is no such thing — a facing's frame table is an ordinary array of 16-byte records, of which only the first may carry `0x04`. See the 2026-09-17 correction entry. The "BGRA palette" claim is separately corrected: entries are stored blue, red, green, pad.)
+- **Observed:** the format contains 32-byte file headers, animation sequences/facings/frames, 256-entry BGRA palettes, six-byte padded hotspots, direct duplicate frames, and `0x04` shared-pixel frame records. (**Corrected 2026-09-17:** this entry said "repeated facings". There is no such thing — a facing's frame table is an ordinary array of 16-byte records, of which only the first may carry `0x04`. See the 2026-09-17 correction entry. The "BGRA palette" claim is separately corrected: entries are stored blue, red, green, pad. **Corrected again 2026-09-23:** that second correction was itself wrong — entries are stored blue, green, red, pad, i.e. plain BGRA as originally written here. See [2026-09-23](#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).)
 - **Observed:** the custom RLE uses controls below `0x80` for repeated runs and controls at or above `0x80` for literal runs.
 - **Inferred:** file-flag bits `0x30` select 8-, 1-, 2-, or 4-bit indexed storage, and sub-byte indices are packed most-significant-bit first.
 - **Observed:** generated-header comparison matches 1,784 of 1,798 paired stems exactly. Fourteen bounded metadata disagreements and four orphan names remain explicit validation failures.
@@ -1111,7 +1111,9 @@ entries: the two agree on every index where red equals green, and disagree where
 the signature of a channel swap somewhere between our decoder and the capture, and it bears on the
 "palette is BGRA, swapped to RGB" claim recorded in [Stage 1](native-asset-stage.md). It is **not**
 resolved here — one frame against one background cannot separate a decoder bug from a BMP reader bug —
-and it needs a deliberate test against a known colour.
+and it needs a deliberate test against a known colour. (**Resolved 2026-09-23:** a BMP reader bug. The
+capture bytes are G,R,B and were read as R,G,B; the decoder was right. See
+[the 2026-09-23 entry](#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).)
 
 ## 2026-09-16 — An unattended probe does not work, and why
 
@@ -1215,7 +1217,7 @@ move by 14.4 per isometric step and differ from each other by a constant 80, so 
 units and are not screen pixels. This is real progress on the y/z convention question left open by
 PR #29, though the y half is still unmeasured — it needs a sprite that actually renders.
 
-### Finding: `screencapture` writes R, G, B, not the BMP-standard B, G, R
+### Finding: `screencapture` writes R, G, B, not the BMP-standard B, G, R — **corrected 2026-09-23**
 
 Decoding the captures per the BMP standard makes the interface stone blue and the terrain purple.
 Decoding the bytes in the order written makes the stone brown and the grass green. The interface
@@ -1229,6 +1231,11 @@ be non-standard in two independent ways, since `bfOffBits` already reports 14 ag
 of 54.
 
 `tools/probe_captures.py` is the reader that gets both right, and its tests pin them.
+
+**Corrected 2026-09-23:** the eyeball reading here ("stone brown, grass green") was right that the
+bytes are not standard B,G,R, but wrong about which non-standard order — the reader built on it
+still read the bytes as R,G,B, one axis short of the truth. The actual order is **G, R, B**: neither
+candidate this entry tested. See [2026-09-23](#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).
 
 ### The rebuilt probe
 
@@ -1315,7 +1322,15 @@ The two copies are the same art with one palette entry differing, and they rende
 So "the RGB in slot 1 is incidental" is now a controlled result rather than an inference: the entry
 was rewritten to bright magenta and the engine ignored it.
 
-### Palette entries are stored blue, red, green, pad
+### Palette entries are stored blue, red, green, pad — **corrected 2026-09-23**
+
+**Corrected 2026-09-23:** this entire measurement went through `tools/probe_captures.py`, whose
+reader took the engine's `screencapture` bytes — actually stored G, R, B — as R, G, B. That swapped
+red and green in every colour this section reports, and the palette order fitted to it inherited the
+swap. Entries are in fact stored **blue, green, red, pad**, i.e. the plain BGRA the community
+specification described. See
+[2026-09-23](#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).
+The rest of this entry is kept as originally measured.
 
 Every index in the frame was paired with the pixel the engine painted at the corresponding screen
 position. Fitting the six permutations of the stored triple:
@@ -1327,25 +1342,32 @@ position. Fitting the six permutations of the stored triple:
 | the other four | 1-2 / 14 |
 
 The authored entries confirm it independently: raw `ff 00 00` rendered **blue**, `00 ff 00` rendered
-**red**, `00 00 ff` rendered **green**.
+**red**, `00 00 ff` rendered **green**. (**Corrected 2026-09-23:** these three colour names came
+through the same swapped reader. Under the true G, R, B capture order, `ff 00 00` is blue, `00 ff 00`
+is green and `00 00 ff` is red — which is what the corrected permutation, `(p2, p1, p0)`, predicts.)
 
 `src/imp.rs` mapped `|bgra| [bgra[2], bgra[1], bgra[0], 255]`, a reversal, which **swaps red and
 green and leaves blue correct**. That is precisely the symptom this log has carried since the first
 capture — *"agree wherever red equals green and disagree where they differ"* — recorded accurately
 and left unexplained. Corrected to `|brg| [brg[1], brg[2], brg[0], 255]`; against the engine capture
-the old mapping scores 3/10 and the new one 10/10.
+the old mapping scores 3/10 and the new one 10/10. (**Corrected 2026-09-23:** this reversed the
+correction that was needed. `|bgra| [bgra[2], bgra[1], bgra[0], 255]` — the mapping this paragraph
+replaced — was the right one all along; the "10/10" score below was measured through the swapped
+capture reader and does not survive re-measurement against the raw framebuffer.)
 
 Two consequences worth stating. Every PNG the viewer has exported has red and green swapped. And the
 community specification's "stored BGRA, swapped to RGB" is **refuted** — we had accepted it in
 [Stage 1](native-asset-stage.md) as confirmation, so a wrong claim was used to close a question our
-own evidence was already contradicting.
+own evidence was already contradicting. (**Both corrected 2026-09-23: the community specification
+was right, and it was this section's refutation of it that swapped red and green.** See the
+[2026-09-23 entry](#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).)
 
 **The off-by-one alternative was ruled out, not assumed away.** "Entries are `[R,G,B,pad]` and our
 palette offset is one byte early" predicts blue coming from the fourth byte. The fourth byte is zero
 for all 256 entries, while index 228 stores `(82, 49, 0)` and rendered blue 80. Blue comes from the
 first byte.
 
-### The BMP byte order, settled numerically
+### The BMP byte order, settled numerically — **corrected 2026-09-23**
 
 `screencapture` writes pixels **R, G, B**, not the BMP-standard B, G, R. Judging this by eye is
 unsound, so it was measured on materials whose hue is not in question — the carved stone interface,
@@ -1359,6 +1381,13 @@ cannot discriminate; only the warm/cool axis can:
 | whole interface band | 62.1% | 2.4% |
 
 Stone, wood and parchment are not blue. The first byte is red.
+
+**Corrected 2026-09-23.** The warm/cool discrimination above is sound — the first byte genuinely is
+not blue — but "not blue" was narrowed to "red" without ruling out green, which is the other warm
+byte this table cannot separate from red on grey stone. Measured against the game's own raw
+framebuffer with an LBM control in the same frame, the first byte is **green**, and the true order is
+**G, R, B**. See
+[2026-09-23](#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).
 
 ### Also confirmed, and one thing still open
 
@@ -1453,14 +1482,16 @@ survived in part, one did not, and one of our own statements needed narrowing.
 | Claim | Source | Outcome |
 | --- | --- | --- |
 | The RLE algorithm, with the `+3` bias | snv, 2011 | **Confirmed** — matches `decode_rle_packet` line for line |
-| `u1 Palette[256*4]; // RGBA palette` | snv, 2011 | Size confirmed, **order refuted**: stored blue, red, green, pad |
+| `u1 Palette[256*4]; // RGBA palette` | snv, 2011 | Size confirmed, **order refuted**: stored blue, red, green, pad. **Corrected 2026-09-23: that refutation was wrong** — entries are stored blue, green, red, pad, i.e. plain BGRA as the community wording implied |
 | "index 0xff is RLE special value" | snv, 2011 | **Refuted** as a palette claim: index 255 is ordinary pixel data in 164 of 1,800 files, 7,070 frames, 6.25M pixels, across every asset category |
 | "Pure Red and Pure Green... have to be the first two colors" | Boaster, 2023 | **Order answered, requirement refuted** — see below |
 | `LOM_Sprite_Tool` preserves and adjusts placement | Hexdragon, 2023 | **Unverified.** The tool has not been obtained or run; recorded as a community claim |
 
-**Boaster's ordering, measured across all 1,800 shipped IMPs:** 1,542 files (85.7%) do hold pure red
-at index 0 and pure green at index 1. The other 258 do not — 167 hold black and `(8,8,8)`, 56 hold
-pure red and a cyan, 35 something else. They render correctly anyway, because the engine keys on the
+**Boaster's ordering, measured across all 1,800 shipped IMPs:** 1,542 files (85.7%) do hold pure green
+at index 0 and pure red at index 1. The other 258 do not — 167 hold black and `(8,8,8)`, 56 hold
+pure green and a magenta, 35 something else. (**Corrected 2026-09-23:** this said red at index 0,
+green at index 1 and "a cyan", read through the red/green-swapped decoder; re-run with
+`examples/slot01_survey.rs` after the fix.) They render correctly anyway, because the engine keys on the
 **index** and ignores the colour, which the magenta test proved directly. So the convention is an
 art-pipeline habit, not an engine constraint: repainting a palette must preserve those two *indices*,
 not those two colours.
@@ -1475,7 +1506,17 @@ return [p[i*4+2], p[i*4+1], p[i*4]];
 The engine's layout requires `[p[i*4+1], p[i*4+2], p[i*4]]`. Every colour that tool has displayed or
 exported has red and green transposed, exactly as ours did — and that is how the wrong order
 survived scrutiny here. Our decoder and the community tool agreed with each other, and
-**agreement between two implementations was mistaken for confirmation from evidence.** Neither had
+**agreement between two implementations was mistaken for confirmation from evidence.**
+
+**Corrected 2026-09-23: IMP Studio's accessor was right, and this section's "requires" line was not.**
+`[p[i*4+2], p[i*4+1], p[i*4]]` is a plain reversal of a `blue, green, red, pad` entry, which is
+exactly the engine's own layout — see `0x0049B220` in the research log. IMP Studio's colours were
+never transposed; ours were, from 2026-09-17 to 2026-09-23. The instinct that agreement between two
+implementations needed outside confirmation was correct; the outside confirmation used here
+(the engine capture) was itself broken, which is why the two candid parties still ended up on the
+wrong side. See
+[2026-09-23](#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).
+Neither had
 been checked against the engine until now.
 
 
@@ -3608,7 +3649,14 @@ amount of further decoding will produce one — and the issue splits into three:
    with an independently known bearing; two rotations sit in the way (`0x005AEC3C`, and a `+1` at
    `0x0049DCDD`).
 
-### A contradiction to record rather than resolve: the palette channel order
+### A contradiction to record rather than resolve: the palette channel order — **resolved 2026-09-23**
+
+**Resolved 2026-09-23, in favour of the disassembly.** The second candidate resolution below is the
+one that held: the attended measurement was wrong, not the disassembly. `0x0049B220`'s pure reversal
+is exactly right, and `imp.rs:566`'s `(p0,p1,p2) → (p1,p2,p0)` — the mapping this entry declined to
+touch — is the bug. See
+[2026-09-23](#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).
+The rest of this entry is kept as originally reasoned.
 
 Found while scanning for byte-sized reads and initially filed as out of scope, which is the one
 outcome to avoid — an out-of-scope observation that goes nowhere is an unrecorded finding.
@@ -3646,6 +3694,12 @@ its own convention. The two candidate resolutions are:
 `ff 00 00` renders blue — and this repository's rule is that a recorded contradicting symptom wins
 over a clean-looking disassembly. This entry exists so that if the palette is ever questioned again,
 the four addresses are already written down.
+
+**Corrected 2026-09-23: the "strong" measurement was the broken one.** All three numbers above were
+read through `tools/probe_captures.py`, which took the capture's actual G,R,B bytes as R,G,B and so
+swapped red and green in everything it reported. The rule that a recorded contradicting symptom wins
+over a clean-looking disassembly is still sound in general; what was missing here was checking that
+the symptom's own instrument was trustworthy before letting it outvote four written-down addresses.
 
 ## 2026-09-17 (second review round) — The instrument was blind twice more, and a stated limit hid it
 
@@ -7218,3 +7272,97 @@ resolution and compare against the original: faithful resampling lands at **4.8/
 deviation, `ultrasharp-4x` at **9.7** with local deviations to **56**. That converts "does the model
 invent?" from an argument into a number, and it took one Box resize per candidate. Any future
 upscaling work should report it.
+
+## 2026-09-23 — IMP palettes are BGR after all: the capture reader swapped red and green
+
+**Evidence class: observed in the running engine, via the cnc-ddraw HD-overlay fork's raw
+framebuffer capture, with an LBM control in the same frames.**
+
+The 2026-09-17 palette and `screencapture` findings are both reversed. **IMP palette entries are
+stored blue, green, red, pad** — plain BGRA, exactly as the community specification said and exactly
+what `imp.rs` did before 2026-09-17. Decoding is a plain reversal: `rgb = (p2, p1, p0)`. That is also
+what the engine's own copy loop at `0x0049B220`–`0x0049B269` does — see the
+[2026-09-17 contradiction entry](#a-contradiction-to-record-rather-than-resolve-the-palette-channel-order--resolved-2026-09-23),
+now resolved in the disassembly's favour. Separately, **the engine's `screencapture` BMP writer
+stores pixel bytes as green, red, blue** — not the BMP-standard B,G,R and not the R,G,B this
+repository believed from 2026-09-17. `bfOffBits` still lies (says 14, data starts at 54); that part
+of the earlier finding stands.
+
+### The root cause
+
+`tools/probe_captures.py` read the capture's G,R,B bytes as if they were R,G,B. Every colour it
+reported therefore had red and green swapped. That is also the symptom the
+[2026-09-16 entry](#2026-09-16--the-hotspot-type-numbers-read-out-of-the-exe-and-two-corrections) recorded and could not place — decoded entries and captured pixels
+agreeing wherever red equals green and disagreeing where they differ. The decoder was right; the
+reader was not. Both 2026-09-17 measurements that depended on it
+inherited the swap exactly:
+
+- The permutation fit over the running frame — `(p1, p2, p0)` scoring 14/14 against `(p2, p1, p0)`
+  scoring 4/14 — was fit to colours read through the swapped reader. Read correctly, the engine's own
+  reversal, `(p2, p1, p0)`, is the one that fits.
+- The authored raw-byte check inherited the same swap: `ff 00 00` was reported rendering blue,
+  `00 ff 00` red and `00 00 ff` green. Under the true G,R,B capture order, `ff 00 00` renders blue,
+  `00 ff 00` renders green and `00 00 ff` renders red — consistent with plain BGRA.
+- The `screencapture` byte-order finding itself was a stone/terrain eyeball, not a numeric fit: grey
+  interface stone cannot distinguish red from green, only warm from cool, so "the first byte is red"
+  was one axis short of the truth. The claim that grass read green under an R,G,B decoding does not
+  survive measurement either — the map area averages capture bytes `(96, 50, 37)`, which is a warm
+  brown under R,G,B, not green.
+
+### The measurement that settled it
+
+The game's own 16-bit framebuffer, read raw through the cnc-ddraw HD-overlay fork's frame capture
+(RGB565, standard channel masks — no BMP writer involved at all):
+
+- `imp\tree2b.imp` frame 0 at screen (394,55) matched **1,404 of 1,404** opaque, non-shadow pixels
+  under BGR palette decoding, versus **28.8%** under the blue,red,green decoding this repository
+  shipped from 2026-09-17. All 87 palette indices used by that frame mapped to exactly one
+  framebuffer colour each — a pure channel permutation, not a live palette.
+- Four more single-frame sprites (five placements) matched under BGR decoding in the same captures:
+  `llkeep0b` 100%, `livilb` 100% (two placements), `hermitb` 100%, `llwizt1b` 96%.
+- Reproduce with `tools/framebuffer_palette_check.py FRAME.raw SPRITE.png X Y` on a frame dumped by
+  the overlay build and a frame exported with `--export-imp-frame`. For `tree2b` at (394,55) it prints
+  1.000 for the palette as exported and 0.288 for it red/green swapped; an export made before this
+  fix prints the reverse. Frames and exports are game art and stay under the gitignored `artifacts/`.
+  `shipped_palettes_hold_green_then_red_in_slots_0_and_1` (in `imp.rs`, corpus-gated) pins the
+  decode to the shipped files, and fails with the 2026-09-17 decode.
+- **Control that the framebuffer's own channels are read right:** LBM art in the same frames —
+  portraits, buildings, screens, the interface bar, all RGB-paletted — matches with ordinary RGB, no
+  correction needed. The library screen `lllibl10` matches 97.5% of 8-pixel runs. The HD overlay
+  itself depends on this and works.
+- `screencapture` byte order, measured directly against two archived engine BMPs
+  (`artifacts/engine-probe-captures/run-20260917-0923-elevation/zs1.bmp` and
+  `run-20260921-113819/zc0.bmp`): the interface-bar region matches `intrface.lbm` at **30.8%** under
+  byte order G,R,B and **≤0.9%** under every other permutation. (30% is also what the bar itself
+  scores against a live frame, since parts of it are dynamic, so this is not a low score.)
+  Independently, the mean map-area colour in `zc0.bmp` is bytes **(95.9, 50.4, 36.9)**, against a
+  live framebuffer frame of the overland map (a different session) averaging R,G,B
+  **(50.3, 96.1, 37.1)** — a red/green transposition of nearly the same triple.
+
+### What stands, unaffected
+
+Everything channel-symmetric is untouched: slot 0 is transparency, slot 1 draws the background at
+half brightness and its own RGB is ignored, and every geometry finding — the hotspot rule,
+placements, component bounds, equality-based differencing — does not depend on which byte means red.
+
+### Consequences
+
+- Every PNG the asset viewer exported from IMPs between 2026-09-17 and 2026-09-23 has red and green
+  swapped, including the 1,512 sprite originals shown on the HD-upscale review page.
+- The community specification's "stored BGRA, swapped to RGB" claim was right; the 2026-09-17
+  refutation of it was the error.
+- IMP Studio's palette accessor, `[p[i*4+2], p[i*4+1], p[i*4]]`, was a correct plain reversal all
+  along — see [community research](community-research.md#threads-2012-and-2086-read-2026-09-17). It
+  was never transposed; this repository's decoder was, for six days.
+
+### The lesson
+
+A colour instrument was validated with controls that are blind to the axis it got wrong. Grey stone
+and terrain can settle warm-versus-cool; they cannot settle red-versus-green. That gap then
+propagated silently into the measurement the instrument was built for — the palette channel order —
+because the same reader produced both. What actually discriminated red from green was a second,
+independent instrument that does not share the reader: the raw framebuffer, decoded with standard
+RGB565 masks, cross-checked against an LBM control in the same frame that has no red/green ambiguity
+of its own. A "recorded contradicting symptom wins over a clean-looking disassembly" is not a rule
+that can be applied before checking whether the symptom's own instrument is trustworthy — here it
+was not, and the disassembly was right.

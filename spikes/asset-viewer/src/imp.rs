@@ -568,20 +568,21 @@ impl ImpSprite {
         )?;
         require_range(source, palette_offset, 1, PALETTE_BYTES, "palette")?;
 
-        // Palette entries are stored **blue, red, green, pad** -- not BGRA, and not RGBA.
-        // Measured in the running engine on 2026-09-17: a frame was placed twice, once with five
-        // entries rewritten as raw bytes, and the rendered pixels were paired with the file bytes
-        // for every index in the frame. `(p1, p2, p0)` fits 14 of 14 sampled indices; the next
-        // best permutation fits 4. Writing raw `ff 00 00` renders blue, `00 ff 00` renders red and
-        // `00 00 ff` renders green, which confirms it independently.
+        // Palette entries are stored **blue, green, red, pad** (BGRA), as the community
+        // specification says. Measured on 2026-09-23 in the game's own 16-bit framebuffer, read
+        // raw through cnc-ddraw: `imp\\tree2b.imp` frame 0 matched 1,404 of 1,404 opaque pixels
+        // decoded this way and 29% decoded blue, red, green; four more sprites matched 96-100%
+        // (`tools/framebuffer_palette_check.py` reproduces the measurement).
+        // LBM art in the same frames matches with its RGB palette, so the frame's channels are
+        // right. The engine agrees: `0x0049B220` copies each entry as a plain reversal.
         //
-        // The previous reversal swapped red and green, which is why decoded entries and rendered
-        // pixels agreed wherever red equalled green and disagreed where they differed -- a symptom
-        // this repository recorded for weeks without the cause. It also refutes the community
-        // specification's "stored BGRA, swapped to RGB" claim.
+        // From 2026-09-17 to 2026-09-23 this read blue, red, green. That reading came through the
+        // engine's `screencapture` BMPs, whose pixel bytes are green, red, blue; the reader took them
+        // as red, green, blue, so every colour it reported had red and green swapped, and the
+        // palette order fitted to it inherited the swap. See the research log for 2026-09-23.
         let palette: Vec<[u8; 4]> = source[palette_offset..palette_offset + PALETTE_BYTES]
             .chunks_exact(4)
-            .map(|brg| [brg[1], brg[2], brg[0], 255])
+            .map(|bgr| [bgr[2], bgr[1], bgr[0], 255])
             .collect();
         let mut facing_count = 0_usize;
         let mut frame_count = 0_usize;
@@ -2372,9 +2373,9 @@ mod tests {
         assert_eq!(sprite.frame_location(0).unwrap(), (0, 0, 0));
         assert_eq!(sprite.raw_pixel_bytes, 2);
         assert_eq!(sprite.stored_pixel_bytes, 2);
-        // Stored blue, red, green, pad -- so file bytes [3, 2, 1] render as red 2, green 1,
-        // blue 3. Measured in the engine, see the research log for 2026-09-17.
-        assert_eq!(sprite.palette[0], [2, 1, 3, 255]);
+        // Stored blue, green, red, pad -- so file bytes [3, 2, 1] render as red 1, green 2,
+        // blue 3. Measured in the framebuffer, see the research log for 2026-09-23.
+        assert_eq!(sprite.palette[0], [1, 2, 3, 255]);
     }
 
     #[test]
@@ -2752,7 +2753,7 @@ mod tests {
             // *last* payload grows -- it sits after every payload.
             assert_eq!(rewritten.frames[2].hotspots.len(), 1);
             assert_eq!(rewritten.frames[2].hotspots[0].id, 7);
-            assert_eq!(rewritten.palette[0], [2, 1, 3, 255]);
+            assert_eq!(rewritten.palette[0], [1, 2, 3, 255]);
         }
     }
 
@@ -4675,6 +4676,33 @@ mod tests {
             .add_listfile_contents(&contents)
             .expect("apply the listfile");
         archive
+    }
+
+    /// Slots 0 and 1 of the shipped palettes decode as pure green then pure red. A literal test
+    /// cannot catch the rule itself being wrong; this pins the decode to the shipped files. From
+    /// 2026-09-17 to 2026-09-23 the decoder read them red then green, a red/green swap fitted to a
+    /// capture reader that had its own (research log, 2026-09-23).
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR and LOM_LISTFILE"]
+    fn shipped_palettes_hold_green_then_red_in_slots_0_and_1() {
+        let archive = open_imp_archive();
+        let (mut sprites, mut green_red, mut red_green) = (0_usize, 0_usize, 0_usize);
+        for entry in archive.entries().expect("enumerate imp.mpq") {
+            let Ok(bytes) = archive.read(&entry.name) else {
+                continue;
+            };
+            let Ok(sprite) = ImpSprite::parse(&bytes) else {
+                continue;
+            };
+            sprites += 1;
+            match (sprite.palette[0], sprite.palette[1]) {
+                ([0, 255, 0, _], [255, 0, 0, _]) => green_red += 1,
+                ([255, 0, 0, _], [0, 255, 0, _]) => red_green += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(sprites, 1_800);
+        assert_eq!((green_red, red_green), (1_542, 0));
     }
 
     /// Every payload-carrying frame in `imp.mpq` re-encodes losslessly, and every frame the

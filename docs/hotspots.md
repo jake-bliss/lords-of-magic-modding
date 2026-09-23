@@ -168,9 +168,21 @@ wobble by cropping. That is the gap the rule above closes.
   green" symptom this entry used to describe. Fixed in `imp.rs`; against the capture the old mapping
   scored 3/10 and the new one 10/10. It also refutes the community specification's "BGRA, swapped to
   RGB" claim, which we had accepted.
+  **Corrected 2026-09-23: this whole answer was wrong.** The 2026-09-17 measurement went through
+  `tools/probe_captures.py`, which itself swapped red and green (see below), and the "fix" it drove
+  reintroduced the very swap it thought it removed. Palette entries are stored **blue, green, red,
+  pad** — plain BGRA, and the community's original claim was right — measured against the game's raw
+  framebuffer with an LBM control in the same frame: `imp\tree2b.imp` matched 1,404/1,404 opaque
+  pixels under this order versus 28.8% under the 2026-09-17 order. See [research
+  log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).
 - Related, on the reader side: `screencapture` writes its pixel bytes as R, G, B rather than the
   BMP-standard B, G, R. Confirmed numerically on known materials — carved stone, wood and parchment
   come out first-byte-dominant 62-91% against 0.8-2.4%. Use `tools/probe_captures.py`.
+  **Corrected 2026-09-23: the bytes are G, R, B, not R, G, B.** Stone and parchment can only rule out
+  blue, not tell red from green — this measurement never actually discriminated the two. The interface
+  bar matches its own `.lbm` art at 30.8% only under G,R,B, against ≤0.9% for every other order. See
+  the [research
+  log](research-log.md#the-bmp-byte-order-settled-numerically--corrected-2026-09-23).
 - ~~A unit-path caveat.~~ **Answered 2026-09-20: the unit draw path computes its anchor the same
   way the terrain-sprite path does.** Record 0 was originally confirmed by placing a unit IMP
   through the *terrain sprite* path, which left a unit-specific constant in the *anchor*

@@ -324,7 +324,9 @@ ACCEPTANCE: dict[str, ArchiveAcceptance] = {
                     "The sprite-ladder probe added two members no shipped archive holds and a "
                     "script asked for one of them BY NAME; the engine registered a terrain "
                     "sprite type from it and painted its pixels, which is how the stored palette "
-                    "order was recovered -- the authored entries exist in no other member."
+                    "order was measured -- the authored entries exist in no other member. (The "
+                    "order it gave was wrong: the capture reader swapped red and green, as the "
+                    "research log's later correction records.)"
                 ),
             ),
             EngineRun(
