@@ -165,7 +165,9 @@ document.addEventListener("keydown", async (e) => {
   if (e.key === "j" || e.key === "ArrowDown") { focus = Math.min(focus + 1, shown.length - 1); render(); scrollToFocus(); e.preventDefault(); }
   else if (e.key === "k" || e.key === "ArrowUp") { focus = Math.max(focus - 1, 0); render(); scrollToFocus(); e.preventDefault(); }
   else if (e.key === "0") await pickFocused("original");
-  else if (/^[1-9]$/.test(e.key) && state.options[+e.key - 1]) await pickFocused(state.options[+e.key - 1]);
+  else if (/^[1-9]$/.test(e.key) && state.options[+e.key - 1] &&
+           (state.options[+e.key - 1] !== "approved" || shown[focus]?.ready.includes("approved")))
+    await pickFocused(state.options[+e.key - 1]);   // the palette pipeline only where it was rendered
   else if (e.key === "u") { const im = shown[focus]; if (im && await choose([im.key], null)) render(); }
 });
 for (const id of ["group", "show", "zoom"]) $(id).addEventListener("change", () => { remember(id, $(id).value); focus = 0; render(); });
