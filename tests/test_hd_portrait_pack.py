@@ -411,6 +411,19 @@ class MaskedRecords(unittest.TestCase):
         self.assertEqual([(r[0], r[3], r[4], r[5]) for r in back],
                          [(f"g{i}", pack.FLAG_MASKED | pack.FLAG_MIRROR, 5, 7) for i in range(3)])
 
+    def test_a_pack_past_four_gigabytes_is_refused(self) -> None:
+        """The DLL's offsets are 32-bit. Checked with the limit lowered: 4 GB of test data is not."""
+        indices, rgba = self.sprite()
+        record = pack.encode_record("s", 20, 6, indices, PALETTE, 40, 12, rgba, flags=pack.FLAG_MASKED, key=5)
+        one = len(pack.MAGIC) + 4 + sum(len(part) for part in record)
+        old = pack.MAX_PACK_BYTES
+        self.addCleanup(setattr, pack, "MAX_PACK_BYTES", old)
+        pack.MAX_PACK_BYTES = one
+        pack.write_records(pathlib.Path(self.tmp.name) / "fits.pack", [record])
+        pack.MAX_PACK_BYTES = one - 1
+        with self.assertRaises(SystemExit):
+            pack.write_records(pathlib.Path(self.tmp.name) / "big.pack", [record])
+
     def test_a_split_group_is_refused(self) -> None:
         """The DLL refuses a group whose records are not consecutive; so does the writer."""
         indices, rgba = self.sprite()

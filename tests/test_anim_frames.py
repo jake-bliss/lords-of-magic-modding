@@ -23,9 +23,11 @@ from test_sprite_pack import PLTE, indexed_png  # noqa: E402
 KEY = 5
 
 
-def frame_png(w: int, h: int, fill: int, *, shadow_at: int | None = None) -> bytes:
-    """A frame with a 2-pixel key border and `fill` inside: eligible when w - 4 >= 8."""
-    row = bytes([KEY] * 2 + [fill] * (w - 4) + [KEY] * 2)
+def frame_png(w: int, h: int, fill: int, *, shadow_at: int | None = None, flat: bool = False) -> bytes:
+    """A frame with a 2-pixel key border and, inside, colours counting up from `fill` (one colour
+    if `flat`): eligible when w - 4 >= 8. Different `fill`s are different frames."""
+    inside = [fill] * (w - 4) if flat else [10 + (fill * 16 + x) % 200 for x in range(w - 4)]
+    row = bytes([KEY] * 2 + inside + [KEY] * 2)
     indices = bytearray(row * h)
     if shadow_at is not None:
         indices[shadow_at] = pack.SHADOW_INDEX
@@ -145,6 +147,32 @@ class AnimFramesTest(unittest.TestCase):
                          resolved, {"sprite__cav": "anime2x"}, self.work, "fp", workers=1)
         self.assertEqual(again.calls, 0)
 
+    def test_a_units_repeat_of_an_earlier_unmirrored_frame_makes_it_mirror(self) -> None:
+        """building\\aaa sorts first and keeps the record; units\\bbb draws the same frame, and
+        may draw it flipped -- so the kept record must be MIRROR (Claude review, 2026-09-23)."""
+        shared = frame_png(20, 6, 3)
+        sprites, _, _ = self.plan(
+            {"building\\aaa.imp": [shared, frame_png(20, 6, 4)], "units\\bbb.imp": [shared, frame_png(20, 6, 7)]},
+            {"sprite__aaa": "anime2x", "sprite__bbb": "anime2x"})
+        aaa = sprites[0]
+        self.assertFalse(aaa.mirror)
+        self.assertEqual([f.mirror for f in aaa.frames], [True, False])
+
+    def test_a_frame_with_no_probe_of_enough_colours_is_left_out(self) -> None:
+        sprites, _, counts = self.plan(
+            {"units\\cav.imp": [frame_png(20, 6, 3, flat=True), frame_png(20, 6, 4)]},
+            {"sprite__cav": "anime2x"})
+        self.assertEqual([f.index for f in sprites[0].frames], [1])
+        self.assertEqual(counts["no_probe"], 1)
+
+    def test_caches_are_keyed_by_member_not_only_name(self) -> None:
+        """A name that resolves to another member on another run must not reuse the first
+        member's prepared frames or renders (Claude review, 2026-09-23)."""
+        frames = [frame_png(20, 6, 3), frame_png(20, 6, 4)]
+        first, _, _ = self.plan({"aura\\glow.imp": frames}, {"sprite__glow": "anime2x"})
+        second, _, _ = self.plan({"imp\\glow.imp": frames}, {"sprite__glow": "anime2x"})
+        self.assertNotEqual(first[0].frames[0].prepped, second[0].frames[0].prepped)
+
     # --- render -------------------------------------------------------------------------------
 
     def test_rendering_goes_in_batches_by_pick_and_resumes(self) -> None:
@@ -183,9 +211,10 @@ class AnimFramesTest(unittest.TestCase):
         sprites, _, _ = self.plan(frames, {f"sprite__{n}": "anime2x" for n in ("aaa", "bbb", "ccc")})
         anim_frames.render_all(sprites, self.work, "fp", self.fake_render, log=lambda _: None)
         render = self.work / "fp" / "render" / "anime2x"
-        (render / "aaa__001.png").unlink()
-        for i in (0, 1):
-            (render / f"bbb__{i:03d}.png").unlink()
+        stem = {s.name: [f.prepped.stem for f in s.frames] for s in sprites}
+        (render / f"{stem['aaa'][1]}.png").unlink()
+        for key in stem["bbb"]:
+            (render / f"{key}.png").unlink()
         skipped: list[str] = []
         records = list(anim_frames.records(sprites, self.work, "fp", self.fake_load_hd_rgba, skipped))
         groups = [pack.entry_fields(entry)[4] for entry, _, _ in records]
@@ -196,7 +225,7 @@ class AnimFramesTest(unittest.TestCase):
         frames = {"units\\cav.imp": [frame_png(20, 6, 3), frame_png(20, 6, 4)]}
         sprites, _, _ = self.plan(frames, {"sprite__cav": "anime2x"})
         anim_frames.render_all(sprites, self.work, "fp", self.fake_render, log=lambda _: None)
-        (self.work / "fp" / "render" / "anime2x" / "cav__000.png").write_text("38x12")
+        (self.work / "fp" / "render" / "anime2x" / f"{sprites[0].frames[0].prepped.stem}.png").write_text("38x12")
         skipped: list[str] = []
         records = list(anim_frames.records(sprites, self.work, "fp", self.fake_load_hd_rgba, skipped))
         self.assertEqual(len(records), 1)

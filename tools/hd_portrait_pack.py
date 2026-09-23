@@ -88,6 +88,7 @@ MAX_GROUP = 0xFFFF
 # the reservation, and the writer, summing reservations, refuses every pack the DLL would refuse and
 # possibly a few it would not: the safe direction for a build-time check to be wrong in.
 MAX_PROBES = 1 << 20
+MAX_PACK_BYTES = 0xFFFFFFFF  # the DLL's offsets and file size are 32-bit (it seeks unsigned)
 PICTURE_PROBE_SLOTS = 6
 MASKED_PROBE_BANDS = 3
 MASKED_PROBE_ROWS_CAP = 4    # LOMHD_SPRITE_PROBE_ROWS
@@ -212,6 +213,44 @@ def masked_is_eligible(w: int, h: int, indices, key: int) -> bool:
             and masked_opaque_rows(w, h, indices, key) >= MASKED_MIN_OPAQUE_ROWS)
 
 
+SPRITE_MIN_COLOURS = 4       # LOMHD_SPRITE_MIN_COLOURS: distinct RGB565 colours a sprite probe holds
+
+
+def masked_probe_slices(w: int, h: int, indices, key: int, palette) -> int:
+    """How many probe slices the DLL inserts for a masked record, before mirroring -- its own rule
+    (lomhd_match.c): up to MASKED_PROBE_ROWS_CAP of the rows holding an 8-pixel opaque run, spread
+    evenly over them; in each row, one slice per third of the possible starts, if any fully opaque
+    8-pixel window there holds SPRITE_MIN_COLOURS distinct colours (truncated to RGB565). A run of
+    one colour hits all over a frame, so the DLL makes no probe of it -- and a sprite with no probe
+    at all can never be found, so it is not worth packing."""
+    def rgb565(i):
+        r, g, b = palette[i]
+        return (r >> 3, g >> 2, b >> 3)
+
+    see_through = (key, SHADOW_INDEX)
+    rows = [y for y in range(h) if _longest_run(indices[y * w:(y + 1) * w], key) >= MASKED_MIN_OPAQUE_RUN]
+    n = min(len(rows), MASKED_PROBE_ROWS_CAP)
+    width, starts, slices = MASKED_MIN_OPAQUE_RUN, w - MASKED_MIN_OPAQUE_RUN + 1, 0
+    for k in range(n):
+        row = indices[rows[(len(rows) - 1) * k // (n - 1 if n > 1 else 1)] * w:][:w]
+        for band in range(MASKED_PROBE_BANDS):
+            for col in range(starts * band // MASKED_PROBE_BANDS, starts * (band + 1) // MASKED_PROBE_BANDS):
+                window = row[col:col + width]
+                if len(window) == width and not any(v in see_through for v in window) \
+                        and len({rgb565(v) for v in window}) >= SPRITE_MIN_COLOURS:
+                    slices += 1
+                    break
+    return slices
+
+
+def _longest_run(row, key: int) -> int:
+    run = best = 0
+    for value in row:
+        run = run + 1 if value != key and value != SHADOW_INDEX else 0
+        best = max(best, run)
+    return best
+
+
 def same_image(a: pathlib.Path, b: pathlib.Path) -> bool:
     w1, h1, i1, p1, _ = lbm_png.decode(a)
     w2, h2, i2, p2, _ = lbm_png.decode(b)
@@ -300,6 +339,7 @@ def write_records(out: pathlib.Path, records) -> int:
     slots = 0
     groups_done: set[int] = set()
     current_group = 0
+    size = len(MAGIC) + 4
     with tempfile.TemporaryFile(dir=out.parent) as streams:
         for entry, zidx, zhd in records:
             slots += record_probe_slots(entry, zidx)
@@ -315,6 +355,9 @@ def write_records(out: pathlib.Path, records) -> int:
                 if group in groups_done:
                     raise SystemExit(f"group {group} is split: its records must be consecutive")
                 current_group = group
+            size += len(entry) + len(zidx) + len(zhd)
+            if size > MAX_PACK_BYTES:
+                raise SystemExit(f"the pack would pass {MAX_PACK_BYTES} bytes; the overlay's offsets are 32-bit")
             entries.append(entry)
             streams.write(zidx)
             streams.write(zhd)

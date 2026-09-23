@@ -225,6 +225,10 @@ def build_sprite_records(archive: pathlib.Path, viewer: pathlib.Path, listfile: 
             skipped.append(f"{name}: {w}x{h} is too small, too large, or has no row with a long "
                            "enough run of opaque pixels for the matcher")
             continue
+        if not pack.masked_probe_slices(w, h, indices, key, pad_palette(png.palette())):
+            skipped.append(f"{name}: no 8-pixel run of {pack.SPRITE_MIN_COLOURS} colours: the "
+                           "overlay could make no probe, so it could never be found")
+            continue
 
         # The upscale is always exactly (2w, 2h) (`load_hd_rgba` forces it), so the DLL's own
         # limit on the upscale's side -- MAX_UPSCALE_SIDE -- can be checked here, before the render
@@ -305,7 +309,8 @@ def main() -> int:
         anim_skipped += planned_skipped
         print(f"animated: {len(sprites)} sprites, {sum(len(s.frames) for s in sprites)} frames to pack "
               f"of {counts['frames']} ({counts['repeats']} repeats, {counts['ineligible']} too small "
-              f"for the matcher, {counts['unreadable']} unreadable)", flush=True)
+              f"for the matcher, {counts['no_probe']} with no probe of enough colours, "
+              f"{counts['unreadable']} unreadable)", flush=True)
 
         def render(option, inputs, dest):
             hd_upscale.render(option, inputs, dest, args.esrgan, args.models)

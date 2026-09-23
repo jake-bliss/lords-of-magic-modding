@@ -39,9 +39,11 @@ def indexed_png(w: int, h: int, indices: bytes, plte: bytes, trns: bytes | None 
 
 
 def masked_sprite(w: int, h: int, key: int, opaque: int = 3, border: int = 2) -> bytes:
-    """`border` columns of `key` on each side, `opaque` in between, `h` identical rows -- a run of
-    `w - 2 * border` on every row, same shape as tools/hd_portrait_pack's own test helper."""
-    row = bytes([key] * border + [opaque] * (w - 2 * border) + [key] * border)
+    """`border` columns of `key` on each side, colours counting up from `opaque` in between (the
+    overlay makes no probe of a run of one colour), `h` identical rows -- a run of `w - 2 * border`
+    on every row."""
+    inside = [10 + (opaque * 16 + x) % 200 for x in range(w - 2 * border)]
+    row = bytes([key] * border + [v if v != key else v + 1 for v in inside] + [key] * border)
     return row * h
 
 

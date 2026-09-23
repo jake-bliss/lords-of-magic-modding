@@ -16,10 +16,14 @@ What the overlay needs of a frame (2026-09-23, measured over the captures in the
   its sprite flipped left to right. A front unicorn matched 85.5% flipped and under 30% as stored.
 - A frame identical to one already packed -- the same pixels, the same transparency -- is packed
   once: 15,648 of 50,713 frames were repeats, 10,100 of them within their own sprite. The first
-  keeps its record; the matcher finds it wherever either was drawn.
+  keeps its record, MIRROR if any copy is (a `units\\` frame can repeat a building's that sorts
+  first: Claude review, 2026-09-23); the matcher finds it wherever either was drawn.
+- A frame the DLL could make no probe for -- every 8-pixel run of too few colours -- could never
+  be found, and is left out.
 
 Frames are exported, prepared and rendered under WORK (gitignored), keyed by the archive's content
-and the member path, and every step resumes: a rerun redoes only what is missing. Rendering goes
+and the member path -- every step, so a name that resolves to another member is never given the
+first one's upscale -- and every step resumes: a rerun redoes only what is missing. Rendering goes
 in batches, so an interrupted three-hour run loses one batch, not the lot.
 """
 from __future__ import annotations
@@ -51,8 +55,9 @@ PREP_BACKGROUND = "#202228"      # sprite_originals: a neutral dark grey bleeds 
 class Frame:
     index: int
     raw: pathlib.Path            # the export, exactly as the archive stores it
-    prepped: pathlib.Path        # what the upscaler is given
+    prepped: pathlib.Path        # what the upscaler is given; its stem keys the render too
     record: str                  # the pack record's name
+    mirror: bool                 # searched for flipped too: its sprite's, or a repeat's that is
 
 
 @dataclasses.dataclass
@@ -62,6 +67,10 @@ class Sprite:
     option: str
     mirror: bool
     frames: list[Frame]
+
+
+def member_key(member: str) -> str:
+    return hashlib.sha256(member.lower().encode()).hexdigest()[:12]
 
 
 def record_name(name: str, index: int) -> str:
@@ -126,9 +135,9 @@ def plan(archive: pathlib.Path, viewer: pathlib.Path, listfile: pathlib.Path,
     checked and prepared, repeats dropped. `resolved` is name -> (member, frame count), as
     `imp_members.resolve_members` gives it."""
     skipped: list[str] = []
-    counts = {"frames": 0, "ineligible": 0, "repeats": 0, "unreadable": 0}
+    counts = {"frames": 0, "ineligible": 0, "repeats": 0, "unreadable": 0, "no_probe": 0}
     sprites: list[Sprite] = []
-    seen: dict[bytes, str] = {}
+    seen: dict[bytes, Frame] = {}
     root = work / fingerprint
 
     todo = []
@@ -142,7 +151,7 @@ def plan(archive: pathlib.Path, viewer: pathlib.Path, listfile: pathlib.Path,
         if len(record_name(name, frames - 1)) > MAX_RECORD_NAME_LEN:
             skipped.append(f"{name}: record names would pass the DLL's {MAX_RECORD_NAME_LEN} characters")
             continue
-        folder = root / "raw" / f"{hashlib.sha256(member.lower().encode()).hexdigest()[:12]}__{name}"
+        folder = root / "raw" / f"{member_key(member)}__{name}"
         folder.mkdir(parents=True, exist_ok=True)
         todo.append((name, member, frames, choice, folder))
 
@@ -179,13 +188,18 @@ def plan(archive: pathlib.Path, viewer: pathlib.Path, listfile: pathlib.Path,
             except SystemExit:
                 counts["ineligible"] += 1
                 continue
+            if not pack.masked_probe_slices(png.width, png.height, indices, key, pad_palette(png.palette())):
+                counts["no_probe"] += 1
+                continue
             identity = frame_identity(png, key)
             if identity in seen:
                 counts["repeats"] += 1
+                seen[identity].mirror |= sprite.mirror
                 continue
-            seen[identity] = record_name(name, i)
-            prepped = prep_dir / f"{name}__{i:03d}.png"
-            sprite.frames.append(Frame(i, raw, prepped, record_name(name, i)))
+            prepped = prep_dir / f"{member_key(member)}__{name}__{i:03d}.png"
+            frame = Frame(i, raw, prepped, record_name(name, i), sprite.mirror)
+            seen[identity] = frame
+            sprite.frames.append(frame)
             if not prepped.exists():
                 to_prepare.append((raw, prepped))
         if sprite.frames:
@@ -224,9 +238,9 @@ def records(sprites: list[Sprite], work: pathlib.Path, fingerprint: str, load_hd
         if group > pack.MAX_GROUP:
             skipped.append(f"{sprite.name}: more than {pack.MAX_GROUP} animated sprites")
             continue
-        flags = pack.FLAG_MASKED | (pack.FLAG_MIRROR if sprite.mirror else 0)
         packed = 0
         for frame in sprite.frames:
+            flags = pack.FLAG_MASKED | (pack.FLAG_MIRROR if frame.mirror else 0)
             render = work / fingerprint / "render" / sprite.option / f"{frame.prepped.stem}.png"
             if not render.exists():
                 skipped.append(f"{frame.record}: {sprite.option} render is missing")
