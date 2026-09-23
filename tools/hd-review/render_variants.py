@@ -37,6 +37,14 @@ import lbm_png  # noqa: E402
 GROUPS = {                       # group -> directory in pic.mpq, and the size every member has
     "portrait": ("portrait", (70, 67)),
     "building": ("lbm/building", None),
+    # Static screens, 2026-09-22. Most are 640x480: the overlay's 512-pixel upscale cap must rise
+    # before these can ship, but review does not wait for it. Left out: fonts (glyph sheets),
+    # til (map terrain, its own tier), gs/edit (the map editor), palette (swatches).
+    "keep": ("keeps", None),
+    "screen": ("lbm", None),
+    "panel": ("lbm/panels", None),
+    "sky": ("lbm/skies", None),
+    "library": ("library", None),
 }
 def find_dir(root: pathlib.Path, rel: str) -> pathlib.Path | None:
     """pic.mpq spells directories in both cases (PORTRAIT\\ and portrait\\)."""
@@ -88,9 +96,12 @@ def main() -> int:
     keys = write_originals(args.src, args.out)
     print(f"{len(keys)} images", flush=True)
     inputs = {k: args.out / "original" / f"{k}.png" for k in keys}
+    # One model run per option and group, so an interrupted run keeps every finished group.
     for option in args.only or hd_upscale.OPTIONS:
-        n = hd_upscale.render(option, inputs, args.out / option, args.esrgan, args.models)
-        print(f"{option}: {n} rendered", flush=True)
+        for group in GROUPS:
+            batch = {k: p for k, p in inputs.items() if k.split("__", 1)[0] == group}
+            n = hd_upscale.render(option, batch, args.out / option, args.esrgan, args.models)
+            print(f"{option} {group}: {n} rendered", flush=True)
     return 0
 
 
