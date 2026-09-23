@@ -23,7 +23,9 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 CHOICES = ROOT / "release" / "hd-overlay" / "upscale-choices.json"
 OPTIONS = ["ultrasharp", "ultrasharp-tta", "anime2x", "anime4x"]
-VALID = set(OPTIONS) | {"original"}
+# "approved": the original palette pipeline (despeckle, UltraSharp, remap to the image's own 256
+# colours) -- kept for character portraits, where it was reviewed and approved on 2026-09-22.
+VALID = set(OPTIONS) | {"original", "approved"}
 
 
 def load_choices() -> dict[str, str]:
