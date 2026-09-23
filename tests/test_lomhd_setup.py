@@ -202,6 +202,33 @@ class InstallUninstall(unittest.TestCase):
         self.assertEqual(self.dll(), ORIGINAL)
         self.assertEqual(sorted(p.name for p in self.game.iterdir()), ["ddraw.dll"])
 
+    def test_the_ddraw_ini_cnc_ddraw_creates_is_set_aside_never_deleted(self) -> None:
+        """Windows Steam installs ship no ddraw.dll or ddraw.ini; cnc-ddraw writes an ini on its
+        first run, which the player may then tune. Uninstall moves it out of the game's way and
+        keeps the bytes. (Codex review: deleting it could destroy a player's settings.)"""
+        setup.install(self.game, PACK, self.record)
+        (self.game / "ddraw.ini").write_text("[ddraw]\nrenderer=auto\nmaxfps=144\n")
+        setup.install(self.game, PACK, self.record)                          # a re-run keeps had_ini
+        setup.uninstall(self.game)
+        self.assertEqual(sorted(p.name for p in self.game.iterdir()), ["ddraw.ini.lomhd-saved"])
+        self.assertEqual((self.game / "ddraw.ini.lomhd-saved").read_text(),
+                         "[ddraw]\nrenderer=auto\nmaxfps=144\n")
+
+    def test_an_earlier_set_aside_ini_is_not_overwritten(self) -> None:
+        (self.game / "ddraw.ini.lomhd-saved").write_text("older")
+        setup.install(self.game, PACK, self.record)
+        (self.game / "ddraw.ini").write_text("newer")
+        setup.uninstall(self.game)
+        self.assertEqual((self.game / "ddraw.ini.lomhd-saved").read_text(), "older")
+        self.assertEqual((self.game / "ddraw.ini.lomhd-saved2").read_text(), "newer")
+
+    def test_a_players_own_ddraw_ini_is_kept(self) -> None:
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        (self.game / "ddraw.ini").write_text("[ddraw]\nrenderer=opengl\n")
+        setup.install(self.game, PACK, self.record)
+        setup.uninstall(self.game)
+        self.assertEqual((self.game / "ddraw.ini").read_text(), "[ddraw]\nrenderer=opengl\n")
+
 
 if __name__ == "__main__":
     unittest.main()

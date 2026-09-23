@@ -313,6 +313,9 @@ def install(game: pathlib.Path, pack: bytes, record: dict) -> None:
         "had_ddraw": had,
         "backup_sha256": backup_sha,
         "pack_sha256": hashlib.sha256(pack).hexdigest(),
+        # cnc-ddraw writes a default ddraw.ini on its first run when there is none -- the case on a
+        # Windows Steam install, which ships no ddraw.dll at all. Uninstall removes it only then.
+        "had_ini": previous.get("had_ini", (game / "ddraw.ini").exists()),
     }, indent=2).encode() + b"\n")
     write_atomically(game / PACK_NAME, pack)
     write_atomically(dll, (HERE / "ddraw.dll").read_bytes())
@@ -345,11 +348,25 @@ def uninstall(game: pathlib.Path) -> None:
 
     if had and file_hash(backup) == backup_sha:
         backup.unlink()
+    # Set aside, never deleted: cnc-ddraw wrote it, but the player may have tuned it since, and a
+    # file we cannot prove unmodified is not ours to destroy. The game ignores the renamed copy.
+    # (Codex review of 9863bf9: deleting it could lose a player's settings.)
+    ini_saved = None
+    if record.get("had_ini") is False and (game / "ddraw.ini").is_file():
+        ini_saved = game / "ddraw.ini.lomhd-saved"
+        n = 1
+        while ini_saved.exists():
+            n += 1
+            ini_saved = game / f"ddraw.ini.lomhd-saved{n}"
+        os.replace(game / "ddraw.ini", ini_saved)
     for name in (PACK_NAME, PACK_NAME + ".lomhd-part", "ddraw.dll.lomhd-part",
                  RECORD_NAME + ".lomhd-part", "lomhd.log", RECORD_NAME):
         if (game / name).exists():
             (game / name).unlink()
     say(f"Uninstalled. ddraw.dll is {'your original again' if had else 'removed'}.")
+    if ini_saved:
+        say(f"cnc-ddraw's settings file was set aside as {ini_saved.name} (the game ignores it; "
+            "delete it if you like).")
 
 
 def main() -> int:

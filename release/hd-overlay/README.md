@@ -59,7 +59,13 @@ the game folder.
   or it is one the game builds on the fly. The original is shown; nothing breaks.
 - **No portraits are sharp at all:** check `lomhd.log` in the game folder. It says whether the pack
   loaded and, if the overlay switched itself off, why.
-- The overlay needs cnc-ddraw's **OpenGL** renderer (the default). With the Direct3D 9 or GDI
-  renderer the game runs normally with the original portraits.
+- The overlay needs cnc-ddraw's **OpenGL** renderer. With `renderer=auto` (the default) the overlay
+  selects it; if you have set `direct3d9` or `gdi` in `ddraw.ini` yourself, that is respected and
+  the game runs normally with the original portraits.
+- **On Windows the Steam version ships without cnc-ddraw**, so installing this also brings in
+  cnc-ddraw itself (windowing, scaling, and a `ddraw.ini` it creates on first run). Uninstalling
+  removes cnc-ddraw, so the game uses Windows' own DirectDraw again, and renames that `ddraw.ini`
+  to `ddraw.ini.lomhd-saved` rather than deleting settings you may have changed. The game ignores
+  it; delete it if you like.
 
 See `NOTICES.md` for licences.
