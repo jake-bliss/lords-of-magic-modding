@@ -20,7 +20,9 @@ disk is not already that (renders are usually already exact -- `hd_upscale.rende
 but a stale render from an older export size should not silently ship a mismatched picture).
 
 Frame exports are cached under `artifacts/hd-review/_sprite_pack_frames/` (gitignored) and reused
-across runs; delete that folder to force a re-export.
+across runs, keyed by a content hash of the archive as well as the sprite's name -- two different
+archives (or two builds of the same one) never share a cached export, even if a stale one is still
+sitting under the same path. Delete the folder to force every export to redo anyway.
 
 Combined pack, one command, mirroring `hd_portrait_pack.py`'s own CLI for the picture half:
 
@@ -30,6 +32,7 @@ Combined pack, one command, mirroring `hd_portrait_pack.py`'s own CLI for the pi
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import subprocess
@@ -113,50 +116,80 @@ def load_hd_rgba(render: pathlib.Path, w: int, h: int) -> tuple[int, int, bytes]
         return target_w, target_h, load_rgba(resized)
 
 
-def sprite_names(listfile: pathlib.Path) -> list[tuple[str, str]]:
-    """(name, member) for every distinct `.imp` stem the listfile names -- two spellings of one
-    member (case differences) collapse to a single entry, same dedup rule as
-    `sprite_originals.py`. Which spelling of a tied name survives is not guaranteed."""
-    members = sorted({m.strip() for m in listfile.read_text().splitlines()
-                      if m.strip().lower().endswith(".imp")}, key=str.lower)
-    seen: set[str] = set()
-    out = []
-    for member in members:
+def candidate_members(listfile: pathlib.Path) -> dict[str, list[str]]:
+    """name -> every DISTINCT (case-insensitively) member path the listfile gives that basename,
+    in sorted order. Two spellings of one path (folder or extension case) collapse to a single
+    candidate here; two paths that only share a basename -- different folders -- do not, because
+    only trying each one against a specific archive can tell whether they are the same sprite
+    or two unrelated ones (see `build_sprite_records`). A listfile aggregates paths recovered
+    across several game profiles, so a name resolving to more than one *present* candidate is a
+    real possibility, not just a theoretical one -- `aura\\agx06b.imp` and `imp\\agx06b.imp` are
+    both real recovered spellings."""
+    seen_paths: dict[str, str] = {}
+    for line in listfile.read_text().splitlines():
+        member = line.strip()
+        if member.lower().endswith(".imp"):
+            seen_paths.setdefault(member.lower(), member)
+    by_name: dict[str, list[str]] = {}
+    for member in sorted(seen_paths.values(), key=str.lower):
         name = member.split("\\")[-1].rsplit(".", 1)[0].lower()
-        if name in seen:
-            continue
-        seen.add(name)
-        out.append((name, member))
-    return out
+        by_name.setdefault(name, []).append(member)
+    return by_name
+
+
+def archive_fingerprint(archive: pathlib.Path) -> str:
+    """A short, content-based key for `archive`, so a cached frame export can never leak into a
+    different archive's pack -- or a rebuilt archive that reused the same path -- even though the
+    cache folder is reused across runs. Hashed rather than sized/dated: a rebuilt archive (as in a
+    test, or a re-exported profile) can keep both its path and its size."""
+    digest = hashlib.sha256()
+    with archive.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()[:16]
 
 
 def build_sprite_records(archive: pathlib.Path, viewer: pathlib.Path, listfile: pathlib.Path,
                          renders: pathlib.Path, choices: dict) -> tuple[list, int, list[str]]:
     """(records, considered, skipped) -- every masked record this archive's static sprites can
     give, with what was left out and why."""
-    names = sprite_names(listfile)
-    if not viewer_decodes_bgr(viewer, archive, [member for _, member in names], listfile):
+    grouped = candidate_members(listfile)
+    all_paths = [member for candidates in grouped.values() for member in candidates]
+    if not viewer_decodes_bgr(viewer, archive, all_paths, listfile):
         raise SystemExit(f"{viewer} predates the palette fix and would export red and green "
                          "swapped: rebuild it (cargo build --release in spikes/asset-viewer)")
     WORK.mkdir(parents=True, exist_ok=True)
+    fingerprint = archive_fingerprint(archive)
 
     records, skipped = [], []
-    for name, member in names:
+    for name, candidates in grouped.items():
         record_name = f"sprite__{name}"
         if len(record_name) > MAX_RECORD_NAME_LEN:
             skipped.append(f"{name}: record name {record_name!r} is longer than the DLL's "
                            f"{MAX_RECORD_NAME_LEN}-character limit")
             continue
 
-        frames = frame_count(viewer, archive, member, listfile)
-        if frames is None:
+        # Try every spelling this name has anywhere in the listfile: which of them, if any, this
+        # PARTICULAR archive actually holds is not known until now. Dropping to one candidate
+        # before this point (as an earlier version did) can silently keep a spelling absent from
+        # this archive while a present one under a different folder is never even tried.
+        present = [(member, frame_count(viewer, archive, member, listfile)) for member in candidates]
+        present = [(member, frames) for member, frames in present if frames is not None]
+        if not present:
             skipped.append(f"{name}: not in this archive")
             continue
+        if len(present) > 1:
+            paths = ", ".join(member for member, _ in present)
+            skipped.append(f"{name}: {len(present)} different members share this name in this "
+                           f"archive ({paths}); ambiguous, left out")
+            continue
+        member, frames = present[0]
+
         if frames != 1:
             skipped.append(f"{name}: {frames} frames, not a static sprite")
             continue
 
-        raw = WORK / f"{name}.png"
+        raw = WORK / f"{fingerprint}__{name}.png"
         if not raw.exists():
             result = subprocess.run([str(viewer), "--export-imp-frame", str(archive), member, "0",
                                      str(raw), "--listfile", str(listfile)],
@@ -183,6 +216,17 @@ def build_sprite_records(archive: pathlib.Path, viewer: pathlib.Path, listfile: 
                            "enough run of opaque pixels for the matcher")
             continue
 
+        # The upscale is always exactly (2w, 2h) (`load_hd_rgba` forces it), so the DLL's own
+        # limit on the upscale's side -- MAX_UPSCALE_SIDE -- can be checked here, before the render
+        # is even looked up: a narrow-but-tall or wide-but-short sprite can pass the eligibility
+        # rule above (which only bounds w*h) and still upscale past what the DLL will load, and a
+        # SINGLE oversized record makes the DLL refuse the WHOLE pack, not just that one image.
+        try:
+            pack.check_reader_limits(name, w, h, w * 2, h * 2, masked=True)
+        except SystemExit as error:
+            skipped.append(str(error))
+            continue
+
         choice = choices.get(record_name)
         if choice is None or choice not in hd_upscale.OPTIONS:
             skipped.append(f"{name}: no usable upscale pick ({choice!r})")
@@ -202,7 +246,7 @@ def build_sprite_records(archive: pathlib.Path, viewer: pathlib.Path, listfile: 
             continue
 
         records.append(record)
-    return records, len(names), skipped
+    return records, len(grouped), skipped
 
 
 def main() -> int:

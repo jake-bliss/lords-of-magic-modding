@@ -114,17 +114,25 @@ class PadPaletteTest(unittest.TestCase):
         self.assertEqual(sprite_pack.pad_palette(PLTE), [tuple(PLTE[i:i + 3]) for i in range(0, 768, 3)])
 
 
-class SpriteNamesTest(unittest.TestCase):
-    def test_names_are_deduplicated_case_insensitively(self) -> None:
-        """Two spellings of one member collapse to a single (name, member) pair -- which spelling
-        survives is not asserted, same as `sprite_originals.py`'s own dedup (`sorted(set(...))`
-        gives no ordering guarantee between case-insensitive ties)."""
+class CandidateMembersTest(unittest.TestCase):
+    def test_case_variant_spellings_of_one_path_collapse_to_one_candidate(self) -> None:
+        """`unit\\Tree.imp` and `unit\\TREE.imp` name the same archive entry -- one candidate, not
+        two -- but which spelling survives is not asserted."""
         with tempfile.TemporaryDirectory() as tmp:
             listfile = pathlib.Path(tmp) / "list.txt"
             listfile.write_text("unit\\Tree.imp\nunit\\TREE.imp\nunit\\Goblin.imp\nunit\\not-a-sprite.pbm\n")
-            result = sprite_pack.sprite_names(listfile)
-            self.assertEqual(sorted(name for name, _ in result), ["goblin", "tree"])
-            self.assertEqual(len(result), 2, "one spelling of tree.imp, not both")
+            grouped = sprite_pack.candidate_members(listfile)
+            self.assertEqual(set(grouped), {"tree", "goblin"})
+            self.assertEqual(len(grouped["tree"]), 1, "one spelling of unit\\tree.imp, not both")
+
+    def test_different_folders_sharing_a_basename_are_kept_as_separate_candidates(self) -> None:
+        """`aura\\agx06b.imp` and `imp\\agx06b.imp` are different paths that only share a
+        basename -- both must be tried against a specific archive, not collapsed here."""
+        with tempfile.TemporaryDirectory() as tmp:
+            listfile = pathlib.Path(tmp) / "list.txt"
+            listfile.write_text("aura\\agx06b.imp\nimp\\agx06b.imp\n")
+            grouped = sprite_pack.candidate_members(listfile)
+            self.assertEqual(grouped, {"agx06b": ["aura\\agx06b.imp", "imp\\agx06b.imp"]})
 
 
 class FrameCountTest(unittest.TestCase):
@@ -181,11 +189,14 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         sprite_pack.subprocess.run = viewer.run
         return viewer
 
-    def eligible_sprite_png(self, key: int = 5) -> bytes:
-        indices = masked_sprite(20, 6, key)
+    def masked_png(self, w: int, h: int, key: int = 5, opaque: int = 3) -> bytes:
+        indices = masked_sprite(w, h, key, opaque=opaque)
         trns = bytearray(b"\xff" * 256)
         trns[key] = 0
-        return indexed_png(20, 6, indices, PLTE, bytes(trns))
+        return indexed_png(w, h, indices, PLTE, bytes(trns))
+
+    def eligible_sprite_png(self, key: int = 5) -> bytes:
+        return self.masked_png(20, 6, key)
 
     def write_listfile(self, *members: str) -> None:
         self.listfile.write_text("\n".join(f"unit\\{m}" for m in members) + "\n")
@@ -295,13 +306,97 @@ class BuildSpriteRecordsTest(unittest.TestCase):
     def test_an_export_already_on_disk_is_reused_not_re_exported(self) -> None:
         self.write_listfile("tree.imp")
         sprite_pack.WORK.mkdir(parents=True, exist_ok=True)
-        (sprite_pack.WORK / "tree.png").write_bytes(self.eligible_sprite_png())
+        fingerprint = sprite_pack.archive_fingerprint(self.archive)
+        (sprite_pack.WORK / f"{fingerprint}__tree.png").write_bytes(self.eligible_sprite_png())
         viewer = self.install_viewer({"unit\\tree.imp": describe(1)}, {})   # no export entry needed
         (self.renders / "anime2x").mkdir()
         (self.renders / "anime2x" / "sprite__tree.png").write_bytes(b"stand-in")
         records, considered, skipped = self.run_build({"sprite__tree": "anime2x"})
         self.assertEqual(len(records), 1)
         self.assertEqual(viewer.export_calls, [], "a cached frame export must not be re-exported")
+
+    # --- the upscale side must fit the DLL's own limit, not just the eligibility rule -----------
+
+    def test_a_sprite_upscale_at_exactly_the_max_side_is_packed(self) -> None:
+        """640 wide, 16 tall: eligible (w*h well under the pixel cap), and 2*640 = 1280 is exactly
+        MAX_UPSCALE_SIDE -- the DLL's own boundary, not the eligibility rule's."""
+        self.write_listfile("wide.imp")
+        png = self.masked_png(640, 16)
+        self.install_viewer({"unit\\wide.imp": describe(1)}, {"unit\\wide.imp": png})
+        (self.renders / "anime2x").mkdir()
+        (self.renders / "anime2x" / "sprite__wide.png").write_bytes(b"stand-in")
+        records, considered, skipped = self.run_build({"sprite__wide": "anime2x"})
+        self.assertEqual(skipped, [])
+        self.assertEqual(len(records), 1)
+
+    def test_a_sprite_upscale_one_pixel_over_the_max_side_is_skipped_not_packed(self) -> None:
+        """641 wide passes the same eligibility rule as 640 does (w*h is still tiny), but its
+        upscale is 1282 wide -- over MAX_UPSCALE_SIDE -- which the DLL refuses the WHOLE pack for,
+        not just this one record, if it is ever allowed through."""
+        self.write_listfile("toowide.imp")
+        png = self.masked_png(641, 16)
+        self.install_viewer({"unit\\toowide.imp": describe(1)}, {"unit\\toowide.imp": png})
+        (self.renders / "anime2x").mkdir()
+        (self.renders / "anime2x" / "sprite__toowide.png").write_bytes(b"stand-in")
+        records, considered, skipped = self.run_build({"sprite__toowide": "anime2x"})
+        self.assertEqual(records, [])
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("exceeds", skipped[0])
+
+    # --- the frame-export cache must not mix pixels from two different archives ------------------
+
+    def test_two_different_archives_do_not_share_a_cached_frame_export(self) -> None:
+        self.write_listfile("tree.imp")
+        archive_a = self.root / "a.mpq"; archive_a.write_bytes(b"archive-a-bytes")
+        archive_b = self.root / "b.mpq"; archive_b.write_bytes(b"a-different-archive-entirely")
+        (self.renders / "anime2x").mkdir()
+        (self.renders / "anime2x" / "sprite__tree.png").write_bytes(b"stand-in")
+
+        self.install_viewer({"unit\\tree.imp": describe(1)},
+                            {"unit\\tree.imp": self.masked_png(20, 6, opaque=3)})
+        records_a, _, skipped_a = sprite_pack.build_sprite_records(
+            archive_a, pathlib.Path("viewer"), self.listfile, self.renders, {"sprite__tree": "anime2x"})
+        self.assertEqual(skipped_a, [])
+
+        self.install_viewer({"unit\\tree.imp": describe(1)},
+                            {"unit\\tree.imp": self.masked_png(20, 6, opaque=9)})
+        records_b, _, skipped_b = sprite_pack.build_sprite_records(
+            archive_b, pathlib.Path("viewer"), self.listfile, self.renders, {"sprite__tree": "anime2x"})
+        self.assertEqual(skipped_b, [])
+
+        out_a, out_b = self.root / "a.pack", self.root / "b.pack"
+        pack.write_records(out_a, records_a)
+        pack.write_records(out_b, records_b)
+        [(_, small_a, *_)] = pack.read(out_a.read_bytes())
+        [(_, small_b, *_)] = pack.read(out_b.read_bytes())
+        self.assertNotEqual(bytes(small_a[3]), bytes(small_b[3]),
+                            "each archive's own pixels, not whichever was cached first")
+
+    # --- membership must be resolved before names are deduplicated by basename -------------------
+
+    def test_a_present_spelling_is_found_even_when_a_different_spelling_of_the_name_is_not(self) -> None:
+        """`aura\\agx06b.imp` and `imp\\agx06b.imp` both come from the recovered listfile; this
+        archive only has the second. Deduplicating by basename before checking membership can pick
+        the absent spelling and report the whole name as missing."""
+        self.listfile.write_text("aura\\agx06b.imp\nimp\\agx06b.imp\n")
+        self.install_viewer({"imp\\agx06b.imp": describe(1)},
+                            {"imp\\agx06b.imp": self.eligible_sprite_png()})
+        (self.renders / "anime2x").mkdir()
+        (self.renders / "anime2x" / "sprite__agx06b.png").write_bytes(b"stand-in")
+        records, considered, skipped = self.run_build({"sprite__agx06b": "anime2x"})
+        self.assertEqual(skipped, [])
+        self.assertEqual(len(records), 1)
+
+    def test_two_different_present_members_sharing_a_name_are_reported_as_a_collision(self) -> None:
+        """If BOTH spellings are present in this archive, they may be two unrelated sprites that
+        happen to share a basename -- picking one silently would be a guess, not a resolution."""
+        self.listfile.write_text("aura\\agx06b.imp\nimp\\agx06b.imp\n")
+        self.install_viewer({"aura\\agx06b.imp": describe(1), "imp\\agx06b.imp": describe(1)}, {})
+        records, considered, skipped = self.run_build({"sprite__agx06b": "anime2x"})
+        self.assertEqual(records, [])
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("agx06b:", skipped[0])
+        self.assertIn("ambiguous", skipped[0])
 
 
 if __name__ == "__main__":

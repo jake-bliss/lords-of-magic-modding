@@ -72,11 +72,14 @@ IMAGE_SUFFIXES = {".lbm", ".png"}
 FLAG_MASKED = 0x01          # the record has a transparent colour key and a shadow index to skip
 VALID_FLAGS = FLAG_MASKED
 
-# The DLL's probe table is LOMHD_TABLE entries, and a pack fails to load past half of it. A
-# picture costs 3 probe rows x 1 column band x 2 colour rounding rules; a sprite's own
-# transparency can hide any given row or band, so the DLL widens its search for one to up to 4
-# rows x 3 bands x 2 rules. The writer must refuse a pack that would cost the DLL more table
-# entries than it has, not let the game discover that at load time.
+# The DLL's probe table is LOMHD_TABLE (65,536) entries, and a pack fails to load past half of it
+# (src/lomhd_match.c: `probes += 2 * bands * nrows`, checked per image before it is inserted). A
+# picture always costs exactly 2 rules x 1 band x 3 rows = 6. A sprite's own transparency can hide
+# any given row or band, so the DLL widens a sprite's search to 3 bands and up to 4 rows -- but
+# `nrows` there is `min(its own eligible row count, 4)`, so a sprite actually costs anywhere from
+# 2*3*3=18 (the fewest eligible rows this module ever packs, MASKED_MIN_OPAQUE_ROWS) up to 24.
+# MASKED_PROBE_SLOTS charges every sprite the worst case (24): the writer's total can only be an
+# OVER-estimate of the DLL's, so this refuses everything the DLL would and nothing it would not.
 TABLE_SLOTS = 65536 // 2
 PICTURE_PROBE_SLOTS = 6
 MASKED_PROBE_SLOTS = 24
