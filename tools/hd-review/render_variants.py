@@ -38,13 +38,16 @@ GROUPS = {                       # group -> directory in pic.mpq, and the size e
     "portrait": ("portrait", (70, 67)),
     "building": ("lbm/building", None),
     # Static screens, 2026-09-22. Most are 640x480: the overlay's 512-pixel upscale cap must rise
-    # before these can ship, but review does not wait for it. Left out: fonts (glyph sheets),
-    # til (map terrain, its own tier), gs/edit (the map editor), palette (swatches).
+    # before these can ship, but review does not wait for it. Left out: fonts (glyph sheets) and
+    # gs/edit (the map editor). Terrain sheets and icons were added the same night; sprites come
+    # from tools/hd-review/sprite_originals.py, which writes its own originals.
     "keep": ("keeps", None),
     "screen": ("lbm", None),
     "panel": ("lbm/panels", None),
     "sky": ("lbm/skies", None),
     "library": ("library", None),
+    "terrain": ("til", None),
+    "icon": ("palette", None),
 }
 def find_dir(root: pathlib.Path, rel: str) -> pathlib.Path | None:
     """pic.mpq spells directories in both cases (PORTRAIT\\ and portrait\\)."""
@@ -93,12 +96,14 @@ def main() -> int:
     parser.add_argument("--only", choices=sorted(hd_upscale.OPTIONS), action="append")
     args = parser.parse_args()
 
-    keys = write_originals(args.src, args.out)
-    print(f"{len(keys)} images", flush=True)
-    inputs = {k: args.out / "original" / f"{k}.png" for k in keys}
+    write_originals(args.src, args.out)
+    # Every original on disk, including ones another tool wrote (sprites).
+    inputs = {p.stem: p for p in sorted((args.out / "original").glob("*.png"))}
+    groups = list(dict.fromkeys([*GROUPS, *(k.split("__", 1)[0] for k in inputs)]))
+    print(f"{len(inputs)} images in {len(groups)} groups", flush=True)
     # One model run per option and group, so an interrupted run keeps every finished group.
     for option in args.only or hd_upscale.OPTIONS:
-        for group in GROUPS:
+        for group in groups:
             batch = {k: p for k, p in inputs.items() if k.split("__", 1)[0] == group}
             n = hd_upscale.render(option, batch, args.out / option, args.esrgan, args.models)
             print(f"{option} {group}: {n} rendered", flush=True)
