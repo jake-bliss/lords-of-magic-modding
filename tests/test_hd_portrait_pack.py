@@ -156,6 +156,12 @@ class Pack(unittest.TestCase):
         self.assertEqual(zlib.decompress(data[pos + 8:pos + 8 + zlen]), rgb_of(up))
         self.assertEqual(pos + 8 + zlen, len(data))
 
+    def test_an_empty_pack_is_refused(self) -> None:
+        """The overlay refuses a count of zero as corrupt; write nothing rather than that."""
+        write_lbm(self.small / "aipotm.lbm", W, H, 1)
+        with self.assertRaises(SystemExit):
+            pack.build(self.small, [self.large])
+
     def test_trailing_bytes_are_an_error(self) -> None:
         write_lbm(self.small / "a.lbm", W, H, 1)
         write_lbm(self.large / "a.lbm", W * 2, H * 2, 1)

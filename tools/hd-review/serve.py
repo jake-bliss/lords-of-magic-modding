@@ -17,6 +17,8 @@ import http.server
 import json
 import os
 import pathlib
+import tempfile
+import threading
 import urllib.parse
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -26,6 +28,7 @@ OPTIONS = ["ultrasharp", "ultrasharp-tta", "anime2x", "anime4x"]
 # "approved": the original palette pipeline (despeckle, UltraSharp, remap to the image's own 256
 # colours) -- kept for character portraits, where it was reviewed and approved on 2026-09-22.
 VALID = set(OPTIONS) | {"original", "approved"}
+SAVING = threading.Lock()        # the server is threaded; two quick picks must not interleave
 
 
 def load_choices() -> dict[str, str]:
@@ -38,8 +41,9 @@ def load_choices() -> dict[str, str]:
 def save_choices(choices: dict[str, str]) -> None:
     body = json.dumps({"version": 1, "options": OPTIONS, "choices": dict(sorted(choices.items()))},
                       indent=1) + "\n"
-    part = CHOICES.with_name(CHOICES.name + ".part")
-    part.write_text(body)
+    fd, part = tempfile.mkstemp(dir=CHOICES.parent, prefix=CHOICES.name, suffix=".part")
+    with os.fdopen(fd, "w") as f:
+        f.write(body)
     os.replace(part, CHOICES)
 
 
@@ -72,29 +76,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send(200, json.dumps(state).encode(), "application/json")
         if path.startswith("/img/"):
             rel = pathlib.PurePosixPath(urllib.parse.unquote(path[5:]))
-            if len(rel.parts) != 2 or rel.parts[0] not in VALID | {"original"} or rel.suffix != ".png":
+            if (len(rel.parts) != 2 or rel.parts[0] not in VALID or rel.suffix != ".png"
+                    or "\\" in rel.parts[1] or rel.parts[1].startswith(".")):
                 return self.send(404, b"", "text/plain")
-            file = self.renders / rel.parts[0] / rel.parts[1]
-            if file.is_file():
+            file = (self.renders / rel.parts[0] / rel.parts[1]).resolve()
+            if file.is_relative_to(self.renders) and file.is_file():
                 return self.send(200, file.read_bytes(), "image/png")
         self.send(404, b"not found", "text/plain")
 
     def do_POST(self) -> None:
         if urllib.parse.urlparse(self.path).path != "/api/choose":
             return self.send(404, b"", "text/plain")
+        # Only this page may pick. Another site open in the browser can post to localhost; a
+        # JSON content type forces a CORS preflight it cannot pass, and the Origin must be ours.
+        origin = self.headers.get("Origin")
+        if (self.headers.get("Content-Type", "").split(";")[0] != "application/json"
+                or origin not in (None, *(f"http://{host}:{self.server.server_port}"
+                                          for host in ("127.0.0.1", "localhost")))):
+            return self.send(403, b"forbidden", "text/plain")
+        known = {png.stem for png in (self.renders / "original").glob("*.png")}
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
             keys, choice = body["keys"], body["choice"]
-            assert isinstance(keys, list) and (choice in VALID or choice is None)
-        except (ValueError, KeyError, AssertionError):
+            assert isinstance(keys, list) and all(isinstance(k, str) and k in known for k in keys)
+            assert choice in VALID or choice is None
+        except (ValueError, KeyError, TypeError, AssertionError):
             return self.send(400, b"bad request", "text/plain")
-        choices = load_choices()
-        for key in keys:
-            if choice is None:
-                choices.pop(key, None)
-            else:
-                choices[key] = choice
-        save_choices(choices)
+        with SAVING:
+            choices = load_choices()
+            for key in keys:
+                if choice is None:
+                    choices.pop(key, None)
+                else:
+                    choices[key] = choice
+            save_choices(choices)
         self.send(200, json.dumps({"picked": len(choices)}).encode(), "application/json")
 
 

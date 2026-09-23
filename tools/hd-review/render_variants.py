@@ -16,7 +16,9 @@ and the overlay draws full colour, so none of these do either:
   anime2x         realesr-animevideov3 at its native 2x
   anime4x         realesr-animevideov3 at 4x, shrunk to 2x
 
-Resumable: only images without an output are rendered. Each model runs once per batch over a
+Resumable: only images without an output are rendered. Nothing is invalidated, so point a
+different SRC_DIR (another install) at a fresh OUT_DIR: reusing one keeps the old pictures under
+shared names and lists images the new source lacks. Each model runs once per batch over a
 folder, not once per image.
 """
 from __future__ import annotations

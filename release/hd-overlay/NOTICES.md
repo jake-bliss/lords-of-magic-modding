@@ -23,7 +23,9 @@ modification adds the portrait overlay (`src/lomhd.c`, `src/lomhd_match.c`).
 **Downloaded at setup, not included:**
 
 - [Real-ESRGAN ncnn Vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) v0.2.5.0, MIT
-  licence, (c) 2021 Xintao Wang.
+  licence, (c) 2021 Xintao Wang, with the `realesr-animevideov3` models bundled in that release
+  (from [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), BSD 3-Clause licence, (c) 2021
+  Xintao Wang).
 - [4x-UltraSharp](https://openmodeldb.info/models/4x-UltraSharp) by Kim2091, **CC BY-NC-SA 4.0**
   (non-commercial, share-alike), in the ncnn conversion distributed by
   [Upscayl](https://github.com/upscayl/upscayl). The portraits made with it on your machine are for

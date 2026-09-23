@@ -167,6 +167,8 @@ def build(originals, upscaled, sources=None) -> tuple[bytes, list[str]]:
         records.append(struct.pack("<B", len(encoded)) + encoded
                        + encode_original(w, h, idx, pal) + encode_upscale(hw, hh, rgb))
 
+    if not records:
+        raise SystemExit("no images to pack; the overlay refuses an empty pack as corrupt")
     if len(records) > MAX_IMAGES:
         raise SystemExit(f"{len(records)} images; the overlay accepts at most {MAX_IMAGES}")
 

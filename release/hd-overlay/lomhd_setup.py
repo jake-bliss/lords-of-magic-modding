@@ -214,7 +214,7 @@ def extract_images(game: pathlib.Path) -> dict[str, list[str]]:
             out.unlink()
             continue
         size = GROUPS[group][1]
-        if (size and (w, h) != size) or w < hd_portrait_pack.MIN_WIDTH:
+        if (size and (w, h) != size) or not fits_the_overlay(w, h):
             out.unlink()
             continue
         found[group].append(stem)
@@ -224,6 +224,13 @@ def extract_images(game: pathlib.Path) -> dict[str, list[str]]:
     if not found["portrait"]:
         fail("no portraits found in pic.mpq -- is this Lords of Magic Special Edition?")
     return found
+
+
+def fits_the_overlay(w: int, h: int) -> bool:
+    """What the pack writer would refuse, found before 20-60 minutes of upscaling rather than
+    after: a mod install's oversized building is skipped, not a reason to install nothing."""
+    p = hd_portrait_pack
+    return w >= p.MIN_WIDTH and h >= p.MIN_HEIGHT and 2 * max(w, h) <= p.MAX_UPSCALE_SIDE
 
 
 def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.Path) -> list[pathlib.Path]:
@@ -240,9 +247,13 @@ def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.
                 choice = "ultrasharp-tta"         # the palette pipeline is sized for portraits
             plan.setdefault(choice, []).append((group, stem))
 
-    out = WORK / "upscaled"
-    if out.exists():
-        shutil.rmtree(out)                        # a stale option folder would duplicate names
+    out, pngs = WORK / "upscaled", WORK / "png"
+    for stale in (out, pngs):
+        # A stale option folder would duplicate names. A stale PNG is worse: it is another
+        # install's picture under this install's name, and the pack cannot catch it, because the
+        # originals it checks against are this run's. Found by cross-model review, 2026-09-22.
+        if stale.exists():
+            shutil.rmtree(stale)
     folders = []
     for choice, items in sorted(plan.items()):
         say(f"     {len(items):4d} with {choice}")
@@ -257,16 +268,14 @@ def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.
             folders.append(dest / "portrait")
         else:
             inputs = {}
-            pngs = WORK / "png"
             pngs.mkdir(parents=True, exist_ok=True)
             for group, stem in items:
                 png = pngs / f"{stem}.png"
-                if not png.exists():
-                    w, h, px, pal, _ = lbm_png.decode(WORK / "originals" / group / f"{stem}.lbm")
-                    ppm = png.with_suffix(".ppm")
-                    ppm.write_bytes(f"P6 {w} {h} 255\n".encode() + b"".join(bytes(pal[i]) for i in px))
-                    subprocess.run(["magick", str(ppm), str(png)], check=True)
-                    ppm.unlink()
+                w, h, px, pal, _ = lbm_png.decode(WORK / "originals" / group / f"{stem}.lbm")
+                ppm = png.with_suffix(".ppm")
+                ppm.write_bytes(f"P6 {w} {h} 255\n".encode() + b"".join(bytes(pal[i]) for i in px))
+                subprocess.run(["magick", str(ppm), str(png)], check=True)
+                ppm.unlink()
                 inputs[stem] = png
             hd_upscale.render(choice, inputs, dest, exe, models)
             folders.append(dest)

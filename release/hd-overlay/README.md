@@ -51,18 +51,18 @@ python lomhd_setup.py --uninstall
 If you installed with `--game`, uninstall with the same `--game "..."` too.
 
 This puts your original `ddraw.dll` back (it was saved as `ddraw.dll.lomhd-backup`) and removes the
-portrait pack. To turn the portraits off without uninstalling, delete `lomhd_portraits.pack` from
-the game folder.
+image pack. To turn the HD art off without uninstalling, delete `lomhd_portraits.pack` from the
+game folder (the name dates from when it held only portraits).
 
 ## If something looks wrong
 
-- **A portrait stays blurry:** it is covered or clipped at that moment (a tooltip, the screen edge),
+- **A picture stays blurry:** it is covered or clipped at that moment (a tooltip, the screen edge),
   or it is one the game builds on the fly. The original is shown; nothing breaks.
-- **No portraits are sharp at all:** check `lomhd.log` in the game folder. It says whether the pack
+- **Nothing is sharp at all:** check `lomhd.log` in the game folder. It says whether the pack
   loaded and, if the overlay switched itself off, why.
 - The overlay needs cnc-ddraw's **OpenGL** renderer. With `renderer=auto` (the default) the overlay
   selects it; if you have set `direct3d9` or `gdi` in `ddraw.ini` yourself, that is respected and
-  the game runs normally with the original portraits.
+  the game runs normally with the original art.
 - **On Windows the Steam version ships without cnc-ddraw**, so installing this also brings in
   cnc-ddraw itself (windowing, scaling, and a `ddraw.ini` it creates on first run). Uninstalling
   removes cnc-ddraw, so the game uses Windows' own DirectDraw again, and renames that `ddraw.ini`

@@ -230,5 +230,57 @@ class InstallUninstall(unittest.TestCase):
         self.assertEqual((self.game / "ddraw.ini").read_text(), "[ddraw]\nrenderer=opengl\n")
 
 
+class UpscalePlan(unittest.TestCase):
+    """upscale_all with the model stubbed: what each image is upscaled FROM."""
+
+    def setUp(self) -> None:
+        import struct
+        import lbm_png
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.work = pathlib.Path(tmp.name) / "lomhd_work"
+        for name, value in (("WORK", self.work), ("say", lambda text: None)):
+            self.addCleanup(setattr, setup, name, getattr(setup, name))
+            setattr(setup, name, value)
+        self.palette = [(i, i, i) for i in range(256)]
+        self.lbm_png, self.struct = lbm_png, struct
+        self.seen: dict[str, bytes] = {}
+
+        def render(option, inputs, dest, esrgan, models):
+            for key, png in inputs.items():
+                self.seen[key] = png.read_bytes()
+            return len(inputs)
+
+        def run(cmd, check=False):         # magick PPM -> PNG, stubbed as a copy
+            pathlib.Path(cmd[2]).write_bytes(pathlib.Path(cmd[1]).read_bytes())
+
+        for target, name, value in ((setup.hd_upscale, "render", render), (setup.subprocess, "run", run)):
+            self.addCleanup(setattr, target, name, getattr(target, name))
+            setattr(target, name, value)
+
+    def extract(self, shade: int) -> None:
+        folder = self.work / "originals" / "building"
+        folder.mkdir(parents=True, exist_ok=True)
+        header = self.struct.pack(">HHhhBBBBHBBhh", 40, 6, 0, 0, 8, 0, 1, 0, 0, 1, 1, 40, 6)
+        self.lbm_png.encode(folder / "aagtwr0a.lbm", 40, 6, bytes([shade]) * 240, self.palette,
+                            [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+
+    def test_a_second_run_upscales_this_install_not_the_last_one(self) -> None:
+        """Vanilla then GS5R3: a name both share, a different picture. The PNG cache kept the
+        vanilla picture, and the pack could not tell, since it checks against this run's art."""
+        self.extract(10)
+        setup.upscale_all({"building": ["aagtwr0a"]}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        first = self.seen.pop("aagtwr0a")
+        self.extract(200)
+        setup.upscale_all({"building": ["aagtwr0a"]}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertNotEqual(self.seen["aagtwr0a"], first)
+        self.assertIn(bytes([200, 200, 200]), self.seen["aagtwr0a"])
+
+    def test_images_the_overlay_would_refuse_are_skipped_before_upscaling(self) -> None:
+        self.assertTrue(setup.fits_the_overlay(228, 180))
+        for w, h in ((31, 67), (70, 3), (257, 67), (70, 257)):
+            self.assertFalse(setup.fits_the_overlay(w, h), (w, h))
+
+
 if __name__ == "__main__":
     unittest.main()
