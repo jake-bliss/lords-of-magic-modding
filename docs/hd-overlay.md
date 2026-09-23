@@ -103,16 +103,47 @@ worker thread owns every file operation.
 ## The pack
 
 `tools/hd_portrait_pack.py OUT --originals INSTALLED --sources MADE_FROM --upscaled DIR...` writes
-`lomhd_portraits.pack` beside `lomse.exe` (the name predates buildings). **Format 3** (`LOMHDPK3`):
-an index first (name, sizes, palette, two stream lengths per picture), then per picture zlib of its
-indices and zlib of its upscale RGB, back to back to the end of the file -- offsets are sums of
-lengths, so none can point anywhere odd. Any width from 32 and height from 4, upscale at most 1280
-a side, at most 5,461 pictures. ~870 MB with screens, so the writer streams it. Inflation in the
-overlay is **bounded** (`lodepng_zlib_decompress_bounded`): a stream that would inflate past its
-picture's size fails while inflating. An older-format pack is reported ("run lomhd_setup.py
-again"). The writer refuses what the reader would, and refuses pixel-doubled "upscales": 395 of
-the pictures in the first pack played were 2x2 repeats that changed nothing. Setup leaves out
-pictures with fewer than 16 colours: a flat picture's probes match anywhere.
+`lomhd_portraits.pack` beside `lomse.exe` (the name predates buildings). **Format 4** (`LOMHDPK4`,
+2026-09-23, replacing format 3): an index first (name, sizes, flags, colour key, palette, two
+stream lengths per record), then per record zlib of its indices and zlib of its upscale, back to
+back to the end of the file -- offsets are sums of lengths, so none can point anywhere odd. Any
+width from 32 and height from 4, upscale at most 1280 a side. Format 4 adds a per-record `flags`
+byte (bit 0 MASKED) and a `key` byte between the sizes and the palette; every picture packed so far
+is unmasked (`flags=0`, `key=0`, upscale stream `hw*hh*3` RGB), unchanged from format 3 apart from
+those two extra header bytes. A **masked** record (a sprite, see below) has pixels whose index
+equals `key` (its transparent colour) or 1 (the shadow, keyed by index rather than colour) that are
+not part of the image, and its upscale stream is `hw*hh*4` straight RGBA -- the transparency an
+upscaler produced that the 1-bit game format never had room for. ~870 MB with screens, so the
+writer streams it. Inflation in the overlay is **bounded**
+(`lodepng_zlib_decompress_bounded`): a stream that would inflate past its picture's size fails
+while inflating. An older-format pack is reported ("run lomhd_setup.py again"). The writer refuses
+what the reader would, and refuses pixel-doubled "upscales": 395 of the pictures in the first pack
+played were 2x2 repeats that changed nothing. Setup leaves out pictures with fewer than 16 colours:
+a flat picture's probes match anywhere.
+
+**Probe-table capacity.** The DLL's probe table is halved between records: a picture costs 3 probe
+rows x 1 column band x 2 colour-rounding rules (6 slots); a sprite's own transparency can hide any
+given row or band, so a masked record costs up to 4 rows x 3 bands x 2 rules (24 slots). The writer
+refuses a pack that would cost more than half of the table (32,768 slots) rather than let the game
+discover that at load time -- `6 * pictures + 24 * sprites <= 32768`, which is where the
+picture-only cap of 5,461 (`MAX_IMAGES`, `5461 * 6 = 32766`) comes from.
+
+**Sprites** (`tools/hd-review/sprite_pack.py`, a dev tool, not shipped -- sprites are not part of
+the player release yet) pack only STATIC sprites: an IMP member with exactly one frame in total, so
+one upscale covers the whole thing the way one covers a portrait. A sprite's low-res half (palette
+and indices, what the matcher compares on screen) comes straight from the asset viewer's
+`--export-imp-frame` -- no shadow-clearing, no background fill, because the game still draws the
+shadow and the transparent key exactly as the archive stores them; only the review's own originals
+(`sprite_originals.py`) do that cleanup, for upscaling, not for the pack. A masked record must also
+satisfy what the DLL requires: width >= 16, height >= 4, `w * h <= 65,536`, and at least 3 rows each
+holding a run of >= 16 consecutive pixels that are neither the colour key nor the shadow index
+(`hd_portrait_pack.masked_is_eligible`); the builder skips and reports anything short of that, the
+same as every other kind of skip. One command builds a pack with both sprites and the existing
+pictures, for a single DLL test that covers both:
+
+    python3 tools/hd-review/sprite_pack.py imp.mpq combined.pack --with-pack-inputs \
+        --originals lomhd_work/originals/portrait \
+        --upscaled lomhd_work/upscaled/ultrasharp-tta/portrait
 
 **Which upscaler, per picture** (`tools/hd_upscale.py`, shared by the review renderer and the
 player's setup so both run the same code): `approved` (the original palette pipeline -- despeckle,
