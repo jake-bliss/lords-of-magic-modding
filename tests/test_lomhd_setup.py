@@ -282,11 +282,13 @@ class UpscalePlan(unittest.TestCase):
         import io
         members = {}
         for name, (w, h) in {"portrait\\aicavp00.lbm": (70, 67), "lbm\\building\\aagtwr0a.lbm": (228, 180),
-                             "lbm\\building\\huge.lbm": (257, 67), "lbm\\building\\flat.lbm": (70, 3)}.items():
+                             "lbm\\building\\huge.lbm": (641, 67), "lbm\\building\\flat.lbm": (70, 3),
+                             "lbm\\plain.lbm": (640, 480)}.items():
             buf = io.BytesIO()
             header = self.struct.pack(">HHhhBBBBHBBhh", w, h, 0, 0, 8, 0, 1, 0, 0, 1, 1, w, h)
             path = self.work.parent / "member.lbm"
-            self.lbm_png.encode(path, w, h, bytes(w * h), self.palette,
+            pixels = bytes(w * h) if "plain" in name else bytes(i % 251 for i in range(w * h))
+            self.lbm_png.encode(path, w, h, pixels, self.palette,
                                 [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
             members[name] = path.read_bytes()
 
@@ -299,7 +301,9 @@ class UpscalePlan(unittest.TestCase):
         self.addCleanup(setattr, setup.mpq_read, "Archive", setup.mpq_read.Archive)
         setup.mpq_read.Archive = Archive
         found = setup.extract_images(self.work.parent)
-        self.assertEqual(found, {"portrait": ["aicavp00"], "building": ["aagtwr0a"]})
+        self.assertEqual({g: v for g, v in found.items() if v},
+                         {"portrait": ["aicavp00"], "building": ["aagtwr0a"]},
+                         "too big, too short and too plain (a flat 640x480) are all left out")
 
     def test_the_players_own_picks_win_over_the_shipped_ones(self) -> None:
         """--review saves to my-upscale-choices.json; a plain run must install with it, and

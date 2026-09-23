@@ -98,7 +98,7 @@ class Pack(unittest.TestCase):
     def test_a_short_palette_is_refused(self) -> None:
         """Padding it would shift every later record; the reader would misparse the whole pack."""
         with self.assertRaises(ValueError):
-            pack.encode_original(2, 2, b"\0" * 4, PALETTE[:16])
+            pack.encode_record("a", 2, 2, b"\0" * 4, PALETTE[:16], 4, 4, b"\0" * 48)
 
     def test_an_install_whose_original_differs_from_the_source_is_not_given_that_upscale(self) -> None:
         """The vanilla and GS5R3 installs share a portrait NAME whose picture differs. Pairing by
@@ -120,7 +120,7 @@ class Pack(unittest.TestCase):
         cases = {
             "narrower than the probe slice": [("a.lbm", 31, 6, 62, 12)],
             "too few rows for three probes": [("a.lbm", W, 3, W * 2, 6)],
-            "an upscale larger than the overlay's buffer": [("a.lbm", W, H, 513, 12)],
+            "an upscale larger than the overlay's limit": [("a.lbm", W, H, 1281, 12)],
         }
         for label, images in cases.items():
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
@@ -146,15 +146,30 @@ class Pack(unittest.TestCase):
         self.assertEqual([n for n, _, _ in pack.read(data)], ["real"])
         self.assertEqual(skipped, ["d1_great_axe: the upscale is the original with each pixel repeated, not an upscale"])
 
-    def test_the_upscale_is_zlib_rgb_the_overlay_can_inflate(self) -> None:
-        write_lbm(self.small / "a.lbm", W, H, 1)
-        up = write_lbm(self.large / "a.lbm", W * 2, H * 2, 2)
+    def test_the_index_comes_first_and_the_streams_follow_in_order(self) -> None:
+        """The overlay reads the index alone at start and each stream only when it needs it, by
+        offsets it computes from the lengths -- so the layout must be exactly this."""
+        a = write_lbm(self.small / "a.lbm", W, H, 1); up_a = write_lbm(self.large / "a.lbm", W * 2, H * 2, 2)
+        b = write_lbm(self.small / "b.lbm", W, H, 3); up_b = write_lbm(self.large / "b.lbm", W * 2, H * 2, 4)
         data, _ = pack.build(self.small, [self.large])
-        self.assertEqual(data[:8], b"LOMHDPK2")
-        pos = 12 + 1 + 1 + 4 + 768 + W * H
-        hw, hh, zlen = struct.unpack_from("<HHI", data, pos)
-        self.assertEqual(zlib.decompress(data[pos + 8:pos + 8 + zlen]), rgb_of(up))
-        self.assertEqual(pos + 8 + zlen, len(data))
+        self.assertEqual(data[:8], b"LOMHDPK3")
+        self.assertEqual(struct.unpack_from("<I", data, 8), (2,))
+        pos, lengths = 12, []
+        for name in ("a", "b"):
+            self.assertEqual(data[pos:pos + 2], bytes([1]) + name.encode())
+            self.assertEqual(struct.unpack_from("<HHHH", data, pos + 2), (W, H, W * 2, H * 2))
+            lengths.append(struct.unpack_from("<II", data, pos + 10 + 768))
+            pos += 2 + 8 + 768 + 8
+        for (idx_len, hd_len), idx, up in ((lengths[0], a, up_a), (lengths[1], b, up_b)):
+            self.assertEqual(zlib.decompress(data[pos:pos + idx_len]), idx); pos += idx_len
+            self.assertEqual(zlib.decompress(data[pos:pos + hd_len]), rgb_of(up)); pos += hd_len
+        self.assertEqual(pos, len(data))
+        self.assertEqual(pack.count(self._write(data)), 2)
+
+    def _write(self, data: bytes) -> pathlib.Path:
+        path = pathlib.Path(self.tmp.name) / "out.pack"
+        path.write_bytes(data)
+        return path
 
     def test_an_empty_pack_is_refused(self) -> None:
         """The overlay refuses a count of zero as corrupt; write nothing rather than that."""

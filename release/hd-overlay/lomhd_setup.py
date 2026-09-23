@@ -59,7 +59,13 @@ MY_CHOICES = HERE / "my-upscale-choices.json"
 GROUPS = {                       # group -> (folder in pic.mpq, the one size its members have)
     "portrait": ("portrait", (70, 67)),
     "building": ("lbm\\building", None),
+    "keep": ("keeps", None),
+    "screen": ("lbm", None),
+    "panel": ("lbm\\panels", None),
+    "sky": ("lbm\\skies", None),
+    "library": ("library", None),
 }
+MIN_COLOURS = 16                 # a picture plainer than this is found anywhere, and costs every frame
 
 ESRGAN = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/"
 MODELS = ("https://raw.githubusercontent.com/upscayl/upscayl/"
@@ -218,12 +224,14 @@ def extract_images(game: pathlib.Path) -> dict[str, list[str]]:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(archive.read(lower))
         try:
-            w, h, *_ = lbm_png.decode(out)
+            w, h, px, *_ = lbm_png.decode(out)
         except Exception:
             out.unlink()
             continue
         size = GROUPS[group][1]
-        if (size and (w, h) != size) or not fits_the_overlay(w, h):
+        # A flat picture (all black, one colour of sky) has probe slices that match any flat part
+        # of any frame; each hit then costs a full comparison. Nothing to sharpen in it anyway.
+        if (size and (w, h) != size) or not fits_the_overlay(w, h) or len(set(px)) < MIN_COLOURS:
             out.unlink()
             continue
         found[group].append(stem)
@@ -366,11 +374,16 @@ def serve_review(review: pathlib.Path, port: int) -> None:
 
 # --- install / uninstall -------------------------------------------------------------------------
 
-def write_atomically(path: pathlib.Path, data: bytes) -> None:
-    """Whole or not at all: an interruption leaves the old file, never a half-written one."""
+def write_atomically(path: pathlib.Path, data: "bytes | pathlib.Path") -> None:
+    """Whole or not at all: an interruption leaves the old file, never a half-written one. `data`
+    is the bytes, or a file to copy them from (the pack is ~850 MB with full-screen art)."""
     part = path.with_name(path.name + ".lomhd-part")
     with part.open("wb") as f:
-        f.write(data)
+        if isinstance(data, pathlib.Path):
+            with data.open("rb") as src:
+                shutil.copyfileobj(src, f, 1 << 20)
+        else:
+            f.write(data)
         f.flush()
         os.fsync(f.fileno())
     os.replace(part, path)
@@ -406,7 +419,7 @@ def check_writable(game: pathlib.Path) -> None:
              "if it still fails, run the terminal as administrator.")
 
 
-def install(game: pathlib.Path, pack: bytes, record: dict) -> None:
+def install(game: pathlib.Path, pack: "bytes | pathlib.Path", record: dict) -> None:
     """Back up the player's ddraw.dll once, record what was done, then install.
 
     The record is written BEFORE our DLL is copied, so an interruption at any point leaves either
@@ -453,7 +466,7 @@ def install(game: pathlib.Path, pack: bytes, record: dict) -> None:
         "ddraw_sha256": ours,
         "had_ddraw": had,
         "backup_sha256": backup_sha,
-        "pack_sha256": hashlib.sha256(pack).hexdigest(),
+        "pack_sha256": sha256(pack) if isinstance(pack, pathlib.Path) else hashlib.sha256(pack).hexdigest(),
         # cnc-ddraw writes a default ddraw.ini on its first run when there is none -- the case on a
         # Windows Steam install, which ships no ddraw.dll at all. Uninstall removes it only then.
         "had_ini": previous.get("had_ini", (game / "ddraw.ini").exists()),
@@ -552,10 +565,8 @@ def main() -> int:
     upscaled = upscale_all(found, exe, models)
     say("4/4  Building the pack and installing")
     originals = [WORK / "originals" / group for group in found if found[group]]
-    pack, skipped = hd_portrait_pack.build(originals, upscaled, originals)
-    count = len(hd_portrait_pack.read(pack))
-    if count == 0:
-        fail("the pack came out empty. The game has not been touched.")
+    pack = WORK / PACK_NAME
+    count, skipped = hd_portrait_pack.write(pack, originals, upscaled, originals)
     install(game, pack, record)
     say(f"\nDone: {count} HD images installed in {game}.")
     for line in skipped:

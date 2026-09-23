@@ -12,8 +12,8 @@ Files pair by name, case-insensitively, ignoring the extension.
 
 The overlay (a fork of cnc-ddraw, see docs/hd-overlay.md) finds an image on screen by matching the
 ORIGINAL pixels in the finished frame, then draws the UPSCALE over it at window resolution. So each
-record carries both: the original as palette plus indices (the matcher turns it into RGB565
-templates), and the upscale as zlib-compressed full-colour RGB. Full colour because the overlay
+record carries both: the original as palette plus indices (the matcher turns them into RGB565
+through the palette), and the upscale as zlib-compressed full-colour RGB. Full colour because the overlay
 draws its own texture: squeezing the upscale back into the original's 256 colours, with a despeckle
 before it, is what lost detail in the first building upscales (2026-09-22).
 
@@ -24,34 +24,41 @@ pixel- and palette-identical to the original it was made from. Observed 2026-09-
 and GS5R3 installs share 445 portrait names, but 5 of those differ, and the vanilla Life banner is
 not the GS5R3 one at all. A name match would have drawn a GS5R3 upscale over a different picture.
 
-Format LOMHDPK2, little-endian:
+Format LOMHDPK3, little-endian. An index first, so the overlay can read it without reading the
+rest: full-screen upscales make the pack ~850 MB, and the game is a 32-bit process.
 
-    b"LOMHDPK2"  u32 count
-    per record:  u8 name_len, name (ASCII, lowercase)
-                 original: u16 w, u16 h, 256 x (r, g, b), w*h indices
-                 upscale:  u16 w, u16 h, u32 zlen, zlib(w*h*3 RGB)
+    b"LOMHDPK3"  u32 count
+    count index records, in order:
+                 u8 name_len, name (ASCII, lowercase), u16 w, u16 h, u16 hw, u16 hh,
+                 256 x (r, g, b), u32 idx_len, u32 hd_len
+    then, for each record in the same order and with nothing between them:
+                 zlib(w*h palette indices), idx_len bytes
+                 zlib(hw*hh*3 RGB), hd_len bytes
+    The last stream ends at the end of the file.
 """
 from __future__ import annotations
 
 import argparse
 import pathlib
+import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "portrait-upscale"))
 import lbm_png  # noqa: E402
 
-MAGIC = b"LOMHDPK2"
+MAGIC = b"LOMHDPK3"
 
 # What the overlay's reader (src/lomhd_match.c in the cnc-ddraw fork) accepts. A pack it would
 # refuse must fail HERE, at build time, not load as "corrupt" in the game with the overlay silently
 # off. (Found by cross-model review, 2026-09-22: the writer checked none of these.)
-MAX_IMAGES = 1365           # count * 2 rules * 3 probe rows must stay under half of 16384 slots
+MAX_IMAGES = 5461           # count * 2 rules * 3 probe rows must stay under half of 65536 slots
 MIN_WIDTH = 32              # the matcher hashes a 32-pixel slice of each probe row
 MIN_HEIGHT = 4              # three probe rows at h/4, h/2 and 3h/4 need at least four rows
-MAX_UPSCALE_SIDE = 512      # the overlay's per-placement buffer
+MAX_UPSCALE_SIDE = 1280     # a 640x480 screen at 2x
 IMAGE_SUFFIXES = {".lbm", ".png"}
 
 
@@ -100,21 +107,22 @@ def load_rgb(path: pathlib.Path) -> tuple[int, int, bytes]:
     return w, h, data
 
 
-def encode_original(width: int, height: int, indices: bytes, palette) -> bytes:
+def encode_record(name: str, w: int, h: int, indices: bytes, palette, hw: int, hh: int,
+                  rgb: bytes) -> tuple[bytes, bytes, bytes]:
+    """(index entry, zlib indices, zlib upscale) for one image."""
     if len(palette) != 256:
         # A short CMAP would shift every later record if padded silently; refuse instead.
         raise ValueError(f"expected a 256-colour palette, got {len(palette)}")
-    if len(indices) != width * height:
-        raise ValueError(f"expected {width * height} indices, got {len(indices)}")
+    if len(indices) != w * h:
+        raise ValueError(f"expected {w * h} indices, got {len(indices)}")
+    if len(rgb) != hw * hh * 3:
+        raise ValueError(f"expected {hw * hh * 3} bytes of RGB, got {len(rgb)}")
+    zidx, zhd = zlib.compress(bytes(indices), 9), zlib.compress(rgb, 9)
     flat = bytes(channel for colour in palette for channel in colour)
-    return struct.pack("<HH", width, height) + flat + bytes(indices)
-
-
-def encode_upscale(width: int, height: int, rgb: bytes) -> bytes:
-    if len(rgb) != width * height * 3:
-        raise ValueError(f"expected {width * height * 3} bytes of RGB, got {len(rgb)}")
-    packed = zlib.compress(rgb, 9)
-    return struct.pack("<HHI", width, height, len(packed)) + packed
+    encoded = name.encode("ascii")
+    entry = (struct.pack("<B", len(encoded)) + encoded + struct.pack("<HHHH", w, h, hw, hh) + flat
+             + struct.pack("<II", len(zidx), len(zhd)))
+    return entry, zidx, zhd
 
 
 def same_image(a: pathlib.Path, b: pathlib.Path) -> bool:
@@ -136,8 +144,10 @@ def is_pixel_multiple(w: int, h: int, idx, pal, hw: int, hh: int, rgb: bytes) ->
                for y in range(hh) for x in range(hw))
 
 
-def build(originals, upscaled, sources=None) -> tuple[bytes, list[str]]:
-    """Return the pack and a list of what was left out and why -- reported, never silent.
+def write(out: pathlib.Path, originals, upscaled, sources=None) -> tuple[int, list[str]]:
+    """Write the pack to `out`; return how many images it holds and what was left out and why --
+    reported, never silent. Streams: only the index is held in memory, the compressed images go
+    to a temporary file beside `out` and are copied in after it.
 
     `sources` holds the originals the upscales were made from. When given, an image is packed only
     if the installed original is the same image; `None` means the installed originals ARE the
@@ -149,30 +159,53 @@ def build(originals, upscaled, sources=None) -> tuple[bytes, list[str]]:
     skipped = [f"{name}: no upscale" for name in sorted(set(small) - set(large))]
     skipped += [f"{name}: upscale with no original" for name in sorted(set(large) - set(small))]
 
-    records = []
-    for name in sorted(set(small) & set(large)):
-        if name not in made_from:
-            skipped.append(f"{name}: no source original to verify the upscale against")
-            continue
-        if not same_image(small[name], made_from[name]):
-            skipped.append(f"{name}: installed original differs from the one the upscale was made from")
-            continue
-        w, h, idx, pal, _ = lbm_png.decode(small[name])
-        hw, hh, rgb = load_rgb(large[name])
-        if is_pixel_multiple(w, h, idx, pal, hw, hh, rgb):
-            skipped.append(f"{name}: the upscale is the original with each pixel repeated, not an upscale")
-            continue
-        check_reader_limits(name, w, h, hw, hh)
-        encoded = name.encode("ascii")
-        records.append(struct.pack("<B", len(encoded)) + encoded
-                       + encode_original(w, h, idx, pal) + encode_upscale(hw, hh, rgb))
+    out = pathlib.Path(out)
+    entries = []
+    with tempfile.TemporaryFile(dir=out.parent) as streams:
+        for name in sorted(set(small) & set(large)):
+            if name not in made_from:
+                skipped.append(f"{name}: no source original to verify the upscale against")
+                continue
+            if not same_image(small[name], made_from[name]):
+                skipped.append(f"{name}: installed original differs from the one the upscale was made from")
+                continue
+            w, h, idx, pal, _ = lbm_png.decode(small[name])
+            hw, hh, rgb = load_rgb(large[name])
+            if is_pixel_multiple(w, h, idx, pal, hw, hh, rgb):
+                skipped.append(f"{name}: the upscale is the original with each pixel repeated, not an upscale")
+                continue
+            check_reader_limits(name, w, h, hw, hh)
+            entry, zidx, zhd = encode_record(name, w, h, idx, pal, hw, hh, rgb)
+            entries.append(entry)
+            streams.write(zidx)
+            streams.write(zhd)
 
-    if not records:
-        raise SystemExit("no images to pack; the overlay refuses an empty pack as corrupt")
-    if len(records) > MAX_IMAGES:
-        raise SystemExit(f"{len(records)} images; the overlay accepts at most {MAX_IMAGES}")
+        if not entries:
+            raise SystemExit("no images to pack; the overlay refuses an empty pack as corrupt")
+        if len(entries) > MAX_IMAGES:
+            raise SystemExit(f"{len(entries)} images; the overlay accepts at most {MAX_IMAGES}")
+        streams.seek(0)
+        with out.open("wb") as f:
+            f.write(MAGIC + struct.pack("<I", len(entries)) + b"".join(entries))
+            shutil.copyfileobj(streams, f, 1 << 20)
+    return len(entries), skipped
 
-    return MAGIC + struct.pack("<I", len(records)) + b"".join(records), skipped
+
+def build(originals, upscaled, sources=None) -> tuple[bytes, list[str]]:
+    """`write`, returning the pack's bytes: for tests and small packs."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "pack"
+        _, skipped = write(path, originals, upscaled, sources)
+        return path.read_bytes(), skipped
+
+
+def count(path: pathlib.Path) -> int:
+    """How many images a pack file holds, from its header alone."""
+    with open(path, "rb") as f:
+        head = f.read(12)
+    if head[:8] != MAGIC:
+        raise ValueError("not a format-3 image pack")
+    return struct.unpack_from("<I", head, 8)[0]
 
 
 def check_reader_limits(name: str, w: int, h: int, hw: int, hh: int) -> None:
@@ -186,21 +219,24 @@ def check_reader_limits(name: str, w: int, h: int, hw: int, hh: int) -> None:
 
 
 def read(pack: bytes):
-    """The inverse of `build`, used by the tests and by anyone checking a pack by hand.
+    """The inverse of `write`, used by the tests and by anyone checking a pack by hand.
     Returns (name, (w, h, palette, indices), (hw, hh, rgb)) per record."""
     if pack[:8] != MAGIC:
-        raise ValueError("not a format-2 image pack")
-    (count,) = struct.unpack_from("<I", pack, 8)
-    pos, out = 12, []
-    for _ in range(count):
+        raise ValueError("not a format-3 image pack")
+    (n_records,) = struct.unpack_from("<I", pack, 8)
+    pos, index = 12, []
+    for _ in range(n_records):
         n = pack[pos]; name = pack[pos + 1:pos + 1 + n].decode("ascii"); pos += 1 + n
-        w, h = struct.unpack_from("<HH", pack, pos); pos += 4
+        w, h, hw, hh = struct.unpack_from("<HHHH", pack, pos); pos += 8
         pal = [tuple(pack[pos + i * 3:pos + i * 3 + 3]) for i in range(256)]; pos += 768
-        idx = pack[pos:pos + w * h]; pos += w * h
-        hw, hh, zlen = struct.unpack_from("<HHI", pack, pos); pos += 8
-        rgb = zlib.decompress(pack[pos:pos + zlen]); pos += zlen
-        if len(rgb) != hw * hh * 3:
-            raise ValueError(f"{name}: upscale holds {len(rgb)} bytes, {hw * hh * 3} expected")
+        idx_len, hd_len = struct.unpack_from("<II", pack, pos); pos += 8
+        index.append((name, w, h, hw, hh, pal, idx_len, hd_len))
+    out = []
+    for name, w, h, hw, hh, pal, idx_len, hd_len in index:
+        idx = zlib.decompress(pack[pos:pos + idx_len]); pos += idx_len
+        rgb = zlib.decompress(pack[pos:pos + hd_len]); pos += hd_len
+        if len(idx) != w * h or len(rgb) != hw * hh * 3:
+            raise ValueError(f"{name}: stream sizes do not match {w}x{h} / {hw}x{hh}")
         out.append((name, (w, h, pal, idx), (hw, hh, rgb)))
     if pos != len(pack):
         raise ValueError(f"{len(pack) - pos} trailing bytes")
@@ -216,9 +252,8 @@ def main() -> int:
                         help="the originals the upscales were made from")
     args = parser.parse_args()
 
-    pack, skipped = build(args.originals, args.upscaled, args.sources)
-    args.out.write_bytes(pack)
-    print(f"{args.out}: {len(read(pack))} images, {len(pack) / 1e6:.1f} MB")
+    n, skipped = write(args.out, args.originals, args.upscaled, args.sources)
+    print(f"{args.out}: {n} images, {args.out.stat().st_size / 1e6:.1f} MB")
     for line in skipped:
         print(f"  left out -- {line}")
     return 0
