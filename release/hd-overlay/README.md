@@ -64,6 +64,8 @@ the game folder.
   the game runs normally with the original portraits.
 - **On Windows the Steam version ships without cnc-ddraw**, so installing this also brings in
   cnc-ddraw itself (windowing, scaling, and a `ddraw.ini` it creates on first run). Uninstalling
-  removes both and the game uses Windows' own DirectDraw again.
+  removes cnc-ddraw, so the game uses Windows' own DirectDraw again, and renames that `ddraw.ini`
+  to `ddraw.ini.lomhd-saved` rather than deleting settings you may have changed. The game ignores
+  it; delete it if you like.
 
 See `NOTICES.md` for licences.

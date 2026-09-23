@@ -124,9 +124,9 @@ build the pack, install the DLL. No game art is distributed.
    What Windows taught us:
    - 🔴 **The Windows Steam install ships no `ddraw.dll` and no `ddraw.ini`.** cnc-ddraw then runs
      with `renderer=auto`, which picks **Direct3D 9 on real Windows** (OpenGL only under Wine), so
-     the overlay would have loaded and never drawn. Fork `e815726`: a pack beside the game tips
-     `auto` to OpenGL; an explicit renderer is never overridden. cnc-ddraw writes a default
-     `ddraw.ini` on first run; the install record notes it did not exist and uninstall removes it.
+     the overlay would have loaded and never drawn. Fork `e815726` + `c41dd7e`: a pack beside the game tips
+     `auto` to OpenGL when OpenGL loads (else auto keeps its Direct3D 9 fallback); an explicit renderer is never overridden. cnc-ddraw writes a default
+     `ddraw.ini` on first run; the install record notes it did not exist and uninstall sets it aside as `ddraw.ini.lomhd-saved` (never deletes it: the player may have tuned it).
    - **Upscales are visually equivalent across GPUs, not bit-identical.** The 3070's 440 shared
      portraits differ from the Mac's in about half their pixel indices, but by 3.5/255 per pixel,
      and 1.0/255 after a 3x3 blur: fp16 rounding amplified by Floyd-Steinberg dither.
