@@ -56,7 +56,7 @@ class Pack(unittest.TestCase):
         upscale = write_lbm(self.large / "aicavp00.lbm", W * 2, H * 2, 2)
         data, skipped = pack.build(self.small, [self.large])
         self.assertEqual(skipped, [])
-        [(name, small, large, flags, key)] = pack.read(data)
+        [(name, small, large, flags, key, _)] = pack.read(data)
         self.assertEqual(name, "aicavp00")
         self.assertEqual((flags, key), (0, 0), "a picture is unmasked, with no colour key")
         self.assertEqual((small[0], small[1], bytes(small[3])), (W, H, original))
@@ -71,7 +71,7 @@ class Pack(unittest.TestCase):
         write_lbm(self.large / "llwizt1a.lbm", 286, 24, 4)
         data, skipped = pack.build(self.small, [self.large])
         self.assertEqual(skipped, [])
-        self.assertEqual(sorted((n, s[0]) for n, s, _, _, _ in pack.read(data)),
+        self.assertEqual(sorted((n, s[0]) for n, s, _, _, _, _ in pack.read(data)),
                          [("llwizt1a", 143), ("portrait", 70)])
 
     def test_originals_and_upscales_may_come_from_several_folders(self) -> None:
@@ -80,7 +80,7 @@ class Pack(unittest.TestCase):
         write_lbm(self.small / "a.lbm", W, H, 1); write_lbm(self.large / "a.lbm", W * 2, H * 2, 2)
         write_lbm(more_small / "b.lbm", W, H, 3); write_lbm(more_large / "b.lbm", W * 2, H * 2, 4)
         data, _ = pack.build([self.small, more_small], [self.large, more_large])
-        self.assertEqual([n for n, _, _, _, _ in pack.read(data)], ["a", "b"])
+        self.assertEqual([n for n, *_ in pack.read(data)], ["a", "b"])
 
     def test_an_uppercase_extension_still_pairs(self) -> None:
         """8 of the 748 shipped portraits are spelled `.LBM`; a case-sensitive glob dropped them."""
@@ -123,7 +123,7 @@ class Pack(unittest.TestCase):
         write_lbm(sources / "LILDWP00.LBM", W, H, 2)
         write_lbm(self.large / "lildwp00.lbm", W * 2, H * 2, 2)
         data, skipped = pack.build(self.small, [self.large], sources)
-        self.assertEqual([name for name, _, _, _, _ in pack.read(data)], ["lildwp00"])
+        self.assertEqual([name for name, *_ in pack.read(data)], ["lildwp00"])
         self.assertEqual(skipped, ["life: installed original differs from the one the upscale was made from"])
 
     def test_what_the_overlay_would_refuse_fails_at_build_time(self) -> None:
@@ -155,7 +155,7 @@ class Pack(unittest.TestCase):
         write_lbm(self.small / "real.lbm", W, H, 2)
         write_lbm(self.large / "real.lbm", W * 2, H * 2, 5)
         data, skipped = pack.build(self.small, [self.large])
-        self.assertEqual([n for n, _, _, _, _ in pack.read(data)], ["real"])
+        self.assertEqual([n for n, *_ in pack.read(data)], ["real"])
         self.assertEqual(skipped, ["d1_great_axe: the upscale is the original with each pixel repeated, not an upscale"])
 
     def test_the_index_comes_first_and_the_streams_follow_in_order(self) -> None:
@@ -164,15 +164,15 @@ class Pack(unittest.TestCase):
         a = write_lbm(self.small / "a.lbm", W, H, 1); up_a = write_lbm(self.large / "a.lbm", W * 2, H * 2, 2)
         b = write_lbm(self.small / "b.lbm", W, H, 3); up_b = write_lbm(self.large / "b.lbm", W * 2, H * 2, 4)
         data, _ = pack.build(self.small, [self.large])
-        self.assertEqual(data[:8], b"LOMHDPK4")
+        self.assertEqual(data[:8], b"LOMHDPK5")
         self.assertEqual(struct.unpack_from("<I", data, 8), (2,))
         pos, lengths = 12, []
         for name in ("a", "b"):
             self.assertEqual(data[pos:pos + 2], bytes([1]) + name.encode())
             self.assertEqual(struct.unpack_from("<HHHH", data, pos + 2), (W, H, W * 2, H * 2))
-            self.assertEqual(data[pos + 10:pos + 12], b"\x00\x00", "flags=0, key=0 for a picture")
-            lengths.append(struct.unpack_from("<II", data, pos + 12 + 768))
-            pos += 2 + 8 + 2 + 768 + 8
+            self.assertEqual(data[pos + 10:pos + 14], b"\x00\x00\x00\x00", "flags, key, group 0 for a picture")
+            lengths.append(struct.unpack_from("<II", data, pos + 14 + 768))
+            pos += 2 + 8 + 4 + 768 + 8
         for (idx_len, hd_len), idx, up in ((lengths[0], a, up_a), (lengths[1], b, up_b)):
             self.assertEqual(zlib.decompress(data[pos:pos + idx_len]), idx); pos += idx_len
             self.assertEqual(zlib.decompress(data[pos:pos + hd_len]), rgb_of(up)); pos += hd_len
@@ -191,11 +191,12 @@ class Pack(unittest.TestCase):
             pack.build(self.small, [self.large])
 
     def test_the_limits_are_the_overlays(self) -> None:
-        """Tied to src/lomhd_match.c: a picture costs PICTURE_PROBE_SLOTS of the DLL's probe table,
-        and the whole pack must fit half of LOMHD_TABLE (65,536); a 640x480 screen at 2x (1280
-        wide) must be accepted."""
-        self.assertLessEqual(pack.MAX_IMAGES * pack.PICTURE_PROBE_SLOTS, pack.TABLE_SLOTS)
-        self.assertGreater((pack.MAX_IMAGES + 1) * pack.PICTURE_PROBE_SLOTS, pack.TABLE_SLOTS)
+        """Tied to src/lomhd_match.c: LOMHD_MAX_IMAGES records and LOMHD_MAX_PROBES probes, of which
+        a picture takes PICTURE_PROBE_SLOTS -- so a pack of pictures alone meets the image limit
+        first; a 640x480 screen at 2x (1280 wide) must be accepted."""
+        self.assertEqual(pack.MAX_IMAGES, 131072)
+        self.assertEqual(pack.MAX_PROBES, 1 << 20)
+        self.assertLessEqual(pack.MAX_IMAGES * pack.PICTURE_PROBE_SLOTS, pack.MAX_PROBES)
         pack.check_reader_limits("screen", 640, 480, 1280, 960)
         with self.assertRaises(SystemExit):
             pack.check_reader_limits("screen", 640, 480, 1281, 960)
@@ -229,7 +230,7 @@ class MaskedRecords(unittest.TestCase):
                                               rgba, flags=pack.FLAG_MASKED, key=key)
         out = pathlib.Path(self.tmp.name) / "out.pack"
         pack.write_records(out, [(entry, zidx, zhd)])
-        [(name, small, large, flags, got_key)] = pack.read(out.read_bytes())
+        [(name, small, large, flags, got_key, _)] = pack.read(out.read_bytes())
         self.assertEqual(name, "sprite__orc")
         self.assertEqual(flags, pack.FLAG_MASKED)
         self.assertEqual(got_key, key)
@@ -237,7 +238,7 @@ class MaskedRecords(unittest.TestCase):
         self.assertEqual(large, (w * 2, h * 2, rgba), "RGBA is carried straight, not premultiplied")
         self.assertEqual(len(large[2]), (w * 2) * (h * 2) * 4, "four bytes a pixel for a masked record")
 
-    def test_masked_header_bytes_place_flags_and_key_after_the_sizes(self) -> None:
+    def test_masked_header_bytes_place_flags_key_and_group_after_the_sizes(self) -> None:
         w, h, key = 20, 6, 200
         indices, rgba = self.sprite(w, h, key)
         entry, zidx, zhd = pack.encode_record("sprite__x", w, h, indices, PALETTE, w * 2, h * 2,
@@ -247,8 +248,8 @@ class MaskedRecords(unittest.TestCase):
         self.assertEqual(entry[1:1 + n], b"sprite__x")
         pos = 1 + n
         self.assertEqual(struct.unpack_from("<HHHH", entry, pos), (w, h, w * 2, h * 2))
-        self.assertEqual(entry[pos + 8:pos + 10], bytes([pack.FLAG_MASKED, key]))
-        palette_start = pos + 10
+        self.assertEqual(entry[pos + 8:pos + 12], bytes([pack.FLAG_MASKED, key, 0, 0]))
+        palette_start = pos + 12
         self.assertEqual(entry[palette_start:palette_start + 768],
                          bytes(c for colour in PALETTE for c in colour))
         idx_len, hd_len = struct.unpack_from("<II", entry, palette_start + 768)
@@ -265,14 +266,14 @@ class MaskedRecords(unittest.TestCase):
                                     sprite_rgba, flags=pack.FLAG_MASKED, key=5)
         out = pathlib.Path(self.tmp.name) / "out.pack"
         pack.write_records(out, [picture, sprite])
-        records = {name: (flags, key) for name, _, _, flags, key in pack.read(out.read_bytes())}
+        records = {name: (flags, key) for name, _, _, flags, key, _ in pack.read(out.read_bytes())}
         self.assertEqual(records, {"aicavp00": (0, 0), "sprite__orc": (pack.FLAG_MASKED, 5)})
 
     def test_unknown_flag_bits_are_refused(self) -> None:
         indices, rgba = self.sprite()
         with self.assertRaises(ValueError):
             pack.encode_record("sprite__x", 20, 6, indices, PALETTE, 40, 12, rgba,
-                               flags=pack.FLAG_MASKED | 0x02, key=5)
+                               flags=pack.FLAG_MASKED | 0x04, key=5)
 
     def test_an_unmasked_record_with_a_nonzero_key_is_refused(self) -> None:
         indices = bytes((x + y) % 256 for y in range(H) for x in range(W))
@@ -311,14 +312,14 @@ class MaskedRecords(unittest.TestCase):
     def test_eligibility_needs_three_qualifying_rows_not_two(self) -> None:
         w, h, key = 20, 6, 5
         two_rows = bytearray(masked_sprite(w, h, key))
-        # Break the run in every row past the second by inserting the key mid-row.
+        # Break the run in every row past the second into thirds, each shorter than a probe.
         for y in range(2, h):
-            two_rows[y * w + w // 2] = key
+            two_rows[y * w + w // 3] = two_rows[y * w + 2 * w // 3] = key
         self.assertFalse(pack.masked_is_eligible(w, h, bytes(two_rows), key),
                          "two qualifying rows is not enough")
         three_rows = bytearray(masked_sprite(w, h, key))
         for y in range(3, h):
-            three_rows[y * w + w // 2] = key
+            three_rows[y * w + w // 3] = three_rows[y * w + 2 * w // 3] = key
         self.assertTrue(pack.masked_is_eligible(w, h, bytes(three_rows), key),
                         "three qualifying rows is exactly the rule")
 
@@ -342,36 +343,26 @@ class MaskedRecords(unittest.TestCase):
 
     # --- the DLL's probe-table capacity ---------------------------------------------------------
 
-    def test_a_sprite_costs_more_probe_slots_than_a_picture(self) -> None:
-        """This sprite has 6 rows, all of them eligible: `min(6, MASKED_PROBE_ROWS_CAP) == 4`, so
-        its exact cost coincides with the worst case, MASKED_PROBE_SLOTS."""
+    def test_a_sprites_probe_cost_is_its_rows_times_bands_doubled_when_mirrored(self) -> None:
+        """This sprite has 6 rows, all of them eligible: `min(6, MASKED_PROBE_ROWS_CAP) == 4` rows x
+        3 bands x one colour rule = 12, and 24 when it is MIRROR (every slice also read backwards).
+        A picture is always 6."""
         indices, rgba = self.sprite()
-        sprite_entry, sprite_zidx, _ = pack.encode_record("sprite__x", 20, 6, indices, PALETTE, 40, 12,
-                                                          rgba, flags=pack.FLAG_MASKED, key=5)
+        plain = pack.encode_record("sprite__x", 20, 6, indices, PALETTE, 40, 12, rgba,
+                                   flags=pack.FLAG_MASKED, key=5)
+        mirrored = pack.encode_record("sprite__x", 20, 6, indices, PALETTE, 40, 12, rgba,
+                                      flags=pack.FLAG_MASKED | pack.FLAG_MIRROR, key=5)
         picture_indices = bytes((x + y) % 256 for y in range(H) for x in range(W))
         picture_entry, picture_zidx, _ = pack.encode_record(
             "a", W, H, picture_indices, PALETTE, W * 2, H * 2,
             rgb_of(bytes((x + y) % 256 for y in range(H * 2) for x in range(W * 2))))
         self.assertEqual(pack.record_probe_slots(picture_entry, picture_zidx), pack.PICTURE_PROBE_SLOTS)
-        self.assertEqual(pack.record_probe_slots(sprite_entry, sprite_zidx), pack.MASKED_PROBE_SLOTS)
+        self.assertEqual(pack.record_probe_slots(plain[0], plain[1]), 12)
+        self.assertEqual(pack.record_probe_slots(mirrored[0], mirrored[1]), 24)
 
-    def test_a_pack_that_would_cost_too_many_probe_slots_is_refused(self) -> None:
-        indices, rgba = self.sprite()
-        one_sprite = pack.encode_record("sprite__x", 20, 6, indices, PALETTE, 40, 12, rgba,
-                                        flags=pack.FLAG_MASKED, key=5)
-        # This sprite's exact cost is MASKED_PROBE_SLOTS (see the test above), so
-        # TABLE_SLOTS // MASKED_PROBE_SLOTS of them fit exactly; one more must be refused.
-        fits = pack.TABLE_SLOTS // pack.MASKED_PROBE_SLOTS
-        out = pathlib.Path(self.tmp.name) / "fits.pack"
-        pack.write_records(out, [one_sprite] * fits)
-        self.assertEqual(pack.count(out), fits)
-        with self.assertRaises(SystemExit):
-            pack.write_records(pathlib.Path(self.tmp.name) / "too-many.pack", [one_sprite] * (fits + 1))
-
-    def test_the_boundary_is_each_sprites_own_cost_not_a_flat_worst_case(self) -> None:
-        """1,366 sprites with exactly three eligible rows (18 slots each, not the worst-case 24)
-        must not be refused as if they cost 24: the real boundary is TABLE_SLOTS // 18 = 1,820 of
-        them (32,760 slots, accepted), with the 1,821st (32,778) refused."""
+    def test_the_probe_boundary_is_each_sprites_own_cost(self) -> None:
+        """Mirrored sprites with exactly three eligible rows cost 18 each (3 rows x 3 bands x 2), not
+        a flat 24: MAX_PROBES // 18 of them are accepted and one more is refused."""
         w, h, key = 20, 4, 5
         good_row = bytes([key, key] + [3] * (w - 4) + [key, key])
         empty_row = bytes([key] * w)
@@ -380,19 +371,60 @@ class MaskedRecords(unittest.TestCase):
         self.assertTrue(pack.masked_is_eligible(w, h, indices, key))
 
         rgba = bytes(w * 2 * h * 2 * 4)
-        entry, zidx, zhd = pack.encode_record("sprite__x", w, h, indices, PALETTE, w * 2, h * 2,
-                                              rgba, flags=pack.FLAG_MASKED, key=key)
-        self.assertEqual(pack.record_probe_slots(entry, zidx), 18, "2 * 3 bands * 3 rows, not 24")
+        record = pack.encode_record("sprite__x", w, h, indices, PALETTE, w * 2, h * 2, rgba,
+                                    flags=pack.FLAG_MASKED | pack.FLAG_MIRROR, key=key)
+        self.assertEqual(pack.record_probe_slots(record[0], record[1]), 18)
 
-        fits = pack.TABLE_SLOTS // 18
-        self.assertEqual(fits, 1820)
-        self.assertEqual(fits * 18, 32760)
-        out = pathlib.Path(self.tmp.name) / "fits3.pack"
-        pack.write_records(out, [(entry, zidx, zhd)] * fits)
+        fits = pack.MAX_PROBES // 18
+        out = pathlib.Path(self.tmp.name) / "fits.pack"
+        pack.write_records(out, [record] * fits)
         self.assertEqual(pack.count(out), fits)
         with self.assertRaises(SystemExit):
-            pack.write_records(pathlib.Path(self.tmp.name) / "too-many3.pack",
-                               [(entry, zidx, zhd)] * (fits + 1))
+            pack.write_records(pathlib.Path(self.tmp.name) / "too-many.pack", [record] * (fits + 1))
+
+    # --- format 5: mirrored and grouped sprites -------------------------------------------------
+
+    def test_a_picture_cannot_be_mirrored_or_grouped(self) -> None:
+        indices = bytes((x + y) % 256 for y in range(H) for x in range(W))
+        rgb = rgb_of(bytes((x + y) % 256 for y in range(H * 2) for x in range(W * 2)))
+        with self.assertRaises(ValueError):
+            pack.encode_record("a", W, H, indices, PALETTE, W * 2, H * 2, rgb, flags=pack.FLAG_MIRROR)
+        with self.assertRaises(ValueError):
+            pack.encode_record("a", W, H, indices, PALETTE, W * 2, H * 2, rgb, group=3)
+
+    def test_a_group_must_fit_sixteen_bits(self) -> None:
+        indices, rgba = self.sprite()
+        pack.encode_record("s", 20, 6, indices, PALETTE, 40, 12, rgba, flags=pack.FLAG_MASKED, key=5,
+                           group=pack.MAX_GROUP)
+        with self.assertRaises(ValueError):
+            pack.encode_record("s", 20, 6, indices, PALETTE, 40, 12, rgba, flags=pack.FLAG_MASKED,
+                               key=5, group=pack.MAX_GROUP + 1)
+
+    def test_flags_and_groups_survive_a_round_trip(self) -> None:
+        indices, rgba = self.sprite()
+        records = [pack.encode_record(f"g{i}", 20, 6, indices, PALETTE, 40, 12, rgba,
+                                      flags=pack.FLAG_MASKED | pack.FLAG_MIRROR, key=5, group=7)
+                   for i in range(3)]
+        out = pathlib.Path(self.tmp.name) / "groups.pack"
+        pack.write_records(out, records)
+        back = pack.read(out.read_bytes())
+        self.assertEqual([(r[0], r[3], r[4], r[5]) for r in back],
+                         [(f"g{i}", pack.FLAG_MASKED | pack.FLAG_MIRROR, 5, 7) for i in range(3)])
+
+    def test_a_split_group_is_refused(self) -> None:
+        """The DLL refuses a group whose records are not consecutive; so does the writer."""
+        indices, rgba = self.sprite()
+        def rec(name, group):
+            return pack.encode_record(name, 20, 6, indices, PALETTE, 40, 12, rgba,
+                                      flags=pack.FLAG_MASKED, key=5, group=group)
+        ok = pathlib.Path(self.tmp.name) / "ok.pack"
+        pack.write_records(ok, [rec("a", 1), rec("b", 1), rec("c", 0), rec("d", 2)])
+        with self.assertRaises(SystemExit):
+            pack.write_records(pathlib.Path(self.tmp.name) / "split.pack",
+                               [rec("a", 1), rec("b", 2), rec("c", 1)])
+        with self.assertRaises(SystemExit):
+            pack.write_records(pathlib.Path(self.tmp.name) / "split0.pack",
+                               [rec("a", 1), rec("b", 0), rec("c", 1)])
 
 
 class Choices(unittest.TestCase):

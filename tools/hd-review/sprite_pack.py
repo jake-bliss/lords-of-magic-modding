@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Pack STATIC IMP sprites (and, optionally, the existing pictures) into a format-4 HD pack, for a
-DLL test that covers masked records rather than only the picture path.
+"""Pack IMP sprites (and, optionally, the existing pictures) into a format-5 HD pack, for a DLL
+test that covers masked records rather than only the picture path.
 
     python3 tools/hd-review/sprite_pack.py ARCHIVE OUT.pack [--renders DIR] [--choices FILE]
         [--viewer PATH] [--listfile PATH]
+        [--animated --esrgan PATH --models DIR]
         [--with-pack-inputs --originals DIR [...] --upscaled DIR [...] [--sources DIR [...]]]
+
+`--animated` adds every frame of every animated sprite, upscaled here with the sprite's own pick:
+see `anim_frames.py`. Without it, only STATIC sprites, whose one review render is their upscale.
 
 A dev tool, not shipped: sprites are not part of the player release yet (see docs/hd-overlay.md,
 "Terrain cannot use the overlay at all" and the sprite-pick caveat above it). Only STATIC sprites
@@ -139,10 +143,10 @@ def member_fingerprint(member: str) -> str:
     return hashlib.sha256(member.lower().encode("utf-8")).hexdigest()[:12]
 
 
-def build_sprite_records(archive: pathlib.Path, viewer: pathlib.Path, listfile: pathlib.Path,
-                         renders: pathlib.Path, choices: dict) -> tuple[list, int, list[str]]:
-    """(records, considered, skipped) -- every masked record this archive's static sprites can
-    give, with what was left out and why."""
+def resolve_sprites(archive: pathlib.Path, viewer: pathlib.Path,
+                    listfile: pathlib.Path) -> tuple[dict[str, tuple[str, int]], int, list[str]]:
+    """(name -> (member, frame count), considered, skipped): which member this archive holds for
+    each sprite name, and how many frames it has."""
     grouped = candidate_members(listfile)
 
     # An oversized name is refused before any candidate for it is even tried against the archive
@@ -162,8 +166,6 @@ def build_sprite_records(archive: pathlib.Path, viewer: pathlib.Path, listfile: 
     if not viewer_decodes_bgr(viewer, archive, all_paths, listfile):
         raise SystemExit(f"{viewer} predates the palette fix and would export red and green "
                          "swapped: rebuild it (cargo build --release in spikes/asset-viewer)")
-    WORK.mkdir(parents=True, exist_ok=True)
-    fingerprint = archive_fingerprint(archive)
 
     # Try every spelling a name has anywhere in the listfile: which of them, if any, THIS
     # particular archive actually holds is not known until now. Deduplicating to one candidate
@@ -172,14 +174,27 @@ def build_sprite_records(archive: pathlib.Path, viewer: pathlib.Path, listfile: 
     # reported as an ambiguous collision rather than a silent pick (see imp_members.py).
     resolved, resolve_skipped = resolve_members(
         usable, lambda member: frame_count(viewer, archive, member, listfile))
-    skipped += resolve_skipped
+    return resolved, len(grouped), skipped + resolve_skipped
+
+
+def build_sprite_records(archive: pathlib.Path, viewer: pathlib.Path, listfile: pathlib.Path,
+                         renders: pathlib.Path, choices: dict,
+                         resolved: dict[str, tuple[str, int]] | None = None,
+                         considered: int = 0) -> tuple[list, int, list[str]]:
+    """(records, considered, skipped) -- every masked record this archive's static sprites can
+    give, with what was left out and why. `resolved` is `resolve_sprites`' result, when the
+    caller already has it."""
+    skipped: list[str] = []
+    if resolved is None:
+        resolved, considered, skipped = resolve_sprites(archive, viewer, listfile)
+    WORK.mkdir(parents=True, exist_ok=True)
+    fingerprint = archive_fingerprint(archive)
 
     records = []
     for name, (member, frames) in resolved.items():
         record_name = f"sprite__{name}"
         if frames != 1:
-            skipped.append(f"{name}: {frames} frames, not a static sprite")
-            continue
+            continue                        # animated: see anim_frames.py and --animated
 
         # Keyed by archive, member path AND name: two different builds of the SAME archive can
         # resolve two different members for one record name (one listfile naming only the aura\\
@@ -241,7 +256,7 @@ def build_sprite_records(archive: pathlib.Path, viewer: pathlib.Path, listfile: 
             continue
 
         records.append(record)
-    return records, len(grouped), skipped
+    return records, considered, skipped
 
 
 def main() -> int:
@@ -255,6 +270,10 @@ def main() -> int:
                         default=ROOT / "spikes/asset-viewer/target/release/lom-asset-viewer")
     parser.add_argument("--listfile", type=pathlib.Path,
                         default=ROOT / "reports/member-names/all-profiles-imp-recovered.txt")
+    parser.add_argument("--animated", action="store_true",
+                        help="also every frame of every animated sprite (upscaled here: slow)")
+    parser.add_argument("--esrgan", type=pathlib.Path, help="realesrgan-ncnn-vulkan (with --animated)")
+    parser.add_argument("--models", type=pathlib.Path, help="its models folder (with --animated)")
     parser.add_argument("--with-pack-inputs", action="store_true",
                         help="also pack pictures, mirroring hd_portrait_pack.py's own CLI")
     parser.add_argument("--originals", type=pathlib.Path, action="append",
@@ -267,24 +286,53 @@ def main() -> int:
 
     if args.with_pack_inputs and not (args.originals and args.upscaled):
         parser.error("--with-pack-inputs needs --originals and --upscaled")
+    if args.animated and not (args.esrgan and args.models):
+        parser.error("--animated needs --esrgan and --models")
 
     choices = json.loads(args.choices.read_text())["choices"]
-    records, considered, skipped = build_sprite_records(
-        args.archive, args.viewer, args.listfile, args.renders, choices)
+    resolved, considered, skipped = resolve_sprites(args.archive, args.viewer, args.listfile)
+    records, _, static_skipped = build_sprite_records(
+        args.archive, args.viewer, args.listfile, args.renders, choices, resolved, considered)
+    skipped += static_skipped
+
+    anim_skipped: list[str] = []
+    sprites = []
+    if args.animated:
+        import anim_frames
+        fingerprint = archive_fingerprint(args.archive)
+        sprites, planned_skipped, counts = anim_frames.plan(
+            args.archive, args.viewer, args.listfile, resolved, choices, anim_frames.WORK, fingerprint)
+        anim_skipped += planned_skipped
+        print(f"animated: {len(sprites)} sprites, {sum(len(s.frames) for s in sprites)} frames to pack "
+              f"of {counts['frames']} ({counts['repeats']} repeats, {counts['ineligible']} too small "
+              f"for the matcher, {counts['unreadable']} unreadable)", flush=True)
+
+        def render(option, inputs, dest):
+            hd_upscale.render(option, inputs, dest, args.esrgan, args.models)
+
+        anim_frames.render_all(sprites, anim_frames.WORK, fingerprint, render,
+                               log=lambda line: print(line, flush=True))
 
     picture_skipped: list[str] = []
 
     def all_records():
         yield from records
+        if args.animated:
+            yield from anim_frames.records(sprites, anim_frames.WORK, fingerprint, load_hd_rgba,
+                                           anim_skipped)
         if args.with_pack_inputs:
             yield from pack.unmasked_records(args.originals, args.upscaled, picture_skipped, args.sources)
 
     n = pack.write_records(args.out, all_records())
-    print(f"sprites: {considered} considered, {len(records)} packed, {len(skipped)} skipped")
+    print(f"sprites: {considered} considered, {len(records)} static packed, {len(skipped)} skipped")
     for line in skipped:
         print(f"  left out -- {line}")
+    if args.animated:
+        print(f"animated: {len(anim_skipped)} left out")
+        for line in anim_skipped:
+            print(f"  left out -- {line}")
     if args.with_pack_inputs:
-        print(f"pictures: {n - len(records)} packed, {len(picture_skipped)} skipped")
+        print(f"pictures: packed, {len(picture_skipped)} skipped")
         for line in picture_skipped:
             print(f"  left out -- {line}")
     print(f"{args.out}: {n} images total, {args.out.stat().st_size / 1e6:.1f} MB")

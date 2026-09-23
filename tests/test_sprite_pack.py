@@ -229,7 +229,7 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         self.assertEqual(considered, 1)
         self.assertEqual(skipped, [])
         [(entry, zidx, zhd)] = records
-        [(name, small, large, flags, key)] = pack.read(
+        [(name, small, large, flags, key, _)] = pack.read(
             self._packed_bytes(records))
         self.assertEqual(name, "sprite__tree")
         self.assertEqual(flags, pack.FLAG_MASKED)
@@ -243,12 +243,14 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         return out.read_bytes()
 
     def test_a_multi_frame_sprite_is_not_static(self) -> None:
+        """Not a static record, and not reported as left out either: animated sprites are
+        anim_frames.py's (sprite_pack.py --animated)."""
         self.write_listfile("goblin.imp")
         self.install_viewer({"unit\\goblin.imp": describe(4)}, {})
         records, considered, skipped = self.run_build({})
         self.assertEqual(records, [])
         self.assertEqual(considered, 1)
-        self.assertIn("goblin: 4 frames, not a static sprite", skipped)
+        self.assertEqual(skipped, [])
 
     def test_a_member_not_in_this_archive_is_reported_not_silently_dropped(self) -> None:
         self.write_listfile("ghost.imp")

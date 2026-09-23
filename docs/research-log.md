@@ -7366,3 +7366,35 @@ RGB565 masks, cross-checked against an LBM control in the same frame that has no
 of its own. A "recorded contradicting symptom wins over a clean-looking disassembly" is not a rule
 that can be applied before checking whether the symptom's own instrument is trustworthy — here it
 was not, and the disassembly was right.
+
+## 2026-09-23 — Animated sprites: map armies are drawn mirrored, and one-colour probes cost seconds
+
+**Evidence class: offline, the overlay's own matcher (`lomhd_match_test`) and a brute-force scorer
+run over the 47 raw frames captured in that day's attended run. No new game run.**
+
+Every frame of every animated IMP was exported (50,713 frames of 947 sprites) and packed as masked
+records with blank upscales, alongside the 848 static sprites as a control. Findings:
+
+- **Colours are exact.** 49% of the pixels in a clump of Life units on the map are colours of the
+  shared Life unit palette; 0% of the grass beside it. No lighting and no team-colour remap.
+- **Map armies use the half-size `…b` unit sprites** (`licr1a` is 21x60, `licr1b` 10x29). Cavalry is
+  two layered sprites, rider (`licavb`) and mount (`licavbm`).
+- **Map armies facing the other way are their sprite flipped left to right.** Sliding every Life
+  frame over the clump, the best score as stored was under 30%; flipped, the front mount
+  `licavbm#033` scored 85.5%, its rider `licavb#018` 72%, the leader `lildfb#018` 51% (behind others).
+  Only units were measured; the overlay's pack marks only `units\` frames MIRROR.
+- **Start-screen faith leaders match as stored** (`aildfa`, `wafita`, `orldfa`, `fildfa`, `chldfa`...),
+  at stable positions from capture to capture with changing frame numbers.
+- **A map banner (`liflagb`) matched 97% brute force but cannot be probed:** it is a pole and a
+  pennant, and only two of its rows hold 8 opaque pixels.
+- **One-colour probes were the whole cost.** With every frame loaded the shipped matcher took 318 ms
+  on a map frame and 27 s on a start-screen frame: 18 million full comparisons, from 16-pixel probe
+  slices of a single colour (black) that hit ~80,000 places a frame. Requiring 4 distinct colours in
+  a probe: 78 comparisons, 8.6 ms mean and 10.4 ms worst over the 47 frames with all 46,875 eligible
+  frames and mirrored probes loaded, and the static-sprite placements unchanged.
+- **Every sprite match used the truncating RGB565 rule** (1,191 in the live log, 685 offline), so
+  sprites no longer carry the rounding rule's probes.
+- **A third of frames are repeats** (15,648 of 50,713; 10,100 within their own sprite).
+
+The pack format this led to (5: MIRROR flag, animation groups) is described in
+[hd-overlay.md](hd-overlay.md#the-pack).
