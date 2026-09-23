@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
-"""Lords of Magic HD portraits -- build the portraits from YOUR game and install the overlay.
+"""Lords of Magic HD art -- build the upscales from YOUR game and install the overlay.
 
     python lomhd_setup.py                       find the game, build, install
     python lomhd_setup.py --game "C:\\...\\English"
     python lomhd_setup.py --uninstall           put the game back exactly as it was
+    python lomhd_setup.py --review              pick your own upscaler per picture first
+
+Choosing your own: --review renders every upscale option for every picture from your own game,
+then opens a review page on this computer (http://127.0.0.1:8765) with the shipped picks already
+selected. Change any you like; they are saved to my-upscale-choices.json next to this script, and
+the next plain run uses that file instead of the shipped upscale-choices.json. Delete it to go back
+to the shipped picks. Rendering every option takes several times longer than an install.
 
 What it does, in order, and nothing else:
 
-  1. Reads the portraits out of your own pic.mpq. No game art ships with this mod.
+  1. Reads the portraits and building pictures out of your own pic.mpq. No game art ships with
+     this mod.
   2. Downloads the upscaler (Real-ESRGAN ncnn Vulkan, MIT) and the 4x-UltraSharp model
      (CC BY-NC-SA 4.0), each checked against a pinned SHA-256 before it is used.
-  3. Upscales every 70x67 portrait to 140x134, keeping each portrait's own palette.
+  3. Upscales each picture to 2x with the method picked for it in review (upscale-choices.json):
+     character portraits on the approved palette pipeline, everything else in full colour.
   4. Writes lomhd_portraits.pack beside lomse.exe.
   5. Backs up your ddraw.dll to ddraw.dll.lomhd-backup and installs the overlay's ddraw.dll.
 
-Needs Python 3.9+, ImageMagick 7 (`magick` on PATH) and a GPU with Vulkan. Takes 10-20 minutes,
+Needs Python 3.9+, ImageMagick 7 (`magick` on PATH) and a GPU with Vulkan. Takes 20-60 minutes,
 almost all of it step 3. Everything it downloads or makes lives in `lomhd_work` next to this script.
 """
 from __future__ import annotations
@@ -37,6 +46,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "tools"))
 
 import hd_portrait_pack  # noqa: E402
+import hd_upscale  # noqa: E402
 import lbm_png  # noqa: E402
 import mpq_read  # noqa: E402
 
@@ -44,7 +54,19 @@ WORK = HERE / "lomhd_work"
 PACK_NAME = "lomhd_portraits.pack"
 BACKUP_NAME = "ddraw.dll.lomhd-backup"
 RECORD_NAME = "lomhd_install.json"
-PORTRAIT_SIZE = (70, 67)
+SHIPPED_CHOICES = HERE / "upscale-choices.json"
+MY_CHOICES = HERE / "my-upscale-choices.json"
+GROUPS = {                       # group -> (folder in pic.mpq, the one size its members have)
+    "portrait": ("portrait", (70, 67)),
+    "building": ("lbm\\building", None),
+    "keep": ("keeps", None),
+    "screen": ("lbm", None),
+    "panel": ("lbm\\panels", None),
+    "sky": ("lbm\\skies", None),
+    "library": ("library", None),
+}
+PLURAL = {"sky": "skies", "library": "library pages"}
+MIN_COLOURS = 16                 # a picture plainer than this is found anywhere, and costs every frame
 
 ESRGAN = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/"
 MODELS = ("https://raw.githubusercontent.com/upscayl/upscayl/"
@@ -166,70 +188,232 @@ def upscaler() -> tuple[pathlib.Path, pathlib.Path]:
     models.mkdir(exist_ok=True)
     for key in ("ultrasharp-4x.param", "ultrasharp-4x.bin"):
         fetch(key, models / key)
+    # The animevideo models ship inside the Real-ESRGAN zip itself (checked for both zips).
+    for name in hd_upscale.MODEL_FILES:
+        if not (models / name).exists():
+            bundled = tools / kind / "models" / name
+            if not bundled.is_file():
+                fail(f"{name} is missing from the Real-ESRGAN download.")
+            shutil.copy(bundled, models / name)
     return exe, models
 
 
 # --- building the pack ---------------------------------------------------------------------------
 
-def extract_portraits(game: pathlib.Path) -> tuple[pathlib.Path, list[str]]:
-    """Every 70x67 LBM under portrait\\ in the player's pic.mpq, written flat and lowercase.
+def extract_images(game: pathlib.Path) -> dict[str, list[str]]:
+    """Every image the overlay covers, from the player's own pic.mpq, written to
+    lomhd_work/originals/<group>/<name>.lbm, lowercase. Returns group -> names.
 
     Names come from the list shipped with this mod plus the archive's own (listfile). Two spellings
     of one member (PORTRAIT\\ and portrait\\) resolve to the same hash entry, so they are one."""
     archive = mpq_read.Archive(game / "pic.mpq")
-    wanted = (HERE / "portrait-names.txt").read_text().splitlines() + archive.listfile()
-    names: dict[str, str] = {}
+    wanted = (HERE / "overlay-names.txt").read_text().splitlines() + archive.listfile()
+    root = WORK / "originals"
+    if root.exists():
+        shutil.rmtree(root)
+    found: dict[str, list[str]] = {group: [] for group in GROUPS}
+    seen = set()
     for name in wanted:
-        name = name.strip()
-        if name.lower().startswith("portrait\\") and name.lower().endswith(".lbm"):
-            names.setdefault(name.lower(), name)
-
-    src = WORK / "originals" / "portrait"
-    if src.exists():
-        shutil.rmtree(src)
-    src.mkdir(parents=True)
-    kept = []
-    for key, name in sorted(names.items()):
-        if name not in archive:
+        lower = name.strip().lower()
+        folder, _, member = lower.rpartition("\\")
+        group = next((g for g, (prefix, _) in GROUPS.items() if folder == prefix), None)
+        if group is None or not member.endswith(".lbm") or lower in seen or lower not in archive:
             continue
-        data = archive.read(name)
-        out = src / key.split("\\", 1)[1]
-        out.write_bytes(data)
+        seen.add(lower)
+        stem = member[:-4]
+        out = root / group / f"{stem}.lbm"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(archive.read(lower))
         try:
-            w, h, *_ = lbm_png.decode(out)
+            w, h, px, *_ = lbm_png.decode(out)
         except Exception:
             out.unlink()
             continue
-        if (w, h) != PORTRAIT_SIZE:
+        size = GROUPS[group][1]
+        # A flat picture (all black, one colour of sky) has probe slices that match any flat part
+        # of any frame; each hit then costs a full comparison. Nothing to sharpen in it anyway.
+        if (size and (w, h) != size) or not fits_the_overlay(w, h) or len(set(px)) < MIN_COLOURS:
             out.unlink()
             continue
-        kept.append("portrait\\" + out.name)
-    if not kept:
+        found[group].append(stem)
+    # The pack keys pictures by name alone. Two folders holding one name (portrait\\black.lbm and
+    # lbm\\black.lbm in the shipped archives) keep the first group's and report the other, rather
+    # than stopping every install over one picture. (Claude review, 2026-09-23.)
+    claimed: set[str] = set()
+    for group in GROUPS:
+        for stem in list(found[group]):
+            if stem in claimed:
+                found[group].remove(stem)
+                (root / group / f"{stem}.lbm").unlink()
+                say(f"     left out {GROUPS[group][0]}\\{stem}.lbm: another folder has a picture of that name")
+            claimed.add(stem)
+    if not found["portrait"]:
         fail("no portraits found in pic.mpq -- is this Lords of Magic Special Edition?")
-    return src, kept
+    return found
 
 
-def upscale(src_root: pathlib.Path, names: list[str], exe: pathlib.Path,
-            models: pathlib.Path) -> pathlib.Path:
-    out = WORK / "upscaled"
-    if out.exists():
-        shutil.rmtree(out)
-    names_file = WORK / "portraits.txt"
-    names_file.write_text("\n".join(names) + "\n")
-    cmd = [sys.executable, str(HERE / "tools" / "upscale.py"), str(src_root), str(out),
-           "--names", str(names_file), "--esrgan", str(exe), "--models", str(models)]
-    if subprocess.run(cmd).returncode != 0:
-        fail("upscaling did not finish. The game has not been touched.")
-    return out / "portrait"
+def fits_the_overlay(w: int, h: int) -> bool:
+    """What the pack writer would refuse, found before 20-60 minutes of upscaling rather than
+    after: a mod install's oversized building is skipped, not a reason to install nothing."""
+    p = hd_portrait_pack
+    return w >= p.MIN_WIDTH and h >= p.MIN_HEIGHT and 2 * max(w, h) <= p.MAX_UPSCALE_SIDE
+
+
+def choices_file() -> pathlib.Path:
+    """The player's own picks when they made some with --review, else the shipped ones."""
+    return MY_CHOICES if MY_CHOICES.is_file() else SHIPPED_CHOICES
+
+
+def lbm_to_png(lbm: pathlib.Path, png: pathlib.Path) -> None:
+    w, h, px, pal, _ = lbm_png.decode(lbm)
+    ppm = png.with_suffix(".ppm")
+    ppm.write_bytes(f"P6 {w} {h} 255\n".encode() + b"".join(bytes(pal[i]) for i in px))
+    subprocess.run(["magick", str(ppm), f"PNG:{png}"], check=True)
+    ppm.unlink()
+
+
+def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.Path,
+                choices_path: pathlib.Path | None = None) -> list[pathlib.Path]:
+    """Each image with the option picked for it in review, or the default for images that review
+    never saw. Returns the folders holding the upscales."""
+    choices = json.loads((choices_path or choices_file()).read_text())["choices"]
+    plan: dict[str, list[tuple[str, str]]] = {}
+    for group, stems in found.items():
+        for stem in stems:
+            choice = choices.get(f"{group}__{stem}") or hd_upscale.default_choice(group, stem)
+            if choice == "original":
+                continue                          # reviewed: no upscale beat the original
+            if choice == hd_upscale.APPROVED and group != "portrait":
+                choice = "ultrasharp-tta"         # the palette pipeline is sized for portraits
+            plan.setdefault(choice, []).append((group, stem))
+
+    out, pngs = WORK / "upscaled", WORK / "png"
+    for stale in (out, pngs):
+        # A stale option folder would duplicate names. A stale PNG is worse: it is another
+        # install's picture under this install's name, and the pack cannot catch it, because the
+        # originals it checks against are this run's. Found by cross-model review, 2026-09-22.
+        if stale.exists():
+            shutil.rmtree(stale)
+    folders = []
+    for choice, items in sorted(plan.items()):
+        say(f"     {len(items):4d} with {choice}")
+        dest = out / choice
+        if choice == hd_upscale.APPROVED:
+            names_file = WORK / "approved.txt"
+            names_file.write_text("".join(f"portrait\\{stem}.lbm\n" for _, stem in items))
+            cmd = [sys.executable, str(HERE / "tools" / "upscale.py"), str(WORK / "originals"), str(dest),
+                   "--names", str(names_file), "--esrgan", str(exe), "--models", str(models)]
+            if subprocess.run(cmd).returncode != 0:
+                fail("upscaling did not finish. The game has not been touched.")
+            folders.append(dest / "portrait")
+        else:
+            inputs = {}
+            pngs.mkdir(parents=True, exist_ok=True)
+            for group, stem in items:
+                png = pngs / f"{stem}.png"
+                lbm_to_png(WORK / "originals" / group / f"{stem}.lbm", png)
+                inputs[stem] = png
+            hd_upscale.render(choice, inputs, dest, exe, models)
+            folders.append(dest)
+    return folders
+
+
+def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.Path) -> pathlib.Path:
+    """Every option for every picture, in lomhd_work/review, laid out as the review page reads it:
+    original/<group>__<name>.png and one folder per option. Resumable. A picture whose original
+    differs from the one already there (another install, a mod) has its old renders removed."""
+    review = WORK / "review"
+    originals = review / "original"
+    originals.mkdir(parents=True, exist_ok=True)
+    options = [*hd_upscale.OPTIONS, hd_upscale.APPROVED]
+    inputs: dict[str, dict[str, pathlib.Path]] = {}
+    characters = []
+    for group, stems in found.items():
+        for stem in stems:
+            key = f"{group}__{stem}"
+            png = originals / f"{key}.png"
+            lbm = WORK / "originals" / group / f"{stem}.lbm"
+            # Compared by the picture's own bytes, kept beside its PNG: ImageMagick stamps every
+            # PNG it writes with the time, so comparing PNGs made every run look changed and
+            # re-render everything. (Claude review, 2026-09-23.)
+            kept = originals / f"{key}.lbm"
+            if not (png.exists() and kept.exists() and kept.read_bytes() == lbm.read_bytes()):
+                for option in options:
+                    (review / option / f"{key}.png").unlink(missing_ok=True)
+                part = originals / f"{key}.part"          # not *.png: the page lists those
+                lbm_to_png(lbm, part)
+                os.replace(part, png)
+                shutil.copyfile(lbm, kept)
+            inputs.setdefault(group, {})[key] = png
+            if hd_upscale.default_choice(group, stem) == hd_upscale.APPROVED:
+                characters.append(stem)
+    # Pictures from an install reviewed before (or a mod since removed) are not this game's: off the
+    # page, or a pick could be saved for art this install never installs. (Codex review.)
+    current = {key for batch in inputs.values() for key in batch}
+    for folder in [originals, *(review / option for option in options)]:
+        for stale in folder.glob("*.*") if folder.is_dir() else []:
+            if stale.stem not in current:
+                stale.unlink()
+    total = sum(len(v) for v in inputs.values())
+    for option in hd_upscale.OPTIONS:
+        say(f"     {option}: {total} pictures")
+        for group, batch in inputs.items():
+            hd_upscale.render(option, batch, review / option, exe, models)
+    approved = review / hd_upscale.APPROVED
+    todo = [s for s in characters if not (approved / f"portrait__{s}.png").exists()]
+    if todo:
+        say(f"     {hd_upscale.APPROVED}: {len(todo)} character portraits")
+        names = WORK / "review-approved.txt"
+        names.write_text("".join(f"portrait\\{stem}.lbm\n" for stem in todo))
+        lbms = WORK / "review-approved"
+        cmd = [sys.executable, str(HERE / "tools" / "upscale.py"), str(WORK / "originals"), str(lbms),
+               "--names", str(names), "--esrgan", str(exe), "--models", str(models)]
+        if subprocess.run(cmd).returncode != 0:
+            fail("upscaling did not finish. The game has not been touched.")
+        approved.mkdir(parents=True, exist_ok=True)
+        for stem in todo:
+            lbm_to_png(lbms / "portrait" / f"{stem}.lbm", approved / f"portrait__{stem}.png")
+    return review
+
+
+def serve_review(review: pathlib.Path, port: int) -> None:
+    """The review page, on this computer only, until Ctrl+C. Picks save as they are made. The
+    browser opens only once the server has said it is listening; if it cannot start (the port is
+    taken, say), setup stops and says so rather than showing whatever else answers there."""
+    url = f"http://127.0.0.1:{port}"
+    cmd = [sys.executable, str(HERE / "tools" / "serve.py"), "--renders", str(review),
+           "--port", str(port), "--choices", str(MY_CHOICES), "--seed", str(SHIPPED_CHOICES)]
+    server = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    first = server.stdout.readline()
+    if not first.startswith(url):
+        server.wait()
+        fail(f"the review page could not start on port {port} (is something else using it? "
+             "try --port 8766).")
+    say(f"\nReview page: {url}  (Ctrl+C here when you are done)")
+    say(f"Your picks are saved to {MY_CHOICES.name}; the next plain run installs with them.")
+    try:
+        import webbrowser
+        webbrowser.open(url)
+    except Exception:
+        pass
+    try:
+        server.wait()
+    except KeyboardInterrupt:
+        server.terminate()
 
 
 # --- install / uninstall -------------------------------------------------------------------------
 
-def write_atomically(path: pathlib.Path, data: bytes) -> None:
-    """Whole or not at all: an interruption leaves the old file, never a half-written one."""
+def write_atomically(path: pathlib.Path, data: "bytes | pathlib.Path") -> None:
+    """Whole or not at all: an interruption leaves the old file, never a half-written one. `data`
+    is the bytes, or a file to copy them from (the pack is ~850 MB with full-screen art)."""
     part = path.with_name(path.name + ".lomhd-part")
     with part.open("wb") as f:
-        f.write(data)
+        if isinstance(data, pathlib.Path):
+            with data.open("rb") as src:
+                shutil.copyfileobj(src, f, 1 << 20)
+        else:
+            f.write(data)
         f.flush()
         os.fsync(f.fileno())
     os.replace(part, path)
@@ -265,7 +449,7 @@ def check_writable(game: pathlib.Path) -> None:
              "if it still fails, run the terminal as administrator.")
 
 
-def install(game: pathlib.Path, pack: bytes, record: dict) -> None:
+def install(game: pathlib.Path, pack: "bytes | pathlib.Path", record: dict) -> None:
     """Back up the player's ddraw.dll once, record what was done, then install.
 
     The record is written BEFORE our DLL is copied, so an interruption at any point leaves either
@@ -276,7 +460,7 @@ def install(game: pathlib.Path, pack: bytes, record: dict) -> None:
     ours = record["ddraw_sha256"]
     previous = read_record(game)
     current, saved = file_hash(dll), file_hash(backup)
-    ours_any = {ours, previous.get("ddraw_sha256")} - {None}
+    ours_any = {ours, previous.get("ddraw_sha256"), *previous.get("overlay_sha256s", [])} - {None}
 
     if previous:
         had, backup_sha = previous["had_ddraw"], previous["backup_sha256"]
@@ -310,9 +494,13 @@ def install(game: pathlib.Path, pack: bytes, record: dict) -> None:
     write_atomically(record_path, json.dumps({
         "release": record["version"],
         "ddraw_sha256": ours,
+        # Every overlay DLL this game has had. An upgrade interrupted after this record but before
+        # the new DLL is copied leaves the OLD overlay DLL in place; without its hash here, both a
+        # re-run and --uninstall took it for another mod's. (Codex review, 2026-09-23.)
+        "overlay_sha256s": sorted(ours_any),
         "had_ddraw": had,
         "backup_sha256": backup_sha,
-        "pack_sha256": hashlib.sha256(pack).hexdigest(),
+        "pack_sha256": sha256(pack) if isinstance(pack, pathlib.Path) else hashlib.sha256(pack).hexdigest(),
         # cnc-ddraw writes a default ddraw.ini on its first run when there is none -- the case on a
         # Windows Steam install, which ships no ddraw.dll at all. Uninstall removes it only then.
         "had_ini": previous.get("had_ini", (game / "ddraw.ini").exists()),
@@ -335,7 +523,7 @@ def uninstall(game: pathlib.Path) -> None:
 
     if had and current == backup_sha:
         pass                                            # the original is already back
-    elif current == record["ddraw_sha256"]:
+    elif current in {record["ddraw_sha256"], *record.get("overlay_sha256s", [])}:
         if had:
             if file_hash(backup) != backup_sha:
                 fail(f"{BACKUP_NAME} is missing or changed, so the original cannot be restored "
@@ -374,6 +562,9 @@ def main() -> int:
     parser.add_argument("--game", type=pathlib.Path,
                         help="the folder holding lomse.exe and pic.mpq")
     parser.add_argument("--uninstall", action="store_true")
+    parser.add_argument("--review", action="store_true",
+                        help="render every option and open a page to pick your own; installs nothing")
+    parser.add_argument("--port", type=int, default=8765, help="the review page's port")
     args = parser.parse_args()
 
     if sys.version_info < (3, 9):
@@ -384,23 +575,34 @@ def main() -> int:
         uninstall(game)
         return 0
 
+    if args.review:
+        check_magick()
+        say("1/3  Getting the upscaler")
+        exe, models = upscaler()
+        say("2/3  Reading pictures from your pic.mpq")
+        found = extract_images(game)
+        say("3/3  Rendering every option (the long step; it resumes if stopped)")
+        serve_review(render_review(found, exe, models), args.port)
+        return 0
+
     record = release()
     check_magick()
     check_writable(game)
+    if choices_file() == MY_CHOICES:
+        say(f"Using your own picks from {MY_CHOICES.name}")
     say("1/4  Getting the upscaler")
     exe, models = upscaler()
-    say("2/4  Reading portraits from your pic.mpq")
-    src, names = extract_portraits(game)
-    say(f"     {len(names)} portraits")
+    say("2/4  Reading portraits and building pictures from your pic.mpq")
+    found = extract_images(game)
+    say("     " + ", ".join(f"{len(v)} {PLURAL.get(k, k + 's')}" for k, v in found.items() if v))
     say("3/4  Upscaling (the long step)")
-    upscaled = upscale(src.parent, names, exe, models)
+    upscaled = upscale_all(found, exe, models)
     say("4/4  Building the pack and installing")
-    pack, skipped = hd_portrait_pack.build(src, [upscaled], src)
-    count = len(hd_portrait_pack.read(pack))
-    if count == 0:
-        fail("the pack came out empty. The game has not been touched.")
+    originals = [WORK / "originals" / group for group in found if found[group]]
+    pack = WORK / PACK_NAME
+    count, skipped = hd_portrait_pack.write(pack, originals, upscaled, originals)
     install(game, pack, record)
-    say(f"\nDone: {count} HD portraits installed in {game}.")
+    say(f"\nDone: {count} HD images installed in {game}.")
     for line in skipped:
         say(f"  left out -- {line}")
     say("To undo: python lomhd_setup.py --uninstall" + (f' --game "{game}"' if args.game else ""))

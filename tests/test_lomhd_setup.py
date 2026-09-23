@@ -95,6 +95,17 @@ class InstallUninstall(unittest.TestCase):
         self.assertTrue((self.game / setup.PACK_NAME).exists())
         self.assertTrue((self.game / setup.RECORD_NAME).exists())
 
+    def test_a_pack_installed_from_a_file_arrives_whole(self) -> None:
+        """Setup installs the pack from the file the writer streamed to; every other test passes
+        bytes. (Claude review, 2026-09-23: copying nothing, or hashing the path, passed.)"""
+        pack = self.release_dir / "made.pack"
+        pack.write_bytes(PACK * 1000)
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        setup.install(self.game, pack, self.record)
+        self.assertEqual((self.game / setup.PACK_NAME).read_bytes(), PACK * 1000)
+        record = json.loads((self.game / setup.RECORD_NAME).read_text())
+        self.assertEqual(record["pack_sha256"], hashlib.sha256(PACK * 1000).hexdigest())
+
     def test_the_record_names_what_was_installed(self) -> None:
         (self.game / "ddraw.dll").write_bytes(ORIGINAL)
         setup.install(self.game, PACK, self.record)
@@ -169,6 +180,32 @@ class InstallUninstall(unittest.TestCase):
         setup.uninstall(self.game)
         self.assertEqual(self.dll(), ORIGINAL)
 
+    def test_an_upgrade_interrupted_before_the_new_dll_is_still_undoable(self) -> None:
+        """The upgrade writes its record (naming the new DLL), then stops before copying the DLL: the
+        OLD overlay DLL is left in place. Re-running and uninstalling must both still know it as
+        ours. (Codex review, 2026-09-23.)"""
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        old = dict(self.record, ddraw_sha256=hashlib.sha256(b"old overlay").hexdigest())
+        (self.release_dir / "ddraw.dll").write_bytes(b"old overlay")
+        setup.install(self.game, PACK, old)                 # the older release, installed
+        (self.release_dir / "ddraw.dll").write_bytes(OURS)
+        real_write = setup.write_atomically
+
+        def stop_at_the_dll(path, data):
+            if path.name == "ddraw.dll":
+                raise KeyboardInterrupt
+            real_write(path, data)
+
+        setup.write_atomically = stop_at_the_dll
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                setup.install(self.game, PACK, self.record)
+        finally:
+            setup.write_atomically = real_write
+        self.assertEqual(self.dll(), b"old overlay")
+        setup.uninstall(self.game)
+        self.assertEqual(self.dll(), ORIGINAL)
+
     def test_the_record_exists_before_our_dll_does(self) -> None:
         """So an interruption during the copy leaves something uninstall can act on."""
         (self.game / "ddraw.dll").write_bytes(ORIGINAL)
@@ -228,6 +265,123 @@ class InstallUninstall(unittest.TestCase):
         setup.install(self.game, PACK, self.record)
         setup.uninstall(self.game)
         self.assertEqual((self.game / "ddraw.ini").read_text(), "[ddraw]\nrenderer=opengl\n")
+
+
+class UpscalePlan(unittest.TestCase):
+    """upscale_all with the model stubbed: what each image is upscaled FROM."""
+
+    def setUp(self) -> None:
+        import struct
+        import lbm_png
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.work = pathlib.Path(tmp.name) / "lomhd_work"
+        for name, value in (("WORK", self.work), ("say", lambda text: None)):
+            self.addCleanup(setattr, setup, name, getattr(setup, name))
+            setattr(setup, name, value)
+        self.palette = [(i, i, i) for i in range(256)]
+        self.lbm_png, self.struct = lbm_png, struct
+        self.seen: dict[str, bytes] = {}
+
+        def render(option, inputs, dest, esrgan, models):
+            for key, png in inputs.items():
+                self.seen[key] = png.read_bytes()
+            return len(inputs)
+
+        def run(cmd, check=False):         # magick PPM -> PNG, stubbed as a copy
+            pathlib.Path(cmd[2].removeprefix("PNG:")).write_bytes(pathlib.Path(cmd[1]).read_bytes())
+
+        for target, name, value in ((setup.hd_upscale, "render", render), (setup.subprocess, "run", run)):
+            self.addCleanup(setattr, target, name, getattr(target, name))
+            setattr(target, name, value)
+
+    def extract(self, shade: int) -> None:
+        folder = self.work / "originals" / "building"
+        folder.mkdir(parents=True, exist_ok=True)
+        header = self.struct.pack(">HHhhBBBBHBBhh", 40, 6, 0, 0, 8, 0, 1, 0, 0, 1, 1, 40, 6)
+        self.lbm_png.encode(folder / "aagtwr0a.lbm", 40, 6, bytes([shade]) * 240, self.palette,
+                            [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+
+    def test_a_second_run_upscales_this_install_not_the_last_one(self) -> None:
+        """Vanilla then GS5R3: a name both share, a different picture. The PNG cache kept the
+        vanilla picture, and the pack could not tell, since it checks against this run's art."""
+        self.extract(10)
+        setup.upscale_all({"building": ["aagtwr0a"]}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        first = self.seen.pop("aagtwr0a")
+        self.extract(200)
+        setup.upscale_all({"building": ["aagtwr0a"]}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertNotEqual(self.seen["aagtwr0a"], first)
+        self.assertIn(bytes([200, 200, 200]), self.seen["aagtwr0a"])
+
+    def test_images_the_overlay_would_refuse_are_skipped_before_upscaling(self) -> None:
+        """A mod install's oversized building must not cost 20-60 minutes of upscaling and then
+        stop the pack writer; extraction leaves it out."""
+        import io
+        members = {}
+        for name, (w, h) in {"portrait\\aicavp00.lbm": (70, 67), "lbm\\building\\aagtwr0a.lbm": (228, 180),
+                             "lbm\\building\\huge.lbm": (641, 67), "lbm\\building\\flat.lbm": (70, 3),
+                             "lbm\\plain.lbm": (640, 480), "lbm\\start01.lbm": (640, 480),
+                             "portrait\\black.lbm": (70, 67), "lbm\\black.lbm": (640, 480)}.items():
+            buf = io.BytesIO()
+            header = self.struct.pack(">HHhhBBBBHBBhh", w, h, 0, 0, 8, 0, 1, 0, 0, 1, 1, w, h)
+            path = self.work.parent / "member.lbm"
+            pixels = bytes(w * h) if "plain" in name else bytes((i * 7 + w) % 251 for i in range(w * h))
+            self.lbm_png.encode(path, w, h, pixels, self.palette,
+                                [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+            members[name] = path.read_bytes()
+
+        class Archive:
+            def __init__(self, path): pass
+            def listfile(self): return list(members)
+            def __contains__(self, name): return name in members
+            def read(self, name): return members[name]
+
+        self.addCleanup(setattr, setup.mpq_read, "Archive", setup.mpq_read.Archive)
+        setup.mpq_read.Archive = Archive
+        found = setup.extract_images(self.work.parent)
+        self.assertEqual({g: v for g, v in found.items() if v},
+                         {"portrait": ["aicavp00", "black"], "building": ["aagtwr0a"], "screen": ["start01"]},
+                         "too big, too short and too plain are left out; a real screen is kept; of two "
+                         "pictures named black, the portrait is kept and the screen left out")
+
+    def test_the_players_own_picks_win_over_the_shipped_ones(self) -> None:
+        """--review saves to my-upscale-choices.json; a plain run must install with it, and
+        deleting it must fall back to the shipped picks."""
+        import json
+        mine, shipped = self.work.parent / "mine.json", self.work.parent / "shipped.json"
+        shipped.write_text(json.dumps({"choices": {"building__aagtwr0a": "anime2x"}}))
+        for name, value in (("MY_CHOICES", mine), ("SHIPPED_CHOICES", shipped)):
+            self.addCleanup(setattr, setup, name, getattr(setup, name))
+            setattr(setup, name, value)
+        options = []
+        setup.hd_upscale.render = lambda option, inputs, *rest: options.append(option)
+        self.extract(10)
+        setup.upscale_all({"building": ["aagtwr0a"]}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        mine.write_text(json.dumps({"choices": {"building__aagtwr0a": "anime4x"}}))
+        setup.upscale_all({"building": ["aagtwr0a"]}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        mine.unlink()
+        setup.upscale_all({"building": ["aagtwr0a"]}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertEqual(options, ["anime2x", "anime4x", "anime2x"])
+
+    def test_review_renders_survive_a_rerun_and_go_when_the_picture_changes(self) -> None:
+        """--review resumes: an unchanged picture keeps its renders; a changed one loses them."""
+        setup.hd_upscale.render = lambda *a, **k: 0
+        self.extract(10)
+        found = {"building": ["aagtwr0a"]}
+        review = setup.render_review(found, pathlib.Path("esrgan"), pathlib.Path("models"))
+        render = review / "anime2x" / "building__aagtwr0a.png"
+        render.parent.mkdir(parents=True, exist_ok=True)
+        render.write_bytes(b"a finished render")
+        setup.render_review(found, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertTrue(render.exists(), "an unchanged picture must keep its renders")
+        self.assertEqual(sorted(p.name for p in (review / "original").iterdir()),
+                         ["building__aagtwr0a.lbm", "building__aagtwr0a.png"], "no stray temp files")
+        self.extract(200)
+        setup.render_review(found, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertFalse(render.exists(), "a changed picture must lose its old renders")
+        setup.render_review({"building": []}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertEqual(list((review / "original").iterdir()), [],
+                         "a picture this install does not have leaves the page")
 
 
 if __name__ == "__main__":
