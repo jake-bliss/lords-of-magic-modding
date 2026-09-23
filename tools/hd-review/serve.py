@@ -57,7 +57,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store" if kind.startswith("application/json") else "max-age=3600")
+        self.send_header("Cache-Control", "max-age=3600" if kind == "image/png" else "no-store")
         self.end_headers()
         self.wfile.write(body)
 

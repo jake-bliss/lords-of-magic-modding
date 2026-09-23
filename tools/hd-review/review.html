@@ -39,6 +39,8 @@
   .tile.orig img { image-rendering: pixelated; }
   .tile .cap { font-size: 12px; color: var(--dim); margin-top: 4px; }
   .tile.chosen .cap { color: var(--text); }
+  .vp { width: 380px; height: 300px; overflow: hidden; position: relative; }
+  .vp img { position: absolute; left: 0; top: 0; }
   .pending { display: grid; place-items: center; color: var(--dim); font-size: 12px; border: 1px dashed var(--line); }
   .empty { color: var(--dim); padding: 40px; text-align: center; }
   @media (max-width: 600px) { header { gap: 8px; } .help { display: none; } }
@@ -49,7 +51,7 @@
   <h1>Upscale Review</h1>
   <label>Group <select id="group"><option value="">All</option><option value="portrait">Portraits</option><option value="building">Buildings</option><option value="keep">Keeps</option><option value="screen">Screens</option><option value="panel">Panels</option><option value="sky">Skies</option><option value="library">Library</option></select></label>
   <label>Show <select id="show"><option value="unpicked">Unpicked</option><option value="picked">Picked</option><option value="all">All</option></select></label>
-  <label>Zoom <select id="zoom"><option value="1">1x (game 2x)</option><option value="1.5">1.5x</option><option value="2" selected>2x</option></select></label>
+  <label>Zoom <select id="zoom"><option value="detail">Detail (hover to pan)</option><option value="0.5">0.5x</option><option value="1">1x (game 2x)</option><option value="1.5">1.5x</option><option value="2" selected>2x</option></select></label>
   <span class="progress"><span id="count">0</span> / <span id="total">0</span> picked</span>
   <div class="bar"><div id="fill" style="width:0"></div></div>
   <label>Bulk <select id="bulkopt"></select><button id="bulk">Apply to all unpicked shown</button></label>
@@ -78,14 +80,32 @@ function filtered() {
     (s === "all" || (s === "picked") === (im.key in state.choices)));
 }
 
+// Detail: every tile of a card shows the same 380x300 window of the image at full 2x size, and
+// moving the mouse over any of them pans all of them -- for full-screen art, where whole images
+// at a size that fits side by side are too small to judge.
+const DETAIL = { w: 380, h: 300 };
+function detailMode() { return $("zoom").value === "detail"; }
+
+function pan(vp, event) {
+  const box = vp.getBoundingClientRect();
+  const fx = Math.min(Math.max((event.clientX - box.left) / box.width, 0), 1);
+  const fy = Math.min(Math.max((event.clientY - box.top) / box.height, 0), 1);
+  for (const img of vp.closest(".card").querySelectorAll(".vp img")) {
+    const w = parseFloat(img.style.width) || img.naturalWidth, h = w * img.naturalHeight / img.naturalWidth;
+    img.style.left = -fx * Math.max(w - DETAIL.w, 0) + "px";
+    img.style.top = -fy * Math.max(h - DETAIL.h, 0) + "px";
+  }
+}
+
 function tile(im, option, zoom) {
   const chosen = state.choices[im.key] === option;
   const num = option === "original" ? 0 : state.options.indexOf(option) + 1;
   const ready = option === "original" || im.ready.includes(option);
   const src = `/img/${option}/${encodeURIComponent(im.key)}.png`;
-  const body = ready
-    ? `<img loading="lazy" src="${src}" alt="${LABELS[option]}" data-zoom="${zoom}" onload="sizeImg(this)">`
-    : `<div class="pending" style="width:${140 * zoom}px;height:${134 * zoom}px">rendering…</div>`;
+  const img = `<img loading="lazy" src="${src}" alt="${LABELS[option]}" data-zoom="${zoom}" onload="sizeImg(this)">`;
+  const body = !ready
+    ? `<div class="pending" style="width:${detailMode() ? DETAIL.w : 140 * zoom}px;height:${detailMode() ? DETAIL.h : 134 * zoom}px">rendering…</div>`
+    : detailMode() ? `<div class="vp" onmousemove="pan(this, event)">${img}</div>` : img;
   return `<div class="tile ${option === "original" ? "orig" : ""} ${chosen ? "chosen" : ""}" data-key="${im.key}" data-option="${option}">
     ${body}<div class="cap">${num} · ${LABELS[option]}</div></div>`;
 }
@@ -97,7 +117,7 @@ function sizeImg(img) {
 }
 
 function render() {
-  const zoom = parseFloat($("zoom").value);
+  const zoom = detailMode() ? 2 : parseFloat($("zoom").value);
   shown = filtered();
   focus = Math.min(focus, Math.max(shown.length - 1, 0));
   $("list").innerHTML = shown.length ? shown.map((im, i) => {
