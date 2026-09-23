@@ -128,10 +128,13 @@ class MainOrderTest(unittest.TestCase):
 class ViewerCheckTest(unittest.TestCase):
     """A stand-in viewer that exports a PNG with a given PLTE, checked against the member's bytes."""
 
-    def viewer(self, plte: bytes, fail_first: int = 0) -> Path:
+    def viewer(self, plte: bytes, fail_first: int = 0, first: bytes | None = None) -> Path:
+        """`first`, when given, is what the first export writes instead (a broken PNG, say)."""
         folder = Path(tempfile.mkdtemp())
         png = folder / "export.png"
         png.write_bytes(one_pixel_png(plte))
+        bad = folder / "first.png"
+        bad.write_bytes(first or b"")
         counter = folder / "count"
         script = folder / "viewer"
         # argv as the real call passes it: --export-imp-frame ARCHIVE MEMBER FRAME OUTPUT --listfile L
@@ -144,7 +147,7 @@ class ViewerCheckTest(unittest.TestCase):
             counter.write_text(str(n + 1))
             if n < {fail_first}:
                 sys.exit(1)
-            shutil.copy({str(png)!r}, sys.argv[5])
+            shutil.copy({str(bad)!r} if n == 0 and {first is not None} else {str(png)!r}, sys.argv[5])
             """))
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
         return script
@@ -169,6 +172,12 @@ class ViewerCheckTest(unittest.TestCase):
 
     def test_a_failed_export_moves_on_to_the_next_sprite(self) -> None:
         self.assertTrue(self.check(self.viewer(FIXED, fail_first=1)))
+
+    def test_an_export_with_broken_deflate_data_moves_on_to_the_next_sprite(self) -> None:
+        # Valid chunk CRCs, but the IDAT payload is not a zlib stream.
+        broken = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 3, 0, 0, 0))
+                  + chunk(b"PLTE", FIXED) + chunk(b"IDAT", b"not deflate") + chunk(b"IEND", b""))
+        self.assertTrue(self.check(self.viewer(FIXED, first=broken)))
 
     def test_neither_decode_refuses_rather_than_guessing(self) -> None:
         with self.assertRaises(SystemExit):
