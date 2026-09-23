@@ -114,7 +114,8 @@ for the dword at `+8` is that it is **overloaded**: when the count is zero those
 observation of *"a separate index for a 1,651-pixel silhouette beneath the creature"*
 independently corroborates it. Compositing is keyed by palette **index**, not by colour, and the RGB in slots 0 and 1 is ignored
 outright — proved by rewriting index 1 to magenta and rendering it unchanged. Index 0 holds pure
-**red** and index 1 pure **green**. This retires the "not a single
+**green** and index 1 pure **red** (**corrected 2026-09-23**: this said red then green, read through
+the red/green-swapped decoder; see the [research log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green)). This retires the "not a single
 universal chroma key" framing.
 
 **Our "cycle" is a facing — a direction — and facings are ordered clockwise.** Clockwise ordering is

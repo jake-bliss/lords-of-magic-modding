@@ -1111,7 +1111,9 @@ entries: the two agree on every index where red equals green, and disagree where
 the signature of a channel swap somewhere between our decoder and the capture, and it bears on the
 "palette is BGRA, swapped to RGB" claim recorded in [Stage 1](native-asset-stage.md). It is **not**
 resolved here — one frame against one background cannot separate a decoder bug from a BMP reader bug —
-and it needs a deliberate test against a known colour.
+and it needs a deliberate test against a known colour. (**Resolved 2026-09-23:** a BMP reader bug. The
+capture bytes are G,R,B and were read as R,G,B; the decoder was right. See
+[the 2026-09-23 entry](#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green).)
 
 ## 2026-09-16 — An unattended probe does not work, and why
 
@@ -7289,7 +7291,10 @@ of the earlier finding stands.
 ### The root cause
 
 `tools/probe_captures.py` read the capture's G,R,B bytes as if they were R,G,B. Every colour it
-reported therefore had red and green swapped, and both 2026-09-17 measurements that depended on it
+reported therefore had red and green swapped. That is also the symptom the
+[2026-09-16 entry](#2026-09-16--the-hotspot-type-numbers-read-out-of-the-exe-and-two-corrections) recorded and could not place — decoded entries and captured pixels
+agreeing wherever red equals green and disagreeing where they differ. The decoder was right; the
+reader was not. Both 2026-09-17 measurements that depended on it
 inherited the swap exactly:
 
 - The permutation fit over the running frame — `(p1, p2, p0)` scoring 14/14 against `(p2, p1, p0)`
@@ -7313,8 +7318,14 @@ The game's own 16-bit framebuffer, read raw through the cnc-ddraw HD-overlay for
   under BGR palette decoding, versus **28.8%** under the blue,red,green decoding this repository
   shipped from 2026-09-17. All 87 palette indices used by that frame mapped to exactly one
   framebuffer colour each — a pure channel permutation, not a live palette.
-- Five more single-frame sprites matched under BGR decoding in the same captures: `llkeep0b` 100%,
-  `livilb` 100% (two placements), `hermitb` 100%, `llwizt1b` 96%.
+- Four more single-frame sprites (five placements) matched under BGR decoding in the same captures:
+  `llkeep0b` 100%, `livilb` 100% (two placements), `hermitb` 100%, `llwizt1b` 96%.
+- Reproduce with `tools/framebuffer_palette_check.py FRAME.raw SPRITE.png X Y` on a frame dumped by
+  the overlay build and a frame exported with `--export-imp-frame`. For `tree2b` at (394,55) it prints
+  1.000 for the palette as exported and 0.288 for it red/green swapped; an export made before this
+  fix prints the reverse. Frames and exports are game art and stay under the gitignored `artifacts/`.
+  `shipped_palettes_hold_green_then_red_in_slots_0_and_1` (in `imp.rs`, corpus-gated) pins the
+  decode to the shipped files, and fails with the 2026-09-17 decode.
 - **Control that the framebuffer's own channels are read right:** LBM art in the same frames —
   portraits, buildings, screens, the interface bar, all RGB-paletted — matches with ordinary RGB, no
   correction needed. The library screen `lllibl10` matches 97.5% of 8-pixel runs. The HD overlay
@@ -7324,9 +7335,9 @@ The game's own 16-bit framebuffer, read raw through the cnc-ddraw HD-overlay for
   `run-20260921-113819/zc0.bmp`): the interface-bar region matches `intrface.lbm` at **30.8%** under
   byte order G,R,B and **≤0.9%** under every other permutation. (30% is also what the bar itself
   scores against a live frame, since parts of it are dynamic, so this is not a low score.)
-  Independently, the mean map-area colour in `zc0.bmp` is bytes **(95.9, 50.4, 36.9)**, against the
-  live framebuffer's mean of R,G,B **(50.3, 96.1, 37.1)** for the same map — a red/green transposition
-  of the same triple, to within noise.
+  Independently, the mean map-area colour in `zc0.bmp` is bytes **(95.9, 50.4, 36.9)**, against a
+  live framebuffer frame of the overland map (a different session) averaging R,G,B
+  **(50.3, 96.1, 37.1)** — a red/green transposition of nearly the same triple.
 
 ### What stands, unaffected
 

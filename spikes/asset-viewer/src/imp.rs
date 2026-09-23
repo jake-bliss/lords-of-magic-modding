@@ -571,7 +571,8 @@ impl ImpSprite {
         // Palette entries are stored **blue, green, red, pad** (BGRA), as the community
         // specification says. Measured on 2026-09-23 in the game's own 16-bit framebuffer, read
         // raw through cnc-ddraw: `imp\\tree2b.imp` frame 0 matched 1,404 of 1,404 opaque pixels
-        // decoded this way and 29% decoded blue, red, green; five more sprites matched 96-100%.
+        // decoded this way and 29% decoded blue, red, green; four more sprites matched 96-100%
+        // (`tools/framebuffer_palette_check.py` reproduces the measurement).
         // LBM art in the same frames matches with its RGB palette, so the frame's channels are
         // right. The engine agrees: `0x0049B220` copies each entry as a plain reversal.
         //
@@ -4675,6 +4676,33 @@ mod tests {
             .add_listfile_contents(&contents)
             .expect("apply the listfile");
         archive
+    }
+
+    /// Slots 0 and 1 of the shipped palettes decode as pure green then pure red. A literal test
+    /// cannot catch the rule itself being wrong; this pins the decode to the shipped files. From
+    /// 2026-09-17 to 2026-09-23 the decoder read them red then green, a red/green swap fitted to a
+    /// capture reader that had its own (research log, 2026-09-23).
+    #[test]
+    #[ignore = "needs LOM_GAME_DIR and LOM_LISTFILE"]
+    fn shipped_palettes_hold_green_then_red_in_slots_0_and_1() {
+        let archive = open_imp_archive();
+        let (mut sprites, mut green_red, mut red_green) = (0_usize, 0_usize, 0_usize);
+        for entry in archive.entries().expect("enumerate imp.mpq") {
+            let Ok(bytes) = archive.read(&entry.name) else {
+                continue;
+            };
+            let Ok(sprite) = ImpSprite::parse(&bytes) else {
+                continue;
+            };
+            sprites += 1;
+            match (sprite.palette[0], sprite.palette[1]) {
+                ([0, 255, 0, _], [255, 0, 0, _]) => green_red += 1,
+                ([255, 0, 0, _], [0, 255, 0, _]) => red_green += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(sprites, 1_800);
+        assert_eq!((green_red, red_green), (1_542, 0));
     }
 
     /// Every payload-carrying frame in `imp.mpq` re-encodes losslessly, and every frame the

@@ -75,7 +75,8 @@
 //! known `.lbm`, or an operator body traced to the palette load.
 //!
 //! **This is not the same claim as the `screencapture` one.** `docs/research-log.md` records that
-//! the engine's own `screencapture` operator writes R,G,B into a file whose header says otherwise.
+//! the engine's own `screencapture` operator writes G,R,B into a file whose header says otherwise
+//! (corrected 2026-09-23 from R,G,B; see the research log entry of that date).
 //! That is a property of *that operator's output*, measured on captures. These two members are
 //! authored art shipped inside an archive. The two findings do not conflict and neither one may be
 //! used to predict the other.

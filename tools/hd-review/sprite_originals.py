@@ -28,6 +28,11 @@ sys.path.insert(0, str(ROOT / "tools" / "sprite-review"))
 from generate import describe  # noqa: E402  -- the parser the sprite review already uses
 
 MIN_SIDE = 16                    # smaller than this is a spark or a dot: nothing to upscale
+# Bumped whenever the viewer's decoding of IMP art changes. Originals already on disk are reused,
+# so without this a rerun after a decoder fix keeps the old colours -- and so does every upscale
+# rendered from them. 2026-09-23: palettes read blue, green, red (they were red/green swapped).
+EXPORT_VERSION = "imp-bgr-2026-09-23"
+STAMP = ".sprite-export-version"
 SHADOW_INDEX = 1                 # keyed by index, whatever colour the palette gives it
 
 
@@ -54,6 +59,22 @@ def clear_shadow(png: pathlib.Path) -> None:
     png.write_bytes(b"".join(out))
 
 
+def discard_stale(out: pathlib.Path) -> int:
+    """Remove sprite originals, and every upscale rendered from them, written by an older export."""
+    stamp = out / "original" / STAMP
+    if stamp.exists() and stamp.read_text().strip() == EXPORT_VERSION:
+        return 0
+    removed = 0
+    for folder in (p for p in out.iterdir() if p.is_dir()):
+        for png in folder.glob("sprite__*.png"):
+            png.unlink()
+            removed += 1
+    if removed:
+        print(f"{removed} sprite images from an older export removed", flush=True)
+    stamp.write_text(EXPORT_VERSION + "\n")
+    return removed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("archive", type=pathlib.Path)
@@ -65,6 +86,7 @@ def main() -> int:
     args = parser.parse_args()
     originals = args.out / "original"
     originals.mkdir(parents=True, exist_ok=True)
+    discard_stale(args.out)
     members = sorted({m.strip() for m in args.listfile.read_text().splitlines()
                       if m.strip().lower().endswith(".imp")}, key=str.lower)
     written = skipped = 0
