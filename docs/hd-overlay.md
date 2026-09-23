@@ -17,6 +17,17 @@ Jake picked the upscaler per picture on a local review page (below). Seen in pla
 profile: Life and Order barracks, mage tower and guild pictures detected and drawn. Windows passed
 for the 749-portrait release (RTX 3070); the 917 release is not yet re-tested there.
 
+**Update 2026-09-23: full screens, 1,281 pictures.** Keeps, full screens (`lbm\`), panels, skies
+and the library join -- 371 more, most 640x480, upscaled to 1280x960. A capture run first showed
+the engine copies screens into the frame as exact RGB565 too (loading 99.7%, start 99.5%, library
+95.4%, a keep 94.6%, the unit roster 91.1%; quest2 sits at (70,20)). Seen in play on the dev
+profile and judged "substantially better" side by side with the untouched GS5R3 profile: start,
+new game, loading, the interface bar under the map, the Life library and a book page, the Life
+keep, the unit roster, report and quest dialogs, with portraits and buildings drawn over them.
+This needed pack format 3 and lazy loading (below): format 2 would have held ~1.8 GB of upscales
+in a 32-bit process. Players can now pick their own upscaler per picture (`--review`, below).
+Not yet re-tested on Windows.
+
 Code: `~/personal-projects/cnc-ddraw-lom`, branch `lom-hd-overlay` off upstream cnc-ddraw 7.1.0.0
 (`541b5de`, the version the game ships). Pack tool: `tools/hd_portrait_pack.py` here.
 
@@ -50,19 +61,39 @@ cursor on one row does not hide it). Each probe is the picture's **busiest** 32-
 row: a flat slice (sky, parchment) hashes to the same value in half the frame, and the first
 any-width build took about 10 s per frame for it. Both candidate RGB565 conversions (truncating
 and rounding) are accepted. A candidate then passes a 1-in-16 sample at 60% (cheap rejection of
-false hits only) and a full count at 85%.
+false hits only) and a full count at 85%, through a palette-to-RGB565 table (1 byte per pixel
+held, not two 2-byte templates).
+
+**Large pictures** (over 65,536 pixels -- screens) are scored on their 1-in-16 sample alone, at
+**30%**: a library page with text on it showed 76% of its pixels, and the interface bar under the
+live map 30-38%. Nothing else in a frame matches 30% of a ~20,000-point sample of a 640x480 picture
+exactly, and the mask (below) draws the upscale only where the original's exact pixel is still
+showing, so a partly covered screen still draws correctly. Their full indices are loaded only
+when they are found.
 
 **One picture per spot, the best.** An upgraded building shares most of its pixels with the level
-below (`llwizt3a` matched 78% where `llwizt1a` matched 100%). Candidates sharing at least half of
-the smaller one are rivals; a new one must beat **every** rival, and replaces them all. Pictures
-that merely touch are both drawn. `tests/lomhd_find_test.c` asserts this on synthetic frames.
-Runs only when the frame changed: **2.15 ms mean, 2.64 ms worst** over 19 captured frames with
-all 917 pictures loaded.
+below (`llwizt3a` matched 78% where `llwizt1a` matched 100%). Candidates of a **similar size**
+(neither more than twice the other's area) sharing at least half of the smaller one are rivals; a
+new one must beat **every** rival, and replaces them all. Pictures that merely touch, and a
+portrait on a screen, are both drawn. `tests/lomhd_find_test.c` asserts this on synthetic frames.
+Runs only when the frame changed: **1.0 ms mean, 1.3 ms worst** (native build) over 64 captured
+frames with all 1,281 pictures loaded.
 
-**Drawing** (`src/lomhd.c`): after cnc-ddraw draws the scaled frame and before `SwapBuffers`. The
-context is GL 3.2 core, so the quad has its own shader and buffers. Pixels the frame no longer shows
-as the portrait (cursor, tooltip) are **discarded**, not blended; every GL binding touched is saved
-and restored, because cnc-ddraw sets some of its state once at init.
+**Loading** (`src/lomhd.c`): the worker keeps the pack open and reads only its index and matching
+data at start (1.7 s, 18 MB resident for 1,281 pictures). The first time a picture is found the
+render thread asks for it; the worker inflates its upscale (and a screen's full indices) and hands
+it over; the next scan draws it -- the original shows for a frame or two. Each upscale is uploaded
+to the GPU once and its CPU copy freed; a 160 MB texture budget evicts the least recently drawn
+picture not on screen. A new GL context forgets every texture and forces a rescan; a picture that
+finished loading after it left the screen is dropped after 60 scans. A picture whose stream fails
+is switched off alone and logged.
+
+**Drawing**: after cnc-ddraw draws the scaled frame and before `SwapBuffers`. The context is GL 3.2
+core, so the quad has its own shader and buffers. Each placement uploads a **mask** at the
+original's size (one byte a pixel: does the frame still show the original's exact pixel here?);
+the shader samples it NEAREST and **discards** covered pixels -- cursor, tooltip, text on a page,
+the live map in the interface bar. Every GL binding touched, both texture units and the unpack
+state are saved and restored, because cnc-ddraw sets some of its state once at init.
 
 **Threading rule: the render thread never touches a file.** It holds `g_ddraw.cs` whenever it calls
 in. An early build logged and wrote screenshots there; under Wine that wedged the render thread and
@@ -72,11 +103,16 @@ worker thread owns every file operation.
 ## The pack
 
 `tools/hd_portrait_pack.py OUT --originals INSTALLED --sources MADE_FROM --upscaled DIR...` writes
-`lomhd_portraits.pack` beside `lomse.exe` (the name predates buildings). **Format 2** (`LOMHDPK2`):
-per picture, the original as palette plus indices (the templates) and the upscale as zlib RGB, any
-width from 32 and height from 4, upscale at most 512 a side. Format 1 (palette upscales, one width)
-still loads. The writer refuses what the reader would, and refuses pixel-doubled "upscales": 395
-of the pictures in the first pack played were 2x2 repeats that changed nothing.
+`lomhd_portraits.pack` beside `lomse.exe` (the name predates buildings). **Format 3** (`LOMHDPK3`):
+an index first (name, sizes, palette, two stream lengths per picture), then per picture zlib of its
+indices and zlib of its upscale RGB, back to back to the end of the file -- offsets are sums of
+lengths, so none can point anywhere odd. Any width from 32 and height from 4, upscale at most 1280
+a side, at most 5,461 pictures. ~870 MB with screens, so the writer streams it. Inflation in the
+overlay is **bounded** (`lodepng_zlib_decompress_bounded`): a stream that would inflate past its
+picture's size fails while inflating. An older-format pack is reported ("run lomhd_setup.py
+again"). The writer refuses what the reader would, and refuses pixel-doubled "upscales": 395 of
+the pictures in the first pack played were 2x2 repeats that changed nothing. Setup leaves out
+pictures with fewer than 16 colours: a flat picture's probes match anywhere.
 
 **Which upscaler, per picture** (`tools/hd_upscale.py`, shared by the review renderer and the
 player's setup so both run the same code): `approved` (the original palette pipeline -- despeckle,
@@ -85,7 +121,14 @@ player's setup so both run the same code): `approved` (the original palette pipe
 two steps lost detail on buildings). Picks live in `release/hd-overlay/upscale-choices.json` (names
 only, no art); a picture the review never saw gets `approved` if it is a character portrait,
 otherwise `ultrasharp-tta`. The review page: `tools/hd-review/render_variants.py` then
-`tools/hd-review/serve.py` (127.0.0.1:8765, game art stays local).
+`tools/hd-review/serve.py` (127.0.0.1:8765, game art stays local). Jake picked all 2,845 on
+2026-09-23 -- including sprites (one frame each, `sprite_originals.py`, shadow index cleared),
+terrain sheets and icons, which the overlay cannot draw yet.
+
+**Players choose too.** The release ships the page: `lomhd_setup.py --review` renders every option
+from the player's own game into `lomhd_work/review` (plus the palette pipeline for character
+portraits, as its own tile), opens the page with the shipped picks preselected, and saves to
+`my-upscale-choices.json`, which a plain install then uses instead of the shipped file.
 
 🔴 **Pairing is by content.** An upscale is packed only when the installed original is pixel- and
 palette-identical to the original it was made from. The vanilla and GS5R3 installs share 445
@@ -101,9 +144,11 @@ same in both) and silently missed the Life banner. Vanilla: 440 portraits. GS5R3
   the log only records the pack loading, the overlay turning itself off, or an error.
 - **Off switch:** delete `lomhd_portraits.pack`. A missing or malformed pack, or a missing GL entry
   point, turns the overlay off and leaves the game exactly as it was.
-- **Matcher test:** `tests/lomhd_match_test.exe PACK FRAME.raw...` runs the shipped matcher over
-  captured frames under the app's own Wine (needs `WINEESYNC=1 WINEMSYNC=1` and the app's
-  `Contents/Frameworks` on `DYLD_FALLBACK_LIBRARY_PATH`, or it exits 136 with no output).
+- **Tests** build natively on macOS against a small `windows.h` shim (the types and
+  `HeapAlloc`/`HeapFree` as `malloc`/`free`): `cc -O2 -std=c99 -I<shim> -Iinc -Itests
+  tests/lomhd_{pack,find}_test.c src/lomhd_match.c src/lodepng.c`. `lomhd_match_test PACK
+  FRAME.raw...` runs the shipped matcher over captured frames and prints what it finds and how long
+  the search took; no Wine or Windows machine needed.
 - **Original DLL:** `artifacts/experiment-backups/ddraw-20260922/ddraw.dll.orig`
   (`85e0f7d530dfda13`, identical to the copy in the GS5R3 profile).
 
