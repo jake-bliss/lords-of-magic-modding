@@ -301,6 +301,25 @@ class UpscalePlan(unittest.TestCase):
         found = setup.extract_images(self.work.parent)
         self.assertEqual(found, {"portrait": ["aicavp00"], "building": ["aagtwr0a"]})
 
+    def test_the_players_own_picks_win_over_the_shipped_ones(self) -> None:
+        """--review saves to my-upscale-choices.json; a plain run must install with it, and
+        deleting it must fall back to the shipped picks."""
+        import json
+        mine, shipped = self.work.parent / "mine.json", self.work.parent / "shipped.json"
+        shipped.write_text(json.dumps({"choices": {"building__aagtwr0a": "anime2x"}}))
+        for name, value in (("MY_CHOICES", mine), ("SHIPPED_CHOICES", shipped)):
+            self.addCleanup(setattr, setup, name, getattr(setup, name))
+            setattr(setup, name, value)
+        options = []
+        setup.hd_upscale.render = lambda option, inputs, *rest: options.append(option)
+        self.extract(10)
+        setup.upscale_all({"building": ["aagtwr0a"]}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        mine.write_text(json.dumps({"choices": {"building__aagtwr0a": "anime4x"}}))
+        setup.upscale_all({"building": ["aagtwr0a"]}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        mine.unlink()
+        setup.upscale_all({"building": ["aagtwr0a"]}, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertEqual(options, ["anime2x", "anime4x", "anime2x"])
+
 
 if __name__ == "__main__":
     unittest.main()

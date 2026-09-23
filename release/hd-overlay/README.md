@@ -42,6 +42,28 @@ The art is sharper, not bigger: each picture fills the same space on screen as b
 The setup downloads two things, each checked against a fixed SHA-256 before use:
 Real-ESRGAN ncnn Vulkan v0.2.5.0 from its GitHub release, and the 4x-UltraSharp model files.
 
+## Choose your own upscaler (optional)
+
+Every picture ships with an upscaler already picked for it -- the maintainer compared four
+options side by side for each one. To make your own picks instead:
+
+```
+python lomhd_setup.py --review
+```
+
+This renders **every** option for every picture from your own game (a few hours; stop it any
+time, it resumes), then opens a review page on your own computer at http://127.0.0.1:8765 with
+the shipped picks already selected. Nothing is uploaded and nothing is installed.
+
+- Each picture shows the original (**0**) and each option (**1**-**5**; the palette pipeline
+  appears only on character portraits). Click a tile or press its number to pick it.
+- **Zoom -> Detail** shows the same close-up of every option; move the mouse to pan.
+- Picks save as you make them, to `my-upscale-choices.json` next to `lomhd_setup.py`.
+
+Close the page and press Ctrl+C, then run `python lomhd_setup.py` as usual: it says
+"Using your own picks" and installs with them. Delete `my-upscale-choices.json` to go back to the
+shipped picks.
+
 ## Uninstall
 
 ```

@@ -4,6 +4,13 @@
     python lomhd_setup.py                       find the game, build, install
     python lomhd_setup.py --game "C:\\...\\English"
     python lomhd_setup.py --uninstall           put the game back exactly as it was
+    python lomhd_setup.py --review              pick your own upscaler per picture first
+
+Choosing your own: --review renders every upscale option for every picture from your own game,
+then opens a review page on this computer (http://127.0.0.1:8765) with the shipped picks already
+selected. Change any you like; they are saved to my-upscale-choices.json next to this script, and
+the next plain run uses that file instead of the shipped upscale-choices.json. Delete it to go back
+to the shipped picks. Rendering every option takes several times longer than an install.
 
 What it does, in order, and nothing else:
 
@@ -47,6 +54,8 @@ WORK = HERE / "lomhd_work"
 PACK_NAME = "lomhd_portraits.pack"
 BACKUP_NAME = "ddraw.dll.lomhd-backup"
 RECORD_NAME = "lomhd_install.json"
+SHIPPED_CHOICES = HERE / "upscale-choices.json"
+MY_CHOICES = HERE / "my-upscale-choices.json"
 GROUPS = {                       # group -> (folder in pic.mpq, the one size its members have)
     "portrait": ("portrait", (70, 67)),
     "building": ("lbm\\building", None),
@@ -233,10 +242,24 @@ def fits_the_overlay(w: int, h: int) -> bool:
     return w >= p.MIN_WIDTH and h >= p.MIN_HEIGHT and 2 * max(w, h) <= p.MAX_UPSCALE_SIDE
 
 
-def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.Path) -> list[pathlib.Path]:
-    """Each image with the option picked for it in review (upscale-choices.json), or the default
-    for images that review never saw. Returns the folders holding the upscales."""
-    choices = json.loads((HERE / "upscale-choices.json").read_text())["choices"]
+def choices_file() -> pathlib.Path:
+    """The player's own picks when they made some with --review, else the shipped ones."""
+    return MY_CHOICES if MY_CHOICES.is_file() else SHIPPED_CHOICES
+
+
+def lbm_to_png(lbm: pathlib.Path, png: pathlib.Path) -> None:
+    w, h, px, pal, _ = lbm_png.decode(lbm)
+    ppm = png.with_suffix(".ppm")
+    ppm.write_bytes(f"P6 {w} {h} 255\n".encode() + b"".join(bytes(pal[i]) for i in px))
+    subprocess.run(["magick", str(ppm), str(png)], check=True)
+    ppm.unlink()
+
+
+def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.Path,
+                choices_path: pathlib.Path | None = None) -> list[pathlib.Path]:
+    """Each image with the option picked for it in review, or the default for images that review
+    never saw. Returns the folders holding the upscales."""
+    choices = json.loads((choices_path or choices_file()).read_text())["choices"]
     plan: dict[str, list[tuple[str, str]]] = {}
     for group, stems in found.items():
         for stem in stems:
@@ -271,15 +294,74 @@ def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.
             pngs.mkdir(parents=True, exist_ok=True)
             for group, stem in items:
                 png = pngs / f"{stem}.png"
-                w, h, px, pal, _ = lbm_png.decode(WORK / "originals" / group / f"{stem}.lbm")
-                ppm = png.with_suffix(".ppm")
-                ppm.write_bytes(f"P6 {w} {h} 255\n".encode() + b"".join(bytes(pal[i]) for i in px))
-                subprocess.run(["magick", str(ppm), str(png)], check=True)
-                ppm.unlink()
+                lbm_to_png(WORK / "originals" / group / f"{stem}.lbm", png)
                 inputs[stem] = png
             hd_upscale.render(choice, inputs, dest, exe, models)
             folders.append(dest)
     return folders
+
+
+def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.Path) -> pathlib.Path:
+    """Every option for every picture, in lomhd_work/review, laid out as the review page reads it:
+    original/<group>__<name>.png and one folder per option. Resumable. A picture whose original
+    differs from the one already there (another install, a mod) has its old renders removed."""
+    review = WORK / "review"
+    originals = review / "original"
+    originals.mkdir(parents=True, exist_ok=True)
+    options = [*hd_upscale.OPTIONS, hd_upscale.APPROVED]
+    inputs: dict[str, dict[str, pathlib.Path]] = {}
+    characters = []
+    for group, stems in found.items():
+        for stem in stems:
+            key = f"{group}__{stem}"
+            png = originals / f"{key}.png"
+            fresh = png.with_name(png.name + ".new.png")
+            lbm_to_png(WORK / "originals" / group / f"{stem}.lbm", fresh)
+            if png.exists() and png.read_bytes() != fresh.read_bytes():
+                for option in options:
+                    (review / option / f"{key}.png").unlink(missing_ok=True)
+            os.replace(fresh, png)
+            inputs.setdefault(group, {})[key] = png
+            if hd_upscale.default_choice(group, stem) == hd_upscale.APPROVED:
+                characters.append(stem)
+    total = sum(len(v) for v in inputs.values())
+    for option in hd_upscale.OPTIONS:
+        say(f"     {option}: {total} pictures")
+        for group, batch in inputs.items():
+            hd_upscale.render(option, batch, review / option, exe, models)
+    approved = review / hd_upscale.APPROVED
+    todo = [s for s in characters if not (approved / f"portrait__{s}.png").exists()]
+    if todo:
+        say(f"     {hd_upscale.APPROVED}: {len(todo)} character portraits")
+        names = WORK / "review-approved.txt"
+        names.write_text("".join(f"portrait\\{stem}.lbm\n" for stem in todo))
+        lbms = WORK / "review-approved"
+        cmd = [sys.executable, str(HERE / "tools" / "upscale.py"), str(WORK / "originals"), str(lbms),
+               "--names", str(names), "--esrgan", str(exe), "--models", str(models)]
+        if subprocess.run(cmd).returncode != 0:
+            fail("upscaling did not finish. The game has not been touched.")
+        approved.mkdir(parents=True, exist_ok=True)
+        for stem in todo:
+            lbm_to_png(lbms / "portrait" / f"{stem}.lbm", approved / f"portrait__{stem}.png")
+    return review
+
+
+def serve_review(review: pathlib.Path, port: int) -> None:
+    """The review page, on this computer only, until Ctrl+C. Picks save as they are made."""
+    url = f"http://127.0.0.1:{port}"
+    say(f"\nReview page: {url}  (Ctrl+C here when you are done)")
+    say(f"Your picks are saved to {MY_CHOICES.name}; the next plain run installs with them.")
+    try:
+        import webbrowser
+        webbrowser.open(url)
+    except Exception:
+        pass
+    cmd = [sys.executable, str(HERE / "tools" / "serve.py"), "--renders", str(review),
+           "--port", str(port), "--choices", str(MY_CHOICES), "--seed", str(SHIPPED_CHOICES)]
+    try:
+        subprocess.run(cmd)
+    except KeyboardInterrupt:
+        pass
 
 
 # --- install / uninstall -------------------------------------------------------------------------
@@ -433,6 +515,9 @@ def main() -> int:
     parser.add_argument("--game", type=pathlib.Path,
                         help="the folder holding lomse.exe and pic.mpq")
     parser.add_argument("--uninstall", action="store_true")
+    parser.add_argument("--review", action="store_true",
+                        help="render every option and open a page to pick your own; installs nothing")
+    parser.add_argument("--port", type=int, default=8765, help="the review page's port")
     args = parser.parse_args()
 
     if sys.version_info < (3, 9):
@@ -443,9 +528,21 @@ def main() -> int:
         uninstall(game)
         return 0
 
+    if args.review:
+        check_magick()
+        say("1/3  Getting the upscaler")
+        exe, models = upscaler()
+        say("2/3  Reading pictures from your pic.mpq")
+        found = extract_images(game)
+        say("3/3  Rendering every option (the long step; it resumes if stopped)")
+        serve_review(render_review(found, exe, models), args.port)
+        return 0
+
     record = release()
     check_magick()
     check_writable(game)
+    if choices_file() == MY_CHOICES:
+        say(f"Using your own picks from {MY_CHOICES.name}")
     say("1/4  Getting the upscaler")
     exe, models = upscaler()
     say("2/4  Reading portraits and building pictures from your pic.mpq")

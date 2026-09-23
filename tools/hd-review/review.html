@@ -55,7 +55,7 @@
   <span class="progress"><span id="count">0</span> / <span id="total">0</span> picked</span>
   <div class="bar"><div id="fill" style="width:0"></div></div>
   <label>Bulk <select id="bulkopt"></select><button id="bulk">Apply to all unpicked shown</button></label>
-  <span class="help">Keys: <b>1-4</b> pick option, <b>0</b> keep original, <b>j/k</b> next/prev, <b>u</b> clear</span>
+  <span class="help">Keys: <b id="keys">1-4</b> pick option, <b>0</b> keep original, <b>j/k</b> next/prev, <b>u</b> clear</span>
 </header>
 <main id="list"></main>
 <script>
@@ -71,6 +71,8 @@ async function load() {
   state = await (await fetch("/api/state")).json();
   $("bulkopt").innerHTML = state.options.map(o => `<option value="${o}">${LABELS[o]}</option>`).join("") + `<option value="original">Keep original</option>`;
   for (const id of ["group", "show", "zoom"]) { const v = recall(id); if (v !== null) $(id).value = v; }
+  // A player starts from the shipped picks, so "Unpicked" would open on an empty page.
+  if (recall("show") === null && state.images.every(im => im.key in state.choices)) $("show").value = "all";
   render();
 }
 
@@ -124,9 +126,11 @@ function render() {
     const pick = state.choices[im.key];
     return `<section class="card ${i === focus ? "focus" : ""}" data-i="${i}">
       <h2>${im.key.replace("__", " / ")} <span class="state ${pick ? "picked" : ""}">${pick ? "picked: " + LABELS[pick] : "not picked"}</span></h2>
-      <div class="tiles">${["original", ...state.options].map(o => tile(im, o, zoom)).join("")}</div></section>`;
+      <div class="tiles">${["original", ...state.options.filter(o => o !== "approved" || im.ready.includes(o))].map(o => tile(im, o, zoom)).join("")}</div></section>`;
   }).join("") : `<div class="empty">Nothing here. Change the filters above.</div>`;
-  const picked = Object.keys(state.choices).length;
+  // Only pictures on this page: the shipped picks also name art another install may lack.
+  const picked = state.images.filter(im => im.key in state.choices).length;
+  $("keys").textContent = `1-${state.options.length}`;
   $("count").textContent = picked; $("total").textContent = state.images.length;
   $("fill").style.width = (state.images.length ? 100 * picked / state.images.length : 0) + "%";
 }
