@@ -141,6 +141,11 @@ reason. The release recipe makes real upscales for all 749.
 
 ## Known gaps
 
+- **Not ours: dialog remnants after "Buy Potion".** Closing the potion dialog in a Mage Tower leaves
+  pieces of it on screen until the next map repaint. Reproduced 2026-09-22 in the untouched GS5R3
+  profile (stock `ddraw.dll` `85e0f7d5`, no overlay files), so it is the game's own dirty-rectangle
+  repaint, not the overlay. If a player reports it, this is the answer.
+
 - The on-screen **size does not change**; this buys sharpness at the slot's size. Bigger portraits
   need layout changes as well (the re-flow in `mods/ui-bigportrait` works for the info panel).
 - The vanilla **faith banner** is not in the pack; GS5R3's is, but has not been seen on screen yet.
