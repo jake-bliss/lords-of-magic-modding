@@ -277,9 +277,29 @@ class UpscalePlan(unittest.TestCase):
         self.assertIn(bytes([200, 200, 200]), self.seen["aagtwr0a"])
 
     def test_images_the_overlay_would_refuse_are_skipped_before_upscaling(self) -> None:
-        self.assertTrue(setup.fits_the_overlay(228, 180))
-        for w, h in ((31, 67), (70, 3), (257, 67), (70, 257)):
-            self.assertFalse(setup.fits_the_overlay(w, h), (w, h))
+        """A mod install's oversized building must not cost 20-60 minutes of upscaling and then
+        stop the pack writer; extraction leaves it out."""
+        import io
+        members = {}
+        for name, (w, h) in {"portrait\\aicavp00.lbm": (70, 67), "lbm\\building\\aagtwr0a.lbm": (228, 180),
+                             "lbm\\building\\huge.lbm": (257, 67), "lbm\\building\\flat.lbm": (70, 3)}.items():
+            buf = io.BytesIO()
+            header = self.struct.pack(">HHhhBBBBHBBhh", w, h, 0, 0, 8, 0, 1, 0, 0, 1, 1, w, h)
+            path = self.work.parent / "member.lbm"
+            self.lbm_png.encode(path, w, h, bytes(w * h), self.palette,
+                                [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+            members[name] = path.read_bytes()
+
+        class Archive:
+            def __init__(self, path): pass
+            def listfile(self): return list(members)
+            def __contains__(self, name): return name in members
+            def read(self, name): return members[name]
+
+        self.addCleanup(setattr, setup.mpq_read, "Archive", setup.mpq_read.Archive)
+        setup.mpq_read.Archive = Archive
+        found = setup.extract_images(self.work.parent)
+        self.assertEqual(found, {"portrait": ["aicavp00"], "building": ["aagtwr0a"]})
 
 
 if __name__ == "__main__":
