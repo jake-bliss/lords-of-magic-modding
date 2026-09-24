@@ -7414,3 +7414,39 @@ animated frames of 553 sprites (1.76 GB). Jake: "it looks sharper, no issues".
   bounded: that band's sprites stay vanilla for those frames.
 - Presented frames per 5 s: median 168 (previous static-sprite run: 197), with more time spent in
   battle this run.
+
+## 2026-09-23 — The interface's small icons come from sheets, cut one rectangle at a time
+
+**Question.** The map bar's stone (`intrface`) was matched in every map frame, yet its buttons and
+arrows stayed low-resolution. Were the icons missing from the pack, or unfindable?
+
+**Method.** Over one map frame, every capture pixel `intrface` does not explain (the buttons, the
+party strip, the right-hand panel) was split into 8-pixel RGB565 windows of at least four colours,
+and every window looked up in every exported image: 50,713 animated frames, the static sprites and
+the 2,845 review originals.
+
+**Result.** The icons come from sheets: `intspr1` (arrows, zoom and footprint buttons, the faith
+emblems), `eoturn` (the gem wheel in each state, footprint and diamond buttons), `staticon`
+(the eye and party buttons, the health bars), plus `liicons` frames in the party strip. The sheets
+were packed -- as pictures, which the matcher finds only drawn whole or cut at an edge. An icon
+copied from the middle of one never could be.
+
+The scripts name each rectangle: `/intspr1_page"lbm/intspr1.lbm"lbm def`, then
+`intspr1_page 341 0 70 67 doodad`. 179 literal cuts across the GS5R3 scripts; the rest are computed
+or cut by native code, so separate shapes on each sheet's key colour fill in. Cut that way and packed
+as masked records (`tools/hd-review/sheet_icons.py`, 365 icons), the shipped matcher
+(`lomhd_match_test`) finds 65 different icons across the 93 captured frames -- the party arrows and
+footprint buttons in 51 frames, the zoom buttons in 57, the gem wheel (93x92) in 49 -- with the
+search at 4.9 ms mean, 6.2 ms worst, over the full 30,046-record dev pack.
+
+Three things the first cut got wrong (Claude review): the scripts name pages freely
+(`unitinfo_staticon`, `eoturnbuttonpage`), so matching only `*_page` read no cuts for staticon or
+eoturn and merged touching icons (35 icons found; 64 once read); `eoturn`'s scripts also cut the
+whole page (`0 0 373 309`), which hid every shape under it, the gem wheel among them; and the most
+common index is not always the key -- on `label` it is a real teal. The key is index 0, pure green,
+on every sheet. Pasted at 2x onto a frame
+at the matched positions, every icon lands exactly on its original.
+
+**Not yet shown.** Seen in the game. And the ~240 icons not seen in these frames belong to screens
+the captures never visited (barter, the editor, combat results), so they are unverified, not wrong.
+
