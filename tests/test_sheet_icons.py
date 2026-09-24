@@ -204,6 +204,14 @@ class PlanAndRecordsTest(unittest.TestCase):
         flat = [tuple(p) for row in pixels[2] for p in row] if isinstance(pixels, tuple) else None
         self.assertEqual(flat, [si.PREP_BACKGROUND, si.PREP_BACKGROUND, PAL[77], si.PREP_BACKGROUND])
 
+    def test_the_render_cache_key_follows_everything_the_upscaler_sees(self) -> None:
+        idx = bytes(range(10, 210)) * 4
+        base = si.render_key(40, 20, idx, PAL, KEY)
+        self.assertNotEqual(base, si.render_key(20, 40, idx, PAL, KEY), "same bytes, other size")
+        self.assertNotEqual(base, si.render_key(40, 20, idx, [PAL[0], (1, 2, 3)] + PAL[2:], KEY))
+        self.assertNotEqual(base, si.render_key(40, 20, idx, PAL, 7))
+        self.assertEqual(base, si.render_key(40, 20, idx, PAL, KEY))
+
     def render(self, w: int, h: int) -> pathlib.Path:
         out = self.root / f"render{w}x{h}.png"
         lbm_png.write_png(out, w * 2, h * 2, [[(x % 256, y % 256, 9) for x in range(w * 2)] for y in range(h * 2)])

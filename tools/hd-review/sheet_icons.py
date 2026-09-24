@@ -219,6 +219,13 @@ def prepared_png(dest: pathlib.Path, w: int, h: int, idx: bytes, pal, key: int) 
     lbm_png.write_png(dest, w, h, rows)
 
 
+def render_key(w: int, h: int, idx: bytes, pal, key: int) -> str:
+    """The render cache's folder name: everything the upscaler's input depends on. The size too --
+    a 40x20 sheet and a 20x40 one can share their bytes (Codex review, 2026-09-23)."""
+    return hashlib.sha256(idx + bytes(v for c in pal for v in c) +
+                          f"{w}x{h}|{key}|{PREP_BACKGROUND}|{PREP_VERSION}".encode()).hexdigest()[:16]
+
+
 def records(planned, renders: dict[str, pathlib.Path], skipped: list[str]):
     """Yield (entry, zidx, zhd) for every planned icon, cropped from its sheet's 2x render. An icon
     identical to one already yielded -- staticon and staticon5 share most -- is yielded once."""
@@ -274,9 +281,7 @@ def main() -> int:
         if option not in hd_upscale.OPTIONS:
             skipped.append(f"{sheet}: no usable upscale pick ({option!r})")
             continue
-        digest = hashlib.sha256(idx + bytes(v for c in pal for v in c) +
-                                f"{w}x{h}|{key}|{PREP_BACKGROUND}|{PREP_VERSION}".encode()).hexdigest()[:16]
-        folder = WORK / digest
+        folder = WORK / render_key(w, h, idx, pal, key)
         folder.mkdir(parents=True, exist_ok=True)
         src = folder / f"{sheet}.png"
         if not src.exists():
