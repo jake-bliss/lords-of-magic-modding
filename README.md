@@ -70,3 +70,10 @@ Concretely, today you can **inspect, decode, render, export, measure, validate a
 ## Immediate opportunity
 
 The first archive comparison is complete. It isolates the focused 3.02 changes, confirms that GS5R3 is a broad script-and-art fork, and recovers hundreds of filenames that were anonymous in the original archives. The [native Rust asset tool](spikes/asset-viewer/README.md) now classifies all 9,804 core-archive members, decodes every detected PBM image, expands every observed IMP sprite without decoder errors, and parses all 365 installed `.scn`/`.smp`/`.lgd` files — 365 of the 366 files in GS5R3's `English/map/`, the one exception in every profile being `e3map2.map` ([loose files](docs/loose-files.md)). Its native viewers display masks, sprite animation played by the engine's own rules (action, direction and cycle position, at the engine's screen-mode interval), elevation relief, and original-art terrain; the CLI exports indexed sprite frames and terrain previews. The map parser also decodes the trailing object section of every installed map — 21,117 records across six record layouts — so object editing works on all 365. See the [Stage 1 record](docs/native-asset-stage.md) for measured coverage, provisional semantics, and known exceptions.
+
+## License
+
+The code and documentation in this repository are MIT licensed (see `LICENSE`). That covers
+only our own work: Lords of Magic and its art, music, text and executable remain the property of
+their rights holders, and none of it is included here. Third-party components keep their own
+licences; the HD overlay release lists them in `release/hd-overlay/NOTICES.md`.
