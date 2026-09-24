@@ -88,6 +88,39 @@ class Padding(unittest.TestCase):
         self.assertEqual(rows[2][4], PAL[12])     # right padding of the top row
         self.assertEqual(rows[3][2], PAL[13])     # the tile itself starts at (2, 2)
 
+    def test_wrap_padding_takes_the_tiles_own_opposite_side(self) -> None:
+        t, w = 3, 3
+        idx = bytes(range(10, 19))
+        rows = th.padded_tile(idx, w, PAL, 0, 0, t, 1, wrap=True)
+        self.assertEqual(rows[1][0], PAL[12])     # left of (0,0) is the row's last pixel
+        self.assertEqual(rows[0][1], PAL[16])     # above (0,0) is the column's last pixel
+        self.assertEqual(rows[4][4], PAL[10])     # beyond the bottom-right corner is (0,0)
+
+    def test_wrap_never_reads_the_neighbouring_cell(self) -> None:
+        t, w = 4, 8
+        rows = th.padded_tile(two_tiles(t), w, PAL, 0, 0, t, 3, wrap=True)
+        self.assertTrue(all(px == PAL[1] for r in rows for px in r))
+
+
+class PureTiles(unittest.TestCase):
+    def test_only_tiles_whose_eight_edges_are_their_own_type_wrap(self) -> None:
+        d = pathlib.Path(tempfile.mkdtemp())
+        (d / "a.til").write_bytes(
+            b"LBM=x.lbm\rTILESIZE= 32, 32\r"
+            b"TILE=      0, 6,  6,  6,  6,  6,  6,  6,  6,  6,   0\r"
+            b"TILE=      1, 6,  ~6|9,  *,  6|9,  6|9,  6|9,  6|9,  6|9,  *,   1\r"
+            b"TILE=      2, 4,  4,  4,  4,  4,  4,  4,  4,  6,   2\r"
+            b"TILE=      3, 4,  4,  4,  4,  4,  4,  4,  4,  4,   3\r")
+        self.assertEqual(th.pure_tiles(d), {"x.lbm": {0, 3}})
+
+    def test_the_ramp_is_full_at_the_edge_and_zero_from_the_band_in(self) -> None:
+        r = th.edge_ramp(16, 4)
+        self.assertEqual(r[0][8], (255, 255, 255))
+        self.assertEqual(r[8][15], (255, 255, 255))
+        self.assertEqual(r[2][8][0], round(255 * 0.5))
+        self.assertEqual(r[4][8], (0, 0, 0))
+        self.assertEqual(r[8][8], (0, 0, 0))
+
 
 class Quantize(unittest.TestCase):
     def test_a_neighbours_colour_cannot_cross_the_tile_edge(self) -> None:
@@ -161,13 +194,14 @@ class EndToEnd(unittest.TestCase):
         self.fake = fake
 
     def test_nearest_upscale_round_trips_and_data_maps_are_left_alone(self) -> None:
+        # soften=0: the exact round trip is only defined without the edge blur.
         t, w, h = 4, 8, 8
         idx = bytes((x * 3 + y * 5) % 200 + 10 for y in range(h) for x in range(w))
         write_lbm(self.src / "tilesz01.lbm", w, h, idx)
         write_lbm(self.src / "thite01.lbm", w, h, idx)
         (self.src / "tilesz01.til").write_bytes(til("tilesz01.lbm", t))
         choices = {"terrain__tilesz01": "anime2x", "terrain__thite01": "anime2x"}
-        report = th.build(self.src, self.out, self.fake, self.d, self.d / "work", choices)
+        report = th.build(self.src, self.out, self.fake, self.d, self.d / "work", choices, soften=0)
         W, H, got, pal, _ = lbm_png.decode(self.out / "tilesz01.lbm")
         self.assertEqual((W, H), (2 * w, 2 * h))
         want = bytes(idx[(y // 2) * w + x // 2] for y in range(H) for x in range(W))
@@ -183,12 +217,31 @@ class EndToEnd(unittest.TestCase):
         choices = {"terrain__tilesz01": "anime2x"}
         work = self.d / "work"
         write_lbm(self.src / "tilesz01.lbm", w, h, bytes([10] * 64))
-        th.build(self.src, self.out, self.fake, self.d, work, choices)
+        th.build(self.src, self.out, self.fake, self.d, work, choices, soften=0)
         second = bytes((x + y) % 50 + 20 for y in range(h) for x in range(w))
         write_lbm(self.src / "tilesz01.lbm", w, h, second)
-        th.build(self.src, self.out, self.fake, self.d, work, choices)
+        th.build(self.src, self.out, self.fake, self.d, work, choices, soften=0)
         _, _, got, _, _ = lbm_png.decode(self.out / "tilesz01.lbm")
         self.assertEqual(bytes(got), bytes(second[(y // 2) * w + x // 2] for y in range(2 * h) for x in range(2 * w)))
+
+    def test_softening_leaves_every_tile_interior_exact(self) -> None:
+        t, w, h = 8, 16, 8
+        idx = bytes((x * 7 + y * 11) % 200 + 10 for y in range(h) for x in range(w))
+        write_lbm(self.src / "tilesz01.lbm", w, h, idx)
+        (self.src / "tilesz01.til").write_bytes(til("tilesz01.lbm", t))
+        th.build(self.src, self.out, self.fake, self.d, self.d / "work", {"terrain__tilesz01": "anime2x"}, soften=4)
+        W, H, got, _, _ = lbm_png.decode(self.out / "tilesz01.lbm")
+        changed_inside = changed_band = 0
+        for y in range(H):
+            for x in range(W):
+                e = min(x % 16, y % 16, 15 - x % 16, 15 - y % 16)
+                differs = got[y * W + x] != idx[(y // 2) * w + x // 2]
+                if e >= 4:
+                    changed_inside += differs
+                else:
+                    changed_band += differs
+        self.assertEqual(changed_inside, 0)
+        self.assertGreater(changed_band, 0)  # the control: softening did something in the band
 
     def test_an_atlas_without_a_reviewed_choice_refuses(self) -> None:
         write_lbm(self.src / "tilesz01.lbm", 8, 8, bytes(64))

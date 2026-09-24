@@ -27,7 +27,7 @@ set -euo pipefail
 # shellcheck source=scripts/lib-mod-pipeline.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-mod-pipeline.sh"
 
-ART_BUILD="${LOM_TERRAIN_ART_BUILD:-7c8503ebd540}"
+ART_BUILD="${LOM_TERRAIN_ART_BUILD:-fc3788d7463d}"
 BASE_BUILD="${LOM_BASE_BUILD:-ad9fece3123a}"
 sets_dir="${project_dir}/tools/exe_patches"
 viewport=("${sets_dir}/viewport-2x.toml" "${sets_dir}/terrain-render-2x.toml")

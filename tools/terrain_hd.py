@@ -16,8 +16,8 @@ upscaled alone, and cropped, so nothing outside the tile can reach it.
 
 **Quantized index-safely.** Texels go through the light tables by PALETTE INDEX, so the atlas must
 stay 8-bit in its own palette. A 2x pixel may only take an index that occurs within one source
-pixel of it AND inside the same tile, so no index reaches a pixel more than one source pixel from
-where the original had it, and none crosses a tile edge. (An isolated index CAN grow into its
+pixel of it AND inside the same tile (two, in the softened band at a tile's edge), so no index
+reaches a pixel more than two source pixels from where the original had it, and none crosses a tile edge. (An isolated index CAN grow into its
 neighbouring 2x pixels. None of the 20 atlases has an active CRNG range, so no cycling colour can
 spread; a key or cycling index added later would want excluding from its neighbours' candidates.)
 
@@ -45,6 +45,14 @@ import lbm_png  # noqa: E402
 
 NOT_TEXTURES = {"thite01", "ttype01"}
 PAD = 8
+# Seams. Inside a tile the model's output is about half as contrasty pixel to pixel as the original
+# (it smooths); across a tile edge the step between two unrelated tiles stays full size, so every
+# edge reads as a line -- observed on the map, 2026-09-24 rung 2. The outer SOFTEN_PX of each tile
+# fade into a blur of the tile itself, so the step at an edge is no sharper than the texture around
+# it. Measured on a mosaic of random plain tiles (seam step / interior step): edge padding alone 2.32,
+# wrap padding 2.02, wrap + softening 1.61.
+SOFTEN_PX = 4
+SOFTEN_SIGMA = 1.5
 DEFAULT_TILE = 32
 CHOICES = HERE.parent / "release" / "hd-overlay" / "upscale-choices.json"
 
@@ -79,29 +87,64 @@ def tile_sizes(src: pathlib.Path) -> dict[str, int]:
     return sizes
 
 
-def padded_tile(idx: bytes, w: int, pal, tx: int, ty: int, t: int, pad: int):
-    """RGB rows of one tile with its own edge pixels repeated `pad` times outward."""
+def padded_tile(idx: bytes, w: int, pal, tx: int, ty: int, t: int, pad: int, wrap: bool = False):
+    """RGB rows of one tile padded `pad` pixels outward: its own edge pixels repeated, or (`wrap`)
+    its own opposite side. Never a neighbouring cell -- see the module docstring."""
+    def at(v: int) -> int:
+        return v % t if wrap else min(max(v, 0), t - 1)
     rows = []
     for y in range(-pad, t + pad):
-        sy = ty * t + min(max(y, 0), t - 1)
-        rows.append([pal[idx[sy * w + tx * t + min(max(x, 0), t - 1)]] for x in range(-pad, t + pad)])
+        sy = ty * t + at(y)
+        rows.append([pal[idx[sy * w + tx * t + at(x)]] for x in range(-pad, t + pad)])
     return rows
 
 
-def quantize(idx: bytes, w: int, h: int, pal, t: int, rgb: bytes) -> tuple[bytes, float]:
+def pure_tiles(src: pathlib.Path) -> dict[str, set[int]]:
+    """Per atlas, the cells whose `TILE=` line gives all eight edges and corners the tile's own
+    terrain type -- plain grass, plain water. Those are made to sit beside any other plain tile of
+    their type, so the best stand-in for the unknown neighbour is the tile's own opposite side."""
+    pure: dict[str, set[int]] = {}
+    for til in sorted(src.glob("*.til")):
+        name, _ = read_til(til)
+        for line in til.read_bytes().decode("latin-1").replace("\r", "\n").splitlines():
+            if not line.startswith("TILE="):
+                continue
+            f = [v.strip() for v in line[5:].split(",")]
+            if len(f) >= 10 and all(e == f[1] for e in f[2:10]):
+                pure.setdefault(name, set()).add(int(f[0]))
+    return pure
+
+
+def edge_ramp(size: int, band: int) -> list[list[tuple[int, int, int]]]:
+    """A grey mask, white at a tile's edge fading to black `band` pixels in."""
+    rows = []
+    for y in range(size):
+        row = []
+        for x in range(size):
+            e = min(x, y, size - 1 - x, size - 1 - y)
+            v = round(255 * max(0.0, 1 - e / band))
+            row.append((v, v, v))
+        rows.append(row)
+    return rows
+
+
+def quantize(idx: bytes, w: int, h: int, pal, t: int, rgb: bytes, band: int = 0) -> tuple[bytes, float]:
     """Each 2x pixel -> the nearest palette colour among indices within one source pixel of it,
-    clamped to its own tile. Returns the indices and how often a block's top-left keeps its source
-    index (a sanity reading: high, and not 100%)."""
-    W = 2 * w
+    clamped to its own tile. Inside the softened `band` (2x pixels from a tile edge) the reach is
+    two source pixels: nine candidates snap a blended edge colour straight back to a hard one and
+    undo most of the softening. Returns the indices and how often a block's top-left keeps its
+    source index (a sanity reading: high, and not 100%)."""
+    W, T = 2 * w, 2 * t
     out = bytearray(4 * w * h)
     for y in range(2 * h):
         sy = y // 2
         y0 = (sy // t) * t
-        ys = range(max(y0, sy - 1), min(y0 + t, sy + 2))
         for x in range(W):
             sx = x // 2
             x0 = (sx // t) * t
-            cand = {idx[yy * w + xx] for yy in ys for xx in range(max(x0, sx - 1), min(x0 + t, sx + 2))}
+            r_ = 2 if min(x % T, y % T, T - 1 - x % T, T - 1 - y % T) < band else 1
+            cand = {idx[yy * w + xx] for yy in range(max(y0, sy - r_), min(y0 + t, sy + r_ + 1))
+                    for xx in range(max(x0, sx - r_), min(x0 + t, sx + r_ + 1))}
             p = (y * W + x) * 3
             r, g, b = rgb[p], rgb[p + 1], rgb[p + 2]
             # Ties go to the source pixel's own index, then to the lowest. Palettes repeat colours
@@ -115,8 +158,8 @@ def quantize(idx: bytes, w: int, h: int, pal, t: int, rgb: bytes) -> tuple[bytes
 
 
 def foreign_edge_pixels(idx: bytes, w: int, h: int, t: int, out: bytes) -> int:
-    """2x pixels holding an index their own tile's source neighbourhood does not have. The per-tile
-    pipeline makes this 0 by construction; it is measured anyway, because it is the defect."""
+    """2x pixels holding an index their own TILE does not have within two source pixels. The
+    per-tile pipeline makes this 0 by construction; it is measured anyway, because it is the defect."""
     W, bad = 2 * w, 0
     for y in range(2 * h):
         sy = y // 2
@@ -124,16 +167,17 @@ def foreign_edge_pixels(idx: bytes, w: int, h: int, t: int, out: bytes) -> int:
         for x in range(W):
             sx = x // 2
             x0 = (sx // t) * t
-            own = {idx[yy * w + xx] for yy in range(max(y0, sy - 1), min(y0 + t, sy + 2))
-                   for xx in range(max(x0, sx - 1), min(x0 + t, sx + 2))}
+            own = {idx[yy * w + xx] for yy in range(max(y0, sy - 2), min(y0 + t, sy + 3))
+                   for xx in range(max(x0, sx - 2), min(x0 + t, sx + 3))}
             bad += out[y * W + x] not in own
     return bad
 
 
 def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pathlib.Path,
-          work: pathlib.Path, choices: dict[str, str]) -> list[str]:
+          work: pathlib.Path, choices: dict[str, str], soften: int = SOFTEN_PX) -> list[str]:
     out.mkdir(parents=True, exist_ok=True)
     sizes = tile_sizes(src)
+    pure = pure_tiles(src)
     report = []
     for lbm in sorted(src.glob("*.lbm")):
         name = lbm.stem.lower()
@@ -151,7 +195,10 @@ def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pa
         # Tiles and renders are reused on a rerun, so their names carry everything they were made
         # from: the source atlas's bytes, the tile size and the padding. A re-extracted source or a
         # new PAD gets fresh tiles instead of silently compositing the old ones.
-        digest = hashlib.sha256(lbm.read_bytes() + b"%d/%d" % (t, PAD)).hexdigest()[:12]
+        wraps = pure.get(f"{name}.lbm", set())
+        per_row = w // t
+        digest = hashlib.sha256(lbm.read_bytes() + b"%d/%d/" % (t, PAD)
+                                + ",".join(map(str, sorted(wraps))).encode()).hexdigest()[:12]
         tiles_dir = work / "tiles" / f"{name}-{digest}"
         tiles_dir.mkdir(parents=True, exist_ok=True)
         inputs = {}
@@ -160,24 +207,41 @@ def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pa
                 key = f"{name}-{digest}_{tx:02d}_{ty:02d}"
                 path = tiles_dir / f"{key}.png"
                 if not path.exists():
-                    lbm_png.write_png(path, t + 2 * PAD, t + 2 * PAD, padded_tile(idx, w, pal, tx, ty, t, PAD))
+                    wrap = ty * per_row + tx in wraps
+                    lbm_png.write_png(path, t + 2 * PAD, t + 2 * PAD, padded_tile(idx, w, pal, tx, ty, t, PAD, wrap))
                 inputs[key] = path
         rendered = work / "rendered" / option
         hd_upscale.render(option, inputs, rendered, esrgan, models)
         # Crop each tile's centre and lay it back on the 2x sheet.
         with tempfile.TemporaryDirectory() as tmp:
-            sheet = pathlib.Path(tmp) / "sheet.png"
-            args = ["magick", "-size", f"{2 * w}x{2 * h}", "xc:black"]
-            for key in inputs:
-                tx, ty = int(key[-5:-3]), int(key[-2:])
-                args += ["(", str(rendered / f"{key}.png"), "-crop", f"{2 * t}x{2 * t}+{2 * PAD}+{2 * PAD}",
-                         "+repage", ")", "-geometry", f"+{2 * t * tx}+{2 * t * ty}", "-composite"]
-            args.append(str(sheet))
-            subprocess.run(args, check=True)
+            tmp = pathlib.Path(tmp)
+            sheet = tmp / "sheet.png"
+
+            def assemble(dest: pathlib.Path, blur: bool) -> None:
+                args = ["magick", "-size", f"{2 * w}x{2 * h}", "xc:black"]
+                for key in inputs:
+                    tx, ty = int(key[-5:-3]), int(key[-2:])
+                    # Blurred AFTER the crop, against the tile's own repeated edge, so the blur
+                    # never reaches a neighbouring cell either.
+                    extra = ["-virtual-pixel", "edge", "-blur", f"0x{SOFTEN_SIGMA}"] if blur else []
+                    args += ["(", str(rendered / f"{key}.png"), "-crop", f"{2 * t}x{2 * t}+{2 * PAD}+{2 * PAD}",
+                             "+repage", *extra, ")", "-geometry", f"+{2 * t * tx}+{2 * t * ty}", "-composite"]
+                args.append(str(dest))
+                subprocess.run(args, check=True)
+
+            if soften:
+                sharp, blurred, ramp = tmp / "sharp.png", tmp / "blurred.png", tmp / "ramp.png"
+                assemble(sharp, False)
+                assemble(blurred, True)
+                lbm_png.write_png(ramp, 2 * t, 2 * t, edge_ramp(2 * t, soften))
+                subprocess.run(["magick", str(sharp), str(blurred), "(", "-size", f"{2 * w}x{2 * h}",
+                                f"tile:{ramp}", "-colorspace", "gray", ")", "-composite", str(sheet)], check=True)
+            else:
+                assemble(sheet, False)
             rgb = subprocess.check_output(["magick", str(sheet), "-depth", "8", "rgb:-"])
         if len(rgb) != 4 * w * h * 3:
             raise SystemExit(f"{name}: assembled sheet is {len(rgb)} bytes, not {12 * w * h}")
-        indices, kept = quantize(idx, w, h, pal, t, rgb)
+        indices, kept = quantize(idx, w, h, pal, t, rgb, band=soften)
         foreign = foreign_edge_pixels(idx, w, h, t, indices)
         if foreign:
             raise SystemExit(f"{name}: {foreign} pixels took an index from another tile")
@@ -189,7 +253,7 @@ def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pa
         (work / "preview").mkdir(parents=True, exist_ok=True)
         lbm_png.write_png(work / "preview" / f"{name}.png", 2 * w, 2 * h,
                           [[pal[v] for v in indices[y * 2 * w:(y + 1) * 2 * w]] for y in range(2 * h)])
-        report.append(f"{name}: {w}x{h} -> {2 * w}x{2 * h}, {t}px tiles, {option}; "
+        report.append(f"{name}: {w}x{h} -> {2 * w}x{2 * h}, {t}px tiles, {option}, {len(wraps)} wrapped; "
                       f"top-left keeps source index {kept:.0%}; foreign-tile pixels 0")
     for til in sorted(src.glob("*.til")):
         (out / til.name.lower()).write_bytes(doubled_til(til.read_bytes()))
