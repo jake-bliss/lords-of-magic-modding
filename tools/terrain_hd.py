@@ -24,8 +24,9 @@ model smooths each tile's interior, so a leftover step between two tiles reads a
 noisy 1x art hid it. In the outer NORM_PX of each tile, the local average colour (a blur of the tile
 itself) is shifted to the average colour of the terrain type on that side, with the detail kept on
 top. Any two tiles of one type then meet at the same base colour, whichever two the map picks.
-Mosaic of random plain meadow tiles, seam step / interior step: edge padding + blur 1.66, neighbour
-padding + this 1.51.
+The detail right at the edge is damped a little too: it is what does not continue across. Mosaic
+of random plain meadow tiles, seam step / interior step: edge padding + blur 1.66, neighbour padding
++ colour only 1.51, + damping 0.97 (see NORM_*).
 
 **Quantized index-safely.** Texels go through the light tables by PALETTE INDEX, so the atlas must
 stay 8-bit in its own palette. A 2x pixel may only take an index that occurs within one source
@@ -58,8 +59,15 @@ import lbm_png  # noqa: E402
 
 NOT_TEXTURES = {"thite01", "ttype01"}
 PAD = 8
-NORM_PX = 8          # 2x pixels from a tile edge over which colour is pulled to the terrain's
-NORM_SIGMA = 4.0     # blur (2x pixels) that defines a pixel's "local average colour"
+NORM_PX = 4          # 2x pixels from a tile edge over which colour is pulled to the terrain's
+NORM_SIGMA = 2.0     # blur (2x pixels) that defines a pixel's "local average colour"
+NORM_DAMP = 0.4      # how much of the fine detail is damped at the very edge
+# Chosen on mosaics of random plain meadow and plains tiles by two readings that pull opposite ways:
+# the step across a seam, and the detail left in the edge band, each over the interior's. Colour
+# alone (8px, sigma 4) left seams at 1.51-1.57x; wider bands or broader blurs were WORSE (the leftover
+# is fine detail that does not continue across the edge, not shading). Damping fixes the step but
+# flattens the band into a visible "grout" lattice past about half. 4px / sigma 2 / 0.4: seam
+# 0.97-1.01x, band detail 0.95-1.01x -- neither reads as a line.
 DEFAULT_TILE = 32
 CHOICES = HERE.parent / "release" / "hd-overlay" / "upscale-choices.json"
 
@@ -193,9 +201,10 @@ def type_means(idx: bytes, w: int, pal, t: int, defs: dict[int, dict]) -> dict[i
 
 
 def normalize_edges(rgb: bytes, low: bytes, w2: int, h2: int, t2: int, defs: dict[int, dict],
-                    means: dict[int, tuple[float, ...]], band: int) -> bytes:
+                    means: dict[int, tuple[float, ...]], band: int, damp: float = NORM_DAMP) -> bytes:
     """Shift each tile's local average colour (`low`, a per-tile blur) toward its side's terrain
-    average across the outer `band` pixels; detail (`rgb - low`) is kept. Cells with no TILE= line,
+    average across the outer `band` pixels, and damp the detail (`rgb - low`) by up to `damp` at
+    the very edge. Cells with no TILE= line,
     or sides whose terrain has no plain tile on this sheet, are left alone."""
     out = bytearray(rgb)
     per = w2 // t2
@@ -214,7 +223,8 @@ def normalize_edges(rgb: bytes, low: bytes, w2: int, h2: int, t2: int, defs: dic
                 continue
             p = (y * w2 + x) * 3
             for q in range(3):
-                out[p + q] = min(255, max(0, round(rgb[p + q] + a * (target[q] - low[p + q]))))
+                detail = (rgb[p + q] - low[p + q]) * (1 - damp * a)
+                out[p + q] = min(255, max(0, round(low[p + q] + detail + a * (target[q] - low[p + q]))))
     return bytes(out)
 
 

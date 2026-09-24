@@ -164,8 +164,10 @@ class Normalize(unittest.TestCase):
         rgb[(4 * w2 + 7) * 3] = 140                       # a bright detail on the east edge
         low = bytes([100, 100, 100]) * (w2 * h2)
         defs = {0: {"self": 6, "n": 6, "e": 1, "s": 6, "w": 6, "pure": False}}
-        out = th.normalize_edges(bytes(rgb), low, w2, h2, t2, defs, {6: (100.0,) * 3, 1: (60.0,) * 3}, 4)
+        out = th.normalize_edges(bytes(rgb), low, w2, h2, t2, defs, {6: (100.0,) * 3, 1: (60.0,) * 3}, 4, damp=0)
         self.assertEqual(out[(4 * w2 + 7) * 3], 100)      # 140 + (60 - 100): the detail rides along
+        damped = th.normalize_edges(bytes(rgb), low, w2, h2, t2, defs, {6: (100.0,) * 3, 1: (60.0,) * 3}, 4, damp=0.5)
+        self.assertEqual(damped[(4 * w2 + 7) * 3], 80)    # 100 + 40 * 0.5 + (60 - 100)
         self.assertEqual(out[(3 * w2 + 7) * 3], 60)
 
     def test_cells_without_a_definition_are_untouched(self) -> None:
