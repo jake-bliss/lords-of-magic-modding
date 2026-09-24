@@ -129,18 +129,27 @@ def overlaps(a, b) -> bool:
     return a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]
 
 
+def inside(a, b) -> bool:
+    return b[0] <= a[0] and b[1] <= a[1] and a[0] + a[2] <= b[0] + b[2] and a[1] + a[3] <= b[1] + b[3]
+
+
 def icons_of(sheet: str, w: int, h: int, idx: bytes, key: int, cuts) -> list[Icon]:
     """The script's cuts that fit the sheet, then every shape no cut touches. A cut inside another
     cut from the same corner (the scripts cut some buttons at 26x17 and 27x18) is the larger one.
     A cut of half the sheet or more is the scripts loading the page, and one under MIN_CUT a
     placeholder (`eoturnbuttonpage 0 0 373 309` and `200 0 1 1`): neither is an icon, and neither
     may hide the shapes under it -- the first hid the gem wheel."""
-    rects = [r for r in sorted(cuts) if r[0] + r[2] <= w and r[1] + r[3] <= h and
-             r[2] >= MIN_CUT[0] and r[3] >= MIN_CUT[1] and 2 * r[2] * r[3] < w * h]
+    fits = [r for r in sorted(cuts) if r[0] + r[2] <= w and r[1] + r[3] <= h]
+    rects = [r for r in fits if r[2] >= MIN_CUT[0] and r[3] >= MIN_CUT[1] and 2 * r[2] * r[3] < w * h]
+    slices = [r for r in fits if r[2] < MIN_CUT[0] or r[3] < MIN_CUT[1]]
     rects = [r for r in rects if not any(o != r and o[:2] == r[:2] and o[2] >= r[2] and o[3] >= r[3]
                                          for o in rects)]
     icons = [Icon(sheet, *r, "script") for r in rects]
     for r in shapes(w, h, idx, key):
+        # A shape holding two or more slices is a stack the game draws a slice at a time -- the
+        # 30x3 bars on staticon5r3a (Claude review): it would never be found whole.
+        if sum(inside(c, r) for c in slices) >= 2:
+            continue
         if not any(overlaps(r, c) for c in rects):
             icons.append(Icon(sheet, *r, "shape"))
     return icons

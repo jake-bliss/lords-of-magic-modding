@@ -95,6 +95,14 @@ class IconsOfTest(unittest.TestCase):
         self.assertEqual([(i.x, i.y, i.w, i.h, i.source) for i in icons],
                          [(2, 2, 20, 12, "script"), (60, 10, 20, 12, "shape")])
 
+    def test_a_stack_of_slices_is_not_an_icon(self) -> None:
+        """staticon5r3a's bars are cut 30x3 at a time; the stack is never drawn whole."""
+        w, h = 60, 30
+        idx = blank(w, h)
+        paint(idx, w, 10, 5, 30, 9, 0)
+        icons = si.icons_of("s", w, h, bytes(idx), KEY, {(10, 5, 30, 3), (10, 8, 30, 3), (10, 11, 30, 3)})
+        self.assertEqual(icons, [])
+
     def test_a_cut_inside_a_larger_one_from_the_same_corner_is_dropped(self) -> None:
         w, h = 60, 30
         idx = blank(w, h)
@@ -173,6 +181,20 @@ class PlanAndRecordsTest(unittest.TestCase):
         skipped: list[str] = []
         self.assertEqual(si.plan(self.lbm, {}, skipped), [])
         self.assertEqual(skipped, ["wide: index 0 is (27, 43, 43), not the chroma key"])
+
+    def test_the_key_is_index_0_even_where_a_real_colour_is_commoner(self) -> None:
+        """`label`: green index 0 only in a margin, a teal fill everywhere else (Claude review).
+        Keyed on the commonest index, the fill would be see-through."""
+        si.SHEETS = ("wide",)
+        w, h = 40, 20
+        idx = bytearray([222] * (w * h))
+        for x in range(w):
+            idx[x] = KEY
+        paint(idx, w, 10, 5, 20, 3, 0)
+        self.write_sheet("wide", w, h, idx)
+        [(sheet, _, _, _, _, key, icons)] = si.plan(self.lbm, {}, [])
+        self.assertEqual(key, KEY)
+        self.assertEqual([(i.x, i.y, i.w, i.h) for i in icons], [(0, 1, 40, 19)])
 
     def test_the_upscaler_sees_key_and_index_1_as_grey_and_colours_as_themselves(self) -> None:
         idx = bytes([KEY, pack.SHADOW_INDEX, 77, KEY])
