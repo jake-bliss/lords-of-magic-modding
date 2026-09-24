@@ -24,13 +24,13 @@ pixel- and palette-identical to the original it was made from. Observed 2026-09-
 and GS5R3 installs share 445 portrait names, but 5 of those differ, and the vanilla Life banner is
 not the GS5R3 one at all. A name match would have drawn a GS5R3 upscale over a different picture.
 
-Format LOMHDPK4, little-endian. An index first, so the overlay can read it without reading the
+Format LOMHDPK5, little-endian. An index first, so the overlay can read it without reading the
 rest: full-screen upscales make the pack ~850 MB, and the game is a 32-bit process.
 
-    b"LOMHDPK4"  u32 count
+    b"LOMHDPK5"  u32 count
     count index records, in order:
                  u8 name_len, name (ASCII, lowercase), u16 w, u16 h, u16 hw, u16 hh,
-                 u8 flags, u8 key, 256 x (r, g, b), u32 idx_len, u32 hd_len
+                 u8 flags, u8 key, u16 group, 256 x (r, g, b), u32 idx_len, u32 hd_len
     then, for each record in the same order and with nothing between them:
                  zlib(w*h palette indices), idx_len bytes
                  zlib(the upscale), hd_len bytes
@@ -43,6 +43,12 @@ has pixels whose index equals `key` (the sprite's transparent colour key) or 1 (
 by index rather than colour) that are not part of the image, and its upscale stream is `hw*hh*4`
 straight, non-premultiplied RGBA -- the transparency an upscaler produced, which the 1-bit game
 format never had room for.
+
+`flags` bit 1 is MIRROR, masked records only: the game also draws the sprite flipped left to right,
+as it draws map armies facing the other way (2026-09-23), so the overlay searches for it both ways
+round. `group` numbers the frames of one animated sprite (0: a record on its own; always 0 for an
+unmasked one), and a group's records must be consecutive: the overlay loads a group's next frames
+ahead of them being drawn.
 """
 from __future__ import annotations
 
@@ -58,55 +64,44 @@ import zlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "portrait-upscale"))
 import lbm_png  # noqa: E402
 
-MAGIC = b"LOMHDPK4"
+MAGIC = b"LOMHDPK5"
 
 # What the overlay's reader (src/lomhd_match.c in the cnc-ddraw fork) accepts. A pack it would
 # refuse must fail HERE, at build time, not load as "corrupt" in the game with the overlay silently
 # off. (Found by cross-model review, 2026-09-22: the writer checked none of these.)
-MAX_IMAGES = 5461           # a picture-only pack: count * PICTURE_PROBE_SLOTS must stay <= TABLE_SLOTS
+MAX_IMAGES = 131072         # LOMHD_MAX_IMAGES
 MIN_WIDTH = 32              # the matcher hashes a 32-pixel slice of each probe row
 MIN_HEIGHT = 4              # three probe rows at h/4, h/2 and 3h/4 need at least four rows
 MAX_UPSCALE_SIDE = 1280     # a 640x480 screen at 2x
 IMAGE_SUFFIXES = {".lbm", ".png"}
 
 FLAG_MASKED = 0x01          # the record has a transparent colour key and a shadow index to skip
-VALID_FLAGS = FLAG_MASKED
+FLAG_MIRROR = 0x02          # masked only: the game also draws it flipped left to right
+VALID_FLAGS = FLAG_MASKED | FLAG_MIRROR
+MAX_GROUP = 0xFFFF
 
-# The DLL's probe table is LOMHD_TABLE (65,536) entries, and a pack fails to load past half of it.
-# Its own check, in src/lomhd_match.c, is: for each image in turn, RESERVE `2 * bands * nrows`
-# slots (bands=1, nrows=LOMHD_PROBES=3 for a picture; bands=3, nrows=min(its own eligible row
-# count, LOMHD_SPRITE_PROBE_ROWS=4) for a sprite), and refuse the WHOLE pack if the running total
-# of reservations, including this one, exceeds TABLE_SLOTS -- checked BEFORE the image is actually
-# inserted. A picture's reservation is always exactly PICTURE_PROBE_SLOTS (6); write_records
-# charges each masked (sprite) record its own EXACT reservation via `record_probe_slots` (2 * 3 *
-# its own eligible-row count, capped at 4), not the flat worst case: a pack of many 3-row sprites
-# (each costing 18, not 24) must not be refused for nothing -- 1,366 such sprites cost 24,588, well
-# under half the table, and a flat 24-per-sprite bound refused that pack with no real DLL reason.
-#
-# What this arithmetic guarantees, precisely: **the writer refuses every pack the DLL would
-# refuse.** It is not exact the other way -- the writer's running total sums each image's
-# RESERVATION, while the DLL's own running total sums what each image ACTUALLY inserts, which can
-# be less (a band with no fully opaque 16-pixel window, or a probe that duplicates an earlier
-# slice, inserts fewer than its share). Since actual insertions <= the reservation for every image,
-# the DLL's running total can only be <= the writer's at every point, so the writer can refuse a
-# pack the DLL would in fact still open, but never the reverse. That asymmetry is the safe
-# direction for a build-time check to be wrong in, and it is what summing reservations (rather than
-# trying to predict actual insertions) buys: never accepting what the DLL refuses.
-TABLE_SLOTS = 65536 // 2
+# The DLL inserts at most LOMHD_MAX_PROBES probes and refuses the pack past that. For each image
+# it inserts at most a RESERVATION: exactly PICTURE_PROBE_SLOTS (6: 3 rows x 2 colour rules) for a
+# picture; for a sprite MASKED_PROBE_BANDS x min(its own eligible rows, MASKED_PROBE_ROWS_CAP), one
+# colour rule, doubled when it is MIRROR (each slice is also inserted read backwards). A band may
+# insert nothing -- no opaque slice, or one of too few colours -- so what the DLL inserts is at most
+# the reservation, and the writer, summing reservations, refuses every pack the DLL would refuse and
+# possibly a few it would not: the safe direction for a build-time check to be wrong in.
+MAX_PROBES = 1 << 20
+MAX_PACK_BYTES = 0xFFFFFFFF  # the DLL's offsets and file size are 32-bit (it seeks unsigned)
 PICTURE_PROBE_SLOTS = 6
 MASKED_PROBE_BANDS = 3
 MASKED_PROBE_ROWS_CAP = 4    # LOMHD_SPRITE_PROBE_ROWS
-MASKED_PROBE_SLOTS = 2 * MASKED_PROBE_BANDS * MASKED_PROBE_ROWS_CAP  # 24: a sprite's worst case
 
 # A masked (sprite) record's own floor -- smaller than a picture's, because a sprite's own art is
 # smaller too. The matcher still needs a run of opaque pixels long enough to hash; sprites carry
 # their own transparent pixels, so "busiest slice of the row" (the picture rule) has to become
 # "longest run that is not transparent". MASKED_MAX_PIXELS is the DLL's own cap on a masked
 # image's original size (w*h), separate from MAX_UPSCALE_SIDE, which bounds the upscale instead.
-MASKED_MIN_WIDTH = 16
+MASKED_MIN_WIDTH = 8        # LOMHD_SPRITE_PROBE_W: map armies are drawn from half-size sprites
 MASKED_MIN_HEIGHT = 4
 MASKED_MAX_PIXELS = 65536
-MASKED_MIN_OPAQUE_RUN = 16   # the shortest hashable run of pixels that are part of the sprite
+MASKED_MIN_OPAQUE_RUN = 8    # the shortest hashable run of pixels that are part of the sprite
 MASKED_MIN_OPAQUE_ROWS = 3  # same "three probe rows" rule as pictures
 SHADOW_INDEX = 1             # the engine draws this index as a darkening, never as its own colour
 
@@ -157,12 +152,12 @@ def load_rgb(path: pathlib.Path) -> tuple[int, int, bytes]:
 
 
 def encode_record(name: str, w: int, h: int, indices: bytes, palette, hw: int, hh: int,
-                  hd: bytes, *, flags: int = 0, key: int = 0) -> tuple[bytes, bytes, bytes]:
+                  hd: bytes, *, flags: int = 0, key: int = 0, group: int = 0) -> tuple[bytes, bytes, bytes]:
     """(index entry, zlib indices, zlib upscale) for one image.
 
     `hd` is the upscale's pixels: full-colour RGB for an unmasked (picture) record, or straight
     RGBA for a masked (sprite) one (`flags=FLAG_MASKED`). `key` is the sprite's transparent colour
-    index and must be 0 when the record is not masked -- format 4 has no other use for the byte,
+    index and must be 0 when the record is not masked -- the format has no other use for the byte,
     and a stray value there would silently do nothing on the picture path, which is worse than
     refusing it."""
     if flags & ~VALID_FLAGS:
@@ -170,6 +165,10 @@ def encode_record(name: str, w: int, h: int, indices: bytes, palette, hw: int, h
     masked = bool(flags & FLAG_MASKED)
     if not masked and key != 0:
         raise ValueError(f"{name}: key must be 0 for an unmasked record, got {key}")
+    if not masked and (flags & FLAG_MIRROR or group):
+        raise ValueError(f"{name}: only a masked record can be mirrored or grouped")
+    if not 0 <= group <= MAX_GROUP:
+        raise ValueError(f"{name}: group {group} does not fit in 16 bits")
     if len(palette) != 256:
         # A short CMAP would shift every later record if padded silently; refuse instead.
         raise ValueError(f"expected a 256-colour palette, got {len(palette)}")
@@ -182,7 +181,7 @@ def encode_record(name: str, w: int, h: int, indices: bytes, palette, hw: int, h
     flat = bytes(channel for colour in palette for channel in colour)
     encoded = name.encode("ascii")
     entry = (struct.pack("<B", len(encoded)) + encoded + struct.pack("<HHHH", w, h, hw, hh)
-             + struct.pack("<BB", flags, key) + flat + struct.pack("<II", len(zidx), len(zhd)))
+             + struct.pack("<BBH", flags, key, group) + flat + struct.pack("<II", len(zidx), len(zhd)))
     return entry, zidx, zhd
 
 
@@ -212,6 +211,44 @@ def masked_is_eligible(w: int, h: int, indices, key: int) -> bool:
     rows to find a hashable run in."""
     return (w >= MASKED_MIN_WIDTH and h >= MASKED_MIN_HEIGHT and w * h <= MASKED_MAX_PIXELS
             and masked_opaque_rows(w, h, indices, key) >= MASKED_MIN_OPAQUE_ROWS)
+
+
+SPRITE_MIN_COLOURS = 4       # LOMHD_SPRITE_MIN_COLOURS: distinct RGB565 colours a sprite probe holds
+
+
+def masked_probe_slices(w: int, h: int, indices, key: int, palette) -> int:
+    """How many probe slices the DLL inserts for a masked record, before mirroring -- its own rule
+    (lomhd_match.c): up to MASKED_PROBE_ROWS_CAP of the rows holding an 8-pixel opaque run, spread
+    evenly over them; in each row, one slice per third of the possible starts, if any fully opaque
+    8-pixel window there holds SPRITE_MIN_COLOURS distinct colours (truncated to RGB565). A run of
+    one colour hits all over a frame, so the DLL makes no probe of it -- and a sprite with no probe
+    at all can never be found, so it is not worth packing."""
+    def rgb565(i):
+        r, g, b = palette[i]
+        return (r >> 3, g >> 2, b >> 3)
+
+    see_through = (key, SHADOW_INDEX)
+    rows = [y for y in range(h) if _longest_run(indices[y * w:(y + 1) * w], key) >= MASKED_MIN_OPAQUE_RUN]
+    n = min(len(rows), MASKED_PROBE_ROWS_CAP)
+    width, starts, slices = MASKED_MIN_OPAQUE_RUN, w - MASKED_MIN_OPAQUE_RUN + 1, 0
+    for k in range(n):
+        row = indices[rows[(len(rows) - 1) * k // (n - 1 if n > 1 else 1)] * w:][:w]
+        for band in range(MASKED_PROBE_BANDS):
+            for col in range(starts * band // MASKED_PROBE_BANDS, starts * (band + 1) // MASKED_PROBE_BANDS):
+                window = row[col:col + width]
+                if len(window) == width and not any(v in see_through for v in window) \
+                        and len({rgb565(v) for v in window}) >= SPRITE_MIN_COLOURS:
+                    slices += 1
+                    break
+    return slices
+
+
+def _longest_run(row, key: int) -> int:
+    run = best = 0
+    for value in row:
+        run = run + 1 if value != key and value != SHADOW_INDEX else 0
+        best = max(best, run)
+    return best
 
 
 def same_image(a: pathlib.Path, b: pathlib.Path) -> bool:
@@ -266,22 +303,26 @@ def unmasked_records(originals, upscaled, skipped: list[str], sources=None):
         yield encode_record(name, w, h, idx, pal, hw, hh, rgb)
 
 
+def entry_fields(entry: bytes) -> tuple[int, int, int, int, int]:
+    """(w, h, flags, key, group) of an already-encoded index entry."""
+    pos = 1 + entry[0]
+    w, h, _, _ = struct.unpack_from("<HHHH", entry, pos)
+    flags, key, group = struct.unpack_from("<BBH", entry, pos + 8)
+    return w, h, flags, key, group
+
+
 def record_probe_slots(entry: bytes, zidx: bytes) -> int:
-    """The DLL's own reservation for one already-encoded record: PICTURE_PROBE_SLOTS for an
-    unmasked (picture) record, always; for a masked (sprite) one, `2 * MASKED_PROBE_BANDS *
-    min(masked_opaque_rows(...), MASKED_PROBE_ROWS_CAP)` -- the record's OWN eligible-row count,
-    not the worst case, so a pack of many 3-row sprites is not charged for rows it does not have.
-    `zidx` is the record's own compressed indices stream (`encode_record`'s second return value),
-    decompressed here to count rows; a picture record never needs it."""
-    name_len = entry[0]
-    pos = 1 + name_len
-    w, h, hw, hh = struct.unpack_from("<HHHH", entry, pos)
-    flags, key = struct.unpack_from("<BB", entry, pos + 8)
+    """The DLL's own reservation for one already-encoded record (see MAX_PROBES): PICTURE_PROBE_SLOTS
+    for an unmasked (picture) record, always; for a masked (sprite) one, `MASKED_PROBE_BANDS *
+    min(masked_opaque_rows(...), MASKED_PROBE_ROWS_CAP)`, doubled if MIRROR -- the record's OWN
+    eligible-row count, not the worst case. `zidx` is the record's own compressed indices stream
+    (`encode_record`'s second return value), decompressed here to count rows."""
+    w, h, flags, key, _ = entry_fields(entry)
     if not flags & FLAG_MASKED:
         return PICTURE_PROBE_SLOTS
     indices = zlib.decompress(zidx)
     rows = min(masked_opaque_rows(w, h, indices, key), MASKED_PROBE_ROWS_CAP)
-    return 2 * MASKED_PROBE_BANDS * rows
+    return MASKED_PROBE_BANDS * rows * (2 if flags & FLAG_MIRROR else 1)
 
 
 def write_records(out: pathlib.Path, records) -> int:
@@ -296,11 +337,27 @@ def write_records(out: pathlib.Path, records) -> int:
     out = pathlib.Path(out)
     entries = []
     slots = 0
+    groups_done: set[int] = set()
+    current_group = 0
+    size = len(MAGIC) + 4
     with tempfile.TemporaryFile(dir=out.parent) as streams:
         for entry, zidx, zhd in records:
             slots += record_probe_slots(entry, zidx)
-            if slots > TABLE_SLOTS:
-                raise SystemExit(f"{slots} probe-table entries; the overlay accepts at most {TABLE_SLOTS}")
+            if slots > MAX_PROBES:
+                raise SystemExit(f"{slots} probes; the overlay accepts at most {MAX_PROBES}")
+            if len(entries) == MAX_IMAGES:
+                raise SystemExit(f"more than {MAX_IMAGES} images; the overlay accepts at most that")
+            # A group's records must be consecutive: the DLL refuses a group it has seen before.
+            group = entry_fields(entry)[4]
+            if group != current_group:
+                if current_group:
+                    groups_done.add(current_group)
+                if group in groups_done:
+                    raise SystemExit(f"group {group} is split: its records must be consecutive")
+                current_group = group
+            size += len(entry) + len(zidx) + len(zhd)
+            if size > MAX_PACK_BYTES:
+                raise SystemExit(f"the pack would pass {MAX_PACK_BYTES} bytes; the overlay's offsets are 32-bit")
             entries.append(entry)
             streams.write(zidx)
             streams.write(zhd)
@@ -340,7 +397,7 @@ def count(path: pathlib.Path) -> int:
     with open(path, "rb") as f:
         head = f.read(12)
     if head[:8] != MAGIC:
-        raise ValueError("not a format-4 image pack")
+        raise ValueError("not a format-5 image pack")
     return struct.unpack_from("<I", head, 8)[0]
 
 
@@ -357,27 +414,27 @@ def check_reader_limits(name: str, w: int, h: int, hw: int, hh: int, *, masked: 
 
 def read(pack: bytes):
     """The inverse of `write`/`write_records`, used by the tests and by anyone checking a pack by
-    hand. Returns (name, (w, h, palette, indices), (hw, hh, hd), flags, key) per record; `hd` is
-    RGB for an unmasked record and RGBA for a masked one."""
+    hand. Returns (name, (w, h, palette, indices), (hw, hh, hd), flags, key, group) per record;
+    `hd` is RGB for an unmasked record and RGBA for a masked one."""
     if pack[:8] != MAGIC:
-        raise ValueError("not a format-4 image pack")
+        raise ValueError("not a format-5 image pack")
     (n_records,) = struct.unpack_from("<I", pack, 8)
     pos, index = 12, []
     for _ in range(n_records):
         n = pack[pos]; name = pack[pos + 1:pos + 1 + n].decode("ascii"); pos += 1 + n
         w, h, hw, hh = struct.unpack_from("<HHHH", pack, pos); pos += 8
-        flags, key = struct.unpack_from("<BB", pack, pos); pos += 2
+        flags, key, group = struct.unpack_from("<BBH", pack, pos); pos += 4
         pal = [tuple(pack[pos + i * 3:pos + i * 3 + 3]) for i in range(256)]; pos += 768
         idx_len, hd_len = struct.unpack_from("<II", pack, pos); pos += 8
-        index.append((name, w, h, hw, hh, flags, key, pal, idx_len, hd_len))
+        index.append((name, w, h, hw, hh, flags, key, group, pal, idx_len, hd_len))
     out = []
-    for name, w, h, hw, hh, flags, key, pal, idx_len, hd_len in index:
+    for name, w, h, hw, hh, flags, key, group, pal, idx_len, hd_len in index:
         idx = zlib.decompress(pack[pos:pos + idx_len]); pos += idx_len
         hd = zlib.decompress(pack[pos:pos + hd_len]); pos += hd_len
         channels = 4 if flags & FLAG_MASKED else 3
         if len(idx) != w * h or len(hd) != hw * hh * channels:
             raise ValueError(f"{name}: stream sizes do not match {w}x{h} / {hw}x{hh}")
-        out.append((name, (w, h, pal, idx), (hw, hh, hd), flags, key))
+        out.append((name, (w, h, pal, idx), (hw, hh, hd), flags, key, group))
     if pos != len(pack):
         raise ValueError(f"{len(pack) - pos} trailing bytes")
     return out

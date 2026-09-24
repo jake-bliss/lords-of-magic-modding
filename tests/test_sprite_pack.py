@@ -39,9 +39,11 @@ def indexed_png(w: int, h: int, indices: bytes, plte: bytes, trns: bytes | None 
 
 
 def masked_sprite(w: int, h: int, key: int, opaque: int = 3, border: int = 2) -> bytes:
-    """`border` columns of `key` on each side, `opaque` in between, `h` identical rows -- a run of
-    `w - 2 * border` on every row, same shape as tools/hd_portrait_pack's own test helper."""
-    row = bytes([key] * border + [opaque] * (w - 2 * border) + [key] * border)
+    """`border` columns of `key` on each side, colours counting up from `opaque` in between (the
+    overlay makes no probe of a run of one colour), `h` identical rows -- a run of `w - 2 * border`
+    on every row."""
+    inside = [10 + (opaque * 16 + x) % 200 for x in range(w - 2 * border)]
+    row = bytes([key] * border + [v if v != key else v + 1 for v in inside] + [key] * border)
     return row * h
 
 
@@ -229,7 +231,7 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         self.assertEqual(considered, 1)
         self.assertEqual(skipped, [])
         [(entry, zidx, zhd)] = records
-        [(name, small, large, flags, key)] = pack.read(
+        [(name, small, large, flags, key, _)] = pack.read(
             self._packed_bytes(records))
         self.assertEqual(name, "sprite__tree")
         self.assertEqual(flags, pack.FLAG_MASKED)
@@ -243,12 +245,14 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         return out.read_bytes()
 
     def test_a_multi_frame_sprite_is_not_static(self) -> None:
+        """Not a static record, and not reported as left out either: animated sprites are
+        anim_frames.py's (sprite_pack.py --animated)."""
         self.write_listfile("goblin.imp")
         self.install_viewer({"unit\\goblin.imp": describe(4)}, {})
         records, considered, skipped = self.run_build({})
         self.assertEqual(records, [])
         self.assertEqual(considered, 1)
-        self.assertIn("goblin: 4 frames, not a static sprite", skipped)
+        self.assertEqual(skipped, [])
 
     def test_a_member_not_in_this_archive_is_reported_not_silently_dropped(self) -> None:
         self.write_listfile("ghost.imp")
@@ -268,6 +272,20 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         self.assertEqual(len(skipped), 1)
         self.assertIn("dot:", skipped[0])
         self.assertIn("matcher", skipped[0])
+
+    def test_a_sprite_with_no_probe_of_enough_colours_is_skipped(self) -> None:
+        """Eligible by size, but every opaque run is one colour: the overlay could make no probe,
+        so the record could never be found (Codex review, 2026-09-23)."""
+        self.write_listfile("flat.imp")
+        row = bytes([5] * 2 + [9] * 16 + [5] * 2)
+        trns = bytearray(b"\xff" * 256); trns[5] = 0
+        png = indexed_png(20, 6, row * 6, PLTE, bytes(trns))
+        self.install_viewer({"unit\\flat.imp": describe(1)}, {"unit\\flat.imp": png})
+        self.write_render("anime2x", "sprite__flat", 40, 12)
+        records, considered, skipped = self.run_build({"sprite__flat": "anime2x"})
+        self.assertEqual(records, [])
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("flat: no 8-pixel run", skipped[0])
 
     def test_a_sprite_with_no_upscale_pick_is_skipped(self) -> None:
         self.write_listfile("tree.imp")
