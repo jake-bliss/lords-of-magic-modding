@@ -299,6 +299,55 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(changed_inside, 0)
         self.assertGreater(changed_band, 0)  # the control: normalization did something in the band
 
+    def interrupted_run(self, target, name: str, output_of) -> None:
+        """Run build() with `target.name` wrapped so that the file it writes is left half-written
+        and the run stops there, as a killed run leaves it; then run build() again normally."""
+        t, w, h = 4, 8, 8
+        idx = bytes((x * 3 + y * 5) % 200 + 10 for y in range(h) for x in range(w))
+        write_lbm(self.src / "tilesz01.lbm", w, h, idx)
+        (self.src / "tilesz01.til").write_bytes(til("tilesz01.lbm", t))
+        real = getattr(target, name)
+
+        def half_then_stop(*args, **kwargs):
+            real(*args, **kwargs)
+            written = output_of(*args)
+            written.write_bytes(written.read_bytes()[:40])
+            raise KeyboardInterrupt
+
+        setattr(target, name, half_then_stop)
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                th.build(self.src, self.out, self.fake, self.d, self.d / "work", {"terrain__tilesz01": "anime4x"}, norm=0)
+        finally:
+            setattr(target, name, real)
+        th.build(self.src, self.out, self.fake, self.d, self.d / "work", {"terrain__tilesz01": "anime4x"}, norm=0)
+        _, _, got, _, _ = lbm_png.decode(self.out / "tilesz01.lbm")
+        self.assertEqual(bytes(got), bytes(idx[(y // 2) * w + x // 2] for y in range(2 * h) for x in range(2 * w)))
+
+    def test_a_tile_cut_short_by_a_stopped_run_is_not_reused(self) -> None:
+        self.interrupted_run(th.lbm_png, "write_png", lambda path, *rest: pathlib.Path(path))
+
+    def test_a_render_cut_short_by_a_stopped_run_is_not_reused(self) -> None:
+        """hd_upscale.render skips any output that exists: one cut short must never be there. Only
+        its resize step (which writes the output) is interrupted; the stand-in model runs as is."""
+        import types
+        import hd_upscale
+
+        real_run = hd_upscale.subprocess.run
+        resize = types.SimpleNamespace(run=real_run)
+
+        def run(cmd, *args, **kwargs):
+            if cmd[0] == "magick" and "-resize" in cmd:
+                return resize.run(cmd, *args, **kwargs)
+            return real_run(cmd, *args, **kwargs)
+
+        original = hd_upscale.subprocess          # only render's own reference is swapped
+        hd_upscale.subprocess = types.SimpleNamespace(run=run)
+        try:
+            self.interrupted_run(resize, "run", lambda cmd, *rest: pathlib.Path(str(cmd[-1]).removeprefix("PNG:")))
+        finally:
+            hd_upscale.subprocess = original
+
     def test_an_atlas_without_a_reviewed_choice_refuses(self) -> None:
         write_lbm(self.src / "tilesz01.lbm", 8, 8, bytes(64))
         with self.assertRaises(SystemExit):

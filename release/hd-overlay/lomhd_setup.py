@@ -6,6 +6,8 @@
     python lomhd_setup.py --uninstall           put the game back exactly as it was
     python lomhd_setup.py --review              pick your own upscaler per picture first
     python lomhd_setup.py --terrain             also install HD terrain (patches lomse.exe)
+    python lomhd_setup.py --terrain --force-terrain-folder
+                                                replace a lomhd_terrain folder this mod did not make
 
 Choosing your own: --review renders every upscale option for every picture from your own game,
 then opens a review page on this computer (http://127.0.0.1:8765) with the shipped picks already
@@ -47,6 +49,7 @@ import platform
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import urllib.error
@@ -542,7 +545,7 @@ def install(game: pathlib.Path, pack: "bytes | pathlib.Path", record: dict) -> N
     write_atomically(dll, (HERE / "ddraw.dll").read_bytes())
 
 
-def uninstall(game: pathlib.Path) -> None:
+def uninstall(game: pathlib.Path, force_terrain_folder: bool = False) -> None:
     record_path = game / RECORD_NAME
     record = read_record(game)
     if not record:
@@ -550,7 +553,10 @@ def uninstall(game: pathlib.Path) -> None:
             fail(f"{RECORD_NAME} is damaged. Run the install again (it recovers from the backup), "
                  "then --uninstall.")
         fail(f"no {RECORD_NAME} in {game}; the overlay does not look installed there.")
-    terrain_removed = uninstall_terrain(game, record)
+    # A running game holds ddraw.dll and lomse.exe: say so before anything is changed, rather than
+    # stopping halfway with a traceback.
+    check_writable(game, terrain=True)
+    terrain_removed = uninstall_terrain(game, record, force_terrain_folder)
     dll, backup = game / "ddraw.dll", game / BACKUP_NAME
     had, backup_sha = record["had_ddraw"], record["backup_sha256"]
     current = file_hash(dll)
@@ -587,7 +593,7 @@ def uninstall(game: pathlib.Path) -> None:
             (game / name).unlink()
     say(f"Uninstalled. ddraw.dll is {'your original again' if had else 'removed'}.")
     if terrain_removed:
-        say("HD terrain removed: lomse.exe is your original again and lomhd_terrain is gone.")
+        say(terrain_removed)
     if ini_saved:
         say(f"cnc-ddraw's settings file was set aside as {ini_saved.name} (the game ignores it; "
             "delete it if you like).")
@@ -750,8 +756,12 @@ def build_terrain(game: pathlib.Path, esrgan: pathlib.Path, models: pathlib.Path
         shutil.rmtree(out)
     try:
         report = terrain_hd.build(src, out, esrgan, models, WORK / "terrain" / "work", terrain_choices())
-    except SystemExit as error:
-        fail(f"building HD terrain stopped: {error}\nThe HD art is installed; lomse.exe was not touched.")
+    except (SystemExit, subprocess.CalledProcessError) as error:
+        # CalledProcessError: ImageMagick refused a file, most likely a damaged tile or render left
+        # in the cache by an earlier run that was stopped hard.
+        fail(f"building HD terrain stopped: {error}\nThe HD art is installed; lomse.exe was not "
+             f"touched. If it stops again, delete {WORK / 'terrain'} (in lomhd_work, next to this "
+             "script) and run again: it is only a cache.")
     for line in report:
         if "skipped" in line:
             say(f"     {line}")
@@ -769,13 +779,65 @@ def terrain_digest(til: pathlib.Path) -> str | None:
     return digest.hexdigest()
 
 
-def install_terrain(game: pathlib.Path, built: pathlib.Path) -> None:
+def terrain_folder_owned(game: pathlib.Path, record: dict) -> bool:
+    """Whether lomhd_terrain is exactly a folder this mod wrote: nothing in it but til, and til's
+    digest one the install record holds. A folder the player edited, or put there by hand, is not."""
+    dest = game / TERRAIN_DIR
+    terrain = record.get("terrain", {})
+    ours = {terrain.get("terrain_sha256"), *terrain.get("terrain_sha256s", [])} - {None}
+    return (dest.is_dir() and {p.name for p in dest.iterdir()} == {"til"}
+            and terrain_digest(dest / "til") in ours)
+
+
+def check_terrain_folder(game: pathlib.Path, record: dict, force: bool) -> None:
+    """Refuse to replace a lomhd_terrain this mod cannot show it made, unless told to."""
+    dest = game / TERRAIN_DIR
+    if (dest.exists() or dest.is_symlink()) and not force and not terrain_folder_owned(game, record):
+        fail(f"{dest} is already there and is not the one this mod installed (it was changed since, "
+             "or put there by hand), so it was not replaced. Move it out of the game folder, or run "
+             "again with --force-terrain-folder to replace it. lomse.exe was not touched.")
+
+
+def recover_terrain_swap(game: pathlib.Path, again: str) -> None:
+    """A run stopped between moving the old lomhd_terrain aside and renaming the new one into place
+    leaves lomhd_terrain.lomhd-old and no lomhd_terrain: a patched exe with no art, which draws
+    scrambled terrain. Put the old folder back before anything else."""
+    dest, old = game / TERRAIN_DIR, game / (TERRAIN_DIR + ".lomhd-old")
+    if old.is_dir() and not (dest.exists() or dest.is_symlink()):
+        try:
+            os.replace(old, dest)
+        except OSError:
+            fail(f"an earlier run left {old.name}, and it could not be put back as {TERRAIN_DIR}. "
+                 f"Close Lords of Magic and anything else using the game folder, then run "
+                 f"python lomhd_setup.py {again} again.")
+        say(f"     put back {TERRAIN_DIR} from a run that was interrupted")
+
+
+def write_game_file(path: pathlib.Path, data: "bytes | pathlib.Path", again: str, state: str) -> None:
+    """write_atomically, for a file the running game holds: a locked file becomes a message saying
+    what to do, not a traceback, and the half-written .lomhd-part goes."""
+    try:
+        write_atomically(path, data)
+    except OSError as error:
+        try:
+            path.with_name(path.name + ".lomhd-part").unlink(missing_ok=True)
+        except OSError:
+            pass
+        fail(f"could not write {path.name} ({error.strerror or error}). Close Lords of Magic (and "
+             f"anything else using the game folder) and run python lomhd_setup.py {again} again. "
+             f"{state}")
+
+
+def install_terrain(game: pathlib.Path, built: pathlib.Path, force_folder: bool = False) -> None:
     """Record, then the art folder, then the exe -- the exe LAST, so an interrupted run leaves at
     worst the art without the patch, which the stock exe ignores.
 
-    The art goes in whole or not at all: it is copied to a sibling folder and renamed into place.
-    The exe is backed up once (the backup verified), written beside itself and renamed over, and
-    verified again after."""
+    The art goes in whole or not at all: it is copied to a sibling folder and renamed into place,
+    and the folder it replaces is only deleted once the new one is there. A lomhd_terrain this mod
+    cannot show it made is refused unless `force_folder`. The exe is backed up once (written beside
+    itself, renamed, verified), then written the same way and verified again."""
+    again = "--terrain"
+    recover_terrain_swap(game, again)
     _, patched = terrain_exe_plan(game)
     exe, backup = game / EXE_NAME, game / EXE_BACKUP_NAME
     dest = game / TERRAIN_DIR
@@ -784,6 +846,7 @@ def install_terrain(game: pathlib.Path, built: pathlib.Path) -> None:
     if not record:
         fail(f"{RECORD_NAME} is missing or damaged after the HD art install. HD terrain was not "
              "installed; lomse.exe was not touched.")
+    check_terrain_folder(game, record, force_folder)
     previous = record.get("terrain", {})
     record["terrain"] = {
         "exe_original_sha256": PRISTINE_EXE_SHA256,
@@ -792,12 +855,17 @@ def install_terrain(game: pathlib.Path, built: pathlib.Path) -> None:
         # patch differs must still recognise the old one as ours.
         "exe_patched_sha256s": sorted({PATCHED_EXE_SHA256, *previous.get("exe_patched_sha256s", [])}),
         "terrain_sha256": digest,
+        # Every art folder this game has had from us. The record is written before the folder is
+        # swapped, so a run stopped in between must still know the folder left in place as ours.
+        "terrain_sha256s": sorted({digest, *previous.get("terrain_sha256s", []),
+                                   *([previous["terrain_sha256"]] if previous.get("terrain_sha256") else [])}),
     }
     write_atomically(game / RECORD_NAME, json.dumps(record, indent=2).encode() + b"\n")
 
     if terrain_digest(dest / "til") != digest or {p.name for p in dest.iterdir()} != {"til"}:
         # (A re-run with the same art leaves the folder as it is: nothing to replace.)
         part, old = game / (TERRAIN_DIR + ".lomhd-part"), game / (TERRAIN_DIR + ".lomhd-old")
+        # After recover_terrain_swap, an `old` still here has lomhd_terrain beside it: the newer one.
         for stale in (part, old):
             if stale.exists():
                 shutil.rmtree(stale)
@@ -805,64 +873,133 @@ def install_terrain(game: pathlib.Path, built: pathlib.Path) -> None:
         if terrain_digest(part / "til") != digest:
             shutil.rmtree(part)
             fail("the copy of the HD terrain did not verify. lomse.exe was not touched.")
-        # Windows cannot rename a folder over another, so the old one steps aside first.
+        locked = (f"could not put the new {TERRAIN_DIR} in place (something has a file in it open). "
+                  f"Close Lords of Magic and anything else using the game folder, then run "
+                  f"python lomhd_setup.py {again} again.")
+        # Windows cannot rename a folder over another, so the old one steps aside first -- and comes
+        # back if the new one cannot take its place: a patched exe without the folder draws
+        # scrambled terrain.
         if dest.exists():
-            os.replace(dest, old)
-        os.replace(part, dest)
+            try:
+                os.replace(dest, old)
+            except OSError:
+                shutil.rmtree(part, ignore_errors=True)
+                fail(f"{locked} The HD terrain already installed was left as it was.")
+        try:
+            os.replace(part, dest)
+        except BaseException as error:
+            restored = not old.exists()
+            if old.exists() and not dest.exists():
+                try:
+                    os.replace(old, dest)
+                    restored = True
+                except OSError:
+                    pass                    # recover_terrain_swap puts it back on the next run
+            shutil.rmtree(part, ignore_errors=True)
+            if isinstance(error, OSError):
+                fail(f"{locked} " + ("The HD terrain already installed was left as it was."
+                                     if restored else "The next run puts the previous one back."))
+            raise
         if old.exists():
-            shutil.rmtree(old)
+            shutil.rmtree(old, ignore_errors=True)   # the new folder is in place; a leftover is inert
 
     if file_hash(backup) is None:              # terrain_exe_plan: so the exe is the pristine one
-        shutil.copy2(exe, backup)
+        write_game_file(backup, exe, again, "lomse.exe was not touched.")
         if file_hash(backup) != PRISTINE_EXE_SHA256:
             backup.unlink()
             fail("the backup of lomse.exe did not verify. lomse.exe was not touched.")
     if file_hash(exe) != PATCHED_EXE_SHA256:
-        write_atomically(exe, patched)
+        write_game_file(exe, patched, again, "lomse.exe was not changed.")
         if file_hash(exe) != PATCHED_EXE_SHA256:
             fail("the patched lomse.exe did not verify. Run --uninstall to put the original back.")
 
 
-def uninstall_terrain(game: pathlib.Path, record: dict) -> bool:
-    """Put the original lomse.exe back, then remove lomhd_terrain. Returns whether there was
-    anything to undo.
+def terrain_edits_present(image: bytes) -> bool:
+    """Whether ANY site of this mod's terrain patch holds its patched (`new`) bytes. An exe nobody
+    recognises is safe beside lomhd_terrain only when none do: the folder then does nothing."""
+    try:
+        secs = exe_patch.sections(image)
+    except (exe_patch.PatchError, struct.error):
+        return False
+    for patch_set in terrain_sets():
+        for p in patch_set.patches:
+            try:
+                off = exe_patch.va_to_offset(secs, p.va, len(p.new))
+            except exe_patch.PatchError:
+                continue
+            if image[off:off + len(p.new)] == p.new:
+                return True
+    return False
+
+
+def uninstall_terrain(game: pathlib.Path, record: dict, force_folder: bool = False) -> str | None:
+    """Put the original lomse.exe back, then remove lomhd_terrain. Returns what to tell the player,
+    or None when there was nothing to undo.
 
     Hash discipline as for ddraw.dll: the exe is only replaced when it is the one this mod wrote,
     and only from a backup that verifies. If Steam's "Verify integrity" already restored it, the
-    backup is simply dropped. An exe something else changed is left alone and nothing is removed --
-    the folder is only harmless once the exe is not ours."""
+    backup is simply dropped. An exe something else changed is left alone: if it still holds this
+    mod's edits, the folder is still needed and nothing is removed; if it holds none, the folder is
+    inert. Either way the folder is only deleted when it is the one this mod installed (or
+    `force_folder`): a stock exe ignores it, so leaving a foreign one is safe."""
+    again = "--uninstall"
+    recover_terrain_swap(game, again)
     exe, backup, dest = game / EXE_NAME, game / EXE_BACKUP_NAME, game / TERRAIN_DIR
     terrain = record.get("terrain", {})
     original = terrain.get("exe_original_sha256", PRISTINE_EXE_SHA256)
     ours = {PATCHED_EXE_SHA256, terrain.get("exe_patched_sha256"), *terrain.get("exe_patched_sha256s", [])} - {None}
     current, saved = file_hash(exe), file_hash(backup)
-    leftovers = [game / (TERRAIN_DIR + s) for s in (".lomhd-part", ".lomhd-old")] + [game / (EXE_NAME + ".lomhd-part")]
+    leftovers = ([game / (TERRAIN_DIR + s) for s in (".lomhd-part", ".lomhd-old")]
+                 + [game / (EXE_NAME + ".lomhd-part"), game / (EXE_BACKUP_NAME + ".lomhd-part")])
     if not (terrain or saved is not None or current in ours or dest.exists()
             or any(p.exists() for p in leftovers)):
-        return False
+        return None
 
+    exe_note = "lomse.exe is your original again"
+    foreign_exe = False
     if current in ours or current is None:
         if saved != original:
             fail(f"{EXE_BACKUP_NAME} is missing or changed, so the original lomse.exe cannot be "
                  "restored safely. Nothing was removed. Steam's 'Verify integrity of game files' "
                  "puts the original back; then run --uninstall again.")
-        write_atomically(exe, backup)
+        write_game_file(exe, backup, again, "Nothing was removed.")
         if file_hash(exe) != original:
             fail("the restored lomse.exe did not verify. Nothing else was removed.")
     elif current != original:
-        fail("lomse.exe is neither this mod's patched one nor your original -- something else has "
-             "changed it since. Left as it is, and nothing was removed.")
+        if terrain_edits_present(exe.read_bytes()):
+            fail("lomse.exe is neither this mod's patched one nor your original, but it still holds "
+                 "this mod's terrain edits -- something else has changed it on top of them. Left as "
+                 "it is, and nothing was removed (the edits still need lomhd_terrain). Steam's "
+                 "'Verify integrity of game files' puts the original back; then run --uninstall "
+                 "again.")
+        foreign_exe = True
+        exe_note = "lomse.exe was changed by something else since, and was left as it is"
 
-    if file_hash(backup) == original:
+    if foreign_exe and backup.exists():
+        say(f"{EXE_BACKUP_NAME} (your original lomse.exe) was kept, since lomse.exe itself has been "
+            "replaced; delete it if you do not need it.")
+    elif file_hash(backup) == original:
         backup.unlink()
     elif backup.exists():
         say(f"{EXE_BACKUP_NAME} is not the original lomse.exe, so it was left where it is.")
-    for path in [dest, *leftovers]:
+
+    folder_note = f"{TERRAIN_DIR} is gone"
+    if dest.exists() or dest.is_symlink():
+        if force_folder or terrain_folder_owned(game, record):
+            if dest.is_dir() and not dest.is_symlink():
+                shutil.rmtree(dest)
+            else:
+                dest.unlink()
+        else:
+            folder_note = (f"{TERRAIN_DIR} was left in place: it is not the one this mod installed "
+                           "(changed since, or put there by hand). The game ignores it now; delete it "
+                           "if you do not want it")
+    for path in leftovers:
         if path.is_dir():
             shutil.rmtree(path)
         elif path.exists():
             path.unlink()
-    return True
+    return f"HD terrain removed: {exe_note}, and {folder_note}."
 
 
 def main() -> int:
@@ -876,6 +1013,9 @@ def main() -> int:
     parser.add_argument("--terrain", action="store_true",
                         help="also install HD terrain: patches lomse.exe and adds lomhd_terrain "
                              "(--uninstall undoes both)")
+    parser.add_argument("--force-terrain-folder", action="store_true",
+                        help="replace (or, with --uninstall, remove) a lomhd_terrain folder this mod "
+                             "did not make or that was changed since")
     args = parser.parse_args()
 
     if sys.version_info < (3, 9):
@@ -883,7 +1023,7 @@ def main() -> int:
     game = find_game(args.game)
     say(f"Game: {game}")
     if args.uninstall:
-        uninstall(game)
+        uninstall(game, args.force_terrain_folder)
         return 0
 
     if args.review:
@@ -901,6 +1041,7 @@ def main() -> int:
     check_writable(game, args.terrain)
     if args.terrain:
         terrain_exe_plan(game)       # refuse an exe it cannot patch now, not after an hour's work
+        check_terrain_folder(game, read_record(game), args.force_terrain_folder)
     steps = 6 if args.terrain else 4
     if choices_file() == MY_CHOICES:
         say(f"Using your own picks from {MY_CHOICES.name}")
@@ -923,7 +1064,7 @@ def main() -> int:
         say(f"\n5/{steps}  Building HD terrain from your pic.mpq (the long step again)")
         built = build_terrain(game, exe, models)
         say(f"6/{steps}  Installing HD terrain and patching lomse.exe")
-        install_terrain(game, built)
+        install_terrain(game, built, args.force_terrain_folder)
         say(f"Done: HD terrain installed ({TERRAIN_DIR}\\til, and lomse.exe patched; the original "
             f"is {EXE_BACKUP_NAME}). Recommended window: 1280x960 (width/height in ddraw.ini).")
     say("To undo: python lomhd_setup.py --uninstall" + (f' --game "{game}"' if args.game else ""))

@@ -494,12 +494,232 @@ class TerrainInstall(unittest.TestCase):
 
     def test_changed_art_replaces_the_whole_folder(self) -> None:
         self.install_all()
+        (self.built / "tilesb01.lbm").write_bytes(b"an atlas the last build did not have")
         (self.built / "tilesa01.lbm").write_bytes(b"a newer 2x atlas")
-        (self.game / setup.TERRAIN_DIR / "til" / "stray.lbm").write_bytes(b"left over")
         setup.install_terrain(self.game, self.built)
         self.assert_installed()
         self.assertFalse((self.game / (setup.TERRAIN_DIR + ".lomhd-old")).exists())
         self.assertFalse((self.game / (setup.TERRAIN_DIR + ".lomhd-part")).exists())
+        (self.built / "tilesb01.lbm").unlink()
+        setup.install_terrain(self.game, self.built)
+        self.assert_installed()                  # tilesb01 went with the folder it was in
+
+    # --- the art folder swap (cross-review of 7f1cce3) ------------------------------------------
+
+    def fail_rename(self, which: str, error: BaseException = PermissionError("locked"),
+                    also_rollback: bool = False):
+        """os.replace failing on one rename of the folder swap: `which` is "aside" (lomhd_terrain
+        -> .lomhd-old) or "into-place" (.lomhd-part -> lomhd_terrain)."""
+        real = setup.os.replace
+        dest = self.game / setup.TERRAIN_DIR
+
+        def replace(src, dst):
+            src, dst = pathlib.Path(src), pathlib.Path(dst)
+            if which == "aside" and src == dest:
+                raise error
+            if which == "into-place" and dst == dest and src.name.endswith(".lomhd-part"):
+                raise error
+            if also_rollback and dst == dest and src.name.endswith(".lomhd-old"):
+                raise PermissionError("still locked")
+            return real(src, dst)
+
+        setup.os.replace = replace
+        self.addCleanup(setattr, setup.os, "replace", real)
+        return real
+
+    def old_art(self) -> dict:
+        til = self.game / setup.TERRAIN_DIR / "til"
+        return {p.name: p.read_bytes() for p in til.iterdir()}
+
+    def test_a_failed_rename_either_way_leaves_the_patched_exe_its_art(self) -> None:
+        for which in ("aside", "into-place"):
+            with self.subTest(which):
+                self.install_all()
+                before = self.old_art()
+                (self.built / "tilesa01.lbm").write_bytes(b"art for " + which.encode())
+                real = self.fail_rename(which)
+                with self.assertRaises(SystemExit) as stopped:
+                    setup.install_terrain(self.game, self.built)
+                setup.os.replace = real
+                self.assertIn("run python lomhd_setup.py --terrain again", str(stopped.exception))
+                self.assertEqual(self.exe(), self.patched)
+                self.assertEqual(self.old_art(), before, "the patched exe must keep a folder")
+                self.assertFalse((self.game / (setup.TERRAIN_DIR + ".lomhd-old")).exists())
+                self.assertFalse((self.game / (setup.TERRAIN_DIR + ".lomhd-part")).exists())
+                setup.install_terrain(self.game, self.built)       # the re-run finishes the job
+                self.assert_installed()
+
+    def test_an_interrupted_swap_is_put_back_by_the_next_run(self) -> None:
+        """Killed between the two renames, with the rollback failing too: .lomhd-old and no folder.
+        The next run restores it FIRST -- here it then fails its own copy, and the patched exe must
+        still have its art."""
+        self.install_all()
+        before = self.old_art()
+        (self.built / "tilesa01.lbm").write_bytes(b"a newer 2x atlas")
+        real = self.fail_rename("into-place", KeyboardInterrupt(), also_rollback=True)
+        with self.assertRaises(KeyboardInterrupt):
+            setup.install_terrain(self.game, self.built)
+        setup.os.replace = real
+        self.assertFalse((self.game / setup.TERRAIN_DIR).exists())
+        self.assertTrue((self.game / (setup.TERRAIN_DIR + ".lomhd-old")).exists())
+
+        real_copytree = setup.shutil.copytree
+        setup.shutil.copytree = lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))
+        try:
+            with self.assertRaises(OSError):
+                setup.install_terrain(self.game, self.built)
+        finally:
+            setup.shutil.copytree = real_copytree
+        self.assertEqual(self.old_art(), before, "the old folder must be back before anything else")
+        setup.install_terrain(self.game, self.built)
+        self.assert_installed()
+        self.assertFalse((self.game / (setup.TERRAIN_DIR + ".lomhd-old")).exists())
+
+    def test_uninstall_puts_an_interrupted_swap_back_even_when_it_then_stops(self) -> None:
+        self.install_all()
+        os.replace(self.game / setup.TERRAIN_DIR, self.game / (setup.TERRAIN_DIR + ".lomhd-old"))
+        (self.game / setup.EXE_BACKUP_NAME).write_bytes(b"damaged")
+        with self.assertRaises(SystemExit):
+            setup.uninstall(self.game)
+        self.assertEqual(self.exe(), self.patched)
+        self.assertTrue((self.game / setup.TERRAIN_DIR / "til" / "tilesa01.lbm").exists(),
+                        "the patched exe still needs its art")
+
+    # --- a lomhd_terrain this mod did not make --------------------------------------------------
+
+    def test_a_folder_put_there_by_hand_is_refused_unless_forced(self) -> None:
+        setup.install(self.game, PACK, self.record)
+        hand = self.game / setup.TERRAIN_DIR / "til"
+        hand.mkdir(parents=True)
+        (hand / "tilesa01.lbm").write_bytes(b"the player's own art")
+        with self.assertRaises(SystemExit) as stopped:
+            setup.install_terrain(self.game, self.built)
+        self.assertIn("--force-terrain-folder", str(stopped.exception))
+        self.assertEqual((hand / "tilesa01.lbm").read_bytes(), b"the player's own art")
+        self.assertEqual(self.exe(), PRISTINE_EXE)
+        self.assertNotIn("terrain", json.loads((self.game / setup.RECORD_NAME).read_text()))
+        with self.assertRaises(SystemExit):                  # main's early check says the same
+            setup.check_terrain_folder(self.game, setup.read_record(self.game), False)
+        setup.install_terrain(self.game, self.built, force_folder=True)
+        self.assert_installed()
+
+    def test_a_folder_the_player_edited_is_refused_unless_forced(self) -> None:
+        self.install_all()
+        stray = self.game / setup.TERRAIN_DIR / "til" / "stray.lbm"
+        stray.write_bytes(b"the player's edit")
+        (self.built / "tilesa01.lbm").write_bytes(b"a newer 2x atlas")
+        with self.assertRaises(SystemExit):
+            setup.install_terrain(self.game, self.built)
+        self.assertEqual(stray.read_bytes(), b"the player's edit")
+        setup.install_terrain(self.game, self.built, force_folder=True)
+        self.assert_installed()
+
+    def test_uninstall_restores_the_exe_but_keeps_a_folder_it_does_not_own(self) -> None:
+        self.install_all()
+        edited = self.game / setup.TERRAIN_DIR / "til" / "tilesa01.lbm"
+        edited.write_bytes(b"the player's retouched atlas")
+        setup.uninstall(self.game)
+        self.assertEqual(self.exe(), PRISTINE_EXE)
+        self.assertEqual((self.game / "ddraw.dll").read_bytes(), ORIGINAL)
+        self.assertEqual(edited.read_bytes(), b"the player's retouched atlas")
+        self.assertEqual(self.listing(), ["ddraw.dll", setup.TERRAIN_DIR, "lomse.exe"])
+
+    def test_a_run_stopped_after_the_record_still_owns_the_folder_it_left(self) -> None:
+        """The record names the NEW art before the folder is swapped; the folder left in place by
+        a run stopped between them is still this mod's, for a re-run and for uninstall."""
+        self.install_all()
+        (self.built / "tilesa01.lbm").write_bytes(b"a newer 2x atlas")
+        real_copytree = setup.shutil.copytree
+        setup.shutil.copytree = lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt())
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                setup.install_terrain(self.game, self.built)
+        finally:
+            setup.shutil.copytree = real_copytree
+        setup.uninstall(self.game)
+        self.assert_uninstalled()
+
+    # --- writes to files the running game holds -------------------------------------------------
+
+    def test_the_exe_backup_is_written_whole_or_not_at_all(self) -> None:
+        setup.install(self.game, PACK, self.record)
+        real = setup.os.replace
+
+        def stop_at_the_backup(src, dst):
+            if pathlib.Path(dst).name == setup.EXE_BACKUP_NAME:
+                raise KeyboardInterrupt
+            return real(src, dst)
+
+        setup.os.replace = stop_at_the_backup
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                setup.install_terrain(self.game, self.built)
+        finally:
+            setup.os.replace = real
+        self.assertFalse((self.game / setup.EXE_BACKUP_NAME).exists())
+        self.assertEqual(self.exe(), PRISTINE_EXE)
+        setup.install_terrain(self.game, self.built)
+        self.assert_installed()
+        setup.uninstall(self.game)
+        self.assert_uninstalled()
+
+    def test_a_locked_exe_stops_install_and_uninstall_with_a_message(self) -> None:
+        """Windows: the running game holds lomse.exe, and the rename over it is refused."""
+        setup.install(self.game, PACK, self.record)
+        real = setup.os.replace
+
+        def locked(src, dst):
+            if pathlib.Path(dst).name == setup.EXE_NAME:
+                raise PermissionError(13, "Access is denied")
+            return real(src, dst)
+
+        setup.os.replace = locked
+        try:
+            with self.assertRaises(SystemExit) as stopped:
+                setup.install_terrain(self.game, self.built)
+            self.assertIn("Close Lords of Magic", str(stopped.exception))
+            self.assertNotIn("lomse.exe.lomhd-part", self.listing())
+            self.assertEqual(self.exe(), PRISTINE_EXE)
+            setup.os.replace = real
+            setup.install_terrain(self.game, self.built)
+            setup.os.replace = locked
+            with self.assertRaises(SystemExit) as stopped:
+                setup.uninstall(self.game)
+            self.assertIn("--uninstall again", str(stopped.exception))
+            self.assertNotIn("lomse.exe.lomhd-part", self.listing())
+        finally:
+            setup.os.replace = real
+        self.assert_installed()
+        setup.uninstall(self.game)
+        self.assert_uninstalled()
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root can open a read-only file")
+    def test_uninstall_checks_the_exe_is_writable_before_changing_anything(self) -> None:
+        self.install_all()
+        exe = self.game / "lomse.exe"
+        exe.chmod(0o444)
+        self.addCleanup(exe.chmod, 0o644)
+        with self.assertRaises(SystemExit):
+            setup.uninstall(self.game)
+        self.assertEqual(self.exe(), self.patched)
+        self.assertEqual((self.game / "ddraw.dll").read_bytes(), OURS)
+        self.assertTrue((self.game / setup.TERRAIN_DIR).exists())
+
+    def test_a_failed_imagemagick_step_names_the_cache_to_delete(self) -> None:
+        import subprocess
+        for name, value in (("extract_terrain", lambda game: self.built),
+                            ("WORK", self.release_dir / "lomhd_work")):
+            self.addCleanup(setattr, setup, name, getattr(setup, name))
+            setattr(setup, name, value)
+
+        def build(*args):
+            raise subprocess.CalledProcessError(1, ["magick", "tile.png"])
+
+        self.addCleanup(setattr, setup.terrain_hd, "build", setup.terrain_hd.build)
+        setup.terrain_hd.build = build
+        with self.assertRaises(SystemExit) as stopped:
+            setup.build_terrain(self.game, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertIn("lomhd_work", str(stopped.exception))
 
     def test_an_unknown_exe_is_refused_before_anything_is_touched(self) -> None:
         setup.install(self.game, PACK, self.record)
@@ -586,15 +806,36 @@ class TerrainInstall(unittest.TestCase):
         self.assert_installed()
 
     def test_uninstall_leaves_an_exe_someone_else_changed_and_removes_nothing(self) -> None:
+        """Still holding this mod's edits (another patch stacked on ours): the folder is still
+        needed, so nothing is removed, and the message names the way out."""
         self.install_all()
-        (self.game / "lomse.exe").write_bytes(b"patched by another mod")
+        stacked = bytearray(self.patched)
+        stacked[0x21F] ^= 0xFF                      # outside every terrain site
+        (self.game / "lomse.exe").write_bytes(bytes(stacked))
         before = self.listing()
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(SystemExit) as stopped:
             setup.uninstall(self.game)
-        self.assertEqual(self.exe(), b"patched by another mod")
+        self.assertIn("Verify integrity", str(stopped.exception))
+        self.assertIn("--uninstall again", str(stopped.exception))
+        self.assertEqual(self.exe(), bytes(stacked))
         self.assertEqual(self.listing(), before)
         self.assertEqual((self.game / setup.EXE_BACKUP_NAME).read_bytes(), PRISTINE_EXE)
         self.assertEqual((self.game / "ddraw.dll").read_bytes(), OURS)
+
+    def test_uninstall_goes_ahead_when_the_changed_exe_holds_none_of_our_edits(self) -> None:
+        """Replaced outright (another version, a game update): the folder is inert. It goes, being
+        ours; the DLL is uninstalled; the exe and its original's backup are left."""
+        for replacement in (fake_exe(b"another version!"), b"not even a PE file"):
+            with self.subTest(replacement[:8]):
+                self.install_all()
+                (self.game / "lomse.exe").write_bytes(replacement)
+                setup.uninstall(self.game)
+                self.assertEqual(self.exe(), replacement)
+                self.assertEqual((self.game / "ddraw.dll").read_bytes(), ORIGINAL)
+                self.assertEqual((self.game / setup.EXE_BACKUP_NAME).read_bytes(), PRISTINE_EXE)
+                self.assertEqual(self.listing(), ["ddraw.dll", "lomse.exe", setup.EXE_BACKUP_NAME])
+                (self.game / setup.EXE_BACKUP_NAME).unlink()
+                (self.game / "lomse.exe").write_bytes(PRISTINE_EXE)
 
     def test_uninstall_with_a_changed_exe_backup_restores_nothing(self) -> None:
         self.install_all()

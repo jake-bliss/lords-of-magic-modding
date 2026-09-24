@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -309,8 +310,12 @@ def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pa
                 key = f"{name}-{digest}_{tx:02d}_{ty:02d}"
                 path = tiles_dir / f"{key}.png"
                 if not path.exists():
-                    lbm_png.write_png(path, t + 2 * PAD, t + 2 * PAD,
+                    # Reused whenever it exists, so it only appears whole: a run stopped mid-write
+                    # leaves a .part, never a truncated tile the next run would take as done.
+                    part = path.with_name(path.name + ".part")
+                    lbm_png.write_png(part, t + 2 * PAD, t + 2 * PAD,
                                       padded_tile(idx, w, pal, tx, ty, t, PAD, nbrs[ty * per_row + tx]))
+                    os.replace(part, path)
                 inputs[key] = path
         rendered = work / "rendered" / option
         hd_upscale.render(option, inputs, rendered, esrgan, models)
