@@ -139,10 +139,10 @@ game folder (the name dates from when it held only portraits).
   removes cnc-ddraw, so the game uses Windows' own DirectDraw again, and renames that `ddraw.ini`
   to `ddraw.ini.lomhd-saved` rather than deleting settings you may have changed. The game ignores
   it; delete it if you like.
-
-See `NOTICES.md` for licences.
 - **Scrambled or striped terrain** means the patched `lomse.exe` is running without its
   `lomhd_terrain` folder: run `python lomhd_setup.py --terrain` again, or `--uninstall`.
 - **Reporting a problem:** open an issue at
   <https://github.com/jake-bliss/lords-of-magic-modding/issues> with your `lomhd.log`, your
   Windows or macOS version, and whether you used `--terrain`.
+
+See `NOTICES.md` for licences.
