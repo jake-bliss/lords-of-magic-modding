@@ -156,11 +156,11 @@ footprint buttons, the eye, the gem wheel and the status icons are drawn one rec
 from a few UI sheets (`intspr1`, `eoturn`, `staticon` and its GS5R3 variants, and six more). The
 sheets were packed as pictures, but a picture is only found drawn whole or cut at an edge, so no
 icon ever was. The tool cuts each sheet into its icons -- the scripts' own `NAME_page x y w h doodad`
-rectangles first (`/NAME_page"lbm/FILE.lbm"lbm def` names the sheet), then each separate shape on
-the sheet's key colour -- and packs each as a masked record keyed on that colour, cropped at 2x from
-one upscale of the whole sheet with the sheet's own pick (`screen__<sheet>`). 272 icons from the
-GS5R3 sheets; the shipped matcher finds 35 different ones in the 93 captured frames, 16 in one map
-frame, at 5.5 ms a search over the whole 29,953-record dev pack.
+rectangles first (any variable bound to an LBM is a page: `/unitinfo_staticon"LBM/STATICON.lbm"lbm
+def`), then each separate shape on the sheet's key colour -- and packs each as a masked record keyed
+on index 0, the pure-green chroma key, cropped at 2x from one upscale of the whole sheet with the
+sheet's own pick (`screen__<sheet>`). 365 icons from the GS5R3 sheets; the shipped matcher finds 65
+different ones in the 93 captured frames at 4.9 ms a search over the whole 30,046-record dev pack.
 
     python3 tools/hd-review/sheet_icons.py icons.pack --lbm <pic.mpq LBM folder> \
         --scripts <gs.mpq scripts> --esrgan realesrgan-ncnn-vulkan --models models

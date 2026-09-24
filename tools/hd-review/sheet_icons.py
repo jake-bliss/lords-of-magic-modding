@@ -22,9 +22,10 @@ Where the rectangles come from, in order:
   the sheet's key colour. Shapes too small to hold a probe (the developers' text labels) fall out
   by the same rule as every sprite.
 
-Each icon is a MASKED record keyed on the sheet's key colour (its most common index: every sheet
-here is mostly background). Each sheet is upscaled ONCE, with the upscaler picked for it in review
-(`screen__<sheet>`), key colour turned neutral grey as for sprites, and every icon is cropped from
+Each icon is a MASKED record keyed on index 0, the pure-green chroma key of every UI sheet (not the
+most common index: on `label` that is a real colour). A sheet whose index 0 is not that green is
+refused. Each sheet is upscaled ONCE, with the upscaler picked for it in review
+(`screen__<sheet>`), key colour and index 1 turned neutral grey as for sprites, and every icon is cropped from
 that at 2x -- one model per sheet, so neighbouring icons match. An icon identical to one already cut
 (staticon and staticon5 share most of theirs) is packed once.
 """
@@ -53,10 +54,14 @@ SHEETS = ("intspr1", "eoturn", "staticon", "staticon5", "staticon5r3a", "indicat
           "editbits", "label", "slidtest")
 WORK = ROOT / "artifacts" / "hd-review" / "_sheets"
 PREP_BACKGROUND = (0x20, 0x22, 0x28)     # sprite_originals' neutral grey
+PREP_VERSION = 2                         # bump when the upscaler's input changes: renders are cached
+CHROMA_KEY = (0, 255, 0)                 # index 0 on every UI sheet the game keys
 MAX_RECORD_NAME_LEN = 39
+MIN_CUT = (8, 4)                         # the pack's smallest masked record
 
-PAGE = re.compile(r'/(\w+)_page\s*"([^"]+)"\s*lbm\b')
-CUT = re.compile(r'\b(\w+)_page\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+doodad\b')
+PAGE = re.compile(r'/(\w+)\s*"([^"]+\.lbm)"\s*lbm\b', re.I)
+CUT = re.compile(r'\b(\w+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+doodad\b')
+COMMENT = re.compile(r';[^\r\n]*')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -74,11 +79,14 @@ class Icon:
 
 
 def script_cuts(texts) -> dict[str, set[tuple[int, int, int, int]]]:
-    """sheet -> literal (x, y, w, h) cuts, from the text of every script. A page variable bound to
-    more than one file is ambiguous and ignored."""
+    """sheet -> literal (x, y, w, h) cuts, from the text of every script. Any variable bound to an
+    LBM is a page -- the scripts name them freely (`/unitinfo_staticon"LBM/STATICON.lbm"lbm def`,
+    `/eoturnbuttonpage...`; Claude review, 2026-09-23). A variable bound to more than one file is
+    ambiguous and ignored, and so is anything after a `;`: commented-out cuts are not drawn."""
     files: dict[str, set[str]] = collections.defaultdict(set)
     cuts: dict[str, set[tuple[int, int, int, int]]] = collections.defaultdict(set)
     for text in texts:
+        text = COMMENT.sub("", text)
         for page, path in PAGE.findall(text):
             files[page].add(pathlib.PureWindowsPath(path.replace("/", "\\")).stem.lower())
         for page, *rect in CUT.findall(text):
@@ -123,8 +131,12 @@ def overlaps(a, b) -> bool:
 
 def icons_of(sheet: str, w: int, h: int, idx: bytes, key: int, cuts) -> list[Icon]:
     """The script's cuts that fit the sheet, then every shape no cut touches. A cut inside another
-    cut from the same corner (the scripts cut some buttons at 26x17 and 27x18) is the larger one."""
-    rects = [r for r in sorted(cuts) if r[2] and r[3] and r[0] + r[2] <= w and r[1] + r[3] <= h]
+    cut from the same corner (the scripts cut some buttons at 26x17 and 27x18) is the larger one.
+    A cut of half the sheet or more is the scripts loading the page, and one under MIN_CUT a
+    placeholder (`eoturnbuttonpage 0 0 373 309` and `200 0 1 1`): neither is an icon, and neither
+    may hide the shapes under it -- the first hid the gem wheel."""
+    rects = [r for r in sorted(cuts) if r[0] + r[2] <= w and r[1] + r[3] <= h and
+             r[2] >= MIN_CUT[0] and r[3] >= MIN_CUT[1] and 2 * r[2] * r[3] < w * h]
     rects = [r for r in rects if not any(o != r and o[:2] == r[:2] and o[2] >= r[2] and o[3] >= r[3]
                                          for o in rects)]
     icons = [Icon(sheet, *r, "script") for r in rects]
@@ -156,8 +168,8 @@ def load_sheet(lbm_dir: pathlib.Path, sheet: str):
 
 
 def plan(lbm_dir: pathlib.Path, cuts, skipped: list[str]):
-    """[(sheet, w, h, idx, palette, key, [Icon])] -- every icon worth packing, repeats dropped."""
-    seen: set[bytes] = set()
+    """[(sheet, w, h, idx, palette, key, [Icon])] -- every icon the overlay could find. Repeats
+    across sheets are dropped later, by `records`, over the icons actually packed."""
     out = []
     for sheet in SHEETS:
         loaded = load_sheet(lbm_dir, sheet)
@@ -165,7 +177,10 @@ def plan(lbm_dir: pathlib.Path, cuts, skipped: list[str]):
             skipped.append(f"{sheet}: not in this install")
             continue
         w, h, idx, pal = loaded
-        key = collections.Counter(idx).most_common(1)[0][0]
+        if tuple(pal[0]) != CHROMA_KEY:
+            skipped.append(f"{sheet}: index 0 is {tuple(pal[0])}, not the chroma key")
+            continue
+        key = 0        # not the most common index: on `label` that is a real colour (Claude review)
         keep = []
         for icon in icons_of(sheet, w, h, idx, key, cuts.get(sheet, ())):
             cell = crop(idx, w, icon)
@@ -180,23 +195,25 @@ def plan(lbm_dir: pathlib.Path, cuts, skipped: list[str]):
             except SystemExit as error:
                 skipped.append(f"{icon.record}: {error}")
                 continue
-            ident = identity(cell, pal, key, icon.w, icon.h)
-            if ident in seen:
-                continue
-            seen.add(ident)
             keep.append(icon)
         out.append((sheet, w, h, idx, pal, key, keep))
     return out
 
 
 def prepared_png(dest: pathlib.Path, w: int, h: int, idx: bytes, pal, key: int) -> None:
-    """The sheet as the upscaler sees it: full colour, the key colour neutral grey."""
-    rows = [[PREP_BACKGROUND if v == key else tuple(pal[v]) for v in idx[y * w:(y + 1) * w]] for y in range(h)]
+    """The sheet as the upscaler sees it: full colour, the key colour and index 1 neutral grey.
+    Index 1 is pure red on every sheet and the overlay never draws it (masked records skip it, as
+    for sprites), but left red it bleeds into the pixels beside it (Claude review, 2026-09-23).
+    The game does not draw it as red: over 93 frames no bar icon shows a run of it."""
+    rows = [[PREP_BACKGROUND if v in (key, pack.SHADOW_INDEX) else tuple(pal[v])
+             for v in idx[y * w:(y + 1) * w]] for y in range(h)]
     lbm_png.write_png(dest, w, h, rows)
 
 
 def records(planned, renders: dict[str, pathlib.Path], skipped: list[str]):
-    """Yield (entry, zidx, zhd) for every planned icon, cropped from its sheet's 2x render."""
+    """Yield (entry, zidx, zhd) for every planned icon, cropped from its sheet's 2x render. An icon
+    identical to one already yielded -- staticon and staticon5 share most -- is yielded once."""
+    seen: set[bytes] = set()
     for sheet, w, h, idx, pal, key, icons in planned:
         render = renders.get(sheet)
         if render is None or not icons:
@@ -207,13 +224,18 @@ def records(planned, renders: dict[str, pathlib.Path], skipped: list[str]):
             skipped.append(f"{sheet}: render is not {2 * w}x{2 * h}")
             continue
         for icon in icons:
+            cell = crop(idx, w, icon)
+            ident = identity(cell, pal, key, icon.w, icon.h)
+            if ident in seen:
+                continue
+            seen.add(ident)
             rgba = bytearray()
             for j in range(icon.h * 2):
                 at = ((icon.y * 2 + j) * w * 2 + icon.x * 2) * 3
                 row = rgb[at:at + icon.w * 2 * 3]
                 for i in range(icon.w * 2):
                     rgba += row[i * 3:i * 3 + 3] + b"\xff"
-            yield pack.encode_record(icon.record, icon.w, icon.h, crop(idx, w, icon), pal,
+            yield pack.encode_record(icon.record, icon.w, icon.h, cell, pal,
                                      icon.w * 2, icon.h * 2, bytes(rgba), flags=pack.FLAG_MASKED,
                                      key=key, group=0)
 
@@ -241,7 +263,8 @@ def main() -> int:
         if option not in hd_upscale.OPTIONS:
             skipped.append(f"{sheet}: no usable upscale pick ({option!r})")
             continue
-        digest = hashlib.sha256(idx + bytes(v for c in pal for v in c)).hexdigest()[:16]
+        digest = hashlib.sha256(idx + bytes(v for c in pal for v in c) +
+                                f"{key}|{PREP_BACKGROUND}|{PREP_VERSION}".encode()).hexdigest()[:16]
         folder = WORK / digest
         folder.mkdir(parents=True, exist_ok=True)
         src = folder / f"{sheet}.png"

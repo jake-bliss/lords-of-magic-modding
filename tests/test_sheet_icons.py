@@ -18,8 +18,8 @@ import hd_portrait_pack as pack  # noqa: E402
 import lbm_png  # noqa: E402
 import sheet_icons as si  # noqa: E402
 
-KEY = 250
-PAL = [(i, (i * 3) % 256, 255 - i) for i in range(256)]
+KEY = 0
+PAL = [(0, 255, 0)] + [(i, (i * 3) % 256, 255 - i) for i in range(1, 256)]
 
 
 def blank(w: int, h: int) -> bytearray:
@@ -51,6 +51,18 @@ class ScriptCutsTest(unittest.TestCase):
     def test_a_page_never_bound_to_a_file_is_ignored(self) -> None:
         self.assertEqual(dict(si.script_cuts(["black_page 0 0 640 480 doodad"])), {})
 
+    def test_any_variable_bound_to_an_lbm_is_a_page(self) -> None:
+        """GS5R3 binds staticon as `unitinfo_staticon` and eoturn as `eoturnbuttonpage`."""
+        text = '/unitinfo_staticon"LBM/STATICON.lbm"lbm def unitinfo_staticon 424 163 31 18 doodad ' \
+               '/eoturnbuttonpage "lbm/eoturn.lbm" lbm def eoturnbuttonpage 89 243 12 27 doodad'
+        self.assertEqual(dict(si.script_cuts([text])),
+                         {"staticon": {(424, 163, 31, 18)}, "eoturn": {(89, 243, 12, 27)}})
+
+    def test_a_commented_out_cut_is_not_a_cut(self) -> None:
+        text = '/intspr1_page"lbm/intspr1.lbm"lbm def\r; /dead intspr1_page 530 151 40 36 doodad def\r' \
+               'intspr1_page 0 91 24 25 doodad'
+        self.assertEqual(dict(si.script_cuts([text])), {"intspr1": {(0, 91, 24, 25)}})
+
 
 class ShapesTest(unittest.TestCase):
     def test_separate_shapes_and_diagonal_neighbours(self) -> None:
@@ -73,12 +85,29 @@ class IconsOfTest(unittest.TestCase):
         self.assertEqual([(i.x, i.y, i.w, i.h, i.source) for i in icons],
                          [(0, 0, 20, 20, "script"), (20, 0, 20, 20, "script"), (60, 10, 20, 12, "shape")])
 
+    def test_a_whole_page_cut_or_a_placeholder_hides_nothing(self) -> None:
+        """eoturn's scripts cut `0 0 373 309` (the page itself) and `200 0 1 1`."""
+        w, h = 100, 40
+        idx = blank(w, h)
+        paint(idx, w, 60, 10, 20, 12, 0)
+        paint(idx, w, 2, 2, 20, 12, 0)
+        icons = si.icons_of("s", w, h, bytes(idx), KEY, {(0, 0, 99, 39), (60, 10, 1, 1), (2, 2, 20, 12)})
+        self.assertEqual([(i.x, i.y, i.w, i.h, i.source) for i in icons],
+                         [(2, 2, 20, 12, "script"), (60, 10, 20, 12, "shape")])
+
     def test_a_cut_inside_a_larger_one_from_the_same_corner_is_dropped(self) -> None:
         w, h = 60, 30
         idx = blank(w, h)
         paint(idx, w, 5, 5, 27, 18, 0)
         icons = si.icons_of("s", w, h, bytes(idx), KEY, {(5, 5, 26, 17), (5, 5, 27, 18)})
         self.assertEqual([(i.w, i.h) for i in icons], [(27, 18)])
+
+    def test_cuts_neither_of_which_contains_the_other_are_both_kept(self) -> None:
+        w, h = 60, 30
+        idx = blank(w, h)
+        paint(idx, w, 5, 5, 27, 18, 0)
+        icons = si.icons_of("s", w, h, bytes(idx), KEY, {(5, 5, 26, 18), (5, 5, 27, 17)})
+        self.assertEqual(sorted((i.w, i.h) for i in icons), [(26, 18), (27, 17)])
 
 
 class PlanAndRecordsTest(unittest.TestCase):
@@ -91,9 +120,9 @@ class PlanAndRecordsTest(unittest.TestCase):
         self.addCleanup(setattr, si, "SHEETS", si.SHEETS)
         si.SHEETS = ("wide", "copy")
 
-    def write_sheet(self, name: str, w: int, h: int, idx) -> None:
+    def write_sheet(self, name: str, w: int, h: int, idx, pal=PAL) -> None:
         bmhd = struct.pack(">HHhhBBBBHBBhh", w, h, 0, 0, 8, 0, 1, 0, 0, 1, 1, w, h)
-        lbm_png.encode(self.lbm / f"{name.upper()}.LBM", w, h, bytes(idx), PAL,
+        lbm_png.encode(self.lbm / f"{name.upper()}.LBM", w, h, bytes(idx), pal,
                        [(b"BMHD", bmhd), (b"CMAP", b""), (b"BODY", b"")])
 
     def test_small_shapes_drop_out_and_a_repeat_across_sheets_is_packed_once(self) -> None:
@@ -109,8 +138,61 @@ class PlanAndRecordsTest(unittest.TestCase):
         skipped: list[str] = []
         planned = si.plan(self.lbm, {}, skipped)
         got = {sheet: [(i.x, i.y, i.w, i.h) for i in icons] for sheet, *_, icons in planned}
-        self.assertEqual(got, {"wide": [(3, 2, 20, 10), (50, 15, 24, 12)], "copy": []})
+        self.assertEqual(got, {"wide": [(3, 2, 20, 10), (50, 15, 24, 12)], "copy": [(10, 5, 20, 10)]})
         self.assertEqual(skipped, [])
+        packed = self.pack(planned, {"wide": self.render(80, 30), "copy": self.render(40, 20)})
+        self.assertEqual([r[0] for r in packed], ["icon__wide@3,2,20x10", "icon__wide@50,15,24x12"])
+
+    def test_a_repeat_survives_when_its_first_sheet_is_not_packed(self) -> None:
+        """Dedupe runs over what is packed: a first sheet with no render must not take the shared
+        icon with it (Claude review, 2026-09-23)."""
+        for name, w, h, x, y in (("wide", 80, 30, 3, 2), ("copy", 40, 20, 10, 5)):
+            idx = blank(w, h)
+            paint(idx, w, x, y, 20, 10, 0)
+            self.write_sheet(name, w, h, idx)
+        planned = si.plan(self.lbm, {}, [])
+        packed = self.pack(planned, {"copy": self.render(40, 20)})
+        self.assertEqual([r[0] for r in packed], ["icon__copy@10,5,20x10"])
+
+    def test_the_same_indices_under_another_palette_are_another_icon(self) -> None:
+        other = [PAL[0]] + [(255 - r, g, b) for r, g, b in PAL[1:]]
+        for name, pal in (("wide", PAL), ("copy", other)):
+            idx = blank(40, 20)
+            paint(idx, 40, 10, 5, 20, 10, 0)
+            self.write_sheet(name, 40, 20, idx, pal)
+        planned = si.plan(self.lbm, {}, [])
+        packed = self.pack(planned, {"wide": self.render(40, 20), "copy": self.render(40, 20)})
+        self.assertEqual(len(packed), 2)
+
+    def test_a_sheet_whose_index_0_is_not_the_chroma_key_is_refused(self) -> None:
+        """`label`'s most common index is a real colour; keying on it would punch holes."""
+        si.SHEETS = ("wide",)
+        idx = blank(40, 20)
+        paint(idx, 40, 10, 5, 20, 10, 0)
+        self.write_sheet("wide", 40, 20, idx, [(27, 43, 43)] + PAL[1:])
+        skipped: list[str] = []
+        self.assertEqual(si.plan(self.lbm, {}, skipped), [])
+        self.assertEqual(skipped, ["wide: index 0 is (27, 43, 43), not the chroma key"])
+
+    def test_the_upscaler_sees_key_and_index_1_as_grey_and_colours_as_themselves(self) -> None:
+        idx = bytes([KEY, pack.SHADOW_INDEX, 77, KEY])
+        out = self.root / "prep.png"
+        si.prepared_png(out, 2, 2, idx, PAL, KEY)
+        pixels = lbm_png.read_png_rgb(out)
+        flat = [tuple(p) for row in pixels[2] for p in row] if isinstance(pixels, tuple) else None
+        self.assertEqual(flat, [si.PREP_BACKGROUND, si.PREP_BACKGROUND, PAL[77], si.PREP_BACKGROUND])
+
+    def render(self, w: int, h: int) -> pathlib.Path:
+        out = self.root / f"render{w}x{h}.png"
+        lbm_png.write_png(out, w * 2, h * 2, [[(x % 256, y % 256, 9) for x in range(w * 2)] for y in range(h * 2)])
+        return out
+
+    def pack(self, planned, renders):
+        skipped: list[str] = []
+        out = self.root / "icons.pack"
+        pack.write_records(out, si.records(planned, renders, skipped))
+        self.assertEqual(skipped, [])
+        return pack.read(out.read_bytes())
 
     def test_a_missing_sheet_is_reported(self) -> None:
         skipped: list[str] = []

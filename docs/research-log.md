@@ -7434,10 +7434,17 @@ copied from the middle of one never could be.
 The scripts name each rectangle: `/intspr1_page"lbm/intspr1.lbm"lbm def`, then
 `intspr1_page 341 0 70 67 doodad`. 179 literal cuts across the GS5R3 scripts; the rest are computed
 or cut by native code, so separate shapes on each sheet's key colour fill in. Cut that way and packed
-as masked records (`tools/hd-review/sheet_icons.py`, 272 icons), the shipped matcher
-(`lomhd_match_test`) finds 35 different icons across the 93 captured frames -- the party arrows and
+as masked records (`tools/hd-review/sheet_icons.py`, 365 icons), the shipped matcher
+(`lomhd_match_test`) finds 65 different icons across the 93 captured frames -- the party arrows and
 footprint buttons in 51 frames, the zoom buttons in 57, the gem wheel (93x92) in 49 -- with the
-search at 5.5 ms mean, 6.8 ms worst, over the full 29,953-record dev pack. Pasted at 2x onto a frame
+search at 4.9 ms mean, 6.2 ms worst, over the full 30,046-record dev pack.
+
+Three things the first cut got wrong (Claude review): the scripts name pages freely
+(`unitinfo_staticon`, `eoturnbuttonpage`), so matching only `*_page` read no cuts for staticon or
+eoturn and merged touching icons (35 icons found; 64 once read); `eoturn`'s scripts also cut the
+whole page (`0 0 373 309`), which hid every shape under it, the gem wheel among them; and the most
+common index is not always the key -- on `label` it is a real teal. The key is index 0, pure green,
+on every sheet. Pasted at 2x onto a frame
 at the matched positions, every icon lands exactly on its original.
 
 **Not yet shown.** Seen in the game. And the ~240 icons not seen in these frames belong to screens
