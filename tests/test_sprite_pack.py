@@ -273,6 +273,20 @@ class BuildSpriteRecordsTest(unittest.TestCase):
         self.assertIn("dot:", skipped[0])
         self.assertIn("matcher", skipped[0])
 
+    def test_a_sprite_with_no_probe_of_enough_colours_is_skipped(self) -> None:
+        """Eligible by size, but every opaque run is one colour: the overlay could make no probe,
+        so the record could never be found (Codex review, 2026-09-23)."""
+        self.write_listfile("flat.imp")
+        row = bytes([5] * 2 + [9] * 16 + [5] * 2)
+        trns = bytearray(b"\xff" * 256); trns[5] = 0
+        png = indexed_png(20, 6, row * 6, PLTE, bytes(trns))
+        self.install_viewer({"unit\\flat.imp": describe(1)}, {"unit\\flat.imp": png})
+        self.write_render("anime2x", "sprite__flat", 40, 12)
+        records, considered, skipped = self.run_build({"sprite__flat": "anime2x"})
+        self.assertEqual(records, [])
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("flat: no 8-pixel run", skipped[0])
+
     def test_a_sprite_with_no_upscale_pick_is_skipped(self) -> None:
         self.write_listfile("tree.imp")
         self.install_viewer({"unit\\tree.imp": describe(1)}, {"unit\\tree.imp": self.eligible_sprite_png()})

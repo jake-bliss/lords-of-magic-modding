@@ -204,6 +204,22 @@ class AnimFramesTest(unittest.TestCase):
                                ("anim__glow#001", pack.FLAG_MASKED, 6)])
         self.assertEqual(skipped, [])
 
+    def test_a_units_repeat_makes_the_kept_buildings_record_mirror_in_the_pack(self) -> None:
+        """The flag must reach the encoded record, not only the plan (Codex review, 2026-09-23)."""
+        shared = frame_png(20, 6, 3)
+        sprites, _, _ = self.plan(
+            {"building\\aaa.imp": [shared, frame_png(20, 6, 4)], "units\\bbb.imp": [shared, frame_png(20, 6, 7)]},
+            {"sprite__aaa": "anime2x", "sprite__bbb": "anime2x"})
+        anim_frames.render_all(sprites, self.work, "fp", self.fake_render, log=lambda _: None)
+        skipped: list[str] = []
+        out = self.work / "anim.pack"
+        pack.write_records(out, anim_frames.records(sprites, self.work, "fp", self.fake_load_hd_rgba, skipped))
+        got = {name: flags for name, _, _, flags, _, _ in pack.read(out.read_bytes())}
+        mirror = pack.FLAG_MASKED | pack.FLAG_MIRROR
+        self.assertEqual(got, {"anim__aaa#000": mirror, "anim__aaa#001": pack.FLAG_MASKED,
+                               "anim__bbb#001": mirror})
+        self.assertEqual(skipped, [])
+
     def test_a_missing_render_leaves_out_that_frame_and_a_sprite_with_none_takes_no_group(self) -> None:
         frames = {"units\\aaa.imp": [frame_png(20, 6, 3), frame_png(20, 6, 4)],
                   "units\\bbb.imp": [frame_png(20, 6, 6), frame_png(20, 6, 7)],
