@@ -12,9 +12,12 @@
 # sheared garbage -- which is rung 1 of the ladder, on purpose.
 #
 # ART. 20 atlases from tools/terrain_hd.py: each TILE upscaled on its own with the reviewed
-# anime2x/anime4x choice and quantized to its atlas's palette index-safely. Per tile because the
-# atlases are Wang tiles placed by terrain type, not by sheet position; a whole-sheet upscale put a
-# neighbouring cell's colour into 8-12% of every tile's edge ring. Texels pass through light tables BY PALETTE INDEX, so an RGB atlas is
+# anime2x/anime4x choice, padded on each side with a plain tile of the terrain the .til says borders
+# it, its edge colours pulled to that terrain's average, and quantized to its atlas's palette
+# index-safely. Per tile because the atlases are Wang tiles placed by terrain type, not by sheet
+# position. Rung 2 (2026-09-24) showed a line on every tile edge with edge-repeat padding; the
+# neighbour padding and edge normalization are the fix for that. Texels pass through light tables
+# BY PALETTE INDEX, so an RGB atlas is
 # not an option. thite01/ttype01 are NOT here: they are data maps read by coordinate, not textures,
 # and doubling them would double the map's elevation and terrain-type lookups.
 #

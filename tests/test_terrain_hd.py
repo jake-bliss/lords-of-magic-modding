@@ -88,38 +88,89 @@ class Padding(unittest.TestCase):
         self.assertEqual(rows[2][4], PAL[12])     # right padding of the top row
         self.assertEqual(rows[3][2], PAL[13])     # the tile itself starts at (2, 2)
 
-    def test_wrap_padding_takes_the_tiles_own_opposite_side(self) -> None:
-        t, w = 3, 3
-        idx = bytes(range(10, 19))
-        rows = th.padded_tile(idx, w, PAL, 0, 0, t, 1, wrap=True)
-        self.assertEqual(rows[1][0], PAL[12])     # left of (0,0) is the row's last pixel
-        self.assertEqual(rows[0][1], PAL[16])     # above (0,0) is the column's last pixel
-        self.assertEqual(rows[4][4], PAL[10])     # beyond the bottom-right corner is (0,0)
+    def test_a_side_with_a_neighbour_continues_into_it(self) -> None:
+        # Sheet: cell 0 (indices 10..), cell 1 (index 2 throughout). Cell 0's east side is cell 1.
+        t, w = 2, 4
+        idx = bytes([10, 11, 2, 2, 12, 13, 2, 2])
+        rows = th.padded_tile(idx, w, PAL, 0, 0, t, 1, {"e": 1, "n": None, "s": None, "w": None})
+        self.assertEqual(rows[1][3], PAL[2])       # east padding comes from cell 1
+        self.assertEqual(rows[1][0], PAL[10])      # west repeats cell 0's own edge
+        self.assertEqual(rows[0][0], PAL[10])      # corners repeat cell 0's own corner
 
-    def test_wrap_never_reads_the_neighbouring_cell(self) -> None:
-        t, w = 4, 8
-        rows = th.padded_tile(two_tiles(t), w, PAL, 0, 0, t, 3, wrap=True)
-        self.assertTrue(all(px == PAL[1] for r in rows for px in r))
+    def test_neighbour_pixels_are_the_ones_that_would_continue_past_the_edge(self) -> None:
+        # Cell 1 is a 2x2 with distinct indices; as cell 0's NORTH neighbour, the row above cell 0
+        # is cell 1's BOTTOM row.
+        t, w = 2, 4
+        idx = bytes([5, 5, 20, 21, 5, 5, 22, 23])
+        rows = th.padded_tile(idx, w, PAL, 0, 0, t, 1, {"n": 1})
+        self.assertEqual(rows[0][1:3], [PAL[22], PAL[23]])
 
 
-class PureTiles(unittest.TestCase):
-    def test_only_tiles_whose_eight_edges_are_their_own_type_wrap(self) -> None:
-        d = pathlib.Path(tempfile.mkdtemp())
-        (d / "a.til").write_bytes(
-            b"LBM=x.lbm\rTILESIZE= 32, 32\r"
-            b"TILE=      0, 6,  6,  6,  6,  6,  6,  6,  6,  6,   0\r"
-            b"TILE=      1, 6,  ~6|9,  *,  6|9,  6|9,  6|9,  6|9,  6|9,  *,   1\r"
-            b"TILE=      2, 4,  4,  4,  4,  4,  4,  4,  4,  6,   2\r"
-            b"TILE=      3, 4,  4,  4,  4,  4,  4,  4,  4,  4,   3\r")
-        self.assertEqual(th.pure_tiles(d), {"x.lbm": {0, 3}})
+TIL = (b"LBM=x.lbm\rTILESIZE= 32, 32\r"
+       b"TILE=      0, 6,  6,  6,  6,  6,  6,  6,  6,  6,   0\r"
+       b"TILE=      1, 6,  6,  6,  1,  6,  6,  6,  6,  6,   9\r"
+       b"TILE=      2, 1,  1,  1,  1,  1,  1,  1,  1,  1,   0\r"
+       b"TILE=      3, 4,  ~6|9,  *,  6|9,  4,  4,  4,  *,  4,   3\r"
+       b"TILE=      4, 6,  6,  6,  6,  6,  6,  6,  6,  6,   7\r")
 
-    def test_the_ramp_is_full_at_the_edge_and_zero_from_the_band_in(self) -> None:
-        r = th.edge_ramp(16, 4)
-        self.assertEqual(r[0][8], (255, 255, 255))
-        self.assertEqual(r[8][15], (255, 255, 255))
-        self.assertEqual(r[2][8][0], round(255 * 0.5))
-        self.assertEqual(r[4][8], (0, 0, 0))
-        self.assertEqual(r[8][8], (0, 0, 0))
+
+class TileDefs(unittest.TestCase):
+    def setUp(self) -> None:
+        self.d = pathlib.Path(tempfile.mkdtemp())
+        (self.d / "a.til").write_bytes(TIL)
+        self.defs = th.tile_defs(self.d)["x.lbm"]
+
+    def test_the_cell_is_the_first_field_not_the_last(self) -> None:
+        # The corpus decides this: tile 392 in tilesb01.til is plain water and cell 392 is blue;
+        # its LAST field is 0, a brown cell.
+        self.assertEqual(sorted(self.defs), [0, 1, 2, 3, 4])
+        self.assertTrue(self.defs[4]["pure"])
+
+    def test_side_types_and_purity(self) -> None:
+        self.assertEqual(self.defs[1]["e"], 1)
+        self.assertFalse(self.defs[1]["pure"])
+        self.assertEqual(self.defs[3]["n"], 6)     # ~6|9 without its own type -> the lowest named
+        self.assertEqual(self.defs[3]["w"], 4)     # * -> its own type
+        self.assertEqual(self.defs[3]["s"], 4)
+
+    def test_each_side_gets_a_plain_tile_of_that_sides_terrain(self) -> None:
+        n = th.neighbours(self.defs, 1)
+        self.assertEqual(n["e"], 2)                # the only plain water tile
+        self.assertIn(n["n"], (0, 4))              # a plain type-6 tile
+        self.assertEqual(th.neighbours(self.defs, 99), dict.fromkeys(th.SIDES))
+
+    def test_a_plain_tile_is_not_its_own_neighbour_when_another_exists(self) -> None:
+        self.assertEqual(th.neighbours(self.defs, 0)["n"], 4)
+        self.assertEqual(th.neighbours(self.defs, 2)["n"], 2)  # the only plain water tile
+
+
+class Normalize(unittest.TestCase):
+    def test_edges_move_to_the_terrain_average_and_the_interior_does_not(self) -> None:
+        w2 = h2 = t2 = 16
+        rgb = bytes([100, 100, 100]) * (w2 * h2)
+        low = rgb
+        defs = {0: {"self": 6, "n": 6, "e": 1, "s": 6, "w": 6, "pure": False}}
+        means = {6: (100.0, 100.0, 100.0), 1: (0.0, 0.0, 200.0)}
+        out = th.normalize_edges(rgb, low, w2, h2, t2, defs, means, 4)
+        px = lambda x, y: tuple(out[(y * w2 + x) * 3:(y * w2 + x) * 3 + 3])  # noqa: E731
+        self.assertEqual(px(15, 8), (0, 0, 200))         # east edge -> water average
+        self.assertEqual(px(13, 8), (50, 50, 150))       # halfway into the band
+        self.assertEqual(px(8, 8), (100, 100, 100))      # interior untouched
+        self.assertEqual(px(0, 8), (100, 100, 100))      # west edge already at its average
+
+    def test_detail_survives_the_shift(self) -> None:
+        w2 = h2 = t2 = 8
+        rgb = bytearray([100, 100, 100]) * (w2 * h2)
+        rgb[(4 * w2 + 7) * 3] = 140                       # a bright detail on the east edge
+        low = bytes([100, 100, 100]) * (w2 * h2)
+        defs = {0: {"self": 6, "n": 6, "e": 1, "s": 6, "w": 6, "pure": False}}
+        out = th.normalize_edges(bytes(rgb), low, w2, h2, t2, defs, {6: (100.0,) * 3, 1: (60.0,) * 3}, 4)
+        self.assertEqual(out[(4 * w2 + 7) * 3], 100)      # 140 + (60 - 100): the detail rides along
+        self.assertEqual(out[(3 * w2 + 7) * 3], 60)
+
+    def test_cells_without_a_definition_are_untouched(self) -> None:
+        rgb = bytes(range(48)) * 16
+        self.assertEqual(th.normalize_edges(rgb, rgb, 16, 16, 16, {}, {}, 4), rgb)
 
 
 class Quantize(unittest.TestCase):
@@ -194,14 +245,14 @@ class EndToEnd(unittest.TestCase):
         self.fake = fake
 
     def test_nearest_upscale_round_trips_and_data_maps_are_left_alone(self) -> None:
-        # soften=0: the exact round trip is only defined without the edge blur.
+        # norm=0: the exact round trip is only defined without edge normalization.
         t, w, h = 4, 8, 8
         idx = bytes((x * 3 + y * 5) % 200 + 10 for y in range(h) for x in range(w))
         write_lbm(self.src / "tilesz01.lbm", w, h, idx)
         write_lbm(self.src / "thite01.lbm", w, h, idx)
         (self.src / "tilesz01.til").write_bytes(til("tilesz01.lbm", t))
         choices = {"terrain__tilesz01": "anime2x", "terrain__thite01": "anime2x"}
-        report = th.build(self.src, self.out, self.fake, self.d, self.d / "work", choices, soften=0)
+        report = th.build(self.src, self.out, self.fake, self.d, self.d / "work", choices, norm=0)
         W, H, got, pal, _ = lbm_png.decode(self.out / "tilesz01.lbm")
         self.assertEqual((W, H), (2 * w, 2 * h))
         want = bytes(idx[(y // 2) * w + x // 2] for y in range(H) for x in range(W))
@@ -217,19 +268,22 @@ class EndToEnd(unittest.TestCase):
         choices = {"terrain__tilesz01": "anime2x"}
         work = self.d / "work"
         write_lbm(self.src / "tilesz01.lbm", w, h, bytes([10] * 64))
-        th.build(self.src, self.out, self.fake, self.d, work, choices, soften=0)
+        th.build(self.src, self.out, self.fake, self.d, work, choices, norm=0)
         second = bytes((x + y) % 50 + 20 for y in range(h) for x in range(w))
         write_lbm(self.src / "tilesz01.lbm", w, h, second)
-        th.build(self.src, self.out, self.fake, self.d, work, choices, soften=0)
+        th.build(self.src, self.out, self.fake, self.d, work, choices, norm=0)
         _, _, got, _, _ = lbm_png.decode(self.out / "tilesz01.lbm")
         self.assertEqual(bytes(got), bytes(second[(y // 2) * w + x // 2] for y in range(2 * h) for x in range(2 * w)))
 
-    def test_softening_leaves_every_tile_interior_exact(self) -> None:
+    def test_normalization_leaves_every_tile_interior_exact(self) -> None:
         t, w, h = 8, 16, 8
         idx = bytes((x * 7 + y * 11) % 200 + 10 for y in range(h) for x in range(w))
         write_lbm(self.src / "tilesz01.lbm", w, h, idx)
-        (self.src / "tilesz01.til").write_bytes(til("tilesz01.lbm", t))
-        th.build(self.src, self.out, self.fake, self.d, self.d / "work", {"terrain__tilesz01": "anime2x"}, soften=4)
+        (self.src / "tilesz01.til").write_bytes(
+            b"LBM=tilesz01.lbm\rTILES= 2, 1\rTILESIZE= 8, 8\r"
+            b"TILE= 0, 6, 6, 6, 1, 6, 6, 6, 6, 6, 0\r"
+            b"TILE= 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0\r")
+        th.build(self.src, self.out, self.fake, self.d, self.d / "work", {"terrain__tilesz01": "anime2x"}, norm=4)
         W, H, got, _, _ = lbm_png.decode(self.out / "tilesz01.lbm")
         changed_inside = changed_band = 0
         for y in range(H):
@@ -241,7 +295,7 @@ class EndToEnd(unittest.TestCase):
                 else:
                     changed_band += differs
         self.assertEqual(changed_inside, 0)
-        self.assertGreater(changed_band, 0)  # the control: softening did something in the band
+        self.assertGreater(changed_band, 0)  # the control: normalization did something in the band
 
     def test_an_atlas_without_a_reviewed_choice_refuses(self) -> None:
         write_lbm(self.src / "tilesz01.lbm", 8, 8, bytes(64))

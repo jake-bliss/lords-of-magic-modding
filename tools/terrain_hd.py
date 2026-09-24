@@ -6,19 +6,32 @@
 SRC_DIR holds the game's `til\\*.lbm` and `til\\*.til` members. OUT_DIR receives the 2x atlases and
 the .til files with TILESIZE doubled -- what `mods/terrain-hd-art` stages into pic.mpq.
 
-**Per tile, not per sheet.** An atlas is a grid of independent Wang tiles: each `TILE=` line gives a
-cell's corner and edge terrain types, and the map places cells by those types, never by where they
-sit on the sheet. Upscaling the whole sheet lets the model blend each tile into whatever tile is
-stored beside it, and the first staging (2026-09-23) did exactly that: 8-12% of the pixels in a
-2-px ring around every tile took a colour that exists only in the NEIGHBOURING cell. On the map
-that is a faint grid on every tile edge. Here each tile is padded by repeating its own edge pixels,
-upscaled alone, and cropped, so nothing outside the tile can reach it.
+**Per tile, not per sheet.** An atlas is a grid of Wang tiles: each `TILE=` line (tilenum = atlas
+cell, then the cell's own terrain type and the types on its n, ne, e, se, s, sw, w, nw sides) says
+what may sit next to it, and the map places cells by those types, never by where they sit on the
+sheet. Upscaling the whole sheet lets the model blend each tile into whatever tile is stored beside
+it: the first staging (2026-09-23) put a colour that exists only in the NEIGHBOURING cell into
+8-12% of every tile's edge ring.
+
+**Padded with a neighbour the map could place there.** Each side is padded with a plain tile of the
+terrain type that side borders (texture top = map north, right = east -- measured: compatible
+neighbours' edges match about 20% better than random pairs that way round). The model then sees the
+right terrain continuing past every edge. Repeating the tile's own edge instead left a visible step
+at every tile edge on the map (rung 2, 2026-09-24).
+
+**Edges pulled to their terrain's colour.** Adjacent tiles are not drawn pixel-continuous, and the
+model smooths each tile's interior, so a leftover step between two tiles reads as a line where the
+noisy 1x art hid it. In the outer NORM_PX of each tile, the local average colour (a blur of the tile
+itself) is shifted to the average colour of the terrain type on that side, with the detail kept on
+top. Any two tiles of one type then meet at the same base colour, whichever two the map picks.
+Mosaic of random plain meadow tiles, seam step / interior step: edge padding + blur 1.66, neighbour
+padding + this 1.51.
 
 **Quantized index-safely.** Texels go through the light tables by PALETTE INDEX, so the atlas must
 stay 8-bit in its own palette. A 2x pixel may only take an index that occurs within one source
-pixel of it AND inside the same tile (two, in the softened band at a tile's edge), so no index
-reaches a pixel more than two source pixels from where the original had it, and none crosses a tile edge. (An isolated index CAN grow into its
-neighbouring 2x pixels. None of the 20 atlases has an active CRNG range, so no cycling colour can
+pixel of it AND inside the same tile (two, in the NORM_PX band at a tile's edge), so no index
+reaches a pixel more than two source pixels from where the original had it, and none crosses a
+tile edge. (An isolated index CAN grow into its neighbouring 2x pixels. None of the 20 atlases has an active CRNG range, so no cycling colour can
 spread; a key or cycling index added later would want excluding from its neighbours' candidates.)
 
 **Not every atlas.** `thite01`/`ttype01` are data maps read by coordinate (height and terrain type),
@@ -45,14 +58,8 @@ import lbm_png  # noqa: E402
 
 NOT_TEXTURES = {"thite01", "ttype01"}
 PAD = 8
-# Seams. Inside a tile the model's output is about half as contrasty pixel to pixel as the original
-# (it smooths); across a tile edge the step between two unrelated tiles stays full size, so every
-# edge reads as a line -- observed on the map, 2026-09-24 rung 2. The outer SOFTEN_PX of each tile
-# fade into a blur of the tile itself, so the step at an edge is no sharper than the texture around
-# it. Measured on a mosaic of random plain tiles (seam step / interior step): edge padding alone 2.32,
-# wrap padding 2.02, wrap + softening 1.61.
-SOFTEN_PX = 4
-SOFTEN_SIGMA = 1.5
+NORM_PX = 8          # 2x pixels from a tile edge over which colour is pulled to the terrain's
+NORM_SIGMA = 4.0     # blur (2x pixels) that defines a pixel's "local average colour"
 DEFAULT_TILE = 32
 CHOICES = HERE.parent / "release" / "hd-overlay" / "upscale-choices.json"
 
@@ -87,50 +94,133 @@ def tile_sizes(src: pathlib.Path) -> dict[str, int]:
     return sizes
 
 
-def padded_tile(idx: bytes, w: int, pal, tx: int, ty: int, t: int, pad: int, wrap: bool = False):
-    """RGB rows of one tile padded `pad` pixels outward: its own edge pixels repeated, or (`wrap`)
-    its own opposite side. Never a neighbouring cell -- see the module docstring."""
-    def at(v: int) -> int:
-        return v % t if wrap else min(max(v, 0), t - 1)
-    rows = []
-    for y in range(-pad, t + pad):
-        sy = ty * t + at(y)
-        rows.append([pal[idx[sy * w + tx * t + at(x)]] for x in range(-pad, t + pad)])
-    return rows
+SIDES = ("n", "e", "s", "w")
 
 
-def pure_tiles(src: pathlib.Path) -> dict[str, set[int]]:
-    """Per atlas, the cells whose `TILE=` line gives all eight edges and corners the tile's own
-    terrain type -- plain grass, plain water. Those are made to sit beside any other plain tile of
-    their type, so the best stand-in for the unknown neighbour is the tile's own opposite side."""
-    pure: dict[str, set[int]] = {}
+def _types(field: str) -> set[int] | None:
+    """`6`, `6|9`, `~6|9` -> {6, 9}; `*` (any) -> None. `~` is kept as the types it names."""
+    field = field.strip().lstrip("~")
+    return None if field == "*" else {int(v) for v in field.split("|") if v}
+
+
+def tile_defs(src: pathlib.Path) -> dict[str, dict[int, dict]]:
+    """Per atlas, cell -> {"self": type, "n"/"e"/"s"/"w": the type on that side, "pure": bool}.
+    The cell is the TILE= line's FIRST field (tile 392 is plain water and cell 392 is blue); the
+    last field is something else. Where two .til files describe one cell (tilesa01.til and
+    tilesb01.til both draw from tilesb01.lbm), the first, in name order, is kept."""
+    defs: dict[str, dict[int, dict]] = {}
     for til in sorted(src.glob("*.til")):
         name, _ = read_til(til)
+        cells = defs.setdefault(name, {})
         for line in til.read_bytes().decode("latin-1").replace("\r", "\n").splitlines():
             if not line.startswith("TILE="):
                 continue
-            f = [v.strip() for v in line[5:].split(",")]
-            if len(f) >= 10 and all(e == f[1] for e in f[2:10]):
-                pure.setdefault(name, set()).add(int(f[0]))
-    return pure
+            f = line[5:].split(",")
+            if len(f) < 10:
+                continue
+            cell, own = int(f[0]), int(f[1])
+            ring = [_types(v) for v in f[2:10]]
+            sides = dict(zip(("n", "ne", "e", "se", "s", "sw", "w", "nw"), ring))
+            entry = {"self": own, "pure": all(r == {own} for r in ring)}
+            for side in SIDES:
+                v = sides[side]
+                entry[side] = own if v is None or own in v else min(v)
+            cells.setdefault(cell, entry)
+    return defs
 
 
-def edge_ramp(size: int, band: int) -> list[list[tuple[int, int, int]]]:
-    """A grey mask, white at a tile's edge fading to black `band` pixels in."""
+def neighbours(defs: dict[int, dict], cell: int) -> dict[str, int | None]:
+    """For each side, a plain tile of the terrain on that side (deterministic), or None."""
+    d = defs.get(cell)
+    if d is None:
+        return dict.fromkeys(SIDES)
+    by_type: dict[int, list[int]] = {}
+    for c, e in sorted(defs.items()):
+        if e["pure"]:
+            by_type.setdefault(e["self"], []).append(c)
+    out = {}
+    for side in SIDES:
+        pool = [c for c in by_type.get(d[side], []) if c != cell] or by_type.get(d[side], [])
+        out[side] = pool[(cell * 7) % len(pool)] if pool else None
+    return out
+
+
+def padded_tile(idx: bytes, w: int, pal, tx: int, ty: int, t: int, pad: int,
+                nbrs: dict[str, int | None] | None = None):
+    """RGB rows of one tile padded `pad` pixels outward. Each side comes from its neighbour cell
+    (`nbrs`, cell numbers on this sheet) where there is one -- the neighbour's pixels as they would
+    continue past the edge -- and otherwise repeats the tile's own edge. Corners repeat the tile's
+    own corner pixel. Never the cell stored beside it on the sheet."""
+    nbrs = nbrs or {}
+    per = w // t
+
+    def at(cell: int, x: int, y: int):
+        return pal[idx[((cell // per) * t + y) * w + (cell % per) * t + x]]
+
+    own = ty * per + tx
+    clamp = lambda v: min(max(v, 0), t - 1)  # noqa: E731
     rows = []
-    for y in range(size):
+    for y in range(-pad, t + pad):
         row = []
-        for x in range(size):
-            e = min(x, y, size - 1 - x, size - 1 - y)
-            v = round(255 * max(0.0, 1 - e / band))
-            row.append((v, v, v))
+        for x in range(-pad, t + pad):
+            inside_x, inside_y = 0 <= x < t, 0 <= y < t
+            side = None
+            if inside_x and not inside_y:
+                side = "n" if y < 0 else "s"
+            elif inside_y and not inside_x:
+                side = "w" if x < 0 else "e"
+            n = nbrs.get(side) if side else None
+            if n is not None:
+                row.append(at(n, x % t, y % t))
+            else:
+                row.append(at(own, clamp(x), clamp(y)))
         rows.append(row)
     return rows
 
 
+def type_means(idx: bytes, w: int, pal, t: int, defs: dict[int, dict]) -> dict[int, tuple[float, ...]]:
+    """Average 1x colour of each terrain type, over its plain tiles on this sheet."""
+    per, acc = w // t, {}
+    for cell, d in defs.items():
+        if not d["pure"]:
+            continue
+        s = acc.setdefault(d["self"], [0, 0, 0, 0])
+        for y in range(t):
+            for x in range(t):
+                c = pal[idx[((cell // per) * t + y) * w + (cell % per) * t + x]]
+                s[0] += c[0]; s[1] += c[1]; s[2] += c[2]; s[3] += 1
+    return {k: (v[0] / v[3], v[1] / v[3], v[2] / v[3]) for k, v in acc.items()}
+
+
+def normalize_edges(rgb: bytes, low: bytes, w2: int, h2: int, t2: int, defs: dict[int, dict],
+                    means: dict[int, tuple[float, ...]], band: int) -> bytes:
+    """Shift each tile's local average colour (`low`, a per-tile blur) toward its side's terrain
+    average across the outer `band` pixels; detail (`rgb - low`) is kept. Cells with no TILE= line,
+    or sides whose terrain has no plain tile on this sheet, are left alone."""
+    out = bytearray(rgb)
+    per = w2 // t2
+    for y in range(h2):
+        ty, iy = divmod(y, t2)
+        for x in range(w2):
+            tx, ix = divmod(x, t2)
+            d = defs.get(ty * per + tx)
+            if d is None:
+                continue
+            dist = {"w": ix, "e": t2 - 1 - ix, "n": iy, "s": t2 - 1 - iy}
+            side = min(dist, key=dist.get)
+            a = 1 - dist[side] / band
+            target = means.get(d[side])
+            if a <= 0 or target is None:
+                continue
+            p = (y * w2 + x) * 3
+            for q in range(3):
+                out[p + q] = min(255, max(0, round(rgb[p + q] + a * (target[q] - low[p + q]))))
+    return bytes(out)
+
+
 def quantize(idx: bytes, w: int, h: int, pal, t: int, rgb: bytes, band: int = 0) -> tuple[bytes, float]:
     """Each 2x pixel -> the nearest palette colour among indices within one source pixel of it,
-    clamped to its own tile. Inside the softened `band` (2x pixels from a tile edge) the reach is
+    clamped to its own tile. Inside the normalized `band` (2x pixels from a tile edge) the reach is
     two source pixels: nine candidates snap a blended edge colour straight back to a hard one and
     undo most of the softening. Returns the indices and how often a block's top-left keeps its
     source index (a sanity reading: high, and not 100%)."""
@@ -174,10 +264,10 @@ def foreign_edge_pixels(idx: bytes, w: int, h: int, t: int, out: bytes) -> int:
 
 
 def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pathlib.Path,
-          work: pathlib.Path, choices: dict[str, str], soften: int = SOFTEN_PX) -> list[str]:
+          work: pathlib.Path, choices: dict[str, str], norm: int = NORM_PX) -> list[str]:
     out.mkdir(parents=True, exist_ok=True)
     sizes = tile_sizes(src)
-    pure = pure_tiles(src)
+    all_defs = tile_defs(src)
     report = []
     for lbm in sorted(src.glob("*.lbm")):
         name = lbm.stem.lower()
@@ -193,12 +283,14 @@ def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pa
         if w % t or h % t:
             raise SystemExit(f"{name}: {w}x{h} is not a whole number of {t}px tiles")
         # Tiles and renders are reused on a rerun, so their names carry everything they were made
-        # from: the source atlas's bytes, the tile size and the padding. A re-extracted source or a
-        # new PAD gets fresh tiles instead of silently compositing the old ones.
-        wraps = pure.get(f"{name}.lbm", set())
+        # from: the source atlas's bytes, the tile size, the padding and every tile's neighbours.
+        # A re-extracted source, a new PAD or an edited .til gets fresh tiles instead of silently
+        # compositing the old ones.
+        defs = all_defs.get(f"{name}.lbm", {})
         per_row = w // t
+        nbrs = {c: neighbours(defs, c) for c in range(per_row * (h // t))}
         digest = hashlib.sha256(lbm.read_bytes() + b"%d/%d/" % (t, PAD)
-                                + ",".join(map(str, sorted(wraps))).encode()).hexdigest()[:12]
+                                + json.dumps(nbrs, sort_keys=True).encode()).hexdigest()[:12]
         tiles_dir = work / "tiles" / f"{name}-{digest}"
         tiles_dir.mkdir(parents=True, exist_ok=True)
         inputs = {}
@@ -207,8 +299,8 @@ def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pa
                 key = f"{name}-{digest}_{tx:02d}_{ty:02d}"
                 path = tiles_dir / f"{key}.png"
                 if not path.exists():
-                    wrap = ty * per_row + tx in wraps
-                    lbm_png.write_png(path, t + 2 * PAD, t + 2 * PAD, padded_tile(idx, w, pal, tx, ty, t, PAD, wrap))
+                    lbm_png.write_png(path, t + 2 * PAD, t + 2 * PAD,
+                                      padded_tile(idx, w, pal, tx, ty, t, PAD, nbrs[ty * per_row + tx]))
                 inputs[key] = path
         rendered = work / "rendered" / option
         hd_upscale.render(option, inputs, rendered, esrgan, models)
@@ -217,31 +309,31 @@ def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pa
             tmp = pathlib.Path(tmp)
             sheet = tmp / "sheet.png"
 
-            def assemble(dest: pathlib.Path, blur: bool) -> None:
+            def assemble(dest: pathlib.Path, sigma: float = 0) -> None:
                 args = ["magick", "-size", f"{2 * w}x{2 * h}", "xc:black"]
                 for key in inputs:
                     tx, ty = int(key[-5:-3]), int(key[-2:])
-                    # Blurred AFTER the crop, against the tile's own repeated edge, so the blur
-                    # never reaches a neighbouring cell either.
-                    extra = ["-virtual-pixel", "edge", "-blur", f"0x{SOFTEN_SIGMA}"] if blur else []
+                    # Blurred AFTER the crop, against the tile's own repeated edge, so the local
+                    # average never reaches a neighbouring cell either.
+                    extra = ["-virtual-pixel", "edge", "-blur", f"0x{sigma}"] if sigma else []
                     args += ["(", str(rendered / f"{key}.png"), "-crop", f"{2 * t}x{2 * t}+{2 * PAD}+{2 * PAD}",
                              "+repage", *extra, ")", "-geometry", f"+{2 * t * tx}+{2 * t * ty}", "-composite"]
                 args.append(str(dest))
                 subprocess.run(args, check=True)
 
-            if soften:
-                sharp, blurred, ramp = tmp / "sharp.png", tmp / "blurred.png", tmp / "ramp.png"
-                assemble(sharp, False)
-                assemble(blurred, True)
-                lbm_png.write_png(ramp, 2 * t, 2 * t, edge_ramp(2 * t, soften))
-                subprocess.run(["magick", str(sharp), str(blurred), "(", "-size", f"{2 * w}x{2 * h}",
-                                f"tile:{ramp}", "-colorspace", "gray", ")", "-composite", str(sheet)], check=True)
-            else:
-                assemble(sheet, False)
-            rgb = subprocess.check_output(["magick", str(sheet), "-depth", "8", "rgb:-"])
+            def pixels(path: pathlib.Path) -> bytes:
+                return subprocess.check_output(["magick", str(path), "-depth", "8", "rgb:-"])
+
+            assemble(sheet)
+            rgb = pixels(sheet)
+            if norm and defs:
+                low = tmp / "low.png"
+                assemble(low, NORM_SIGMA)
+                rgb = normalize_edges(rgb, pixels(low), 2 * w, 2 * h, 2 * t, defs,
+                                      type_means(idx, w, pal, t, defs), norm)
         if len(rgb) != 4 * w * h * 3:
             raise SystemExit(f"{name}: assembled sheet is {len(rgb)} bytes, not {12 * w * h}")
-        indices, kept = quantize(idx, w, h, pal, t, rgb, band=soften)
+        indices, kept = quantize(idx, w, h, pal, t, rgb, band=norm)
         foreign = foreign_edge_pixels(idx, w, h, t, indices)
         if foreign:
             raise SystemExit(f"{name}: {foreign} pixels took an index from another tile")
@@ -253,7 +345,9 @@ def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pa
         (work / "preview").mkdir(parents=True, exist_ok=True)
         lbm_png.write_png(work / "preview" / f"{name}.png", 2 * w, 2 * h,
                           [[pal[v] for v in indices[y * 2 * w:(y + 1) * 2 * w]] for y in range(2 * h)])
-        report.append(f"{name}: {w}x{h} -> {2 * w}x{2 * h}, {t}px tiles, {option}, {len(wraps)} wrapped; "
+        padded = sum(v is not None for n in nbrs.values() for v in n.values())
+        report.append(f"{name}: {w}x{h} -> {2 * w}x{2 * h}, {t}px tiles, {option}, {len(defs)} defined, "
+                      f"{padded} sides neighbour-padded; "
                       f"top-left keeps source index {kept:.0%}; foreign-tile pixels 0")
     for til in sorted(src.glob("*.til")):
         (out / til.name.lower()).write_bytes(doubled_til(til.read_bytes()))
