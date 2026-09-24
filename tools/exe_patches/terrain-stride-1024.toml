@@ -1,0 +1,244 @@
+# Texture rows 1024 bytes wide instead of 512: the rasterizer's only assumption about atlas width.
+#
+# Every textured span in the terrain rasterizer (0x512710-0x5179da, 18 span loops) fetches a texel as
+#
+#     texel = atlas[((v >> 7) & ~0x1ff) + (u >> 16)]        u, v in 16.16 texels
+#
+# i.e. row = floor(v) * 512. u carries no wrap mask, so the column needs no change; only the row
+# stride does. For a 1024-wide atlas that is (v >> 6) & ~0x3ff = floor(v) * 1024. Both edits keep
+# the instruction length, so nothing moves.
+#
+# All 18 sites are generated from the binary by the scan below, not transcribed, and the scan runs
+# again at build time: exactly 18 occurrences before, zero after, and 18 in the finished form. The same pattern occurs nowhere
+# else in the executable (whole-file search, 2026-09-24), so no other code path samples a 512-wide
+# texture this way.
+#
+# Applies to EVERY atlas at once. There is one texture page format, so every .lbm a .til names must
+# be 1024 wide with this set in, and 512 wide without it. tilesa01.til draws from tilesb01.lbm.
+
+[target]
+sha256 = "a505f399d5be73fe0a2215633f663717f28daeb3075bbcc05b47d40653669052"
+
+[[scan]]
+start = 0x512710
+end = 0x5179da
+regex = '\xc1[\xf8-\xff]\x07(?:\x81[\xe0-\xe7]|\x25)\x00\xfe\xff\xff'
+after = '\xc1[\xf8-\xff]\x06(?:\x81[\xe0-\xe7]|\x25)\x00\xfc\xff\xff'
+count = 18
+
+[[patch]]
+va = 0x512aa9
+old = "c1 fb 07"
+new = "c1 fb 06"
+what = "site 1: sar ebx,7 -> sar ebx,6"
+
+[[patch]]
+va = 0x512aac
+old = "81 e3 00 fe ff ff"
+new = "81 e3 00 fc ff ff"
+what = "site 1: and ebx,0xfffffe00 -> and ebx,0xfffffc00"
+
+[[patch]]
+va = 0x512eed
+old = "c1 fb 07"
+new = "c1 fb 06"
+what = "site 2: sar ebx,7 -> sar ebx,6"
+
+[[patch]]
+va = 0x512ef0
+old = "81 e3 00 fe ff ff"
+new = "81 e3 00 fc ff ff"
+what = "site 2: and ebx,0xfffffe00 -> and ebx,0xfffffc00"
+
+[[patch]]
+va = 0x513347
+old = "c1 f8 07"
+new = "c1 f8 06"
+what = "site 3: sar eax,7 -> sar eax,6"
+
+[[patch]]
+va = 0x51334a
+old = "25 00 fe ff ff"
+new = "25 00 fc ff ff"
+what = "site 3: and eax,0xfffffe00 -> and eax,0xfffffc00"
+
+[[patch]]
+va = 0x5137a6
+old = "c1 f8 07"
+new = "c1 f8 06"
+what = "site 4: sar eax,7 -> sar eax,6"
+
+[[patch]]
+va = 0x5137a9
+old = "25 00 fe ff ff"
+new = "25 00 fc ff ff"
+what = "site 4: and eax,0xfffffe00 -> and eax,0xfffffc00"
+
+[[patch]]
+va = 0x513c9d
+old = "c1 fa 07"
+new = "c1 fa 06"
+what = "site 5: sar edx,7 -> sar edx,6"
+
+[[patch]]
+va = 0x513ca0
+old = "81 e2 00 fe ff ff"
+new = "81 e2 00 fc ff ff"
+what = "site 5: and edx,0xfffffe00 -> and edx,0xfffffc00"
+
+[[patch]]
+va = 0x5140ec
+old = "c1 f8 07"
+new = "c1 f8 06"
+what = "site 6: sar eax,7 -> sar eax,6"
+
+[[patch]]
+va = 0x5140ef
+old = "25 00 fe ff ff"
+new = "25 00 fc ff ff"
+what = "site 6: and eax,0xfffffe00 -> and eax,0xfffffc00"
+
+[[patch]]
+va = 0x5145f3
+old = "c1 f8 07"
+new = "c1 f8 06"
+what = "site 7: sar eax,7 -> sar eax,6"
+
+[[patch]]
+va = 0x5145f6
+old = "25 00 fe ff ff"
+new = "25 00 fc ff ff"
+what = "site 7: and eax,0xfffffe00 -> and eax,0xfffffc00"
+
+[[patch]]
+va = 0x514a49
+old = "c1 fb 07"
+new = "c1 fb 06"
+what = "site 8: sar ebx,7 -> sar ebx,6"
+
+[[patch]]
+va = 0x514a4c
+old = "81 e3 00 fe ff ff"
+new = "81 e3 00 fc ff ff"
+what = "site 8: and ebx,0xfffffe00 -> and ebx,0xfffffc00"
+
+[[patch]]
+va = 0x514f6f
+old = "c1 f8 07"
+new = "c1 f8 06"
+what = "site 9: sar eax,7 -> sar eax,6"
+
+[[patch]]
+va = 0x514f72
+old = "25 00 fe ff ff"
+new = "25 00 fc ff ff"
+what = "site 9: and eax,0xfffffe00 -> and eax,0xfffffc00"
+
+[[patch]]
+va = 0x5153e0
+old = "c1 fb 07"
+new = "c1 fb 06"
+what = "site 10: sar ebx,7 -> sar ebx,6"
+
+[[patch]]
+va = 0x5153e3
+old = "81 e3 00 fe ff ff"
+new = "81 e3 00 fc ff ff"
+what = "site 10: and ebx,0xfffffe00 -> and ebx,0xfffffc00"
+
+[[patch]]
+va = 0x515835
+old = "c1 f8 07"
+new = "c1 f8 06"
+what = "site 11: sar eax,7 -> sar eax,6"
+
+[[patch]]
+va = 0x515838
+old = "25 00 fe ff ff"
+new = "25 00 fc ff ff"
+what = "site 11: and eax,0xfffffe00 -> and eax,0xfffffc00"
+
+[[patch]]
+va = 0x515ca1
+old = "c1 f8 07"
+new = "c1 f8 06"
+what = "site 12: sar eax,7 -> sar eax,6"
+
+[[patch]]
+va = 0x515ca4
+old = "25 00 fe ff ff"
+new = "25 00 fc ff ff"
+what = "site 12: and eax,0xfffffe00 -> and eax,0xfffffc00"
+
+[[patch]]
+va = 0x5161a6
+old = "c1 fa 07"
+new = "c1 fa 06"
+what = "site 13: sar edx,7 -> sar edx,6"
+
+[[patch]]
+va = 0x5161a9
+old = "81 e2 00 fe ff ff"
+new = "81 e2 00 fc ff ff"
+what = "site 13: and edx,0xfffffe00 -> and edx,0xfffffc00"
+
+[[patch]]
+va = 0x5165fe
+old = "c1 f8 07"
+new = "c1 f8 06"
+what = "site 14: sar eax,7 -> sar eax,6"
+
+[[patch]]
+va = 0x516601
+old = "25 00 fe ff ff"
+new = "25 00 fc ff ff"
+what = "site 14: and eax,0xfffffe00 -> and eax,0xfffffc00"
+
+[[patch]]
+va = 0x516b2c
+old = "c1 f8 07"
+new = "c1 f8 06"
+what = "site 15: sar eax,7 -> sar eax,6"
+
+[[patch]]
+va = 0x516b2f
+old = "25 00 fe ff ff"
+new = "25 00 fc ff ff"
+what = "site 15: and eax,0xfffffe00 -> and eax,0xfffffc00"
+
+[[patch]]
+va = 0x516f8b
+old = "c1 fb 07"
+new = "c1 fb 06"
+what = "site 16: sar ebx,7 -> sar ebx,6"
+
+[[patch]]
+va = 0x516f8e
+old = "81 e3 00 fe ff ff"
+new = "81 e3 00 fc ff ff"
+what = "site 16: and ebx,0xfffffe00 -> and ebx,0xfffffc00"
+
+[[patch]]
+va = 0x517489
+old = "c1 fb 07"
+new = "c1 fb 06"
+what = "site 17: sar ebx,7 -> sar ebx,6"
+
+[[patch]]
+va = 0x51748c
+old = "81 e3 00 fe ff ff"
+new = "81 e3 00 fc ff ff"
+what = "site 17: and ebx,0xfffffe00 -> and ebx,0xfffffc00"
+
+[[patch]]
+va = 0x5178d4
+old = "c1 fb 07"
+new = "c1 fb 06"
+what = "site 18: sar ebx,7 -> sar ebx,6"
+
+[[patch]]
+va = 0x5178d7
+old = "81 e3 00 fe ff ff"
+new = "81 e3 00 fc ff ff"
+what = "site 18: and ebx,0xfffffe00 -> and ebx,0xfffffc00"
+
