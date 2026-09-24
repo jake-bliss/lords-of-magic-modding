@@ -7450,3 +7450,61 @@ at the matched positions, every icon lands exactly on its original.
 **Not yet shown.** Seen in the game. And the ~240 icons not seen in these frames belong to screens
 the captures never visited (barter, the editor, combat results), so they are unverified, not wrong.
 
+## 2026-09-23 — HD terrain is an engine change, not an overlay one
+
+**Question.** Jake picked anime2x upscales for the 22 terrain sheets. Can any of them reach the
+screen?
+
+**Not through the overlay.** The overland map is a 3D render: tile art is resampled and shaded
+before it reaches the frame, so 8-pixel runs of the map area match the tile atlases at 0.1-0.2%,
+against 97.5% for a control picture. **Not through a filter either.** All nine shaders shipped in the
+Development profile were run offline over captured map frames with the real GLSL, replicating the
+fork's passes, uniforms and 1120x840 viewport (control: nearest-neighbour equals a CPU
+nearest-neighbour scale on every unambiguous pixel). `lanczos2-sharp`, already in use, came out best;
+`fsr` and `rca-sharpen` turn grass into speckle with halos, the xBR family smears it.
+
+**The engine route, statically (GS5R3 `lomse.exe`, nothing run):**
+
+- The engine reads `TILESIZE=%d,%d` from each `.til` (`sscanf` at `0x509C04`) and builds tile
+  rectangles from it (`0x5095A0`, square tiles only); both draw paths (`0x518E11`, `0x512350`) turn
+  them into 16.16 texel coordinates. Atlas sizes come from the LBM header. So `TILESIZE=64,64` with
+  a 2x atlas would have the engine double its own coordinates.
+- The blocker: the rasterizer (`0x512710`-`0x5179DA`) assumes a 512-byte texture row at exactly 18
+  sites (`sar r,7; and r,0xFFFFFE00`, first at `0x512AAC`, last at `0x5178D7`; count checked). For
+  1024-wide atlases each becomes `sar 6` / `0xFFFFFC00`, two bytes a site, same length. The page is
+  shared, so every tileset doubles together (combat's `tilesa01.til` uses `tilesb01.lbm`).
+- Texels are lit through tables by palette index, so an upscale must be quantized back to its
+  atlas's palette. Checked on `tilesb01`: remapped without dither, it keeps nearly all of the gain.
+- It only shows at the 2x "magnify" tier -- the doubled viewport at the original zoom -- and in a
+  1280x960 frame, because sprites share the doubled projection. Unpatched so far: the rasterizer clip
+  in the 3D map's constructor (`0x51149B`/`0x5114A5`, 759/503), which conflicts with the 2026-09-22
+  note that new terrain drew correctly, and the per-cell redraw limits (`0x512393`, `0x512399`,
+  `0x5126B0`).
+
+**Plan.** A proof in one attended sitting, four rungs: a control, 2x atlases with the stride
+unpatched (expected garbled: proves the atlas and `TILESIZE` load), stride patched (expected sharp),
+then a combat and a location view. A playable 2x game (2x sprites, the rest of the 2x UI) is weeks.
+`thite01` and `ttype01` (320 wide, no `.til`) look like height and type maps, not textures, and
+must not be doubled.
+
+## 2026-09-24 — Interface icons live: sharper, and the edges a picture's upscale gets wrong
+
+The sheet icons (#91) matched in the game at once: eye and party buttons, footprints, zoom buttons,
+health bars, a label -- no errors, the pack opening in 3.8 s. Jake: sharper, but squares showed
+around some icons, and the boundary between the map and the bar looked jagged with a thin dark gap.
+
+Replaying the overlay's own draw offline (the mask, NEAREST for pictures and LINEAR for sprites, the
+discard at one half) over a captured map frame put both on the **bar picture**, not the icons. The
+art above the bar's stone is the green key, and under the icons the bar has buttons baked in; the
+upscaler carried both about a pixel into the stone beside them, and NEAREST masking drew those
+pixels wherever the original stone matched. Fix (fork `994fa1c`, `2e2c1b8`): erode a picture's mask
+by one pixel, so edge pixels show the frame. Replayed: the fringe and the squares go, icons stay
+sharp; on a text page the ring around each glyph is negligible. Sprites keep their edges. Jake
+re-tested: better.
+
+**A strip that is not ours.** In the city view a thin band between the keep picture and the bar still
+looks like the overland map. Row by row against a capture: the keep matches rows 0-380, the bar from
+381, and the bar's art there is the green key -- the game shows whatever it drew last. That is the
+game's frame before the overlay touches it, vanilla too; the overlay only makes it stand out. Left
+alone.
+
