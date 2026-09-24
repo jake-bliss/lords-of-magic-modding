@@ -7398,3 +7398,19 @@ records with blank upscales, alongside the 848 static sprites as a control. Find
 
 The pack format this led to (5: MIRROR flag, animation groups) is described in
 [hd-overlay.md](hd-overlay.md#the-pack).
+
+### Attended run, same evening: animated sprites in the live game
+
+Development profile, fork `6ec40f1`, a dev pack of the 1,282 pictures, 781 static sprites and 27,618
+animated frames of 553 sprites (1.76 GB). Jake: "it looks sharper, no issues".
+
+- The pack opened on the worker thread in 5.5 s; 105 MB resident, as measured offline.
+- Found live, flipped and as stored: start-screen faith leaders, map armies (Fire leader `fildfb`,
+  Chaos infantry `chinfb`, both mirrored), and **battles** -- full-size combat sprites (`chinfa`,
+  `fildfa`), both ways round, about ten a screen. 214 of the logged sightings were mirrored.
+- Battles draw the combat sprites unscaled, which the captures had not shown before.
+- 29 scans in one five-second window went over a band's comparison budget; the frame captured just
+  after needed 42 comparisons in all. The screen that caused it was not captured. The effect is
+  bounded: that band's sprites stay vanilla for those frames.
+- Presented frames per 5 s: median 168 (previous static-sprite run: 197), with more time spent in
+  battle this run.
