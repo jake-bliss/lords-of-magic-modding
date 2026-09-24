@@ -92,7 +92,12 @@ is switched off alone and logged.
 core, so the quad has its own shader and buffers. Each placement uploads a **mask** at the
 original's size (one byte a pixel: does the frame still show the original's exact pixel here?);
 the shader samples it NEAREST and **discards** covered pixels -- cursor, tooltip, text on a page,
-the live map in the interface bar. Every GL binding touched, both texture units and the unpack
+the live map in the interface bar. A picture's mask is then **eroded by one pixel** (fork `2e2c1b8`):
+its upscale is wrong at any edge against something else, because the upscaler carried in what the
+original held next to it -- seen live 2026-09-24 as a green-and-dark fringe along the bar's top edge
+(the key green above the stone) and as squares around icons (the buttons baked into the bar under
+them). Those pixels show the frame instead. A sprite's mask is not eroded: its upscale's own alpha
+draws its edge. Every GL binding touched, both texture units and the unpack
 state are saved and restored, because cnc-ddraw sets some of its state once at init.
 
 **Threading rule: the render thread never touches a file.** It holds `g_ddraw.cs` whenever it calls
@@ -179,7 +184,11 @@ terrain sheets and icons, which the overlay cannot draw yet. **The 1,512 sprite 
 red/green-swapped originals** (the viewer decoded IMP palettes wrongly until 2026-09-23; see the
 [research log](research-log.md#2026-09-23--imp-palettes-are-bgr-after-all-the-capture-reader-swapped-red-and-green)): the originals and renders have since been regenerated, and
 Jake confirmed the sprite picks on the corrected renders the same day. Terrain cannot use the overlay at
-all -- the overland map is drawn in 3D, so no tile reaches the screen as a pixel copy.
+all -- the overland map is drawn in 3D, so no tile reaches the screen as a pixel copy. Nor can a
+filter stand in: all nine shipped cnc-ddraw shaders were run offline over captured map frames at the
+game's window size (2026-09-23), and the `lanczos2-sharp` already in use was the best of them. HD
+terrain needs the engine to render the map at 2x with 2x atlases; the static evidence and the plan
+are in the [research log](research-log.md#2026-09-23--hd-terrain-is-an-engine-change-not-an-overlay-one).
 
 **Players choose too.** The release ships the page: `lomhd_setup.py --review` renders every option
 from the player's own game into `lomhd_work/review` (plus the palette pipeline for character
@@ -296,3 +305,11 @@ reason. The release recipe makes real upscales for all 749.
 - A portrait **clipped at the screen edge, or with all three probe rows covered**, is not detected
   and stays vanilla -- a safe failure.
 - Only the **OpenGL** renderer draws the overlay.
+- **Not ours: a thin strip under the city picture.** In a city view the keep picture (640x381) ends
+  where the interface bar's art has a see-through band (rows 381-385, key green), so the game shows
+  whatever was drawn there last -- the overland map. Measured on a capture before the overlay draws:
+  it is the game's own frame, in vanilla too. Left as it is (2026-09-24); covering it would invent pixels.
+- **The party strip's unit figures stay low-resolution.** Each slot shows about 40 of a figure's 96
+  rows (`liicons`), too little of the sprite for the matcher.
+- **Icons on screens never captured** (barter, the editor, combat results -- about 300 of the 365) are
+  packed but unverified.

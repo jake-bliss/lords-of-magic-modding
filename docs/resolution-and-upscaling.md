@@ -441,7 +441,7 @@ used a 65-wide frame. A 2x art project would walk into that untested branch on e
 | ---: | --- | --- |
 | 1 | Does the engine read IMP `encoded_size` at all? A sweep of the whole IMP module (`0x499000`-`0x4AD5F1`) found ~30 word reads at frame-record `+2`/`+4` and **zero** at `+6`. If it is dead, our writer is stricter than the engine. | Attended run: a frame with a deliberately wrong `encoded_size` |
 | 2 | Does a 668x628 DirectDraw surface survive in exclusive 16-bit mode? | Attended run |
-| 3 | Does the engine read `TILESIZE=` from a `.til` at all? All 26 shipped tilesets declare `32, 32`. | Attended run; `til-format.md:202` already refuses writes to that field on this ground |
+| 3 | Does the engine read `TILESIZE=` from a `.til` at all? All 26 shipped tilesets declare `32, 32`. | **Statically, yes** (2026-09-23): `sscanf("TILESIZE=%d,%d")` at `0x509C04` stores it in the tileset, and tile rectangles are built from it (`0x5095A0`); see the [research log](research-log.md#2026-09-23--hd-terrain-is-an-engine-change-not-an-overlay-one). Still unobserved in a run, so `til-format.md:202` keeps refusing writes until one confirms it |
 | 4 | ~~What value does `START.GS` pass to `maxgraphics`?~~ **Answered 2026-09-21: `3500 maxgraphics`.** | closed |
 
 ### `maxgraphics` is 3,500, and it is a slot count worth watching
