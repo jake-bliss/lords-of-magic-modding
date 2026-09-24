@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
 import struct
 import sys
@@ -256,10 +257,16 @@ def main(argv: list[str] | None = None) -> int:
             n = len(plan(image, sets))
             print(f"ok: {n} sites match across {len(sets)} set(s)")
             return 0
-        if args.output.exists() and args.output.resolve() == args.input.resolve():
+        # samefile, not a path comparison: a hard link to the input is a different path to the
+        # same bytes, and writing through it would truncate the pristine binary.
+        if args.output.exists() and os.path.samefile(args.output, args.input):
             raise PatchError("refusing to write over the input; build a copy")
         out = apply(image, sets)
-        args.output.write_bytes(out)
+        # Written beside the destination and renamed into place, so an interrupted build leaves
+        # either the old file or the whole new one, never a truncated binary.
+        staging = args.output.with_name(args.output.name + ".partial")
+        staging.write_bytes(out)
+        os.replace(staging, args.output)
         print(f"wrote {args.output} sha256 {hashlib.sha256(out).hexdigest()}")
         for s in sets:
             print(f"  {s.path.name}: {len(s.patches)} edits")

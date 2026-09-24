@@ -104,7 +104,12 @@ def quantize(idx: bytes, w: int, h: int, pal, t: int, rgb: bytes) -> tuple[bytes
             cand = {idx[yy * w + xx] for yy in ys for xx in range(max(x0, sx - 1), min(x0 + t, sx + 2))}
             p = (y * W + x) * 3
             r, g, b = rgb[p], rgb[p + 1], rgb[p + 2]
-            out[y * W + x] = min(cand, key=lambda i: (pal[i][0] - r) ** 2 + (pal[i][1] - g) ** 2 + (pal[i][2] - b) ** 2)
+            # Ties go to the source pixel's own index, then to the lowest. Palettes repeat colours
+            # (ruins01: indices 1 and 89 are the same RGB) and the light tables work by INDEX, so
+            # an equal-looking swap is not a harmless one.
+            src = idx[sy * w + sx]
+            out[y * W + x] = min(cand, key=lambda i: ((pal[i][0] - r) ** 2 + (pal[i][1] - g) ** 2
+                                                      + (pal[i][2] - b) ** 2, i != src, i))
     kept = sum(out[2 * y * W + 2 * x] == idx[y * w + x] for y in range(h) for x in range(w))
     return bytes(out), kept / (w * h)
 

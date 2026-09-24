@@ -167,6 +167,16 @@ class Verification(Case):
         self.assertEqual(src.read_bytes(), IMAGE)
 
 
+    def test_build_refuses_a_hard_link_to_its_input(self) -> None:
+        import os
+        src, link = self.tmp / "in.exe", self.tmp / "link.exe"
+        src.write_bytes(IMAGE)
+        os.link(src, link)
+        rc = ep.main(["build", str(src), str(link), "--set", str(self.set_file(FULL_STRIDE))])
+        self.assertEqual(rc, 1)
+        self.assertEqual(src.read_bytes(), IMAGE)
+
+
 class Scans(Case):
     def test_undercounted_scan_is_refused(self) -> None:
         with self.assertRaises(ep.PatchError) as ctx:

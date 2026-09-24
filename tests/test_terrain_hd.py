@@ -130,6 +130,18 @@ class Quantize(unittest.TestCase):
                 near = x // 2 >= 2 and y // 2 >= 2
                 self.assertEqual(out[y * W + x], 2 if near else 1, (x, y))
 
+    def test_a_tie_keeps_the_source_index(self) -> None:
+        # Indices 5 and 6 are the same colour. The source pixel is 6; the neighbour is 5.
+        pal = list(PAL)
+        pal[5] = pal[6] = (40, 50, 60)
+        t, w, h = 2, 2, 2
+        idx = bytes([5, 6, 5, 6])
+        rgb = bytes(pal[5]) * (4 * w * h)
+        out, _ = th.quantize(idx, w, h, pal, t, rgb)
+        W = 2 * w
+        self.assertEqual([out[y * W + x] for y in range(4) for x in range(2, 4)], [6] * 8)
+        self.assertEqual([out[y * W + x] for y in range(4) for x in range(0, 2)], [5] * 8)
+
 
 @unittest.skipUnless(shutil.which("magick"), "ImageMagick not installed")
 class EndToEnd(unittest.TestCase):
