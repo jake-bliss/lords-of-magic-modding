@@ -1,0 +1,578 @@
+# The 3D map's render path at 1280x768: every map-viewport and map-surface extent that is not
+# already in viewport-2x.toml. Use the two sets together.
+#
+# The map renders into a surface of (2*margin + 640) x (2*margin + 384) -- 760x504 at the stock
+# margin of 60 -- and the scroll, redraw and dirty-rect code carries that size as literals, not as a
+# read of the surface: 639/383 (right/bottom), 640/384 (widths), and 2m+639/2m+383. viewport-2x.toml
+# doubles the surface; these sites are the code that still believes it is 760x504. Missing them does
+# not crash -- it leaves unrendered or stale bands along the right and bottom after a scroll.
+#
+# Sites come from a full classification of every 639/383/640/384/759/503 literal in the render
+# path (backups/terrain-hd-20260924/literal-classification.md, 2026-09-24, static only): 87 rows
+# applied here, high and medium confidence, all of one kind -- a map-viewport or map-surface extent.
+#
+# 🔴 THE RASTERIZER CLIP IS A CONSTANT, NOT A FUNCTION OF THE SURFACE. The ctor writes 759/503
+# (here 1399/887) and nothing ever recomputes it -- not even the script op that rebuilds the surface
+# with new margins (0x51af05/0x51af0e, patched below). That is true of the stock game too: a margin
+# other than 60 leaves a band unrendered (larger) or lets the rasterizer write past the surface
+# (smaller). 1399/887 is right only while the margin stays 60.
+#
+# HELD BACK, deliberately -- each is a candidate for a rung-0 symptom, not a guess to pre-apply:
+
+#   0x5190f6 MODE8/medium: same, when per-player mode [0x5a8078]==8 (480-tall map view); patch only if that mode is in scope
+#   0x51abd9 MUST*/medium: recentre: invalidate whole screen (0,0,639,479) on list 0x5a7aa4 (container+0x22fbc); useless unless that list clip (4ff1cd/4ff202) also grows
+#   0x51abde MUST*/medium: same, bottom 479 -> 959
+#   0x51a87a ALT/low: camera-bound setter: NOP the sar (doubles bound, = (2w-1280)/2) instead of touching 640/384; bounds x = (w-640)/2 -> w-640
+#   0x51a88d ALT/low: camera-bound setter: NOP the sar (doubles bound, = (2w-1280)/2) instead of touching 640/384; bounds y = (h-384)/2 -> h-384
+#   0x51a8df ALT/low: camera-bound setter: NOP the sar (doubles bound, = (2w-1280)/2) instead of touching 640/384; bounds (640-a*640)/2 -> 640-a*640
+#   0x51a90d ALT/low: camera-bound setter: NOP the sar (doubles bound, = (2w-1280)/2) instead of touching 640/384; (384-b*384)/2 -> 384-b*384
+#   0x51a90f ALT/low: camera-bound setter: NOP the sar (doubles bound, = (2w-1280)/2) instead of touching 640/384; (a*640-640)/2 -> a*640-640
+#   0x51a911 ALT/low: camera-bound setter: NOP the sar (doubles bound, = (2w-1280)/2) instead of touching 640/384; (b*384-384)/2 -> b*384-384
+#   0x5001ae MODE8/medium: entering mode 8: map dirty-list clip bottom 479
+#   0x4ff150 FULLSCR/low: full-screen dirty list +0x22f08 clip right 639 (UI space?)
+#   0x4ff185 FULLSCR/low: same, bottom 479
+#   0x4ff1cd FULLSCR/low: full-screen dirty list +0x22fbc (=0x5a7aa4) clip right 639
+#   0x4ff202 FULLSCR/low: same, bottom 479
+#   0x4a31c3 OVERLAY/low: thick-pixel plotter into back buffer, clipped to map viewport: x<639-r
+#   0x4a31d5 OVERLAY/low: thick-pixel plotter into back buffer, clipped to map viewport: y<383-r
+#   0x4a32d0 OVERLAY/low: thick-pixel plotter into back buffer, clipped to map viewport: x<639-r
+#   0x4a32e2 OVERLAY/low: thick-pixel plotter into back buffer, clipped to map viewport: y<383-r
+#   0x505c06 CAMUNIT/medium: script camera-pan clamp on map camera 0x587874/78 (+-2880 x, +-1520 y) in projected-pixel units, which double
+#   0x505c1b CAMUNIT/medium: script camera-pan clamp on map camera 0x587874/78 (+-2880 x, +-1520 y) in projected-pixel units, which double
+#   0x505c38 CAMUNIT/medium: script camera-pan clamp on map camera 0x587874/78 (+-2880 x, +-1520 y) in projected-pixel units, which double
+#   0x505c49 CAMUNIT/medium: script camera-pan clamp on map camera 0x587874/78 (+-2880 x, +-1520 y) in projected-pixel units, which double
+#   0x505c66 CAMUNIT/medium: script camera-pan clamp on map camera 0x587874/78 (+-2880 x, +-1520 y) in projected-pixel units, which double
+#   0x505c77 CAMUNIT/medium: script camera-pan clamp on map camera 0x587874/78 (+-2880 x, +-1520 y) in projected-pixel units, which double
+#   0x505c94 CAMUNIT/medium: script camera-pan clamp on map camera 0x587874/78 (+-2880 x, +-1520 y) in projected-pixel units, which double
+#   0x505ca0 CAMUNIT/medium: script camera-pan clamp on map camera 0x587874/78 (+-2880 x, +-1520 y) in projected-pixel units, which double
+#   0x430531 LEAVE/low: widget invalidate rect clamped to y<=383 (UI space); leave
+#
+# The camera works in projected screen pixels, which double with the viewport, so script pan clamps
+# (CAMUNIT) and the camera-bound setters (ALT) will likely need attention once the view is right.
+# Mode 8 (a 480-tall map view) is unresolved.
+
+[target]
+sha256 = "a505f399d5be73fe0a2215633f663717f28daeb3075bbcc05b47d40653669052"
+
+[[patch]]
+va = 0x517e82
+old = "8d 91 7f 01 00 00"
+new = "8d 91 ff 02 00 00"
+what = "517e10: lea    edx,[ecx+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x517f11
+old = "8d 8c 00 7f 01 00 00"
+new = "8d 8c 00 ff 02 00 00"
+what = "517e10: lea    ecx,[eax+eax*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x517f6c
+old = "8d 90 7f 01 00 00"
+new = "8d 90 ff 02 00 00"
+what = "517e10: lea    edx,[eax+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x517ff6
+old = "8d 90 7f 01 00 00"
+new = "8d 90 ff 02 00 00"
+what = "517e10: lea    edx,[eax+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x518066
+old = "8d 8c 00 7f 01 00 00"
+new = "8d 8c 00 ff 02 00 00"
+what = "517e10: lea    ecx,[eax+eax*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x5180c8
+old = "8d 94 09 7f 01 00 00"
+new = "8d 94 09 ff 02 00 00"
+what = "517e10: lea    edx,[ecx+ecx*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x5180f9
+old = "8d 8c 00 7f 01 00 00"
+new = "8d 8c 00 ff 02 00 00"
+what = "517e10: lea    ecx,[eax+eax*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x518181
+old = "8d 8c 09 7f 01 00 00"
+new = "8d 8c 09 ff 02 00 00"
+what = "517e10: lea    ecx,[ecx+ecx*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x5181a0
+old = "8d 8c 00 7f 01 00 00"
+new = "8d 8c 00 ff 02 00 00"
+what = "517e10: lea    ecx,[eax+eax*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x5181fc
+old = "8d 84 00 7f 01 00 00"
+new = "8d 84 00 ff 02 00 00"
+what = "517e10: lea    eax,[eax+eax*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x51822f
+old = "8d 90 7f 01 00 00"
+new = "8d 90 ff 02 00 00"
+what = "517e10: lea    edx,[eax+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x518235
+old = "8d 84 00 7f 01 00 00"
+new = "8d 84 00 ff 02 00 00"
+what = "517e10: lea    eax,[eax+eax*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x518291
+old = "8d 8c 09 7f 01 00 00"
+new = "8d 8c 09 ff 02 00 00"
+what = "517e10: lea    ecx,[ecx+ecx*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x5182df
+old = "8d 8c 00 7f 01 00 00"
+new = "8d 8c 00 ff 02 00 00"
+what = "517e10: lea    ecx,[eax+eax*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x518323
+old = "8d 88 7f 01 00 00"
+new = "8d 88 ff 02 00 00"
+what = "517e10: lea    ecx,[eax+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x518329
+old = "8d 94 00 7f 01 00 00"
+new = "8d 94 00 ff 02 00 00"
+what = "517e10: lea    edx,[eax+eax*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x518395
+old = "8d 8c 09 7f 01 00 00"
+new = "8d 8c 09 ff 02 00 00"
+what = "517e10: lea    ecx,[ecx+ecx*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x5183e1
+old = "8d 8c 00 7f 01 00 00"
+new = "8d 8c 00 ff 02 00 00"
+what = "517e10: lea    ecx,[eax+eax*1+0x17f] -- scroll BltFast/ColorFill rect bottom: m+383 or 2m+383 (=H-1) of retained-margin surface"
+
+[[patch]]
+va = 0x517e8c
+old = "8d 90 80 02 00 00"
+new = "8d 90 00 05 00 00"
+what = "517e10: lea    edx,[eax+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x517ec4
+old = "8d 94 09 80 02 00 00"
+new = "8d 94 09 00 05 00 00"
+what = "517e10: lea    edx,[ecx+ecx*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x517f50
+old = "8d 8c 09 80 02 00 00"
+new = "8d 8c 09 00 05 00 00"
+what = "517e10: lea    ecx,[ecx+ecx*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x517fd4
+old = "8d 8c 09 80 02 00 00"
+new = "8d 8c 09 00 05 00 00"
+what = "517e10: lea    ecx,[ecx+ecx*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x518023
+old = "8d 94 09 80 02 00 00"
+new = "8d 94 09 00 05 00 00"
+what = "517e10: lea    edx,[ecx+ecx*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x518077
+old = "8d 90 80 02 00 00"
+new = "8d 90 00 05 00 00"
+what = "517e10: lea    edx,[eax+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x51807d
+old = "8d 84 00 80 02 00 00"
+new = "8d 84 00 00 05 00 00"
+what = "517e10: lea    eax,[eax+eax*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x5180bb
+old = "8d 84 00 80 02 00 00"
+new = "8d 84 00 00 05 00 00"
+what = "517e10: lea    eax,[eax+eax*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x51810a
+old = "8d 90 80 02 00 00"
+new = "8d 90 00 05 00 00"
+what = "517e10: lea    edx,[eax+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x518110
+old = "8d 84 00 80 02 00 00"
+new = "8d 84 00 00 05 00 00"
+what = "517e10: lea    eax,[eax+eax*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x51815e
+old = "8d 94 00 80 02 00 00"
+new = "8d 94 00 00 05 00 00"
+what = "517e10: lea    edx,[eax+eax*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x5181b1
+old = "8d 90 80 02 00 00"
+new = "8d 90 00 05 00 00"
+what = "517e10: lea    edx,[eax+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x5181b7
+old = "8d 84 00 80 02 00 00"
+new = "8d 84 00 00 05 00 00"
+what = "517e10: lea    eax,[eax+eax*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x5181f5
+old = "8d 8c 09 80 02 00 00"
+new = "8d 8c 09 00 05 00 00"
+what = "517e10: lea    ecx,[ecx+ecx*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x51824e
+old = "8d 94 09 80 02 00 00"
+new = "8d 94 09 00 05 00 00"
+what = "517e10: lea    edx,[ecx+ecx*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x5182b3
+old = "8d 90 80 02 00 00"
+new = "8d 90 00 05 00 00"
+what = "517e10: lea    edx,[eax+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x51833e
+old = "8d 8c 00 80 02 00 00"
+new = "8d 8c 00 00 05 00 00"
+what = "517e10: lea    ecx,[eax+eax*1+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x5183b1
+old = "8d 90 80 02 00 00"
+new = "8d 90 00 05 00 00"
+what = "517e10: lea    edx,[eax+0x280] -- scroll BltFast/ColorFill rect right: m+640 or 2m+640 (=W) -- NOT in the prior scan list"
+
+[[patch]]
+va = 0x5190ec
+old = "c7 44 24 10 7f 01 00 00"
+new = "c7 44 24 10 ff 02 00 00"
+what = "5190d0: mov    DWORD PTR [esp+0x10],0x17f -- full-viewport blit bottom (src rect 1b4+383) to back buffer"
+
+[[patch]]
+va = 0x519169
+old = "81 fe 7f 02 00 00"
+new = "81 fe ff 04 00 00"
+what = "5190d0: cmp    esi,0x27f -- dirty-rect right clamp to viewport width-1"
+
+[[patch]]
+va = 0x519175
+old = "be 7f 02 00 00"
+new = "be ff 04 00 00"
+what = "5190d0: mov    esi,0x27f -- dirty-rect right clamp value"
+
+[[patch]]
+va = 0x519288
+old = "81 c1 80 02 00 00"
+new = "81 c1 00 05 00 00"
+what = "5190d0: add    ecx,0x280 -- full-viewport blit src right = 1b0+640"
+
+[[patch]]
+va = 0x5194b3
+old = "8d 9c 00 7f 01 00 00"
+new = "8d 9c 00 ff 02 00 00"
+what = "519480: lea    ebx,[eax+eax*1+0x17f] -- full-redraw rect bottom 2m+383 (=H-1, inclusive, surface coords)"
+
+[[patch]]
+va = 0x5194ba
+old = "8d 84 09 7f 02 00 00"
+new = "8d 84 09 ff 04 00 00"
+what = "519480: lea    eax,[ecx+ecx*1+0x27f] -- full-redraw rect right 2m+639 (=W-1)"
+
+[[patch]]
+va = 0x519606
+old = "8d 94 09 7f 02 00 00"
+new = "8d 94 09 ff 04 00 00"
+what = "5195c0: lea    edx,[ecx+ecx*1+0x27f] -- exposed-strip redraw rect after scroll: strip right 2m+639"
+
+[[patch]]
+va = 0x51960d
+old = "8d 84 00 7f 01 00 00"
+new = "8d 84 00 ff 02 00 00"
+what = "5195c0: lea    eax,[eax+eax*1+0x17f] -- exposed-strip redraw rect after scroll: strip bottom 2m+383"
+
+[[patch]]
+va = 0x51965b
+old = "8d 84 12 7f 02 00 00"
+new = "8d 84 12 ff 04 00 00"
+what = "5195c0: lea    eax,[edx+edx*1+0x27f] -- exposed-strip redraw rect after scroll: strip right 2m+639"
+
+[[patch]]
+va = 0x51968b
+old = "8d 94 09 7f 02 00 00"
+new = "8d 94 09 ff 04 00 00"
+what = "5195c0: lea    edx,[ecx+ecx*1+0x27f] -- exposed-strip redraw rect after scroll: strip right 2m+639"
+
+[[patch]]
+va = 0x519692
+old = "8d 84 00 7f 01 00 00"
+new = "8d 84 00 ff 02 00 00"
+what = "5195c0: lea    eax,[eax+eax*1+0x17f] -- exposed-strip redraw rect after scroll: strip bottom 2m+383"
+
+[[patch]]
+va = 0x519699
+old = "81 c1 7f 02 00 00"
+new = "81 c1 ff 04 00 00"
+what = "5195c0: add    ecx,0x27f -- exposed-strip redraw rect after scroll: second strip left m+639 (=W-m-1)"
+
+[[patch]]
+va = 0x5196e0
+old = "8d 94 09 7f 01 00 00"
+new = "8d 94 09 ff 02 00 00"
+what = "5195c0: lea    edx,[ecx+ecx*1+0x17f] -- exposed-strip redraw rect after scroll: strip bottom 2m+383"
+
+[[patch]]
+va = 0x5196e7
+old = "8d 88 7f 02 00 00"
+new = "8d 88 ff 04 00 00"
+what = "5195c0: lea    ecx,[eax+0x27f] -- exposed-strip redraw rect after scroll: strip left m+639 (=W-m-1)"
+
+[[patch]]
+va = 0x5196f9
+old = "8d 94 00 7f 02 00 00"
+new = "8d 94 00 ff 04 00 00"
+what = "5195c0: lea    edx,[eax+eax*1+0x27f] -- exposed-strip redraw rect after scroll: strip right 2m+639"
+
+[[patch]]
+va = 0x51971d
+old = "8d 8c 00 7f 01 00 00"
+new = "8d 8c 00 ff 02 00 00"
+what = "5195c0: lea    ecx,[eax+eax*1+0x17f] -- exposed-strip redraw rect after scroll: strip bottom 2m+383"
+
+[[patch]]
+va = 0x519724
+old = "8d 9a 7f 02 00 00"
+new = "8d 9a ff 04 00 00"
+what = "5195c0: lea    ebx,[edx+0x27f] -- exposed-strip redraw rect after scroll: strip left m+639"
+
+[[patch]]
+va = 0x51972a
+old = "8d 94 12 7f 02 00 00"
+new = "8d 94 12 ff 04 00 00"
+what = "5195c0: lea    edx,[edx+edx*1+0x27f] -- exposed-strip redraw rect after scroll: strip right 2m+639"
+
+[[patch]]
+va = 0x519731
+old = "05 7f 01 00 00"
+new = "05 ff 02 00 00"
+what = "5195c0: add    eax,0x17f -- exposed-strip redraw rect after scroll: second strip top m+383 (=H-m-1)"
+
+[[patch]]
+va = 0x519771
+old = "8d 88 7f 01 00 00"
+new = "8d 88 ff 02 00 00"
+what = "5195c0: lea    ecx,[eax+0x17f] -- exposed-strip redraw rect after scroll: strip top m+383 (=H-m-1)"
+
+[[patch]]
+va = 0x519777
+old = "8d 94 00 7f 01 00 00"
+new = "8d 94 00 ff 02 00 00"
+what = "5195c0: lea    edx,[eax+eax*1+0x17f] -- exposed-strip redraw rect after scroll: strip bottom 2m+383"
+
+[[patch]]
+va = 0x519790
+old = "8d 8c 00 7f 02 00 00"
+new = "8d 8c 00 ff 04 00 00"
+what = "5195c0: lea    ecx,[eax+eax*1+0x27f] -- exposed-strip redraw rect after scroll: strip right 2m+639"
+
+[[patch]]
+va = 0x5197ba
+old = "8d 94 09 7f 01 00 00"
+new = "8d 94 09 ff 02 00 00"
+what = "5195c0: lea    edx,[ecx+ecx*1+0x17f] -- exposed-strip redraw rect after scroll: strip bottom 2m+383"
+
+[[patch]]
+va = 0x5197c1
+old = "81 c1 7f 01 00 00"
+new = "81 c1 ff 02 00 00"
+what = "5195c0: add    ecx,0x17f -- exposed-strip redraw rect after scroll: second strip top m+383"
+
+[[patch]]
+va = 0x5197d3
+old = "8d 94 00 7f 02 00 00"
+new = "8d 94 00 ff 04 00 00"
+what = "5195c0: lea    edx,[eax+eax*1+0x27f] -- exposed-strip redraw rect after scroll: strip right 2m+639"
+
+[[patch]]
+va = 0x519812
+old = "8d 8c 00 7f 01 00 00"
+new = "8d 8c 00 ff 02 00 00"
+what = "5195c0: lea    ecx,[eax+eax*1+0x17f] -- exposed-strip redraw rect after scroll: strip bottom 2m+383"
+
+[[patch]]
+va = 0x512393
+old = "81 c1 7f 02 00 00"
+new = "81 c1 ff 04 00 00"
+what = "512350: add    ecx,0x27f -- per-cell redraw: whole-surface rect right 2m+639"
+
+[[patch]]
+va = 0x512399
+old = "05 7f 01 00 00"
+new = "05 ff 02 00 00"
+what = "512350: add    eax,0x17f -- per-cell redraw: whole-surface rect bottom 2m+383"
+
+[[patch]]
+va = 0x5126b0
+old = "81 ff 80 01 00 00"
+new = "81 ff 00 03 00 00"
+what = "512350: cmp    edi,0x180 -- per-cell dirty rect y clamp test (>=384)"
+
+[[patch]]
+va = 0x5126b8
+old = "bf 7f 01 00 00"
+new = "bf ff 02 00 00"
+what = "512350: mov    edi,0x17f -- per-cell dirty rect y clamp value"
+
+[[patch]]
+va = 0x51149b
+old = "c7 86 80 02 00 00 f7 01 00 00"
+new = "c7 86 80 02 00 00 77 03 00 00"
+what = "5113c0: mov    DWORD PTR [esi+0x280],0x1f7 -- rasterizer clip y-max = surface H-1 (888-1)"
+
+[[patch]]
+va = 0x5114a5
+old = "c7 86 7c 02 00 00 f7 02 00 00"
+new = "c7 86 7c 02 00 00 77 05 00 00"
+what = "5113c0: mov    DWORD PTR [esi+0x27c],0x2f7 -- rasterizer clip x-max = surface W-1 (1400-1)"
+
+[[patch]]
+va = 0x51af05
+old = "8d 84 1b 80 01 00 00"
+new = "8d 84 1b 00 03 00 00"
+what = "51ae??(script op): lea    eax,[ebx+ebx*1+0x180] -- script 'set map margin': recreate map surface height 2m+384"
+
+[[patch]]
+va = 0x51af0e
+old = "8d 8c 09 80 02 00 00"
+new = "8d 8c 09 00 05 00 00"
+what = "51ae??(script op): lea    ecx,[ecx+ecx*1+0x280] -- script 'set map margin': recreate map surface width 2m+640"
+
+[[patch]]
+va = 0x47af8a
+old = "8d b4 36 7f 02 00 00"
+new = "8d b4 36 ff 04 00 00"
+what = "47af50: lea    esi,[esi+esi*1+0x27f] -- whole-surface rect right 2m+639 (map coords) for per-object visibility pass via map+0x220"
+
+[[patch]]
+va = 0x47af9a
+old = "8d 8c 09 7f 01 00 00"
+new = "8d 8c 09 ff 02 00 00"
+what = "47af50: lea    ecx,[ecx+ecx*1+0x17f] -- whole-surface rect bottom 2m+383"
+
+[[patch]]
+va = 0x504bcb
+old = "8d 94 09 80 01 00 00"
+new = "8d 94 09 00 03 00 00"
+what = "504b80: lea    edx,[ecx+ecx*1+0x180] -- copy whole map surface (2m+384 tall) into an image (0x497270)"
+
+[[patch]]
+va = 0x504bd2
+old = "8d 8c 00 80 02 00 00"
+new = "8d 8c 00 00 05 00 00"
+what = "504b80: lea    ecx,[eax+eax*1+0x280] -- same, width 2m+640"
+
+[[patch]]
+va = 0x503caf
+old = "ba 7f 02 00 00"
+new = "ba ff 04 00 00"
+what = "503c95: mov    edx,0x27f -- mouse msg 0x200-0x205: PtInRect(0,0,639,383) = pointer over map viewport"
+
+[[patch]]
+va = 0x503cd1
+old = "be 7f 01 00 00"
+new = "be ff 02 00 00"
+what = "503c95: mov    esi,0x17f -- same, bottom"
+
+[[patch]]
+va = 0x49aaa0
+old = "be 7f 01 00 00"
+new = "be ff 02 00 00"
+what = "49aa80: mov    esi,0x17f -- global rect 0x584ab8 = (0,0,639,383) bottom; used by 4f2f50 (vfunc +0x14 draw clip)"
+
+[[patch]]
+va = 0x49aaa7
+old = "ba 7f 02 00 00"
+new = "ba ff 04 00 00"
+what = "49aa80: mov    edx,0x27f -- same, right"
+
+[[patch]]
+va = 0x4ff22f
+old = "c7 44 24 1c 7f 02 00 00"
+new = "c7 44 24 1c ff 04 00 00"
+what = "4ff0xx (container init): mov    DWORD PTR [esp+0x1c],0x27f -- clip right shared by map-viewport dirty lists +0x22f2c/+0x22f50/+0x22f74"
+
+[[patch]]
+va = 0x4ff25e
+old = "b8 7f 01 00 00"
+new = "b8 ff 02 00 00"
+what = "4ff0xx (container init): mov    eax,0x17f -- map-viewport dirty-list clip bottom 383"
+
+[[patch]]
+va = 0x4ff2dc
+old = "b8 7f 01 00 00"
+new = "b8 ff 02 00 00"
+what = "4ff0xx (container init): mov    eax,0x17f -- map-viewport dirty-list clip bottom 383"
+
+[[patch]]
+va = 0x4ff35a
+old = "b8 7f 01 00 00"
+new = "b8 ff 02 00 00"
+what = "4ff0xx (container init): mov    eax,0x17f -- map-viewport dirty-list clip bottom 383"
+
+[[patch]]
+va = 0x500152
+old = "bf 7f 01 00 00"
+new = "bf ff 02 00 00"
+what = "5000f0: mov    edi,0x17f -- leaving mode 8: map dirty-list clip bottom back to 383"
+
+[[patch]]
+va = 0x454119
+old = "81 fe 7f 02 00 00"
+new = "81 fe ff 04 00 00"
+what = "454030: cmp    esi,0x27f -- Bresenham line plotter into locked back buffer 0x585170, clipped to map viewport: x<639"
+
+[[patch]]
+va = 0x454125
+old = "81 ff 7f 01 00 00"
+new = "81 ff ff 02 00 00"
+what = "454030: cmp    edi,0x17f -- Bresenham line plotter into locked back buffer 0x585170, clipped to map viewport: y<383"
+
+[[patch]]
+va = 0x4541aa
+old = "81 fe 7f 02 00 00"
+new = "81 fe ff 04 00 00"
+what = "454030: cmp    esi,0x27f -- Bresenham line plotter into locked back buffer 0x585170, clipped to map viewport: x<639"
+
+[[patch]]
+va = 0x4541b6
+old = "81 ff 7f 01 00 00"
+new = "81 ff ff 02 00 00"
+what = "454030: cmp    edi,0x17f -- Bresenham line plotter into locked back buffer 0x585170, clipped to map viewport: y<383"
+
