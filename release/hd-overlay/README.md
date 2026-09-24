@@ -1,7 +1,8 @@
 # Lords of Magic HD Art
 
 Sharp, redrawn art for Lords of Magic Special Edition: every character portrait, every item and
-artifact picture, and every building picture, everywhere the game shows one. The game itself is not modified. A
+artifact picture, and every building picture, everywhere the game shows one, plus optional HD
+terrain. Without `--terrain` the game itself is not modified. A
 replacement `ddraw.dll` (a fork of cnc-ddraw, which the game already uses) spots each picture as it
 is drawn and paints a 2x-resolution version over it.
 
@@ -10,6 +11,11 @@ upscales them on your machine, each with the upscaler that was picked for it by 
 was made (the choices ship as `upscale-choices.json`).
 
 The art is sharper, not bigger: each picture fills the same space on screen as before.
+
+> **Beta (0.4.0).** The HD art overlay has been played on Windows and macOS. HD terrain
+> (`--terrain`) is new and so far played only on macOS (Wine). It should work the same on Windows,
+> and `--uninstall` puts every file back, but please report anything odd -- see the end of this
+> file.
 
 ## What you need
 
@@ -42,7 +48,7 @@ The art is sharper, not bigger: each picture fills the same space on screen as b
 The setup downloads two things, each checked against a fixed SHA-256 before use:
 Real-ESRGAN ncnn Vulkan v0.2.5.0 from its GitHub release, and the 4x-UltraSharp model files.
 
-## HD terrain (optional)
+## HD terrain (optional, beta)
 
 The map's terrain is drawn by the game itself, so the overlay alone cannot sharpen it. With
 `--terrain`, setup also makes it 2x:
@@ -135,3 +141,8 @@ game folder (the name dates from when it held only portraits).
   it; delete it if you like.
 
 See `NOTICES.md` for licences.
+- **Scrambled or striped terrain** means the patched `lomse.exe` is running without its
+  `lomhd_terrain` folder: run `python lomhd_setup.py --terrain` again, or `--uninstall`.
+- **Reporting a problem:** open an issue at
+  <https://github.com/jake-bliss/lords-of-magic-modding/issues> with your `lomhd.log`, your
+  Windows or macOS version, and whether you used `--terrain`.
