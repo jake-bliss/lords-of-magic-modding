@@ -16,6 +16,7 @@ in the first building upscales, and the overlay draws its own texture, so it nee
 """
 from __future__ import annotations
 
+import os
 import pathlib
 import re
 import shutil
@@ -69,10 +70,14 @@ def render(option: str, inputs: dict[str, pathlib.Path], dest: pathlib.Path, esr
             if not got.exists():
                 raise SystemExit(f"{option}: the upscaler wrote nothing for {k}")
             w, h = png_size(p)
+            # An output that exists counts as done, so it is written under a name nothing reads
+            # (not *.png: the review page lists those) and renamed into place only once whole.
+            final, part = dest / f"{k}.png", dest / f"{k}.png.part"
             if scale == 2 and png_size(got) == (w * 2, h * 2):
-                shutil.move(str(got), dest / f"{k}.png")
+                shutil.move(str(got), part)
             else:
                 # Exactly 2x the original, whatever rounding the model applied.
                 subprocess.run(["magick", str(got), "-filter", "MagicKernelSharp2021",
-                                "-resize", f"{w * 2}x{h * 2}!", str(dest / f"{k}.png")], check=True)
+                                "-resize", f"{w * 2}x{h * 2}!", f"PNG:{part}"], check=True)
+            os.replace(part, final)
     return len(todo)

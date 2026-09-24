@@ -1,0 +1,34 @@
+# Terrain atlases at 2x -- half of the HD-terrain proof. The other half is in the binary.
+#
+# Terrain is rasterized in 3D, so the HD overlay cannot replace it: there is no fixed picture on
+# screen to match. The engine has to sample better texels itself (docs/research-log.md, 2026-09-23).
+#
+# WHAT THE ENGINE ALREADY DOES. Each .til's `TILESIZE=` is parsed at load (0x509c04) and 0x5095a0
+# builds every tile's texel rect from it, so UVs are not pre-baked: TILESIZE 32 -> 64 makes the
+# engine address a 2x atlas correctly by itself. Atlas dimensions come from the LBM header.
+#
+# WHAT IT DOES NOT. The rasterizer hard-codes a 512-byte texture row at 18 sites.
+# tools/exe_patches/terrain-stride-1024.toml moves them to 1024. This mod without that set renders
+# sheared garbage -- which is rung 1 of the ladder, on purpose.
+#
+# ART. 20 atlases from tools/terrain_hd.py: each TILE upscaled on its own with the reviewed
+# anime2x/anime4x choice, padded on each side with a plain tile of the terrain the .til says borders
+# it, its edge colours pulled to that terrain's average, and quantized to its atlas's palette
+# index-safely. Per tile because the atlases are Wang tiles placed by terrain type, not by sheet
+# position. Rung 2 (2026-09-24) showed a line on every tile edge with edge-repeat padding; the
+# neighbour padding and edge normalization are the fix for that. Texels pass through light tables
+# BY PALETTE INDEX, so an RGB atlas is
+# not an option. thite01/ttype01 are NOT here: they are data maps read by coordinate, not textures,
+# and doubling them would double the map's elevation and terrain-type lookups.
+#
+# 🔴 All 26 .til files change together. There is one texture-row stride for every atlas, and
+# tilesa01.til draws from tilesb01.lbm, so no subset is coherent.
+id = "terrain-hd-art"
+name = "Terrain atlases at 2x"
+version = "0.1.0"
+description = "All 20 terrain atlases at 2x (palette-quantized reviewed upscales) and TILESIZE doubled in all 26 .til files."
+
+base_profile = "gs5r3"
+
+new_members = []
+allow_new_members = false

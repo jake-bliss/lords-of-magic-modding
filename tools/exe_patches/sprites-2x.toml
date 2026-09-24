@@ -1,0 +1,94 @@
+# Map sprites and the cursor across the whole 2x map. Use with viewport-2x and terrain-render-2x.
+#
+# Observed on rung 2 (2026-09-24): terrain filled 1280x768 but units, trees and buildings drew only
+# inside the old 640x384, and the cursor only inside the old 640x480. Neither is a clip in the IMP
+# blitter (static read, backups/terrain-hd-20260924/sprite-clip.md):
+#
+#   * every frame the object pass tests each map object against a (0,0,640,384) rect before drawing
+#     it (0x4a6a10), and the invalidate pass uses the same rect (0x4a6850);
+#   * the sprite blitters lock the REAL back buffer (1280x960 already) and then overwrite the locked
+#     height with 384 for map draws -- so fixing only the cull gives full-width sprites that still
+#     stop at y=384;
+#   * the cursor manager's own dirty list is clipped to (0,0,639,479) at construction, and every
+#     cursor rect is clamped to it before the presenter merges it into the full-screen list.
+#
+# 0x584ab8 (patched in an earlier terrain-render-2x) is NOT on this path: its only reader feeds the
+# SOURCE rect of an animated-IMP script draw, so doubling it was reverted there.
+#
+# Expect, with this in: sprites everywhere on the map, still at 1x size, and the 640x480 interface's
+# bottom panel (y 384-479) overlapping them, in whatever order the game draws the two.
+
+[target]
+sha256 = "a505f399d5be73fe0a2215633f663717f28daeb3075bbcc05b47d40653669052"
+
+[[patch]]
+va = 0x4a6a61
+old = "c7 44 24 24 80 02 00 00"
+new = "c7 44 24 24 00 05 00 00"
+what = "object draw pass 0x4a6a10: cull rect right 640 -> 1280"
+
+[[patch]]
+va = 0x4a6a69
+old = "c7 44 24 28 80 01 00 00"
+new = "c7 44 24 28 00 03 00 00"
+what = "object draw pass 0x4a6a10: cull rect bottom 384 -> 768"
+
+[[patch]]
+va = 0x4a688c
+old = "c7 44 24 28 80 02 00 00"
+new = "c7 44 24 28 00 05 00 00"
+what = "object invalidate pass 0x4a6850: cull rect right 640 -> 1280"
+
+[[patch]]
+va = 0x4a6894
+old = "c7 44 24 2c 80 01 00 00"
+new = "c7 44 24 2c 00 03 00 00"
+what = "object invalidate pass 0x4a6850: cull rect bottom 384 -> 768"
+
+[[patch]]
+va = 0x49ceef
+old = "c7 47 08 80 01 00 00"
+new = "c7 47 08 00 03 00 00"
+what = "sprite draw 0x49cd80: back-buffer lock height forced to 384 -> 768"
+
+[[patch]]
+va = 0x49e296
+old = "c7 40 08 80 01 00 00"
+new = "c7 40 08 00 03 00 00"
+what = "sprite draw 0x49e070 (remap variant): lock height 384 -> 768"
+
+[[patch]]
+va = 0x416ff6
+old = "c7 44 24 30 80 01 00 00"
+new = "c7 44 24 30 00 03 00 00"
+what = "army/unit draw 0x416a90: lock height 384 -> 768 (1 of 3)"
+
+[[patch]]
+va = 0x41749a
+old = "c7 44 24 30 80 01 00 00"
+new = "c7 44 24 30 00 03 00 00"
+what = "army/unit draw 0x416a90: lock height 384 -> 768 (2 of 3)"
+
+[[patch]]
+va = 0x4175e7
+old = "c7 44 24 30 80 01 00 00"
+new = "c7 44 24 30 00 03 00 00"
+what = "army/unit draw 0x416a90: lock height 384 -> 768 (3 of 3)"
+
+[[patch]]
+va = 0x4ba636
+old = "c7 44 24 60 80 01 00 00"
+new = "c7 44 24 60 00 03 00 00"
+what = "map-object text drawn into a back-buffer lock: height 384 -> 768 (medium confidence)"
+
+[[patch]]
+va = 0x4716b6
+old = "bd 7f 02 00 00"
+new = "bd ff 04 00 00"
+what = "cursor manager dirty list (0x5a9e10) clip right 639 -> 1279"
+
+[[patch]]
+va = 0x4716d7
+old = "b8 df 01 00 00"
+new = "b8 bf 03 00 00"
+what = "cursor manager dirty list clip bottom 479 -> 959"

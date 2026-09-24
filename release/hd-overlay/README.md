@@ -1,7 +1,8 @@
 # Lords of Magic HD Art
 
 Sharp, redrawn art for Lords of Magic Special Edition: every character portrait, every item and
-artifact picture, and every building picture, everywhere the game shows one. The game itself is not modified. A
+artifact picture, and every building picture, everywhere the game shows one, plus optional HD
+terrain. Without `--terrain` the game itself is not modified. A
 replacement `ddraw.dll` (a fork of cnc-ddraw, which the game already uses) spots each picture as it
 is drawn and paints a 2x-resolution version over it.
 
@@ -10,6 +11,11 @@ upscales them on your machine, each with the upscaler that was picked for it by 
 was made (the choices ship as `upscale-choices.json`).
 
 The art is sharper, not bigger: each picture fills the same space on screen as before.
+
+> **Beta (0.4.0).** The HD art overlay has been played on Windows and macOS. HD terrain
+> (`--terrain`) is new and so far played only on macOS (Wine). It should work the same on Windows,
+> and `--uninstall` puts every file back, but please report anything odd -- see the end of this
+> file.
 
 ## What you need
 
@@ -42,6 +48,44 @@ The art is sharper, not bigger: each picture fills the same space on screen as b
 The setup downloads two things, each checked against a fixed SHA-256 before use:
 Real-ESRGAN ncnn Vulkan v0.2.5.0 from its GitHub release, and the 4x-UltraSharp model files.
 
+## HD terrain (optional, beta)
+
+The map's terrain is drawn by the game itself, so the overlay alone cannot sharpen it. With
+`--terrain`, setup also makes it 2x:
+
+```
+python lomhd_setup.py --terrain
+```
+
+This one **does change the game**, in two places, always together:
+
+- **`lomse.exe` is patched** -- 65 same-size edits so the terrain is drawn at 2x. It only works on
+  Lords of Magic Special Edition with the GS5R3 patch (the Steam version); any other `lomse.exe` is
+  refused and left untouched. Your original is saved first as `lomse.exe.lomhd-backup`.
+- **A new folder, `lomhd_terrain`**, beside `lomse.exe`, holds the 2x terrain tiles. Like the
+  pictures, they are made on your machine from your own `pic.mpq` (which is not changed). This adds
+  to the run time: every terrain tile is upscaled on its own.
+
+The exe is patched last, after the art is in place, so a run that stops part-way leaves your game
+working. The overlay's `ddraw.dll` only reads `lomhd_terrain` when the patched `lomse.exe` is the one
+running, so the original exe with the folder left beside it plays exactly as before.
+
+**Recommended window: 1280x960.** The terrain is drawn at twice the game's 640x480, so it shows its
+detail at 1280x960 or larger. Setup does not change your settings; to set it, edit `ddraw.ini` in
+the game folder (cnc-ddraw creates it on first run) and set `width=1280` and `height=960` in the
+`[ddraw]` section.
+
+**Undo:** `python lomhd_setup.py --uninstall` puts your original `lomse.exe` back from the backup
+(checking it first) and removes `lomhd_terrain`, along with the rest of the mod. If something else
+has changed `lomse.exe` since, uninstall leaves it alone and says so rather than overwrite it. If
+`lomhd_terrain` holds files setup did not write (you edited or added art by hand), setup leaves the
+folder where it is and says so; `--force-terrain-folder` lets it replace or remove the folder anyway.
+
+Steam's **Verify integrity of game files** puts the original `lomse.exe` back and so undoes the exe
+half. That is harmless: the game runs as normal with the ordinary terrain. Run
+`python lomhd_setup.py --terrain` again to re-apply it, or `--uninstall` to tidy up the backup and
+the folder.
+
 ## Choose your own upscaler (optional)
 
 Every picture ships with an upscaler already picked for it -- the maintainer compared four
@@ -60,6 +104,10 @@ the shipped picks already selected. Nothing is uploaded and nothing is installed
 - **Zoom -> Detail** shows the same close-up of every option; move the mouse to pan.
 - Picks save as you make them, to `my-upscale-choices.json` next to `lomhd_setup.py`.
 
+The terrain atlases have picks too (the `terrain__` entries in `upscale-choices.json`); the
+review page does not show them, but `--terrain` uses any you add to `my-upscale-choices.json`, one
+atlas at a time, and the shipped pick for the rest.
+
 Close the page and press Ctrl+C, then run `python lomhd_setup.py` as usual: it says
 "Using your own picks" and installs with them. Delete `my-upscale-choices.json` to go back to the
 shipped picks.
@@ -73,7 +121,8 @@ python lomhd_setup.py --uninstall
 If you installed with `--game`, uninstall with the same `--game "..."` too.
 
 This puts your original `ddraw.dll` back (it was saved as `ddraw.dll.lomhd-backup`) and removes the
-image pack. To turn the HD art off without uninstalling, delete `lomhd_portraits.pack` from the
+image pack. If you installed HD terrain it also puts your original `lomse.exe` back and removes
+`lomhd_terrain` (unless you changed files in it -- see above). To turn the HD art off without uninstalling, delete `lomhd_portraits.pack` from the
 game folder (the name dates from when it held only portraits).
 
 ## If something looks wrong
@@ -90,5 +139,10 @@ game folder (the name dates from when it held only portraits).
   removes cnc-ddraw, so the game uses Windows' own DirectDraw again, and renames that `ddraw.ini`
   to `ddraw.ini.lomhd-saved` rather than deleting settings you may have changed. The game ignores
   it; delete it if you like.
+- **Scrambled or striped terrain** means the patched `lomse.exe` is running without its
+  `lomhd_terrain` folder: run `python lomhd_setup.py --terrain` again, or `--uninstall`.
+- **Reporting a problem:** open an issue at
+  <https://github.com/jake-bliss/lords-of-magic-modding/issues> with your `lomhd.log`, your
+  Windows or macOS version, and whether you used `--terrain`.
 
 See `NOTICES.md` for licences.

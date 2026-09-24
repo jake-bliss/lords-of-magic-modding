@@ -21,6 +21,10 @@
 
 ## GS5R3 and related mods
 
+GS5R3 is ManTerA's balance and content mod for Lords of Magic. The gameplay reports in `reports/`
+read it alongside the original game, and quote short item and spell descriptions from it as well as
+from the game; those texts are ManTerA's work, credited here with thanks.
+
 - [Community guide to 3.02, GS5R3, maps, portraits, and music](https://steamcommunity.com/sharedfiles/filedetails/?id=3453918606)
 - [GS5R3 community review](https://steamcommunity.com/app/404040/discussions/0/215439774872159175/)
 - [ManTerA GS5R3 archive](http://mantera.xorgate.com/mods/GS5/mpq/GS5R3.rar)
