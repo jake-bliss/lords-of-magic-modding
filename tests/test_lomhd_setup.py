@@ -624,6 +624,36 @@ class TerrainInstall(unittest.TestCase):
         self.assertEqual(edited.read_bytes(), b"the player's retouched atlas")
         self.assertEqual(self.listing(), ["ddraw.dll", setup.TERRAIN_DIR, "lomse.exe"])
 
+    def test_a_folder_the_player_added_to_is_left_not_crashed_on(self) -> None:
+        """A subfolder inside til cannot be hashed as a file: uninstall must treat the folder as
+        not ours and finish, not stop half way with the exe restored and the overlay still in."""
+        self.install_all()
+        custom = self.game / setup.TERRAIN_DIR / "til" / "custom"
+        custom.mkdir()
+        setup.uninstall(self.game)
+        self.assertEqual(self.exe(), PRISTINE_EXE)
+        self.assertEqual((self.game / "ddraw.dll").read_bytes(), ORIGINAL)
+        self.assertTrue(custom.is_dir())
+        self.assertEqual(self.listing(), ["ddraw.dll", setup.TERRAIN_DIR, "lomse.exe"])
+
+    def test_the_command_puts_an_interrupted_swap_back_before_the_long_steps(self) -> None:
+        """Recovery runs first in main, so a failure in the download or the build (here: the
+        release check) cannot leave the patched exe without its art. (Codex review.)"""
+        self.install_all()
+        before = self.old_art()
+        (self.game / setup.TERRAIN_DIR).rename(self.game / (setup.TERRAIN_DIR + ".lomhd-old"))
+        (self.game / "pic.mpq").write_bytes(b"")
+        argv, real_release = sys.argv, setup.release
+        sys.argv = ["lomhd_setup.py", "--game", str(self.game), "--terrain"]
+        setup.release = lambda: (_ for _ in ()).throw(SystemExit("the download failed"))
+        try:
+            with self.assertRaises(SystemExit):
+                setup.main()
+        finally:
+            sys.argv, setup.release = argv, real_release
+        self.assertEqual(self.old_art(), before)
+        self.assertEqual(self.exe(), self.patched)
+
     def test_a_run_stopped_after_the_record_still_owns_the_folder_it_left(self) -> None:
         """The record names the NEW art before the folder is swapped; the folder left in place by
         a run stopped between them is still this mod's, for a re-run and for uninstall."""

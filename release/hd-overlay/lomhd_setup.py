@@ -770,11 +770,15 @@ def build_terrain(game: pathlib.Path, esrgan: pathlib.Path, models: pathlib.Path
 
 
 def terrain_digest(til: pathlib.Path) -> str | None:
-    """One hash for the art folder: every file's name and bytes. None when there is no folder."""
+    """One hash for the art folder: every file's name and bytes. None when there is no folder, or
+    when it holds anything but plain files (a folder the player added) -- no digest this mod wrote
+    can match that, so it reads as not ours rather than failing. (Codex review.)"""
     if not til.is_dir():
         return None
     digest = hashlib.sha256()
     for path in sorted(til.iterdir()):
+        if path.is_symlink() or not path.is_file():
+            return None
         digest.update(path.name.encode() + b"\0" + sha256(path).encode() + b"\n")
     return digest.hexdigest()
 
@@ -1022,6 +1026,9 @@ def main() -> int:
         fail("Python 3.9 or newer is needed.")
     game = find_game(args.game)
     say(f"Game: {game}")
+    # First, whatever was asked: an interrupted swap leaves a patched exe without its art, and the
+    # long steps below can fail before install_terrain would get to it. (Codex review.)
+    recover_terrain_swap(game, "--uninstall" if args.uninstall else "--terrain")
     if args.uninstall:
         uninstall(game, args.force_terrain_folder)
         return 0
