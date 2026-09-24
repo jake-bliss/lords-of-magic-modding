@@ -235,6 +235,20 @@ class PlanAndRecordsTest(unittest.TestCase):
         self.assertEqual(list(si.records(planned, {"wide": render}, skipped)), [])
         self.assertEqual(skipped, ["wide: render is not 128x48"])
 
+    def test_a_render_with_width_and_height_swapped_is_refused(self) -> None:
+        """Same byte count as the right render, wrong geometry (Codex review, 2026-09-23)."""
+        w, h = 64, 24
+        idx = blank(w, h)
+        paint(idx, w, 37, 9, 20, 8, 3)
+        self.write_sheet("wide", w, h, idx)
+        si.SHEETS = ("wide",)
+        planned = si.plan(self.lbm, {}, [])
+        render = self.root / "wide.png"
+        lbm_png.write_png(render, h * 2, w * 2, [[(0, 0, 0)] * (h * 2) for _ in range(w * 2)])
+        skipped: list[str] = []
+        self.assertEqual(list(si.records(planned, {"wide": render}, skipped)), [])
+        self.assertEqual(skipped, ["wide: render is not 128x48"])
+
 
 if __name__ == "__main__":
     unittest.main()

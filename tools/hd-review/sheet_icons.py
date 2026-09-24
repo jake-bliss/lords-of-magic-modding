@@ -218,11 +218,13 @@ def records(planned, renders: dict[str, pathlib.Path], skipped: list[str]):
         render = renders.get(sheet)
         if render is None or not icons:
             continue
+        size = subprocess.run(["magick", "identify", "-format", "%w %h", str(render)], check=True,
+                              capture_output=True, text=True).stdout.split()
+        if [int(v) for v in size] != [2 * w, 2 * h]:      # the size, not the byte count: a 40x20
+            skipped.append(f"{sheet}: render is not {2 * w}x{2 * h}")   # sheet is 20x40's bytes (Codex)
+            continue
         rgb = subprocess.run(["magick", str(render), "-depth", "8", "rgb:-"], check=True,
                              capture_output=True).stdout
-        if len(rgb) != 4 * w * h * 3:
-            skipped.append(f"{sheet}: render is not {2 * w}x{2 * h}")
-            continue
         for icon in icons:
             cell = crop(idx, w, icon)
             ident = identity(cell, pal, key, icon.w, icon.h)
@@ -264,7 +266,7 @@ def main() -> int:
             skipped.append(f"{sheet}: no usable upscale pick ({option!r})")
             continue
         digest = hashlib.sha256(idx + bytes(v for c in pal for v in c) +
-                                f"{key}|{PREP_BACKGROUND}|{PREP_VERSION}".encode()).hexdigest()[:16]
+                                f"{w}x{h}|{key}|{PREP_BACKGROUND}|{PREP_VERSION}".encode()).hexdigest()[:16]
         folder = WORK / digest
         folder.mkdir(parents=True, exist_ok=True)
         src = folder / f"{sheet}.png"

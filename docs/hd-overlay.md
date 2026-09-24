@@ -160,7 +160,8 @@ rectangles first (any variable bound to an LBM is a page: `/unitinfo_staticon"LB
 def`), then each separate shape on the sheet's key colour -- and packs each as a masked record keyed
 on index 0, the pure-green chroma key, cropped at 2x from one upscale of the whole sheet with the
 sheet's own pick (`screen__<sheet>`). 365 icons from the GS5R3 sheets; the shipped matcher finds 65
-different ones in the 93 captured frames at 4.9 ms a search over the whole 30,046-record dev pack.
+different ones in the 93 captured frames at 4.9 ms a search over the whole 30,046-record dev pack. Index 1
+(pure red on every sheet) is skipped as for sprites: those few pixels keep their original look.
 
     python3 tools/hd-review/sheet_icons.py icons.pack --lbm <pic.mpq LBM folder> \
         --scripts <gs.mpq scripts> --esrgan realesrgan-ncnn-vulkan --models models
