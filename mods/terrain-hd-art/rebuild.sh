@@ -7,8 +7,8 @@
 #
 #   python3 tools/terrain_hd.py SRC OUT --esrgan PATH --models DIR
 #
-# Re-runnable. Refuses a stage that is missing any atlas a .til names, or that holds an atlas that
-# is not exactly 2x its original, because with tools/exe_patches/terrain-stride-1024.toml in the
+# Re-runnable. Refuses a stage that is missing any atlas a .til names, or whose atlas is not exactly
+# the .til's TILES grid at 64px, because with tools/exe_patches/terrain-stride-1024.toml in the
 # binary EVERY sampled atlas must be 1024 wide -- one left at 512 renders sheared garbage.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
@@ -35,6 +35,7 @@ def lbm_size(path):
         i += 8 + n + (n & 1)
     raise SystemExit(f"{path.name}: no BMHD")
 
+SHORT_IN_THE_ORIGINAL = {"jeff01.lbm": 2 * 480}
 tils = sorted(stage.glob("*.til"))
 lbms = {p.name.lower(): p for p in stage.glob("*.lbm")}
 assert len(tils) == 26 and len(lbms) == 20, (len(tils), len(lbms))
@@ -43,11 +44,18 @@ for til in tils:
     text = til.read_bytes().decode("latin-1")
     lbm = re.search(r"^LBM=\s*(\S+)", text, re.M | re.I)
     size = re.search(r"TILESIZE=\s*(\d+),\s*(\d+)", text)
-    assert lbm and size, til.name
+    grid = re.search(r"TILES=\s*(\d+),\s*(\d+)", text)
+    assert lbm and size and grid, til.name
     name = lbm[1].strip().lower()
     assert name in lbms, f"{til.name} names {name}, not staged"
     assert (int(size[1]), int(size[2])) == (64, 64), f"{til.name}: TILESIZE {size[1]},{size[2]}"
     named.add(name)
+    # The rasterizer reads TILES x 64 texels; an atlas shorter than that is read past its end.
+    # One shipped tileset already is: jeff01.til declares 16 rows (512px at 1x) over a 480-tall
+    # atlas, so its last row of tiles was never whole. It is held to exactly 2x ITS height instead.
+    w, h = lbm_size(lbms[name])
+    want = (int(grid[1]) * 64, SHORT_IN_THE_ORIGINAL.get(name, int(grid[2]) * 64))
+    assert (w, h) == want, f"{til.name}: {name} is {w}x{h}, want {want[0]}x{want[1]}"
 for name, path in sorted(lbms.items()):
     w, h = lbm_size(path)
     assert w == 1024, f"{name}: {w} wide -- every sampled atlas must be 1024"

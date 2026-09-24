@@ -165,6 +165,19 @@ class EndToEnd(unittest.TestCase):
         self.assertIn(b"TILESIZE= 8, 8", (self.out / "tilesz01.til").read_bytes())
         self.assertTrue(any("top-left keeps source index 100%" in line for line in report), report)
 
+    def test_a_changed_source_is_not_built_from_the_previous_runs_tiles(self) -> None:
+        t, w, h = 4, 8, 8
+        (self.src / "tilesz01.til").write_bytes(til("tilesz01.lbm", t))
+        choices = {"terrain__tilesz01": "anime2x"}
+        work = self.d / "work"
+        write_lbm(self.src / "tilesz01.lbm", w, h, bytes([10] * 64))
+        th.build(self.src, self.out, self.fake, self.d, work, choices)
+        second = bytes((x + y) % 50 + 20 for y in range(h) for x in range(w))
+        write_lbm(self.src / "tilesz01.lbm", w, h, second)
+        th.build(self.src, self.out, self.fake, self.d, work, choices)
+        _, _, got, _, _ = lbm_png.decode(self.out / "tilesz01.lbm")
+        self.assertEqual(bytes(got), bytes(second[(y // 2) * w + x // 2] for y in range(2 * h) for x in range(2 * w)))
+
     def test_an_atlas_without_a_reviewed_choice_refuses(self) -> None:
         write_lbm(self.src / "tilesz01.lbm", 8, 8, bytes(64))
         with self.assertRaises(SystemExit):

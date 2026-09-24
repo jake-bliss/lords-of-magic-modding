@@ -65,7 +65,7 @@ what = "NDC x scale 320.0f -> 640.0f"
 va = 0x54d7d8
 old = "00 00 a0 c3"
 new = "00 00 20 c4"
-what = "NDC y scale -320.0f -> -640.0f"
+what = "NDC x offset -320.0f -> -640.0f (screen_x = ndc_x*320 - (-320); fsub at 0x469b81)"
 
 [[patch]]
 va = 0x54d7dc
@@ -132,3 +132,102 @@ va = 0x519de3
 old = "b8 7f 01 00 00"
 new = "b8 ff 02 00 00"
 what = "camera screen-to-map extent y 383 -> 767"
+
+# --- screen-space limits that go with the 1280x960 frame -----------------------------------------
+# Found in cross-review (2026-09-24). The cursor gate above lets the pointer reach 1279x959, and
+# these are the other readers of that pointer and of the frame's extent.
+#
+# Edge scrolling, 0x500bf0 (called from the mouse path at 0x503c6a): the map scrolls when the
+# pointer is at x >= 639 / y >= 479, with 50px corner zones at 590 / 430. Left at 640x480 with the
+# gate raised, the whole right half and bottom half of the screen would scroll the map without
+# stopping, and map hover would be skipped there.
+
+[[patch]]
+va = 0x500c56
+old = "81 fd 4e 02 00 00"
+new = "81 fd ce 04 00 00"
+what = "edge scroll: top-right corner zone x > 590 -> > 1230"
+
+[[patch]]
+va = 0x500c6d
+old = "81 ff ae 01 00 00"
+new = "81 ff 8e 03 00 00"
+what = "edge scroll: bottom corner zone y > 430 -> > 910"
+
+[[patch]]
+va = 0x500c86
+old = "81 ff ae 01 00 00"
+new = "81 ff 8e 03 00 00"
+what = "edge scroll: bottom-right corner zone y > 430 -> > 910"
+
+[[patch]]
+va = 0x500c8e
+old = "81 fd 4e 02 00 00"
+new = "81 fd ce 04 00 00"
+what = "edge scroll: bottom-right corner zone x > 590 -> > 1230"
+
+[[patch]]
+va = 0x500cb0
+old = "81 ff df 01 00 00"
+new = "81 ff bf 03 00 00"
+what = "edge scroll: bottom edge y >= 479 -> >= 959"
+
+[[patch]]
+va = 0x500cd8
+old = "81 fd 7f 02 00 00"
+new = "81 fd ff 04 00 00"
+what = "edge scroll: right edge x >= 639 -> >= 1279"
+
+[[patch]]
+va = 0x500cff
+old = "81 fd 7f 02 00 00"
+new = "81 fd ff 04 00 00"
+what = "map hover gate x < 639 -> < 1279"
+
+[[patch]]
+va = 0x500d07
+old = "81 ff df 01 00 00"
+new = "81 ff bf 03 00 00"
+what = "map hover gate y < 479 -> < 959"
+
+# Full-screen dirty lists, built in the container init. 0x5000f0 copies left/top/RIGHT of the map
+# dirty lists' clips from the first of these on every mode-8 entry and exit, so leaving it at 639
+# would undo the map lists' 1279 (terrain-render-2x.toml) the first time the mode changes, and the
+# right half of the map would stop being presented. The recentre at 0x51ab90 invalidates the whole
+# screen through the second list.
+
+[[patch]]
+va = 0x4ff150
+old = "b8 7f 02 00 00"
+new = "b8 ff 04 00 00"
+what = "full-screen dirty list +0x22f08 clip right 639 -> 1279"
+
+[[patch]]
+va = 0x4ff185
+old = "b8 df 01 00 00"
+new = "b8 bf 03 00 00"
+what = "full-screen dirty list +0x22f08 clip bottom 479 -> 959"
+
+[[patch]]
+va = 0x4ff1cd
+old = "b8 7f 02 00 00"
+new = "b8 ff 04 00 00"
+what = "full-screen dirty list +0x22fbc clip right 639 -> 1279"
+
+[[patch]]
+va = 0x4ff202
+old = "b8 df 01 00 00"
+new = "b8 bf 03 00 00"
+what = "full-screen dirty list +0x22fbc clip bottom 479 -> 959"
+
+[[patch]]
+va = 0x51abd9
+old = "ba 7f 02 00 00"
+new = "ba ff 04 00 00"
+what = "recentre: invalidate whole screen right 639 -> 1279"
+
+[[patch]]
+va = 0x51abde
+old = "be df 01 00 00"
+new = "be bf 03 00 00"
+what = "recentre: invalidate whole screen bottom 479 -> 959"

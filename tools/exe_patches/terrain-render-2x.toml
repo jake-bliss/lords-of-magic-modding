@@ -17,11 +17,12 @@
 # other than 60 leaves a band unrendered (larger) or lets the rasterizer write past the surface
 # (smaller). 1399/887 is right only while the margin stays 60.
 #
+# The full-screen dirty-list clips and the recentre invalidate are frame-space and live in
+# viewport-2x.toml; 0x500152 below depends on 0x4ff150 there (mode-8 copies its right edge).
+#
 # HELD BACK, deliberately -- each is a candidate for a rung-0 symptom, not a guess to pre-apply:
 
 #   0x5190f6 MODE8/medium: same, when per-player mode [0x5a8078]==8 (480-tall map view); patch only if that mode is in scope
-#   0x51abd9 MUST*/medium: recentre: invalidate whole screen (0,0,639,479) on list 0x5a7aa4 (container+0x22fbc); useless unless that list clip (4ff1cd/4ff202) also grows
-#   0x51abde MUST*/medium: same, bottom 479 -> 959
 #   0x51a87a ALT/low: camera-bound setter: NOP the sar (doubles bound, = (2w-1280)/2) instead of touching 640/384; bounds x = (w-640)/2 -> w-640
 #   0x51a88d ALT/low: camera-bound setter: NOP the sar (doubles bound, = (2w-1280)/2) instead of touching 640/384; bounds y = (h-384)/2 -> h-384
 #   0x51a8df ALT/low: camera-bound setter: NOP the sar (doubles bound, = (2w-1280)/2) instead of touching 640/384; bounds (640-a*640)/2 -> 640-a*640
@@ -29,10 +30,6 @@
 #   0x51a90f ALT/low: camera-bound setter: NOP the sar (doubles bound, = (2w-1280)/2) instead of touching 640/384; (a*640-640)/2 -> a*640-640
 #   0x51a911 ALT/low: camera-bound setter: NOP the sar (doubles bound, = (2w-1280)/2) instead of touching 640/384; (b*384-384)/2 -> b*384-384
 #   0x5001ae MODE8/medium: entering mode 8: map dirty-list clip bottom 479
-#   0x4ff150 FULLSCR/low: full-screen dirty list +0x22f08 clip right 639 (UI space?)
-#   0x4ff185 FULLSCR/low: same, bottom 479
-#   0x4ff1cd FULLSCR/low: full-screen dirty list +0x22fbc (=0x5a7aa4) clip right 639
-#   0x4ff202 FULLSCR/low: same, bottom 479
 #   0x4a31c3 OVERLAY/low: thick-pixel plotter into back buffer, clipped to map viewport: x<639-r
 #   0x4a31d5 OVERLAY/low: thick-pixel plotter into back buffer, clipped to map viewport: y<383-r
 #   0x4a32d0 OVERLAY/low: thick-pixel plotter into back buffer, clipped to map viewport: x<639-r

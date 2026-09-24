@@ -82,7 +82,11 @@ case "${rung}" in
   restore)
     scripts/install-dev-exe.sh --restore
     install_pic gs5r3-base "${BASE_BUILD}"
-    [[ -f "${saved_ini}" ]] && cp "${saved_ini}" "$(approve_dev_path "${ini}")"
+    if [[ -f "${saved_ini}" ]]; then
+      cp "${saved_ini}" "$(approve_dev_path "${ini}")"
+      # Consumed: a later ladder saves the window as it is THEN, not as it was before this one.
+      rm -f "$(approve_dev_path "${saved_ini}")"
+    fi
     ;;
 esac
 echo "  development profile is on rung ${rung}"

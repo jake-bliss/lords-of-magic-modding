@@ -16,8 +16,10 @@ upscaled alone, and cropped, so nothing outside the tile can reach it.
 
 **Quantized index-safely.** Texels go through the light tables by PALETTE INDEX, so the atlas must
 stay 8-bit in its own palette. A 2x pixel may only take an index that occurs within one source
-pixel of it AND inside the same tile, so the key, colour-cycling ranges and special indices never
-spread to pixels that did not have them, and no index crosses a tile edge.
+pixel of it AND inside the same tile, so no index reaches a pixel more than one source pixel from
+where the original had it, and none crosses a tile edge. (An isolated index CAN grow into its
+neighbouring 2x pixels. None of the 20 atlases has an active CRNG range, so no cycling colour can
+spread; a key or cycling index added later would want excluding from its neighbours' candidates.)
 
 **Not every atlas.** `thite01`/`ttype01` are data maps read by coordinate (height and terrain type),
 not textures; doubling them would double the map's lookups rather than its detail.
@@ -26,6 +28,7 @@ not textures; doubling them would double the map's lookups rather than its detai
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -140,12 +143,16 @@ def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pa
         t = sizes.get(f"{name}.lbm", DEFAULT_TILE)
         if w % t or h % t:
             raise SystemExit(f"{name}: {w}x{h} is not a whole number of {t}px tiles")
-        tiles_dir = work / "tiles" / name
+        # Tiles and renders are reused on a rerun, so their names carry everything they were made
+        # from: the source atlas's bytes, the tile size and the padding. A re-extracted source or a
+        # new PAD gets fresh tiles instead of silently compositing the old ones.
+        digest = hashlib.sha256(lbm.read_bytes() + b"%d/%d" % (t, PAD)).hexdigest()[:12]
+        tiles_dir = work / "tiles" / f"{name}-{digest}"
         tiles_dir.mkdir(parents=True, exist_ok=True)
         inputs = {}
         for ty in range(h // t):
             for tx in range(w // t):
-                key = f"{name}_{tx:02d}_{ty:02d}"
+                key = f"{name}-{digest}_{tx:02d}_{ty:02d}"
                 path = tiles_dir / f"{key}.png"
                 if not path.exists():
                     lbm_png.write_png(path, t + 2 * PAD, t + 2 * PAD, padded_tile(idx, w, pal, tx, ty, t, PAD))
