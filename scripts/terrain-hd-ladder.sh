@@ -19,6 +19,8 @@
 #   rung 2  + the texture stride at 1024.
 #           Expect: terrain sharp and correct, at the same magnification as rung 0.
 #   (rung 3 is rung 2's install: enter a battle and a location view, which use other atlases.)
+#   Since 2026-09-24 every rung also carries sprites-2x.toml (map sprites and the cursor across the
+#   whole map); the ladder itself was run before it existed.
 #   restore puts back the pristine exe, the gs5r3-base archives and the window size.
 #
 # The window is set to 1280x960 for every rung, so the 2x frame is shown 1:1 rather than scaled.
@@ -30,7 +32,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-mod-pipeline.sh"
 ART_BUILD="${LOM_TERRAIN_ART_BUILD:-6c996e7484b7}"
 BASE_BUILD="${LOM_BASE_BUILD:-ad9fece3123a}"
 sets_dir="${project_dir}/tools/exe_patches"
-viewport=("${sets_dir}/viewport-2x.toml" "${sets_dir}/terrain-render-2x.toml")
+viewport=("${sets_dir}/viewport-2x.toml" "${sets_dir}/terrain-render-2x.toml" "${sets_dir}/sprites-2x.toml")
 stride="${sets_dir}/terrain-stride-1024.toml"
 
 rung="${1:-}"

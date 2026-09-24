@@ -8,7 +8,7 @@
 # not crash -- it leaves unrendered or stale bands along the right and bottom after a scroll.
 #
 # Sites come from a full classification of every 639/383/640/384/759/503 literal in the render
-# path (backups/terrain-hd-20260924/literal-classification.md, 2026-09-24, static only): 87 rows
+# path (backups/terrain-hd-20260924/literal-classification.md, 2026-09-24, static only): 85 rows
 # applied here, high and medium confidence, all of one kind -- a map-viewport or map-surface extent.
 #
 # 🔴 THE RASTERIZER CLIP IS A CONSTANT, NOT A FUNCTION OF THE SURFACE. The ctor writes 759/503
@@ -19,6 +19,9 @@
 #
 # The full-screen dirty-list clips and the recentre invalidate are frame-space and live in
 # viewport-2x.toml; 0x500152 below depends on 0x4ff150 there (mode-8 copies its right edge).
+#
+# REVERTED: 0x49aaa0/0x49aaa7 (global rect 0x584ab8). Classified as a draw clip; a later read found its
+# only reader feeds the SOURCE rect of an animated-IMP script draw, so doubling it could read past an image.
 #
 # HELD BACK, deliberately -- each is a candidate for a rung-0 symptom, not a guess to pre-apply:
 
@@ -506,18 +509,6 @@ va = 0x503cd1
 old = "be 7f 01 00 00"
 new = "be ff 02 00 00"
 what = "503c95: mov    esi,0x17f -- same, bottom"
-
-[[patch]]
-va = 0x49aaa0
-old = "be 7f 01 00 00"
-new = "be ff 02 00 00"
-what = "49aa80: mov    esi,0x17f -- global rect 0x584ab8 = (0,0,639,383) bottom; used by 4f2f50 (vfunc +0x14 draw clip)"
-
-[[patch]]
-va = 0x49aaa7
-old = "ba 7f 02 00 00"
-new = "ba ff 04 00 00"
-what = "49aa80: mov    edx,0x27f -- same, right"
 
 [[patch]]
 va = 0x4ff22f
