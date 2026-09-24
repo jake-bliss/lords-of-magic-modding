@@ -221,8 +221,32 @@ class RealBinary(unittest.TestCase):
             with self.subTest(path.name):
                 ep.plan(self.image, [ep.load_set(path)])
 
-    def test_all_shipped_sets_apply_together(self) -> None:
-        ep.plan(self.image, [ep.load_set(p) for p in sorted(self.SETS.glob("*.toml"))])
+    # The builds that are installed together (scripts/terrain-hd-ladder.sh). The two terrain builds
+    # are alternatives -- they give the same sites different values -- so they never combine.
+    BUILDS = {
+        "magnify": ["viewport-2x", "terrain-render-2x", "sprites-2x", "terrain-stride-1024"],
+        "hybrid": ["terrain-hybrid-2x", "terrain-stride-1024"],
+    }
+
+    def test_every_build_applies(self) -> None:
+        for name, sets in self.BUILDS.items():
+            with self.subTest(name):
+                ep.plan(self.image, [ep.load_set(self.SETS / f"{s}.toml") for s in sets])
+
+    def test_every_shipped_set_is_in_a_build(self) -> None:
+        used = {s for sets in self.BUILDS.values() for s in sets}
+        self.assertEqual({p.stem for p in self.SETS.glob("*.toml")}, used)
+
+    def test_the_hybrid_leaves_the_texel_shifts_alone(self) -> None:
+        # The same two vertex-setup functions shift the texel u/v with shl 16 as well; TILESIZE in
+        # the .til already doubles those, so doubling them here too would sample at 4x.
+        uv = {0x512574, 0x512583, 0x512599, 0x5125BA, 0x518F87, 0x518F95, 0x518FAB, 0x518FC7}
+        vas = {p.va for p in ep.load_set(self.SETS / "terrain-hybrid-2x.toml").patches}
+        self.assertFalse(uv & vas)
+        for va in uv:
+            off = ep.va_to_offset(ep.sections(self.image), va, 3)
+            self.assertEqual(self.image[off], 0xC1, hex(va))
+            self.assertEqual(self.image[off + 2], 0x10, hex(va))
 
     def test_the_stride_pattern_exists_only_in_the_rasterizer(self) -> None:
         # Whole file, not the declared range: a 19th site outside it would never be scanned.

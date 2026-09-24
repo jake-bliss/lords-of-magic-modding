@@ -1,0 +1,193 @@
+# HD terrain, hybrid: the game stays 640x480 and only the terrain rasterizes at 2x.
+#
+# The map render surface becomes a 2x-resolution image of the stock 1x surface space. Only two things
+# know that: the rasterizer's vertex setup (512350 and 518c50 build 16.16 positions with shl 16; shl 17
+# doubles the drawn geometry and nothing else), and the fork's ddraw.dll, which doubles every rect or
+# point on the map-surface side of a Blt/BltFast and downsamples map->back-buffer copies 2:1, keeping
+# the 2x pixels to composite at present time. Every other coordinate -- camera, dirty lists, culling,
+# picking, sprites, the frame -- stays stock, so viewport-2x, terrain-render-2x and sprites-2x are NOT
+# used with this set. terrain-stride-1024.toml is (the 2x atlases need it).
+#
+# Surface: 4m+1280 x 4m+768 = 1520x1008 at margin 60 (not 2m+1280): the movie save/restore and the
+# start screen use the map surface as a 640x480 scratch buffer, which the DLL doubles to 1280x960.
+#
+# Static analysis 2026-09-24 (scratchpad hybrid-analysis.md, archived beside lomse.asm in
+# backups/terrain-hd-20260924). Edges keep 1x precision: vertex positions are whole 1x pixels, so they
+# land on even 2x pixels; texture interiors get full 2x texel density.
+
+[target]
+sha256 = "a505f399d5be73fe0a2215633f663717f28daeb3075bbcc05b47d40653669052"
+
+[[patch]]
+va = 0x512446
+old = "c1 e5 10"
+new = "c1 e5 11"
+what = "1: 512350 shl ebp,0x10 (v0.x + wrap + origin) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x51245e
+old = "c1 e5 10"
+new = "c1 e5 11"
+what = "2: shl ebp,0x10 (v0.y) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x512498
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "3: shl edx,0x10 (v1.x) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x5124b8
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "4: shl edx,0x10 (v1.y) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x5124e3
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "5: shl edx,0x10 (v2.x) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x512508
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "6: shl edx,0x10 (v2.y) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x512534
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "7: shl edx,0x10 (v3.x) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x512555
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "8: shl edx,0x10 (v3.y) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x512691
+old = "c1 fb 10"
+new = "c1 fb 11"
+what = "9: 512350 dirty rect sar ebx,0x10 (reads back vertex x) (high)"
+
+[[patch]]
+va = 0x51269a
+old = "c1 fd 10"
+new = "c1 fd 11"
+what = "10: sar ebp,0x10 (x) (2x->1x)"
+
+[[patch]]
+va = 0x5126a2
+old = "c1 fe 10"
+new = "c1 fe 11"
+what = "11: sar esi,0x10 (y) (2x->1x)"
+
+[[patch]]
+va = 0x5126ab
+old = "c1 ff 10"
+new = "c1 ff 11"
+what = "12: sar edi,0x10 (y) (2x->1x)"
+
+[[patch]]
+va = 0x518e51
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "13: 518c50 shl edx,0x10 (v0.x) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x518e75
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "14: (v0.y) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x518ea4
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "15: (v1.x) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x518ec8
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "16: (v1.y) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x518ef7
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "17: (v2.x) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x518f1c
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "18: (v2.y) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x518f4d
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "19: (v3.x) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x518f6e
+old = "c1 e2 10"
+new = "c1 e2 11"
+what = "20: (v3.y) (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x51149b
+old = "c7 86 80 02 00 00 f7 01 00 00"
+new = "c7 86 80 02 00 00 ef 03 00 00"
+what = "21: ctor mov [esi+0x280],0x1f7 clip ymax (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x5114a5
+old = "c7 86 7c 02 00 00 f7 02 00 00"
+new = "c7 86 7c 02 00 00 ef 05 00 00"
+what = "22: ctor mov [esi+0x27c],0x2f7 clip xmax (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x47532e
+old = "8d 84 12 80 01 00 00"
+new = "8d 04 95 00 03 00 00"
+what = "23: lea eax,[edx+edx*1+0x180] map surface H (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x475335
+old = "8d 94 09 80 02 00 00"
+new = "8d 14 8d 00 05 00 00"
+what = "24: lea edx,[ecx+ecx*1+0x280] map surface W (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x51af05
+old = "8d 84 1b 80 01 00 00"
+new = "8d 04 9d 00 03 00 00"
+what = "25: script set-margin recreate H (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x51af0e
+old = "8d 8c 09 80 02 00 00"
+new = "8d 0c 8d 00 05 00 00"
+what = "26: script set-margin recreate W (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x504bcb
+old = "8d 94 09 80 01 00 00"
+new = "8d 14 8d 00 03 00 00"
+what = "27: 504b80 lock-clear rect H (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x504bd2
+old = "8d 8c 00 80 02 00 00"
+new = "8d 0c 85 00 05 00 00"
+what = "28: 504b80 lock-clear rect W (SURFACE-PIXEL)"
+
+[[patch]]
+va = 0x46a0fe
+old = "c1 e1 02"
+new = "c1 e1 04"
+what = "29: 46a000 (vtbl[16], surface-lost restore) clear byte count shl ecx,2 (SURFACE-PIXEL)"

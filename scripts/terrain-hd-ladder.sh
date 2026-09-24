@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Put the development profile on one rung of the HD-terrain ladder. Launches nothing.
 #
-#   scripts/terrain-hd-ladder.sh 0|1|2|restore
+#   scripts/terrain-hd-ladder.sh 0|1|2|hybrid|restore
 #
 # One attended session, four readings. Each rung changes ONE thing, so whichever rung breaks names
 # the step that failed rather than leaving "HD terrain did not work" to be guessed at.
@@ -21,6 +21,14 @@
 #   (rung 3 is rung 2's install: enter a battle and a location view, which use other atlases.)
 #   Since 2026-09-24 every rung also carries sprites-2x.toml (map sprites and the cursor across the
 #   whole map); the ladder itself was run before it existed.
+#   hybrid  the build Jake chose (2026-09-24): the game stays 640x480 as stock and only the terrain
+#           rasterizes at 2x (terrain-hybrid-2x.toml + the stride), composited by the fork's ddraw.dll.
+#           Needs that DLL installed first -- the exe alone draws a magnified quarter of the map,
+#           and this rung refuses to install without it.
+#           Expect: the whole 640x480 game at its normal layout and zoom, units and interface at
+#           their normal size, terrain sharper than vanilla. The quarter-map picture means the DLL
+#           did not switch on; vanilla-looking terrain means it switched on but drew nothing (the
+#           debug log's "terrain:" lines say which).
 #   restore puts back the pristine exe, the gs5r3-base archives and the window size.
 #
 # The window is set to 1280x960 for every rung, so the 2x frame is shown 1:1 rather than scaled.
@@ -34,9 +42,10 @@ BASE_BUILD="${LOM_BASE_BUILD:-ad9fece3123a}"
 sets_dir="${project_dir}/tools/exe_patches"
 viewport=("${sets_dir}/viewport-2x.toml" "${sets_dir}/terrain-render-2x.toml" "${sets_dir}/sprites-2x.toml")
 stride="${sets_dir}/terrain-stride-1024.toml"
+hybrid="${sets_dir}/terrain-hybrid-2x.toml"
 
 rung="${1:-}"
-[[ "${rung}" =~ ^(0|1|2|restore)$ ]] || die "usage: $0 0|1|2|restore"
+[[ "${rung}" =~ ^(0|1|2|hybrid|restore)$ ]] || die "usage: $0 0|1|2|hybrid|restore"
 
 refuse_if_game_running
 metadata_dir="$(dev_metadata_dir)"
@@ -78,6 +87,14 @@ case "${rung}" in
     ;;
   2)
     scripts/install-dev-exe.sh "${viewport[@]}" "${stride}"
+    install_pic terrain-hd-art "${ART_BUILD}"
+    set_window 1280 960
+    ;;
+  hybrid)
+    # The string only the terrain-composite build of the fork's DLL carries.
+    grep -qa 'map copies, %ld builds' "${dev_game_dir}/ddraw.dll" ||
+      die "the installed ddraw.dll has no HD terrain composite -- install the fork's claude/hybrid-terrain build first"
+    scripts/install-dev-exe.sh "${hybrid}" "${stride}"
     install_pic terrain-hd-art "${ART_BUILD}"
     set_window 1280 960
     ;;
