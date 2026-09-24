@@ -1,3 +1,7 @@
+> **Internal working notes.** Hand-off notes written between working sessions (people and AI
+> agents) while the project was private. Kept for the history of how things were found; the
+> maintained documentation is the rest of `docs/`.
+
 # Agent handoff — 2026-09-16 (engine operator table, arity, hotspot geometry)
 
 ## Outcome and next move

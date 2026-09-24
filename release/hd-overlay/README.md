@@ -71,7 +71,9 @@ the game folder (cnc-ddraw creates it on first run) and set `width=1280` and `he
 
 **Undo:** `python lomhd_setup.py --uninstall` puts your original `lomse.exe` back from the backup
 (checking it first) and removes `lomhd_terrain`, along with the rest of the mod. If something else
-has changed `lomse.exe` since, uninstall leaves it alone and says so rather than overwrite it.
+has changed `lomse.exe` since, uninstall leaves it alone and says so rather than overwrite it. If
+`lomhd_terrain` holds files setup did not write (you edited or added art by hand), setup leaves the
+folder where it is and says so; `--force-terrain-folder` lets it replace or remove the folder anyway.
 
 Steam's **Verify integrity of game files** puts the original `lomse.exe` back and so undoes the exe
 half. That is harmless: the game runs as normal with the ordinary terrain. Run
@@ -114,7 +116,7 @@ If you installed with `--game`, uninstall with the same `--game "..."` too.
 
 This puts your original `ddraw.dll` back (it was saved as `ddraw.dll.lomhd-backup`) and removes the
 image pack. If you installed HD terrain it also puts your original `lomse.exe` back and removes
-`lomhd_terrain`. To turn the HD art off without uninstalling, delete `lomhd_portraits.pack` from the
+`lomhd_terrain` (unless you changed files in it -- see above). To turn the HD art off without uninstalling, delete `lomhd_portraits.pack` from the
 game folder (the name dates from when it held only portraits).
 
 ## If something looks wrong

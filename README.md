@@ -65,7 +65,7 @@ Concretely, today you can **inspect, decode, render, export, measure, validate a
 3. Back up `gs.mpq`, `pic.mpq`, configuration files, and saves before replacement.
 4. Treat observed behavior, community claims, and our inferences as different evidence classes.
 5. Build repeatable extraction, validation, packing, and smoke-test commands before attempting a large mod.
-6. If distributing a mod, distribute original work or a patch—not Sierra/Rebellion's complete copyrighted assets.
+6. If distributing a mod, distribute original work or a patch—not the game's copyrighted assets.
 
 ## Immediate opportunity
 

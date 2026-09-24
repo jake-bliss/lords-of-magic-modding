@@ -504,7 +504,7 @@ def install(game: pathlib.Path, pack: "bytes | pathlib.Path", record: dict) -> N
                  "Left untouched. Remove that mod first, or put your original back by hand.")
         if had and saved != backup_sha:
             if restored:                                # the original is right here: back it up again
-                shutil.copy2(dll, backup)
+                write_atomically(backup, dll)
             else:
                 fail(f"{BACKUP_NAME} is missing or changed, so your original could not be restored "
                      "later. Nothing was installed.")
@@ -518,7 +518,7 @@ def install(game: pathlib.Path, pack: "bytes | pathlib.Path", record: dict) -> N
             fail(f"{backup} already exists and is not a backup of the current ddraw.dll. Move it "
                  "aside by hand so nothing is overwritten.")
     elif current is not None and current not in ours_any:
-        shutil.copy2(dll, backup)
+        write_atomically(backup, dll)                   # whole or not at all, like the exe's
         if file_hash(backup) != current:
             fail("the backup of ddraw.dll did not verify. Nothing was installed.")
         had, backup_sha = True, current
@@ -568,7 +568,7 @@ def uninstall(game: pathlib.Path, force_terrain_folder: bool = False) -> None:
             if file_hash(backup) != backup_sha:
                 fail(f"{BACKUP_NAME} is missing or changed, so the original cannot be restored "
                      "safely. Nothing was removed.")
-            shutil.copy2(backup, dll)
+            write_atomically(dll, backup)
         else:
             dll.unlink()
     elif not (current is None and not had):

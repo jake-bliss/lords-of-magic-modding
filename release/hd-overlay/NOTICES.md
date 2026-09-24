@@ -1,12 +1,16 @@
 # Notices
 
-**This mod** -- the setup script and tools -- is free, non-commercial fan work. Lords of Magic is (c)
-Sierra / Impressions Games; no part of it is distributed here.
+**This mod** -- the setup script and tools -- is free, non-commercial fan work. Lords of Magic was
+developed by Impressions Games and published by Sierra, and belongs to its current rights holders;
+no part of it is distributed here.
 
 **ddraw.dll** is a modified build of [cnc-ddraw](https://github.com/FunkyFr3sh/cnc-ddraw) 7.1.0.0,
 MIT licence, (c) 2022 github.com/FunkyFr3sh. Full text in `LICENSE-cnc-ddraw.txt`. The
 modification adds the portrait overlay (`src/lomhd.c`, `src/lomhd_match.c`) and serves the HD
-terrain from `lomhd_terrain`.
+terrain from `lomhd_terrain`. Its source, with every change, is at
+[jake-bliss/cnc-ddraw](https://github.com/jake-bliss/cnc-ddraw) (branch `lom-hd-overlay`). It
+includes [lodepng](https://github.com/lvandeve/lodepng) (zlib licence, (c) Lode Vandevenne), with
+a bounded-decompression change marked `lomhd:` in its source.
 
 **HD terrain (`--terrain`)** patches your own `lomse.exe` on your machine, from the edit lists in
 `exe_patches/`. No part of `lomse.exe` is distributed here: the lists hold only the few bytes each
