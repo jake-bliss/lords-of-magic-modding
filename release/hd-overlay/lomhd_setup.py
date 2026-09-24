@@ -5,6 +5,7 @@
     python lomhd_setup.py --game "C:\\...\\English"
     python lomhd_setup.py --uninstall           put the game back exactly as it was
     python lomhd_setup.py --review              pick your own upscaler per picture first
+    python lomhd_setup.py --terrain             also install HD terrain (patches lomse.exe)
 
 Choosing your own: --review renders every upscale option for every picture from your own game,
 then opens a review page on this computer (http://127.0.0.1:8765) with the shipped picks already
@@ -23,6 +24,15 @@ What it does, in order, and nothing else:
   4. Writes lomhd_portraits.pack beside lomse.exe.
   5. Backs up your ddraw.dll to ddraw.dll.lomhd-backup and installs the overlay's ddraw.dll.
 
+With --terrain, after those five steps (and only if they succeeded):
+
+  6. Reads the terrain atlases and their .til files out of your pic.mpq and upscales every tile to
+     2x, quantized back to its atlas's own palette (tools/terrain_hd.py).
+  7. Writes them to lomhd_terrain/til beside lomse.exe. pic.mpq is not changed.
+  8. Backs up lomse.exe to lomse.exe.lomhd-backup and patches it (65 same-size edits, every one
+     checked before any is written) so the terrain is drawn at 2x. Last, so an interrupted run never
+     leaves a patched game without its art.
+
 Needs Python 3.9+, ImageMagick 7 (`magick` on PATH) and a GPU with Vulkan. Takes 20-60 minutes,
 almost all of it step 3. Everything it downloads or makes lives in `lomhd_work` next to this script.
 """
@@ -34,6 +44,7 @@ import json
 import os
 import pathlib
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -45,10 +56,12 @@ import zipfile
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "tools"))
 
+import exe_patch  # noqa: E402
 import hd_portrait_pack  # noqa: E402
 import hd_upscale  # noqa: E402
 import lbm_png  # noqa: E402
 import mpq_read  # noqa: E402
+import terrain_hd  # noqa: E402
 
 WORK = HERE / "lomhd_work"
 PACK_NAME = "lomhd_portraits.pack"
@@ -56,6 +69,22 @@ BACKUP_NAME = "ddraw.dll.lomhd-backup"
 RECORD_NAME = "lomhd_install.json"
 SHIPPED_CHOICES = HERE / "upscale-choices.json"
 MY_CHOICES = HERE / "my-upscale-choices.json"
+
+# HD terrain (--terrain). The exe half and the art half are installed and removed as a pair: the
+# DLL serves lomhd_terrain only to the patched exe, so a stock exe beside a leftover folder is
+# harmless, but a patched exe WITHOUT the folder draws scrambled terrain.
+EXE_NAME = "lomse.exe"
+EXE_BACKUP_NAME = "lomse.exe.lomhd-backup"
+TERRAIN_DIR = "lomhd_terrain"
+TERRAIN_SETS = ("terrain-hybrid-2x", "terrain-stride-1024")     # exe_patches/<name>.json
+# GS5R3 lomse.exe, the binary the sets were derived from, and what applying both sets to it gives.
+# The second is recomputed from the pristine bytes on every install and must agree; the constant is
+# what recognises an already-patched exe when there are no pristine bytes to hand.
+PRISTINE_EXE_SHA256 = "a505f399d5be73fe0a2215633f663717f28daeb3075bbcc05b47d40653669052"
+PATCHED_EXE_SHA256 = "ddb438837c47f5299fe5b74e4c1de9c31fcbc7b218179c69ba043b9b93d0bee2"
+TERRAIN_STRIDE = 1024            # terrain-stride-1024: EVERY sampled atlas must be this wide
+TERRAIN_TILE = 64                # TILESIZE after doubling
+SHORT_IN_THE_ORIGINAL = {"jeff01.lbm": 2 * 480}   # jeff01.til declares 16 rows over a 480-tall atlas
 GROUPS = {                       # group -> (folder in pic.mpq, the one size its members have)
     "portrait": ("portrait", (70, 67)),
     "building": ("lbm\\building", None),
@@ -433,17 +462,19 @@ def file_hash(path: pathlib.Path) -> str | None:
     return sha256(path) if path.is_file() else None
 
 
-def check_writable(game: pathlib.Path) -> None:
-    """Before the long step, not after it. Windows locks the ddraw.dll a running game has loaded,
-    and a copy that fails there would do so after twenty minutes of upscaling."""
+def check_writable(game: pathlib.Path, terrain: bool = False) -> None:
+    """Before the long step, not after it. Windows locks the ddraw.dll a running game has loaded
+    (and, for --terrain, its lomse.exe), and a copy that fails there would do so after twenty
+    minutes of upscaling."""
     dll = game / "ddraw.dll"
     probe = game / "lomhd_write_test.tmp"
     try:
         probe.write_bytes(b"")
         probe.unlink()
-        if dll.is_file():
-            with dll.open("r+b"):
-                pass
+        for held in [dll] + ([game / EXE_NAME] if terrain else []):
+            if held.is_file():
+                with held.open("r+b"):
+                    pass
     except OSError:
         fail(f"cannot write to {game}. Close the game (and cnc-ddraw's config tool) and run again; "
              "if it still fails, run the terminal as administrator.")
@@ -504,6 +535,8 @@ def install(game: pathlib.Path, pack: "bytes | pathlib.Path", record: dict) -> N
         # cnc-ddraw writes a default ddraw.ini on its first run when there is none -- the case on a
         # Windows Steam install, which ships no ddraw.dll at all. Uninstall removes it only then.
         "had_ini": previous.get("had_ini", (game / "ddraw.ini").exists()),
+        # Kept across a plain re-run: the terrain is still installed, and uninstall reads this.
+        **({"terrain": previous["terrain"]} if "terrain" in previous else {}),
     }, indent=2).encode() + b"\n")
     write_atomically(game / PACK_NAME, pack)
     write_atomically(dll, (HERE / "ddraw.dll").read_bytes())
@@ -517,6 +550,7 @@ def uninstall(game: pathlib.Path) -> None:
             fail(f"{RECORD_NAME} is damaged. Run the install again (it recovers from the backup), "
                  "then --uninstall.")
         fail(f"no {RECORD_NAME} in {game}; the overlay does not look installed there.")
+    terrain_removed = uninstall_terrain(game, record)
     dll, backup = game / "ddraw.dll", game / BACKUP_NAME
     had, backup_sha = record["had_ddraw"], record["backup_sha256"]
     current = file_hash(dll)
@@ -552,9 +586,283 @@ def uninstall(game: pathlib.Path) -> None:
         if (game / name).exists():
             (game / name).unlink()
     say(f"Uninstalled. ddraw.dll is {'your original again' if had else 'removed'}.")
+    if terrain_removed:
+        say("HD terrain removed: lomse.exe is your original again and lomhd_terrain is gone.")
     if ini_saved:
         say(f"cnc-ddraw's settings file was set aside as {ini_saved.name} (the game ignores it; "
             "delete it if you like).")
+
+
+# --- HD terrain (--terrain) ----------------------------------------------------------------------
+
+def terrain_sets() -> list:
+    """The two patch sets, as shipped (JSON: tomllib is Python 3.11+ and setup promises 3.9), loaded
+    through exe_patch's own validation. Both must target the one binary this release knows."""
+    sets = []
+    for name in TERRAIN_SETS:
+        path = HERE / "exe_patches" / f"{name}.json"
+        if not path.is_file():
+            fail(f"{path.name} is missing from exe_patches. Unzip the mod again.")
+        try:
+            loaded = exe_patch.load_set(path)
+        except (exe_patch.PatchError, KeyError, ValueError) as error:
+            fail(f"{path.name} is damaged ({error}). Unzip the mod again.")
+        if loaded.sha256 != PRISTINE_EXE_SHA256:
+            fail(f"{path.name} targets a different lomse.exe than this release. Unzip the mod again.")
+        sets.append(loaded)
+    return sets
+
+
+def terrain_exe_plan(game: pathlib.Path) -> tuple[bytes, bytes]:
+    """(pristine bytes, patched bytes) for this game's lomse.exe, or a refusal naming why not.
+
+    The exe must be the pristine GS5R3 binary, or one this mod patched (a re-run or an upgrade), in
+    which case the pristine bytes come from the verified backup. Anything else -- another patch, a
+    different version -- is refused before anything is touched."""
+    exe, backup = game / EXE_NAME, game / EXE_BACKUP_NAME
+    record = read_record(game).get("terrain", {})
+    ours = {PATCHED_EXE_SHA256, *record.get("exe_patched_sha256s", [])}
+    current, saved = file_hash(exe), file_hash(backup)
+    if saved is not None and saved != PRISTINE_EXE_SHA256:
+        fail(f"{EXE_BACKUP_NAME} exists and is not the original lomse.exe. Move it aside by hand so "
+             "nothing is overwritten. The game's lomse.exe was not touched.")
+    if current == PRISTINE_EXE_SHA256:
+        pristine = exe.read_bytes()
+    elif current in ours:
+        if saved is None:
+            fail(f"lomse.exe is already patched for HD terrain but {EXE_BACKUP_NAME} is missing, so "
+                 "the original could not be restored later. Put the original back (Steam: Verify "
+                 "integrity of game files) and run again.")
+        pristine = backup.read_bytes()
+    else:
+        fail("lomse.exe is not the one HD terrain was made for (Lords of Magic Special Edition with "
+             "the GS5R3 patch) and not one this mod patched -- another patch or a different version "
+             "may have changed it. HD terrain was not installed; lomse.exe was not touched.")
+    try:
+        patched = exe_patch.apply(pristine, terrain_sets())
+    except exe_patch.PatchError as error:
+        fail(f"the terrain patch does not apply to this lomse.exe: {error}")
+    if hashlib.sha256(patched).hexdigest() != PATCHED_EXE_SHA256:
+        fail("patching lomse.exe gave an unexpected result. HD terrain was not installed.")
+    return pristine, patched
+
+
+def terrain_names() -> list[str]:
+    """The til\\*.lbm and til\\*.til members terrain_hd builds from. pic.mpq has no listfile, so
+    the names ship with the mod (terrain-names.txt), the way overlay-names.txt does."""
+    return [n.strip() for n in (HERE / "terrain-names.txt").read_text().splitlines() if n.strip()]
+
+
+def terrain_choices() -> dict[str, str]:
+    """The upscaler for each atlas: the shipped picks, with any terrain__ picks the player saved to
+    my-upscale-choices.json on top. Per atlas, so a file saved before terrain existed (no terrain__
+    keys) still builds with the shipped ones."""
+    choices = json.loads(SHIPPED_CHOICES.read_text())["choices"]
+    if MY_CHOICES.is_file():
+        mine = json.loads(MY_CHOICES.read_text())["choices"]
+        choices.update({k: v for k, v in mine.items() if k.startswith("terrain__")})
+    return {k: v for k, v in choices.items() if k.startswith("terrain__")}
+
+
+def extract_terrain(game: pathlib.Path) -> pathlib.Path:
+    """Every name in terrain-names.txt, from the player's own pic.mpq, into lomhd_work/terrain/src."""
+    archive = mpq_read.Archive(game / "pic.mpq")
+    src = WORK / "terrain" / "src"
+    if src.exists():
+        shutil.rmtree(src)
+    src.mkdir(parents=True)
+    names = terrain_names()
+    missing = [n for n in names if n.lower() not in archive]
+    if missing:
+        fail(f"pic.mpq has no {', '.join(missing[:5])}{' ...' if len(missing) > 5 else ''}. HD "
+             "terrain needs the terrain tilesets of Lords of Magic Special Edition. The HD art is "
+             "installed; lomse.exe was not touched.")
+    for name in names:
+        (src / name.lower().rpartition("\\")[2]).write_bytes(archive.read(name.lower()))
+    return src
+
+
+def lbm_size(path: pathlib.Path) -> tuple[int, int]:
+    data = path.read_bytes()
+    if data[:4] != b"FORM" or data[8:12] not in (b"PBM ", b"ILBM"):
+        raise ValueError(f"{path.name}: not an LBM")
+    i = 12
+    while i + 8 <= len(data):
+        tag, n = data[i:i + 4], int.from_bytes(data[i + 4:i + 8], "big")
+        if tag == b"BMHD":
+            return int.from_bytes(data[i + 8:i + 10], "big"), int.from_bytes(data[i + 10:i + 12], "big")
+        i += 8 + n + (n & 1)
+    raise ValueError(f"{path.name}: no BMHD")
+
+
+def check_terrain_art(src: pathlib.Path, out: pathlib.Path) -> None:
+    """mods/terrain-hd-art/rebuild.sh's checks, in Python: every .til and every atlas present,
+    TILESIZE 64, every atlas exactly its .til's TILES grid at 64px and exactly 2x its original, and
+    every atlas 1024 wide. With the stride patch in the exe, one atlas left at 512 renders sheared
+    garbage, so a build that fails any of these is not installed."""
+    names = [n.lower().rpartition("\\")[2] for n in terrain_names()]
+    want_tils = sorted(n for n in names if n.endswith(".til"))
+    want_lbms = sorted(n for n in names if n.endswith(".lbm") and n[:-4] not in terrain_hd.NOT_TEXTURES)
+    tils = sorted(p.name for p in out.glob("*.til"))
+    lbms = sorted(p.name for p in out.glob("*.lbm"))
+    problems = []
+    if tils != want_tils or lbms != want_lbms:
+        problems.append(f"built {len(tils)} .til and {len(lbms)} atlases, want {len(want_tils)} and "
+                        f"{len(want_lbms)}")
+    for til in tils:
+        text = (out / til).read_bytes().decode("latin-1")
+        lbm = re.search(r"^LBM=\s*(\S+)", text, re.M | re.I)
+        size = re.search(r"TILESIZE=\s*(\d+),\s*(\d+)", text)
+        grid = re.search(r"TILES=\s*(\d+),\s*(\d+)", text)
+        if not (lbm and size and grid):
+            problems.append(f"{til}: no LBM=, TILESIZE= or TILES=")
+            continue
+        name = lbm[1].strip().lower()
+        if name not in lbms:
+            problems.append(f"{til} names {name}, which was not built")
+            continue
+        if (int(size[1]), int(size[2])) != (TERRAIN_TILE, TERRAIN_TILE):
+            problems.append(f"{til}: TILESIZE {size[1]},{size[2]}")
+        # The rasterizer reads TILES x 64 texels. jeff01.til declares 16 rows over a 480-tall
+        # atlas, so it is held to exactly 2x its own height instead.
+        w, h = lbm_size(out / name)
+        want = (int(grid[1]) * TERRAIN_TILE, SHORT_IN_THE_ORIGINAL.get(name, int(grid[2]) * TERRAIN_TILE))
+        if (w, h) != want:
+            problems.append(f"{til}: {name} is {w}x{h}, want {want[0]}x{want[1]}")
+    for name in lbms:
+        w, h = lbm_size(out / name)
+        ow, oh = lbm_size(src / name) if (src / name).is_file() else (0, 0)
+        if w != TERRAIN_STRIDE:
+            problems.append(f"{name}: {w} wide -- every atlas must be {TERRAIN_STRIDE}")
+        if (w, h) != (2 * ow, 2 * oh):
+            problems.append(f"{name}: {w}x{h} is not twice the original {ow}x{oh}")
+    if problems:
+        fail("the HD terrain build did not check out, so it was not installed (the HD art is; "
+             "lomse.exe was not touched):\n  " + "\n  ".join(problems))
+
+
+def build_terrain(game: pathlib.Path, esrgan: pathlib.Path, models: pathlib.Path) -> pathlib.Path:
+    """The 2x atlases and doubled .til files, built and checked in lomhd_work. Touches nothing in
+    the game folder. Tiles and renders are reused on a rerun (terrain_hd keys them by content)."""
+    src = extract_terrain(game)
+    out = WORK / "terrain" / "til"
+    if out.exists():
+        shutil.rmtree(out)
+    try:
+        report = terrain_hd.build(src, out, esrgan, models, WORK / "terrain" / "work", terrain_choices())
+    except SystemExit as error:
+        fail(f"building HD terrain stopped: {error}\nThe HD art is installed; lomse.exe was not touched.")
+    for line in report:
+        if "skipped" in line:
+            say(f"     {line}")
+    check_terrain_art(src, out)
+    return out
+
+
+def terrain_digest(til: pathlib.Path) -> str | None:
+    """One hash for the art folder: every file's name and bytes. None when there is no folder."""
+    if not til.is_dir():
+        return None
+    digest = hashlib.sha256()
+    for path in sorted(til.iterdir()):
+        digest.update(path.name.encode() + b"\0" + sha256(path).encode() + b"\n")
+    return digest.hexdigest()
+
+
+def install_terrain(game: pathlib.Path, built: pathlib.Path) -> None:
+    """Record, then the art folder, then the exe -- the exe LAST, so an interrupted run leaves at
+    worst the art without the patch, which the stock exe ignores.
+
+    The art goes in whole or not at all: it is copied to a sibling folder and renamed into place.
+    The exe is backed up once (the backup verified), written beside itself and renamed over, and
+    verified again after."""
+    _, patched = terrain_exe_plan(game)
+    exe, backup = game / EXE_NAME, game / EXE_BACKUP_NAME
+    dest = game / TERRAIN_DIR
+    digest = terrain_digest(built)
+    record = read_record(game)
+    if not record:
+        fail(f"{RECORD_NAME} is missing or damaged after the HD art install. HD terrain was not "
+             "installed; lomse.exe was not touched.")
+    previous = record.get("terrain", {})
+    record["terrain"] = {
+        "exe_original_sha256": PRISTINE_EXE_SHA256,
+        "exe_patched_sha256": PATCHED_EXE_SHA256,
+        # Every patched exe this game has had, as overlay_sha256s does for the DLL: an upgrade whose
+        # patch differs must still recognise the old one as ours.
+        "exe_patched_sha256s": sorted({PATCHED_EXE_SHA256, *previous.get("exe_patched_sha256s", [])}),
+        "terrain_sha256": digest,
+    }
+    write_atomically(game / RECORD_NAME, json.dumps(record, indent=2).encode() + b"\n")
+
+    if terrain_digest(dest / "til") != digest or {p.name for p in dest.iterdir()} != {"til"}:
+        # (A re-run with the same art leaves the folder as it is: nothing to replace.)
+        part, old = game / (TERRAIN_DIR + ".lomhd-part"), game / (TERRAIN_DIR + ".lomhd-old")
+        for stale in (part, old):
+            if stale.exists():
+                shutil.rmtree(stale)
+        shutil.copytree(built, part / "til")
+        if terrain_digest(part / "til") != digest:
+            shutil.rmtree(part)
+            fail("the copy of the HD terrain did not verify. lomse.exe was not touched.")
+        # Windows cannot rename a folder over another, so the old one steps aside first.
+        if dest.exists():
+            os.replace(dest, old)
+        os.replace(part, dest)
+        if old.exists():
+            shutil.rmtree(old)
+
+    if file_hash(backup) is None:              # terrain_exe_plan: so the exe is the pristine one
+        shutil.copy2(exe, backup)
+        if file_hash(backup) != PRISTINE_EXE_SHA256:
+            backup.unlink()
+            fail("the backup of lomse.exe did not verify. lomse.exe was not touched.")
+    if file_hash(exe) != PATCHED_EXE_SHA256:
+        write_atomically(exe, patched)
+        if file_hash(exe) != PATCHED_EXE_SHA256:
+            fail("the patched lomse.exe did not verify. Run --uninstall to put the original back.")
+
+
+def uninstall_terrain(game: pathlib.Path, record: dict) -> bool:
+    """Put the original lomse.exe back, then remove lomhd_terrain. Returns whether there was
+    anything to undo.
+
+    Hash discipline as for ddraw.dll: the exe is only replaced when it is the one this mod wrote,
+    and only from a backup that verifies. If Steam's "Verify integrity" already restored it, the
+    backup is simply dropped. An exe something else changed is left alone and nothing is removed --
+    the folder is only harmless once the exe is not ours."""
+    exe, backup, dest = game / EXE_NAME, game / EXE_BACKUP_NAME, game / TERRAIN_DIR
+    terrain = record.get("terrain", {})
+    original = terrain.get("exe_original_sha256", PRISTINE_EXE_SHA256)
+    ours = {PATCHED_EXE_SHA256, terrain.get("exe_patched_sha256"), *terrain.get("exe_patched_sha256s", [])} - {None}
+    current, saved = file_hash(exe), file_hash(backup)
+    leftovers = [game / (TERRAIN_DIR + s) for s in (".lomhd-part", ".lomhd-old")] + [game / (EXE_NAME + ".lomhd-part")]
+    if not (terrain or saved is not None or current in ours or dest.exists()
+            or any(p.exists() for p in leftovers)):
+        return False
+
+    if current in ours or current is None:
+        if saved != original:
+            fail(f"{EXE_BACKUP_NAME} is missing or changed, so the original lomse.exe cannot be "
+                 "restored safely. Nothing was removed. Steam's 'Verify integrity of game files' "
+                 "puts the original back; then run --uninstall again.")
+        write_atomically(exe, backup)
+        if file_hash(exe) != original:
+            fail("the restored lomse.exe did not verify. Nothing else was removed.")
+    elif current != original:
+        fail("lomse.exe is neither this mod's patched one nor your original -- something else has "
+             "changed it since. Left as it is, and nothing was removed.")
+
+    if file_hash(backup) == original:
+        backup.unlink()
+    elif backup.exists():
+        say(f"{EXE_BACKUP_NAME} is not the original lomse.exe, so it was left where it is.")
+    for path in [dest, *leftovers]:
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+    return True
 
 
 def main() -> int:
@@ -565,6 +873,9 @@ def main() -> int:
     parser.add_argument("--review", action="store_true",
                         help="render every option and open a page to pick your own; installs nothing")
     parser.add_argument("--port", type=int, default=8765, help="the review page's port")
+    parser.add_argument("--terrain", action="store_true",
+                        help="also install HD terrain: patches lomse.exe and adds lomhd_terrain "
+                             "(--uninstall undoes both)")
     args = parser.parse_args()
 
     if sys.version_info < (3, 9):
@@ -587,17 +898,20 @@ def main() -> int:
 
     record = release()
     check_magick()
-    check_writable(game)
+    check_writable(game, args.terrain)
+    if args.terrain:
+        terrain_exe_plan(game)       # refuse an exe it cannot patch now, not after an hour's work
+    steps = 6 if args.terrain else 4
     if choices_file() == MY_CHOICES:
         say(f"Using your own picks from {MY_CHOICES.name}")
-    say("1/4  Getting the upscaler")
+    say(f"1/{steps}  Getting the upscaler")
     exe, models = upscaler()
-    say("2/4  Reading portraits and building pictures from your pic.mpq")
+    say(f"2/{steps}  Reading portraits and building pictures from your pic.mpq")
     found = extract_images(game)
     say("     " + ", ".join(f"{len(v)} {PLURAL.get(k, k + 's')}" for k, v in found.items() if v))
-    say("3/4  Upscaling (the long step)")
+    say(f"3/{steps}  Upscaling (the long step)")
     upscaled = upscale_all(found, exe, models)
-    say("4/4  Building the pack and installing")
+    say(f"4/{steps}  Building the pack and installing")
     originals = [WORK / "originals" / group for group in found if found[group]]
     pack = WORK / PACK_NAME
     count, skipped = hd_portrait_pack.write(pack, originals, upscaled, originals)
@@ -605,6 +919,13 @@ def main() -> int:
     say(f"\nDone: {count} HD images installed in {game}.")
     for line in skipped:
         say(f"  left out -- {line}")
+    if args.terrain:
+        say(f"\n5/{steps}  Building HD terrain from your pic.mpq (the long step again)")
+        built = build_terrain(game, exe, models)
+        say(f"6/{steps}  Installing HD terrain and patching lomse.exe")
+        install_terrain(game, built)
+        say(f"Done: HD terrain installed ({TERRAIN_DIR}\\til, and lomse.exe patched; the original "
+            f"is {EXE_BACKUP_NAME}). Recommended window: 1280x960 (width/height in ddraw.ini).")
     say("To undo: python lomhd_setup.py --uninstall" + (f' --game "{game}"' if args.game else ""))
     return 0
 

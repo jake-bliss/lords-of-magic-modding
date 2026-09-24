@@ -34,17 +34,27 @@ write).
 
     tools/exe_patch.py check  IN --set A.toml [--set B.toml ...]
     tools/exe_patch.py build  IN OUT --set A.toml [--set B.toml ...]
+    tools/exe_patch.py json   A.toml OUT.json
+
+`json` writes a set as JSON, the same document tomllib reads. The HD overlay release ships its sets
+that way because its setup promises Python 3.9 and tomllib is 3.11+; a `.json` set goes through the
+same validation as a `.toml` one (`load_set` dispatches on the suffix).
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import struct
 import sys
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:     # Python < 3.11: JSON sets only (the HD overlay release)
+    tomllib = None
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -128,8 +138,23 @@ def _regex(text: str) -> bytes:
     return text.encode("latin-1").decode("unicode_escape").encode("latin-1")
 
 
+def set_document(path: Path) -> dict:
+    """The set as parsed data: a `.json` set with json, anything else as TOML."""
+    if path.suffix.lower() == ".json":
+        return json.loads(path.read_text())
+    if tomllib is None:
+        raise PatchError(f"{path.name}: TOML sets need Python 3.11+; use the JSON form")
+    return tomllib.loads(path.read_text())
+
+
+def to_json(path: Path) -> str:
+    """A TOML set as the JSON the release ships. Written from the parsed document, so every value
+    (ints, the regex strings' backslashes) arrives as tomllib read it."""
+    return json.dumps(set_document(path), indent=1, sort_keys=True) + "\n"
+
+
 def load_set(path: Path) -> PatchSet:
-    data = tomllib.loads(path.read_text())
+    data = set_document(path)
     try:
         sha = data["target"]["sha256"].lower()
     except KeyError:
@@ -243,6 +268,9 @@ def apply(image: bytes, sets: list[PatchSet]) -> bytes:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
+    j = sub.add_parser("json")
+    j.add_argument("input", type=Path)
+    j.add_argument("output", type=Path)
     for name in ("check", "build"):
         c = sub.add_parser(name)
         c.add_argument("input", type=Path)
@@ -251,6 +279,11 @@ def main(argv: list[str] | None = None) -> int:
         c.add_argument("--set", dest="sets", type=Path, action="append", required=True)
     args = ap.parse_args(argv)
     try:
+        if args.cmd == "json":
+            load_set(args.input)                  # a set that would not load is not shipped
+            args.output.write_text(to_json(args.input))
+            print(f"wrote {args.output}")
+            return 0
         image = args.input.read_bytes()
         sets = [load_set(p) for p in args.sets]
         if args.cmd == "check":
