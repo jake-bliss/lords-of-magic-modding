@@ -11,8 +11,8 @@ The dev front end of what the player's setup does (`release/hd-overlay/lomhd_set
 way players build theirs. See hd_sprites.py for what is packed and why.
 
 STATIC sprites always; `--animated` adds every frame of every animated sprite (hours of rendering;
-it resumes). Work files go under `artifacts/hd-review/_sprites/<archive hash>/` (gitignored), keyed
-by the archive's content and the member path. `--renders` points at the review's renders
+it resumes). Work files go under `artifacts/hd-review/_sprites/` (gitignored), keyed per member by
+its path and its own bytes, as setup keys them. `--renders` points at the review's renders
 (`<option>/sprite__<name>.png`): a static sprite's review render was made from the same prepared
 frame, so it is copied in rather than rendered again. It is still refused if it is not exactly 2x.
 
@@ -107,7 +107,7 @@ def main() -> int:
     archive = mpq_read.Archive(args.archive)
     read_sprite = hd_sprites.archive_reader(archive)
     resolved, considered, skipped = resolve_sprites(archive, args.listfile)
-    root = WORK / hd_sprites.archive_key(args.archive)
+    root = WORK
     plan = hd_sprites.plan(resolved, read_sprite, choices, root, animated=args.animated,
                            log=lambda line: print(f"  {line}", flush=True))
     skipped += plan.skipped

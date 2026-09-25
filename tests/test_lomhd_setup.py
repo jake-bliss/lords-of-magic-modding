@@ -456,16 +456,92 @@ class Sprites(unittest.TestCase):
         plan, _, _ = setup.plan_sprites(self.game, animated=False)
         self.assertEqual([(s.name, s.option) for s in plan.static], [("b", "anime4x")])
 
-    def test_work_is_keyed_by_the_archive_and_another_archives_is_removed(self) -> None:
-        self.picks({"sprite__tree": "anime2x"})
+    def test_changing_one_member_re_renders_only_that_member(self) -> None:
+        """A mod that repaints one sprite changes imp.mpq; every other sprite keeps its render (hours
+        of them, with --sprites). The changed one is rendered afresh and its old work removed."""
+        self.picks({"sprite__tree": "anime2x", "sprite__rock": "anime2x"})
         self.add("imp\\tree.imp", self.frame(20, 6, 3))
-        _, first, _ = setup.plan_sprites(self.game, animated=False)
-        self.assertTrue(any((first / "prep").iterdir()))
-        (self.game / "imp.mpq").write_bytes(b"another imp.mpq")
-        _, second, _ = setup.plan_sprites(self.game, animated=False)
-        self.assertNotEqual(first, second)
-        self.assertEqual(first.parent, second.parent)
-        self.assertFalse(first.exists(), "an older archive's frames are not kept for ever")
+        self.add("imp\\rock.imp", self.frame(20, 6, 4))
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        setup.upscale_sprites(plan.static, root, pathlib.Path("e"), pathlib.Path("m"))
+        old = {s.name: s.frames[0].stem for s in plan.static}
+        self.assertEqual(sorted(self.rendered), sorted(old.values()))
+        self.rendered.clear()
+        self.add("imp\\rock.imp", self.frame(20, 6, 9))                  # the mod's repaint
+        (self.game / "imp.mpq").write_bytes(b"a modded imp.mpq")
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        setup.upscale_sprites(plan.static, root, pathlib.Path("e"), pathlib.Path("m"))
+        new = {s.name: s.frames[0].stem for s in plan.static}
+        self.assertEqual(new["tree"], old["tree"])
+        self.assertNotEqual(new["rock"], old["rock"])
+        self.assertEqual(self.rendered, [new["rock"]], "only the changed member is rendered again")
+        leftovers = [p.name for p in root.rglob("*.png") if p.name.startswith(old["rock"].split("__")[0])]
+        self.assertEqual(leftovers, [], "the changed member's old work is removed")
+
+    def test_a_member_that_will_not_decompress_is_left_out_not_fatal(self) -> None:
+        """A damaged member (here, zlib data that does not inflate) is one sprite's problem: the
+        others -- and the pictures -- still install."""
+        import zlib
+        self.picks({"sprite__tree": "anime2x", "sprite__bad": "anime2x"})
+        self.add("imp\\tree.imp", self.frame(20, 6, 3))
+        self.add("imp\\bad.imp", self.frame(20, 6, 4))
+        members = self.members
+
+        class Damaged:
+            def __init__(self, path): pass
+            def __contains__(self, name): return name.lower() in members
+            def read(self, name):
+                if "bad" in name:
+                    return zlib.decompress(b"not zlib at all")
+                return members[name.lower()]
+
+        setup.mpq_read.Archive = Damaged
+        plan, root, read_sprite = setup.plan_sprites(self.game, animated=False)
+        self.assertEqual([s.name for s in plan.static], ["tree"])
+        self.assertEqual(len(plan.skipped), 1)
+        self.assertTrue(plan.skipped[0].startswith("bad: could not read imp\\bad.imp (not readable from "
+                                                   "the archive (error:"), plan.skipped[0])
+        self.assertIn("could not be read", setup.summarise_skips(plan.skipped))
+
+    def test_the_sprite_mode_is_remembered_until_turned_off(self) -> None:
+        """A plain rerun after --sprites (after --review, say) must not quietly drop hours of
+        animated sprites; --no-sprites turns them off; a fresh install is static only."""
+        self.assertEqual(setup.sprite_mode(self.game, False, False)[0], False, "fresh: static only")
+        dll = self.game / "ddraw.dll"
+        dll.write_bytes(b"the player's own ddraw.dll")
+        release_dir = self.base / "release"
+        release_dir.mkdir()
+        (release_dir / "ddraw.dll").write_bytes(OURS)
+        self.addCleanup(setattr, setup, "HERE", setup.HERE)
+        setup.HERE = release_dir
+        ours = {"ddraw_sha256": hashlib.sha256(OURS).hexdigest(), "version": "t"}
+        self.assertTrue(setup.sprite_mode(self.game, True, False)[0])
+        setup.install(self.game, b"pack", ours, True)
+        on, why = setup.sprite_mode(self.game, False, False)
+        self.assertTrue(on)
+        self.assertIn("remembered", why)
+        setup.install(self.game, b"pack", ours, on)                       # a plain rerun keeps it
+        self.assertTrue(setup.sprite_mode(self.game, False, False)[0])
+        self.assertFalse(setup.sprite_mode(self.game, False, True)[0], "--no-sprites wins")
+        setup.install(self.game, b"pack", ours, False)
+        self.assertFalse(setup.sprite_mode(self.game, False, False)[0], "and is remembered too")
+        setup.install(self.game, b"pack", ours, True)
+        setup.uninstall(self.game)
+        self.assertFalse(setup.sprite_mode(self.game, False, False)[0], "uninstall forgets it")
+
+    def test_a_plain_rerun_after_sprites_keeps_the_animated_records(self) -> None:
+        """Through main's own choice: the rerun plans (and so packs) the animated sprite again."""
+        self.picks({"sprite__cav": "anime2x", "sprite__one": "anime2x"})
+        self.add("units\\cav.imp", self.frame(20, 6, 3), self.frame(20, 6, 4))
+        self.add("imp\\one.imp", self.frame(20, 6, 5))
+        (self.game / setup.RECORD_NAME).write_text(json.dumps(
+            {"ddraw_sha256": "x", "had_ddraw": False, "backup_sha256": None, "sprites": True}))
+        on, _ = setup.sprite_mode(self.game, False, False)
+        plan, _, _ = setup.plan_sprites(self.game, on)
+        self.assertEqual(([s.name for s in plan.static], [s.name for s in plan.animated]), (["one"], ["cav"]))
+        off, _ = setup.sprite_mode(self.game, False, True)
+        plan, _, _ = setup.plan_sprites(self.game, off)
+        self.assertEqual(plan.animated, [])
 
     def test_animated_sprites_resume_where_a_run_stopped(self) -> None:
         self.picks({"sprite__cav": "anime2x"})

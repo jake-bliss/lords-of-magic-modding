@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import pathlib
 import struct
 from typing import List, Optional, Tuple
@@ -98,6 +99,7 @@ class Sprite:
     facings: List[Facing]
     frames: List[Frame]
     duplicate_frame_count: int
+    digest: str = ""             # the member's own bytes, hashed: what a cache of its frames keys on
 
     def resolved_frame(self, index: int) -> Frame:
         """The frame whose pixels `index` shows: itself, or what its duplicate chain ends at."""
@@ -234,7 +236,8 @@ def parse(source: bytes) -> Sprite:
                                   sequence_first_frame, len(frames) - sequence_first_frame))
 
     return Sprite(file_flags, record_variant, compressed, bits_per_pixel, maximum_width,
-                  maximum_height, color_key, palette, sequences, facings, frames, duplicate_frame_count)
+                  maximum_height, color_key, palette, sequences, facings, frames, duplicate_frame_count,
+                  hashlib.sha256(source).hexdigest()[:16])
 
 
 # --- pixels --------------------------------------------------------------------------------------

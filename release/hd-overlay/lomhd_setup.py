@@ -5,7 +5,9 @@
     python lomhd_setup.py --game "C:\\...\\English"
     python lomhd_setup.py --uninstall           put the game back exactly as it was
     python lomhd_setup.py --review              pick your own upscaler per picture first
-    python lomhd_setup.py --sprites             also HD animated sprites (several hours; resumes)
+    python lomhd_setup.py --sprites             also HD animated sprites (several hours; resumes;
+                                                later runs remember it)
+    python lomhd_setup.py --no-sprites          back to sprites that do not move only
     python lomhd_setup.py --terrain             also install HD terrain (patches lomse.exe)
     python lomhd_setup.py --terrain --force-terrain-folder
                                                 replace a lomhd_terrain folder this mod did not make
@@ -470,24 +472,36 @@ def sprite_choices() -> dict:
 def plan_sprites(game: pathlib.Path, animated: bool):
     """(plan, work folder, read_sprite) for the sprites of the player's own imp.mpq: which members
     the shipped names resolve to (imp.mpq has no listfile), and which frames can be packed, their
-    upscaler inputs written. Work goes under lomhd_work/sprites/<the archive's hash>, so another
-    install's frames are never reused; an older archive's folder is removed."""
-    path = game / "imp.mpq"
-    archive = mpq_read.Archive(path)
+    upscaler inputs written. Work goes under lomhd_work/sprites, keyed per member by its path and
+    its own bytes: another install's (or a mod's) version of a member is never reused, and a changed
+    imp.mpq re-renders only the members that changed. Work for members that are gone is removed.
+    A member that cannot be read is left out, never a reason to stop."""
+    archive = mpq_read.Archive(game / "imp.mpq")
     read_sprite = hd_sprites.archive_reader(archive)
-    key = hd_sprites.archive_key(path)
-    hd_sprites.clear_stale(WORK / "sprites", key)
-    root = WORK / "sprites" / key
+    root = WORK / "sprites"
+    digests: dict = {}
+    unreadable: dict = {}
 
     def frame_count(member: str):
         if member.lower() not in archive:
             return None
         try:
-            return len(read_sprite(member).frames)
-        except imp_read.ImpError:
+            sprite = read_sprite(member)
+        except imp_read.ImpError as error:
+            unreadable[member] = str(error)
             return None
+        digests[member] = sprite.digest
+        return len(sprite.frames)
 
-    resolved, skipped = resolve_members(candidate_members(IMP_NAMES), frame_count)
+    candidates = candidate_members(IMP_NAMES)
+    resolved, skipped = resolve_members(candidates, frame_count)
+    for n, line in enumerate(skipped):         # "not in this archive" is not why, for a damaged one
+        name = line.split(":", 1)[0]
+        errors = [f"{m} ({unreadable[m]})" for m in candidates.get(name, []) if m in unreadable]
+        if errors and line.endswith("not in this archive"):
+            skipped[n] = f"{name}: could not read {', '.join(errors)}"
+    root.mkdir(parents=True, exist_ok=True)
+    hd_sprites.prune(root, {hd_sprites.member_key(m, digests[m]) for m, _ in resolved.values()})
     limit = os.environ.get(SPRITE_LIMIT_ENV)
     if animated and limit:
         keep = sorted(n for n, (_, frames) in resolved.items() if frames > 1)[:int(limit)]
@@ -525,6 +539,19 @@ def build_pack(pack: pathlib.Path, sprites, sprite_root: pathlib.Path, read_spri
     moving.setdefault("packed", 0)
     moving.setdefault("sprites", 0)
     return count, skipped, sprite_skipped, packed, moving
+
+
+def sprite_mode(game: pathlib.Path, on: bool, off: bool) -> "tuple[bool, str]":
+    """(build animated sprites?, why) from --sprites / --no-sprites and the install record: a plain
+    run keeps whatever the last install had, so re-running setup (after --review, say) never drops
+    the animated sprites a --sprites run spent hours on."""
+    if on:
+        return True, "on (--sprites)"
+    if off:
+        return False, "off (--no-sprites)"
+    if read_record(game).get("sprites"):
+        return True, "on, remembered from your last install (--no-sprites turns them off)"
+    return False, "off (--sprites adds them)"
 
 
 SKIP_KINDS = (                  # (what a skip reason says, how the summary counts it)
@@ -596,7 +623,7 @@ def check_writable(game: pathlib.Path, terrain: bool = False) -> None:
              "if it still fails, run the terminal as administrator.")
 
 
-def install(game: pathlib.Path, pack: "bytes | pathlib.Path", record: dict) -> None:
+def install(game: pathlib.Path, pack: "bytes | pathlib.Path", record: dict, sprites: bool = False) -> None:
     """Back up the player's ddraw.dll once, record what was done, then install.
 
     The record is written BEFORE our DLL is copied, so an interruption at any point leaves either
@@ -651,6 +678,9 @@ def install(game: pathlib.Path, pack: "bytes | pathlib.Path", record: dict) -> N
         # cnc-ddraw writes a default ddraw.ini on its first run when there is none -- the case on a
         # Windows Steam install, which ships no ddraw.dll at all. Uninstall removes it only then.
         "had_ini": previous.get("had_ini", (game / "ddraw.ini").exists()),
+        # Whether this pack holds the animated sprites (--sprites). A later plain run keeps them
+        # rather than quietly dropping hours of work; --no-sprites turns them off.
+        "sprites": sprites,
         # Kept across a plain re-run: the terrain is still installed, and uninstall reads this.
         **({"terrain": previous["terrain"]} if "terrain" in previous else {}),
     }, indent=2).encode() + b"\n")
@@ -1130,9 +1160,12 @@ def main() -> int:
     parser.add_argument("--terrain", action="store_true",
                         help="also install HD terrain: patches lomse.exe and adds lomhd_terrain "
                              "(--uninstall undoes both)")
-    parser.add_argument("--sprites", action="store_true",
-                        help="also every frame of every animated sprite: several hours on a typical "
-                             "GPU, and it resumes if stopped")
+    sprite_flags = parser.add_mutually_exclusive_group()
+    sprite_flags.add_argument("--sprites", action="store_true",
+                              help="also every frame of every animated sprite: several hours on a "
+                                   "typical GPU, and it resumes if stopped. Later runs remember it")
+    sprite_flags.add_argument("--no-sprites", action="store_true",
+                              help="leave the animated sprites out again after a --sprites install")
     parser.add_argument("--force-terrain-folder", action="store_true",
                         help="replace (or, with --uninstall, remove) a lomhd_terrain folder this mod "
                              "did not make or that was changed since")
@@ -1167,35 +1200,37 @@ def main() -> int:
         terrain_exe_plan(game)       # refuse an exe it cannot patch now, not after an hour's work
         check_terrain_folder(game, read_record(game), args.force_terrain_folder)
     steps = 7 if args.terrain else 5
+    animated, why = sprite_mode(game, args.sprites, args.no_sprites)
     if choices_file() == MY_CHOICES:
         say(f"Using your own picks from {MY_CHOICES.name}")
+    say(f"Animated sprites: {why}")
     say(f"1/{steps}  Getting the upscaler")
     exe, models = upscaler()
     say(f"2/{steps}  Reading pictures from your pic.mpq and sprites from your imp.mpq")
     found = extract_images(game)
     say("     " + ", ".join(f"{len(v)} {PLURAL.get(k, k + 's')}" for k, v in found.items() if v))
-    sprites, sprite_root, read_sprite = plan_sprites(game, args.sprites)
+    sprites, sprite_root, read_sprite = plan_sprites(game, animated)
     frames = sum(len(s.frames) for s in sprites.animated)
     say(f"     {len(sprites.static)} sprites" + (f", {len(sprites.animated)} animated sprites "
-                                                 f"({frames} frames)" if args.sprites else ""))
+                                                 f"({frames} frames)" if animated else ""))
     say(f"3/{steps}  Upscaling pictures (the long step)")
     upscaled = upscale_all(found, exe, models)
     say(f"4/{steps}  Upscaling sprites" + (" (the very long step; it resumes if stopped)"
-                                          if args.sprites else ""))
+                                          if animated else ""))
     upscale_sprites(sprites.static + sprites.animated, sprite_root, exe, models)
     say(f"5/{steps}  Building the pack and installing")
     originals = [WORK / "originals" / group for group in found if found[group]]
     pack = WORK / PACK_NAME
     count, skipped, sprite_skipped, packed, moving = build_pack(pack, sprites, sprite_root, read_sprite,
                                                                 originals, upscaled)
-    install(game, pack, record)
+    install(game, pack, record, animated)
     say(f"\nDone: {count} HD images installed in {game}.")
     for line in skipped:
         say(f"  left out -- {line}")
     say(f"Sprites: {packed['packed']} packed" + (f", and {moving['sprites']} animated sprites "
-                                                  f"({moving['packed']} frames)" if args.sprites else "")
+                                                  f"({moving['packed']} frames)" if animated else "")
         + (f"; {len(sprite_skipped)} left out ({summarise_skips(sprite_skipped)})" if sprite_skipped else ""))
-    if args.sprites:
+    if animated:
         c = sprites.counts
         say(f"  of {c['frames']} animated frames, {c['repeats']} repeat another, {c['ineligible']} are too "
             f"small or too large for the overlay, {c['no_probe']} too plain for it to find")
@@ -1203,7 +1238,7 @@ def main() -> int:
         report = WORK / "sprites-left-out.txt"
         report.write_text("".join(f"{line}\n" for line in sprite_skipped))
         say(f"  (every sprite left out, and why: {report})")
-    if not args.sprites:
+    if not animated:
         say("Animated sprites (units, spell effects) were not built: add --sprites for them.")
     if args.terrain:
         say(f"\n6/{steps}  Building HD terrain from your pic.mpq (the long step again)")

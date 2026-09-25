@@ -1,6 +1,6 @@
 """IMP sprites made into HD pack records: which frames, prepared how, upscaled with what, packed as
 what. One code path for the player's setup (`release/hd-overlay/lomhd_setup.py`) and the dev tools
-(`tools/hd-review/sprite_pack.py`, `anim_frames.py`), so what is tested is what players run.
+(`tools/hd-review/sprite_pack.py`), so what is tested is what players run.
 
 Everything is read from the player's own imp.mpq with `imp_read` (a port of the asset viewer's
 decoder) and written under a work folder keyed by the archive's content; no game art ships.
@@ -34,8 +34,10 @@ over a neutral grey, everything else opaque -- written here directly, pixel-iden
 The HD half is the render, which `hd_upscale.render` always makes exactly 2x the frame. A render of
 a DIFFERENT size is refused, not resized: it was made from a different original.
 
-Work files are keyed by archive content, member path and frame, and every step resumes: a rerun
-redoes only what is missing. Rendering goes in batches, so an interrupted run loses one batch.
+Work files are keyed by each MEMBER's path and its own bytes (not the whole archive's), and by
+frame, and every step resumes: a rerun redoes only what is missing, and a changed imp.mpq -- a mod
+repainting one cursor -- re-renders only the members it changed. Rendering goes in batches, so an
+interrupted run loses one batch.
 """
 from __future__ import annotations
 
@@ -43,7 +45,6 @@ import dataclasses
 import hashlib
 import os
 import pathlib
-import shutil
 import struct
 import subprocess
 import tempfile
@@ -94,20 +95,12 @@ def mirrored(member: str) -> bool:
     return member.lower().startswith("units\\")
 
 
-def member_key(member: str) -> str:
-    """A short, case-normalized key for one member PATH, not just its basename: two different
-    members resolved for one name (see `imp_members.resolve_members`) never share a work file."""
-    return hashlib.sha256(member.lower().encode("utf-8")).hexdigest()[:12]
-
-
-def archive_key(archive: pathlib.Path) -> str:
-    """A short, content-based key for an archive, so a work file can never leak into a different
-    archive's pack -- or a rebuilt archive that kept its path and size."""
-    digest = hashlib.sha256()
-    with archive.open("rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()[:16]
+def member_key(member: str, digest: str = "") -> str:
+    """A short key for one member: its case-normalized PATH, not just its basename, so two different
+    members resolved for one name (see `imp_members.resolve_members`) never share a work file; and
+    its own bytes (`imp_read.Sprite.digest`), so a member a mod changed gets new work files while
+    every unchanged member keeps its renders."""
+    return hashlib.sha256(f"{member.lower()}\0{digest}".encode("utf-8")).hexdigest()[:12]
 
 
 def frame_identity(width: int, height: int, indices: bytes, palette, key: int) -> bytes:
@@ -249,9 +242,9 @@ def plan(resolved: Dict[str, Tuple[str, int]], read_sprite: Callable[[str], "imp
                     counts["repeats"] += 1
                     seen[identity].mirror |= mirror
                     continue
-                stem, record = f"{member_key(member)}__{name}__{index:03d}", record_name(name, index)
+                stem, record = f"{member_key(member, sprite.digest)}__{name}__{index:03d}", record_name(name, index)
             else:
-                stem, record = f"{member_key(member)}__{name}", static_record_name(name)
+                stem, record = f"{member_key(member, sprite.digest)}__{name}", static_record_name(name)
             frame = Frame(index, w, h, stem, record, mirror)
             if is_animated:
                 seen[identity] = frame
@@ -398,23 +391,40 @@ def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[st
         yield from flush()
 
 
+# What a damaged member can raise on its way out of mpq_read (explode, zlib, the sector table) or
+# through imp_read: each is that ONE member's problem, never a reason to stop the install.
+READ_ERRORS = (KeyError, ValueError, IndexError, struct.error, zlib.error, OverflowError)
+
+
 def archive_reader(archive) -> Callable[[str], "imp_read.Sprite"]:
-    """`read_sprite` for an `mpq_read.Archive`: a member the archive cannot give is an ImpError."""
+    """`read_sprite` for an `mpq_read.Archive`: a member the archive cannot give, or that does not
+    decode, is an ImpError -- a per-member skip for every caller."""
     import mpq_read
 
     def read_sprite(member: str) -> "imp_read.Sprite":
         try:
-            data = archive.read(member.lower())
-        except (mpq_read.MpqError, KeyError) as error:
-            raise imp_read.ImpError(f"not readable from the archive ({error})") from error
-        return imp_read.parse(data)
+            return imp_read.parse(archive.read(member.lower()))
+        except imp_read.ImpError:
+            raise
+        except (mpq_read.MpqError,) + READ_ERRORS as error:
+            raise imp_read.ImpError(f"not readable from the archive ({type(error).__name__}: "
+                                    f"{error})") from error
     return read_sprite
 
 
-def clear_stale(root: pathlib.Path, keep: str) -> None:
-    """Remove other archives' work folders beside `root/keep`: a changed imp.mpq (a mod, a patch)
-    would otherwise leave its predecessor's frames on disk for ever."""
-    if root.is_dir():
-        for other in root.iterdir():
-            if other.is_dir() and other.name != keep:
-                shutil.rmtree(other, ignore_errors=True)
+def prune(root: pathlib.Path, live: set) -> int:
+    """Remove prepared inputs and renders whose member key is not in `live` (the keys of every
+    member this archive resolves to now, planned this run or not): a member a mod changed, or one
+    no longer present. Never the whole cache: every unchanged member keeps its renders. Returns how
+    many files went."""
+    removed = 0
+    folders = [root / "prep"] + ([p for p in (root / "render").iterdir() if p.is_dir()]
+                                 if (root / "render").is_dir() else [])
+    for folder in folders:
+        if not folder.is_dir():
+            continue
+        for path in folder.iterdir():
+            if path.is_file() and path.name.split("__", 1)[0] not in live:
+                path.unlink()
+                removed += 1
+    return removed

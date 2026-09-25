@@ -56,7 +56,9 @@ game's `imp.mpq`. Setup reads them from your own copy, like the pictures, and ad
 image pack:
 
 - **Sprites that do not move** (buildings, scenery: one picture each) are built on every run. They
-  add a few minutes.
+  add a few minutes. Only sprites that were given an upscaler by hand when the mod was made are
+  built; the rest -- mostly tiny aura and effect sprites whose preview was too small to judge -- are
+  left as the game draws them.
 - **Animated sprites** (units, spell effects, anything with more than one frame) are optional,
   because every frame is upscaled on its own -- tens of thousands of them:
 
@@ -71,11 +73,17 @@ image pack:
   `lomhd_work\sprites` once the install is done if you need the space back; a later run would then
   start the sprites again from scratch.
 
+  Setup remembers `--sprites`: later runs (a plain `python lomhd_setup.py`, after `--review` say)
+  keep the animated sprites and say "Animated sprites: on, remembered from your last install".
+  Nothing is upscaled twice. To go back to sprites that do not move only, run
+  `python lomhd_setup.py --no-sprites`.
+
 Each sprite is upscaled with the method picked for it by hand (one pick covers all of a sprite's
 frames, so an animation does not flicker between styles). Frames that repeat are packed once, and
-units are also found drawn facing the other way. A sprite too small or too plain for the overlay to
-spot reliably is left out and stays as the game draws it; setup lists what it left out, and why, in
-`lomhd_work\sprites-left-out.txt`.
+units are also found drawn facing the other way. A sprite with no hand-picked upscaler, or too small
+or too plain for the overlay to spot reliably, is left out and stays as the game draws it; setup
+lists what it left out, and why, in `lomhd_work\sprites-left-out.txt`. If a mod changes some sprites
+in `imp.mpq`, the next run upscales only those again.
 
 ## HD terrain (optional, beta)
 
@@ -138,7 +146,8 @@ The terrain atlases and the sprites have picks too (the `terrain__` and `sprite_
 `my-upscale-choices.json`, one atlas or sprite at a time, and the shipped pick for the rest.
 
 Close the page and press Ctrl+C, then run `python lomhd_setup.py` as usual: it says
-"Using your own picks" and installs with them. Delete `my-upscale-choices.json` to go back to the
+"Using your own picks" and installs with them (and keeps the animated sprites if you installed
+with `--sprites`). Delete `my-upscale-choices.json` to go back to the
 shipped picks.
 
 ## Uninstall
