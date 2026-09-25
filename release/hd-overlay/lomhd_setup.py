@@ -195,7 +195,8 @@ def windows_magick_dirs() -> "list[str]":
                 value = winreg.QueryValueEx(handle, "Path")[0]
         except OSError:
             continue
-        dirs += [os.path.expandvars(d) for d in value.split(";") if "imagemagick" in d.lower()]
+        dirs += [os.path.expandvars(d.strip().strip('"')) for d in value.split(";")
+                 if "imagemagick" in d.lower()]
     for base in {os.environ.get("ProgramFiles", r"C:\Program Files"), r"C:\Program Files"}:
         dirs += sorted((str(p) for p in pathlib.Path(base).glob("ImageMagick-7*")), reverse=True)
     return [d for d in dirs if (pathlib.Path(d) / "magick.exe").is_file()]

@@ -439,6 +439,23 @@ class WindowsMagick(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ProgramFiles": str(self.tmp / "Program Files")}):
             self.assertIn(str(where), setup.windows_magick_dirs())
 
+    def test_a_quoted_registry_entry_is_found(self) -> None:
+        where = self.install("Tools/ImageMagick 7")
+        self.registry["HKCU"] = f'"{where}" ; C:\\Windows'
+        with mock.patch.dict(os.environ, {"ProgramFiles": str(self.tmp / "none")}):
+            self.assertEqual(setup.windows_magick_dirs(), [str(where)])
+
+    def test_check_magick_puts_the_found_folder_on_this_process_path(self) -> None:
+        """The fix itself: later bare `magick` calls (here and in tools/) inherit this PATH."""
+        answers = iter(["", "Version: ImageMagick 7.1.2-0 Q16-HDRI"])
+        with mock.patch.object(setup.os, "name", "nt"), \
+                mock.patch.object(setup, "windows_magick_dirs", return_value=["X"]), \
+                mock.patch.object(setup, "magick_version", side_effect=lambda: next(answers)), \
+                mock.patch.object(setup, "fail", side_effect=AssertionError("reported missing")), \
+                mock.patch.dict(os.environ, {"PATH": "orig"}):
+            setup.check_magick()
+            self.assertEqual(os.environ["PATH"], os.pathsep.join(["X", "orig"]))
+
     def test_a_path_entry_without_magick_exe_is_ignored(self) -> None:
         (self.tmp / "ImageMagick-old").mkdir()
         self.registry["HKCU"] = str(self.tmp / "ImageMagick-old")
