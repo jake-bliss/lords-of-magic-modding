@@ -5,6 +5,7 @@ upscaling steps are covered by test_mpq_read.py and the end-to-end run in docs/h
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -388,6 +389,31 @@ class UpscalePlan(unittest.TestCase):
 
 
 # --- sprites ---------------------------------------------------------------------------------------
+
+class RetryCommand(unittest.TestCase):
+    """The command a failed run tells the player to type. It must repeat this run's choices: the
+    install record is written only when a run finishes, so a bare retry falls back to the last
+    install's sprite mode. (Claude + Codex review.)"""
+
+    def command(self, animated: bool, **flags: object) -> str:
+        args = argparse.Namespace(**{"sprites": False, "no_sprites": False, "terrain": False,
+                                     "force_terrain_folder": False, "game": None, **flags})
+        return setup.retry_command(args, animated, pathlib.Path("C:/Games/LOM"))
+
+    def test_no_sprites_is_repeated_so_the_remembered_mode_cannot_come_back(self) -> None:
+        self.assertIn("--no-sprites", self.command(False, no_sprites=True).split())
+
+    def test_a_remembered_animated_run_is_spelled_out(self) -> None:
+        self.assertIn("--sprites", self.command(True).split())
+
+    def test_every_other_flag_is_repeated(self) -> None:
+        line = self.command(False, terrain=True, force_terrain_folder=True, game="C:/Games/LOM")
+        for flag in ("--terrain", "--force-terrain-folder", "--game"):
+            self.assertIn(flag, line.split())
+
+    def test_a_plain_static_run_stays_plain(self) -> None:
+        self.assertEqual(self.command(False), "python lomhd_setup.py")
+
 
 class Sprites(unittest.TestCase):
     """plan_sprites / build_pack against a fake imp.mpq of tiny real IMP files, the upscaler stubbed

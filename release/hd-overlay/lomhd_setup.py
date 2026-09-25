@@ -523,6 +523,17 @@ def build_pack(pack: pathlib.Path, sprites, sprite_root: pathlib.Path, read_spri
     return count, skipped, sprite_skipped, packed, moving
 
 
+def retry_command(args: argparse.Namespace, animated: bool, game: pathlib.Path) -> str:
+    """The command that carries on after a failed run. It spells out the sprite mode this run is in:
+    the install record is only written once a run finishes, so a bare retry could fall back to the
+    previous install's mode (turning animated sprites back on after --no-sprites, say)."""
+    return " ".join(["python lomhd_setup.py"]
+                    + (["--sprites"] if animated else ["--no-sprites"] if args.no_sprites else [])
+                    + (["--terrain"] if args.terrain else [])
+                    + (["--force-terrain-folder"] if args.force_terrain_folder else [])
+                    + ([f'--game "{game}"'] if args.game else []))
+
+
 def sprite_mode(game: pathlib.Path, on: bool, off: bool) -> "tuple[bool, str]":
     """(build animated sprites?, why) from --sprites / --no-sprites and the install record: a plain
     run keeps whatever the last install had, so re-running setup (after --review, say) never drops
@@ -1199,9 +1210,7 @@ def main() -> int:
     upscaled = upscale_all(found, exe, models)
     say(f"4/{steps}  Upscaling sprites" + (" (the very long step; it resumes if stopped)"
                                           if animated else ""))
-    again = " ".join(["python lomhd_setup.py"] + (["--sprites"] if args.sprites else [])
-                     + (["--terrain"] if args.terrain else [])
-                     + ([f'--game "{game}"'] if args.game else []))
+    again = retry_command(args, animated, game)
     upscale_sprites(sprites.static + sprites.animated, sprite_root, exe, models, again)
     say(f"5/{steps}  Building the pack and installing")
     originals = [WORK / "originals" / group for group in found if found[group]]

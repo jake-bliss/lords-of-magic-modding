@@ -289,6 +289,15 @@ class Archive:
 
     @staticmethod
     def _unpack(name: str, chunk: bytes, want: int, flags: int) -> bytes:
+        try:
+            return Archive._unpack_sector(name, chunk, want, flags)
+        except (IndexError, ValueError, struct.error, zlib.error) as error:
+            # A damaged sector trips the decoders in several ways (an empty one fails on its
+            # first byte); callers see one kind, so a bad member is skipped, not fatal.
+            raise MpqError(f"{name}: sector does not decompress ({error})") from error
+
+    @staticmethod
+    def _unpack_sector(name: str, chunk: bytes, want: int, flags: int) -> bytes:
         if len(chunk) >= want:          # stored: compressing this sector did not help
             return chunk[:want]
         if flags & FLAG_IMPLODE:

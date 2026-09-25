@@ -46,6 +46,14 @@ class Explode(unittest.TestCase):
         with self.assertRaises(mpq_read.MpqError):
             mpq_read.explode(bytes.fromhex("00048224"), 100)
 
+    def test_a_damaged_sector_is_an_mpq_error(self) -> None:
+        """An empty compressed sector failed on its first byte with IndexError, which setup does not
+        treat as damage, so one bad sprite stopped the install. (Claude + Codex review.)"""
+        for flags in (mpq_read.FLAG_COMPRESS, mpq_read.FLAG_IMPLODE):
+            for chunk in (b"", b"\x02not zlib", b"\x08"):
+                with self.subTest(flags=flags, chunk=chunk), self.assertRaises(mpq_read.MpqError):
+                    mpq_read.Archive._unpack("x", chunk, 10, flags)
+
     def test_a_bad_header_is_refused(self) -> None:
         for header in ("0204", "0003", "0007"):
             with self.subTest(header), self.assertRaises(mpq_read.MpqError):

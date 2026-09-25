@@ -79,7 +79,8 @@ image pack:
 
   You can delete `lomhd_work\sprites` to get the space back once the install is done, but then any
   later run -- including a plain one, since `--sprites` is remembered -- upscales every animated
-  sprite again, for hours. Run later updates with `--no-sprites` if you do not want that.
+  sprite again, for hours. Running later updates with `--no-sprites` avoids that, but also takes
+  the animated sprites out of the game.
 
 Each sprite is upscaled with the method picked for it by hand (one pick covers all of a sprite's
 frames, so an animation does not flicker between styles). Frames that repeat are packed once, and
