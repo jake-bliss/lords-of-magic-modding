@@ -12,10 +12,9 @@ was made (the choices ship as `upscale-choices.json`).
 
 The art is sharper, not bigger: each picture fills the same space on screen as before.
 
-> **Beta (0.4.0).** The HD art overlay has been played on Windows and macOS. HD terrain
-> (`--terrain`) is new and so far played only on macOS (Wine). It should work the same on Windows,
-> and `--uninstall` puts every file back, but please report anything odd -- see the end of this
-> file.
+> **Beta (0.4.1).** The HD art overlay and HD terrain (`--terrain`) have both been played on
+> Windows 11 (NVIDIA) and macOS (Wine). HD terrain is new, so please report anything odd -- see the
+> end of this file. `--uninstall` puts every file back.
 
 ## What you need
 
