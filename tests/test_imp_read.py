@@ -18,8 +18,8 @@ from __future__ import annotations
 import collections
 import concurrent.futures
 import hashlib
-import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -164,6 +164,50 @@ class Corpus(unittest.TestCase):
             self.assertGreaterEqual(len({k for k in coverage if isinstance(k, tuple)}), 8)
             print(f"\n[imp_read] {label}: {len(jobs)} frames of {len(sprites)} members byte-identical "
                   f"to the viewer -- {dict(sorted(coverage.items(), key=str))}", file=sys.stderr)
+
+    @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
+    def test_setups_upscaler_input_is_the_reviewed_preparation_of_real_frames(self) -> None:
+        """The review prepared each sprite from the viewer's export with `clear_shadow` and
+        `magick -background #202228 -alpha background PNG32:`; setup writes its input from
+        imp_read's decode instead. Real frames, one per folder and key, so keys other than 0 are
+        in it too."""
+        sys.path.insert(0, str(ROOT / "tools" / "hd-review"))
+        import hd_sprites
+        from sprite_originals import clear_shadow
+        for label, path in self.archives_or_skip().items():
+            archive = mpq_read.Archive(path)
+            chosen: dict = {}
+            for member in self.members:
+                if member not in archive:
+                    continue
+                try:
+                    sprite = imp_read.parse(archive.read(member))
+                except imp_read.ImpError:
+                    continue
+                if sprite.frames[0].width:
+                    chosen.setdefault((member.split("\\")[0], sprite.color_key), (member, sprite))
+            self.assertGreater(len({key for _, key in chosen}), 3, "keys other than 0 are covered")
+            with tempfile.TemporaryDirectory() as scratch:
+                scratch = pathlib.Path(scratch)
+                for n, (member, sprite) in enumerate(chosen.values()):
+                    review, ours = scratch / f"r{n}.png", scratch / f"o{n}.png"
+                    subprocess.run([str(VIEWER), "--export-imp-frame", str(path), member, "0", str(review),
+                                    "--listfile", str(LISTFILE)], check=True, capture_output=True)
+                    clear_shadow(review)
+                    subprocess.run(["magick", str(review), "-background", "#202228", "-alpha", "background",
+                                    f"PNG32:{review}"], check=True)
+                    shown = sprite.frames[0]
+                    hd_sprites.write_png_rgba(ours, shown.width, shown.height,
+                                              hd_sprites.prepared_rgba(shown.indices, sprite.palette,
+                                                                       sprite.color_key))
+                    with self.subTest(archive=label, member=member):
+                        self.assertEqual(rgba(ours), rgba(review))
+            print(f"\n[imp_read] {label}: {len(chosen)} real frames prepared identically to the review",
+                  file=sys.stderr)
+
+
+def rgba(path: pathlib.Path) -> bytes:
+    return subprocess.run(["magick", str(path), "-depth", "8", "RGBA:-"], check=True, capture_output=True).stdout
 
 
 class Pixels(unittest.TestCase):
