@@ -60,6 +60,9 @@ import lbm_png  # noqa: E402
 
 NOT_TEXTURES = {"thite01", "ttype01"}
 PAD = 8
+# Characters of tile arguments per ImageMagick call when assembling a sheet: well under Windows'
+# 32767-character command line, whatever the path of the work folder.
+ASSEMBLE_BUDGET = 8000
 NORM_PX = 4          # 2x pixels from a tile edge over which colour is pulled to the terrain's
 NORM_SIGMA = 2.0     # blur (2x pixels) that defines a pixel's "local average colour"
 NORM_DAMP = 0.4      # how much of the fine detail is damped at the very edge
@@ -325,16 +328,39 @@ def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pa
             sheet = tmp / "sheet.png"
 
             def assemble(dest: pathlib.Path, sigma: float = 0) -> None:
-                args = ["magick", "-size", f"{2 * w}x{2 * h}", "xc:black"]
+                # In batches, run from inside the rendered folder so each tile is a short relative
+                # name: one command naming every tile ran past Windows' 32767-character command
+                # line (WinError 206, found by the first Windows run of --terrain). Between
+                # batches the sheet is kept as floating-point MIFF, so no value is rounded before
+                # the one final write -- the result is the single-command one, byte for byte.
+                steps = []
                 for key in inputs:
                     tx, ty = int(key[-5:-3]), int(key[-2:])
                     # Blurred AFTER the crop, against the tile's own repeated edge, so the local
                     # average never reaches a neighbouring cell either.
                     extra = ["-virtual-pixel", "edge", "-blur", f"0x{sigma}"] if sigma else []
-                    args += ["(", str(rendered / f"{key}.png"), "-crop", f"{2 * t}x{2 * t}+{2 * PAD}+{2 * PAD}",
-                             "+repage", *extra, ")", "-geometry", f"+{2 * t * tx}+{2 * t * ty}", "-composite"]
-                args.append(str(dest))
-                subprocess.run(args, check=True)
+                    steps.append(["(", f"{key}.png", "-crop", f"{2 * t}x{2 * t}+{2 * PAD}+{2 * PAD}",
+                                  "+repage", *extra, ")", "-geometry", f"+{2 * t * tx}+{2 * t * ty}",
+                                  "-composite"])
+                partial = dest.with_name(dest.name + ".miff")
+                exact = ["-define", "quantum:format=floating-point", "-depth", "32"]
+                batch: list[list[str]] = []
+                start = ["-size", f"{2 * w}x{2 * h}", "xc:black"]
+
+                def flush(final: bool) -> None:
+                    nonlocal start
+                    out = [str(dest)] if final else [*exact, str(partial)]
+                    args = ["magick", *start, *(a for step in batch for a in step), *out]
+                    subprocess.run(args, check=True, cwd=rendered)
+                    start = [str(partial)]
+                    batch.clear()
+
+                for i, step in enumerate(steps):
+                    batch.append(step)
+                    if i + 1 < len(steps) and sum(len(a) + 3 for b in batch for a in b) > ASSEMBLE_BUDGET:
+                        flush(final=False)
+                flush(final=True)
+                partial.unlink(missing_ok=True)
 
             def pixels(path: pathlib.Path) -> bytes:
                 return subprocess.check_output(["magick", str(path), "-depth", "8", "rgb:-"])

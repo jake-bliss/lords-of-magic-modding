@@ -327,6 +327,40 @@ class EndToEnd(unittest.TestCase):
     def test_a_tile_cut_short_by_a_stopped_run_is_not_reused(self) -> None:
         self.interrupted_run(th.lbm_png, "write_png", lambda path, *rest: pathlib.Path(path))
 
+    def test_assembling_in_batches_gives_the_same_bytes(self) -> None:
+        """One ImageMagick call naming every tile overran Windows' command line (WinError 206).
+        Batched -- here one tile per call, sharp sheet and blurred one both -- the atlas must come
+        out byte for byte as from a single call."""
+        t, w, h = 8, 16, 8
+        idx = bytes((x * 7 + y * 11) % 200 + 10 for y in range(h) for x in range(w))
+        write_lbm(self.src / "tilesz01.lbm", w, h, idx)
+        (self.src / "tilesz01.til").write_bytes(
+            b"LBM=tilesz01.lbm\rTILES= 2, 1\rTILESIZE= 8, 8\r"
+            b"TILE= 0, 6, 6, 6, 1, 6, 6, 6, 6, 6, 0\r"
+            b"TILE= 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0\r")
+        choices = {"terrain__tilesz01": "anime2x"}
+        real_run, calls = th.subprocess.run, []
+
+        def counting_run(args, *a, **k):
+            if args and args[0] == "magick" and args[-1].endswith((".png", ".miff")):
+                calls.append(args)
+            return real_run(args, *a, **k)
+
+        results = {}
+        for budget in (10 ** 9, 1):
+            self.addCleanup(setattr, th, "ASSEMBLE_BUDGET", th.ASSEMBLE_BUDGET)
+            th.ASSEMBLE_BUDGET = budget
+            calls.clear()
+            th.subprocess.run = counting_run
+            try:
+                th.build(self.src, self.out, self.fake, self.d, self.d / "work", choices, norm=4)
+            finally:
+                th.subprocess.run = real_run
+            results[budget] = ((self.out / "tilesz01.lbm").read_bytes(), len(calls))
+        self.assertEqual(results[1][0], results[10 ** 9][0])
+        self.assertEqual(results[10 ** 9][1], 2)        # sharp + blurred, one call each
+        self.assertEqual(results[1][1], 4)              # the control: it really did batch
+
     def test_a_render_cut_short_by_a_stopped_run_is_not_reused(self) -> None:
         """hd_upscale.render skips any output that exists: one cut short must never be there. Only
         its resize step (which writes the output) is interrupted; the stand-in model runs as is."""
