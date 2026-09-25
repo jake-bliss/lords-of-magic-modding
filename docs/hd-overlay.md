@@ -135,24 +135,26 @@ probe rows x 2 colour-rounding rules (6); a sprite up to 4 rows x 3 column bands
 sprite match in the captures used truncation), doubled when MIRROR (24). The writer sums each
 record's own reservation and refuses what the DLL would, before the game finds out at load time.
 
-**Sprites** (`tools/hd-review/sprite_pack.py`, a dev tool, not shipped -- sprites are not part of
-the player release yet) pack STATIC sprites -- an IMP member with exactly one frame in total, whose
-one review render is its upscale -- and, with `--animated`, every frame of every animated sprite
-(`anim_frames.py`): each frame prepared the way the reviewed still was and upscaled with that
+**Sprites** (`tools/hd_sprites.py`, run by the player's setup since 0.5.0 and by the dev tool
+`tools/hd-review/sprite_pack.py`) pack STATIC sprites -- an IMP member with exactly one frame in
+total -- on every install, and, with `--sprites` (`--animated` in the dev tool), every frame of every
+animated sprite: each frame prepared the way the reviewed still was and upscaled with that
 sprite's pick, repeats packed once (a third of all frames), frames of `units\` members marked
 MIRROR, one group per sprite. Rendering ~35,000 frames takes hours; it goes in resumable batches.
-A sprite's low-res half (palette
-and indices, what the matcher compares on screen) comes straight from the asset viewer's
-`--export-imp-frame` -- no shadow-clearing, no background fill, because the game still draws the
-shadow and the transparent key exactly as the archive stores them; only the review's own originals
-(`sprite_originals.py`) do that cleanup, for upscaling, not for the pack. A masked record must also
+Frames are decoded by `tools/imp_read.py`, a pure-Python port of the asset viewer's IMP decoder
+checked against it frame for frame over the whole of `imp.mpq` (`tests/test_imp_read.py`), so it
+runs on the player's Windows machine. A sprite's low-res half (palette
+and indices, what the matcher compares on screen) is the frame as stored
+-- no shadow-clearing, no background fill, because the game still draws the
+shadow and the transparent key exactly as the archive stores them; only the upscaler's input gets
+that cleanup, exactly as the review's originals (`sprite_originals.py`) did. A masked record must also
 satisfy what the DLL requires: width >= 8, height >= 4, `w * h <= 65,536`, and at least 3 rows each
 holding a run of >= 8 consecutive pixels that are neither the colour key nor the shadow index
 (`hd_portrait_pack.masked_is_eligible`); the builder skips and reports anything short of that, the
 same as every other kind of skip. One command builds a pack with both sprites and the existing
 pictures, for a single DLL test that covers both:
 
-    python3 tools/hd-review/sprite_pack.py imp.mpq combined.pack --with-pack-inputs \
+    python3 tools/hd-review/sprite_pack.py imp.mpq combined.pack --esrgan ... --models ... --with-pack-inputs \
         --originals lomhd_work/originals/portrait \
         --upscaled lomhd_work/upscaled/ultrasharp-tta/portrait
 

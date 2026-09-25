@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assemble the HD portrait overlay release zip: the overlay DLL, the setup script and the tools it
 # runs on the player's machine. NO game art -- the player's machine derives it from their own
-# pic.mpq -- and the zip is checked for that before it is written.
+# pic.mpq and imp.mpq -- and the zip is checked for that before it is written.
 #
 #   scripts/build-hd-overlay-release.sh VERSION [CNC_DDRAW_REPO]
 set -euo pipefail
@@ -36,8 +36,8 @@ grep -qa 'art from lomhd_terrain' "$FORK/ddraw.dll" ||
 rm -rf "$OUT" "$OUT.zip"
 mkdir -p "$OUT/tools" "$OUT/exe_patches"
 cp "$FORK/ddraw.dll" "$OUT/"
-cp "$ROOT/release/hd-overlay/"{lomhd_setup.py,README.md,NOTICES.md,overlay-names.txt,terrain-names.txt,upscale-choices.json} "$OUT/"
-cp "$ROOT/tools/"{mpq_read.py,hd_portrait_pack.py,hd_upscale.py,exe_patch.py,terrain_hd.py} "$ROOT/tools/portrait-upscale/"{upscale.py,lbm_png.py} "$ROOT/tools/hd-review/"{serve.py,review.html} "$OUT/tools/"
+cp "$ROOT/release/hd-overlay/"{lomhd_setup.py,README.md,NOTICES.md,overlay-names.txt,terrain-names.txt,imp-names.txt,upscale-choices.json} "$OUT/"
+cp "$ROOT/tools/"{mpq_read.py,hd_portrait_pack.py,hd_upscale.py,exe_patch.py,terrain_hd.py,imp_read.py,hd_sprites.py,imp_members.py} "$ROOT/tools/portrait-upscale/"{upscale.py,lbm_png.py} "$ROOT/tools/hd-review/"{serve.py,review.html} "$OUT/tools/"
 # The terrain patch sets ship as JSON: setup promises Python 3.9, and tomllib is 3.11+. exe_patch
 # loads a .json set through the same validation as the .toml it came from.
 for set in terrain-hybrid-2x terrain-stride-1024; do
@@ -56,14 +56,15 @@ PY
 
 # No game art or game binary, ever: refuse the build if anything that could hold it slipped in.
 if find "$OUT" \( -iname '*.lbm' -o -iname '*.mpq' -o -iname '*.pack' -o -iname '*.png' -o -iname '*.raw' \
-                 -o -iname '*.til' -o -iname '*.exe' -o -iname '*.lomhd-backup' \) | grep -q .; then
+                 -o -iname '*.til' -o -iname '*.imp' -o -iname '*.rgba' -o -iname '*.exe' -o -iname '*.lomhd-backup' \) | grep -q .; then
   echo "refusing: game-derived files in $OUT" >&2; exit 1
 fi
 # And nothing that is not on this list: a new file has to be added here on purpose.
 EXPECTED="LICENSE-cnc-ddraw.txt NOTICES.md README.md ddraw.dll exe_patches/terrain-hybrid-2x.json
-exe_patches/terrain-stride-1024.json lomhd_setup.py overlay-names.txt release.json terrain-names.txt
-tools/exe_patch.py tools/hd_portrait_pack.py tools/hd_upscale.py tools/lbm_png.py tools/mpq_read.py
-tools/review.html tools/serve.py tools/terrain_hd.py tools/upscale.py upscale-choices.json"
+exe_patches/terrain-stride-1024.json imp-names.txt lomhd_setup.py overlay-names.txt release.json
+terrain-names.txt tools/exe_patch.py tools/hd_portrait_pack.py tools/hd_sprites.py tools/hd_upscale.py
+tools/imp_members.py tools/imp_read.py tools/lbm_png.py tools/mpq_read.py tools/review.html tools/serve.py
+tools/terrain_hd.py tools/upscale.py upscale-choices.json"
 GOT=$(cd "$OUT" && find . -type f | sed 's|^\./||' | LC_ALL=C sort | tr '\n' ' ')
 WANT=$(echo "$EXPECTED" | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' ')
 [ "$GOT" = "$WANT" ] || { echo "refusing: $OUT holds [$GOT], expected [$WANT]" >&2; exit 1; }
