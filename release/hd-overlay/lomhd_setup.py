@@ -173,11 +173,42 @@ def release() -> dict:
     return record
 
 
-def check_magick() -> None:
+def magick_version() -> str:
     try:
-        out = subprocess.run(["magick", "-version"], capture_output=True, text=True).stdout
+        return subprocess.run(["magick", "-version"], capture_output=True, text=True).stdout
     except FileNotFoundError:
-        out = ""
+        return ""
+
+
+def windows_magick_dirs() -> "list[str]":
+    """Where a just-installed ImageMagick is on Windows. A console keeps the PATH it opened with, so
+    right after `winget install` the new folder is only in the registry (a tester hit this: setup
+    said ImageMagick was missing until the console was reopened). Also the default install folder,
+    in case the installer did not add it to PATH at all."""
+    import winreg  # Windows only; imported here so the module still loads everywhere else
+    dirs: "list[str]" = []
+    for root, key in ((winreg.HKEY_LOCAL_MACHINE,
+                       r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+                      (winreg.HKEY_CURRENT_USER, "Environment")):
+        try:
+            with winreg.OpenKey(root, key) as handle:
+                value = winreg.QueryValueEx(handle, "Path")[0]
+        except OSError:
+            continue
+        dirs += [os.path.expandvars(d) for d in value.split(";") if "imagemagick" in d.lower()]
+    for base in {os.environ.get("ProgramFiles", r"C:\Program Files"), r"C:\Program Files"}:
+        dirs += sorted((str(p) for p in pathlib.Path(base).glob("ImageMagick-7*")), reverse=True)
+    return [d for d in dirs if (pathlib.Path(d) / "magick.exe").is_file()]
+
+
+def check_magick() -> None:
+    out = magick_version()
+    if "ImageMagick 7" not in out and os.name == "nt":
+        # Put it on this process's PATH: every later `magick` call (here and in tools/) inherits it.
+        found = windows_magick_dirs()
+        if found:
+            os.environ["PATH"] = os.pathsep.join(found + [os.environ.get("PATH", "")])
+            out = magick_version()
     if "ImageMagick 7" not in out:
         fail("ImageMagick 7 is needed and `magick` was not found on PATH.\n"
              "  Windows: winget install ImageMagick.ImageMagick   (then open a NEW terminal)\n"

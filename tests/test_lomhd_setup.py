@@ -15,6 +15,8 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import types
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -389,6 +391,60 @@ class UpscalePlan(unittest.TestCase):
 
 
 # --- sprites ---------------------------------------------------------------------------------------
+
+class WindowsMagick(unittest.TestCase):
+    """A console keeps the PATH it opened with, so right after `winget install ImageMagick` setup
+    must find magick.exe itself (a tester was told it was missing until they reopened the console)."""
+
+    def setUp(self) -> None:
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.registry: "dict[str, str]" = {}
+        fake = types.ModuleType("winreg")
+        fake.HKEY_LOCAL_MACHINE, fake.HKEY_CURRENT_USER = "HKLM", "HKCU"
+
+        class Key:
+            def __init__(self, root: str) -> None:
+                self.root = root
+
+            def __enter__(self) -> "Key":
+                if self.root not in registry:
+                    raise OSError("no such key")
+                return self
+
+            def __exit__(self, *exc: object) -> None:
+                return None
+
+        registry = self.registry
+        fake.OpenKey = lambda root, key: Key(root)
+        fake.QueryValueEx = lambda handle, name: (registry[handle.root], 2)
+        patcher = mock.patch.dict(sys.modules, {"winreg": fake})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def install(self, folder: str) -> pathlib.Path:
+        path = self.tmp / folder
+        path.mkdir(parents=True)
+        (path / "magick.exe").write_bytes(b"")
+        return path
+
+    def test_a_folder_only_in_the_registry_path_is_found(self) -> None:
+        where = self.install("Apps/ImageMagick-7.1.2-Q16-HDRI")
+        self.registry["HKLM"] = f"C:\\Windows;{where}"
+        with mock.patch.dict(os.environ, {"ProgramFiles": str(self.tmp / "none")}):
+            self.assertEqual(setup.windows_magick_dirs(), [str(where)])
+
+    def test_the_default_install_folder_is_found_without_any_path_entry(self) -> None:
+        where = self.install("Program Files/ImageMagick-7.1.2-Q16-HDRI")
+        with mock.patch.dict(os.environ, {"ProgramFiles": str(self.tmp / "Program Files")}):
+            self.assertIn(str(where), setup.windows_magick_dirs())
+
+    def test_a_path_entry_without_magick_exe_is_ignored(self) -> None:
+        (self.tmp / "ImageMagick-old").mkdir()
+        self.registry["HKCU"] = str(self.tmp / "ImageMagick-old")
+        with mock.patch.dict(os.environ, {"ProgramFiles": str(self.tmp / "none")}):
+            self.assertEqual(setup.windows_magick_dirs(), [])
+
 
 class RetryCommand(unittest.TestCase):
     """The command a failed run tells the player to type. It must repeat this run's choices: the

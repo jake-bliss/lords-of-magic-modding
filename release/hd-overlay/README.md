@@ -21,7 +21,8 @@ The art is sharper, not bigger: each picture fills the same space on screen as b
 
 - Lords of Magic Special Edition (Steam or GOG). Vanilla and the GS5R3 patch both work.
 - **Python 3.9 or newer.** Windows: install from python.org and tick *Add python.exe to PATH*.
-- **ImageMagick 7.** Windows: `winget install ImageMagick.ImageMagick`, then open a new terminal.
+- **ImageMagick 7.** Windows: `winget install ImageMagick.ImageMagick` (setup finds it straight away,
+  even in the terminal you installed it from).
   macOS: `brew install imagemagick`.
 - A graphics card with Vulkan (any recent NVIDIA, AMD or Intel GPU; Apple Silicon works).
 - About 1 GB of disk while it runs, and 20-60 minutes, almost all of it upscaling. With
