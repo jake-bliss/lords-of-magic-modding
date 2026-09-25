@@ -3,7 +3,8 @@ what. One code path for the player's setup (`release/hd-overlay/lomhd_setup.py`)
 (`tools/hd-review/sprite_pack.py`), so what is tested is what players run.
 
 Everything is read from the player's own imp.mpq with `imp_read` (a port of the asset viewer's
-decoder) and written under a work folder keyed by the archive's content; no game art ships.
+decoder) and written under a work folder keyed per member by its path and its own bytes; no game
+art ships.
 
 STATIC sprites -- a member with exactly one frame in total -- become one record each, `sprite__<name>`,
 group 0, never MIRROR: one upscale covers the whole sprite the way one covers a portrait.
@@ -54,6 +55,7 @@ from typing import Callable, Dict, Iterator, List, Optional, Tuple
 import hd_portrait_pack as pack
 import hd_upscale
 import imp_read
+from imp_members import candidate_members, resolve_members
 
 MAX_RECORD_NAME_LEN = 39         # the DLL's name[40]: 39 characters plus a null terminator
 RENDER_BATCH = 400
@@ -391,33 +393,79 @@ def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[st
         yield from flush()
 
 
-# What a damaged member can raise on its way out of mpq_read (explode, zlib, the sector table) or
-# through imp_read: each is that ONE member's problem, never a reason to stop the install.
-READ_ERRORS = (KeyError, ValueError, IndexError, struct.error, zlib.error, OverflowError)
+def member_bytes(archive, member: str) -> bytes:
+    """One member's bytes, or an ImpError when the archive cannot give them: missing, or damaged on
+    its way out of mpq_read (its own checks, or zlib inflating a sector). ONLY the read is
+    guarded -- a bug anywhere else still fails loudly."""
+    import mpq_read
+    try:
+        return archive.read(member.lower())
+    except (mpq_read.MpqError, KeyError, zlib.error) as error:
+        raise imp_read.ImpError(f"not readable from the archive ({type(error).__name__}: {error})") from error
 
 
 def archive_reader(archive) -> Callable[[str], "imp_read.Sprite"]:
-    """`read_sprite` for an `mpq_read.Archive`: a member the archive cannot give, or that does not
-    decode, is an ImpError -- a per-member skip for every caller."""
-    import mpq_read
+    """`read_sprite` for an `mpq_read.Archive`: a member the archive cannot give, or that imp_read
+    refuses, is an ImpError -- a per-member skip for every caller."""
+    return lambda member: imp_read.parse(member_bytes(archive, member))
 
-    def read_sprite(member: str) -> "imp_read.Sprite":
+
+@dataclasses.dataclass
+class Resolution:
+    resolved: Dict[str, Tuple[str, int]]     # name -> (member, frame count)
+    considered: int
+    skipped: List[str]
+    live: Optional[set]          # member keys whose work to keep; None: keep everything this run
+
+
+def resolve(archive, listfile: pathlib.Path) -> Resolution:
+    """Which member each name in `listfile` means in THIS archive (`imp_members`), with its frame
+    count; the one resolver for setup and the dev tool. A member that is present but cannot be read
+    or decoded is a skip naming why, never a stop.
+
+    `live` holds the key of EVERY present member whose bytes could be read -- resolved or not, so a
+    member left out this run (undecodable, or sharing its name with another) keeps its renders for
+    when it comes back. If any present member's bytes cannot be read at all, its key cannot be
+    known, so `live` is None and nothing is pruned this run."""
+    candidates = candidate_members(listfile)
+    live: Optional[set] = set()
+    unreadable: Dict[str, str] = {}
+
+    def frame_count(member: str):
+        nonlocal live
+        if member.lower() not in archive:
+            return None
         try:
-            return imp_read.parse(archive.read(member.lower()))
-        except imp_read.ImpError:
-            raise
-        except (mpq_read.MpqError,) + READ_ERRORS as error:
-            raise imp_read.ImpError(f"not readable from the archive ({type(error).__name__}: "
-                                    f"{error})") from error
-    return read_sprite
+            data = member_bytes(archive, member)
+        except imp_read.ImpError as error:
+            unreadable[member] = str(error)
+            live = None
+            return None
+        if live is not None:
+            live.add(member_key(member, hashlib.sha256(data).hexdigest()[:16]))
+        try:
+            return len(imp_read.parse(data).frames)
+        except imp_read.ImpError as error:
+            unreadable[member] = str(error)
+            return None
+
+    resolved, skipped = resolve_members(candidates, frame_count)
+    for n, line in enumerate(skipped):         # "not in this archive" is not why, for a damaged one
+        name = line.split(":", 1)[0]
+        errors = [f"{m} ({unreadable[m]})" for m in candidates.get(name, []) if m in unreadable]
+        if errors and line.endswith("not in this archive"):
+            skipped[n] = f"{name}: could not read {', '.join(errors)}"
+    return Resolution(resolved, len(candidates), skipped, live)
 
 
-def prune(root: pathlib.Path, live: set) -> int:
-    """Remove prepared inputs and renders whose member key is not in `live` (the keys of every
-    member this archive resolves to now, planned this run or not): a member a mod changed, or one
-    no longer present. Never the whole cache: every unchanged member keeps its renders. Returns how
+def prune(root: pathlib.Path, live: Optional[set]) -> int:
+    """Remove prepared inputs and renders whose member key is not in `live` (`Resolution.live`: the
+    key of every member present in the archive now, planned this run or not): a member a mod changed,
+    or one no longer present. `live` None removes nothing. Never the whole cache: every unchanged member keeps its renders. Returns how
     many files went."""
     removed = 0
+    if live is None:
+        return 0
     folders = [root / "prep"] + ([p for p in (root / "render").iterdir() if p.is_dir()]
                                  if (root / "render").is_dir() else [])
     for folder in folders:

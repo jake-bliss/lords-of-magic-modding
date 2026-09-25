@@ -208,10 +208,39 @@ class DevResolve(unittest.TestCase):
         self.assertEqual(resolved, {})
         self.assertIn("ambiguous", skipped[0])
 
-    def test_absent_and_undecodable_members_are_not_in_this_archive(self) -> None:
+    def test_absent_and_undecodable_members_are_skipped_with_their_reason(self) -> None:
+        """setup's resolver, so an undecodable member says why and does not stop the dev tool."""
         resolved, _, skipped = self.resolve("imp\\ghost.imp\nimp\\junk.imp\n", {"imp\\junk.imp": b"junk"})
         self.assertEqual(resolved, {})
-        self.assertEqual(skipped, ["ghost: not in this archive", "junk: not in this archive"])
+        self.assertEqual(skipped[0], "ghost: not in this archive")
+        self.assertTrue(skipped[1].startswith("junk: could not read imp\\junk.imp (IMP file header is truncated"),
+                        skipped[1])
+
+    def test_a_member_the_archive_cannot_inflate_is_a_skip_too(self) -> None:
+        import zlib
+
+        class Damaged(FakeArchive):
+            def read(self, name):
+                return zlib.decompress(b"not zlib") if "bad" in name else super().read(name)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            listfile = pathlib.Path(tmp) / "list.txt"
+            listfile.write_text("imp\\bad.imp\nimp\\ok.imp\n")
+            found = hd_sprites.resolve(Damaged({"imp\\bad.imp": b"", "imp\\ok.imp": imp_file([frame(20, 6, 3)])}),
+                                       listfile)
+        self.assertEqual(found.resolved, {"ok": ("imp\\ok.imp", 1)})
+        self.assertIn("bad: could not read imp\\bad.imp (not readable from the archive (error:", found.skipped[0])
+        self.assertIsNone(found.live, "a member whose bytes are unknown: prune nothing this run")
+
+    def test_only_the_archive_read_is_guarded(self) -> None:
+        """Damage on the way out of the archive is a skip; anything else (here, the archive raising
+        something no damaged member produces) fails loudly rather than being filed as a skip."""
+        class Buggy(FakeArchive):
+            def read(self, name):
+                raise RuntimeError("a bug, not damage")
+
+        with self.assertRaises(RuntimeError):
+            hd_sprites.archive_reader(Buggy({"imp\\ok.imp": b""}))("imp\\ok.imp")
 
 
 class ImpFile(unittest.TestCase):

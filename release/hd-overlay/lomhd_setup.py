@@ -71,11 +71,9 @@ import exe_patch  # noqa: E402
 import hd_portrait_pack  # noqa: E402
 import hd_sprites  # noqa: E402
 import hd_upscale  # noqa: E402
-import imp_read  # noqa: E402
 import lbm_png  # noqa: E402
 import mpq_read  # noqa: E402
 import terrain_hd  # noqa: E402
-from imp_members import candidate_members, resolve_members  # noqa: E402
 
 WORK = HERE / "lomhd_work"
 PACK_NAME = "lomhd_portraits.pack"
@@ -479,29 +477,12 @@ def plan_sprites(game: pathlib.Path, animated: bool):
     archive = mpq_read.Archive(game / "imp.mpq")
     read_sprite = hd_sprites.archive_reader(archive)
     root = WORK / "sprites"
-    digests: dict = {}
-    unreadable: dict = {}
-
-    def frame_count(member: str):
-        if member.lower() not in archive:
-            return None
-        try:
-            sprite = read_sprite(member)
-        except imp_read.ImpError as error:
-            unreadable[member] = str(error)
-            return None
-        digests[member] = sprite.digest
-        return len(sprite.frames)
-
-    candidates = candidate_members(IMP_NAMES)
-    resolved, skipped = resolve_members(candidates, frame_count)
-    for n, line in enumerate(skipped):         # "not in this archive" is not why, for a damaged one
-        name = line.split(":", 1)[0]
-        errors = [f"{m} ({unreadable[m]})" for m in candidates.get(name, []) if m in unreadable]
-        if errors and line.endswith("not in this archive"):
-            skipped[n] = f"{name}: could not read {', '.join(errors)}"
+    found = hd_sprites.resolve(archive, IMP_NAMES)
+    resolved, skipped = found.resolved, found.skipped
     root.mkdir(parents=True, exist_ok=True)
-    hd_sprites.prune(root, {hd_sprites.member_key(m, digests[m]) for m, _ in resolved.values()})
+    # Every member still present keeps its work, planned this run or not: a static-only run must
+    # never cost a --sprites install its hours of animated renders.
+    hd_sprites.prune(root, found.live)
     limit = os.environ.get(SPRITE_LIMIT_ENV)
     if animated and limit:
         keep = sorted(n for n, (_, frames) in resolved.items() if frames > 1)[:int(limit)]
@@ -512,14 +493,15 @@ def plan_sprites(game: pathlib.Path, animated: bool):
     return plan, root, read_sprite
 
 
-def upscale_sprites(sprites: list, root: pathlib.Path, exe: pathlib.Path, models: pathlib.Path) -> None:
+def upscale_sprites(sprites: list, root: pathlib.Path, exe: pathlib.Path, models: pathlib.Path,
+                    again: str = "python lomhd_setup.py") -> None:
     def render(option, inputs, dest):
         hd_upscale.render(option, inputs, dest, exe, models)
     try:
         hd_sprites.render_all(sprites, root, render, log=lambda line: say(f"     {line}"))
     except (SystemExit, subprocess.CalledProcessError) as error:
-        fail(f"upscaling sprites stopped: {error}\nThe game has not been touched. Run again to carry "
-             "on: every sprite already upscaled is kept.")
+        fail(f"upscaling sprites stopped: {error}\nThe game has not been touched. Run the same "
+             f"command again ({again}) to carry on: every sprite already upscaled is kept.")
 
 
 def build_pack(pack: pathlib.Path, sprites, sprite_root: pathlib.Path, read_sprite, originals: list,
@@ -1217,7 +1199,10 @@ def main() -> int:
     upscaled = upscale_all(found, exe, models)
     say(f"4/{steps}  Upscaling sprites" + (" (the very long step; it resumes if stopped)"
                                           if animated else ""))
-    upscale_sprites(sprites.static + sprites.animated, sprite_root, exe, models)
+    again = " ".join(["python lomhd_setup.py"] + (["--sprites"] if args.sprites else [])
+                     + (["--terrain"] if args.terrain else [])
+                     + ([f'--game "{game}"'] if args.game else []))
+    upscale_sprites(sprites.static + sprites.animated, sprite_root, exe, models, again)
     say(f"5/{steps}  Building the pack and installing")
     originals = [WORK / "originals" / group for group in found if found[group]]
     pack = WORK / PACK_NAME
@@ -1239,7 +1224,9 @@ def main() -> int:
         report.write_text("".join(f"{line}\n" for line in sprite_skipped))
         say(f"  (every sprite left out, and why: {report})")
     if not animated:
-        say("Animated sprites (units, spell effects) were not built: add --sprites for them.")
+        say("Animated sprites (units, spell effects) were left out, as --no-sprites asked."
+            if args.no_sprites else
+            "Animated sprites (units, spell effects) were not built: add --sprites for them.")
     if args.terrain:
         say(f"\n6/{steps}  Building HD terrain from your pic.mpq (the long step again)")
         built = build_terrain(game, exe, models)

@@ -37,28 +37,16 @@ sys.path.insert(0, str(ROOT / "tools"))
 import hd_portrait_pack as pack  # noqa: E402
 import hd_sprites  # noqa: E402
 import hd_upscale  # noqa: E402
-import imp_read  # noqa: E402
 import mpq_read  # noqa: E402
-from imp_members import candidate_members, resolve_members  # noqa: E402
 
 WORK = ROOT / "artifacts" / "hd-review" / "_sprites"
 
 
 def resolve_sprites(archive, listfile: pathlib.Path):
-    """(name -> (member, frame count), considered, skipped) for this archive: every name that
-    resolves to exactly one member present in it and decodes."""
-    grouped = candidate_members(listfile)
-
-    def frames(member: str):
-        if member.lower() not in archive:
-            return None
-        try:
-            return len(imp_read.parse(archive.read(member.lower())).frames)
-        except imp_read.ImpError:
-            return None
-
-    resolved, skipped = resolve_members(grouped, frames)
-    return resolved, len(grouped), skipped
+    """(name -> (member, frame count), considered, skipped) for this archive: setup's own resolver
+    (`hd_sprites.resolve`), so a damaged member is a skip here too, not a stop."""
+    found = hd_sprites.resolve(archive, listfile)
+    return found.resolved, found.considered, found.skipped
 
 
 def seed_review_renders(sprites, root: pathlib.Path, renders: pathlib.Path) -> int:

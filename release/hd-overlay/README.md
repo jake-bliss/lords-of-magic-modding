@@ -69,14 +69,17 @@ image pack:
   This takes **several hours on a typical GPU**. Stop it any time (Ctrl+C or closing the window);
   run the same command again and it carries on where it stopped: every frame already upscaled is
   kept in `lomhd_work\sprites`, which grows to about 1 GB. The image pack grows by about 0.7 GB
-  too, and setup keeps a copy of it in `lomhd_work` as well as the one in the game folder. Delete
-  `lomhd_work\sprites` once the install is done if you need the space back; a later run would then
-  start the sprites again from scratch.
+  too, and setup keeps a copy of it in `lomhd_work` as well as the one in the game folder.
 
   Setup remembers `--sprites`: later runs (a plain `python lomhd_setup.py`, after `--review` say)
   keep the animated sprites and say "Animated sprites: on, remembered from your last install".
-  Nothing is upscaled twice. To go back to sprites that do not move only, run
+  They reuse every frame already upscaled; only a sprite whose pick you changed (or that a mod
+  changed) is upscaled again. To go back to sprites that do not move only, run
   `python lomhd_setup.py --no-sprites`.
+
+  You can delete `lomhd_work\sprites` to get the space back once the install is done, but then any
+  later run -- including a plain one, since `--sprites` is remembered -- upscales every animated
+  sprite again, for hours. Run later updates with `--no-sprites` if you do not want that.
 
 Each sprite is upscaled with the method picked for it by hand (one pick covers all of a sprite's
 frames, so an animation does not flicker between styles). Frames that repeat are packed once, and

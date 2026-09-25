@@ -456,6 +456,69 @@ class Sprites(unittest.TestCase):
         plan, _, _ = setup.plan_sprites(self.game, animated=False)
         self.assertEqual([(s.name, s.option) for s in plan.static], [("b", "anime4x")])
 
+    def renders_of(self, root: pathlib.Path, stem_prefix: str) -> list:
+        return sorted(p.name for p in (root / "render").rglob("*.png") if p.name.startswith(stem_prefix))
+
+    def test_a_static_only_run_keeps_the_animated_renders(self) -> None:
+        """A --no-sprites run (or a plain one before sprites were remembered) plans no animated
+        sprite -- and must not prune the hours of renders a --sprites run made for them."""
+        self.picks({"sprite__cav": "anime2x", "sprite__one": "anime2x"})
+        self.add("units\\\\cav.imp", self.frame(20, 6, 3), self.frame(20, 6, 4))
+        self.add("imp\\\\one.imp", self.frame(20, 6, 5))
+        plan, root, _ = setup.plan_sprites(self.game, animated=True)
+        setup.upscale_sprites(plan.static + plan.animated, root, pathlib.Path("e"), pathlib.Path("m"))
+        cav = plan.animated[0].frames[0].stem.split("__")[0]
+        before = self.renders_of(root, cav)
+        self.assertEqual(len(before), 2)
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertEqual(plan.animated, [])
+        self.assertEqual(self.renders_of(root, cav), before)
+
+    def test_present_members_left_out_this_run_keep_their_renders(self) -> None:
+        """Ambiguous (two members, one name) or undecodable today: still in imp.mpq, so their
+        work is kept for when they resolve again -- not pruned as if a mod had removed them."""
+        self.picks({"sprite__tree": "anime2x"})
+        self.add("imp\\\\tree.imp", self.frame(20, 6, 3))
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        setup.upscale_sprites(plan.static, root, pathlib.Path("e"), pathlib.Path("m"))
+        tree = plan.static[0].frames[0].stem.split("__")[0]
+        self.add("aura\\\\tree.imp", self.frame(20, 6, 7))                 # now ambiguous
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertEqual(plan.static, [])
+        self.assertIn("ambiguous", plan.skipped[0])
+        self.assertEqual(len(self.renders_of(root, tree)), 1)
+        del self.members["aura\\\\tree.imp"]
+        good = self.members["imp\\\\tree.imp"]
+        self.members["imp\\\\tree.imp"] = good[:40]                         # present, undecodable
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertIn("could not read", plan.skipped[0])
+        self.assertEqual(len(self.renders_of(root, tree)), 0,
+                         "its bytes changed, so its old work goes: it is a different member now")
+        self.members["imp\\\\tree.imp"] = good
+
+    def test_a_member_whose_bytes_cannot_be_read_prunes_nothing(self) -> None:
+        import zlib
+        self.picks({"sprite__tree": "anime2x", "sprite__rock": "anime2x"})
+        self.add("imp\\\\tree.imp", self.frame(20, 6, 3))
+        self.add("imp\\\\rock.imp", self.frame(20, 6, 4))
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        setup.upscale_sprites(plan.static, root, pathlib.Path("e"), pathlib.Path("m"))
+        rock = next(s for s in plan.static if s.name == "rock").frames[0].stem.split("__")[0]
+        members = self.members
+
+        class Damaged:
+            def __init__(self, path): pass
+            def __contains__(self, name): return name.lower() in members
+            def read(self, name):
+                if "rock" in name:
+                    return zlib.decompress(b"damaged")
+                return members[name.lower()]
+
+        setup.mpq_read.Archive = Damaged
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertEqual([s.name for s in plan.static], ["tree"])
+        self.assertEqual(len(self.renders_of(root, rock)), 1, "its key is unknown: nothing pruned")
+
     def test_changing_one_member_re_renders_only_that_member(self) -> None:
         """A mod that repaints one sprite changes imp.mpq; every other sprite keeps its render (hours
         of them, with --sprites). The changed one is rendered afresh and its old work removed."""
