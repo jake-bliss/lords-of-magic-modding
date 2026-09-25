@@ -334,7 +334,7 @@ def read_renders(root: pathlib.Path, wanted: List[Tuple[str, int, int]]) -> Dict
 
 def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[str], "imp_read.Sprite"],
             skipped: List[str], counts: Optional[Dict[str, int]] = None, first_group: int = 1,
-            batch: int = RENDER_BATCH, budget: int = READ_BUDGET, read=read_renders) -> Iterator[Tuple[bytes, bytes, bytes]]:
+            batch: int = RENDER_BATCH, budget: int = READ_BUDGET, read=None) -> Iterator[Tuple[bytes, bytes, bytes]]:
     """Yield (entry, zidx, zhd) for every planned frame, in order: static sprites group 0, each
     animated sprite its own group, consecutive. The low-res half is decoded again from the archive
     (`read_sprite`), one member at a time. A frame whose render is missing or the wrong size is
@@ -351,7 +351,7 @@ def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[st
         nonlocal group
         wanted = [(f"render/{s.option}/{f.stem}.png", f.width * 2, f.height * 2)
                   for s in queue for f in s.frames]
-        pixels = read(root, wanted)
+        pixels = (read or read_renders)(root, wanted)
         for sprite in queue:
             this_group = 0
             if sprite.animated:
@@ -399,8 +399,16 @@ def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[st
 
 
 def archive_reader(archive) -> Callable[[str], "imp_read.Sprite"]:
-    """`read_sprite` for an `mpq_read.Archive`."""
-    return lambda member: imp_read.parse(archive.read(member.lower()))
+    """`read_sprite` for an `mpq_read.Archive`: a member the archive cannot give is an ImpError."""
+    import mpq_read
+
+    def read_sprite(member: str) -> "imp_read.Sprite":
+        try:
+            data = archive.read(member.lower())
+        except (mpq_read.MpqError, KeyError) as error:
+            raise imp_read.ImpError(f"not readable from the archive ({error})") from error
+        return imp_read.parse(data)
+    return read_sprite
 
 
 def clear_stale(root: pathlib.Path, keep: str) -> None:

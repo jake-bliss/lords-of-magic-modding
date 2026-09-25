@@ -9,6 +9,8 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
+import struct
 import sys
 import tempfile
 import unittest
@@ -383,6 +385,153 @@ class UpscalePlan(unittest.TestCase):
         setup.render_review({"building": []}, pathlib.Path("esrgan"), pathlib.Path("models"))
         self.assertEqual(list((review / "original").iterdir()), [],
                          "a picture this install does not have leaves the page")
+
+
+# --- sprites ---------------------------------------------------------------------------------------
+
+class Sprites(unittest.TestCase):
+    """plan_sprites / build_pack against a fake imp.mpq of tiny real IMP files, the upscaler stubbed
+    to write real PNGs at 2x."""
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_hd_sprites import frame, imp_file
+        import hd_sprites
+        self.frame, self.imp_file, self.hd_sprites = frame, imp_file, hd_sprites
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.base = pathlib.Path(tmp.name)
+        self.game = self.base / "game"
+        self.game.mkdir()
+        (self.game / "imp.mpq").write_bytes(b"one imp.mpq")
+        self.names = self.base / "imp-names.txt"
+        self.shipped, self.mine = self.base / "shipped.json", self.base / "mine.json"
+        for name, value in (("WORK", self.base / "lomhd_work"), ("say", lambda text: None),
+                            ("IMP_NAMES", self.names), ("SHIPPED_CHOICES", self.shipped),
+                            ("MY_CHOICES", self.mine)):
+            self.addCleanup(setattr, setup, name, getattr(setup, name))
+            setattr(setup, name, value)
+        self.members: dict[str, bytes] = {}
+        members = self.members
+
+        class Archive:
+            def __init__(self, path): pass
+            def __contains__(self, name): return name.lower() in members
+            def read(self, name): return members[name.lower()]
+
+        self.addCleanup(setattr, setup.mpq_read, "Archive", setup.mpq_read.Archive)
+        setup.mpq_read.Archive = Archive
+        self.rendered: list[str] = []
+
+        def render(option, inputs, dest, esrgan, models):
+            dest.mkdir(parents=True, exist_ok=True)
+            for key, src in inputs.items():
+                self.rendered.append(key)
+                w, h = setup.hd_upscale.png_size(src)
+                hd_sprites.write_png_rgba(dest / f"{key}.png", w * 2, h * 2, bytes([9, 9, 9, 255]) * (w * h * 4))
+            return len(inputs)
+
+        self.addCleanup(setattr, setup.hd_upscale, "render", setup.hd_upscale.render)
+        setup.hd_upscale.render = render
+
+    def add(self, member: str, *frames) -> None:
+        self.members[member.lower()] = self.imp_file(list(frames))
+        self.names.write_text("".join(f"{m}\n" for m in self.members))
+
+    def picks(self, shipped: dict, mine: dict | None = None) -> None:
+        self.shipped.write_text(json.dumps({"choices": shipped}))
+        if mine is not None:
+            self.mine.write_text(json.dumps({"choices": mine}))
+
+    def test_the_players_sprite_picks_win_per_sprite(self) -> None:
+        """A my-upscale-choices.json from before sprites were built has no sprite__ keys; it must
+        not take the shipped sprite picks away (choices_file swaps the whole file for pictures)."""
+        self.picks({"sprite__a": "anime2x", "sprite__b": "anime2x", "building__x": "ultrasharp"},
+                   {"sprite__b": "anime4x", "building__x": "anime2x"})
+        self.assertEqual(setup.sprite_choices(), {"sprite__a": "anime2x", "sprite__b": "anime4x"})
+        self.mine.write_text(json.dumps({"choices": {"building__x": "anime2x"}}))
+        self.assertEqual(setup.sprite_choices(), {"sprite__a": "anime2x", "sprite__b": "anime2x"})
+        self.add("imp\\b.imp", self.frame(20, 6, 3))
+        self.mine.write_text(json.dumps({"choices": {"sprite__b": "anime4x"}}))
+        plan, _, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertEqual([(s.name, s.option) for s in plan.static], [("b", "anime4x")])
+
+    def test_work_is_keyed_by_the_archive_and_another_archives_is_removed(self) -> None:
+        self.picks({"sprite__tree": "anime2x"})
+        self.add("imp\\tree.imp", self.frame(20, 6, 3))
+        _, first, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertTrue(any((first / "prep").iterdir()))
+        (self.game / "imp.mpq").write_bytes(b"another imp.mpq")
+        _, second, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertNotEqual(first, second)
+        self.assertEqual(first.parent, second.parent)
+        self.assertFalse(first.exists(), "an older archive's frames are not kept for ever")
+
+    def test_animated_sprites_resume_where_a_run_stopped(self) -> None:
+        self.picks({"sprite__cav": "anime2x"})
+        self.add("units\\cav.imp", self.frame(20, 6, 3), self.frame(20, 6, 4))
+        plan, root, _ = setup.plan_sprites(self.game, animated=True)
+        setup.upscale_sprites(plan.animated, root, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertEqual(len(self.rendered), 2)
+        plan, root, _ = setup.plan_sprites(self.game, animated=True)
+        setup.upscale_sprites(plan.animated, root, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertEqual(len(self.rendered), 2, "nothing rendered twice")
+
+    def test_a_game_without_imp_mpq_is_refused(self) -> None:
+        (self.game / "imp.mpq").unlink()
+        with self.assertRaises(SystemExit):
+            setup.check_imp(self.game)
+
+    @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
+    def test_the_pack_holds_sprites_and_pictures_and_uninstall_restores_everything(self) -> None:
+        import hd_portrait_pack as pack
+        import lbm_png
+        self.picks({"sprite__tree": "anime2x", "sprite__cav": "ultrasharp", "sprite__glow": "anime2x",
+                    "sprite__plain": "original"})
+        self.add("imp\\tree.imp", self.frame(20, 6, 3))
+        self.add("imp\\plain.imp", self.frame(20, 6, 5))
+        self.add("units\\cav.imp", self.frame(20, 6, 6), self.frame(20, 6, 7))
+        self.add("aura\\glow.imp", self.frame(20, 6, 8), self.frame(20, 6, 6))  # frame 1 repeats cav's
+        plan, root, read_sprite = setup.plan_sprites(self.game, animated=True)
+        setup.upscale_sprites(plan.static + plan.animated, root, pathlib.Path("e"), pathlib.Path("m"))
+        originals, upscaled = self.base / "originals", self.base / "upscaled"
+        originals.mkdir()
+        upscaled.mkdir()
+        palette = [(i, (i * 3) % 256, 255 - i) for i in range(256)]
+        header = struct.pack(">HHhhBBBBHBBhh", 40, 6, 0, 0, 8, 0, 1, 0, 0, 1, 1, 40, 6)
+        lbm_png.encode(originals / "aagtwr0a.lbm", 40, 6, bytes(range(240)), palette,
+                       [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+        self.hd_sprites.write_png_rgba(upscaled / "aagtwr0a.png", 80, 12, bytes(range(256)) * 15)
+        pack_path = self.base / "lomhd_portraits.pack"
+        count, skipped, sprite_skipped, static, moving = setup.build_pack(
+            pack_path, plan, root, read_sprite, [originals], [upscaled])
+        got = [(name, flags, group) for name, _, _, flags, _, group in pack.read(pack_path.read_bytes())]
+        masked, mirror = pack.FLAG_MASKED, pack.FLAG_MASKED | pack.FLAG_MIRROR
+        self.assertEqual(got, [("sprite__tree", masked, 0),
+                               ("anim__cav#000", mirror, 1), ("anim__cav#001", mirror, 1),
+                               ("anim__glow#000", masked, 2),
+                               ("aagtwr0a", 0, 0)])
+        self.assertEqual((count, skipped, static["packed"], moving["sprites"], moving["packed"]),
+                         (5, [], 1, 2, 3))
+        self.assertEqual(sprite_skipped, ["plain: picked 'original' in review (no upscale beat it)"])
+        self.assertEqual(plan.counts["repeats"], 1)
+
+        # The combined pack installs and uninstalls like any other.
+        dll, original = self.game / "ddraw.dll", b"the player's own ddraw.dll"
+        dll.write_bytes(original)
+        before = sorted(p.name for p in self.game.iterdir())
+        release_dir = self.base / "release"
+        release_dir.mkdir()
+        (release_dir / "ddraw.dll").write_bytes(OURS)
+        self.addCleanup(setattr, setup, "HERE", setup.HERE)
+        setup.HERE = release_dir
+        setup.install(self.game, pack_path, {"ddraw_sha256": hashlib.sha256(OURS).hexdigest(), "version": "t"})
+        self.assertEqual((self.game / setup.PACK_NAME).read_bytes(), pack_path.read_bytes())
+        self.assertEqual(json.loads((self.game / setup.RECORD_NAME).read_text())["pack_sha256"],
+                         hashlib.sha256(pack_path.read_bytes()).hexdigest())
+        setup.uninstall(self.game)
+        self.assertEqual(sorted(p.name for p in self.game.iterdir()), before)
+        self.assertEqual(dll.read_bytes(), original)
 
 
 # --- HD terrain (--terrain) ----------------------------------------------------------------------

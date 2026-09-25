@@ -5,6 +5,7 @@
     python lomhd_setup.py --game "C:\\...\\English"
     python lomhd_setup.py --uninstall           put the game back exactly as it was
     python lomhd_setup.py --review              pick your own upscaler per picture first
+    python lomhd_setup.py --sprites             also HD animated sprites (several hours; resumes)
     python lomhd_setup.py --terrain             also install HD terrain (patches lomse.exe)
     python lomhd_setup.py --terrain --force-terrain-folder
                                                 replace a lomhd_terrain folder this mod did not make
@@ -17,31 +18,36 @@ to the shipped picks. Rendering every option takes several times longer than an 
 
 What it does, in order, and nothing else:
 
-  1. Reads the portraits and building pictures out of your own pic.mpq. No game art ships with
-     this mod.
-  2. Downloads the upscaler (Real-ESRGAN ncnn Vulkan, MIT) and the 4x-UltraSharp model
+  1. Downloads the upscaler (Real-ESRGAN ncnn Vulkan, MIT) and the 4x-UltraSharp model
      (CC BY-NC-SA 4.0), each checked against a pinned SHA-256 before it is used.
+  2. Reads the portraits and building pictures out of your own pic.mpq, and the sprites (map
+     buildings, trees, units, spell effects) out of your own imp.mpq. No game art ships with this mod.
   3. Upscales each picture to 2x with the method picked for it in review (upscale-choices.json):
      character portraits on the approved palette pipeline, everything else in full colour.
-  4. Writes lomhd_portraits.pack beside lomse.exe.
-  5. Backs up your ddraw.dll to ddraw.dll.lomhd-backup and installs the overlay's ddraw.dll.
+  4. Upscales each sprite that does not move (one frame) the same way, with its own pick. With
+     --sprites, also every frame of every animated sprite, each with its sprite's pick: several
+     hours, cached in lomhd_work/sprites, so a run stopped part-way carries on where it was.
+  5. Writes lomhd_portraits.pack beside lomse.exe, backs up your ddraw.dll to
+     ddraw.dll.lomhd-backup and installs the overlay's ddraw.dll.
 
 With --terrain, after those five steps (and only if they succeeded):
 
   6. Reads the terrain atlases and their .til files out of your pic.mpq and upscales every tile to
      2x, quantized back to its atlas's own palette (tools/terrain_hd.py).
-  7. Writes them to lomhd_terrain/til beside lomse.exe. pic.mpq is not changed.
-  8. Backs up lomse.exe to lomse.exe.lomhd-backup and patches it (65 same-size edits, every one
-     checked before any is written) so the terrain is drawn at 2x. Last, so an interrupted run never
-     leaves a patched game without its art.
+  7. Writes them to lomhd_terrain/til beside lomse.exe. pic.mpq is not changed. Then backs up
+     lomse.exe to lomse.exe.lomhd-backup and patches it (65 same-size edits, every one checked
+     before any is written) so the terrain is drawn at 2x. Last, so an interrupted run never leaves
+     a patched game without its art.
 
 Needs Python 3.9+, ImageMagick 7 (`magick` on PATH) and a GPU with Vulkan. Takes 20-60 minutes,
-almost all of it step 3. Everything it downloads or makes lives in `lomhd_work` next to this script.
+almost all of it steps 3 and 4 (with --sprites, several hours). Everything it downloads or makes
+lives in `lomhd_work` next to this script.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import os
 import pathlib
@@ -61,10 +67,13 @@ sys.path.insert(0, str(HERE / "tools"))
 
 import exe_patch  # noqa: E402
 import hd_portrait_pack  # noqa: E402
+import hd_sprites  # noqa: E402
 import hd_upscale  # noqa: E402
+import imp_read  # noqa: E402
 import lbm_png  # noqa: E402
 import mpq_read  # noqa: E402
 import terrain_hd  # noqa: E402
+from imp_members import candidate_members, resolve_members  # noqa: E402
 
 WORK = HERE / "lomhd_work"
 PACK_NAME = "lomhd_portraits.pack"
@@ -72,6 +81,10 @@ BACKUP_NAME = "ddraw.dll.lomhd-backup"
 RECORD_NAME = "lomhd_install.json"
 SHIPPED_CHOICES = HERE / "upscale-choices.json"
 MY_CHOICES = HERE / "my-upscale-choices.json"
+IMP_NAMES = HERE / "imp-names.txt"
+# DEVELOPER AID, not for players: build only the first N animated sprites (by name), so an
+# end-to-end run of --sprites can finish in minutes. Unset, every animated sprite is built.
+SPRITE_LIMIT_ENV = "LOMHD_DEV_SPRITE_LIMIT"
 
 # HD terrain (--terrain). The exe half and the art half are installed and removed as a pair: the
 # DLL serves lomhd_terrain only to the patched exe, so a stock exe beside a leftover folder is
@@ -432,6 +445,106 @@ def serve_review(review: pathlib.Path, port: int) -> None:
         server.wait()
     except KeyboardInterrupt:
         server.terminate()
+
+
+# --- sprites -------------------------------------------------------------------------------------
+
+def check_imp(game: pathlib.Path) -> None:
+    """The sprites come from imp.mpq, which every Lords of Magic Special Edition install has."""
+    if not (game / "imp.mpq").is_file():
+        fail(f"{game} has no imp.mpq, which the HD sprites are made from. Is this Lords of Magic "
+             "Special Edition? Nothing was installed.")
+
+
+def sprite_choices() -> dict:
+    """The upscaler for each sprite: the shipped picks, with any sprite__ picks the player saved to
+    my-upscale-choices.json on top. Per sprite, like terrain_choices, so a file saved before sprites
+    were built (or with only some of them) keeps the shipped pick for every other sprite."""
+    choices = json.loads(SHIPPED_CHOICES.read_text())["choices"]
+    if MY_CHOICES.is_file():
+        mine = json.loads(MY_CHOICES.read_text())["choices"]
+        choices.update({k: v for k, v in mine.items() if k.startswith("sprite__")})
+    return {k: v for k, v in choices.items() if k.startswith("sprite__")}
+
+
+def plan_sprites(game: pathlib.Path, animated: bool):
+    """(plan, work folder, read_sprite) for the sprites of the player's own imp.mpq: which members
+    the shipped names resolve to (imp.mpq has no listfile), and which frames can be packed, their
+    upscaler inputs written. Work goes under lomhd_work/sprites/<the archive's hash>, so another
+    install's frames are never reused; an older archive's folder is removed."""
+    path = game / "imp.mpq"
+    archive = mpq_read.Archive(path)
+    read_sprite = hd_sprites.archive_reader(archive)
+    key = hd_sprites.archive_key(path)
+    hd_sprites.clear_stale(WORK / "sprites", key)
+    root = WORK / "sprites" / key
+
+    def frame_count(member: str):
+        if member.lower() not in archive:
+            return None
+        try:
+            return len(read_sprite(member).frames)
+        except imp_read.ImpError:
+            return None
+
+    resolved, skipped = resolve_members(candidate_members(IMP_NAMES), frame_count)
+    limit = os.environ.get(SPRITE_LIMIT_ENV)
+    if animated and limit:
+        keep = sorted(n for n, (_, frames) in resolved.items() if frames > 1)[:int(limit)]
+        resolved = {n: v for n, v in resolved.items() if v[1] == 1 or n in keep}
+        say(f"     {SPRITE_LIMIT_ENV}={limit}: only {len(keep)} animated sprites (a developer aid)")
+    plan = hd_sprites.plan(resolved, read_sprite, sprite_choices(), root, animated=animated)
+    plan.skipped[:0] = skipped
+    return plan, root, read_sprite
+
+
+def upscale_sprites(sprites: list, root: pathlib.Path, exe: pathlib.Path, models: pathlib.Path) -> None:
+    def render(option, inputs, dest):
+        hd_upscale.render(option, inputs, dest, exe, models)
+    try:
+        hd_sprites.render_all(sprites, root, render, log=lambda line: say(f"     {line}"))
+    except (SystemExit, subprocess.CalledProcessError) as error:
+        fail(f"upscaling sprites stopped: {error}\nThe game has not been touched. Run again to carry "
+             "on: every sprite already upscaled is kept.")
+
+
+def build_pack(pack: pathlib.Path, sprites, sprite_root: pathlib.Path, read_sprite, originals: list,
+               upscaled: list):
+    """Write the pack: static sprites, then each animated sprite as its own consecutive group, then
+    the pictures. Returns (images, pictures left out, sprites left out, static counts, animated
+    counts); the counts hold "packed" frames and "sprites"."""
+    skipped: list = []
+    sprite_skipped = list(sprites.skipped)
+    packed: dict = {}
+    moving: dict = {}
+    count = hd_portrait_pack.write_records(pack, itertools.chain(
+        hd_sprites.records(sprites.static, sprite_root, read_sprite, sprite_skipped, packed),
+        hd_sprites.records(sprites.animated, sprite_root, read_sprite, sprite_skipped, moving),
+        hd_portrait_pack.unmasked_records(originals, upscaled, skipped, originals)))
+    packed.setdefault("packed", 0)
+    moving.setdefault("packed", 0)
+    moving.setdefault("sprites", 0)
+    return count, skipped, sprite_skipped, packed, moving
+
+
+SKIP_KINDS = (                  # (what a skip reason says, how the summary counts it)
+    ("not in this archive", "not in your imp.mpq"),
+    ("ambiguous", "two sprites share the name"),
+    ("picked 'original'", "the original was picked in review"),
+    ("no usable upscale pick", "no pick"),
+    ("character limit", "name too long for the overlay"),
+    ("no 8-pixel run", "too plain for the overlay to find"),
+    ("render", "no usable upscale"),
+    ("could not read", "could not be read"),
+)
+
+
+def summarise_skips(skipped: list) -> str:
+    kinds: dict = {}
+    for line in skipped:
+        kind = next((label for text, label in SKIP_KINDS if text in line), "too small or too large")
+        kinds[kind] = kinds.get(kind, 0) + 1
+    return ", ".join(f"{n} {kind}" for kind, n in sorted(kinds.items(), key=lambda kv: -kv[1]))
 
 
 # --- install / uninstall -------------------------------------------------------------------------
@@ -1017,6 +1130,9 @@ def main() -> int:
     parser.add_argument("--terrain", action="store_true",
                         help="also install HD terrain: patches lomse.exe and adds lomhd_terrain "
                              "(--uninstall undoes both)")
+    parser.add_argument("--sprites", action="store_true",
+                        help="also every frame of every animated sprite: several hours on a typical "
+                             "GPU, and it resumes if stopped")
     parser.add_argument("--force-terrain-folder", action="store_true",
                         help="replace (or, with --uninstall, remove) a lomhd_terrain folder this mod "
                              "did not make or that was changed since")
@@ -1045,32 +1161,54 @@ def main() -> int:
 
     record = release()
     check_magick()
+    check_imp(game)
     check_writable(game, args.terrain)
     if args.terrain:
         terrain_exe_plan(game)       # refuse an exe it cannot patch now, not after an hour's work
         check_terrain_folder(game, read_record(game), args.force_terrain_folder)
-    steps = 6 if args.terrain else 4
+    steps = 7 if args.terrain else 5
     if choices_file() == MY_CHOICES:
         say(f"Using your own picks from {MY_CHOICES.name}")
     say(f"1/{steps}  Getting the upscaler")
     exe, models = upscaler()
-    say(f"2/{steps}  Reading portraits and building pictures from your pic.mpq")
+    say(f"2/{steps}  Reading pictures from your pic.mpq and sprites from your imp.mpq")
     found = extract_images(game)
     say("     " + ", ".join(f"{len(v)} {PLURAL.get(k, k + 's')}" for k, v in found.items() if v))
-    say(f"3/{steps}  Upscaling (the long step)")
+    sprites, sprite_root, read_sprite = plan_sprites(game, args.sprites)
+    frames = sum(len(s.frames) for s in sprites.animated)
+    say(f"     {len(sprites.static)} sprites" + (f", {len(sprites.animated)} animated sprites "
+                                                 f"({frames} frames)" if args.sprites else ""))
+    say(f"3/{steps}  Upscaling pictures (the long step)")
     upscaled = upscale_all(found, exe, models)
-    say(f"4/{steps}  Building the pack and installing")
+    say(f"4/{steps}  Upscaling sprites" + (" (the very long step; it resumes if stopped)"
+                                          if args.sprites else ""))
+    upscale_sprites(sprites.static + sprites.animated, sprite_root, exe, models)
+    say(f"5/{steps}  Building the pack and installing")
     originals = [WORK / "originals" / group for group in found if found[group]]
     pack = WORK / PACK_NAME
-    count, skipped = hd_portrait_pack.write(pack, originals, upscaled, originals)
+    count, skipped, sprite_skipped, packed, moving = build_pack(pack, sprites, sprite_root, read_sprite,
+                                                                originals, upscaled)
     install(game, pack, record)
     say(f"\nDone: {count} HD images installed in {game}.")
     for line in skipped:
         say(f"  left out -- {line}")
+    say(f"Sprites: {packed['packed']} packed" + (f", and {moving['sprites']} animated sprites "
+                                                  f"({moving['packed']} frames)" if args.sprites else "")
+        + (f"; {len(sprite_skipped)} left out ({summarise_skips(sprite_skipped)})" if sprite_skipped else ""))
+    if args.sprites:
+        c = sprites.counts
+        say(f"  of {c['frames']} animated frames, {c['repeats']} repeat another, {c['ineligible']} are too "
+            f"small or too large for the overlay, {c['no_probe']} too plain for it to find")
+    if sprite_skipped:
+        report = WORK / "sprites-left-out.txt"
+        report.write_text("".join(f"{line}\n" for line in sprite_skipped))
+        say(f"  (every sprite left out, and why: {report})")
+    if not args.sprites:
+        say("Animated sprites (units, spell effects) were not built: add --sprites for them.")
     if args.terrain:
-        say(f"\n5/{steps}  Building HD terrain from your pic.mpq (the long step again)")
+        say(f"\n6/{steps}  Building HD terrain from your pic.mpq (the long step again)")
         built = build_terrain(game, exe, models)
-        say(f"6/{steps}  Installing HD terrain and patching lomse.exe")
+        say(f"7/{steps}  Installing HD terrain and patching lomse.exe")
         install_terrain(game, built, args.force_terrain_folder)
         say(f"Done: HD terrain installed ({TERRAIN_DIR}\\til, and lomse.exe patched; the original "
             f"is {EXE_BACKUP_NAME}). Recommended window: 1280x960 (width/height in ddraw.ini).")
