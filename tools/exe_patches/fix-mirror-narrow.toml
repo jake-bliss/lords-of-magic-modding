@@ -1,0 +1,52 @@
+# Vanilla bug fix: the in-place horizontal mirror overruns its buffer on a frame 1 or 2 pixels wide.
+#
+# Found and fixed by Skarn, who traced an intermittent hang when a Death Shade (decr2a) or Frozen
+# Shade (decr2b) dies in combat -- 100% CPU, upstream cnc-ddraw too -- to Storm's DllMain spinning
+# on process detach in a heap-block walk (storm+0x16320) over a zero-size block, after an access
+# violation at 0x49d475. He tested this edit on the hybrid --terrain exe: repeated Shade battles
+# no longer crash. Verified statically here, 2026-09-26.
+#
+# 0x49d360 locks a per-frame surface, decodes an IMP frame into it (0x4f46f0), and when the draw is
+# mirrored (bit 0 of [esi+0x28]: facings 5-7 drawn as 3-1 flipped) reverses every row in place,
+# using the frame's width w as the row pitch:
+#
+#     49d455  dec eax              ; w - 1
+#     49d456  mov ebp,eax
+#     49d45c  sar ebp,1
+#     49d45e  dec ebp              ; k = ((w - 1) >> 1) - 1
+#     49d45f  je  49d497           ; <- this edit: je -> jle
+#     ...     swap row[k - i] with row[w - 1 - k + i] for i = 0..k   (k + 1 swaps, loop 49d473-49d480)
+#
+# The guard only catches k == 0. For w = 1 or 2, k = -1, so the loop runs once and swaps row[-1]
+# with row[w]: one byte before and one byte after the row, i.e. past both ends of the buffer on the
+# first and last rows -- an access violation at a page edge, heap corruption otherwise. (w <= 0 is
+# already refused at 49d44f.) `jle` also skips k < 0; for every w >= 3, k >= 0 and jle behaves
+# exactly as je did, so no width that drew before draws differently now. For w = 2 the one
+# needed swap is not done -- nor was it before: the old code swapped the wrong bytes instead.
+#
+# Left as vanilla, deliberately: k == 0 (w = 3, 4) still skips the mirror, and even widths leave
+# their middle pair unswapped. Both are visual only (the bytes stay in bounds) and `jl` would change
+# the first, which nobody has looked at in game.
+#
+# Every IMP member with a frame 1 or 2 wide (vanilla imp.mpq, 70 members, 33 of them units):
+# decr2a/decr2b end each of sequence 6's five facings on a 1x1 frame (frames 95-99). The ships
+# (*shpa/*shpb), several creatures and many auras and missiles have them too.
+#
+# The pattern D1 FD 4D 74 36 EB 04 occurs once in the whole file; the terrain sets touch nothing in
+# this function, so this set stacks with them.
+
+[target]
+sha256 = "a505f399d5be73fe0a2215633f663717f28daeb3075bbcc05b47d40653669052"
+
+[[scan]]
+start = 0x49d360
+end = 0x49d501
+regex = '(?<=\xd1\xfd\x4d)\x74\x36\xeb\x04'
+after = '(?<=\xd1\xfd\x4d)\x7e\x36\xeb\x04'
+count = 1
+
+[[patch]]
+va = 0x49d45f
+old = "74 36"
+new = "7e 36"
+what = "mirror guard: je -> jle, so a frame 1 or 2 pixels wide skips the swap loop (Skarn)"

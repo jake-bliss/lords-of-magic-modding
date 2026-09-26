@@ -29,6 +29,20 @@ def write_lbm(path: pathlib.Path, width: int, height: int, seed: int) -> bytes:
     return indices
 
 
+def write_upscale(path: pathlib.Path, width: int, height: int, seed: int) -> bytes:
+    """A plausible 2x upscale of `write_lbm(..., width, height, seed)`: each pixel as a 2x2 block,
+    with one pixel nudged so it is not a bare pixel repeat (which the pack refuses). The content
+    check (hd_upscale.damage_score) passes it, as it passes a real upscale."""
+    small = [(x * 3 + y * 5 + seed) % 256 for y in range(height) for x in range(width)]
+    indices = bytearray(small[(y // 2) * width + x // 2] for y in range(height * 2) for x in range(width * 2))
+    indices[-1] = (indices[-1] + 1) % 256
+    header = struct.pack(">HHhhBBBBHBBhh", width * 2, height * 2, 0, 0, 8, 0, 1, 0, 0, 1, 1,
+                         width * 2, height * 2)
+    lbm_png.encode(path, width * 2, height * 2, bytes(indices), PALETTE,
+                   [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+    return bytes(indices)
+
+
 def rgb_of(indices: bytes) -> bytes:
     return b"".join(bytes(PALETTE[i]) for i in indices)
 
@@ -53,7 +67,7 @@ class Pack(unittest.TestCase):
 
     def test_a_pair_round_trips_exactly_as_full_colour(self) -> None:
         original = write_lbm(self.small / "aicavp00.lbm", W, H, 1)
-        upscale = write_lbm(self.large / "aicavp00.lbm", W * 2, H * 2, 2)
+        upscale = write_upscale(self.large / "aicavp00.lbm", W, H, 2)
         data, skipped = pack.build(self.small, [self.large])
         self.assertEqual(skipped, [])
         [(name, small, large, flags, key, _)] = pack.read(data)
@@ -66,9 +80,9 @@ class Pack(unittest.TestCase):
     def test_images_of_different_widths_share_one_pack(self) -> None:
         """Buildings come in 34 widths; format 1 allowed one."""
         write_lbm(self.small / "portrait.lbm", 70, 67, 1)
-        write_lbm(self.large / "portrait.lbm", 140, 134, 2)
+        write_upscale(self.large / "portrait.lbm", 70, 67, 2)
         write_lbm(self.small / "llwizt1a.lbm", 143, 12, 3)
-        write_lbm(self.large / "llwizt1a.lbm", 286, 24, 4)
+        write_upscale(self.large / "llwizt1a.lbm", 143, 12, 4)
         data, skipped = pack.build(self.small, [self.large])
         self.assertEqual(skipped, [])
         self.assertEqual(sorted((n, s[0]) for n, s, _, _, _, _ in pack.read(data)),
@@ -77,15 +91,15 @@ class Pack(unittest.TestCase):
     def test_originals_and_upscales_may_come_from_several_folders(self) -> None:
         more_small = pathlib.Path(self.tmp.name) / "buildings"; more_small.mkdir()
         more_large = pathlib.Path(self.tmp.name) / "buildings-up"; more_large.mkdir()
-        write_lbm(self.small / "a.lbm", W, H, 1); write_lbm(self.large / "a.lbm", W * 2, H * 2, 2)
-        write_lbm(more_small / "b.lbm", W, H, 3); write_lbm(more_large / "b.lbm", W * 2, H * 2, 4)
+        write_lbm(self.small / "a.lbm", W, H, 1); write_upscale(self.large / "a.lbm", W, H, 2)
+        write_lbm(more_small / "b.lbm", W, H, 3); write_upscale(more_large / "b.lbm", W, H, 4)
         data, _ = pack.build([self.small, more_small], [self.large, more_large])
         self.assertEqual([n for n, *_ in pack.read(data)], ["a", "b"])
 
     def test_an_uppercase_extension_still_pairs(self) -> None:
         """8 of the 748 shipped portraits are spelled `.LBM`; a case-sensitive glob dropped them."""
         write_lbm(self.small / "EAINFp00.LBM", W, H, 1)
-        write_lbm(self.large / "eainfp00.lbm", W * 2, H * 2, 1)
+        write_upscale(self.large / "eainfp00.lbm", W, H, 1)
         data, skipped = pack.build(self.small, [self.large])
         self.assertEqual(len(pack.read(data)), 1)
         self.assertEqual(skipped, [])
@@ -93,7 +107,7 @@ class Pack(unittest.TestCase):
     def test_an_image_without_an_upscale_is_reported_not_dropped_silently(self) -> None:
         write_lbm(self.small / "aipotm.lbm", W, H, 1)
         write_lbm(self.small / "aicavp00.lbm", W, H, 2)
-        write_lbm(self.large / "aicavp00.lbm", W * 2, H * 2, 2)
+        write_upscale(self.large / "aicavp00.lbm", W, H, 2)
         data, skipped = pack.build(self.small, [self.large])
         self.assertEqual(len(pack.read(data)), 1)
         self.assertEqual(skipped, ["aipotm: no upscale"])
@@ -102,8 +116,8 @@ class Pack(unittest.TestCase):
         """Two upscale folders naming one image: which to draw is a guess, so refuse."""
         other = pathlib.Path(self.tmp.name) / "other"; other.mkdir()
         write_lbm(self.small / "aicavp00.lbm", W, H, 1)
-        write_lbm(self.large / "aicavp00.lbm", W * 2, H * 2, 1)
-        write_lbm(other / "AICAVP00.lbm", W * 2, H * 2, 3)
+        write_upscale(self.large / "aicavp00.lbm", W, H, 1)
+        write_upscale(other / "AICAVP00.lbm", W, H, 3)
         with self.assertRaises(SystemExit):
             pack.build(self.small, [self.large, other])
 
@@ -118,10 +132,10 @@ class Pack(unittest.TestCase):
         sources = pathlib.Path(self.tmp.name) / "sources"; sources.mkdir()
         write_lbm(self.small / "life.lbm", W, H, 1)           # what the player's install holds
         write_lbm(sources / "LIFE.lbm", W, H, 9)              # what the upscale was made from
-        write_lbm(self.large / "life.lbm", W * 2, H * 2, 9)
+        write_upscale(self.large / "life.lbm", W, H, 9)
         write_lbm(self.small / "lildwp00.lbm", W, H, 2)
         write_lbm(sources / "LILDWP00.LBM", W, H, 2)
-        write_lbm(self.large / "lildwp00.lbm", W * 2, H * 2, 2)
+        write_upscale(self.large / "lildwp00.lbm", W, H, 2)
         data, skipped = pack.build(self.small, [self.large], sources)
         self.assertEqual([name for name, *_ in pack.read(data)], ["lildwp00"])
         self.assertEqual(skipped, ["life: installed original differs from the one the upscale was made from"])
@@ -153,7 +167,7 @@ class Pack(unittest.TestCase):
         lbm_png.encode(self.large / "d1_great_axe.lbm", W * 2, H * 2, doubled, PALETTE,
                        [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
         write_lbm(self.small / "real.lbm", W, H, 2)
-        write_lbm(self.large / "real.lbm", W * 2, H * 2, 5)
+        write_upscale(self.large / "real.lbm", W, H, 5)
         data, skipped = pack.build(self.small, [self.large])
         self.assertEqual([n for n, *_ in pack.read(data)], ["real"])
         self.assertEqual(skipped, ["d1_great_axe: the upscale is the original with each pixel repeated, not an upscale"])
@@ -161,8 +175,8 @@ class Pack(unittest.TestCase):
     def test_the_index_comes_first_and_the_streams_follow_in_order(self) -> None:
         """The overlay reads the index alone at start and each stream only when it needs it, by
         offsets it computes from the lengths -- so the layout must be exactly this."""
-        a = write_lbm(self.small / "a.lbm", W, H, 1); up_a = write_lbm(self.large / "a.lbm", W * 2, H * 2, 2)
-        b = write_lbm(self.small / "b.lbm", W, H, 3); up_b = write_lbm(self.large / "b.lbm", W * 2, H * 2, 4)
+        a = write_lbm(self.small / "a.lbm", W, H, 1); up_a = write_upscale(self.large / "a.lbm", W, H, 2)
+        b = write_lbm(self.small / "b.lbm", W, H, 3); up_b = write_upscale(self.large / "b.lbm", W, H, 4)
         data, _ = pack.build(self.small, [self.large])
         self.assertEqual(data[:8], b"LOMHDPK5")
         self.assertEqual(struct.unpack_from("<I", data, 8), (2,))
@@ -203,7 +217,7 @@ class Pack(unittest.TestCase):
 
     def test_trailing_bytes_are_an_error(self) -> None:
         write_lbm(self.small / "a.lbm", W, H, 1)
-        write_lbm(self.large / "a.lbm", W * 2, H * 2, 1)
+        write_upscale(self.large / "a.lbm", W, H, 1)
         data, _ = pack.build(self.small, [self.large])
         with self.assertRaises(ValueError):
             pack.read(data + b"\0")
@@ -459,6 +473,80 @@ class Choices(unittest.TestCase):
         self.assertEqual({v for v in choices.values()} - allowed, set())
         self.assertGreater(len(choices), 900)
 
+
+
+class ContentCheck(unittest.TestCase):
+    """An upscale of the right size that is not a plausible 2x of its original is made again once
+    (`rerender`), then left out if it still looks damaged."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = pathlib.Path(tmp.name)
+        self.small, self.large = root / "small", root / "large"
+        self.small.mkdir(); self.large.mkdir()
+        write_lbm(self.small / "aagtwr0a.lbm", W, H, 1)
+        write_upscale(self.large / "clean.lbm", W, H, 7)
+        write_lbm(self.small / "clean.lbm", W, H, 7)
+        self.bad = self.large / "aagtwr0a.lbm"
+        write_lbm(self.bad, W * 2, H * 2, 1)          # the right size, but not this picture at 2x
+        self.calls: list[str] = []
+
+    def records(self, rerender):
+        skipped: list[str] = []
+        counts: dict = {}
+        got = list(pack.unmasked_records(self.small, [self.large], skipped, rerender=rerender, counts=counts))
+        return got, skipped, counts
+
+    def test_the_damage_is_real(self) -> None:
+        _, _, idx, pal, _ = lbm_png.decode(self.small / "aagtwr0a.lbm")
+        _, _, big, _, _ = lbm_png.decode(self.bad)
+        score = hd_upscale.damage_score(W, H, rgb_of(idx), rgb_of(big), 3, 3)
+        self.assertTrue(hd_upscale.looks_damaged(score), score)
+
+    def test_a_damaged_upscale_made_again_clean_is_packed(self) -> None:
+        def remake(path):
+            self.calls.append(path.name)
+            write_upscale(path, W, H, 1)
+
+        records, skipped, counts = self.records(remake)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(skipped, [])
+        self.assertEqual(self.calls, ["aagtwr0a.lbm"], "only the damaged one, once")
+        self.assertEqual((counts["damaged"], counts["remade"]), (1, 1))
+
+    def test_one_still_damaged_is_left_out(self) -> None:
+        records, skipped, counts = self.records(lambda path: self.calls.append(path.name))
+        self.assertEqual(len(records), 1)
+        self.assertEqual(len(skipped), 1)
+        self.assertTrue(skipped[0].startswith("aagtwr0a: upscale looked damaged ("), skipped)
+        self.assertIn("made twice); the original shows", skipped[0])
+        self.assertEqual((counts["damaged"], counts["remade"]), (1, 0))
+
+    def test_without_an_upscaler_it_is_left_out_at_once(self) -> None:
+        records, skipped, _ = self.records(None)
+        self.assertEqual(len(records), 1)
+        self.assertNotIn("made twice", skipped[0])
+
+    def test_an_upscaler_that_fails_the_second_time_leaves_it_out(self) -> None:
+        def failing(path):
+            path.unlink()
+            raise SystemExit("the upscaler failed")
+
+        records, skipped, _ = self.records(failing)
+        self.assertEqual(len(records), 1)
+        self.assertIn("upscale looked damaged", skipped[0])
+
+    def test_a_malformed_retry_leaves_that_picture_out_not_the_pack(self) -> None:
+        def garbage(path):
+            path.write_bytes(b"not an image at all")
+
+        records, skipped, counts = self.records(garbage)
+        self.assertEqual(len(records), 1, "the other picture is still packed")
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("upscale looked damaged", skipped[0])
+        self.assertIn("could not be made again", skipped[0])
+        self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 0, 1))
 
 if __name__ == "__main__":
     unittest.main()
