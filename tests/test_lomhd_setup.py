@@ -721,6 +721,70 @@ class Sprites(unittest.TestCase):
             setup.check_imp(self.game)
 
     @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
+    def test_a_damaged_upscale_is_made_again_once_and_counted(self) -> None:
+        """The tester's case: a render in the cache from an earlier run is damaged. A plain rerun
+        finds it, makes it again, and packs the clean one; one that comes out damaged every time
+        is left out and named."""
+        from test_hd_sprites import decode_rgba, doubled
+        self.picks({"sprite__tree": "anime2x", "sprite__rock": "anime2x"})
+        self.add("imp\\tree.imp", self.frame(40, 10, 3))
+        self.add("imp\\rock.imp", self.frame(40, 10, 6))
+        always_bad = set()
+
+        def render(option, inputs, dest, esrgan, models):
+            dest.mkdir(parents=True, exist_ok=True)
+            for key, src in inputs.items():
+                self.rendered.append(key)
+                w, h, rgba = decode_rgba(src)
+                hd = doubled(w, h, rgba)
+                if key in always_bad or len(self.rendered) == 1:
+                    hd = bytes(len(hd))                       # right size, wrong pixels
+                self.hd_sprites.write_png_rgba(dest / f"{key}.png", w * 2, h * 2, hd)
+            return len(inputs)
+
+        setup.hd_upscale.render = render
+        plan, root, read_sprite = setup.plan_sprites(self.game, animated=False)
+        setup.upscale_sprites(plan.static, root, pathlib.Path("e"), pathlib.Path("m"))
+        first, second = sorted(self.rendered)[0], sorted(self.rendered)[1]
+        self.assertEqual(self.rendered[0], first, "the first render written is the damaged one")
+        always_bad.add(second)
+        (root / "render" / "anime2x" / f"{second}.png").write_bytes(
+            (root / "render" / "anime2x" / f"{first}.png").read_bytes())   # a damaged cache entry too
+        pack_path = self.base / "lomhd_portraits.pack"
+        pictures: dict = {}
+        count, skipped, sprite_skipped, static, _ = setup.build_pack(
+            pack_path, plan, root, read_sprite, [], [], pathlib.Path("e"), pathlib.Path("m"), pictures)
+        self.assertEqual(count, 1)
+        self.assertEqual(self.rendered[2:], [first, second], "each damaged one made again, once")
+        self.assertEqual((static["damaged"], static["remade"]), (2, 1))
+        self.assertEqual(len(sprite_skipped), 1)
+        self.assertIn("upscale looked damaged", sprite_skipped[0])
+        self.assertEqual(setup.summarise_skips(sprite_skipped), "1 upscale looked damaged")
+        self.assertEqual(setup.damage_summary([static, pictures], sprite_skipped + skipped),
+                         "2 upscales looked damaged and were made again: 1 came out clean, 1 left out: "
+                         "upscale looked damaged (the original shows for those; running setup again "
+                         "tries them once more).")
+
+    def test_a_picture_is_made_again_by_the_option_that_made_it(self) -> None:
+        calls = []
+        self.addCleanup(setattr, setup.subprocess, "run", setup.subprocess.run)
+        setup.hd_upscale.render = lambda option, inputs, dest, e, m: calls.append(("render", option, dict(inputs), dest))
+        setup.subprocess.run = lambda cmd, **kw: calls.append(("approved", cmd[cmd.index("--names") + 1],
+                                                                 pathlib.Path(cmd[cmd.index("--names") + 1]).read_text()))
+        up = setup.WORK / "upscaled"
+        for path in (up / "anime2x" / "aagtwr0a.png", up / "approved" / "portrait" / "aicavp00.lbm"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"damaged")
+            setup.rerender_picture(path, pathlib.Path("e"), pathlib.Path("m"))
+            self.assertFalse(path.exists())
+        self.assertEqual(calls[0], ("render", "anime2x", {"aagtwr0a": setup.WORK / "png" / "aagtwr0a.png"},
+                                    up / "anime2x"))
+        self.assertEqual((calls[1][0], calls[1][2]), ("approved", "portrait\\aicavp00.lbm\n"))
+
+    def test_the_summary_says_nothing_was_damaged(self) -> None:
+        self.assertEqual(setup.damage_summary([{"damaged": 0}, {}], []), "No upscale looked damaged.")
+
+    @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
     def test_the_pack_holds_sprites_and_pictures_and_uninstall_restores_everything(self) -> None:
         import hd_portrait_pack as pack
         import lbm_png
@@ -739,7 +803,12 @@ class Sprites(unittest.TestCase):
         header = struct.pack(">HHhhBBBBHBBhh", 40, 6, 0, 0, 8, 0, 1, 0, 0, 1, 1, 40, 6)
         lbm_png.encode(originals / "aagtwr0a.lbm", 40, 6, bytes(range(240)), palette,
                        [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
-        self.hd_sprites.write_png_rgba(upscaled / "aagtwr0a.png", 80, 12, bytes(range(256)) * 15)
+        # A plausible upscale (each pixel doubled, one nudged so it is not a bare repeat): the
+        # content check would leave out an unrelated one.
+        up = bytearray(b"".join(bytes(palette[(y // 2) * 40 + x // 2]) + b"\xff"
+                                for y in range(12) for x in range(80)))
+        up[0] ^= 1
+        self.hd_sprites.write_png_rgba(upscaled / "aagtwr0a.png", 80, 12, bytes(up))
         pack_path = self.base / "lomhd_portraits.pack"
         count, skipped, sprite_skipped, static, moving = setup.build_pack(
             pack_path, plan, root, read_sprite, [originals], [upscaled])

@@ -40,6 +40,83 @@ def default_choice(group: str, stem: str) -> str:
     return APPROVED if group == "portrait" and CHARACTER.fullmatch(stem) else "ultrasharp-tta"
 
 
+# --- the content check -------------------------------------------------------------------------
+#
+# The upscaler's output is only checked for SIZE on its way into the pack, and a tester's GPU once
+# wrote renders of the right size whose pixels were garbage (diagonal bands on sprite__iceb,
+# speckled buildings: 2026-09-26). The overlay then drew them, because it matches the ORIGINAL on
+# screen, not the upscale. So every upscale is also compared with what it was made from:
+#
+#   error    each pixel of the source against the mean of its 2x2 block in the upscale (a box
+#            downscale: the same for every option and every scale, since every upscale is exactly
+#            2x), mean |difference| per channel;
+#   texture  the source's own mean |difference| per channel to its right and lower neighbours;
+#   score    error / (texture + TEXTURE_FLOOR).
+#
+# Only pixels that are opaque with all four neighbours opaque count: at an edge the upscale bleeds
+# the transparent background in, which is right and says nothing. Dividing by the texture is what
+# lets a dithered spell effect (which every upscaler smooths) through while a shifted or sheared
+# upscale of a plain one is caught; the floor keeps a flat sprite from dividing by nothing.
+#
+# Measured 2026-09-26 with this function over the 28,399 sprite renders of a full --sprites run on
+# the Mac (ultrasharp-tta 23,708, anime2x 3,610, ultrasharp 1,067, anime4x 14) and the 1,282
+# pictures of the same run (the approved portraits among them): clean sprites p50 0.20, p99 0.37,
+# p99.9 0.52, max 0.74 (a dithered spell effect, esp06br); clean pictures max 0.56; the tower's and
+# the Mac's sprite__iceb 0.38. Rows at the wrong stride (1-4 px) or sheared, the tester's diagonal
+# bands, score a median 1.7, and 98-99% of them clear DAMAGE_THRESHOLD (the misses are near-flat
+# frames, where a shift changes little; a milder shear, heavy noise and a red/blue swap are caught
+# about half the time). One threshold serves every option: no clean one comes near it. Below
+# DAMAGE_MIN_PIXELS judgeable pixels (160 of the 28,399 frames) the frame passes unjudged.
+DAMAGE_THRESHOLD = 0.9
+DAMAGE_MIN_PIXELS = 64
+TEXTURE_FLOOR = 8.0
+
+
+def damage_score(width: int, height: int, source: bytes, upscale: bytes, source_bpp: int = 4,
+                 upscale_bpp: int = 4) -> "float | None":
+    """How unlike its source an upscale is (see above), or None when too little can be judged.
+    `source` is width x height pixels, `upscale` exactly twice that each way; each is RGB
+    (`bpp` 3, every pixel opaque) or straight RGBA (`bpp` 4, opaque where alpha is 255 -- in the
+    SOURCE: the upscale's own alpha is not consulted)."""
+    sb, hb = source_bpp, upscale_bpp
+    if len(source) != width * height * sb or len(upscale) != width * height * 4 * hb:
+        raise ValueError(f"damage_score: {len(source)} / {len(upscale)} bytes do not fit {width}x{height}")
+    opaque = source[3::4] if sb == 4 else b"\xff" * (width * height)
+    row, hrow = width * sb, width * 2 * hb
+    error = texture = n = 0
+    # A large picture is judged on every row_step-th row: a screen is 307,200 pixels, and a sample
+    # of the rows sees a band or a shear as surely as all of them do. Every sprite is judged whole
+    # (the overlay takes none over 65,536 pixels).
+    row_step = max(1, width * height // 65536)
+    for y in range(1, height - 1, row_step):
+        top = upscale[2 * y * hrow:(2 * y + 1) * hrow]
+        bottom = upscale[(2 * y + 1) * hrow:(2 * y + 2) * hrow]
+        base = y * width
+        for x in range(1, width - 1):
+            p = base + x
+            if not (opaque[p] == opaque[p - 1] == opaque[p + 1] == opaque[p - width]
+                    == opaque[p + width] == 255):
+                continue
+            i = p * sb
+            r, d = i + sb, i + row
+            j = 2 * x * hb
+            k = j + hb
+            s0, s1, s2 = source[i], source[i + 1], source[i + 2]
+            error += (abs(4 * s0 - top[j] - top[k] - bottom[j] - bottom[k])
+                      + abs(4 * s1 - top[j + 1] - top[k + 1] - bottom[j + 1] - bottom[k + 1])
+                      + abs(4 * s2 - top[j + 2] - top[k + 2] - bottom[j + 2] - bottom[k + 2]))
+            texture += (abs(s0 - source[r]) + abs(s1 - source[r + 1]) + abs(s2 - source[r + 2])
+                        + abs(s0 - source[d]) + abs(s1 - source[d + 1]) + abs(s2 - source[d + 2]))
+            n += 1
+    if n < DAMAGE_MIN_PIXELS:
+        return None
+    return (error / (12 * n)) / (texture / (6 * n) + TEXTURE_FLOOR)
+
+
+def looks_damaged(score: "float | None") -> bool:
+    return score is not None and score > DAMAGE_THRESHOLD
+
+
 def png_size(path: pathlib.Path) -> tuple[int, int]:
     data = path.read_bytes()[16:24]
     return int.from_bytes(data[:4], "big"), int.from_bytes(data[4:], "big")

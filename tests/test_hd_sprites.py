@@ -87,6 +87,27 @@ def indexed_png(w: int, h: int, indices: bytes, plte: bytes, trns: bytes | None 
             + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
+def decode_rgba(path: pathlib.Path) -> tuple[int, int, bytes]:
+    """A PNG as `write_png_rgba` writes it (one IDAT, filter 0 on every row), decoded without
+    ImageMagick."""
+    data = path.read_bytes()
+    w, h = struct.unpack(">II", data[16:24])
+    pos, idat = 8, b""
+    while pos < len(data):
+        n = struct.unpack(">I", data[pos:pos + 4])[0]
+        if data[pos + 4:pos + 8] == b"IDAT":
+            idat += data[pos + 8:pos + 8 + n]
+        pos += 12 + n
+    raw, stride = zlib.decompress(idat), w * 4 + 1
+    return w, h, b"".join(raw[y * stride + 1:(y + 1) * stride] for y in range(h))
+
+
+def doubled(w: int, h: int, rgba: bytes) -> bytes:
+    """Each pixel as a 2x2 block: the plainest upscale, and a clean one to the content check."""
+    rows = [b"".join(rgba[(y * w + x) * 4:(y * w + x) * 4 + 4] * 2 for x in range(w)) for y in range(h)]
+    return b"".join(row + row for row in rows)
+
+
 def fake_read(root: pathlib.Path, wanted):
     """read_renders' contract without ImageMagick: missing and wrong-size renders are refused."""
     out = {}
@@ -98,7 +119,7 @@ def fake_read(root: pathlib.Path, wanted):
             rw, rh = hd_upscale.png_size(path)
             out[rel] = f"render is {rw}x{rh}, expected {w}x{h}: made from a different original"
         else:
-            out[rel] = bytes(w * h * 4)
+            out[rel] = decode_rgba(path)[2]
     return out
 
 
@@ -127,8 +148,8 @@ class Base(unittest.TestCase):
         self.renders.append((option, sorted(inputs)))
         dest.mkdir(parents=True, exist_ok=True)
         for key, src in inputs.items():
-            w, h = hd_upscale.png_size(src)
-            hd_sprites.write_png_rgba(dest / f"{key}.png", w * 2, h * 2, bytes(w * h * 16))
+            w, h, rgba = decode_rgba(src)
+            hd_sprites.write_png_rgba(dest / f"{key}.png", w * 2, h * 2, doubled(w, h, rgba))
 
     def pack_of(self, plan, skipped=None, **kwargs):
         hd_sprites.render_all(plan.static + plan.animated, self.root, self.fake_render, log=lambda _: None)
@@ -435,6 +456,79 @@ class Animated(Base):
         self.assertEqual(skipped, ["anim__aaa#001: anime2x render is missing",
                                    "anim__bbb#000: anime2x render is missing",
                                    "anim__bbb#001: anime2x render is missing"])
+
+
+class ContentCheck(Base):
+    """A render of the right size whose pixels are garbage (a GPU once wrote bands) is made again
+    once, then left out if it still looks damaged -- whether it was rendered this run or found in
+    the cache from an earlier one."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.plan_ = self.plan({"units\\cav.imp": sprite(frame(40, 10, 3), frame(40, 10, 4))},
+                               {"sprite__cav": "anime2x"})
+        hd_sprites.render_all(self.plan_.animated, self.root, self.fake_render, log=lambda _: None)
+        self.renders.clear()
+        self.stem = self.plan_.animated[0].frames[1].stem
+        self.render = self.root / "render" / "anime2x" / f"{self.stem}.png"
+        self.damage(self.render)
+
+    def damage(self, path: pathlib.Path) -> None:
+        """Every row turned by its own number of pixels: the diagonal bands the tester saw."""
+        w, h, rgba = decode_rgba(path)
+        row = w * 4
+        sheared = b"".join(rgba[y * row:(y + 1) * row][-4 * y % row:] + rgba[y * row:(y + 1) * row][:-4 * y % row]
+                           for y in range(h))
+        hd_sprites.write_png_rgba(path, w, h, sheared)
+
+    def records(self, rerender):
+        skipped: list[str] = []
+        counts: dict = {}
+        got = list(hd_sprites.records(self.plan_.animated, self.root, self.read_sprite, skipped, counts,
+                                      read=fake_read, rerender=rerender))
+        return [pack.entry_fields(entry) for entry, _, _ in got], skipped, counts
+
+    def test_the_damage_is_real(self) -> None:
+        """The control: without it every test below could pass on a check that never fires."""
+        w, h, idx = frame(40, 10, 4)
+        score = hd_upscale.damage_score(w, h, hd_sprites.prepared_rgba(idx, PALETTE, KEY),
+                                        decode_rgba(self.render)[2])
+        self.assertTrue(hd_upscale.looks_damaged(score), score)
+
+    def test_a_damaged_render_in_the_cache_is_made_again_and_packed(self) -> None:
+        records, skipped, counts = self.records(self.fake_render)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(skipped, [])
+        self.assertEqual(self.renders, [("anime2x", [self.stem])], "only the damaged frame, once")
+        self.assertEqual((counts["damaged"], counts["remade"]), (1, 1))
+
+    def test_one_that_is_still_damaged_is_left_out_and_its_sprite_keeps_the_rest(self) -> None:
+        def damaging_render(option, inputs, dest):
+            self.fake_render(option, inputs, dest)
+            self.damage(self.render)
+
+        records, skipped, counts = self.records(damaging_render)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(len(skipped), 1)
+        self.assertTrue(skipped[0].startswith("anim__cav#001: anime2x upscale looked damaged ("), skipped)
+        self.assertIn("made twice); the original shows", skipped[0])
+        self.assertEqual((counts["damaged"], counts["remade"]), (1, 0))
+        self.assertTrue(self.render.exists(), "kept: the next run checks it and tries once more")
+
+    def test_without_an_upscaler_a_damaged_render_is_left_out_at_once(self) -> None:
+        records, skipped, counts = self.records(None)
+        self.assertEqual(len(records), 1)
+        self.assertNotIn("made twice", skipped[0])
+        self.assertIn("upscale looked damaged", skipped[0])
+
+    def test_an_upscaler_that_fails_the_second_time_leaves_that_frame_out(self) -> None:
+        def failing(option, inputs, dest):
+            raise SystemExit("anime2x: the upscaler failed")
+
+        records, skipped, counts = self.records(failing)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(skipped, ["anim__cav#001: anime2x render is missing"])
+        self.assertFalse(self.render.exists(), "missing now, so the next run renders it afresh")
 
 
 class Preparation(unittest.TestCase):

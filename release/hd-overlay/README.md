@@ -13,9 +13,13 @@ was made (the choices ship as `upscale-choices.json`).
 
 The art is sharper, not bigger: each picture fills the same space on screen as before.
 
-> **Beta (0.5.0).** New in this release: HD sprites. The HD art overlay and HD terrain
-> (`--terrain`) have both been played on Windows 11 (NVIDIA) and macOS (Wine); the sprites are new,
-> so please report anything odd -- see the end of this file. `--uninstall` puts every file back.
+> **Beta (0.5.1).** New in this release: a fix for the game hanging when a Death Shade or Frozen
+> Shade dies (see Install), and a check of every upscale's contents -- an upscale of the right size
+> whose pixels came out as bands or speckle is made again, or left out so the original shows (see
+> HD sprites). Rerunning setup over a 0.5.0 install finds and replaces any such upscale already in
+> it. 0.5.0 added HD sprites. The HD art overlay and HD terrain (`--terrain`) have both been played
+> on Windows 11 (NVIDIA) and macOS (Wine); the sprites are new, so please report anything odd --
+> see the end of this file. `--uninstall` puts every file back.
 
 ## What you need
 
@@ -94,6 +98,14 @@ units are also found drawn facing the other way. A sprite with no hand-picked up
 or too plain for the overlay to spot reliably, is left out and stays as the game draws it; setup
 lists what it left out, and why, in `lomhd_work\sprites-left-out.txt`. If a mod changes some sprites
 in `imp.mpq`, the next run upscales only those again.
+
+Every upscale -- sprite frame or picture -- is also checked against what it was made from, every
+time setup builds the pack: shrunk back to the original's size, it must still look like the
+original. An upscaler or graphics driver has been seen to write an upscale of the right size whose
+pixels were garbage (diagonal bands, speckle). One that fails is made again once; if it fails again
+it is left out, the original shows in its place, and setup says so at the end ("upscale looked
+damaged"). The check reads the upscales already kept in `lomhd_work`, so rerunning setup finds a
+damaged one from an earlier run too.
 
 ## HD terrain (optional, beta)
 
@@ -187,6 +199,9 @@ game folder (the name dates from when it held only portraits).
   removes cnc-ddraw, so the game uses Windows' own DirectDraw again, and renames that `ddraw.ini`
   to `ddraw.ini.lomhd-saved` rather than deleting settings you may have changed. The game ignores
   it; delete it if you like.
+- **A sprite or picture with bands or speckle inside its outline** is an upscale that came out
+  damaged but passed the content check. Delete it from `lomhd_work\sprites\render` (the file names
+  include the sprite's name) and run setup again, and please report it with the sprite's name.
 - **Scrambled or striped terrain** means the patched `lomse.exe` is running without its
   `lomhd_terrain` folder: run `python lomhd_setup.py --terrain` again, or `--uninstall`.
 - **Reporting a problem:** open an issue at

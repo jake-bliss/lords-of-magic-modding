@@ -33,7 +33,10 @@ over a neutral grey, everything else opaque -- written here directly, pixel-iden
 `clear_shadow` + `magick -background #202228 -alpha background PNG32:` the review used (tested).
 
 The HD half is the render, which `hd_upscale.render` always makes exactly 2x the frame. A render of
-a DIFFERENT size is refused, not resized: it was made from a different original.
+a DIFFERENT size is refused, not resized: it was made from a different original. A render of the
+right size whose pixels are not a plausible upscale of the frame (`hd_upscale.damage_score`: a GPU
+once wrote bands and speckle) is made again once, and left out if it still looks damaged -- checked
+every time the pack is built, so a damaged render already in the cache is caught by a rerun too.
 
 Work files are keyed by each MEMBER's path and its own bytes (not the whole archive's), and by
 frame, and every step resumes: a rerun redoes only what is missing, and a changed imp.mpq -- a mod
@@ -327,17 +330,64 @@ def read_renders(root: pathlib.Path, wanted: List[Tuple[str, int, int]]) -> Dict
     return out
 
 
+def check_renders(batch: List[Tuple[Sprite, Frame, "imp_read.Sprite"]], pixels: Dict[str, object],
+                  root: pathlib.Path, rerender, reader, counts: Dict[str, int]) -> None:
+    """The content check (`hd_upscale.damage_score`) for one read batch, in place on `pixels`: a
+    render that looks damaged is deleted and made again with `rerender` (`render_all`'s `render`),
+    once; one that still does becomes a skip reason. `rerender` None leaves it out at once."""
+    def damaged(sprite: Sprite, frame: Frame, decoded) -> Optional[float]:
+        rgba = pixels.get(f"render/{sprite.option}/{frame.stem}.png")
+        if not isinstance(rgba, bytes):
+            return None
+        shown = decoded.resolved_frame(frame.index)
+        score = hd_upscale.damage_score(frame.width, frame.height,
+                                        prepared_rgba(shown.indices, decoded.palette, decoded.color_key), rgba)
+        return score if hd_upscale.looks_damaged(score) else None
+
+    bad = [(sprite, frame, decoded, score) for sprite, frame, decoded in batch
+           for score in [damaged(sprite, frame, decoded)] if score is not None]
+    if not bad:
+        return
+    counts["damaged"] += len(bad)
+    if rerender is not None:
+        by_option: Dict[str, Dict[str, pathlib.Path]] = {}
+        for sprite, frame, _, _ in bad:
+            (root / "render" / sprite.option / f"{frame.stem}.png").unlink(missing_ok=True)
+            by_option.setdefault(sprite.option, {})[frame.stem] = root / "prep" / f"{frame.stem}.png"
+        for option, inputs in sorted(by_option.items()):
+            try:
+                rerender(option, inputs, root / "render" / option)
+            except (SystemExit, subprocess.CalledProcessError, OSError):
+                pass                            # what it did not make is missing, and left out below
+        pixels.update(reader(root, [(f"render/{sprite.option}/{frame.stem}.png", frame.width * 2,
+                                     frame.height * 2) for sprite, frame, _, _ in bad]))
+    for sprite, frame, decoded, first in bad:
+        rel = f"render/{sprite.option}/{frame.stem}.png"
+        if rerender is not None and not isinstance(pixels[rel], bytes):
+            continue                            # the second render failed outright: its own reason
+        again = damaged(sprite, frame, decoded) if rerender is not None else first
+        if again is None:
+            counts["remade"] += 1
+        else:
+            pixels[rel] = (f"upscale looked damaged ({again:.2f} against {hd_upscale.DAMAGE_THRESHOLD}"
+                           + (", made twice" if rerender is not None else "") + "); the original shows")
+
+
 def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[str], "imp_read.Sprite"],
             skipped: List[str], counts: Optional[Dict[str, int]] = None, first_group: int = 1,
-            batch: int = RENDER_BATCH, budget: int = READ_BUDGET, read=None) -> Iterator[Tuple[bytes, bytes, bytes]]:
+            batch: int = RENDER_BATCH, budget: int = READ_BUDGET, read=None,
+            rerender=None) -> Iterator[Tuple[bytes, bytes, bytes]]:
     """Yield (entry, zidx, zhd) for every planned frame, in order: static sprites group 0, each
     animated sprite its own group, consecutive. The low-res half is decoded again from the archive
-    (`read_sprite`), one member at a time. A frame whose render is missing or the wrong size is
-    reported in `skipped` and left out; its sprite's other frames still go in. `counts` (if given)
-    gets "packed" frames and "sprites" packed."""
+    (`read_sprite`), one member at a time. A frame whose render is missing, the wrong size, or
+    looks damaged (`check_renders`, which makes it again with `rerender` first) is reported in
+    `skipped` and left out; its sprite's other frames still go in. `counts` (if given) gets
+    "packed" frames and "sprites" packed, "damaged" renders found and "remade" ones that then
+    passed."""
     counts = counts if counts is not None else {}
-    counts.setdefault("packed", 0)
-    counts.setdefault("sprites", 0)
+    for name in ("packed", "sprites", "damaged", "remade"):
+        counts.setdefault(name, 0)
+    reader = read or read_renders
     group = first_group
     queue: List[Sprite] = []
     queued = held = 0
@@ -346,18 +396,26 @@ def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[st
         nonlocal group
         wanted = [(f"render/{s.option}/{f.stem}.png", f.width * 2, f.height * 2)
                   for s in queue for f in s.frames]
-        pixels = (read or read_renders)(root, wanted)
-        for sprite in queue:
+        pixels = reader(root, wanted)
+        decoded_of: Dict[int, object] = {}
+        for n, sprite in enumerate(queue):
+            try:
+                decoded_of[n] = read_sprite(sprite.member)
+            except (imp_read.ImpError, OSError, ValueError) as error:
+                decoded_of[n] = error
+        check_renders([(sprite, frame, decoded_of[n]) for n, sprite in enumerate(queue)
+                       if not isinstance(decoded_of[n], Exception) for frame in sprite.frames],
+                      pixels, root, rerender, reader, counts)
+        for n, sprite in enumerate(queue):
             this_group = 0
             if sprite.animated:
                 if group > pack.MAX_GROUP:
                     skipped.append(f"{sprite.name}: more than {pack.MAX_GROUP} animated sprites")
                     continue
                 this_group = group
-            try:
-                decoded = read_sprite(sprite.member)
-            except (imp_read.ImpError, OSError, ValueError) as error:
-                skipped.append(f"{sprite.name}: could not read {sprite.member} ({error})")
+            decoded = decoded_of[n]
+            if isinstance(decoded, Exception):
+                skipped.append(f"{sprite.name}: could not read {sprite.member} ({decoded})")
                 continue
             packed = 0
             for frame in sprite.frames:

@@ -62,6 +62,7 @@ import tempfile
 import zlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "portrait-upscale"))
+import hd_upscale  # noqa: E402
 import lbm_png  # noqa: E402
 
 MAGIC = b"LOMHDPK5"
@@ -270,7 +271,8 @@ def is_pixel_multiple(w: int, h: int, idx, pal, hw: int, hh: int, rgb: bytes) ->
                for y in range(hh) for x in range(hw))
 
 
-def unmasked_records(originals, upscaled, skipped: list[str], sources=None):
+def unmasked_records(originals, upscaled, skipped: list[str], sources=None, rerender=None,
+                     counts: "dict | None" = None):
     """Yield (entry, zidx, zhd) for every unmasked (picture) record `write` would pack, one at a
     time -- so a caller streaming to disk never holds more than one image's compressed bytes at
     once. What is left out, and why, is appended to `skipped` (the caller's list): the "no
@@ -279,7 +281,14 @@ def unmasked_records(originals, upscaled, skipped: list[str], sources=None):
 
     `sources` holds the originals the upscales were made from. When given, an image is packed only
     if the installed original is the same image; `None` means the installed originals ARE the
-    sources, which is only true when the upscales were made from this very install."""
+    sources, which is only true when the upscales were made from this very install.
+
+    An upscale whose pixels are not a plausible 2x of its original (`hd_upscale.damage_score`) is
+    made again with `rerender(path)`, once, and left out if it still looks damaged. `counts` (if
+    given) gets "damaged" upscales found and "remade" ones that then passed."""
+    counts = counts if counts is not None else {}
+    counts.setdefault("damaged", 0)
+    counts.setdefault("remade", 0)
     small = image_files(originals)
     made_from = image_files(sources) if sources is not None else small
     large = image_files(upscaled)
@@ -299,6 +308,26 @@ def unmasked_records(originals, upscaled, skipped: list[str], sources=None):
         if is_pixel_multiple(w, h, idx, pal, hw, hh, rgb):
             skipped.append(f"{name}: the upscale is the original with each pixel repeated, not an upscale")
             continue
+        if (hw, hh) == (2 * w, 2 * h):
+            source = b"".join(bytes(pal[i]) for i in idx)
+            score = hd_upscale.damage_score(w, h, source, rgb, 3, 3)
+            if hd_upscale.looks_damaged(score):
+                counts["damaged"] += 1
+                again = None
+                if rerender is not None:
+                    try:
+                        rerender(large[name])
+                        hw, hh, rgb = load_rgb(large[name])
+                        again = (hd_upscale.damage_score(w, h, source, rgb, 3, 3)
+                                 if (hw, hh) == (2 * w, 2 * h) else float("inf"))
+                    except (SystemExit, subprocess.CalledProcessError, OSError):
+                        again = float("inf")
+                if again is None or hd_upscale.looks_damaged(again):
+                    skipped.append(f"{name}: upscale looked damaged ({score:.2f} against "
+                                   f"{hd_upscale.DAMAGE_THRESHOLD}" + (", made twice" if rerender else "")
+                                   + "); the original shows")
+                    continue
+                counts["remade"] += 1
         check_reader_limits(name, w, h, hw, hh)
         yield encode_record(name, w, h, idx, pal, hw, hh, rgb)
 

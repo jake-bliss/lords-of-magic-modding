@@ -151,7 +151,22 @@ that cleanup, exactly as the review's originals (`sprite_originals.py`) did. A m
 satisfy what the DLL requires: width >= 8, height >= 4, `w * h <= 65,536`, and at least 3 rows each
 holding a run of >= 8 consecutive pixels that are neither the colour key nor the shadow index
 (`hd_portrait_pack.masked_is_eligible`); the builder skips and reports anything short of that, the
-same as every other kind of skip. One command builds a pack with both sprites and the existing
+same as every other kind of skip.
+
+**The content check** (0.5.1, `hd_upscale.damage_score`): the DLL draws an upscale wherever the
+screen matches the ORIGINAL, so it cannot notice an upscale whose pixels are wrong, and until 0.5.1
+setup checked only an upscale's size. A tester's Windows GPU wrote renders of the right size full of
+diagonal bands and speckle (2026-09-26; the same members were clean on the tower and the Mac). Every
+sprite frame and picture is now shrunk back to 1x (2x2 box mean) and compared with its source over
+the pixels that are opaque with four opaque neighbours; the score is that mean error divided by the
+source's own neighbour-to-neighbour texture plus 8. Over the 28,399 renders of a full Mac
+`--sprites` run and its 1,282 pictures, no clean upscale scored above 0.74 (p99.9 0.52); rows at
+the wrong stride or sheared score a median 1.7, and 98-99% of them clear the threshold of 0.9. A failing
+upscale is made again once and otherwise left out; the check runs whenever the pack is built, so it
+catches a damaged render already in the cache. Set `LOM_SPRITE_WORK` to a run's
+`lomhd_work/sprites` to run `tests/test_hd_upscale.py`'s corpus test.
+
+One command builds a pack with both sprites and the existing
 pictures, for a single DLL test that covers both:
 
     python3 tools/hd-review/sprite_pack.py imp.mpq combined.pack --esrgan ... --models ... --with-pack-inputs \

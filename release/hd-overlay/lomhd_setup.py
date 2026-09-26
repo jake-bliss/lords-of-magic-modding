@@ -547,19 +547,41 @@ def upscale_sprites(sprites: list, root: pathlib.Path, exe: pathlib.Path, models
              f"command again ({again}) to carry on: every sprite already upscaled is kept.")
 
 
+def rerender_picture(path: pathlib.Path, exe: pathlib.Path, models: pathlib.Path) -> None:
+    """The content check's second chance for one picture: its upscale made again, in place, by the
+    option that made it -- the folder it is in (upscale_all's layout)."""
+    folder = path.parent
+    path.unlink(missing_ok=True)
+    if folder.parent.name == hd_upscale.APPROVED:            # upscaled/approved/portrait/<name>.lbm
+        names = WORK / "approved-again.txt"
+        names.write_text(f"{folder.name}\\{path.name}\n")
+        subprocess.run([sys.executable, str(HERE / "tools" / "upscale.py"), str(WORK / "originals"),
+                        str(folder.parent), "--names", str(names), "--esrgan", str(exe),
+                        "--models", str(models)], check=True, capture_output=True)
+    else:                                                    # upscaled/<option>/<name>.png
+        hd_upscale.render(folder.name, {path.stem: WORK / "png" / f"{path.stem}.png"}, folder, exe, models)
+
+
 def build_pack(pack: pathlib.Path, sprites, sprite_root: pathlib.Path, read_sprite, originals: list,
-               upscaled: list):
+               upscaled: list, exe: "pathlib.Path | None" = None, models: "pathlib.Path | None" = None,
+               pictures: "dict | None" = None):
     """Write the pack: static sprites, then each animated sprite as its own consecutive group, then
     the pictures. Returns (images, pictures left out, sprites left out, static counts, animated
-    counts); the counts hold "packed" frames and "sprites"."""
+    counts); the counts hold "packed" frames and "sprites", and, as `pictures` (if given) does for
+    the pictures, "damaged" upscales the content check found and "remade" ones that then passed.
+    With the upscaler (`exe`, `models`), a damaged upscale is made again once before it is left out."""
     skipped: list = []
     sprite_skipped = list(sprites.skipped)
     packed: dict = {}
     moving: dict = {}
+    remake = None if exe is None else (
+        lambda option, inputs, dest: hd_upscale.render(option, inputs, dest, exe, models))
+    remake_picture = None if exe is None else (lambda path: rerender_picture(path, exe, models))
     count = hd_portrait_pack.write_records(pack, itertools.chain(
-        hd_sprites.records(sprites.static, sprite_root, read_sprite, sprite_skipped, packed),
-        hd_sprites.records(sprites.animated, sprite_root, read_sprite, sprite_skipped, moving),
-        hd_portrait_pack.unmasked_records(originals, upscaled, skipped, originals)))
+        hd_sprites.records(sprites.static, sprite_root, read_sprite, sprite_skipped, packed, rerender=remake),
+        hd_sprites.records(sprites.animated, sprite_root, read_sprite, sprite_skipped, moving, rerender=remake),
+        hd_portrait_pack.unmasked_records(originals, upscaled, skipped, originals, rerender=remake_picture,
+                                          counts=pictures)))
     packed.setdefault("packed", 0)
     moving.setdefault("packed", 0)
     moving.setdefault("sprites", 0)
@@ -591,6 +613,7 @@ def sprite_mode(game: pathlib.Path, on: bool, off: bool) -> "tuple[bool, str]":
 
 
 SKIP_KINDS = (                  # (what a skip reason says, how the summary counts it)
+    ("looked damaged", "upscale looked damaged"),
     ("not in this archive", "not in your imp.mpq"),
     ("ambiguous", "two sprites share the name"),
     ("picked 'original'", "the original was picked in review"),
@@ -600,6 +623,18 @@ SKIP_KINDS = (                  # (what a skip reason says, how the summary coun
     ("render", "no usable upscale"),
     ("could not read", "could not be read"),
 )
+
+
+def damage_summary(counts: list, skipped: list) -> str:
+    """What the content check did this run, for the end of the install."""
+    found = sum(c.get("damaged", 0) for c in counts)
+    remade = sum(c.get("remade", 0) for c in counts)
+    left = sum("looked damaged" in line for line in skipped)
+    if not found:
+        return "No upscale looked damaged."
+    return (f"{found} upscales looked damaged and were made again: {remade} came out clean"
+            + (f", {left} left out: upscale looked damaged (the original shows for those; running "
+               f"setup again tries them once more)" if left else "") + ".")
 
 
 def summarise_skips(skipped: list) -> str:
@@ -1337,8 +1372,9 @@ def main() -> int:
     say(f"5/{steps}  Building the pack and installing")
     originals = [WORK / "originals" / group for group in found if found[group]]
     pack = WORK / PACK_NAME
+    pictures: dict = {}
     count, skipped, sprite_skipped, packed, moving = build_pack(pack, sprites, sprite_root, read_sprite,
-                                                                originals, upscaled)
+                                                                originals, upscaled, exe, models, pictures)
     install(game, pack, record, animated)
     exe_note = fix_exe(game, "--terrain" if args.terrain else "")
     say(f"\nDone: {count} HD images installed in {game}.")
@@ -1348,6 +1384,7 @@ def main() -> int:
     say(f"Sprites: {packed['packed']} packed" + (f", and {moving['sprites']} animated sprites "
                                                   f"({moving['packed']} frames)" if animated else "")
         + (f"; {len(sprite_skipped)} left out ({summarise_skips(sprite_skipped)})" if sprite_skipped else ""))
+    say(damage_summary([packed, moving, pictures], sprite_skipped + skipped))
     if animated:
         c = sprites.counts
         say(f"  of {c['frames']} animated frames, {c['repeats']} repeat another, {c['ineligible']} are too "
