@@ -54,6 +54,14 @@ ANCHOR = b'ASCII_VAL 22{storydict begin"Lords of Magic v3.01 December 3, 1998"op
 # there would land in a dictionary nobody chose.
 #
 # Stack effects, operator by operator, are traced in mods/marauder-probe/README.md.
+#
+# The readout's `{...}build_statement storydict begin open_messagebox_dialog end` is the exact shape
+# of the Ctrl+S "saved." message in this same member, so it is a shipped hotkey pattern. The string
+# is `build_statement`'s shared 1000-byte `statement_buffer`, as it is for every shipped caller.
+# `modalloop` (gs\scenario\network.gs's exit message) was considered and not used: no shipped
+# hotkey enters a modal loop, and re-entering the hotkey dispatcher from inside one is untested.
+# `U` puts `processgamemessages` between `setcontrollingcomputer` and `setuserforplayer`, as
+# gs\scenario\network.gs does between its controlling-computer writes and `0 setuserforplayer`.
 READOUT = (
     'ASCII_VAL"J"0 get{getmultiplayerflag not{'
     '{"t="currentturn" cu="currentuser" cp="currentplayer" wmp="WANDERING_MONSTER_PLAYER'
@@ -82,7 +90,7 @@ TAKEOVER = (
     'ASCII_VAL"U"0 get{getmultiplayerflag not incombat not and{'
     'WANDERING_MONSTER_PLAYER 0 setplayeraistatus '
     '0 1 setplayeraistatus '
-    'WANDERING_MONSTER_PLAYER thiscomputer setcontrollingcomputer '
+    'WANDERING_MONSTER_PLAYER thiscomputer setcontrollingcomputer processgamemessages '
     'WANDERING_MONSTER_PLAYER setuserforplayer rendermap'
     '}if}addhotkey'
 )

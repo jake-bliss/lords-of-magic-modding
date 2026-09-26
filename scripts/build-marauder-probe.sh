@@ -59,6 +59,14 @@ check() {
   fi
 }
 
+require() {
+  # require "what was asserted" <command...> -- a check whose failure makes everything after it
+  # meaningless. Recorded like any other check, then the run stops.
+  local before="${failures}"
+  check "$@"
+  (( failures == before )) || { note; note "  STOPPED: a required check failed. Nothing to install."; exit 1; }
+}
+
 probe_tool() {
   PYTHONDONTWRITEBYTECODE=1 python3 "${project_dir}/tools/marauder_probe.py" "$@"
 }
@@ -97,9 +105,9 @@ note
 note "== corpus facts =="
 extract_member "${game_dir}/gs.mpq" "${HOTKEY_MEMBER}" "${work_dir}/hotkey.shipped.gs"
 extract_member "${game_dir}/gs.mpq" "${PLACEDNG_MEMBER}" "${work_dir}/placedng.shipped.gs"
-check "WANDERING_MONSTER_PLAYER in lomse.exe's constant table agrees with placedng.gs's literal slot" \
+require "WANDERING_MONSTER_PLAYER in lomse.exe's constant table agrees with placedng.gs's literal slot" \
   probe_tool wmp "${game_dir}/lomse.exe" "${work_dir}/placedng.shipped.gs"
-check "the probe keys (J N U H) are unbound in the shipped hotkey.gs, every addhotkey accounted for" \
+require "the probe keys (J N U H) are unbound in the shipped hotkey.gs, every addhotkey accounted for" \
   probe_tool keys "${work_dir}/hotkey.shipped.gs"
 note
 
@@ -112,14 +120,14 @@ rm -rf "${project_dir}/mods/${MOD_ID}/archives"
 "${project_dir}/scripts/mod-seed.sh" "${project_dir}/mods/${MOD_ID}" "gs.mpq:${HOTKEY_MEMBER}" >/dev/null
 tree_file="${project_dir}/mods/${MOD_ID}/archives/gs.mpq/gs/hotkey.gs"
 
-check "the seeded tree file is byte-identical to the shipped member" \
+require "the seeded tree file is byte-identical to the shipped member" \
   files_identical "${tree_file}" "${work_dir}/hotkey.shipped.gs"
 
 probe_tool apply "${work_dir}/hotkey.shipped.gs" "${work_dir}/hotkey.edited.gs" >/dev/null \
   || die "the probe edit could not be applied to the shipped member"
 cp "${work_dir}/hotkey.edited.gs" "${tree_file}"
 
-check "the tree file is the shipped member plus exactly the flag flip and the probe block" \
+require "the tree file is the shipped member plus exactly the flag flip and the probe block" \
   probe_tool verify "${work_dir}/hotkey.shipped.gs" "${tree_file}"
 note
 
@@ -139,12 +147,11 @@ check "the member read back out of the packed archive is the edited source" \
   files_identical "${work_dir}/hotkey.packed.gs" "${tree_file}"
 check "the member read back out of the packed archive verifies against the shipped member" \
   probe_tool verify "${work_dir}/hotkey.shipped.gs" "${work_dir}/hotkey.packed.gs"
-check "the build changes gs.mpq and no other archive" \
+require "the build changes gs.mpq and no other archive" \
   only_gs_in_build "${build_dir}/build.json"
 cp "${work_dir}/hotkey.packed.gs" "${out_dir}/packed-hotkey.gs"
 note "  archive sha256 $(file_hash "${build_dir}/gs.mpq")"
 note "  build id ${build_id}"
-note "  install: scripts/install-dev.sh ${MOD_ID} ${build_id}"
 note
 
 note "== result =="
@@ -153,3 +160,4 @@ if (( failures > 0 )); then
   exit 1
 fi
 note "  all offline checks passed. Report: ${report}"
+note "  install: scripts/install-dev.sh ${MOD_ID} ${build_id}"

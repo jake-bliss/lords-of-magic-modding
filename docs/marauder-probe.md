@@ -11,7 +11,8 @@ wandering-monster player, with no city, faith or capital? This is a feasibility 
 - **Rung 1** is a build (`mods/marauder-probe`, vanilla base): cheat-keys-true plus four probe
   hotkeys in `gs\hotkey.gs`. It asks whether the scripts alone can bind the human to slot 15.
 - **Rung 2** is a save edit (`tools/marauder_save_bind.py`) made between two launches: user record
-  0 of a save from rung 1 is re-bound to player 15. It asks what happens once the binding exists.
+  **1** of a save from rung 1 is re-bound to player 15. It asks whether `setuserforplayer 15` can
+  then switch the human to the marauders, and what happens after that.
 
 | | Question |
 | --- | --- |
@@ -59,6 +60,23 @@ The run exists to confirm or refute it.
   `setup_player_control` (player 0 human, 1..7 AI), `setup_ai`
   (`WANDERING_MONSTER_PLAYER 1 setplayeraistatus`), `initusers` and `0 setuserforplayer`.
   Anything the probe flips in game is re-set on load. The user binding is not.
+- **A load from the main menu starts at user index 0.** The menu runs `8 newgame` (`startmenudialog`)
+  before its load dialog, and `newgame` (`0x004DEEC0` -> `0x00481820`) zeroes the current user
+  index at `0x004818F4`. The load path writes the user records but never the index: the only other
+  writers of `0x005A7D8C` are the start-up initialiser and the user switch itself. An in-game
+  Ctrl+L keeps whatever index is current.
+- **Why rung 2 re-binds record 1, not record 0.** Because the menu load starts at index 0,
+  re-binding record 0 would make `currentuser` read 15 straight after the load whether or not
+  `setuserforplayer 15` ever succeeded. With record 1 re-bound, the load leaves `currentuser` at 0,
+  a successful `setuserforplayer 15` moves the index to 1 (`currentuser` 15), and a failed one
+  leaves it at 0. **Precondition, checked against the corpus:** the user switch
+  (`0x0052CDB0`, and `0x0048A400` after it) reads the new record's mode word at `+0x2E8`. It is `2`
+  in records 0 and 1 of all 6 vanilla saves and all 11 Development saves (3.02's `Merlin I` and its
+  `lastsave.lom` have `5` in record 0, so the mode is not a constant, and `bind` refuses when the two
+  differ). Everything else that differs between records 0 and 1 in those saves lies in
+  `+0x14`..`+0x2E7`, which `initusers` resets on every load, or is `+0x2F0`, the per-user
+  `setcenteronmovement` preference (the load copies the global into record 0 only). One untested
+  consequence: player 1, an AI faction, no longer has a user record.
 - The same new-game routine marks player 15 always active (`cmp edi, 0xf`), which is why the
   marauders exist in every game.
 - The HD overlay 0.5.0 patch to the Development profile's `lomse.exe` differs from vanilla in 85
@@ -105,8 +123,8 @@ The build unlocks the whole `cheat_keys` tier. Its table, with the destructive k
 | --- | --- | --- |
 | **Shift+J** | **Readout.** A message box: `t=` turn, `cu=` current user, `cp=` current player (whose turn), `wmp=` the slot constant, `tc=` this computer; then for player 0 (`P0`) and the marauder slot (`MAR`): `f=` faith, `ai=` AI status, `cc=` controlling computer; `nMAR=` armies the marauder slot owns; `lord=` the current user's leader army (-1 = none). In combat it is a balloon instead. | anywhere, single player |
 | **Shift+N** | **Spawn.** Creates a one-unit `decr1` marauder army (no brain) on the nearest empty land to the centre of the map view, and centres the camera on it. | map view, not zoomed out to the world, not in combat |
-| **Shift+U** | **Takeover.** Marauder slot to human (`ai` 0), player 0 to AI (`ai` 1), marauder slot's controlling computer to this computer, then `WANDERING_MONSTER_PLAYER setuserforplayer`. | not in combat |
-| **Shift+H** | **Hand back.** Player 0 to human, marauder slot to AI, `0 setuserforplayer`. **In rung 2 it cannot undo the binding** (no user record is bound to player 0 any more), only the AI flags. | not in combat |
+| **Shift+U** | **Takeover.** Marauder slot to human (`ai` 0), player 0 to AI (`ai` 1), marauder slot's controlling computer to this computer, `processgamemessages`, then `WANDERING_MONSTER_PLAYER setuserforplayer`. | not in combat |
+| **Shift+H** | **Hand back.** Player 0 to human, marauder slot to AI, `0 setuserforplayer`. Works in both rungs: user record 0 stays bound to player 0. | not in combat |
 | `*` | Cheat tier: every unit in the selected army gets 10,000 experience and **1,000 move points**. | single player |
 | `E` | End turn (shipped). | not in combat |
 | Ctrl+S / Ctrl+L | Save / load (shipped). Ctrl+S also rewrites `lastsave.lom`. | not in combat |
@@ -146,15 +164,17 @@ scripts/build-marauder-probe.sh
 cat artifacts/marauder-probe/offline-checks.txt
 
 # 2. A byte copy of the profile's savegame folder. The game rewrites lastsave.lom and autosaves
-#    during the run; this is the way back for them. (A copy, not a hash.)
-mkdir -p "$KEEP/save-backups"
-cp -Rp "$DEV/savegame" "$KEEP/save-backups/dev-savegame-before-marauder-probe"
+#    during the run; this is the way back for them. (A copy, not a hash.) The script refuses while
+#    the game runs, writes a NEW timestamped directory (refusing one that exists), verifies it with
+#    diff -r, and prints its path. Keep that path: the restore needs it.
+scripts/marauder-probe-savegames.sh backup
+SAVEBK="PASTE THE PRINTED PATH HERE"     # e.g. "$KEEP/save-backups/dev-savegame-20260926T010000Z"
 
 # 3. Archives back to pristine vanilla (all five). Refuses while the game is running.
 scripts/restore-dev.sh
 
 # 4. Install the probe. Replaces gs.mpq and nothing else.
-scripts/install-dev.sh marauder-probe BUILD_ID      # a98f32414c64 when this sheet was written
+scripts/install-dev.sh marauder-probe BUILD_ID      # b88ebb19aedc when this sheet was written
 ```
 
 **What these commands touch, stated plainly.** `install-dev.sh` writes only the archives named in
@@ -167,8 +187,8 @@ GS5R3's. Portraits pair by content, so the few that differ between the two insta
 not be upscaled; whether the HD terrain art still lines up with vanilla tilesets was not checked.
 None of the probe's readings is a picture, so neither affects the result.
 
-For reference, `build id a98f32414c64`, `gs.mpq sha256
-08e516c7fe9a3b71c931628700280f0c25d523933d246634914a5e099e2061b4`. A build id is a digest of the
+For reference, `build id b88ebb19aedc`, `gs.mpq sha256
+1b95a7bd82dd17bda9819600aad2b180d73bb94cc480f473a5f57369d11adfbb`. A build id is a digest of the
 tree, the base archives and the tool binaries, so recompiling the tools changes it; trust the report.
 
 ## Rung 1: can the scripts bind the human? (first launch)
@@ -197,9 +217,11 @@ This proves the readout is connected before it is asked anything.
 | `nMAR` | 0 or more (security forces, dungeon garrisons) | note it |
 | `lord` | 0 or more (your lord's army) | note it |
 
-If **no box appears at all**: the key is not reaching the script (a native binding, or the build is
-not installed). Press `*` with your lord's army selected: if the lord goes to level 9 the build is
-installed and the fault is the J binding itself.
+If **no box appears at all**: first **close every open message box and dialog, then press J
+again** -- the message box shows nothing while another story dialog is open (the game's own
+turn-start messages count). If there is still nothing, the key is not reaching the script (a native
+binding, or the build is not installed). Press `*` with your lord's army selected: if the lord goes
+to level 9 the build is installed and the fault is the J binding itself.
 
 ### 1.2 -- Shift+N, then Shift+J
 
@@ -219,6 +241,11 @@ equal to `tc`.
 | **`0` (unchanged)** | **Predicted.** No user record is bound to 15, so `setuserforplayer` returned without doing anything. **The scripts cannot bind the human to slot 15.** Rung 2 is the next step. |
 | **`15`** | Not predicted. The binding worked by script; the static reading of `0x0052CEF0` is wrong. Rung 2 is still worth running, but go to 2.3 first in *this* session (move, end turn, Q5) |
 | **any other number** | Not predicted either: the fallback path ran, which the static reading says needs a user record bound to 15. Report the number, press Shift+H |
+
+**Watch the map after pressing U.** Marking player 0 as AI in the middle of its own turn might
+start the AI playing that turn at once. Note whether anything of yours moves, recruits or builds on
+its own between U and H, and roughly what. If it does, the `mprobe` save made below reflects those
+AI actions; that is fine for rung 2, but say so in the notes.
 
 ### 1.4 -- hand back, save, quit
 
@@ -240,62 +267,74 @@ ls -la "$DEV/savegame/"
 # Read the eight bindings. Predicted: 0 1 2 3 4 5 6 7.
 python3 tools/marauder_save_bind.py check "$DEV/savegame/mprobe"
 
-# Write a COPY with user record 0 bound to player 15. Never edits mprobe itself.
+# Write a COPY with user record 1 bound to player 15 (--record 1 is the default; stated anyway).
+# Never edits mprobe itself.
 python3 tools/marauder_save_bind.py bind "$DEV/savegame/mprobe" "$DEV/savegame/mprobe15" \
-  --backup-dir "$KEEP/save-backups"
+  --record 1 --backup-dir "$KEEP/save-backups"
 ```
 
 `bind` refuses, and writes nothing, if: the game is running; `mprobe15` already exists; the save
 does not parse, re-encode byte-identically, or have exactly one `LS_USER` of eight 784-byte
-records; record 0 is not bound to 0; anything is already bound to 15; or the output differs from
-`mprobe` anywhere but the four bytes of that word. It keeps `"$KEEP/save-backups/mprobe.orig"`, a
-byte copy compared against the source. Predicted output: `before [0, 1, 2, 3, 4, 5, 6, 7]`, `after
-[15, 1, 2, 3, 4, 5, 6, 7]`, one byte changed. The format has no checksum and no compression, and
-the section is fixed width, so nothing else in the file moves.
+records; record 1 is not bound to 1; anything is already bound to 15; record 1's mode word
+(`+0x2E8`) differs from record 0's; the output or the backup directory is inside `~/Applications`
+but outside the Development profile; or the output differs from `mprobe` anywhere but the four
+bytes of that word. It keeps `"$KEEP/save-backups/mprobe.orig"`, a byte copy compared against the
+source. Predicted output: `before [0, 1, 2, 3, 4, 5, 6, 7]`, `after [0, 15, 2, 3, 4, 5, 6, 7]`,
+one byte changed, `mode` all `2`. The format has no checksum and no compression, and the section
+is fixed width, so nothing else in the file moves.
+
+**If `bind` refuses on the mode word**, the discriminating design is not available for this save.
+Fall back to `--record 0` (and a new output name). Then `cu` reads 15 straight after the load
+whatever happens later, so **`cu` does not discriminate** in 2.1 or 2.2; read the AI fields and
+whether the army can be moved instead, and say in the notes that the fallback was used.
 
 ## Rung 2: what happens once the binding exists (second launch)
 
 Relaunch the Development profile. From the **main menu**, load **`mprobe15`**. (Loading from the
-main menu matters: the menu runs `8 newgame` first, which sets the current user index to 0, and
-index 0 is the record the edit re-bound.)
+main menu matters: the menu runs `8 newgame` first, which sets the current user index to 0. Record
+0 is still bound to player 0; the edit re-bound record 1.)
 
 ### 2.1 -- Shift+J right after the load: the control for rung 2
 
-What happens on load, step by step: the load routine reads user record 0 with player 15 in it.
-`final_setup` then sets player 0 human and 1..7 AI (`setup_player_control`), sets slot 15 AI
-(`setup_ai`), leaves the binding alone (`initusers`), and calls `0 setuserforplayer` -- which finds
-no user record bound to player 0 and **returns without doing anything**. The scripts in that path do
-not index anything by `currentuser`; nothing in them is predicted to crash. The natives it calls
-(`gamemode`, `set_turn_button_image`, the visibility code) were not read and could still misbehave
-with a user bound to a slot outside 0..7.
+What happens on load, step by step: the menu has set the current user index to 0; the load routine
+reads the eight user records, record 1 now bound to player 15. `final_setup` sets player 0 human and
+1..7 AI (`setup_player_control`), sets slot 15 AI (`setup_ai`), leaves the bindings alone
+(`initusers`), and calls `0 setuserforplayer` -- which finds record 0 bound to player 0, human and
+on this computer, and switches to it (the index is already 0). The scripts in that path do not
+index anything by `currentuser`. The natives it calls (`gamemode`, `set_turn_button_image`, the
+visibility code) were not read; player 1 having no user record is the untested difference.
 
 | Field | Predicted | If not |
 | --- | --- | --- |
-| **`cu`** | **`15`** -- read straight out of user record 0 | `0`: the load did not restore `+0`, or something re-bound it; the save-edit route is closed and the plan needs an exe patch |
+| **`cu`** | **`0`** -- index 0, record 0, player 0 | `15`: the index was not 0 after the menu load, so the discrimination below is lost; note it and carry on |
 | `cp` | `0` (the save was made on your turn) | note it |
 | `t` | the turn you saved on | note it |
 | `P0 ai` / `MAR ai` | `0` / `1` (`final_setup` re-set them) | if `MAR ai=0`, `setup_ai` did not run: note it |
-| `MAR cc` | the value from 1.1, or `tc` if the controlling computer is saved | note it |
+| `MAR cc` | `tc` if the controlling computer is saved (U set it in rung 1), otherwise the value from 1.1 | note it |
 | `nMAR` | one more than 1.1 (the N army is in the save) | note it |
-| **`lord`** | **`-1`**: slot 15 has no leader | **Q5 baseline** |
+| `lord` | your lord's army, as in 1.1 | note it |
 
-Also note, as text, anything about the screen: whose flag or colour the interface shows, whether
-the fog of war looks different, any error dialog. Those are not readings, only context.
+**An error dialog or a crash on load** is itself a result: the engine cannot hold a user record
+bound to slot 15. Note the text and stop the rung.
 
-**An error dialog or a crash on load** is itself a result: the engine cannot hold a user bound to
-slot 15 without further work. Note the text and stop the rung.
+### 2.2 -- Shift+U, then Shift+J (Q2 with the binding): the discriminating step
 
-### 2.2 -- Shift+U, then Shift+J (Q2 with the binding)
+A user record bound to 15 now exists. U makes slot 15 non-AI and puts it on this computer, so
+`setuserforplayer 15` is predicted to **succeed**: it finds record 1 and moves the current index to
+1.
 
-Now the one user record bound to 15 exists, U sets slot 15 non-AI and on this computer, so
-`setuserforplayer 15` is predicted to **succeed** and run the user-switch routine.
-
-| Field | Predicted |
+| `cu` after U | Meaning |
 | --- | --- |
-| `cu` | `15` (unchanged, but now through a successful switch) |
-| `P0 ai` / `MAR ai` / `MAR cc` | `1` / `0` / `tc` |
+| **`15`** | **Predicted.** The switch worked: the human is now the Marauders. `lord` should read `-1` (slot 15 has no leader): **the Q5 baseline**. Go on to 2.3 |
+| **`0`** | The switch failed even with a bound record: one of the switch's conditions (on this computer, AI bit clear) is not met as the readout claims, or the static reading is wrong. Note `MAR ai` and `MAR cc`, press Shift+H, and stop the rung |
 
-Player 0, your old faction, is now an AI faction with a lord and cities.
+Either way, predicted `P0 ai=1`, `MAR ai=0`, `MAR cc` equal to `tc`. As in rung 1, watch whether
+player 0 (now AI) starts moving on its own. Also note, as text, anything about the screen after the
+switch: whose flag or colour the interface shows, whether the fog of war changed, any error. Those
+are context, not readings.
+
+**Shift+H works here too**: it flips the AI flags back and `0 setuserforplayer` switches to record
+0, so `cu` returns to 0.
 
 ### 2.3 -- move, then end the turn (Q2, Q5)
 
@@ -310,8 +349,8 @@ Player 0, your old faction, is now an AI faction with a lord and cities.
    - `cp` never reads 15 and the game waits with `cp=0`: the engine is waiting on player 0, which
      is now AI but was the "human" slot in its turn order, or is skipping slot 15. Q2 blocked in
      the turn order: exe territory.
-   - The game appears to hang after `E`: note how long you waited and what was on screen. A human
-     slot the engine expects input from, with no user, is the likely cause.
+   - The game appears to hang after `E`: note how long you waited and what was on screen. The
+     engine waiting for input from a slot it does not normally hand to a human is the likely cause.
 3. **Q5.** Over those turns, note any defeat, "game over" or "restart" dialog and the turn it
    appears on. Predicted from the scripts: none. `lord` stays `-1`.
 4. **Q3 (optional).** Attack something with the army. In combat, Shift+J shows a balloon. Can you
@@ -319,23 +358,24 @@ Player 0, your old faction, is now an AI faction with a lord and cities.
 
 ### 2.4 -- save and reload (Q4)
 
-**Ctrl+S** as **`mprobe2`**, then **Ctrl+L** and load `mprobe2`, then Shift+J.
+With the human bound to 15 (index 1), **Ctrl+S** as **`mprobe2`**, then **Ctrl+L** and load
+`mprobe2`, then Shift+J. An in-game load keeps the current index (1), so for a moment after the
+read `currentuser` is 15; then `final_setup` runs `0 setuserforplayer`, finds record 0 bound to
+player 0 and switches back to it.
 
-| Observed | Meaning |
+| Observed after the load | Meaning |
 | --- | --- |
-| `cu=15`, `P0 ai=0`, `MAR ai=1` | **Predicted.** The binding survives a save and a load (the writer writes the in-memory record back out); the AI flags do not (`final_setup`). A real mod needs the save-edit start once, and its takeover redone in `final_setup` on every load |
-| `cu=0` | the in-game save re-bound record 0; the binding does not survive. Exe territory |
+| `cu=0`, `P0 ai=0`, `MAR ai=1`; then Shift+U gives `cu=15` again | **Predicted.** The binding (record 1 -> 15) survived the save and the load; the AI flags and the current index did not (`final_setup`). A real mod needs the bound record once, and its takeover redone in `final_setup` on every load |
+| `cu=0` and Shift+U leaves it at 0 | the save did not keep record 1 bound to 15 (check the file, below). Exe territory |
+| `cu=15` right after the load | `final_setup`'s `0 setuserforplayer` did not switch; note it |
 
-Then Shift+U and Shift+J again: predicted as 2.2. Quit.
+Press Shift+H, then quit.
 
 After the sitting, confirm Q4 from the file itself, offline:
 
 ```sh
-python3 tools/marauder_save_bind.py check "$DEV/savegame/mprobe2"   # predicted: record 0 -> player 15
+python3 tools/marauder_save_bind.py check "$DEV/savegame/mprobe2"   # predicted: record 1 -> player 15
 ```
-
-**Shift+H cannot leave rung 2.** It flips the AI flags back but `0 setuserforplayer` finds no user
-bound to player 0, so `cu` stays 15. To get back to a normal game, load `mprobe` (unedited).
 
 ## Predictions and what each outcome means for the plan
 
@@ -344,12 +384,13 @@ bound to player 0, so `cu` stays 15. To get back to a normal game, load `mprobe`
 | Q1 | `wmp=15`, `MAR ai=1`, `MAR f` outside 0..7 | **predicted**. A faith outside 0..7 means every unguarded faith-array lookup in the UI is a crash risk for a human at 15: script work, not an exe patch |
 | Q2, rung 1 | `cu` stays 0 | **predicted**. Not possible by script alone |
 | Q2, rung 1 | `cu=15` | script-only binding is viable; the static reading is wrong and must be corrected |
-| Q2, rung 2 | `cu=15` on load, the army moves, `cp` reaches 15 | **the save-edit route works.** A real mod = a save-edited start (or a one-word exe patch to bind the user) + script for everything else |
-| Q2, rung 2 | `cu=15`, army moves, but `cp` never reaches 15 | bound but no turn: slot 15 is not in the human turn order. Exe patch |
-| Q2, rung 2 | error or crash on load | the engine cannot hold a user bound to 15 as is. Exe patch or dead end |
+| Q2, rung 2 | `cu=0` on load, `cu=15` after U, the army moves, `cp` reaches 15 | **the save-edit route works.** A real mod = a save-edited start (or a one-word exe patch to bind a user record) + script for everything else |
+| Q2, rung 2 | `cu=15` after U, the army moves, but `cp` never reaches 15 | bound but no turn: slot 15 is not in the human turn order. Exe patch |
+| Q2, rung 2 | `cu=0` after U | a bound record is not enough: the switch refuses slot 15 for a reason the readout does not show. Exe work |
+| Q2, rung 2 | error or crash on load or on U | the engine cannot hold a user bound to 15 as is. Exe patch or dead end |
 | Q3 | units controllable | script-only for combat |
 | Q3 | combat plays itself | combat control keys off something other than `currentuser` or the AI bit; exe work |
-| Q4 | binding survives, AI flags reset | **predicted**. Redo the takeover in `final_setup` |
+| Q4 | binding survives (`check` on `mprobe2`: record 1 -> 15; U works again), AI flags and index reset | **predicted**. Redo the takeover in `final_setup` |
 | Q4 | binding lost | exe work |
 | Q5 | no dialog over several turns | **predicted from the scripts**. Note the side effect: other factions' deaths stop handing their property to the marauders |
 | Q5 | a defeat or game-over screen | a native elimination check exists; find it before anything else. Exe patch or dead end |
@@ -386,17 +427,21 @@ A note on names: the earlier research that seeded this probe cited `SCENARIO5.gs
 ## After the sitting
 
 ```sh
-# Archives back to pristine vanilla. The HD overlay files are untouched.
+# 1. The savegame folder back to its pre-sitting state. Refuses while the game runs. First copies
+#    mprobe, mprobe15 and mprobe2 (evidence) to a new timestamped directory under
+#    "$KEEP/save-backups", verified with cmp; then moves the live folder aside (kept, not deleted);
+#    then copies the backup back and verifies it with diff -r.
+scripts/marauder-probe-savegames.sh restore "$SAVEBK"
+
+# 2. Archives back to pristine vanilla. The HD overlay files are untouched.
 scripts/restore-dev.sh
 
-# Back to exactly the pre-probe state: the GS5R3 base archives under the HD overlay. The durable
-# copy of that build is outside every worktree; restore-dev.sh resolves build/<mod>/<id> under
-# LOM_ARTIFACTS_DIR, and verifies both archives against the build's build.json before writing.
+# 3. Back to exactly the pre-probe state: the GS5R3 base archives under the HD overlay. The durable
+#    copy of that build is outside every worktree; restore-dev.sh resolves build/<mod>/<id> under
+#    LOM_ARTIFACTS_DIR, and verifies both archives against the build's build.json before writing.
 LOM_ARTIFACTS_DIR=/Users/jakebliss/personal-projects/lom-artifacts-keep \
   scripts/restore-dev.sh --to gs5r3-base ad9fece3123a
 ```
 
-That writes `gs.mpq` and `pic.mpq` only. The saves `mprobe`, `mprobe15` and `mprobe2` stay in
-`"$DEV/savegame"`; they are vanilla-script saves and should not be loaded under the GS5R3 archives.
-The pre-sitting copy of the whole folder is in
-`"$KEEP/save-backups/dev-savegame-before-marauder-probe"`.
+Step 3 writes `gs.mpq` and `pic.mpq` only. Run the offline Q4 check on `mprobe2` **before** step 1,
+or on the evidence copy after it.

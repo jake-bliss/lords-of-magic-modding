@@ -51,9 +51,13 @@ as the `"Game Speed: "` balloon in the same member does. Inside:
 | count | `0 P{pop 1 add}enumplayerarmies` | 2 | 0 (the accumulator is left) | `0 15{pop 1 add}enumplayerarmies` (placedng.gs) |
 | lord army | `P getleaderlocation pop` | 1 | 2, one popped | `currentuser getleaderlocation pop -1 eq` (gameover.gs) |
 
-Out of combat the string goes to `storydict begin open_messagebox_dialog end` (the Ctrl+V box, a
-modal box that stays until dismissed); in combat to `center_balloonhelp_quick` (the game-speed
-balloon), because the message box has no shipped in-combat caller.
+`build_statement` (gs\text.gs) opens a mark, runs the procedure, and joins everything above the
+mark with single spaces into its shared 1000-byte `statement_buffer`; so the readout shows e.g.
+`cu= 0`. Out of combat the string goes to `storydict begin open_messagebox_dialog end`, the exact
+shape of the Ctrl+S "saved." message in this member; in combat to `center_balloonhelp_quick` (the
+game-speed balloon), because the message box has no shipped in-combat caller.
+`open_messagebox_dialog` does nothing while another story dialog is open (`story_dlg
+dialogisopen? not{...}if`), so a J press with a message box already up shows nothing new.
 
 **N, spawn.** Single player, not in combat, not zoomed out to the world view (the arrow keys' guard):
 
@@ -75,8 +79,10 @@ armies (`gs\placedng.gs`) get `/brain` on every unit and the village security fo
 `village_security_brain`; this one gets neither.
 
 **U, takeover.** `WANDERING_MONSTER_PLAYER 0 setplayeraistatus`, `0 1 setplayeraistatus`,
-`WANDERING_MONSTER_PLAYER thiscomputer setcontrollingcomputer`,
-`WANDERING_MONSTER_PLAYER setuserforplayer`, `rendermap`. `setplayeraistatus` is `player value`
+`WANDERING_MONSTER_PLAYER thiscomputer setcontrollingcomputer`, `processgamemessages`,
+`WANDERING_MONSTER_PLAYER setuserforplayer`, `rendermap`. The `processgamemessages` before
+`setuserforplayer` follows gs\scenario\network.gs, which does the same between its
+controlling-computer writes and `0 setuserforplayer`. `setplayeraistatus` is `player value`
 (`i 0 setplayeraistatus` in scenario.gs `setup_player_control`); `setcontrollingcomputer` is
 `player computer` (`WANDERING_MONSTER_PLAYER 1 setcontrollingcomputer` in scenario\network.gs,
 for the host); `setuserforplayer` pushes nothing. The controlling-computer write is there because
