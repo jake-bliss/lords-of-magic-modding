@@ -40,6 +40,7 @@ as the `"Game Speed: "` balloon in the same member does. Inside:
 
 | Pushed | Operator | Pops | Pushes | Shipped call site |
 | --- | --- | ---: | ---: | --- |
+| `t` | `currentturn` | 0 | 1 | `turnstring{currentturn}build_statement` (scenario.gs) |
 | `cu` | `currentuser` | 0 | 1 | `currentuser getplayeraistatus` (gameover.gs) |
 | `cp` | `currentplayer` | 0 | 1 | `currentplayer set_turn_button_image` (scenario.gs) |
 | `wmp` | `WANDERING_MONSTER_PLAYER` | 0 | 1 | constant, 15 in `lomse.exe`'s table |
@@ -74,8 +75,13 @@ armies (`gs\placedng.gs`) get `/brain` on every unit and the village security fo
 `village_security_brain`; this one gets neither.
 
 **U, takeover.** `WANDERING_MONSTER_PLAYER 0 setplayeraistatus`, `0 1 setplayeraistatus`,
+`WANDERING_MONSTER_PLAYER thiscomputer setcontrollingcomputer`,
 `WANDERING_MONSTER_PLAYER setuserforplayer`, `rendermap`. `setplayeraistatus` is `player value`
-(`i 0 setplayeraistatus` in scenario.gs `setup_player_control`); `setuserforplayer` pushes nothing.
+(`i 0 setplayeraistatus` in scenario.gs `setup_player_control`); `setcontrollingcomputer` is
+`player computer` (`WANDERING_MONSTER_PLAYER 1 setcontrollingcomputer` in scenario\network.gs,
+for the host); `setuserforplayer` pushes nothing. The controlling-computer write is there because
+`setuserforplayer` only switches to a player on this computer; in rung 2, where a user record is
+bound to slot 15, that is the one remaining condition the scripts can satisfy.
 
 **H, hand back.** The reverse: `0 0 setplayeraistatus`, `WANDERING_MONSTER_PLAYER 1
 setplayeraistatus`, `0 setuserforplayer` (exactly what `final_setup` calls), `rendermap`.

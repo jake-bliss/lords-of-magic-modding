@@ -56,7 +56,8 @@ ANCHOR = b'ASCII_VAL 22{storydict begin"Lords of Magic v3.01 December 3, 1998"op
 # Stack effects, operator by operator, are traced in mods/marauder-probe/README.md.
 READOUT = (
     'ASCII_VAL"J"0 get{getmultiplayerflag not{'
-    '{"cu="currentuser" cp="currentplayer" wmp="WANDERING_MONSTER_PLAYER" tc="thiscomputer'
+    '{"t="currentturn" cu="currentuser" cp="currentplayer" wmp="WANDERING_MONSTER_PLAYER'
+    '" tc="thiscomputer'
     '"  P0 f="0 getplayerfaith" ai="0 getplayeraistatus" cc="0 getcontrollingcomputer'
     '"  MAR f="WANDERING_MONSTER_PLAYER getplayerfaith'
     '" ai="WANDERING_MONSTER_PLAYER getplayeraistatus'
@@ -81,6 +82,7 @@ TAKEOVER = (
     'ASCII_VAL"U"0 get{getmultiplayerflag not incombat not and{'
     'WANDERING_MONSTER_PLAYER 0 setplayeraistatus '
     '0 1 setplayeraistatus '
+    'WANDERING_MONSTER_PLAYER thiscomputer setcontrollingcomputer '
     'WANDERING_MONSTER_PLAYER setuserforplayer rendermap'
     '}if}addhotkey'
 )
