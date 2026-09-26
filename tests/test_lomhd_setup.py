@@ -761,9 +761,9 @@ class Sprites(unittest.TestCase):
         self.assertIn("upscale looked damaged", sprite_skipped[0])
         self.assertEqual(setup.summarise_skips(sprite_skipped), "1 upscale looked damaged")
         self.assertEqual(setup.damage_summary([static, pictures], sprite_skipped + skipped),
-                         "2 upscales looked damaged and were made again: 1 came out clean, 1 left out: "
-                         "upscale looked damaged (the original shows for those; running setup again "
-                         "tries them once more).")
+                         "2 upscales looked damaged and were made again: 1 came out clean, 1 still "
+                         "looked damaged and were left out (the original shows for those; running "
+                         "setup again tries them once more).")
 
     def test_a_picture_is_made_again_by_the_option_that_made_it(self) -> None:
         calls = []
@@ -783,6 +783,18 @@ class Sprites(unittest.TestCase):
 
     def test_the_summary_says_nothing_was_damaged(self) -> None:
         self.assertEqual(setup.damage_summary([{"damaged": 0}, {}], []), "No upscale looked damaged.")
+        self.assertEqual(setup.damage_summary([{"unjudged": 160}], []),
+                         "No upscale looked damaged (160 too small to check).")
+
+    def test_the_summary_counts_remakes_that_failed_outright(self) -> None:
+        got = setup.damage_summary([{"damaged": 2, "remade": 0, "failed": 1, "unjudged": 3}, {"damaged": 1}],
+                                   ["a: anime2x render is missing",
+                                    "b: upscale looked damaged (1.20 against 0.9, made twice); the original shows"])
+        self.assertEqual(got, "3 upscales looked damaged and were made again: 0 came out clean, 1 still "
+                              "looked damaged and were left out, 1 could not be made again and were left "
+                              "out (the original shows for those; running setup again tries them once "
+                              "more). (3 too small to check)")
+        self.assertNotIn("No upscale", setup.damage_summary([{"damaged": 1, "failed": 1}], []))
 
     @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
     def test_the_pack_holds_sprites_and_pictures_and_uninstall_restores_everything(self) -> None:
@@ -1509,6 +1521,93 @@ class TerrainInstall(unittest.TestCase):
         self.assertFalse(setup.terrain_edits_present(self.fixed))
         self.assertTrue(setup.terrain_edits_present(self.patched))
 
+    def said_by(self, action) -> list:
+        said = []
+        with mock.patch.object(setup, "say", said.append):
+            action()
+        return said
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root can open a read-only file")
+    def test_a_read_only_exe_does_not_stop_a_plain_install(self) -> None:
+        """On 0.5.0 that game installed fine: the fix is skipped, with a note, and nothing else."""
+        exe = self.game / "lomse.exe"
+        exe.chmod(0o444)
+        self.addCleanup(exe.chmod, 0o644)
+        setup.check_writable(self.game, False)                    # what a plain run checks
+        with self.assertRaises(SystemExit):
+            setup.check_writable(self.game, True)                 # --terrain still refuses
+        note = self.install_plain()
+        self.assertIn("not applied: lomse.exe is read-only (the Shade crash fix needs to change it)", note)
+        self.assertEqual(self.exe(), PRISTINE_EXE)
+        self.assertFalse((self.game / setup.EXE_BACKUP_NAME).exists())
+        self.assertEqual((self.game / "ddraw.dll").read_bytes(), OURS)
+        setup.uninstall(self.game)                                # the exe is not ours: not required
+        self.assertEqual(self.exe(), PRISTINE_EXE)
+        self.assertEqual((self.game / "ddraw.dll").read_bytes(), ORIGINAL)
+        self.assertEqual(self.listing(), ["ddraw.dll", "lomse.exe"])
+
+    def test_a_refused_exe_write_is_a_note_not_a_stop(self) -> None:
+        """The game holds lomse.exe (Windows): the overlay stays installed, the fix is reported not
+        applied, and --terrain still stops with its own message."""
+        setup.install(self.game, PACK, self.record)
+        real = setup.os.replace
+
+        def locked(src, dst):
+            if pathlib.Path(dst).name == setup.EXE_NAME:
+                raise PermissionError(13, "Access is denied")
+            return real(src, dst)
+
+        with mock.patch.object(setup.os, "replace", locked):
+            note = setup.fix_exe(self.game)
+            with self.assertRaises(SystemExit) as stopped:
+                setup.install_terrain(self.game, self.built)
+        self.assertIn("could not write lomse.exe (is the game running?)", note)
+        self.assertEqual(self.exe(), PRISTINE_EXE)
+        self.assertNotIn("lomse.exe.lomhd-part", self.listing())
+        self.assertIn("run python lomhd_setup.py --terrain again", str(stopped.exception))
+        self.assertEqual(setup.fix_exe(self.game)[:15], "lomse.exe fixed", "the next run applies it")
+        setup.uninstall(self.game)
+        self.assert_uninstalled()
+
+    def test_a_retry_command_without_flags_has_no_double_space(self) -> None:
+        with mock.patch.object(setup, "write_atomically", side_effect=PermissionError(13, "denied")):
+            with self.assertRaises(SystemExit) as stopped:
+                setup.write_game_file(self.game / "lomse.exe", b"x", "", "Nothing changed.")
+        self.assertIn("run python lomhd_setup.py again.", str(stopped.exception))
+
+    def test_a_fix_only_install_uninstalls_without_its_backup(self) -> None:
+        """The one edit is reverted and the result verified against the original's hash."""
+        for label, damage in (("missing", lambda b: b.unlink()), ("wrong", lambda b: b.write_bytes(b"junk"))):
+            with self.subTest(label):
+                self.install_plain()
+                backup = self.game / setup.EXE_BACKUP_NAME
+                damage(backup)
+                note = setup.fix_exe(self.game)                   # a rerun says what is true
+                self.assertIn("already has the Shade crash fix", note)
+                self.assertNotIn("not applied", note)
+                said = self.said_by(lambda: setup.uninstall(self.game))
+                self.assertEqual(self.exe(), PRISTINE_EXE)
+                self.assertEqual((self.game / "ddraw.dll").read_bytes(), ORIGINAL)
+                self.assertIn("The Shade crash fix was removed: lomse.exe is your original again.", said)
+                if label == "wrong":
+                    self.assertEqual(backup.read_bytes(), b"junk", "not ours to delete")
+                    backup.unlink()
+                self.assertEqual(self.listing(), ["ddraw.dll", "lomse.exe"])
+
+    def test_only_a_fixed_exe_is_rebuilt(self) -> None:
+        self.assertEqual(setup.unfixed(self.fixed), PRISTINE_EXE)
+        self.assertIsNone(setup.unfixed(PRISTINE_EXE), "no edit to revert")
+        self.assertIsNone(setup.unfixed(b"not a PE file"))
+
+    def test_uninstall_after_steam_restored_a_fixed_exe_says_so(self) -> None:
+        self.install_plain()
+        (self.game / "lomse.exe").write_bytes(PRISTINE_EXE)
+        said = self.said_by(lambda: setup.uninstall(self.game))
+        self.assertFalse(any("fix was removed" in line for line in said), said)
+        self.assertIn("lomse.exe was already your original (Steam may have put it back); its backup was "
+                      "removed.", said)
+        self.assert_uninstalled()
+
     def test_the_players_terrain_picks_win_per_atlas(self) -> None:
         mine, shipped = self.release_dir / "mine.json", self.release_dir / "shipped.json"
         shipped.write_text(json.dumps({"choices": {"terrain__a": "anime2x", "terrain__b": "anime2x",
@@ -1660,6 +1759,19 @@ class ShippedPatchSets(unittest.TestCase):
             self.assertEqual(built(setup.FIX_SETS, 1), setup.FIXED_EXE_SHA256)
             # What 0.4.0-0.5.0 installed, and what an upgrade must still recognise as ours.
             self.assertEqual((built(setup.TERRAIN_SETS, 65),), setup.EARLIER_PATCHED_EXE_SHA256S)
+            # The real sets: a fixed exe holds none of the terrain edits (so the folder is never
+            # kept for it), the terrain exe does, and the fixed one rebuilds to the original.
+            self.addCleanup(setattr, setup, "HERE", setup.HERE)
+            setup.HERE = pathlib.Path(tmp)
+            (setup.HERE / "exe_patches").mkdir()
+            for name in sets:
+                (setup.HERE / "exe_patches" / f"{name}.json").write_text(
+                    setup.exe_patch.to_json(self.SETS / f"{name}.toml"))
+            fixed = setup.exe_patch.apply(image, [sets[n] for n in setup.FIX_SETS])
+            patched = setup.exe_patch.apply(image, [sets[n] for n in setup.TERRAIN_SETS + setup.FIX_SETS])
+            self.assertFalse(setup.terrain_edits_present(fixed))
+            self.assertTrue(setup.terrain_edits_present(patched))
+            self.assertEqual(setup.unfixed(fixed), image)
 
 
 if __name__ == "__main__":

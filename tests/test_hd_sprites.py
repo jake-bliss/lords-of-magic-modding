@@ -484,8 +484,9 @@ class ContentCheck(Base):
     def records(self, rerender):
         skipped: list[str] = []
         counts: dict = {}
+        self.logged: list[str] = []
         got = list(hd_sprites.records(self.plan_.animated, self.root, self.read_sprite, skipped, counts,
-                                      read=fake_read, rerender=rerender))
+                                      read=fake_read, rerender=rerender, log=self.logged.append))
         return [pack.entry_fields(entry) for entry, _, _ in got], skipped, counts
 
     def test_the_damage_is_real(self) -> None:
@@ -500,7 +501,8 @@ class ContentCheck(Base):
         self.assertEqual(len(records), 2)
         self.assertEqual(skipped, [])
         self.assertEqual(self.renders, [("anime2x", [self.stem])], "only the damaged frame, once")
-        self.assertEqual((counts["damaged"], counts["remade"]), (1, 1))
+        self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 1, 0))
+        self.assertEqual(self.logged, ["anime2x: 1 upscales looked damaged; making them again"])
 
     def test_one_that_is_still_damaged_is_left_out_and_its_sprite_keeps_the_rest(self) -> None:
         def damaging_render(option, inputs, dest):
@@ -528,6 +530,7 @@ class ContentCheck(Base):
         records, skipped, counts = self.records(failing)
         self.assertEqual(len(records), 1)
         self.assertEqual(skipped, ["anim__cav#001: anime2x render is missing"])
+        self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 0, 1))
         self.assertFalse(self.render.exists(), "missing now, so the next run renders it afresh")
 
 

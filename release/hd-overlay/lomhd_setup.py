@@ -578,8 +578,10 @@ def build_pack(pack: pathlib.Path, sprites, sprite_root: pathlib.Path, read_spri
         lambda option, inputs, dest: hd_upscale.render(option, inputs, dest, exe, models))
     remake_picture = None if exe is None else (lambda path: rerender_picture(path, exe, models))
     count = hd_portrait_pack.write_records(pack, itertools.chain(
-        hd_sprites.records(sprites.static, sprite_root, read_sprite, sprite_skipped, packed, rerender=remake),
-        hd_sprites.records(sprites.animated, sprite_root, read_sprite, sprite_skipped, moving, rerender=remake),
+        hd_sprites.records(sprites.static, sprite_root, read_sprite, sprite_skipped, packed, rerender=remake,
+                           log=lambda line: say(f"     {line}")),
+        hd_sprites.records(sprites.animated, sprite_root, read_sprite, sprite_skipped, moving, rerender=remake,
+                           log=lambda line: say(f"     {line}")),
         hd_portrait_pack.unmasked_records(originals, upscaled, skipped, originals, rerender=remake_picture,
                                           counts=pictures)))
     packed.setdefault("packed", 0)
@@ -626,15 +628,22 @@ SKIP_KINDS = (                  # (what a skip reason says, how the summary coun
 
 
 def damage_summary(counts: list, skipped: list) -> str:
-    """What the content check did this run, for the end of the install."""
-    found = sum(c.get("damaged", 0) for c in counts)
-    remade = sum(c.get("remade", 0) for c in counts)
-    left = sum("looked damaged" in line for line in skipped)
+    """What the content check did this run, for the end of the install. `counts` are the builders'
+    ("damaged", "remade", "failed", "unjudged"); `skipped` their left-out lines."""
+    found, remade, failed, unjudged = (sum(c.get(k, 0) for c in counts)
+                                       for k in ("damaged", "remade", "failed", "unjudged"))
+    left = sum("looked damaged" in line and "could not be made again" not in line for line in skipped)
+    small = f" ({unjudged} too small to check)" if unjudged else ""
     if not found:
-        return "No upscale looked damaged."
-    return (f"{found} upscales looked damaged and were made again: {remade} came out clean"
-            + (f", {left} left out: upscale looked damaged (the original shows for those; running "
-               f"setup again tries them once more)" if left else "") + ".")
+        return f"No upscale looked damaged{small}."
+    parts = [f"{remade} came out clean"]
+    if left:
+        parts.append(f"{left} still looked damaged and were left out")
+    if failed:
+        parts.append(f"{failed} could not be made again and were left out")
+    return (f"{found} upscales looked damaged and were made again: {', '.join(parts)}"
+            + (" (the original shows for those; running setup again tries them once more)"
+               if left or failed else "") + f".{small}")
 
 
 def summarise_skips(skipped: list) -> str:
@@ -770,8 +779,9 @@ def uninstall(game: pathlib.Path, force_terrain_folder: bool = False) -> None:
                  "then --uninstall.")
         fail(f"no {RECORD_NAME} in {game}; the overlay does not look installed there.")
     # A running game holds ddraw.dll and lomse.exe: say so before anything is changed, rather than
-    # stopping halfway with a traceback.
-    check_writable(game, terrain=True)
+    # stopping halfway with a traceback. lomse.exe only matters when it is one this mod wrote, the
+    # only case uninstall writes it.
+    check_writable(game, terrain=file_hash(game / EXE_NAME) in our_exe_hashes(record))
     terrain_removed = uninstall_terrain(game, record, force_terrain_folder)
     dll, backup = game / "ddraw.dll", game / BACKUP_NAME
     had, backup_sha = record["had_ddraw"], record["backup_sha256"]
@@ -917,17 +927,19 @@ def record_exe(record: dict, patched_sha: str) -> None:
         terrain["exe_patched_sha256s"] = sorted({patched_sha, *terrain.get("exe_patched_sha256s", [])})
 
 
-def write_exe(game: pathlib.Path, patched: bytes, patched_sha: str, again: str) -> None:
+def write_exe(game: pathlib.Path, patched: bytes, patched_sha: str, again: str, soft: bool = False) -> None:
     """Back lomse.exe up once (written beside itself, renamed, verified), then write the patched one
-    the same way and verify it. exe_plan has checked that a missing backup means a pristine exe."""
+    the same way and verify it. exe_plan has checked that a missing backup means a pristine exe.
+    `soft`: a write the OS refuses raises OSError (see write_game_file); a result that does not
+    verify still stops the run."""
     exe, backup = game / EXE_NAME, game / EXE_BACKUP_NAME
     if file_hash(backup) is None:
-        write_game_file(backup, exe, again, "lomse.exe was not touched.")
+        write_game_file(backup, exe, again, "lomse.exe was not touched.", soft)
         if file_hash(backup) != PRISTINE_EXE_SHA256:
             backup.unlink()
             fail("the backup of lomse.exe did not verify. lomse.exe was not touched.")
     if file_hash(exe) != patched_sha:
-        write_game_file(exe, patched, again, "lomse.exe was not changed.")
+        write_game_file(exe, patched, again, "lomse.exe was not changed.", soft)
         if file_hash(exe) != patched_sha:
             fail("the patched lomse.exe did not verify. Run --uninstall to put the original back.")
 
@@ -936,17 +948,46 @@ def fix_exe(game: pathlib.Path, again: str = "") -> str:
     """Step 5, every install: FIX_SETS on lomse.exe, or the exe left alone. Returns what to tell the
     player. An exe this mod cannot patch is not a refusal -- the overlay works on any lomse.exe --
     it only means no fix. Record, backup, exe, in that order, as for --terrain."""
+    exe = game / EXE_NAME
     plan = exe_plan(game, terrain=False)
     record = read_record(game)
+    current = file_hash(exe)
+    if isinstance(plan, str) and current in (FIXED_EXE_SHA256, PATCHED_EXE_SHA256):
+        # The fix is already in: only the backup is not what it should be.
+        if current == FIXED_EXE_SHA256:
+            return (f"lomse.exe already has the Shade crash fix. {EXE_BACKUP_NAME} is missing or not the "
+                    "original, so it was left as it is; --uninstall rebuilds the original from "
+                    "lomse.exe itself.")
+        return (f"lomse.exe already has the Shade crash fix (and HD terrain), but {EXE_BACKUP_NAME} is "
+                "missing or not the original, so --uninstall cannot put the original back. Steam's "
+                "'Verify integrity of game files' can.")
     if isinstance(plan, str) or not record:
         why = plan if isinstance(plan, str) else f"{RECORD_NAME} is missing or damaged."
         return f"The Shade crash fix was not applied: {why} lomse.exe was left as it is."
     _, patched, patched_sha = plan
+    if current == patched_sha and file_hash(game / EXE_BACKUP_NAME) == PRISTINE_EXE_SHA256:
+        pass                                    # already done: nothing to write, nor to probe
+    elif not exe_writable(game):
+        return ("The Shade crash fix was not applied: lomse.exe is read-only (the Shade crash fix "
+                "needs to change it). lomse.exe was left as it is.")
     record_exe(record, patched_sha)
     write_atomically(game / RECORD_NAME, json.dumps(record, indent=2).encode() + b"\n")
-    write_exe(game, patched, patched_sha, again)
+    try:
+        write_exe(game, patched, patched_sha, again, soft=True)
+    except OSError:
+        return ("The Shade crash fix was not applied: could not write lomse.exe (is the game "
+                "running?). Close Lords of Magic and run setup again to apply it.")
     return (f"lomse.exe fixed (the Shade crash; the original is {EXE_BACKUP_NAME})"
             + (", HD terrain kept." if patched_sha == PATCHED_EXE_SHA256 else "."))
+
+
+def exe_writable(game: pathlib.Path) -> bool:
+    """Whether lomse.exe can be opened for writing: not read-only, not held by a running game."""
+    try:
+        with (game / EXE_NAME).open("r+b"):
+            return True
+    except OSError:
+        return False
 
 
 def terrain_names() -> list[str]:
@@ -1113,9 +1154,11 @@ def recover_terrain_swap(game: pathlib.Path, again: str) -> None:
         say(f"     put back {TERRAIN_DIR} from a run that was interrupted")
 
 
-def write_game_file(path: pathlib.Path, data: "bytes | pathlib.Path", again: str, state: str) -> None:
+def write_game_file(path: pathlib.Path, data: "bytes | pathlib.Path", again: str, state: str,
+                    soft: bool = False) -> None:
     """write_atomically, for a file the running game holds: a locked file becomes a message saying
-    what to do, not a traceback, and the half-written .lomhd-part goes."""
+    what to do, not a traceback, and the half-written .lomhd-part goes. `soft` raises the OSError
+    instead (after that cleanup), for a caller that carries on without the file."""
     try:
         write_atomically(path, data)
     except OSError as error:
@@ -1123,9 +1166,11 @@ def write_game_file(path: pathlib.Path, data: "bytes | pathlib.Path", again: str
             path.with_name(path.name + ".lomhd-part").unlink(missing_ok=True)
         except OSError:
             pass
+        if soft:
+            raise
+        command = " ".join(["python lomhd_setup.py", again]).strip()
         fail(f"could not write {path.name} ({error.strerror or error}). Close Lords of Magic (and "
-             f"anything else using the game folder) and run python lomhd_setup.py {again} again. "
-             f"{state}")
+             f"anything else using the game folder) and run {command} again. {state}")
 
 
 def install_terrain(game: pathlib.Path, built: pathlib.Path, force_folder: bool = False) -> None:
@@ -1206,6 +1251,23 @@ def install_terrain(game: pathlib.Path, built: pathlib.Path, force_folder: bool 
     write_exe(game, patched, PATCHED_EXE_SHA256, again)
 
 
+def unfixed(image: bytes) -> "bytes | None":
+    """`image` with FIX_SETS reverted (each site's `new` bytes back to `old`), or None when a site
+    does not hold its `new` bytes. The caller verifies the result's hash."""
+    try:
+        secs = exe_patch.sections(image)
+        out = bytearray(image)
+        for patch_set in load_sets(FIX_SETS):
+            for p in patch_set.patches:
+                off = exe_patch.va_to_offset(secs, p.va, len(p.new))
+                if out[off:off + len(p.new)] != p.new:
+                    return None
+                out[off:off + len(p.old)] = p.old
+        return bytes(out)
+    except (exe_patch.PatchError, struct.error):
+        return None
+
+
 def terrain_edits_present(image: bytes) -> bool:
     """Whether ANY site of this mod's terrain patch holds its patched (`new`) bytes. An exe nobody
     recognises is safe beside lomhd_terrain only when none do: the folder then does nothing."""
@@ -1250,8 +1312,19 @@ def uninstall_terrain(game: pathlib.Path, record: dict, force_folder: bool = Fal
 
     exe_note = "lomse.exe is your original again"
     had_terrain = bool(terrain) or dest.exists() or dest.is_symlink()
-    foreign_exe = False
-    if current in ours or current is None:
+    foreign_exe = restored = False
+    if current == FIXED_EXE_SHA256 and saved != original:
+        # A fix-only exe needs no backup: its one edit is reverted and the result verified.
+        rebuilt = unfixed(exe.read_bytes())
+        if rebuilt is None or hashlib.sha256(rebuilt).hexdigest() != original:
+            fail(f"{EXE_BACKUP_NAME} is missing or changed, and the original lomse.exe could not be "
+                 "rebuilt from lomse.exe. Nothing was removed. Steam's 'Verify integrity of game "
+                 "files' puts the original back; then run --uninstall again.")
+        write_game_file(exe, rebuilt, again, "Nothing was removed.")
+        if file_hash(exe) != original:
+            fail("the rebuilt lomse.exe did not verify. Nothing else was removed.")
+        restored = True
+    elif current in ours or current is None:
         if saved != original:
             fail(f"{EXE_BACKUP_NAME} is missing or changed, so the original lomse.exe cannot be "
                  "restored safely. Nothing was removed. Steam's 'Verify integrity of game files' "
@@ -1259,6 +1332,7 @@ def uninstall_terrain(game: pathlib.Path, record: dict, force_folder: bool = Fal
         write_game_file(exe, backup, again, "Nothing was removed.")
         if file_hash(exe) != original:
             fail("the restored lomse.exe did not verify. Nothing else was removed.")
+        restored = True
     elif current != original:
         if terrain_edits_present(exe.read_bytes()):
             fail("lomse.exe is neither this mod's patched one nor your original, but it still holds "
@@ -1294,7 +1368,11 @@ def uninstall_terrain(game: pathlib.Path, record: dict, force_folder: bool = Fal
         elif path.exists():
             path.unlink()
     if not had_terrain:                         # only the fix was installed
-        return f"The Shade crash fix was removed: {exe_note}."
+        if restored:
+            return f"The Shade crash fix was removed: {exe_note}."
+        if foreign_exe:
+            return f"The Shade crash fix: {exe_note}."
+        return "lomse.exe was already your original (Steam may have put it back); its backup was removed."
     return f"HD terrain removed: {exe_note}, and {folder_note}."
 
 
@@ -1344,8 +1422,9 @@ def main() -> int:
     record = release()
     check_magick()
     check_imp(game)
-    # lomse.exe too whenever this run will write it: for --terrain, and for the fix (fix_exe).
-    check_writable(game, args.terrain or not isinstance(exe_plan(game, terrain=False), str))
+    # lomse.exe only for --terrain, which cannot go without it. The fix (fix_exe) is skipped, with a
+    # note, when the exe cannot be written: that is no reason to refuse the overlay.
+    check_writable(game, args.terrain)
     if args.terrain:
         terrain_exe_plan(game)       # refuse an exe it cannot patch now, not after an hour's work
         check_terrain_folder(game, read_record(game), args.force_terrain_folder)

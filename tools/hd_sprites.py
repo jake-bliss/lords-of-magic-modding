@@ -331,21 +331,25 @@ def read_renders(root: pathlib.Path, wanted: List[Tuple[str, int, int]]) -> Dict
 
 
 def check_renders(batch: List[Tuple[Sprite, Frame, "imp_read.Sprite"]], pixels: Dict[str, object],
-                  root: pathlib.Path, rerender, reader, counts: Dict[str, int]) -> None:
+                  root: pathlib.Path, rerender, reader, counts: Dict[str, int],
+                  log: Callable[[str], None] = lambda _: None) -> None:
     """The content check (`hd_upscale.damage_score`) for one read batch, in place on `pixels`: a
     render that looks damaged is deleted and made again with `rerender` (`render_all`'s `render`),
-    once; one that still does becomes a skip reason. `rerender` None leaves it out at once."""
-    def damaged(sprite: Sprite, frame: Frame, decoded) -> Optional[float]:
+    once; one that still does becomes a skip reason. `rerender` None leaves it out at once.
+    Counts "unjudged" frames too small to check, and "failed" remakes that produced nothing."""
+    def damaged(sprite: Sprite, frame: Frame, decoded, first: bool = False) -> Optional[float]:
         rgba = pixels.get(f"render/{sprite.option}/{frame.stem}.png")
         if not isinstance(rgba, bytes):
             return None
         shown = decoded.resolved_frame(frame.index)
         score = hd_upscale.damage_score(frame.width, frame.height,
                                         prepared_rgba(shown.indices, decoded.palette, decoded.color_key), rgba)
+        if score is None and first:
+            counts["unjudged"] += 1
         return score if hd_upscale.looks_damaged(score) else None
 
     bad = [(sprite, frame, decoded, score) for sprite, frame, decoded in batch
-           for score in [damaged(sprite, frame, decoded)] if score is not None]
+           for score in [damaged(sprite, frame, decoded, first=True)] if score is not None]
     if not bad:
         return
     counts["damaged"] += len(bad)
@@ -355,6 +359,7 @@ def check_renders(batch: List[Tuple[Sprite, Frame, "imp_read.Sprite"]], pixels: 
             (root / "render" / sprite.option / f"{frame.stem}.png").unlink(missing_ok=True)
             by_option.setdefault(sprite.option, {})[frame.stem] = root / "prep" / f"{frame.stem}.png"
         for option, inputs in sorted(by_option.items()):
+            log(f"{option}: {len(inputs)} upscales looked damaged; making them again")
             try:
                 rerender(option, inputs, root / "render" / option)
             except (SystemExit, subprocess.CalledProcessError, OSError):
@@ -364,7 +369,8 @@ def check_renders(batch: List[Tuple[Sprite, Frame, "imp_read.Sprite"]], pixels: 
     for sprite, frame, decoded, first in bad:
         rel = f"render/{sprite.option}/{frame.stem}.png"
         if rerender is not None and not isinstance(pixels[rel], bytes):
-            continue                            # the second render failed outright: its own reason
+            counts["failed"] += 1               # the second render failed outright: its own reason
+            continue
         again = damaged(sprite, frame, decoded) if rerender is not None else first
         if again is None:
             counts["remade"] += 1
@@ -376,16 +382,16 @@ def check_renders(batch: List[Tuple[Sprite, Frame, "imp_read.Sprite"]], pixels: 
 def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[str], "imp_read.Sprite"],
             skipped: List[str], counts: Optional[Dict[str, int]] = None, first_group: int = 1,
             batch: int = RENDER_BATCH, budget: int = READ_BUDGET, read=None,
-            rerender=None) -> Iterator[Tuple[bytes, bytes, bytes]]:
+            rerender=None, log: Callable[[str], None] = lambda _: None) -> Iterator[Tuple[bytes, bytes, bytes]]:
     """Yield (entry, zidx, zhd) for every planned frame, in order: static sprites group 0, each
     animated sprite its own group, consecutive. The low-res half is decoded again from the archive
     (`read_sprite`), one member at a time. A frame whose render is missing, the wrong size, or
     looks damaged (`check_renders`, which makes it again with `rerender` first) is reported in
     `skipped` and left out; its sprite's other frames still go in. `counts` (if given) gets
     "packed" frames and "sprites" packed, "damaged" renders found and "remade" ones that then
-    passed."""
+    passed, "failed" remakes that produced nothing, and "unjudged" frames too small to check."""
     counts = counts if counts is not None else {}
-    for name in ("packed", "sprites", "damaged", "remade"):
+    for name in ("packed", "sprites", "damaged", "remade", "failed", "unjudged"):
         counts.setdefault(name, 0)
     reader = read or read_renders
     group = first_group
@@ -405,7 +411,7 @@ def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[st
                 decoded_of[n] = error
         check_renders([(sprite, frame, decoded_of[n]) for n, sprite in enumerate(queue)
                        if not isinstance(decoded_of[n], Exception) for frame in sprite.frames],
-                      pixels, root, rerender, reader, counts)
+                      pixels, root, rerender, reader, counts, log)
         for n, sprite in enumerate(queue):
             this_group = 0
             if sprite.animated:

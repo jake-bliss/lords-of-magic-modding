@@ -300,6 +300,19 @@ build the pack, install the DLL. No game art is distributed.
    build compiles the DLL twice with no PE timestamp and refuses if the two differ (one build in
    ten differed once, cause not found).
 
+   **Before every release, run the real-data suites too.** Without these variables the tests that
+   check against the real game skip silently and still report OK:
+
+       LOM_PRISTINE_EXE=<a pristine GS5R3 lomse.exe (sha256 a505f399...)> \
+       LOM_SPRITE_WORK=<lomhd_work/sprites of a finished --sprites run> \
+       python3 -m unittest tests.test_exe_patch tests.test_lomhd_setup tests.test_hd_upscale \
+           tests.test_hd_sprites tests.test_hd_portrait_pack
+
+   `LOM_PRISTINE_EXE` pins the exe patch sets and every exe hash setup recognises;
+   `LOM_SPRITE_WORK` runs the content check over every render of a real run (no false positives,
+   and the wrong-stride and shear corruptions of a sample caught). With both set (and ImageMagick
+   on PATH) that run reports OK with no skipped tests; any skip means real data was not checked.
+
 🔴 **The pack played on 2026-09-22 was only 353/748 real upscales.** The other 395 -- mostly
 artifact and item art -- were 2x2 pixel repeats copied from the 2x UI experiment
 (`mods/ui-2x-infopan/.../PORTRAIT_lowercase` and friends), which look exactly like the original

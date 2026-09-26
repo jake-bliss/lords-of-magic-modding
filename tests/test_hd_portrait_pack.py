@@ -537,5 +537,16 @@ class ContentCheck(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertIn("upscale looked damaged", skipped[0])
 
+    def test_a_malformed_retry_leaves_that_picture_out_not_the_pack(self) -> None:
+        def garbage(path):
+            path.write_bytes(b"not an image at all")
+
+        records, skipped, counts = self.records(garbage)
+        self.assertEqual(len(records), 1, "the other picture is still packed")
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("upscale looked damaged", skipped[0])
+        self.assertIn("could not be made again", skipped[0])
+        self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 0, 1))
+
 if __name__ == "__main__":
     unittest.main()

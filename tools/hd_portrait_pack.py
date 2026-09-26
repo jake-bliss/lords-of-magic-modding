@@ -287,8 +287,8 @@ def unmasked_records(originals, upscaled, skipped: list[str], sources=None, rere
     made again with `rerender(path)`, once, and left out if it still looks damaged. `counts` (if
     given) gets "damaged" upscales found and "remade" ones that then passed."""
     counts = counts if counts is not None else {}
-    counts.setdefault("damaged", 0)
-    counts.setdefault("remade", 0)
+    for key in ("damaged", "remade", "failed", "unjudged"):
+        counts.setdefault(key, 0)
     small = image_files(originals)
     made_from = image_files(sources) if sources is not None else small
     large = image_files(upscaled)
@@ -311,6 +311,7 @@ def unmasked_records(originals, upscaled, skipped: list[str], sources=None, rere
         if (hw, hh) == (2 * w, 2 * h):
             source = b"".join(bytes(pal[i]) for i in idx)
             score = hd_upscale.damage_score(w, h, source, rgb, 3, 3)
+            counts["unjudged"] += score is None
             if hd_upscale.looks_damaged(score):
                 counts["damaged"] += 1
                 again = None
@@ -318,10 +319,18 @@ def unmasked_records(originals, upscaled, skipped: list[str], sources=None, rere
                     try:
                         rerender(large[name])
                         hw, hh, rgb = load_rgb(large[name])
-                        again = (hd_upscale.damage_score(w, h, source, rgb, 3, 3)
-                                 if (hw, hh) == (2 * w, 2 * h) else float("inf"))
-                    except (SystemExit, subprocess.CalledProcessError, OSError):
-                        again = float("inf")
+                        if (hw, hh) != (2 * w, 2 * h):
+                            raise ValueError(f"made again at {hw}x{hh}")
+                        again = hd_upscale.damage_score(w, h, source, rgb, 3, 3)
+                    except (SystemExit, subprocess.CalledProcessError, OSError, ValueError, KeyError,
+                            IndexError, EOFError, struct.error, zlib.error) as error:
+                        # Made again badly, or not at all: that picture is left out, not the pack.
+                        counts["failed"] += 1
+                        skipped.append(f"{name}: upscale looked damaged ({score:.2f} against "
+                                       f"{hd_upscale.DAMAGE_THRESHOLD}) and could not be made again "
+                                       f"({str(error).strip()[:120] or type(error).__name__}); the "
+                                       "original shows")
+                        continue
                 if again is None or hd_upscale.looks_damaged(again):
                     skipped.append(f"{name}: upscale looked damaged ({score:.2f} against "
                                    f"{hd_upscale.DAMAGE_THRESHOLD}" + (", made twice" if rerender else "")
