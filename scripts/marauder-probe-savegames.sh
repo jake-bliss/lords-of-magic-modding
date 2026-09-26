@@ -61,7 +61,15 @@ case "${command}" in
   restore)
     (( $# == 1 )) || usage
     source_dir="$1"
-    [[ -d "${source_dir}" ]] || die "no such backup: ${source_dir}"
+    [[ -d "${source_dir}" && ! -L "${source_dir}" ]] || die "no such backup (or a symlink): ${source_dir}"
+    # Only a folder this script's `backup` made: an evidence folder or any other directory would
+    # otherwise be installed as the profile's saves, and diff -r would happily confirm the copy.
+    case "$(basename "${source_dir}")" in
+      dev-savegame-2*Z) ;;
+      *) die "refusing: ${source_dir} is not a dev-savegame-<stamp> backup made by '$0 backup'" ;;
+    esac
+    [[ "$(cd "$(dirname "${source_dir}")" && pwd)" == "$(cd "${backups}" && pwd)" ]] \
+      || die "refusing: ${source_dir} is not under ${backups}"
     [[ "$(cd "${source_dir}" && pwd)" != "$(cd "${savegame}" && pwd)" ]] \
       || die "the backup is the live folder"
 
@@ -85,10 +93,20 @@ case "${command}" in
     mv "${approved}" "${aside}"
     echo "  live folder moved aside to ${aside}"
 
-    # 3. The backup goes back into place, verified.
+    # 3. The backup goes back into place, verified. Any failure from here puts the live folder
+    # back, so the profile is never left without its saves.
+    put_back() {
+      echo "restore failed: putting the live folder back from ${aside}" >&2
+      rm -rf "${approved}.partial"
+      [[ -e "${approved}" ]] && mv "${approved}" "${approved}.partial"
+      mv "${aside}" "${approved}"
+    }
+    trap put_back ERR
     cp -Rp "${source_dir}" "${approved}"
+    [[ -d "${approved}" && ! -L "${approved}" ]] || { put_back; die "restored path is not a real folder"; }
     diff -r "${source_dir}" "${approved}" >/dev/null \
-      || die "the restored folder differs from ${source_dir}"
+      || { put_back; die "the restored folder differs from ${source_dir}"; }
+    trap - ERR
     echo "== savegame restored from ${source_dir} (diff -r: identical) =="
     ;;
 
