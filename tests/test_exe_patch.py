@@ -222,10 +222,14 @@ class RealBinary(unittest.TestCase):
                 ep.plan(self.image, [ep.load_set(path)])
 
     # The builds that are installed together (scripts/terrain-hd-ladder.sh). The two terrain builds
-    # are alternatives -- they give the same sites different values -- so they never combine.
+    # are alternatives -- they give the same sites different values -- so they never combine. The
+    # vanilla fix goes on every install (lomhd_setup.py), alone or with the hybrid.
     BUILDS = {
         "magnify": ["viewport-2x", "terrain-render-2x", "sprites-2x", "terrain-stride-1024"],
-        "hybrid": ["terrain-hybrid-2x", "terrain-stride-1024"],
+        "hybrid": ["terrain-hybrid-2x", "terrain-stride-1024", "fix-mirror-narrow"],
+        "magnify+fix": ["viewport-2x", "terrain-render-2x", "sprites-2x", "terrain-stride-1024",
+                        "fix-mirror-narrow"],
+        "fix": ["fix-mirror-narrow"],
     }
 
     def test_every_build_applies(self) -> None:
@@ -257,6 +261,19 @@ class RealBinary(unittest.TestCase):
         hits = [text.va + m.start() - text.raw for m in re.finditer(s.regex, self.image, re.S)]
         self.assertEqual(len(hits), 18)
         self.assertTrue(all(s.start <= h < s.end for h in hits))
+
+    def test_the_mirror_guard_is_the_only_one_of_its_kind(self) -> None:
+        # Whole file: `sar r,1; dec r; je` over the same register occurs only at the mirror guard,
+        # and the fix changes exactly that one byte.
+        import re
+        guards = [m.start() for r in range(8)
+                  for m in re.finditer(bytes([0xD1, 0xF8 + r, 0x48 + r, 0x74]), self.image)]
+        secs = ep.sections(self.image)
+        self.assertEqual(guards, [ep.va_to_offset(secs, 0x49D45C, 4)])
+        fixed = ep.apply(self.image, [ep.load_set(self.SETS / "fix-mirror-narrow.toml")])
+        diff = [i for i, (a, b) in enumerate(zip(self.image, fixed)) if a != b]
+        self.assertEqual(diff, [ep.va_to_offset(secs, 0x49D45F)])
+        self.assertEqual((self.image[diff[0]], fixed[diff[0]]), (0x74, 0x7E))    # je -> jle
 
 
 if __name__ == "__main__":

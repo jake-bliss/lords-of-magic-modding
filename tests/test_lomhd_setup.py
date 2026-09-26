@@ -816,18 +816,28 @@ class TerrainInstall(unittest.TestCase):
         sha = hashlib.sha256(PRISTINE_EXE).hexdigest()
         sets = {"terrain-hybrid-2x": terrain_set(sha, (0x401010, "c1 e5 10", "c1 e5 11"),
                                                  (0x401013, "c1 e2 10", "c1 e2 11")),
-                "terrain-stride-1024": terrain_set(sha, (0x401016, "c1 fb 07", "c1 fb 06"))}
+                "terrain-stride-1024": terrain_set(sha, (0x401016, "c1 fb 07", "c1 fb 06")),
+                "fix-mirror-narrow": terrain_set(sha, (0x40101a, "90", "7e"))}
         for name, body in sets.items():
             (self.release_dir / "exe_patches" / f"{name}.json").write_text(json.dumps(body))
-        self.patched = setup.exe_patch.apply(
-            PRISTINE_EXE, [setup.exe_patch.load_set(self.release_dir / "exe_patches" / f"{n}.json")
-                           for n in setup.TERRAIN_SETS])
+
+        def build(names):
+            return setup.exe_patch.apply(
+                PRISTINE_EXE, [setup.exe_patch.load_set(self.release_dir / "exe_patches" / f"{n}.json")
+                               for n in names])
+
+        self.patched = build(setup.TERRAIN_SETS + setup.FIX_SETS)
+        self.fixed = build(setup.FIX_SETS)
+        self.patched_before_the_fix = build(setup.TERRAIN_SETS)       # what 0.4.0-0.5.0 wrote
         (self.built / "tilesa01.lbm").write_bytes(b"pretend 2x atlas")
         (self.built / "tilesa01.til").write_bytes(b"TILESIZE= 64, 64")
         self.record = {"version": "test", "ddraw_sha256": hashlib.sha256(OURS).hexdigest()}
         for name, value in (("HERE", self.release_dir), ("say", lambda text: None),
                             ("PRISTINE_EXE_SHA256", sha),
-                            ("PATCHED_EXE_SHA256", hashlib.sha256(self.patched).hexdigest())):
+                            ("PATCHED_EXE_SHA256", hashlib.sha256(self.patched).hexdigest()),
+                            ("FIXED_EXE_SHA256", hashlib.sha256(self.fixed).hexdigest()),
+                            ("EARLIER_PATCHED_EXE_SHA256S",
+                             (hashlib.sha256(self.patched_before_the_fix).hexdigest(),))):
             self.addCleanup(setattr, setup, name, getattr(setup, name))
             setattr(setup, name, value)
 
@@ -1281,6 +1291,155 @@ class TerrainInstall(unittest.TestCase):
         self.assertEqual(self.exe(), PRISTINE_EXE)
         self.assertFalse((self.game / setup.TERRAIN_DIR).exists())
 
+    # --- the Shade fix (fix-mirror-narrow), on every install -------------------------------------
+
+    def sha(self, data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    def on_disk(self) -> dict:
+        return json.loads((self.game / setup.RECORD_NAME).read_text())
+
+    def install_plain(self) -> str:
+        setup.install(self.game, PACK, self.record)
+        return setup.fix_exe(self.game)
+
+    def assert_record_names_the_exe(self) -> None:
+        """Whatever path wrote the exe, the record names it and every exe this game had from us."""
+        exe = self.on_disk()["exe"]
+        self.assertEqual(exe["original_sha256"], self.sha(PRISTINE_EXE))
+        self.assertEqual(exe["patched_sha256"], self.sha(self.exe()))
+        self.assertIn(self.sha(self.exe()), exe["patched_sha256s"])
+
+    def test_the_fix_and_the_terrain_are_different_edits(self) -> None:
+        self.assertNotIn(self.fixed, (PRISTINE_EXE, self.patched, self.patched_before_the_fix))
+        self.assertNotEqual(self.patched, self.patched_before_the_fix)
+
+    def test_a_plain_install_applies_the_fix_and_uninstall_takes_it_out(self) -> None:
+        self.assertIn("fixed", self.install_plain())
+        self.assertEqual(self.exe(), self.fixed)
+        self.assertEqual((self.game / setup.EXE_BACKUP_NAME).read_bytes(), PRISTINE_EXE)
+        self.assertNotIn("terrain", self.on_disk())
+        self.assert_record_names_the_exe()
+        self.install_plain()                                   # a re-run changes nothing
+        self.assertEqual(self.exe(), self.fixed)
+        self.assertEqual((self.game / setup.EXE_BACKUP_NAME).read_bytes(), PRISTINE_EXE)
+        said = []
+        with mock.patch.object(setup, "say", said.append):
+            setup.uninstall(self.game)
+        self.assert_uninstalled()
+        self.assertIn("The Shade crash fix was removed: lomse.exe is your original again.", said)
+
+    def test_a_plain_install_leaves_an_exe_it_does_not_know_alone(self) -> None:
+        for other in (fake_exe(b"another version"), b"not even a PE file"):
+            with self.subTest(other[:8]):
+                (self.game / "lomse.exe").write_bytes(other)
+                self.assertIn("not applied", self.install_plain())
+                self.assertEqual(self.exe(), other)
+                self.assertFalse((self.game / setup.EXE_BACKUP_NAME).exists())
+                self.assertNotIn("exe", self.on_disk())
+                setup.uninstall(self.game)
+                self.assertEqual(self.exe(), other)
+                self.assertEqual(self.listing(), ["ddraw.dll", "lomse.exe"])
+
+    def test_a_plain_install_never_overwrites_a_stray_exe_backup(self) -> None:
+        (self.game / setup.EXE_BACKUP_NAME).write_bytes(b"something else")
+        self.assertIn("not applied", self.install_plain())
+        self.assertEqual(self.exe(), PRISTINE_EXE)
+        self.assertEqual((self.game / setup.EXE_BACKUP_NAME).read_bytes(), b"something else")
+
+    def test_terrain_installs_the_fix_too(self) -> None:
+        self.install_all()
+        self.assertEqual(self.exe(), self.patched)
+        self.assertEqual(self.on_disk()["terrain"]["exe_patched_sha256"], self.sha(self.patched))
+        self.assert_record_names_the_exe()
+
+    def test_terrain_on_top_of_a_plain_install_keeps_the_first_backup(self) -> None:
+        self.install_plain()
+        setup.install_terrain(self.game, self.built)
+        self.assert_installed()
+        self.assert_record_names_the_exe()
+        self.assertEqual(set(self.on_disk()["exe"]["patched_sha256s"]),
+                         {self.sha(self.fixed), self.sha(self.patched)})
+        setup.uninstall(self.game)
+        self.assert_uninstalled()
+
+    def test_a_plain_rerun_after_terrain_keeps_the_terrain_in_the_exe(self) -> None:
+        """Taking the terrain edits out would leave the installed art unused: the fix goes on top."""
+        self.install_all()
+        self.assertIn("HD terrain kept", self.install_plain())
+        self.assert_installed()
+        setup.uninstall(self.game)
+        self.assert_uninstalled()
+
+    def as_installed_by_0_5_0(self) -> None:
+        """The game as 0.5.0 --terrain left it: the terrain exe without the fix, a record whose
+        terrain section names only that exe, and no exe section."""
+        self.install_all()
+        (self.game / "lomse.exe").write_bytes(self.patched_before_the_fix)
+        record = self.on_disk()
+        del record["exe"]
+        old = self.sha(self.patched_before_the_fix)
+        record["terrain"].update(exe_patched_sha256=old, exe_patched_sha256s=[old])
+        (self.game / setup.RECORD_NAME).write_text(json.dumps(record))
+
+    def test_upgrading_a_0_5_0_terrain_install_adds_the_fix(self) -> None:
+        for rerun in ("plain", "terrain"):
+            with self.subTest(rerun):
+                self.as_installed_by_0_5_0()
+                if rerun == "plain":
+                    self.install_plain()
+                else:
+                    self.install_all()
+                self.assert_installed()
+                terrain = self.on_disk()["terrain"]
+                self.assertEqual(terrain["exe_patched_sha256"], self.sha(self.patched))
+                self.assertEqual(set(terrain["exe_patched_sha256s"]),
+                                 {self.sha(self.patched), self.sha(self.patched_before_the_fix)})
+                self.assert_record_names_the_exe()
+                setup.uninstall(self.game)
+                self.assert_uninstalled()
+
+    def test_a_0_5_0_exe_is_ours_even_when_the_record_forgot_it(self) -> None:
+        """EARLIER_PATCHED_EXE_SHA256S: an exe 0.5.0 wrote is recognised without a record naming it."""
+        self.as_installed_by_0_5_0()
+        record = self.on_disk()
+        record["terrain"].update(exe_patched_sha256s=[])
+        del record["terrain"]["exe_patched_sha256"]
+        (self.game / setup.RECORD_NAME).write_text(json.dumps(record))
+        setup.uninstall(self.game)
+        self.assert_uninstalled()
+
+    def test_uninstalling_a_0_5_0_install_restores_the_original(self) -> None:
+        self.as_installed_by_0_5_0()
+        setup.uninstall(self.game)
+        self.assert_uninstalled()
+
+    def test_an_interrupted_fix_is_finished_by_the_next_run(self) -> None:
+        setup.install(self.game, PACK, self.record)
+        real_write = setup.write_atomically
+
+        def stop_at_the_exe(path, data):
+            if path.name == "lomse.exe":
+                raise KeyboardInterrupt
+            real_write(path, data)
+
+        setup.write_atomically = stop_at_the_exe
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                setup.fix_exe(self.game)
+        finally:
+            setup.write_atomically = real_write
+        self.assertEqual(self.exe(), PRISTINE_EXE)
+        setup.fix_exe(self.game)
+        self.assertEqual(self.exe(), self.fixed)
+        setup.uninstall(self.game)
+        self.assert_uninstalled()
+
+    def test_a_fixed_exe_holds_none_of_the_terrain_edits(self) -> None:
+        """So an exe changed on top of the fix alone does not pin a lomhd_terrain folder in place."""
+        self.assertFalse(setup.terrain_edits_present(self.fixed))
+        self.assertTrue(setup.terrain_edits_present(self.patched))
+
     def test_the_players_terrain_picks_win_per_atlas(self) -> None:
         mine, shipped = self.release_dir / "mine.json", self.release_dir / "shipped.json"
         shipped.write_text(json.dumps({"choices": {"terrain__a": "anime2x", "terrain__b": "anime2x",
@@ -1374,13 +1533,13 @@ class TerrainArtChecks(unittest.TestCase):
 
 
 class ShippedPatchSets(unittest.TestCase):
-    """The release ships the terrain sets as JSON (Python 3.9 has no tomllib)."""
+    """The release ships the terrain sets and the fix as JSON (Python 3.9 has no tomllib)."""
 
     SETS = ROOT / "tools" / "exe_patches"
 
     def test_json_sets_match_the_toml_sets_edit_for_edit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            for name in setup.TERRAIN_SETS:
+            for name in setup.TERRAIN_SETS + setup.FIX_SETS:
                 with self.subTest(name):
                     toml = self.SETS / f"{name}.toml"
                     as_json = pathlib.Path(tmp) / f"{name}.json"
@@ -1395,6 +1554,8 @@ class ShippedPatchSets(unittest.TestCase):
             total = sum(len(setup.exe_patch.load_set(self.SETS / f"{n}.toml").patches)
                         for n in setup.TERRAIN_SETS)
             self.assertEqual(total, 65)
+            self.assertEqual(sum(len(setup.exe_patch.load_set(self.SETS / f"{n}.toml").patches)
+                                 for n in setup.FIX_SETS), 1)
 
     def test_a_json_set_gets_the_same_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1415,14 +1576,21 @@ class ShippedPatchSets(unittest.TestCase):
         image = pathlib.Path(os.environ["LOM_PRISTINE_EXE"]).read_bytes()
         self.assertEqual(hashlib.sha256(image).hexdigest(), setup.PRISTINE_EXE_SHA256)
         with tempfile.TemporaryDirectory() as tmp:
-            sets = []
-            for name in setup.TERRAIN_SETS:
+            sets = {}
+            for name in setup.TERRAIN_SETS + setup.FIX_SETS:
                 path = pathlib.Path(tmp) / f"{name}.json"
                 path.write_text(setup.exe_patch.to_json(self.SETS / f"{name}.toml"))
-                sets.append(setup.exe_patch.load_set(path))
-            self.assertEqual(len(setup.exe_patch.plan(image, sets)), 65)
-            self.assertEqual(hashlib.sha256(setup.exe_patch.apply(image, sets)).hexdigest(),
-                             setup.PATCHED_EXE_SHA256)
+                sets[name] = setup.exe_patch.load_set(path)
+
+            def built(names, edits):
+                chosen = [sets[n] for n in names]
+                self.assertEqual(len(setup.exe_patch.plan(image, chosen)), edits)
+                return hashlib.sha256(setup.exe_patch.apply(image, chosen)).hexdigest()
+
+            self.assertEqual(built(setup.TERRAIN_SETS + setup.FIX_SETS, 66), setup.PATCHED_EXE_SHA256)
+            self.assertEqual(built(setup.FIX_SETS, 1), setup.FIXED_EXE_SHA256)
+            # What 0.4.0-0.5.0 installed, and what an upgrade must still recognise as ours.
+            self.assertEqual((built(setup.TERRAIN_SETS, 65),), setup.EARLIER_PATCHED_EXE_SHA256S)
 
 
 if __name__ == "__main__":
