@@ -289,15 +289,23 @@ class Archive:
 
     @staticmethod
     def _unpack(name: str, chunk: bytes, want: int, flags: int) -> bytes:
+        # Damage is reported as MpqError, so a bad member is skipped, not fatal: an empty sector
+        # used to fail on its first byte with IndexError. Only the known damage is converted --
+        # explode raises MpqError itself, and a bug anywhere else should still fail loudly.
         if len(chunk) >= want:          # stored: compressing this sector did not help
             return chunk[:want]
+        if not chunk:
+            raise MpqError(f"{name}: empty sector")
         if flags & FLAG_IMPLODE:
             return explode(chunk, want)
         mask, body = chunk[0], chunk[1:]
         if mask == 0x08:
             return explode(body, want)
         if mask == 0x02:
-            return zlib.decompress(body)
+            try:
+                return zlib.decompress(body)
+            except zlib.error as error:
+                raise MpqError(f"{name}: sector does not decompress ({error})") from error
         raise MpqError(f"{name}: unsupported compression mask {mask:#04x}")
 
     def listfile(self) -> list[str]:

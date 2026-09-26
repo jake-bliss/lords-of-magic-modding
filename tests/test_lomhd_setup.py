@@ -5,13 +5,18 @@ upscaling steps are covered by test_mpq_read.py and the end-to-end run in docs/h
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
 import pathlib
+import shutil
+import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import types
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -383,6 +388,388 @@ class UpscalePlan(unittest.TestCase):
         setup.render_review({"building": []}, pathlib.Path("esrgan"), pathlib.Path("models"))
         self.assertEqual(list((review / "original").iterdir()), [],
                          "a picture this install does not have leaves the page")
+
+
+# --- sprites ---------------------------------------------------------------------------------------
+
+class WindowsMagick(unittest.TestCase):
+    """A console keeps the PATH it opened with, so right after `winget install ImageMagick` setup
+    must find magick.exe itself (a tester was told it was missing until they reopened the console)."""
+
+    def setUp(self) -> None:
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.registry: "dict[str, str]" = {}
+        fake = types.ModuleType("winreg")
+        fake.HKEY_LOCAL_MACHINE, fake.HKEY_CURRENT_USER = "HKLM", "HKCU"
+
+        class Key:
+            def __init__(self, root: str) -> None:
+                self.root = root
+
+            def __enter__(self) -> "Key":
+                if self.root not in registry:
+                    raise OSError("no such key")
+                return self
+
+            def __exit__(self, *exc: object) -> None:
+                return None
+
+        registry = self.registry
+        fake.OpenKey = lambda root, key: Key(root)
+        fake.QueryValueEx = lambda handle, name: (registry[handle.root], 2)
+        patcher = mock.patch.dict(sys.modules, {"winreg": fake})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def install(self, folder: str) -> pathlib.Path:
+        path = self.tmp / folder
+        path.mkdir(parents=True)
+        (path / "magick.exe").write_bytes(b"")
+        return path
+
+    def test_a_folder_only_in_the_registry_path_is_found(self) -> None:
+        where = self.install("Apps/ImageMagick-7.1.2-Q16-HDRI")
+        self.registry["HKLM"] = f"C:\\Windows;{where}"
+        with mock.patch.dict(os.environ, {"ProgramFiles": str(self.tmp / "none")}):
+            self.assertEqual(setup.windows_magick_dirs(), [str(where)])
+
+    def test_the_default_install_folder_is_found_without_any_path_entry(self) -> None:
+        where = self.install("Program Files/ImageMagick-7.1.2-Q16-HDRI")
+        with mock.patch.dict(os.environ, {"ProgramFiles": str(self.tmp / "Program Files")}):
+            self.assertIn(str(where), setup.windows_magick_dirs())
+
+    def test_a_quoted_registry_entry_is_found(self) -> None:
+        where = self.install("Tools/ImageMagick 7")
+        self.registry["HKCU"] = f'"{where}" ; C:\\Windows'
+        with mock.patch.dict(os.environ, {"ProgramFiles": str(self.tmp / "none")}):
+            self.assertEqual(setup.windows_magick_dirs(), [str(where)])
+
+    def test_check_magick_puts_the_found_folder_on_this_process_path(self) -> None:
+        """The fix itself: later bare `magick` calls (here and in tools/) inherit this PATH."""
+        answers = iter(["", "Version: ImageMagick 7.1.2-0 Q16-HDRI"])
+        with mock.patch.object(setup.os, "name", "nt"), \
+                mock.patch.object(setup, "windows_magick_dirs", return_value=["X"]), \
+                mock.patch.object(setup, "magick_version", side_effect=lambda: next(answers)), \
+                mock.patch.object(setup, "fail", side_effect=AssertionError("reported missing")), \
+                mock.patch.dict(os.environ, {"PATH": "orig"}):
+            setup.check_magick()
+            self.assertEqual(os.environ["PATH"], os.pathsep.join(["X", "orig"]))
+
+    def test_a_path_entry_without_magick_exe_is_ignored(self) -> None:
+        (self.tmp / "ImageMagick-old").mkdir()
+        self.registry["HKCU"] = str(self.tmp / "ImageMagick-old")
+        with mock.patch.dict(os.environ, {"ProgramFiles": str(self.tmp / "none")}):
+            self.assertEqual(setup.windows_magick_dirs(), [])
+
+
+class RetryCommand(unittest.TestCase):
+    """The command a failed run tells the player to type. It must repeat this run's choices: the
+    install record is written only when a run finishes, so a bare retry falls back to the last
+    install's sprite mode. (Claude + Codex review.)"""
+
+    def command(self, animated: bool, **flags: object) -> str:
+        args = argparse.Namespace(**{"sprites": False, "no_sprites": False, "terrain": False,
+                                     "force_terrain_folder": False, "game": None, **flags})
+        return setup.retry_command(args, animated, pathlib.Path("C:/Games/LOM"))
+
+    def test_no_sprites_is_repeated_so_the_remembered_mode_cannot_come_back(self) -> None:
+        self.assertIn("--no-sprites", self.command(False, no_sprites=True).split())
+
+    def test_a_remembered_animated_run_is_spelled_out(self) -> None:
+        self.assertIn("--sprites", self.command(True).split())
+
+    def test_every_other_flag_is_repeated(self) -> None:
+        line = self.command(False, terrain=True, force_terrain_folder=True, game="C:/Games/LOM")
+        for flag in ("--terrain", "--force-terrain-folder", "--game"):
+            self.assertIn(flag, line.split())
+
+    def test_a_plain_static_run_stays_plain(self) -> None:
+        self.assertEqual(self.command(False), "python lomhd_setup.py")
+
+
+class Sprites(unittest.TestCase):
+    """plan_sprites / build_pack against a fake imp.mpq of tiny real IMP files, the upscaler stubbed
+    to write real PNGs at 2x."""
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_hd_sprites import frame, imp_file
+        import hd_sprites
+        self.frame, self.imp_file, self.hd_sprites = frame, imp_file, hd_sprites
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.base = pathlib.Path(tmp.name)
+        self.game = self.base / "game"
+        self.game.mkdir()
+        (self.game / "imp.mpq").write_bytes(b"one imp.mpq")
+        self.names = self.base / "imp-names.txt"
+        self.shipped, self.mine = self.base / "shipped.json", self.base / "mine.json"
+        for name, value in (("WORK", self.base / "lomhd_work"), ("say", lambda text: None),
+                            ("IMP_NAMES", self.names), ("SHIPPED_CHOICES", self.shipped),
+                            ("MY_CHOICES", self.mine)):
+            self.addCleanup(setattr, setup, name, getattr(setup, name))
+            setattr(setup, name, value)
+        self.members: dict[str, bytes] = {}
+        members = self.members
+
+        class Archive:
+            def __init__(self, path): pass
+            def __contains__(self, name): return name.lower() in members
+            def read(self, name): return members[name.lower()]
+
+        self.addCleanup(setattr, setup.mpq_read, "Archive", setup.mpq_read.Archive)
+        setup.mpq_read.Archive = Archive
+        self.rendered: list[str] = []
+
+        def render(option, inputs, dest, esrgan, models):
+            dest.mkdir(parents=True, exist_ok=True)
+            for key, src in inputs.items():
+                self.rendered.append(key)
+                w, h = setup.hd_upscale.png_size(src)
+                hd_sprites.write_png_rgba(dest / f"{key}.png", w * 2, h * 2, bytes([9, 9, 9, 255]) * (w * h * 4))
+            return len(inputs)
+
+        self.addCleanup(setattr, setup.hd_upscale, "render", setup.hd_upscale.render)
+        setup.hd_upscale.render = render
+
+    def add(self, member: str, *frames) -> None:
+        self.members[member.lower()] = self.imp_file(list(frames))
+        self.names.write_text("".join(f"{m}\n" for m in self.members))
+
+    def picks(self, shipped: dict, mine: dict | None = None) -> None:
+        self.shipped.write_text(json.dumps({"choices": shipped}))
+        if mine is not None:
+            self.mine.write_text(json.dumps({"choices": mine}))
+
+    def test_the_players_sprite_picks_win_per_sprite(self) -> None:
+        """A my-upscale-choices.json from before sprites were built has no sprite__ keys; it must
+        not take the shipped sprite picks away (choices_file swaps the whole file for pictures)."""
+        self.picks({"sprite__a": "anime2x", "sprite__b": "anime2x", "building__x": "ultrasharp"},
+                   {"sprite__b": "anime4x", "building__x": "anime2x"})
+        self.assertEqual(setup.sprite_choices(), {"sprite__a": "anime2x", "sprite__b": "anime4x"})
+        self.mine.write_text(json.dumps({"choices": {"building__x": "anime2x"}}))
+        self.assertEqual(setup.sprite_choices(), {"sprite__a": "anime2x", "sprite__b": "anime2x"})
+        self.add("imp\\b.imp", self.frame(20, 6, 3))
+        self.mine.write_text(json.dumps({"choices": {"sprite__b": "anime4x"}}))
+        plan, _, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertEqual([(s.name, s.option) for s in plan.static], [("b", "anime4x")])
+
+    def renders_of(self, root: pathlib.Path, stem_prefix: str) -> list:
+        return sorted(p.name for p in (root / "render").rglob("*.png") if p.name.startswith(stem_prefix))
+
+    def test_a_static_only_run_keeps_the_animated_renders(self) -> None:
+        """A --no-sprites run (or a plain one before sprites were remembered) plans no animated
+        sprite -- and must not prune the hours of renders a --sprites run made for them."""
+        self.picks({"sprite__cav": "anime2x", "sprite__one": "anime2x"})
+        self.add("units\\\\cav.imp", self.frame(20, 6, 3), self.frame(20, 6, 4))
+        self.add("imp\\\\one.imp", self.frame(20, 6, 5))
+        plan, root, _ = setup.plan_sprites(self.game, animated=True)
+        setup.upscale_sprites(plan.static + plan.animated, root, pathlib.Path("e"), pathlib.Path("m"))
+        cav = plan.animated[0].frames[0].stem.split("__")[0]
+        before = self.renders_of(root, cav)
+        self.assertEqual(len(before), 2)
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertEqual(plan.animated, [])
+        self.assertEqual(self.renders_of(root, cav), before)
+
+    def test_present_members_left_out_this_run_keep_their_renders(self) -> None:
+        """Ambiguous (two members, one name) or undecodable today: still in imp.mpq, so their
+        work is kept for when they resolve again -- not pruned as if a mod had removed them."""
+        self.picks({"sprite__tree": "anime2x"})
+        self.add("imp\\\\tree.imp", self.frame(20, 6, 3))
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        setup.upscale_sprites(plan.static, root, pathlib.Path("e"), pathlib.Path("m"))
+        tree = plan.static[0].frames[0].stem.split("__")[0]
+        self.add("aura\\\\tree.imp", self.frame(20, 6, 7))                 # now ambiguous
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertEqual(plan.static, [])
+        self.assertIn("ambiguous", plan.skipped[0])
+        self.assertEqual(len(self.renders_of(root, tree)), 1)
+        del self.members["aura\\\\tree.imp"]
+        good = self.members["imp\\\\tree.imp"]
+        self.members["imp\\\\tree.imp"] = good[:40]                         # present, undecodable
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertIn("could not read", plan.skipped[0])
+        self.assertEqual(len(self.renders_of(root, tree)), 0,
+                         "its bytes changed, so its old work goes: it is a different member now")
+        self.members["imp\\\\tree.imp"] = good
+
+    def test_a_member_whose_bytes_cannot_be_read_prunes_nothing(self) -> None:
+        import zlib
+        self.picks({"sprite__tree": "anime2x", "sprite__rock": "anime2x"})
+        self.add("imp\\\\tree.imp", self.frame(20, 6, 3))
+        self.add("imp\\\\rock.imp", self.frame(20, 6, 4))
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        setup.upscale_sprites(plan.static, root, pathlib.Path("e"), pathlib.Path("m"))
+        rock = next(s for s in plan.static if s.name == "rock").frames[0].stem.split("__")[0]
+        members = self.members
+
+        class Damaged:
+            def __init__(self, path): pass
+            def __contains__(self, name): return name.lower() in members
+            def read(self, name):
+                if "rock" in name:
+                    return zlib.decompress(b"damaged")
+                return members[name.lower()]
+
+        setup.mpq_read.Archive = Damaged
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        self.assertEqual([s.name for s in plan.static], ["tree"])
+        self.assertEqual(len(self.renders_of(root, rock)), 1, "its key is unknown: nothing pruned")
+
+    def test_changing_one_member_re_renders_only_that_member(self) -> None:
+        """A mod that repaints one sprite changes imp.mpq; every other sprite keeps its render (hours
+        of them, with --sprites). The changed one is rendered afresh and its old work removed."""
+        self.picks({"sprite__tree": "anime2x", "sprite__rock": "anime2x"})
+        self.add("imp\\tree.imp", self.frame(20, 6, 3))
+        self.add("imp\\rock.imp", self.frame(20, 6, 4))
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        setup.upscale_sprites(plan.static, root, pathlib.Path("e"), pathlib.Path("m"))
+        old = {s.name: s.frames[0].stem for s in plan.static}
+        self.assertEqual(sorted(self.rendered), sorted(old.values()))
+        self.rendered.clear()
+        self.add("imp\\rock.imp", self.frame(20, 6, 9))                  # the mod's repaint
+        (self.game / "imp.mpq").write_bytes(b"a modded imp.mpq")
+        plan, root, _ = setup.plan_sprites(self.game, animated=False)
+        setup.upscale_sprites(plan.static, root, pathlib.Path("e"), pathlib.Path("m"))
+        new = {s.name: s.frames[0].stem for s in plan.static}
+        self.assertEqual(new["tree"], old["tree"])
+        self.assertNotEqual(new["rock"], old["rock"])
+        self.assertEqual(self.rendered, [new["rock"]], "only the changed member is rendered again")
+        leftovers = [p.name for p in root.rglob("*.png") if p.name.startswith(old["rock"].split("__")[0])]
+        self.assertEqual(leftovers, [], "the changed member's old work is removed")
+
+    def test_a_member_that_will_not_decompress_is_left_out_not_fatal(self) -> None:
+        """A damaged member (here, zlib data that does not inflate) is one sprite's problem: the
+        others -- and the pictures -- still install."""
+        import zlib
+        self.picks({"sprite__tree": "anime2x", "sprite__bad": "anime2x"})
+        self.add("imp\\tree.imp", self.frame(20, 6, 3))
+        self.add("imp\\bad.imp", self.frame(20, 6, 4))
+        members = self.members
+
+        class Damaged:
+            def __init__(self, path): pass
+            def __contains__(self, name): return name.lower() in members
+            def read(self, name):
+                if "bad" in name:
+                    return zlib.decompress(b"not zlib at all")
+                return members[name.lower()]
+
+        setup.mpq_read.Archive = Damaged
+        plan, root, read_sprite = setup.plan_sprites(self.game, animated=False)
+        self.assertEqual([s.name for s in plan.static], ["tree"])
+        self.assertEqual(len(plan.skipped), 1)
+        self.assertTrue(plan.skipped[0].startswith("bad: could not read imp\\bad.imp (not readable from "
+                                                   "the archive (error:"), plan.skipped[0])
+        self.assertIn("could not be read", setup.summarise_skips(plan.skipped))
+
+    def test_the_sprite_mode_is_remembered_until_turned_off(self) -> None:
+        """A plain rerun after --sprites (after --review, say) must not quietly drop hours of
+        animated sprites; --no-sprites turns them off; a fresh install is static only."""
+        self.assertEqual(setup.sprite_mode(self.game, False, False)[0], False, "fresh: static only")
+        dll = self.game / "ddraw.dll"
+        dll.write_bytes(b"the player's own ddraw.dll")
+        release_dir = self.base / "release"
+        release_dir.mkdir()
+        (release_dir / "ddraw.dll").write_bytes(OURS)
+        self.addCleanup(setattr, setup, "HERE", setup.HERE)
+        setup.HERE = release_dir
+        ours = {"ddraw_sha256": hashlib.sha256(OURS).hexdigest(), "version": "t"}
+        self.assertTrue(setup.sprite_mode(self.game, True, False)[0])
+        setup.install(self.game, b"pack", ours, True)
+        on, why = setup.sprite_mode(self.game, False, False)
+        self.assertTrue(on)
+        self.assertIn("remembered", why)
+        setup.install(self.game, b"pack", ours, on)                       # a plain rerun keeps it
+        self.assertTrue(setup.sprite_mode(self.game, False, False)[0])
+        self.assertFalse(setup.sprite_mode(self.game, False, True)[0], "--no-sprites wins")
+        setup.install(self.game, b"pack", ours, False)
+        self.assertFalse(setup.sprite_mode(self.game, False, False)[0], "and is remembered too")
+        setup.install(self.game, b"pack", ours, True)
+        setup.uninstall(self.game)
+        self.assertFalse(setup.sprite_mode(self.game, False, False)[0], "uninstall forgets it")
+
+    def test_a_plain_rerun_after_sprites_keeps_the_animated_records(self) -> None:
+        """Through main's own choice: the rerun plans (and so packs) the animated sprite again."""
+        self.picks({"sprite__cav": "anime2x", "sprite__one": "anime2x"})
+        self.add("units\\cav.imp", self.frame(20, 6, 3), self.frame(20, 6, 4))
+        self.add("imp\\one.imp", self.frame(20, 6, 5))
+        (self.game / setup.RECORD_NAME).write_text(json.dumps(
+            {"ddraw_sha256": "x", "had_ddraw": False, "backup_sha256": None, "sprites": True}))
+        on, _ = setup.sprite_mode(self.game, False, False)
+        plan, _, _ = setup.plan_sprites(self.game, on)
+        self.assertEqual(([s.name for s in plan.static], [s.name for s in plan.animated]), (["one"], ["cav"]))
+        off, _ = setup.sprite_mode(self.game, False, True)
+        plan, _, _ = setup.plan_sprites(self.game, off)
+        self.assertEqual(plan.animated, [])
+
+    def test_animated_sprites_resume_where_a_run_stopped(self) -> None:
+        self.picks({"sprite__cav": "anime2x"})
+        self.add("units\\cav.imp", self.frame(20, 6, 3), self.frame(20, 6, 4))
+        plan, root, _ = setup.plan_sprites(self.game, animated=True)
+        setup.upscale_sprites(plan.animated, root, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertEqual(len(self.rendered), 2)
+        plan, root, _ = setup.plan_sprites(self.game, animated=True)
+        setup.upscale_sprites(plan.animated, root, pathlib.Path("esrgan"), pathlib.Path("models"))
+        self.assertEqual(len(self.rendered), 2, "nothing rendered twice")
+
+    def test_a_game_without_imp_mpq_is_refused(self) -> None:
+        (self.game / "imp.mpq").unlink()
+        with self.assertRaises(SystemExit):
+            setup.check_imp(self.game)
+
+    @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
+    def test_the_pack_holds_sprites_and_pictures_and_uninstall_restores_everything(self) -> None:
+        import hd_portrait_pack as pack
+        import lbm_png
+        self.picks({"sprite__tree": "anime2x", "sprite__cav": "ultrasharp", "sprite__glow": "anime2x",
+                    "sprite__plain": "original"})
+        self.add("imp\\tree.imp", self.frame(20, 6, 3))
+        self.add("imp\\plain.imp", self.frame(20, 6, 5))
+        self.add("units\\cav.imp", self.frame(20, 6, 6), self.frame(20, 6, 7))
+        self.add("aura\\glow.imp", self.frame(20, 6, 8), self.frame(20, 6, 6))  # frame 1 repeats cav's
+        plan, root, read_sprite = setup.plan_sprites(self.game, animated=True)
+        setup.upscale_sprites(plan.static + plan.animated, root, pathlib.Path("e"), pathlib.Path("m"))
+        originals, upscaled = self.base / "originals", self.base / "upscaled"
+        originals.mkdir()
+        upscaled.mkdir()
+        palette = [(i, (i * 3) % 256, 255 - i) for i in range(256)]
+        header = struct.pack(">HHhhBBBBHBBhh", 40, 6, 0, 0, 8, 0, 1, 0, 0, 1, 1, 40, 6)
+        lbm_png.encode(originals / "aagtwr0a.lbm", 40, 6, bytes(range(240)), palette,
+                       [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+        self.hd_sprites.write_png_rgba(upscaled / "aagtwr0a.png", 80, 12, bytes(range(256)) * 15)
+        pack_path = self.base / "lomhd_portraits.pack"
+        count, skipped, sprite_skipped, static, moving = setup.build_pack(
+            pack_path, plan, root, read_sprite, [originals], [upscaled])
+        got = [(name, flags, group) for name, _, _, flags, _, group in pack.read(pack_path.read_bytes())]
+        masked, mirror = pack.FLAG_MASKED, pack.FLAG_MASKED | pack.FLAG_MIRROR
+        self.assertEqual(got, [("sprite__tree", masked, 0),
+                               ("anim__cav#000", mirror, 1), ("anim__cav#001", mirror, 1),
+                               ("anim__glow#000", masked, 2),
+                               ("aagtwr0a", 0, 0)])
+        self.assertEqual((count, skipped, static["packed"], moving["sprites"], moving["packed"]),
+                         (5, [], 1, 2, 3))
+        self.assertEqual(sprite_skipped, ["plain: picked 'original' in review (no upscale beat it)"])
+        self.assertEqual(plan.counts["repeats"], 1)
+
+        # The combined pack installs and uninstalls like any other.
+        dll, original = self.game / "ddraw.dll", b"the player's own ddraw.dll"
+        dll.write_bytes(original)
+        before = sorted(p.name for p in self.game.iterdir())
+        release_dir = self.base / "release"
+        release_dir.mkdir()
+        (release_dir / "ddraw.dll").write_bytes(OURS)
+        self.addCleanup(setattr, setup, "HERE", setup.HERE)
+        setup.HERE = release_dir
+        setup.install(self.game, pack_path, {"ddraw_sha256": hashlib.sha256(OURS).hexdigest(), "version": "t"})
+        self.assertEqual((self.game / setup.PACK_NAME).read_bytes(), pack_path.read_bytes())
+        self.assertEqual(json.loads((self.game / setup.RECORD_NAME).read_text())["pack_sha256"],
+                         hashlib.sha256(pack_path.read_bytes()).hexdigest())
+        setup.uninstall(self.game)
+        self.assertEqual(sorted(p.name for p in self.game.iterdir()), before)
+        self.assertEqual(dll.read_bytes(), original)
 
 
 # --- HD terrain (--terrain) ----------------------------------------------------------------------

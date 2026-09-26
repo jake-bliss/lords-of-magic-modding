@@ -1,6 +1,7 @@
-"""Which IMP member path a specific archive actually holds for a given sprite name -- shared by
-`sprite_pack.py` (building packs) and `sprite_originals.py` (rendering review originals), so both
-resolve a name to the same member, and neither can dedupe away a spelling before finding out
+"""Which IMP member path a specific archive actually holds for a given sprite name -- shared by the
+player's setup and `hd-review/sprite_pack.py` (building packs, through `hd_sprites.py`) and
+`hd-review/sprite_originals.py` (rendering review originals), so all
+resolve a name to the same member, and none can dedupe away a spelling before finding out
 whether it, rather than some other spelling of the same name, is the one this archive holds.
 
 A recovered listfile aggregates member paths across several game profiles. Two spellings of one
