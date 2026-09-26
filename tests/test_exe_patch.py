@@ -237,9 +237,21 @@ class RealBinary(unittest.TestCase):
             with self.subTest(name):
                 ep.plan(self.image, [ep.load_set(self.SETS / f"{s}.toml") for s in sets])
 
+    # Candidate sets that no build installs yet. Each must still apply alone (above) and compose
+    # with every build it could later join, so a draft cannot rot against the binary unnoticed.
+    DRAFTS = {"marauder-unit-list-guard"}
+
     def test_every_shipped_set_is_in_a_build(self) -> None:
         used = {s for sets in self.BUILDS.values() for s in sets}
-        self.assertEqual({p.stem for p in self.SETS.glob("*.toml")}, used)
+        self.assertEqual({p.stem for p in self.SETS.glob("*.toml")}, used | self.DRAFTS)
+        self.assertFalse(used & self.DRAFTS)
+
+    def test_every_draft_composes_with_every_build(self) -> None:
+        for draft in sorted(self.DRAFTS):
+            for name, sets in self.BUILDS.items():
+                with self.subTest(draft=draft, build=name):
+                    ep.plan(self.image, [ep.load_set(self.SETS / f"{s}.toml")
+                                         for s in [*sets, draft]])
 
     def test_the_hybrid_leaves_the_texel_shifts_alone(self) -> None:
         # The same two vertex-setup functions shift the texel u/v with shl 16 as well; TILESIZE in

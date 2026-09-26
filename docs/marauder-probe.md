@@ -1,8 +1,151 @@
 # Marauder probe run sheet
 
-**Built 2026-09-25, not yet run.** Everything below was written before any install, and every
-prediction is stated ahead of the observation, in the style of
-[`docs/cheat-keys-ladder.md`](cheat-keys-ladder.md).
+**Run attended 2026-09-26. Rung 2 bound the human to the Marauders, and every battle ended in a
+crash.** The run sheet below the outcome was written before either rung was installed, and every
+prediction in it was stated ahead of the observation, in the style of
+[`docs/cheat-keys-ladder.md`](cheat-keys-ladder.md). It is left as written; this section scores it.
+
+## Outcome, 2026-09-26
+
+**Evidence class: observed in gameplay** (readings taken by Jake off the Shift+J box, relayed by
+the coordinator). Build `b88ebb19aedc`, Development profile, vanilla archives.
+
+| Step | `t` | `cu` | `cp` | `wmp` | `tc` | `P0 f/ai/cc` | `MAR f/ai/cc` | `nMAR` | `lord` |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: |
+| 1.1 control, new game (ORDER) | 1 | 0 | 0 | 15 | 1 | 2 / 0 / 1 | **3** / 1 / 1 | 15 | 200 |
+| 1.2 after N | 1 | 0 | 0 | 15 | 1 | 2 / 0 / 1 | 3 / 1 / 1 | 16 | 200 |
+| 1.3 after U | -- not read: the AI took over and a battle opened at once (below) | | | | | | | | |
+| 2.1 `mprobe15` loaded from the menu | | **0** | | | | | | | |
+| 2.2 after U | 1 | **15** | 1 | 15 | 1 | 2 / 1 / 1 | 3 / 0 / 1 | 16 | **-1** |
+
+**The headline.** With user record 1 re-bound to player 15 in the save, `15 setuserforplayer`
+switched the human to the Marauders. The party panel then showed a marauder army, the arrow keys
+cycled through **every** marauder army, and in battle Jake had the full combat command panel over
+marauder Berserkers. **Q2 (bind and select on the world map): yes, with a save edit. Q3 (tactical
+control): yes.** Moving an army on the world map was not separately reported.
+
+**Then every battle's end crashed, deterministically**: twice, once after a fought battle and once
+after a retreat, with an identical page fault at `0x00526EF3` (below). **Q4 (save and reload) and
+Q5 (a leaderless current user at turn end) were not reached**: the marauders move after players
+0..7, so an AI attack, and with it the crash, always came first. Whether the human gets a turn of
+its own as player 15 is therefore also still open.
+
+### What the predictions got right and wrong
+
+| Prediction | Observed | Verdict |
+| --- | --- | --- |
+| `wmp` = 15 (exe constant table, `placedng.gs` literal) | 15 | right |
+| `MAR ai` = 1 before U (`setup_ai`) | 1 | right |
+| `MAR f` outside 0..7 | **3, CHAOS** | **wrong.** It matches `ai.gs`'s `WANDERING_MONSTER_PLAYER BARBARIAN CHAOS setspecialcombatowner`; `setupplayergraphics`' `f 0 7 between not` guard was defensive code, not evidence. The unguarded-faith-array crash risk named for Q1 does not apply |
+| `MAR cc` unknown | 1 = `tc` | U's `setcontrollingcomputer` was a no-op |
+| N adds exactly one army | 15 -> 16 | right |
+| Rung 1: `cu` stays 0 after U | not read | **unconfirmed**; the static reading stands (Codex independently confirmed the early return at `0x0052D032`) |
+| Rung 1: marking player 0 AI mid-turn "might" start the AI | the AI **immediately** ran turns | flagged as a possibility, not predicted as an outcome |
+| -- | an AI-vs-marauder battle (Balkoth, the Death lord, against a pre-existing marauder band, "A Band of Renegade Brownie" with centaurs; not the N army) opened **on screen**, with only hover (name, level) working, the keyboard dead except map scrolling and Space not resuming | **not predicted.** The default single-player autocalc proc (`gs\autocalc.gs`) autocalculates only when *both* owners are AI; with `MAR ai=0` the battle went tactical and to the screen, while input stayed with the current user, player 0's user. The game had to be killed; no save |
+| 2.1: `cu` = 0 after a menu load of the record-1 save | 0 | right (and with it: the menu load starts at user index 0) |
+| 2.2: `cu` = 15 after U, `P0 ai` 1, `MAR ai` 0, `lord` -1 | exactly that | right: **the discriminating design worked** |
+| no script path crashes a leaderless user | not reached | open |
+
+The `mprobe` save that went into rung 2 was made from a fresh game after N, without pressing U, so
+it does not carry any AI turn.
+
+## The crash after a marauder battle (static trace, 2026-09-26)
+
+**Evidence class: read in a local binary (static)**, from the crash dump in
+`/Users/jakebliss/personal-projects/lom-artifacts-keep/marauder-probe-run-20260926/crash-after-battle.txt`.
+Nothing was launched to produce it.
+
+**The fault.** `0x00526EF3 mov ecx, [ecx+0x1c]` with `ECX = EDI = -1`. The stack holds the saved
+`EDI = 0x005AB920`, `ESI = 0x005AB9E4`, `EBP = 0x005AA12C`, local `this = 0x005AB9E4`, local saved
+`[this+0x1c] = 0`, and the return address `0x0041177F`.
+
+**What `this` is.** One of an army object's 15 unit slots. Army objects are `0x5DC` bytes (the
+constructor at `~0x004116B0` builds the slots with a vector constructor: 15 x `0x4C` from
+`army+0xC4`, element constructor `0x00526E40`, destructor `0x00526E90` -> `0x00526EA0`). The army
+is `0x005AB920`, which the pseudo-army resolver (`0x004852EE`) maps to **-7**, and -7 is
+**`KILLED_DEFENDER`** in the engine's constant table (`ATTACKER_ARMY -4 = 0x005AA78C`,
+`DEFENDER_ARMY -5 = 0x005AAD68`, `KILLED_ATTACKER -6 = 0x005AB344`, `KILLED_DEFENDER -7 =
+0x005AB920`, all inside the combat state object at `0x005AA12C`). `this = army + 0xC4` is **slot 0**,
+and `EBX = 0xF` is the first pass of the caller's 15-slot loop.
+
+**`[this+0x18]` and `[this+0x1c]`.** Two singly linked lists owned by the unit slot, both zeroed by
+the slot constructor. `+0x18`'s nodes are chained through their own `+0x1C` and returned to the
+node pool at `0x005D2F50`, whose other users sit in the `0x00524000`-`0x00527000` region next to
+`addunitmodifier` (`0x005287F0`), so `+0x18` is most likely the unit's **modifier list** (likely,
+not proven). `+0x1C`'s nodes are chained through `+0x14` and returned to the pool at `0x00578818`.
+The function at `0x00526EA0` detaches both heads, runs a walk over every army's slots that has no
+effect beyond the army iterator's cursor (`0x004FBED0` writes `army+0x28`), and returns the nodes to
+their pools. A head of 0 is empty; **a head of -1 is dereferenced**, both by the walk and by the
+pool push (`0x00526E00`).
+
+**The callers.** `0x0041177F` is inside `0x00411760`, "release all 15 unit slots of this army".
+`0x0045D421` is inside **`0x0045D2E0`, the combat setup** (called from `0x0045C1CC` and
+`0x0045D05A`). At its start it resets the six combat armies (`0x004117F0`) and releases the units
+of `KILLED_ATTACKER` and then `KILLED_DEFENDER` (`0x00411760`); the fault is in the second. So the
+crash fires **when the next battle is set up**: it looks like "at battle end" because in these runs
+the AI turns queued the next attack immediately. The same release of both killed armies also
+runs at `0x004C1F4F`, `0x004C266D` and `0x0047FD95` (other killed-army set-up paths); the patch
+below covers them all because it is in the releasing function.
+
+**How `KILLED_DEFENDER` is filled.** The army method `0x00412590` snapshots a whole army -- header
+and all 15 slots, raw `rep movsd`, list heads included -- into `KILLED_ATTACKER` when the army's
+owner equals the attacker's owner (`[0x005AA7D4]`, `ATTACKER_ARMY + 0x48`), otherwise into
+`KILLED_DEFENDER` when it equals the defender's (`[0x005AADB0]`). So the -1 was in slot 0 of the
+**defending army** when its snapshot was taken, during or at the end of the battle before.
+
+**Where the -1 comes from: not established.** Ruled out statically: an 8-entry per-player array
+indexed by 15 landing on the field (`0x005AB9FC`; no scaled-index operand in the binary reaches it
+with index 15), and a direct `-1` store to a `+0x18` field in the combat code (all 28 such stores
+are stack locals). Leading hypothesis: tactical combat for a **human-flagged side whose player is
+outside 0..7** writes or copies a -1 into its first unit's modifier head. It fits the evidence --
+human-vs-marauder and AI-vs-marauder battles are routine and never crash in unmodified play; the
+only change here is `MAR ai = 0`, which is what makes the marauder side tactical and human -- but it
+is not proven.
+
+**Can GameScript avoid it?** Not at the fault: the fault is native, in combat setup, and no script
+hook runs between the snapshot and the release. The combat-end scripts (`gs\comb_res.gs`'s
+`setfinishcombatproc` and `endcombatproc`) would fail as script errors, not page faults. Giving the
+marauders a leader (`setheirasleader`) has no static link to this code. What script *can* do is keep
+the marauder side out of tactical combat (option 1).
+
+### Fix options, cheapest first
+
+| # | Option | Cost | What it keeps / loses |
+| ---: | --- | --- | --- |
+| 1 | **Script: autocalculate every battle that involves slot 15.** Install, in U, a `setautocalcshouldbeusedproc` that returns `true` when either army's owner is `WANDERING_MONSTER_PLAYER` and otherwise runs the saved default (`getautocalcshouldbeusedproc`, as `gs\story.gs` saves and restores it); H restores the default. The default single-player proc is `gs\autocalc.gs`'s "both owners AI". | a hotkey-block edit, no exe change | loses Q3's tactical control; **also fixes rung 1's on-screen battle with no input**; tells whether the -1 is tactical-only |
+| 2 | **Exe patch: treat a list head of -1 as empty** (`tools/exe_patches/marauder-unit-list-guard.toml`, a draft, below) | 24 bytes in place, no code cave; composes with the HD overlay exe patch | keeps tactical control; treats the symptom, so the -1 may be read somewhere else later |
+| 3 | Root cause: watch `0x005AB9FC` and the defending army's slot 0 `+0x18` through a marauder battle with the engine-probe tooling, and patch the writer | a probe build and a sitting of its own | the real fix |
+
+The draft patch (option 2): at `0x00526EAE` the 24 bytes
+`85 ff 89 6c 24 10 89 74 24 0c c7 45 18 00 00 00 00 c7 45 1c 00 00 00 00` become
+`89 6c 24 10 89 74 24 0c 31 c0 89 45 18 89 45 1c 83 ff ff 75 01 47 85 ff`: the same two stores to
+the locals and the same two zeroings of the slot fields (through a zeroed `EAX`, which is dead
+there), then `cmp edi,-1 / jne +1 / inc edi` before the original `test edi,edi`. The six bytes that
+follow (`jne 0x526ecc`, `test esi,esi`, `je 0x526f1e`) are unchanged and keep their targets. Because
+it is inside the releasing function it covers every caller. Checked offline: `tools/exe_patch.py
+check` matches its site on the vanilla `lomse.exe` (`a505f399...`) alone and together with
+`terrain-hybrid-2x`; the disassembly of the built copy (scratch only) reads as above; and
+`tests/test_exe_patch.py` now lists it as a draft that must apply alone and with every build. **It
+is not wired into any installer.**
+
+### What a fix-test sitting would predict
+
+Both start from `mprobe15` (kept in
+`/Users/jakebliss/personal-projects/lom-artifacts-keep/save-backups/marauder-probe-evidence-20260926T173642Z`),
+loaded from the menu, then Shift+U.
+
+- **Option 2, the patch:** the first battle involving the marauders ends and the next one is set up
+  **without the fault at `0x00526EF3`**. If the game faults again, the EIP is different -- the same
+  -1 read elsewhere -- and that address names the next site. With no fault, play reaches slot 15's
+  own turn: `cp` reads 15 (Q2's turn question), and then Q5 (end the turn with `lord = -1`;
+  predicted from the scripts: no defeat dialog) and Q4 (save, reload: predicted `cu = 0`, then U
+  gives `cu = 15` again) run as written in 2.3 and 2.4.
+- **Option 1, autocalc:** battles involving the marauders resolve without a combat screen. If the
+  -1 comes from tactical combat, **no crash**; a fault at `0x00526EF3` under autocalc means it
+  comes from the marauder side being human-flagged in any combat, which rules option 1 out as a
+  workaround and leaves option 2 or 3.
+
+## The run sheet, as written before the run
 
 The question: can a human play Lords of Magic: Special Edition as the Marauders, the
 wandering-monster player, with no city, faith or capital? This is a feasibility probe, not the mod.
