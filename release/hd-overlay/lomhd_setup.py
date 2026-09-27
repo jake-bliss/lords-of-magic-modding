@@ -22,14 +22,22 @@ Python and ImageMagick versions, the GPU if it can be read cheaply, what this mo
 lomse.exe/ddraw.dll as, the install record, the last setup's own closing summary, and the names and
 sizes of everything in the game folder), and, only with --with-save, one savegame. Nothing is
 uploaded; the zip is written next to this script as lomhd-report-<timestamp>.zip (never overwriting
-an earlier one). A symlink, or anything that resolves outside the game folder, is refused wherever a
-file is chosen for the report.
+an earlier one, even from two runs started in the same second). A symlink, or anything that resolves
+outside the game folder, is refused wherever a file is chosen for the report. A crash/hang file's own
+name is never used inside the zip (only its timestamp, if it has the crash reporter's own shape) --
+its filename could itself carry an account or character name; a savegame is renamed to a plain
+savegame/save(.lom) for the same reason, and report.txt notes only that one was included, not which.
 
 Every text file above is scrubbed before it goes in the zip: your home folder (replaced with `~`);
-`C:\\Users\\<x>\\`, `C:\\Documents and Settings\\<x>\\`, `/Users/<x>/`, `/home/<x>/` and their Wine
-`Z:` equivalents, wherever they appear, not only your own account's; and your account name as a whole
-word. Crash *minidumps* (`lomhd_crash_*.dmp`) hold paths as UTF-16, which cannot be scrubbed as text,
-so they are left out by default -- --with-dump includes them exactly as written, unscrubbed.
+`C:\\Users\\<x>`, `C:\\Documents and Settings\\<x>`, `/Users/<x>`, `/home/<x>`, a `\\\\?\\` long-path
+prefix, a UNC `\\\\host\\Users\\<x>`, and their Wine `Z:` equivalents, wherever they appear (with or
+without a trailing slash) and not only your own account's; and your account name as a whole word. Text
+that cannot be confidently decoded (including legacy Windows text -- UTF-8 is tried first, then
+cp1252, rather than silently mangling non-ASCII characters scrub() could then never match) is left out
+rather than copied in unscrubbed. Crash *minidumps* (`lomhd_crash_*.dmp`) hold paths as UTF-16 inside
+a binary format text scrubbing cannot safely see into at all, so they are left out by default --
+--with-dump includes them exactly as written, unscrubbed. **A savegame is binary too and is never
+scrubbed: it may contain your in-game names. Only use --with-save if you are happy to share it.**
 
 Choosing your own: --review renders every upscale option for every picture from your own game,
 then opens a review page on this computer (http://127.0.0.1:8765) with the shipped picks already
@@ -84,6 +92,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 import zipfile
@@ -158,9 +167,11 @@ GAME_TEXT_FILES = ("lomhd.log", "ddraw.ini", RECORD_NAME)
 # A crash reporter (built separately, in the DLL) is expected to write these; it may not exist yet on
 # a given machine, which is not a reason for --report to fail. The .txt files are text and scrubbed
 # like everything else; .dmp minidumps hold UTF-16 paths a text scrub cannot safely see inside, so
-# they are left out by default (--with-dump includes them exactly as written, unscrubbed).
-CRASH_TEXT_GLOBS = ("lomhd_crash_*.txt", "lomhd_hang_*.txt")
-CRASH_DUMP_GLOB = "lomhd_crash_*.dmp"
+# they are left out by default (--with-dump includes them exactly as written, unscrubbed). Paired with
+# a "kind" used for the zip's own member names, never the player's original filename -- see
+# crash_arcname: a crash reporter could plausibly put an account or character name in its filename.
+CRASH_TEXT_GLOBS = (("lomhd_crash_*.txt", "crash"), ("lomhd_hang_*.txt", "hang"))
+CRASH_DUMP_GLOB = ("lomhd_crash_*.dmp", "crash")
 REPORT_MAX_PER_GLOB = 5
 DUMP_SIZE_CAP = 20 * 1024 * 1024            # a minidump can run far larger than a bug report should
 HASH_FILES = ("lomse.exe", "ddraw.dll", "gs.mpq", "pic.mpq", "imp.mpq")
@@ -1426,20 +1437,27 @@ def uninstall_terrain(game: pathlib.Path, record: dict, force_folder: bool = Fal
 
 # Windows/Wine home-folder shapes that can carry an account name even when this Python is not running
 # as that account: a crash written under a different Windows profile, or under Wine, whose Z: drive is
-# the whole host filesystem (so a Mac/Linux home shows up as Z:\Users\<x>\ or Z:\home\<x>\ too). Every
-# alternative names the segment right after it as the account; either slash kind, case-insensitive.
+# the whole host filesystem (so a Mac/Linux home shows up as Z:\Users\<x>\ or Z:\home\<x>\ too), or a
+# UNC path (\\server\Users\<x>\...). A long-path \\?\ prefix is optional in front of a drive or UNC
+# root. The account segment ends at the next slash, or -- since a path is often just sitting in prose
+# with no trailing separator at all -- at the end of a line, or before a closing quote, a space, or the
+# punctuation that follows a path in running text.
 _HOME_PATH_RE = re.compile(
-    r"(?:C:[\\/]+Users|C:[\\/]+Documents and Settings|/Users|/home|Z:[\\/]+[Hh]ome|Z:[\\/]+Users)"
-    r"[\\/]+([^\\/\r\n]+)[\\/]",
-    re.IGNORECASE,
+    r"(?:\\\\\?\\)?"                                    # optional \\?\ long-path prefix
+    r"(?:[A-Za-z]:|\\\\[^\\/\r\n]+)"                    # a drive letter, or a UNC \\host
+    r"[\\/]+(?:Users|Documents and Settings|home)"      # ... or a bare POSIX form, below
+    r"[\\/]+([^\\/\r\n]+?)(?=[\\/]|$|[\"'\s,;:)\]])"
+    r"|/(?:Users|home)/([^/\r\n]+?)(?=/|$|[\"'\s,;:)\]])",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 
 def _blank_matched_segment(match: "re.Match") -> str:
-    """`match.group(0)` with only its `group(1)` span replaced -- the path's own separators and
-    prefix are kept, only the account-name segment goes."""
+    """`match.group(0)` with only its captured account-name span replaced (group 1 or 2, whichever
+    this alternative used) -- the path's own separators and prefix are kept."""
     whole = match.group(0)
-    start, end = match.start(1) - match.start(0), match.end(1) - match.start(0)
+    group = 1 if match.group(1) is not None else 2
+    start, end = match.start(group) - match.start(0), match.end(group) - match.start(0)
     return whole[:start] + "<user>" + whole[end:]
 
 
@@ -1448,9 +1466,10 @@ def scrub(text: str) -> str:
     GitHub issue never carries who ran it:
 
     - this Python's own home folder, replaced with `~`;
-    - `C:\\Users\\<x>\\`, `C:\\Documents and Settings\\<x>\\`, `/Users/<x>/`, `/home/<x>/` and their
-      Wine `Z:` equivalents (see `_HOME_PATH_RE`) -- these can name an account this process is not
-      running as, so they are checked regardless of what `pathlib.Path.home()` says;
+    - `C:\\Users\\<x>`, `C:\\Documents and Settings\\<x>`, `/Users/<x>`, `/home/<x>`, their Wine `Z:`
+      equivalents, a `\\\\?\\` long-path prefix, and a UNC `\\\\host\\Users\\<x>` (see `_HOME_PATH_RE`)
+      -- these can name an account this process is not running as, so they are checked regardless of
+      what `pathlib.Path.home()` says, whether or not a separator follows the name;
     - this process's own account name (`$USER`/`$USERNAME`/`$LOGNAME`/`getpass.getuser()`), as a
       whole word only: `(?<![A-Za-z0-9])name(?![A-Za-z0-9])`. Because every character beside a 64-hex
       sha256 digest is itself alphanumeric, a whole-word match can never land inside one or split it;
@@ -1460,7 +1479,7 @@ def scrub(text: str) -> str:
       thing. Names under 3 characters are left alone; a name that short is too likely to be noise.
 
     This process's own home is replaced first, whole, so the common case (a report generated by the
-    same account that hit the problem) reads as a clean `~` rather than `C:\\Users\\<user>\\`; the
+    same account that hit the problem) reads as a clean `~` rather than `C:\\Users\\<user>`; the
     generic path patterns then catch anything that is left, including a path naming an account this
     process is not running as."""
     try:
@@ -1469,7 +1488,11 @@ def scrub(text: str) -> str:
         home = ""
     if home:
         text = text.replace(home, "~")
-    text = _HOME_PATH_RE.sub(_blank_matched_segment, text)
+    # The known-name pass runs before the generic path patterns: a multi-word name (a display name
+    # with a space in it, say) is one literal token here, matched and replaced whole. Run the other
+    # way around, the path pattern's segment terminator (which must stop at a bare space -- a path
+    # can end mid-line with no separator at all) would blank only the name's first word and leave the
+    # rest sitting right next to the result, which is worse than not having the path pattern at all.
     names = {os.environ.get(var) for var in ("USER", "USERNAME", "LOGNAME")}
     try:
         names.add(getpass.getuser())
@@ -1479,14 +1502,49 @@ def scrub(text: str) -> str:
         if name and len(name) >= 3:
             text = re.sub(r"(?<![A-Za-z0-9])" + re.escape(name) + r"(?![A-Za-z0-9])", "<user>",
                           text, flags=re.IGNORECASE)
+    text = _HOME_PATH_RE.sub(_blank_matched_segment, text)
     return text
 
 
-def read_scrubbed_text(path: pathlib.Path) -> str:
-    """A text member's contents, ready to go into the zip: read as UTF-8 (a crash reporter or a
-    different locale may not have written valid UTF-8; a report must never fail over one bad byte),
-    then scrub()bed."""
-    return scrub(path.read_text(encoding="utf-8", errors="replace"))
+def decode_text_member(data: bytes) -> "str | None":
+    """`data` decoded as text, or None when nothing here can say so confidently -- the caller must
+    then leave the file out of the report rather than copy bytes scrub() cannot reliably see into.
+
+    Tried in order: a UTF-16 BOM (a Windows tool, including plausibly a C++ crash reporter using wide
+    strings, commonly writes one); no BOM but NUL-heavy, which is what UTF-16 without a BOM looks like
+    to a byte count; UTF-8; then cp1252, the common fallback for legacy Windows text, which -- unlike
+    replacing bad bytes with U+FFFD -- accepts almost every byte and keeps an accented name matchable
+    by scrub() rather than turning it into a character no username could ever equal."""
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        try:
+            return data.decode("utf-16")
+        except UnicodeDecodeError:
+            return None
+    if data and data.count(b"\x00") > len(data) // 4:      # NUL-heavy: UTF-16 without a BOM
+        for encoding in ("utf-16-le", "utf-16-be"):
+            try:
+                return data.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return None
+    for encoding in ("utf-8", "cp1252"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def read_scrubbed_text(path: pathlib.Path) -> "str | None":
+    """A text member's contents, scrubbed and ready to go into the zip, or None if it could not be
+    decoded confidently (decode_text_member) -- the caller leaves the file out rather than risk a
+    leak inside text scrub() never got a real chance to read."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    text = decode_text_member(data)
+    return scrub(text) if text is not None else None
 
 
 def safe_game_file(game: pathlib.Path, path: pathlib.Path) -> bool:
@@ -1605,60 +1663,113 @@ def recognise_dll(sha: "str | None", record: dict, release_record: dict) -> str:
     return "not the overlay's (the player's original, or another mod)"
 
 
+def _crash_file_kind(name: str) -> "str | None":
+    """"crash" or "hang" if `name` looks like one of CRASH_TEXT_GLOBS/CRASH_DUMP_GLOB's own naming,
+    else None. Used to keep a crash/hang file's listing entry as anonymous as its zip member already
+    is -- see list_game_folder."""
+    lower = name.lower()
+    if lower.startswith("lomhd_crash_") and lower.endswith((".txt", ".dmp")):
+        return "crash"
+    if lower.startswith("lomhd_hang_") and lower.endswith(".txt"):
+        return "hang"
+    return None
+
+
 def list_game_folder(game: pathlib.Path) -> "list[tuple[str, str]]":
     """(name, size) for everything directly in the game folder -- names and sizes only, never
-    contents, and never a walk into a subfolder (lomhd_terrain's art, a save, a mod's own files)."""
+    contents, and never a walk into a subfolder (lomhd_terrain's art, a save, a mod's own files, all
+    kept a level down and so never listed by name here). A crash/hang file's entry is anonymised the
+    same way its zip member is (crash_label): its own filename is exactly what this report exists to
+    not repeat, wherever it might otherwise show up."""
     out = []
     for p in sorted(game.iterdir()):
         if p.is_dir():
             out.append((p.name + "\\", "<folder>"))
             continue
+        kind = _crash_file_kind(p.name)
+        name = crash_label(kind, p) if kind else p.name
         try:
-            out.append((p.name, str(p.stat().st_size)))
+            out.append((name, str(p.stat().st_size)))
         except OSError:
-            out.append((p.name, "?"))
+            out.append((name, "?"))
     return out
 
 
-def crash_files(game: pathlib.Path,
-                with_dump: bool) -> "tuple[list[pathlib.Path], list[pathlib.Path], list[str]]":
-    """(text crash/hang files to include, dump files to include, notes about anything left out).
+CRASH_TIMESTAMP_RE = re.compile(r"\d{8}_\d{6}")
 
-    Each of CRASH_TEXT_GLOBS and CRASH_DUMP_GLOB is capped at its own newest REPORT_MAX_PER_GLOB,
+
+def crash_label(kind: str, path: pathlib.Path) -> str:
+    """A name for `path` safe to put in a message a player will read in report.txt: its timestamp if
+    it has the crash reporter's own YYYYMMDD_HHMMSS shape, else just its kind and extension. Never the
+    file's own name -- used for a file that was left out, so nothing it might have been called (an
+    account or character name; the crash reporter is not this mod's to control) ever appears in the
+    zip at all, not even inside a note about why it isn't there."""
+    match = CRASH_TIMESTAMP_RE.search(path.name)
+    if match:
+        return f"{kind}/{match.group(0)}{path.suffix.lower()}"
+    return f"a {kind} file ({path.suffix.lower() or 'no extension'})"
+
+
+def crash_arcname(kind: str, path: pathlib.Path, index: int) -> str:
+    """The zip member name for a crash/hang file that IS going in: crash_label's own naming, but with
+    a plain per-kind number (rather than "a crash file (.txt)", which two such files would collide on)
+    when there is no usable timestamp."""
+    match = CRASH_TIMESTAMP_RE.search(path.name)
+    stem = match.group(0) if match else str(index)
+    return f"{kind}/{stem}{path.suffix.lower()}"
+
+
+def crash_files(game: pathlib.Path, with_dump: bool
+               ) -> "tuple[list[tuple[pathlib.Path, str]], list[tuple[pathlib.Path, str]], list[str]]":
+    """((path, arcname) for the text crash/hang files to include, likewise for dumps, notes about
+    anything left out).
+
+    Each glob in CRASH_TEXT_GLOBS and CRASH_DUMP_GLOB is capped at its own newest REPORT_MAX_PER_GLOB,
     counted only among files safe_game_file allows -- a symlink (or anything else that resolves
     outside the game folder) never occupies a slot a real file could have had, and is named in
-    left_out rather than silently skipped. A .dmp is only actually included with `with_dump`: it is
-    always a candidate (so it can still be named and capped consistently), but otherwise goes to
-    left_out explaining why (its paths cannot be scrubbed as text)."""
-    text_included: "list[pathlib.Path]" = []
-    dump_included: "list[pathlib.Path]" = []
+    left_out (by crash_label, never its own filename) rather than silently skipped. A .dmp is only
+    actually included with `with_dump`: it is always a candidate (so it can still be named and capped
+    consistently), but otherwise goes to left_out explaining why (its paths cannot be scrubbed as
+    text)."""
+    text_included: "list[tuple[pathlib.Path, str]]" = []
+    dump_included: "list[tuple[pathlib.Path, str]]" = []
     left_out: "list[str]" = []
 
-    def candidates(pattern: str) -> "list[pathlib.Path]":
+    def candidates(pattern: str, kind: str) -> "list[pathlib.Path]":
         found = []
         for p in game.glob(pattern):
             if safe_game_file(game, p):
                 found.append(p)
             else:
-                left_out.append(f"{p.name} (refused: a symlink, or it resolves outside the game folder)")
+                left_out.append(f"{crash_label(kind, p)} (refused: a symlink, or it resolves outside "
+                                "the game folder)")
         found.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         return found[:REPORT_MAX_PER_GLOB]
 
-    def under_cap(p: pathlib.Path) -> bool:
+    def under_cap(kind: str, p: pathlib.Path) -> bool:
         size = p.stat().st_size
         if size <= DUMP_SIZE_CAP:
             return True
-        left_out.append(f"{p.name} ({size} bytes, over the {DUMP_SIZE_CAP // (1 << 20)} MiB cap)")
+        left_out.append(f"{crash_label(kind, p)} ({size} bytes, over the "
+                        f"{DUMP_SIZE_CAP // (1 << 20)} MiB cap)")
         return False
 
-    for pattern in CRASH_TEXT_GLOBS:
-        text_included += [p for p in candidates(pattern) if under_cap(p)]
-    for p in candidates(CRASH_DUMP_GLOB):
+    for pattern, kind in CRASH_TEXT_GLOBS:
+        index = 1
+        for p in candidates(pattern, kind):
+            if under_cap(kind, p):
+                text_included.append((p, crash_arcname(kind, p, index)))
+                index += 1
+    dump_pattern, dump_kind = CRASH_DUMP_GLOB
+    index = 1
+    for p in candidates(dump_pattern, dump_kind):
         if not with_dump:
-            left_out.append(f"{p.name} (a binary minidump: its paths cannot be scrubbed as text, so "
-                            "it is left out by default -- rerun with --with-dump to include it as-is)")
-        elif under_cap(p):
-            dump_included.append(p)
+            left_out.append(f"{crash_label(dump_kind, p)} (a binary minidump: its paths cannot be "
+                            "scrubbed as text, so it is left out by default -- rerun with --with-dump "
+                            "to include it as-is)")
+        elif under_cap(dump_kind, p):
+            dump_included.append((p, crash_arcname(dump_kind, p, index)))
+            index += 1
     return text_included, dump_included, left_out
 
 
@@ -1708,7 +1819,14 @@ def find_save(game: pathlib.Path, name: str) -> pathlib.Path:
     return path
 
 
-def build_report_text(game: pathlib.Path, left_out: "list[str]", with_save: "str | None",
+def save_arcname(path: pathlib.Path) -> str:
+    """The zip member name for a savegame: never the player's own filename (a save is named by the
+    player, or defaults to a real one like `autosave.lom` -- either way not this mod's to publish),
+    just its kind (`.lom`, or no extension) via is_save_file's own rule."""
+    return f"{SAVE_DIR_NAME}/save{path.suffix.lower()}"
+
+
+def build_report_text(game: pathlib.Path, left_out: "list[str]", with_save: bool,
                       included_dumps: "list[str]") -> str:
     """report.txt's own contents: everything --report gathers that is not another file already in
     the zip. Scrubbed as a whole at the end, so nothing added above here has to remember to."""
@@ -1749,7 +1867,8 @@ def build_report_text(game: pathlib.Path, left_out: "list[str]", with_save: "str
         lines.append("  (none, or damaged)")
     lines += ["", "Last setup summary:"]
     summary = game / SUMMARY_NAME
-    lines.append(read_scrubbed_text(summary) if safe_game_file(game, summary) else "  (none stored)")
+    summary_text = read_scrubbed_text(summary) if safe_game_file(game, summary) else None
+    lines.append(summary_text if summary_text is not None else "  (none stored)")
     if included_dumps:
         lines += ["", "Included crash dumps (binary, NOT scrubbed -- --with-dump asked for these "
                       "exactly as written; check them yourself before attaching if that matters):"]
@@ -1757,7 +1876,10 @@ def build_report_text(game: pathlib.Path, left_out: "list[str]", with_save: "str
     if left_out:
         lines += ["", "Left out of this report:"] + [f"  {note}" for note in left_out]
     if with_save:
-        lines += ["", f"Included savegame: {with_save}"]
+        # Never the requested name or the save's own filename: a save is player-named (or a
+        # character's), and both are exactly what this report must not carry unasked. See
+        # save_arcname; the save itself sits at savegame/ in this zip if you want to check it.
+        lines += ["", "Included a savegame (see savegame/ in this zip)."]
     lines += ["", "Game folder contents (names and sizes only):"]
     lines += [f"  {name}\t{size}" for name, size in list_game_folder(game)]
     # The whole text is scrubbed here, once, rather than piecemeal above: nothing added to `lines`
@@ -1766,17 +1888,33 @@ def build_report_text(game: pathlib.Path, left_out: "list[str]", with_save: "str
     return scrub("\n".join(lines) + "\n")
 
 
-def unique_report_path() -> pathlib.Path:
-    """A fresh lomhd-report-<timestamp>.zip next to this script, suffixed -2, -3... if that name is
-    already taken (two runs in the same second) -- a report must never overwrite an earlier one."""
+def finalize_report(built: pathlib.Path) -> pathlib.Path:
+    """Give a finished report (already written whole, at `built`) its public name: lomhd-report-
+    <timestamp>.zip, or -2.zip, -3.zip... if that name is taken.
+
+    Each candidate name is claimed by *creating* it -- with a hard link, which shares `built`'s bytes
+    without copying them and fails atomically with FileExistsError if the name is already there --
+    rather than by checking whether the name exists and creating it as a second, separate step. Two
+    runs started in the same second could both pass that check before either had created anything, and
+    one report would silently overwrite the other. A filesystem that cannot hard-link the two paths
+    (not every one can) falls back to an exclusive-create copy, same naming loop, same guarantee."""
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     stem = f"lomhd-report-{stamp}"
-    out_path = HERE / f"{stem}.zip"
-    n = 2
-    while out_path.exists():
-        out_path = HERE / f"{stem}-{n}.zip"
-        n += 1
-    return out_path
+    n = 1
+    while True:
+        candidate = HERE / (f"{stem}.zip" if n == 1 else f"{stem}-{n}.zip")
+        try:
+            os.link(built, candidate)
+            return candidate
+        except FileExistsError:
+            n += 1
+        except OSError:
+            try:
+                with candidate.open("xb") as dst, built.open("rb") as src:
+                    shutil.copyfileobj(src, dst)
+                return candidate
+            except FileExistsError:
+                n += 1
 
 
 def run_report(game: pathlib.Path, with_save: "str | None", with_dump: bool) -> None:
@@ -1784,36 +1922,60 @@ def run_report(game: pathlib.Path, with_save: "str | None", with_dump: bool) -> 
     already go, and simpler than guessing a Desktop folder that may not exist on every platform this
     runs on). Nothing here is uploaded; the player attaches the zip to an issue by hand.
 
-    Written whole or not at all: every member goes into a `.part` file, which is only renamed to its
-    final name once everything has been added without error, so a failure partway through never
-    leaves a half-written report and never touches an earlier one (unique_report_path already gave
-    this run its own name)."""
-    out_path = unique_report_path()
-    part_path = out_path.with_name(out_path.name + ".part")
+    Built whole in a private temp file (tempfile.mkstemp, so two runs of --report started at once are
+    never writing to the same path) and only given its public name (finalize_report) once every member
+    has been added without error; the temp file is always removed after, whether that succeeded or
+    not. A failure partway through a build therefore never leaves a half-written report where a player
+    (or a later run) would find it, and never touches an earlier run's finished report."""
     text_crashes, dump_crashes, left_out = crash_files(game, with_dump)
     save_path = find_save(game, with_save) if with_save else None
-    report_text = build_report_text(game, left_out, with_save, [p.name for p in dump_crashes])
+
+    # Every text member is read and scrubbed up front, so a decode failure can be recorded in
+    # left_out before report.txt (which lists left_out) is built, and the zip-writing pass below never
+    # has to re-read a file or re-decide what to do with one that did not decode.
+    text_members: "list[tuple[str, str]]" = []
+
+    def add_text_member(arcname: str, path: pathlib.Path, label: str) -> None:
+        text = read_scrubbed_text(path)
+        if text is None:
+            left_out.append(f"{label} (could not be decoded confidently as text -- left out)")
+            return
+        text_members.append((arcname, text))
+
+    for name in GAME_TEXT_FILES:
+        path = game / name
+        if safe_game_file(game, path):
+            add_text_member(name, path, name)
+    release_json = HERE / "release.json"
+    if release_json.is_file() and not release_json.is_symlink():
+        add_text_member("release.json", release_json, "release.json")
+    for path, arcname in text_crashes:
+        # The label a decode failure would print is the arcname, never path.name: the original
+        # filename is exactly what item 2 above strips, and a report must not put it back here.
+        add_text_member(arcname, path, arcname)
+
+    report_text = build_report_text(game, left_out, save_path is not None,
+                                    [arcname for _, arcname in dump_crashes])
+
+    fd, temp_name = tempfile.mkstemp(dir=HERE, prefix="lomhd-report-", suffix=".part")
+    os.close(fd)
+    built = pathlib.Path(temp_name)
+    out_path = None
     try:
-        with zipfile.ZipFile(part_path, "w", zipfile.ZIP_DEFLATED) as z:
-            for name in GAME_TEXT_FILES:
-                path = game / name
-                if safe_game_file(game, path):
-                    z.writestr(name, read_scrubbed_text(path))
-            release_json = HERE / "release.json"
-            if release_json.is_file() and not release_json.is_symlink():
-                z.writestr("release.json", read_scrubbed_text(release_json))
-            for path in text_crashes:
-                z.writestr(path.name, read_scrubbed_text(path))
-            for path in dump_crashes:                     # binary, unscrubbed -- see build_report_text
-                z.write(path, arcname=path.name)
+        with zipfile.ZipFile(built, "w", zipfile.ZIP_DEFLATED) as z:
+            for arcname, text in text_members:
+                z.writestr(arcname, text)
+            for path, arcname in dump_crashes:            # binary, unscrubbed -- see build_report_text
+                z.write(path, arcname=arcname)
             if save_path:
-                z.write(save_path, arcname=f"{SAVE_DIR_NAME}/{save_path.name}")
+                z.write(save_path, arcname=save_arcname(save_path))
             z.writestr("report.txt", report_text)
-    except BaseException:
-        part_path.unlink(missing_ok=True)
-        raise
-    os.replace(part_path, out_path)
+        out_path = finalize_report(built)
+    finally:
+        built.unlink(missing_ok=True)
     say(f"Report written to {out_path}")
+    if save_path:
+        say("NOTE: a save may contain your in-game names; only attach it if you're happy to share it.")
     for note in left_out:
         say(f"  left out -- {note}")
     say(f"Attach {out_path.name} to an issue at {ISSUES_URL}")

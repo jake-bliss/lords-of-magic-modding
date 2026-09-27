@@ -1866,13 +1866,26 @@ class Report(unittest.TestCase):
         saves = self.game / "savegame"
         saves.mkdir()
         (saves / "Water I").write_bytes(b"save data")      # no extension: a player-named save
-        self.assertNotIn("savegame/Water I", self.names_in(self.make_report()))
+        self.assertNotIn("savegame/save", self.names_in(self.make_report()))
         for stale in self.release_dir.glob("lomhd-report-*.zip"):
             stale.unlink()
-        self.assertIn("savegame/Water I", self.names_in(self.make_report(with_save="latest")))
+        self.assertIn("savegame/save", self.names_in(self.make_report(with_save="latest")))
         for stale in self.release_dir.glob("lomhd-report-*.zip"):
             stale.unlink()
-        self.assertIn("savegame/Water I", self.names_in(self.make_report(with_save="Water I")))
+        self.assertIn("savegame/save", self.names_in(self.make_report(with_save="Water I")))
+
+    def test_save_arcname_never_carries_the_players_own_filename(self) -> None:
+        """The save's own name could be the player's account or character name (`Alice Smith.lom`,
+        say) -- the zip must never carry it, in the member name or anywhere else in report.txt."""
+        saves = self.game / "savegame"
+        saves.mkdir()
+        (saves / "Alice Smith.lom").write_bytes(b"a save named after the player")
+        path = self.make_report(with_save="Alice Smith.lom")
+        self.assertEqual(self.names_in(path) - {"lomhd.log", "ddraw.ini", setup.RECORD_NAME,
+                                                "release.json", "report.txt"},
+                         {"savegame/save.lom"})
+        self.assertNotIn("Alice Smith", self.text_in(path))
+        self.assertIn("Included a savegame", self.text_in(path))
 
     def test_only_lom_files_and_extensionless_names_count_as_saves(self) -> None:
         """docs/loose-files.md: a save is `*.lom` or a player-named file with no extension at all --
@@ -1923,26 +1936,60 @@ class Report(unittest.TestCase):
     def test_crash_and_hang_files_are_capped_at_the_newest_five(self) -> None:
         now = time.time()
         for i in range(7):
-            path = self.game / f"lomhd_crash_2026010{i}-000000.txt"
+            path = self.game / f"lomhd_crash_2026010{i}_000000.txt"
             path.write_text("crash")
             os.utime(path, (now + i, now + i))   # strictly increasing, all well after 1980
         report = self.make_report()
-        crash_members = {n for n in self.names_in(report) if n.startswith("lomhd_crash_")}
+        crash_members = {n for n in self.names_in(report) if n.startswith("crash/")}
         self.assertEqual(crash_members,
-                         {f"lomhd_crash_2026010{i}-000000.txt" for i in range(2, 7)},
-                         "only the newest 5 by mtime are kept")
+                         {f"crash/2026010{i}_000000.txt" for i in range(2, 7)},
+                         "only the newest 5 by mtime are kept, and each keeps its own timestamp")
+
+    def test_a_crash_files_own_filename_never_appears_in_the_zip(self) -> None:
+        """A crash reporter's filename could itself carry an account or character name (it does, for
+        the exe path inside it -- lomhd_crash_core.c writes `Exe: <full path>`); the zip must use a
+        normalised member name instead, never the file the player's machine actually wrote."""
+        named = self.game / "lomhd_crash_Alice Smith.txt"     # no recognisable timestamp
+        named.write_text("Exe: C:\\Users\\Alice\\...\\lomse.exe\n")
+        path = self.make_report()
+        self.assertEqual({n for n in self.names_in(path) if n.startswith("crash/")}, {"crash/1.txt"})
+        self.assertNotIn("Alice Smith", "\n".join(self.names_in(path)))
+        self.assertNotIn("Alice", self.member_text(path, "crash/1.txt"))
 
     def test_a_symlinked_crash_file_is_refused_and_noted(self) -> None:
         target = self.game.parent / "outside.txt"
         target.write_text("not really a crash log")
-        link = self.game / "lomhd_crash_20260101-000000.txt"
+        link = self.game / "lomhd_crash_20260101_000000.txt"
         try:
             link.symlink_to(target)
         except OSError:
             self.skipTest("symlinks are not available in this environment")
         path = self.make_report()
-        self.assertNotIn(link.name, self.names_in(path))
+        self.assertEqual({n for n in self.names_in(path) if n.startswith("crash/")}, set())
         self.assertIn("refused", self.text_in(path))
+
+    def test_a_left_out_crash_files_own_filename_never_appears_either(self) -> None:
+        """The left_out note about a file that never made it in must not smuggle the player's own
+        filename back in through the back door -- checked here for a symlink refusal, a size-cap
+        refusal, and a dump left out for lack of --with-dump, each named with no recognisable
+        timestamp so crash_label has nothing but the player's own name to fall back to."""
+        target = self.game.parent / "outside.txt"
+        target.write_text("not really a crash log")
+        link = self.game / "lomhd_crash_Alice Smith.txt"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            self.skipTest("symlinks are not available in this environment")
+        (self.game / "lomhd_crash_Bob Jones.dmp").write_bytes(b"x")
+        (self.game / "lomhd_hang_Carol Diaz.txt").write_text("hang")
+        self.addCleanup(setattr, setup, "DUMP_SIZE_CAP", setup.DUMP_SIZE_CAP)
+        setup.DUMP_SIZE_CAP = 0
+        path = self.make_report(with_dump=False)
+        text = self.text_in(path)
+        for name in ("Alice Smith", "Bob Jones", "Carol Diaz"):
+            self.assertNotIn(name, text, f"{name} leaked into report.txt")
+        self.assertIn("refused", text)
+        self.assertIn("MiB cap", text)
 
     def test_a_symlinked_game_text_file_is_refused(self) -> None:
         target = self.game.parent / "outside.log"
@@ -1956,8 +2003,8 @@ class Report(unittest.TestCase):
         self.assertNotIn("lomhd.log", self.names_in(path))
 
     def test_a_dump_over_the_size_cap_is_left_out_and_reported(self) -> None:
-        (self.game / "lomhd_crash_20260101-000000.dmp").write_bytes(b"x")
-        (self.game / "lomhd_crash_20260102-000000.dmp").write_bytes(b"x")
+        (self.game / "lomhd_crash_20260101_000000.dmp").write_bytes(b"x")
+        (self.game / "lomhd_crash_20260102_000000.dmp").write_bytes(b"x")
         self.addCleanup(setattr, setup, "DUMP_SIZE_CAP", setup.DUMP_SIZE_CAP)
         setup.DUMP_SIZE_CAP = 0        # both files now exceed the cap
         path = self.make_report(with_dump=True)
@@ -1965,16 +2012,16 @@ class Report(unittest.TestCase):
         self.assertIn("Left out of this report:", self.text_in(path))
 
     def test_dumps_are_left_out_by_default_and_included_unscrubbed_with_with_dump(self) -> None:
-        dump = self.game / "lomhd_crash_20260101-000000.dmp"
+        dump = self.game / "lomhd_crash_20260101_000000.dmp"
         dump.write_bytes(b"binary minidump bytes, C:\\Users\\Jake\\ in here somewhere")
         path = self.make_report()
-        self.assertNotIn(dump.name, self.names_in(path))
+        self.assertEqual({n for n in self.names_in(path) if n.endswith(".dmp")}, set())
         self.assertIn("a binary minidump", self.text_in(path))
         for stale in self.release_dir.glob("lomhd-report-*.zip"):
             stale.unlink()
         path = self.make_report(with_dump=True)
-        self.assertIn(dump.name, self.names_in(path))
-        self.assertEqual(self.member_bytes(path, dump.name), dump.read_bytes(),
+        self.assertIn("crash/20260101_000000.dmp", self.names_in(path))
+        self.assertEqual(self.member_bytes(path, "crash/20260101_000000.dmp"), dump.read_bytes(),
                          "a dump is included exactly as written -- it is never scrubbed")
         self.assertIn("Included crash dumps", self.text_in(path))
 
@@ -2048,6 +2095,28 @@ class Report(unittest.TestCase):
         self.assertIn("Z:\\Users\\<user>\\AppData", scrubbed)
         self.assertIn("/home/<user>/.wine", scrubbed)
 
+    def test_scrub_catches_a_home_path_with_no_trailing_slash(self) -> None:
+        """A path can simply end where the account name does -- at the end of a line, or right
+        before a closing quote, a space, or the punctuation that follows a path in running prose --
+        with no separator after the name at all. Every form uses "Alice", a name not set anywhere in
+        this process's own environment, so only the generic path pattern -- not the known-account
+        word match -- can be what catches it."""
+        contexts = {
+            "end of line": "path: C:/Users/Alice",
+            "before a quote": 'path was "C:\\Users\\Alice", see the log',
+            "before a comma": "seen at C:\\Users\\Alice, then it hung",
+            "before a space": "under C:\\Users\\Alice and nowhere else",
+            "long-path prefix, end of line": "dump path: \\\\?\\C:\\Users\\Alice",
+            "posix, end of line": "home: /Users/Alice",
+            "posix, before punctuation": "home: /Users/Alice; nothing else",
+            "UNC, mid-path": "exe: \\\\server\\Users\\Alice\\Documents\\lomse.exe",
+        }
+        for label, text in contexts.items():
+            with self.subTest(label):
+                scrubbed = setup.scrub(text)
+                self.assertNotIn("Alice", scrubbed, f"{label}: {scrubbed!r}")
+                self.assertIn("<user>", scrubbed, f"{label}: {scrubbed!r}")
+
     def test_scrub_never_touches_a_64_hex_run_even_when_it_contains_the_username(self) -> None:
         fake_sha256 = "1c2ada9f" + "0" * 56
         self.assertEqual(len(fake_sha256), 64)
@@ -2067,12 +2136,82 @@ class Report(unittest.TestCase):
                 longer_word = f"see {name}se.exe for details"
                 self.assertEqual(setup.scrub(longer_word), longer_word)
 
-    def test_non_ascii_in_the_summary_and_a_text_member_round_trips_as_utf8(self) -> None:
-        (self.game / setup.SUMMARY_NAME).write_text("played by Jos\u00e9 \u00c1lvaro\n", encoding="utf-8")
-        (self.game / "lomhd.log").write_text("crash reported by Jos\u00e9 \u00c1lvaro\n", encoding="utf-8")
+    def test_non_ascii_account_name_is_absent_from_every_member(self) -> None:
+        """Jos\u00e9 \u00c1lvaro as the account itself (getpass, USER/USERNAME, and the home path), not just
+        some unrelated non-ASCII text -- it must be gone from every member, while other non-ASCII
+        text (not the identity) survives untouched."""
+        identity = "Jos\u00e9 \u00c1lvaro"
+        self.addCleanup(setattr, pathlib.Path, "home", pathlib.Path.home)
+        pathlib.Path.home = staticmethod(lambda: pathlib.Path(f"/Users/{identity}"))
+        unrelated = "unrelated non-ascii text: caf\u00e9 na\u00efve"
+        (self.game / "lomhd.log").write_text(
+            f"crash reported by {identity}\nhome: /Users/{identity}/Games/LOM\n{unrelated}\n",
+            encoding="utf-8")
+        (self.game / setup.SUMMARY_NAME).write_text(f"played by {identity}\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"USER": identity, "USERNAME": identity}), \
+             mock.patch("getpass.getuser", return_value=identity):
+            path = self.make_report()
+        for name in self.names_in(path):
+            text = self.member_text(path, name)
+            self.assertNotIn(identity, text, f"{name} still contains the account name")
+            self.assertNotIn("\u00c1lvaro", text, f"{name} still contains part of the account name")
+        self.assertIn(unrelated, self.member_text(path, "lomhd.log"),
+                     "unrelated non-ascii text must survive untouched")
+
+    # --- encoding ----------------------------------------------------------------------------------
+
+    def test_decode_text_member_reads_utf16_with_a_bom(self) -> None:
+        text = "crash near C:\\Users\\Alice\\lomse.exe"
+        for encoding in ("utf-16-le", "utf-16-be"):
+            with self.subTest(encoding):
+                bom = b"\xff\xfe" if encoding == "utf-16-le" else b"\xfe\xff"
+                data = bom + text.encode(encoding)
+                self.assertEqual(setup.decode_text_member(data), text)
+
+    def test_decode_text_member_reads_nul_heavy_utf16_without_a_bom(self) -> None:
+        text = "crash near C:\\Users\\Alice\\lomse.exe"
+        data = text.encode("utf-16-le")          # no BOM, but roughly half NUL bytes
+        self.assertEqual(setup.decode_text_member(data), text)
+
+    def test_decode_text_member_falls_back_to_cp1252_for_legacy_windows_text(self) -> None:
+        # \xe9 is "e" in cp1252 (Windows-1252) but is not valid UTF-8 on its own.
+        data = "caf\u00e9".encode("cp1252")
+        with self.assertRaises(UnicodeDecodeError):
+            data.decode("utf-8")
+        self.assertEqual(setup.decode_text_member(data), "caf\u00e9")
+
+    def test_decode_text_member_gives_up_rather_than_guess(self) -> None:
+        # Genuinely arbitrary bytes: not a BOM, not NUL-heavy, and not valid under either codec tried
+        # (0x81 and 0x8d are undefined in cp1252).
+        self.assertIsNone(setup.decode_text_member(b"\x81\x8d\xff\xfe\xfe\xff\x00\x01\x02"))
+
+    def test_a_text_member_that_cannot_be_decoded_is_left_out_not_copied_in(self) -> None:
+        (self.game / "lomhd.log").write_bytes(b"\x81\x8d\xff\x00\x01\x02\x03\x04")
         path = self.make_report()
-        self.assertIn("Jos\u00e9 \u00c1lvaro", self.text_in(path))
-        self.assertIn("Jos\u00e9 \u00c1lvaro", self.member_text(path, "lomhd.log"))
+        self.assertNotIn("lomhd.log", self.names_in(path))
+        self.assertIn("lomhd.log (could not be decoded confidently as text -- left out)",
+                     self.text_in(path))
+
+    # --- --with-save warning -------------------------------------------------------------------------
+
+    def test_with_save_prints_a_warning_that_a_save_may_carry_in_game_names(self) -> None:
+        saves = self.game / "savegame"
+        saves.mkdir()
+        (saves / "Water I").write_bytes(b"save data")
+        warning = "a save may contain your in-game names"
+        with mock.patch("builtins.print") as printed:
+            self.make_report(with_save="latest")
+        messages = [str(call.args[0]) if call.args else "" for call in printed.call_args_list]
+        self.assertTrue(any(warning in m for m in messages),
+                        f"no warning about in-game names printed; got {messages}")
+        printed.reset_mock()
+        for stale in self.release_dir.glob("lomhd-report-*.zip"):
+            stale.unlink()
+        with mock.patch("builtins.print") as printed:
+            self.make_report()
+        messages = [str(call.args[0]) if call.args else "" for call in printed.call_args_list]
+        self.assertFalse(any(warning in m for m in messages),
+                         "no savegame was requested, so no warning should be printed")
 
     # --- guards ------------------------------------------------------------------------------------
 
@@ -2127,18 +2266,40 @@ class Report(unittest.TestCase):
         self.assertEqual(zips[0].read_bytes(), first_bytes)
         self.assertEqual(list(self.release_dir.glob("*.part")), [], "no partial zip left behind")
 
-    def test_unique_report_path_avoids_a_name_already_taken(self) -> None:
-        (self.release_dir / "lomhd-report-20260101-000000.zip").write_bytes(b"existing report")
+    def freeze_now(self, *args) -> None:
         real_cls = setup.datetime.datetime
         self.addCleanup(setattr, setup.datetime, "datetime", real_cls)
 
         class Frozen(real_cls):
             @classmethod
             def now(cls, tz=None):
-                return real_cls(2026, 1, 1, 0, 0, 0)
+                return real_cls(*args)
 
         setup.datetime.datetime = Frozen
-        self.assertEqual(setup.unique_report_path().name, "lomhd-report-20260101-000000-2.zip")
+
+    def test_finalize_report_uses_the_next_name_when_the_first_is_taken(self) -> None:
+        (self.release_dir / "lomhd-report-20260101-000000.zip").write_bytes(b"existing report")
+        self.freeze_now(2026, 1, 1, 0, 0, 0)
+        built = self.release_dir / "scratch.part"
+        built.write_bytes(b"a freshly built report")
+        out = setup.finalize_report(built)
+        self.assertEqual(out.name, "lomhd-report-20260101-000000-2.zip")
+        self.assertEqual(out.read_bytes(), b"a freshly built report")
+
+    def test_two_runs_racing_for_the_same_name_both_keep_their_report(self) -> None:
+        """Simulates another process having just won the race for this run's timestamp a moment
+        before finalize_report tries to claim it -- the real race is between two --report processes,
+        which this drives through the public run_report() rather than by calling finalize_report
+        directly, so the whole build-then-claim path is exercised, not just the naming loop."""
+        self.freeze_now(2026, 1, 1, 0, 0, 0)
+        (self.release_dir / "lomhd-report-20260101-000000.zip").write_bytes(b"the other run's report")
+        setup.run_report(self.game, None, False)
+        zips = sorted(self.release_dir.glob("lomhd-report-*.zip"))
+        self.assertEqual([p.name for p in zips],
+                         ["lomhd-report-20260101-000000-2.zip", "lomhd-report-20260101-000000.zip"])
+        self.assertEqual((self.release_dir / "lomhd-report-20260101-000000.zip").read_bytes(),
+                         b"the other run's report", "the pre-existing report must be untouched")
+        self.assertEqual(list(self.release_dir.glob("*.part")), [], "no leftover temp file")
 
 
 class MainWritesSummary(unittest.TestCase):
