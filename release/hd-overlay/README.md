@@ -204,8 +204,62 @@ game folder (the name dates from when it held only portraits).
   include the sprite's name) and run setup again, and please report it with the sprite's name.
 - **Scrambled or striped terrain** means the patched `lomse.exe` is running without its
   `lomhd_terrain` folder: run `python lomhd_setup.py --terrain` again, or `--uninstall`.
-- **Reporting a problem:** open an issue at
-  <https://github.com/jake-bliss/lords-of-magic-modding/issues> with your `lomhd.log`, your
-  Windows or macOS version, and whether you used `--sprites` or `--terrain`.
+- **Reporting a problem:** run
+
+  ```
+  python lomhd_setup.py --report
+  ```
+
+  and attach the zip it writes (`lomhd-report-<timestamp>.zip`, next to this script) to an issue at
+  <https://github.com/jake-bliss/lords-of-magic-modding/issues>. See "Reports" below for what it
+  contains.
+
+## Reports
+
+```
+python lomhd_setup.py --report
+python lomhd_setup.py --report --with-save latest
+python lomhd_setup.py --report --with-save "Water I"
+python lomhd_setup.py --report --with-dump
+```
+
+One zip, written next to this script as `lomhd-report-<timestamp>.zip` (never overwriting an earlier
+one, even from two runs started in the same second), with everything useful for a bug report and
+nothing else: `lomhd.log`, `ddraw.ini`, `lomhd_install.json`, this release's own `release.json`, up to
+five each of any crash/hang `.txt` files a separate crash reporter left in the game folder, and a
+generated `report.txt` (your OS and whether it detects Wine, Python and ImageMagick versions, the GPU
+if it can be read cheaply, what this mod recognises `lomse.exe` and `ddraw.dll` as, the install
+record, the summary from the last setup run that finished, and the names and sizes -- never the
+contents -- of the files and folders this mod or the game itself is known to write by exact name
+(`lomse.exe` and its backup, `ddraw.dll`/`ddraw.ini`, the game's own archives, this mod's own
+`lomhd_*` files, and the small set of loose files and folders every install ships with -- never a
+loose prefix or suffix, so e.g. `lomhd_private Alice.txt` does not qualify just because it starts
+with `lomhd`). Anything else in the game folder is only counted, e.g. "+ 3 other files, 2 other
+folders (names not shown)" -- a name outside that list could be the player's own). A symlink, or
+anything that resolves outside the game folder, is refused wherever a file is chosen for the report,
+rather than followed. A crash/hang file keeps only its timestamp inside the zip (never its own
+filename, which could itself carry an account or character name), and a savegame is renamed to a
+plain `savegame/save.lom` (or `savegame/save`); `report.txt` says only that a save was included,
+never its name.
+
+**Scrubbing.** Every text file above -- including a crash/hang `.txt`, which a separate crash
+reporter may write with a full file path in it -- has your home folder (replaced with `~`), any
+`C:\Users\<x>`, `C:\Documents and Settings\<x>`, `/Users/<x>`, `/home/<x>`, a `\\?\` long-path prefix,
+a UNC `\\host\Users\<x>`, or a Wine `Z:` equivalent of those (wherever it appears, with or without a
+trailing slash, and not only for your own account -- a crash from a different Windows account, or
+from Wine, still gets caught), and your account name as a whole word, replaced before it goes in the
+zip. Text that cannot be confidently decoded -- including legacy Windows text, which is tried as UTF-8
+first and then cp1252, so an accented name survives as itself rather than becoming a character no
+username could ever match -- is left out of the zip entirely (named under "Left out of this report")
+rather than copied in unscrubbed. Crash **minidumps** (`lomhd_crash_*.dmp`) hold their paths as
+UTF-16 inside a binary format that cannot be scrubbed as text at all, so they are left out by default
+(and named under "Left out of this report"); `--with-dump` includes them exactly as written,
+unscrubbed -- check one yourself before attaching it if that matters to you.
+
+Nothing is uploaded on its own; you attach the zip by hand. Savegames are never included unless you
+ask with `--with-save NAME` (a `.lom` file or a player-named save with no extension, e.g. `Water I`;
+see `docs/loose-files.md`), or `--with-save latest` for the newest one. **A save is binary and is
+never scrubbed: it may contain your in-game names. Only use `--with-save` if you are happy to share
+it** (setup prints the same warning when you do).
 
 See `NOTICES.md` for licences.
