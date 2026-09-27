@@ -2033,7 +2033,12 @@ impl UserRecord {
             .unwrap_or(0)
     }
 
-    /// `+0`: the record's own index. Equal to its position in every inspected file.
+    /// `+0`: **the player this user is bound to** (corrected 2026-09-26). Equal to the record's
+    /// position in every shipped save, because a new game binds user *i* to player *i*; the name
+    /// `index` is kept for the existing callers. `currentuser` returns this word for the current
+    /// user record and `setuserforplayer` searches for it -- observed in gameplay 2026-09-26, when
+    /// a save with record 1 re-bound to player 15 let `15 setuserforplayer` switch the human to
+    /// the marauders. See `docs/save-format.md` and `docs/marauder-probe.md`.
     pub fn index(&self) -> u32 {
         self.word(0)
     }
@@ -2149,7 +2154,8 @@ impl UserSection {
         Ok(out)
     }
 
-    /// Whether every record's stored index equals its position.
+    /// Whether every record is bound to the player of its own position -- true of every save the
+    /// game writes by itself, false of a save re-bound on purpose (the marauder probe's rung 2).
     pub fn indexes_are_positional(&self) -> bool {
         self.records
             .iter()

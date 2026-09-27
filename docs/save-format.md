@@ -434,7 +434,7 @@ its I/O are a lock pair, and its bytes decode with no transform applied.
 | `LS_MULT` | 744 | decoded | `sizeof` of the setup block (164) — a length the reader uses |
 | `LS_MAP_` | 196,628 | decoded | map width |
 | `LS_SPR_` | varies | decoded | live record count |
-| `LS_USER` | 6,272 | decoded | record 0's own index (`0`) |
+| `LS_USER` | 6,272 | decoded | the player user 0 is bound to (`0` in every shipped save) |
 | `LS_GAME` | varies | decoded | the turn number |
 | `LS_PLR_` | varies | decoded | the first record's slot index |
 | `LS_REGN` | varies | decoded | region-grid width |
@@ -1029,11 +1029,28 @@ with zero remainder. Block *i* begins at `payload + 784*i` and its first `u32` i
 writer does `push 0x310` (784) and `fwrite` eight times; note its **in-memory** stride is `0x400`,
 so the on-disk record is the struct's first 784 bytes and not the whole struct.
 
-Known fields, all with **Unknown** meaning apart from the index:
+**Corrected 2026-09-26: `+0` is the player the user is bound to, not the record's own index.**
+The two coincide in every shipped save because a new game binds user *i* to player *i*
+(`newgame`, `0x00481820`: the loop at `0x004818AB`). Read in the engine, `currentuser`
+(`0x004E3DF0`) returns `+0` of the current user record, `setuserforplayer` (`0x0052CEF0`) searches
+the eight records' `+0` for the player it is given, and the load routine (`0x0052D090`) `fread`s
+each record whole into the user table at `0x005A7D90`, so the word survives a load. **Observed in
+gameplay, 2026-09-26** (the marauder probe, [`marauder-probe.md`](marauder-probe.md)): a save with
+record 1's `+0` changed from `1` to `15` loaded, and `15 setuserforplayer` then switched the human
+to player 15 (`currentuser` read `15`) -- which the unedited game cannot do, because no record is
+ever bound to 15. `tools/marauder_save_bind.py` reads and writes the word.
+
+Other named fields: `+0x2E8` is the user's mode word, read by the user switch (`0x0052CDB0`,
+`0x0048A400`); `2` in records 0 and 1 of every vanilla and Development save, `5` in record 0 of one
+3.02 save. `+0x2F0` is the per-user `setcenteronmovement` value; the load copies the global into
+record 0 only. `initusers` (`0x0052B600`, run by `final_setup` on every load) resets `+0x10`,
+`+0x14`..`+0x2E7` and `+0x17C` but not `+0`.
+
+Known fields, all with **Unknown** meaning apart from the binding:
 
 | offset | value in every inspected record |
 | ---: | --- |
-| `+0` | the record's own index |
+| `+0` | the bound player; equal to the record's own index in every shipped save |
 | `+4` | `0xFFFFFFFF` |
 | `+8` | `0` |
 | `+12` | `0x3F800000` — the bits of `1.0f` |

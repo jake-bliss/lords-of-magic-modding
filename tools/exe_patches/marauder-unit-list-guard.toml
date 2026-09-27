@@ -1,0 +1,45 @@
+# DRAFT, not wired into any installer, not run. Candidate fix-test for the marauder-probe crash of
+# 2026-09-26 (docs/marauder-probe.md, "The crash after a marauder battle").
+#
+# The fault: 0x00526EF3 `mov ecx, [ecx+0x1c]` with ECX = -1. The function at 0x00526EA0 releases a
+# unit slot's two lists (this = one of an army's 15 unit slots, 0x4C bytes each from army+0xC4).
+# It loads the slot's list head at +0x18 into EDI, zeroes the field, runs a side-effect-free walk
+# over every army's slots, and hands EDI to the free-list push at 0x00526E00. Both the walk and the
+# push dereference EDI as a node pointer. The observed head was -1 (the slot's +0x1C was 0), in
+# slot 0 of KILLED_DEFENDER (pseudo-army -7, 0x005AB920), which combat setup (0x0045D2E0) clears at
+# the start of every battle via 0x00411760.
+#
+# This set does NOT find where the -1 comes from. It makes the release treat a head of -1 as an
+# empty list, so the -1 is discarded instead of dereferenced. Because the guard is in the releasing
+# function itself, it covers every caller (0x00411760 for KILLED_ATTACKER, KILLED_DEFENDER and any
+# other army, and the slot destructor 0x00526E90).
+#
+# In place, no code cave: the 24 bytes from 0x00526EAE are re-ordered so the same stores happen
+# and a 6-byte `cmp edi,-1 / jne +1 / inc edi` fits before the original `test edi,edi`.
+# The next six bytes (`jne 0x526ecc` 75 04, `test esi,esi` 85 f6, `je 0x526f1e` 74 52) are
+# unchanged and still land on their original targets. EAX is dead here (next written by the call
+# at 0x00526ED3 or read only after 0x00526F2D), so zeroing it to store the two zeros is safe.
+#
+#   before                                   after
+#   526eae 85 ff          test edi,edi       526eae 89 6c 24 10   mov [esp+0x10],ebp
+#   526eb0 89 6c 24 10    mov [esp+0x10],ebp 526eb2 89 74 24 0c   mov [esp+0xc],esi
+#   526eb4 89 74 24 0c    mov [esp+0xc],esi  526eb6 31 c0         xor eax,eax
+#   526eb8 c7 45 18 0..0  mov [ebp+0x18],0   526eb8 89 45 18      mov [ebp+0x18],eax
+#   526ebf c7 45 1c 0..0  mov [ebp+0x1c],0   526ebb 89 45 1c      mov [ebp+0x1c],eax
+#                                            526ebe 83 ff ff      cmp edi,-1
+#                                            526ec1 75 01         jne 0x526ec4
+#                                            526ec3 47            inc edi        ; -1 -> 0
+#                                            526ec4 85 ff         test edi,edi
+#   526ec6 75 04 85 f6 74 52  (unchanged)
+#
+# The page 0x526000 is not touched by the HD overlay 0.5.0 exe patch (its 85 differing bytes are in
+# 0x46A000, 0x475000 and 0x504000-0x51A000), so this composes with it.
+
+[target]
+sha256 = "a505f399d5be73fe0a2215633f663717f28daeb3075bbcc05b47d40653669052"
+
+[[patch]]
+va = 0x526eae
+old = "85 ff 89 6c 24 10 89 74 24 0c c7 45 18 00 00 00 00 c7 45 1c 00 00 00 00"
+new = "89 6c 24 10 89 74 24 0c 31 c0 89 45 18 89 45 1c 83 ff ff 75 01 47 85 ff"
+what = "unit-slot list release: treat a +0x18 head of -1 as empty (was dereferenced, faulting at 0x526ef3)"

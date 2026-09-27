@@ -1,0 +1,22 @@
+# The marauder probe: can a human be bound to the wandering-monster player?
+#
+# One member, two edits, both made by tools/marauder_probe.py and checked by
+# scripts/build-marauder-probe.sh:
+#
+#   1. `/cheat_keys false def` -> `/cheat_keys true def`, exactly as mods/cheat-keys-true, so `*`
+#      (move points for the selected army) is available during the run.
+#   2. Four Shift+letter hotkeys (J readout, N spawn, U takeover, H hand back) inserted as one
+#      block immediately before the Ctrl+V binding, the first binding after the cheat tier closes.
+#
+# The keys are refused by the build if the shipped member binds any of them. The run sheet, the
+# predictions and the key list are in docs/marauder-probe.md. Read it before installing: this
+# build also unlocks the cheat tier, which includes `Y` (destroyterrainsprite, destructive).
+id = "marauder-probe"
+name = "Marauder probe: bind the human to the wandering-monster player"
+version = "0.1.0"
+description = "cheat_keys true plus four probe hotkeys (J/N/U/H) in gs\\hotkey.gs; nothing else differs."
+
+base_profile = "vanilla"
+
+new_members = []
+allow_new_members = false
