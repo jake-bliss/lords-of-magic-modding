@@ -1874,6 +1874,20 @@ class Report(unittest.TestCase):
             self.assertNotIn(leak, text, f"{leak} leaked into the game folder listing")
         self.assertIn("+ 2 other files, 1 other folder (names not shown)", text)
 
+    def test_a_loose_prefix_or_suffix_match_is_not_enough_to_be_known(self) -> None:
+        """A prefix/suffix allowlist ("lomhd*", "ddraw.*", "*.mpq") is too broad: each of these four
+        starts or ends like a known name without being one, and none may be named in the listing."""
+        (self.game / "lomhd_private Alice.txt").write_text("not a file this mod writes")
+        (self.game / "lomhdAlice.txt").write_text("not a file this mod writes either")
+        (self.game / "ddraw.private Alice").write_text("not ddraw.dll or ddraw.ini")
+        (self.game / "my Alice.mpq").write_bytes(b"not one of the game's own archives")
+        path = self.make_report()
+        text = self.text_in(path)
+        for leak in ("lomhd_private Alice.txt", "lomhdAlice.txt", "ddraw.private Alice",
+                    "my Alice.mpq"):
+            self.assertNotIn(leak, text, f"{leak} leaked into the game folder listing")
+        self.assertIn("+ 4 other files (names not shown)", text)
+
     def test_the_games_own_files_are_still_named_in_the_listing(self) -> None:
         path = self.make_report()
         text = self.text_in(path)
@@ -2370,20 +2384,27 @@ class Report(unittest.TestCase):
 
     def test_finalize_report_removes_its_own_partial_file_when_the_copy_fails(self) -> None:
         """If this filesystem cannot hard-link (forced here) and the exclusive-create copy fallback
-        then fails partway through, the candidate name this run just claimed must not be left behind
-        holding a partial report -- and a pre-existing report at a different name must be untouched."""
+        then fails partway through -- after some bytes have already landed on disk, not before any
+        write at all -- the candidate name this run just claimed must not be left behind holding a
+        partial report, and a pre-existing report at a different name must be untouched."""
         self.freeze_now(2026, 1, 1, 0, 0, 0)
         (self.release_dir / "lomhd-report-20251231-235959.zip").write_bytes(b"an older, unrelated report")
         built = self.release_dir / "scratch.part"
         built.write_bytes(b"a freshly built report")
         self.addCleanup(setattr, setup.os, "link", setup.os.link)
         setup.os.link = mock.Mock(side_effect=OSError("cross-device link"))
+
+        def partial_write_then_fail(src, dst):
+            dst.write(b"x" * 128)     # some of the "report" really did reach disk before the failure
+            raise OSError("disk full")
+
         self.addCleanup(setattr, setup.shutil, "copyfileobj", setup.shutil.copyfileobj)
-        setup.shutil.copyfileobj = mock.Mock(side_effect=RuntimeError("disk full"))
-        with self.assertRaises(RuntimeError):
+        setup.shutil.copyfileobj = partial_write_then_fail
+        with self.assertRaises(OSError):
             setup.finalize_report(built)
         self.assertEqual(list(self.release_dir.glob("lomhd-report-20260101-000000*.zip")), [],
-                         "the candidate this run created must be removed after a failed copy")
+                         "the candidate this run created must be removed after a failed copy, "
+                         "partial bytes and all")
         self.assertEqual((self.release_dir / "lomhd-report-20251231-235959.zip").read_bytes(),
                          b"an older, unrelated report", "an unrelated earlier report must be untouched")
 
