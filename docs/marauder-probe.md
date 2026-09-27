@@ -1,5 +1,34 @@
 # Marauder probe run sheet
 
+> **Status, 2026-09-27: PAUSED** by Jake while playtesting the HD mod takes priority. Nothing is
+> installed. The Development profile was restored to its pre-probe state (GS5R3 base archives,
+> saves byte-identical to the pre-sitting backup).
+>
+> **What is known.** A human *can* play as the Marauders (player 15, faith CHAOS). It needs a
+> save edit that binds a user record to slot 15 (`tools/marauder_save_bind.py`), then
+> `15 setuserforplayer` (Shift+U in the probe build). With that, every marauder army can be
+> selected, and battles can be commanded. Script alone cannot bind the human: `setuserforplayer`
+> needs an existing user record for the player. **The one blocker found:** a deterministic crash at
+> `0x00526EF3` when the *next* battle is set up. A unit-slot list head in the killed-defender
+> snapshot holds -1 (details under "Crash trace" below).
+>
+> **To resume, cheapest first:**
+> 1. Review the drafted guard, `tools/exe_patches/marauder-unit-list-guard.toml` (Claude + Codex).
+>    It is not wired into any installer.
+> 2. Run a fix-test sitting: install the probe build plus the guard, load `mprobe15` (kept in
+>    `~/personal-projects/lom-artifacts-keep/save-backups/marauder-probe-evidence-20260926T173642Z`),
+>    press U. Predicted: no fault at `0x526EF3`. A fault anywhere else names the next site. Then
+>    Q5 (end a turn with no lord) and Q4 (save and reload) as written below.
+> 3. If the guard is not enough: auto-resolve marauder battles (`setautocalcshouldbeusedproc`) to
+>    learn whether the -1 comes only from tactical combat. Otherwise find the writer of the -1 in
+>    a probe sitting.
+> 4. Only then design the real mod: a Marauders start instead of the save edit, loss conditions,
+>    and an economy with no capital. See "Design constraints" below; the GS5R3 FAQ says no capital
+>    means an 18-unit cap and no followers.
+>
+> Evidence (crash dumps, disassembly notes, saves): `~/personal-projects/lom-artifacts-keep/`
+> `marauder-probe-run-20260926/` and `save-backups/marauder-probe-evidence-*`.
+
 **Run attended 2026-09-26. Rung 2 bound the human to the Marauders, and every battle ended in a
 crash.** The run sheet below the outcome was written before either rung was installed, and every
 prediction in it was stated ahead of the observation, in the style of
