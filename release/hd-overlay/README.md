@@ -230,11 +230,15 @@ five each of any crash/hang `.txt` files a separate crash reporter left in the g
 generated `report.txt` (your OS and whether it detects Wine, Python and ImageMagick versions, the GPU
 if it can be read cheaply, what this mod recognises `lomse.exe` and `ddraw.dll` as, the install
 record, the summary from the last setup run that finished, and the names and sizes -- never the
-contents -- of everything in the game folder). A symlink, or anything that resolves outside the game
-folder, is refused wherever a file is chosen for the report, rather than followed. A crash/hang file
-keeps only its timestamp inside the zip (never its own filename, which could itself carry an account
-or character name), and a savegame is renamed to a plain `savegame/save.lom` (or `savegame/save`);
-`report.txt` says only that a save was included, never its name.
+contents -- of the files and folders this mod or the game itself is known to write: `lomse.exe*`,
+`ddraw.*`, every `.mpq`, every `lomhd_*` file, and the small set of loose files and folders every
+install ships with. Anything else in the game folder is only counted, e.g. "+ 3 other files, 2 other
+folders (names not shown)" -- a name outside that list could be the player's own). A symlink, or
+anything that resolves outside the game folder, is refused wherever a file is chosen for the report,
+rather than followed. A crash/hang file keeps only its timestamp inside the zip (never its own
+filename, which could itself carry an account or character name), and a savegame is renamed to a
+plain `savegame/save.lom` (or `savegame/save`); `report.txt` says only that a save was included,
+never its name.
 
 **Scrubbing.** Every text file above -- including a crash/hang `.txt`, which a separate crash
 reporter may write with a full file path in it -- has your home folder (replaced with `~`), any

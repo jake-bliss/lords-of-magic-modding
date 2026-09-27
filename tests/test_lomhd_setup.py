@@ -1860,6 +1860,36 @@ class Report(unittest.TestCase):
         self.assertEqual(self.names_in(path), {"release.json", "report.txt"})
         self.assertIn("(none, or damaged)", self.text_in(path))    # no install record to summarise
 
+    # --- the game-folder listing --------------------------------------------------------------------
+
+    def test_unrecognised_names_in_the_game_folder_are_counted_not_shown(self) -> None:
+        """A folder or file the mod does not know is a player's own -- it could be named after them
+        (a hand-made backup folder, say) -- so the listing must count it rather than print its name."""
+        (self.game / "Alice Smith saves").mkdir()
+        (self.game / "screenshot 2026-09-27.png").write_bytes(b"not a real png")
+        (self.game / "notes from Alice.txt").write_text("reminder to self")
+        path = self.make_report()
+        text = self.text_in(path)
+        for leak in ("Alice Smith saves", "screenshot 2026-09-27.png", "notes from Alice"):
+            self.assertNotIn(leak, text, f"{leak} leaked into the game folder listing")
+        self.assertIn("+ 2 other files, 1 other folder (names not shown)", text)
+
+    def test_the_games_own_files_are_still_named_in_the_listing(self) -> None:
+        path = self.make_report()
+        text = self.text_in(path)
+        for name in ("lomse.exe", "pic.mpq", "imp.mpq", "gs.mpq", "ddraw.dll", "ddraw.ini",
+                    setup.RECORD_NAME, "lomhd.log"):
+            self.assertIn(f"  {name}\t", text, f"{name} should still be named -- it is a known file")
+
+    def test_a_known_folder_is_named_but_never_descended_into(self) -> None:
+        saves = self.game / "savegame"
+        saves.mkdir()
+        (saves / "Alice Smith").write_bytes(b"a save that could be named after the player")
+        path = self.make_report()
+        text = self.text_in(path)
+        self.assertIn("  savegame\\\t<folder>", text)
+        self.assertNotIn("Alice Smith", text)
+
     # --- saves ------------------------------------------------------------------------------------
 
     def test_saves_are_excluded_by_default_and_opt_in_with_with_save(self) -> None:
@@ -2117,6 +2147,35 @@ class Report(unittest.TestCase):
                 self.assertNotIn("Alice", scrubbed, f"{label}: {scrubbed!r}")
                 self.assertIn("<user>", scrubbed, f"{label}: {scrubbed!r}")
 
+    def test_scrub_catches_a_multiword_unknown_account_whole_when_a_slash_follows(self) -> None:
+        """A folder name can hold a space ("Alice Smith"). When more path follows, the whole segment
+        -- spaces included -- must go, not just its first word: a previous version of this pattern
+        stopped at the first space and left "C:\\Users\\<user> Smith\\Games" -- "Smith" leaking right
+        next to the placeholder. "Alice Smith" is not set anywhere in this process's own environment,
+        so only the generic path pattern can be what catches it."""
+        contexts = {
+            "backslash, drive": "seen at C:\\Users\\Alice Smith\\Games, reproduces every time",
+            "forward slash, drive": "seen at C:/Users/Alice Smith/Games, reproduces every time",
+            "UNC": "exe: \\\\server\\Users\\Alice Smith\\Documents\\lomse.exe",
+            "Documents and Settings": "old profile: C:\\Documents and Settings\\Alice Smith\\lom.cfg",
+            "posix": "home: /Users/Alice Smith/Games/LOM/lomhd.log",
+        }
+        for label, text in contexts.items():
+            with self.subTest(label):
+                scrubbed = setup.scrub(text)
+                self.assertNotIn("Alice", scrubbed, f"{label}: {scrubbed!r}")
+                self.assertNotIn("Smith", scrubbed, f"{label}: {scrubbed!r}")
+                self.assertIn("<user>", scrubbed, f"{label}: {scrubbed!r}")
+
+    def test_scrub_catches_a_multiword_unknown_account_with_no_slash_following(self) -> None:
+        """The other half of the same fix: with nothing path-like after the name, it must still end at
+        the first space rather than swallowing the rest of the sentence."""
+        scrubbed = setup.scrub("seen at C:\\Users\\Alice Smith, then it hung")
+        self.assertNotIn("Alice", scrubbed)
+        self.assertIn("<user> Smith", scrubbed,
+                      "with nothing path-like following, only the first word is the segment")
+        self.assertIn(", then it hung", scrubbed, "the rest of the sentence must survive untouched")
+
     def test_scrub_never_touches_a_64_hex_run_even_when_it_contains_the_username(self) -> None:
         fake_sha256 = "1c2ada9f" + "0" * 56
         self.assertEqual(len(fake_sha256), 64)
@@ -2135,6 +2194,29 @@ class Report(unittest.TestCase):
                 # word-boundary lookahead requires a non-alnum character right after the match.
                 longer_word = f"see {name}se.exe for details"
                 self.assertEqual(setup.scrub(longer_word), longer_word)
+
+    def test_a_short_account_name_is_not_scrubbed_standalone_but_still_is_in_a_path(self) -> None:
+        """Deliberate, not a gap: under 3 characters is too likely to be noise as a bare word (see
+        scrub()'s own docstring), so it survives standalone -- but the path patterns key off the
+        path's own shape, not the account's length, so the same name is still caught there."""
+        with mock.patch.dict(os.environ, {"USER": "Al", "USERNAME": "Al"}):
+            standalone = setup.scrub("installed by AL on this machine")
+            self.assertIn("AL", standalone, "a name under 3 characters is left alone standalone")
+            in_a_path = setup.scrub("seen at C:\\Users\\Al\\Documents")
+            self.assertNotIn("Al", in_a_path)
+            self.assertIn("<user>", in_a_path)
+
+    def test_report_never_prints_the_account_name_as_a_field(self) -> None:
+        """report.txt has no field that echoes the account name on its own (no "account:" or
+        "user:" line) -- the only way it could appear at all is inside scrub()bed prose, which the
+        rest of this file's tests already hold to account. A short name is the case that matters here:
+        it survives standalone (previous test), so the one thing left to guarantee is that nothing in
+        report.txt ever puts it on display as a field in its own right."""
+        with mock.patch.dict(os.environ, {"USER": "Al", "USERNAME": "Al"}):
+            path = self.make_report()
+        for line in self.text_in(path).splitlines():
+            self.assertNotRegex(line.lower(), r"^\s*(account|user)\s*:",
+                                f"report.txt must not have an account/user field: {line!r}")
 
     def test_non_ascii_account_name_is_absent_from_every_member(self) -> None:
         """Jos\u00e9 \u00c1lvaro as the account itself (getpass, USER/USERNAME, and the home path), not just
@@ -2285,6 +2367,25 @@ class Report(unittest.TestCase):
         out = setup.finalize_report(built)
         self.assertEqual(out.name, "lomhd-report-20260101-000000-2.zip")
         self.assertEqual(out.read_bytes(), b"a freshly built report")
+
+    def test_finalize_report_removes_its_own_partial_file_when_the_copy_fails(self) -> None:
+        """If this filesystem cannot hard-link (forced here) and the exclusive-create copy fallback
+        then fails partway through, the candidate name this run just claimed must not be left behind
+        holding a partial report -- and a pre-existing report at a different name must be untouched."""
+        self.freeze_now(2026, 1, 1, 0, 0, 0)
+        (self.release_dir / "lomhd-report-20251231-235959.zip").write_bytes(b"an older, unrelated report")
+        built = self.release_dir / "scratch.part"
+        built.write_bytes(b"a freshly built report")
+        self.addCleanup(setattr, setup.os, "link", setup.os.link)
+        setup.os.link = mock.Mock(side_effect=OSError("cross-device link"))
+        self.addCleanup(setattr, setup.shutil, "copyfileobj", setup.shutil.copyfileobj)
+        setup.shutil.copyfileobj = mock.Mock(side_effect=RuntimeError("disk full"))
+        with self.assertRaises(RuntimeError):
+            setup.finalize_report(built)
+        self.assertEqual(list(self.release_dir.glob("lomhd-report-20260101-000000*.zip")), [],
+                         "the candidate this run created must be removed after a failed copy")
+        self.assertEqual((self.release_dir / "lomhd-report-20251231-235959.zip").read_bytes(),
+                         b"an older, unrelated report", "an unrelated earlier report must be untouched")
 
     def test_two_runs_racing_for_the_same_name_both_keep_their_report(self) -> None:
         """Simulates another process having just won the race for this run's timestamp a moment
