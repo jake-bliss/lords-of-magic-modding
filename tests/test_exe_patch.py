@@ -246,6 +246,16 @@ class RealBinary(unittest.TestCase):
         self.assertEqual({p.stem for p in self.SETS.glob("*.toml")}, used | self.DRAFTS)
         self.assertFalse(used & self.DRAFTS)
 
+    def test_no_draft_reaches_a_player(self) -> None:
+        # BUILDS above is this test's own list; what players get is decided by the release script
+        # and the installer, so check those files directly.
+        for path in (ROOT / "scripts/build-hd-overlay-release.sh",
+                     ROOT / "release/hd-overlay/lomhd_setup.py"):
+            text = path.read_text()
+            for draft in sorted(self.DRAFTS):
+                with self.subTest(file=path.name, draft=draft):
+                    self.assertNotIn(draft, text)
+
     def test_every_draft_composes_with_every_build(self) -> None:
         for draft in sorted(self.DRAFTS):
             for name, sets in self.BUILDS.items():
