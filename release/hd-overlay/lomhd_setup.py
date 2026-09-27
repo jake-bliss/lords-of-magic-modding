@@ -11,6 +11,16 @@
     python lomhd_setup.py --terrain             also install HD terrain (patches lomse.exe)
     python lomhd_setup.py --terrain --force-terrain-folder
                                                 replace a lomhd_terrain folder this mod did not make
+    python lomhd_setup.py --report              after a problem: one zip to attach to a GitHub issue
+    python lomhd_setup.py --report --with-save latest
+                                                also include your newest savegame
+
+--report gathers lomhd.log, ddraw.ini, the install record, this release's own release.json, any
+crash/hang files a separate crash reporter wrote, a generated report.txt (OS, Python and ImageMagick
+versions, the GPU if it can be read cheaply, what this mod recognises lomse.exe/ddraw.dll as, and the
+names and sizes of everything in the game folder), and, only with --with-save, one savegame. Nothing
+is uploaded; the zip is written next to this script and named lomhd-report-<timestamp>.zip. Your
+username and home folder are stripped from its text before it is written.
 
 Choosing your own: --review renders every upscale option for every picture from your own game,
 then opens a review page on this computer (http://127.0.0.1:8765) with the shipped picks already
@@ -51,6 +61,8 @@ lives in `lomhd_work` next to this script.
 from __future__ import annotations
 
 import argparse
+import datetime
+import getpass
 import hashlib
 import itertools
 import json
@@ -123,6 +135,19 @@ GROUPS = {                       # group -> (folder in pic.mpq, the one size its
 }
 PLURAL = {"sky": "skies", "library": "library pages"}
 MIN_COLOURS = 16                 # a picture plainer than this is found anywhere, and costs every frame
+
+# --report: one zip a player can attach to a GitHub issue. Opt-in by nature (nothing leaves the
+# machine on its own); the fixed set of files it may hold is spelled out at REPORT_FILES / CRASH_GLOBS
+# rather than a directory walk, so it can never sweep up a save, a mod, or game art by accident.
+SUMMARY_NAME = "lomhd_last_summary.txt"     # this run's closing report, read back by the next --report
+ISSUES_URL = "https://github.com/jake-bliss/lords-of-magic-modding/issues"
+REPORT_FILES = ("lomhd.log", "ddraw.ini", RECORD_NAME)          # from the game folder, if present
+# A crash reporter (built separately, in the DLL) is expected to write these; it may not exist yet on
+# a given machine, which is not a reason for --report to fail.
+CRASH_GLOBS = ("lomhd_crash_*.txt", "lomhd_crash_*.dmp", "lomhd_hang_*.txt")
+REPORT_MAX_PER_GLOB = 5
+DUMP_SIZE_CAP = 20 * 1024 * 1024            # a minidump can run far larger than a bug report should
+HASH_FILES = ("lomse.exe", "ddraw.dll", "gs.mpq", "pic.mpq", "imp.mpq")
 
 ESRGAN = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/"
 MODELS = ("https://raw.githubusercontent.com/upscayl/upscayl/"
@@ -814,7 +839,7 @@ def uninstall(game: pathlib.Path, force_terrain_folder: bool = False) -> None:
             ini_saved = game / f"ddraw.ini.lomhd-saved{n}"
         os.replace(game / "ddraw.ini", ini_saved)
     for name in (PACK_NAME, PACK_NAME + ".lomhd-part", "ddraw.dll.lomhd-part",
-                 RECORD_NAME + ".lomhd-part", "lomhd.log", RECORD_NAME):
+                 RECORD_NAME + ".lomhd-part", "lomhd.log", RECORD_NAME, SUMMARY_NAME):
         if (game / name).exists():
             (game / name).unlink()
     say(f"Uninstalled. ddraw.dll is {'your original again' if had else 'removed'}.")
@@ -1376,6 +1401,244 @@ def uninstall_terrain(game: pathlib.Path, record: dict, force_folder: bool = Fal
     return f"HD terrain removed: {exe_note}, and {folder_note}."
 
 
+# --- --report --------------------------------------------------------------------------------------
+
+def scrub(text: str) -> str:
+    """`text` with this machine's home folder and account name replaced, so a report a player
+    attaches to a public GitHub issue never carries who ran it. Home first (it usually contains the
+    username too); then any environment variable naming the account, on whatever text is left. A
+    name under 3 characters is left alone -- short enough to blank real words in the report."""
+    try:
+        home = str(pathlib.Path.home())
+    except RuntimeError:
+        home = ""
+    if home:
+        text = text.replace(home, "~")
+    names = {os.environ.get(var) for var in ("USER", "USERNAME", "LOGNAME")}
+    try:
+        names.add(getpass.getuser())
+    except OSError:
+        pass
+    for name in names:
+        if name and len(name) >= 3:
+            text = re.sub(re.escape(name), "<user>", text, flags=re.IGNORECASE)
+    return text
+
+
+def detect_wine() -> "str | None":
+    """Wine's own version string, if this Python is running under it; None on a real Windows (or
+    anywhere else). Two independent tells, since either alone has been seen missing on some builds:
+    ntdll's own export, and the registry key Wine creates for itself."""
+    if platform.system() != "Windows":
+        return None
+    try:
+        import ctypes
+        get_version = ctypes.windll.ntdll.wine_get_version
+        get_version.restype = ctypes.c_char_p
+        version = get_version()
+        if version:
+            return version.decode(errors="replace")
+    except (AttributeError, OSError):
+        pass
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Wine"):
+            return "detected (HKCU\\Software\\Wine is present)"
+    except OSError:
+        pass
+    return None
+
+
+def gpu_name() -> "str | None":
+    """The GPU's name, if cheaply available. None, never an exception: this is the one part of the
+    report that shells out to the OS's own tools, and a report must never fail over it."""
+    try:
+        if platform.system() == "Windows":
+            out = subprocess.run(["wmic", "path", "win32_VideoController", "get", "name"],
+                                 capture_output=True, text=True, timeout=5)
+            lines = [ln.strip() for ln in out.stdout.splitlines()
+                    if ln.strip() and ln.strip().lower() != "name"]
+            if lines:
+                return lines[0]
+            out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                  "(Get-CimInstance Win32_VideoController).Name"],
+                                 capture_output=True, text=True, timeout=5)
+            lines = [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
+            return lines[0] if lines else None
+        if platform.system() == "Darwin":
+            out = subprocess.run(["system_profiler", "SPDisplaysDataType"],
+                                 capture_output=True, text=True, timeout=5)
+            for line in out.stdout.splitlines():
+                if "Chipset Model" in line:
+                    return line.split(":", 1)[1].strip()
+            return None
+    except Exception:
+        return None
+    return None
+
+
+def release_info() -> dict:
+    """release.json's own fields, or {} -- unlike release(), never a reason to stop: a report is
+    exactly the thing a player needs when the release folder is not in the state setup expects."""
+    try:
+        return json.loads((HERE / "release.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def recognise_exe(sha: "str | None", record: dict) -> str:
+    """What setup would call this lomse.exe, from the hashes it already knows -- the same recognition
+    exe_plan and uninstall_terrain use, read back rather than re-derived."""
+    if sha is None:
+        return "missing"
+    if sha == PRISTINE_EXE_SHA256:
+        return "vanilla GS5R3 (unpatched)"
+    if sha == FIXED_EXE_SHA256:
+        return "patched by this mod (Shade crash fix)"
+    if sha == PATCHED_EXE_SHA256:
+        return "patched by this mod (Shade crash fix + HD terrain)"
+    if sha in EARLIER_PATCHED_EXE_SHA256S:
+        return "patched by an earlier release of this mod (HD terrain)"
+    if sha in our_exe_hashes(record):
+        return "patched by this mod (an earlier install)"
+    return "unknown"
+
+
+def recognise_dll(sha: "str | None", record: dict, release_record: dict) -> str:
+    """What setup would call this ddraw.dll, from the release it shipped with and the install record."""
+    if sha is None:
+        return "missing"
+    if release_record.get("ddraw_sha256") == sha:
+        return "this release's overlay ddraw.dll"
+    if sha == record.get("ddraw_sha256") or sha in record.get("overlay_sha256s", []):
+        return "an earlier install's overlay ddraw.dll"
+    return "not the overlay's (the player's original, or another mod)"
+
+
+def list_game_folder(game: pathlib.Path) -> "list[tuple[str, str]]":
+    """(name, size) for everything directly in the game folder -- names and sizes only, never
+    contents, and never a walk into a subfolder (lomhd_terrain's art, a save, a mod's own files)."""
+    out = []
+    for p in sorted(game.iterdir()):
+        if p.is_dir():
+            out.append((p.name + "\\", "<folder>"))
+            continue
+        try:
+            out.append((p.name, str(p.stat().st_size)))
+        except OSError:
+            out.append((p.name, "?"))
+    return out
+
+
+def crash_files(game: pathlib.Path) -> "tuple[list[pathlib.Path], list[str]]":
+    """The newest REPORT_MAX_PER_GLOB of each CRASH_GLOBS pattern in the game folder (a separate
+    crash reporter's output, which may not exist yet -- their absence is not a reason to stop), minus
+    any single file over DUMP_SIZE_CAP. Returns (files to include, why each left-out one was)."""
+    included: "list[pathlib.Path]" = []
+    left_out: "list[str]" = []
+    for pattern in CRASH_GLOBS:
+        matches = sorted(game.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in matches[:REPORT_MAX_PER_GLOB]:
+            size = p.stat().st_size
+            if size > DUMP_SIZE_CAP:
+                left_out.append(f"{p.name} ({size} bytes, over the {DUMP_SIZE_CAP // (1 << 20)} MiB cap)")
+                continue
+            included.append(p)
+    return included, left_out
+
+
+def find_save(game: pathlib.Path, name: str) -> pathlib.Path:
+    """The savegame --with-save asked for: the newest one for "latest", else that exact file."""
+    saves = game / "savegame"
+    if name.lower() == "latest":
+        candidates = sorted(saves.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True) if saves.is_dir() else []
+        if not candidates:
+            fail(f"no savegames found in {saves}.")
+        return candidates[0]
+    path = saves / name
+    if not path.is_file():
+        fail(f"{path} does not exist.")
+    return path
+
+
+def build_report_text(game: pathlib.Path, left_out: "list[str]", with_save: "str | None") -> str:
+    """report.txt's own contents: everything --report gathers that is not another file already in
+    the zip. Scrubbed as a whole at the end, so nothing added above here has to remember to."""
+    record = read_record(game)
+    release_record = release_info()
+    lines = [
+        "Lords of Magic HD overlay -- diagnostic report",
+        f"generated: {datetime.datetime.now().isoformat(timespec='seconds')}",
+        f"game folder: {game}",
+        "",
+        f"OS: {platform.platform()}",
+    ]
+    wine = detect_wine()
+    if wine:
+        lines.append(f"Wine: {wine}")
+    lines.append(f"Python: {platform.python_version()}")
+    magick = magick_version()
+    lines.append(f"magick -version: {magick.splitlines()[0] if magick.strip() else '(not found)'}")
+    gpu = gpu_name()
+    lines.append(f"GPU: {gpu if gpu else '(could not be read)'}")
+    lines += ["", "Files this mod recognises:"]
+    for name in HASH_FILES:
+        path = game / name
+        h = file_hash(path)
+        if name == "lomse.exe":
+            what = recognise_exe(h, record)
+        elif name == "ddraw.dll":
+            what = recognise_dll(h, record, release_record)
+        else:
+            what = "unknown (not tracked by this mod)"
+        lines.append(f"  {name}: {h or '(missing)'} -- {what}")
+    lines += ["", "Install record (lomhd_install.json):"]
+    if record:
+        lines.append(f"  release: {record.get('release', '?')}")
+        lines.append(f"  animated sprites installed: {record.get('sprites', False)}")
+        lines.append(f"  HD terrain installed: {'terrain' in record}")
+    else:
+        lines.append("  (none, or damaged)")
+    lines += ["", "Last setup summary:"]
+    summary = game / SUMMARY_NAME
+    lines.append(summary.read_text() if summary.is_file() else "  (none stored)")
+    if left_out:
+        lines += ["", "Left out of this report:"] + [f"  {note}" for note in left_out]
+    if with_save:
+        lines += ["", f"Included savegame: {with_save}"]
+    lines += ["", "Game folder contents (names and sizes only):"]
+    lines += [f"  {name}\t{size}" for name, size in list_game_folder(game)]
+    return scrub("\n".join(lines) + "\n")
+
+
+def run_report(game: pathlib.Path, with_save: "str | None") -> None:
+    """--report: one zip, next to this script (the same place lomhd_work and my-upscale-choices.json
+    already go, and simpler than guessing a Desktop folder that may not exist on every platform this
+    runs on). Nothing here is uploaded; the player attaches the zip to an issue by hand."""
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_path = HERE / f"lomhd-report-{stamp}.zip"
+    included_crashes, left_out = crash_files(game)
+    save_path = find_save(game, with_save) if with_save else None
+    report_text = build_report_text(game, left_out, with_save)
+    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in REPORT_FILES:
+            path = game / name
+            if path.is_file():
+                z.write(path, arcname=name)
+        release_json = HERE / "release.json"
+        if release_json.is_file():
+            z.write(release_json, arcname="release.json")
+        for path in included_crashes:
+            z.write(path, arcname=path.name)
+        if save_path:
+            z.write(save_path, arcname=f"savegame/{save_path.name}")
+        z.writestr("report.txt", report_text)
+    say(f"Report written to {out_path}")
+    for note in left_out:
+        say(f"  left out -- {note}")
+    say(f"Attach {out_path.name} to an issue at {ISSUES_URL}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--game", type=pathlib.Path,
@@ -1396,12 +1659,23 @@ def main() -> int:
     parser.add_argument("--force-terrain-folder", action="store_true",
                         help="replace (or, with --uninstall, remove) a lomhd_terrain folder this mod "
                              "did not make or that was changed since")
+    parser.add_argument("--report", action="store_true",
+                        help="write one zip of diagnostics next to this script, to attach to a "
+                             "GitHub issue; installs nothing, nothing is uploaded")
+    parser.add_argument("--with-save", metavar="NAME",
+                        help="with --report, also include that savegame (savegame\\NAME, or the "
+                             "newest save if NAME is 'latest'); saves are never included otherwise")
     args = parser.parse_args()
 
     if sys.version_info < (3, 9):
         fail("Python 3.9 or newer is needed.")
+    if args.with_save and not args.report:
+        fail("--with-save only makes sense with --report.")
     game = find_game(args.game)
     say(f"Game: {game}")
+    if args.report:
+        run_report(game, args.with_save)
+        return 0
     # First, whatever was asked: an interrupted swap leaves a patched exe without its art, and the
     # long steps below can fail before install_terrain would get to it. (Codex review.)
     recover_terrain_swap(game, "--uninstall" if args.uninstall else "--terrain")
@@ -1456,34 +1730,43 @@ def main() -> int:
                                                                 originals, upscaled, exe, models, pictures)
     install(game, pack, record, animated)
     exe_note = fix_exe(game, "--terrain" if args.terrain else "")
-    say(f"\nDone: {count} HD images installed in {game}.")
-    say(exe_note)
+    # Kept alongside the printed run (as SUMMARY_NAME, in the game folder): the closing report of the
+    # last install that finished, for --report to read back on a later, separate run.
+    summary_lines: "list[str]" = []
+
+    def told(text: str) -> None:
+        summary_lines.append(text)
+        say(text)
+
+    told(f"\nDone: {count} HD images installed in {game}.")
+    told(exe_note)
     for line in skipped:
-        say(f"  left out -- {line}")
-    say(f"Sprites: {packed['packed']} packed" + (f", and {moving['sprites']} animated sprites "
-                                                  f"({moving['packed']} frames)" if animated else "")
+        told(f"  left out -- {line}")
+    told(f"Sprites: {packed['packed']} packed" + (f", and {moving['sprites']} animated sprites "
+                                                   f"({moving['packed']} frames)" if animated else "")
         + (f"; {len(sprite_skipped)} left out ({summarise_skips(sprite_skipped)})" if sprite_skipped else ""))
-    say(damage_summary([packed, moving, pictures], sprite_skipped + skipped))
+    told(damage_summary([packed, moving, pictures], sprite_skipped + skipped))
     if animated:
         c = sprites.counts
-        say(f"  of {c['frames']} animated frames, {c['repeats']} repeat another, {c['ineligible']} are too "
-            f"small or too large for the overlay, {c['no_probe']} too plain for it to find")
+        told(f"  of {c['frames']} animated frames, {c['repeats']} repeat another, {c['ineligible']} are too "
+             f"small or too large for the overlay, {c['no_probe']} too plain for it to find")
     if sprite_skipped:
         report = WORK / "sprites-left-out.txt"
         report.write_text("".join(f"{line}\n" for line in sprite_skipped))
-        say(f"  (every sprite left out, and why: {report})")
+        told(f"  (every sprite left out, and why: {report})")
     if not animated:
-        say("Animated sprites (units, spell effects) were left out, as --no-sprites asked."
-            if args.no_sprites else
-            "Animated sprites (units, spell effects) were not built: add --sprites for them.")
+        told("Animated sprites (units, spell effects) were left out, as --no-sprites asked."
+             if args.no_sprites else
+             "Animated sprites (units, spell effects) were not built: add --sprites for them.")
     if args.terrain:
-        say(f"\n6/{steps}  Building HD terrain from your pic.mpq (the long step again)")
+        told(f"\n6/{steps}  Building HD terrain from your pic.mpq (the long step again)")
         built = build_terrain(game, exe, models)
-        say(f"7/{steps}  Installing HD terrain and patching lomse.exe")
+        told(f"7/{steps}  Installing HD terrain and patching lomse.exe")
         install_terrain(game, built, args.force_terrain_folder)
-        say(f"Done: HD terrain installed ({TERRAIN_DIR}\\til, and lomse.exe patched; the original "
-            f"is {EXE_BACKUP_NAME}). Recommended window: 1280x960 (width/height in ddraw.ini).")
-    say("To undo: python lomhd_setup.py --uninstall" + (f' --game "{game}"' if args.game else ""))
+        told(f"Done: HD terrain installed ({TERRAIN_DIR}\\til, and lomse.exe patched; the original "
+             f"is {EXE_BACKUP_NAME}). Recommended window: 1280x960 (width/height in ddraw.ini).")
+    told("To undo: python lomhd_setup.py --uninstall" + (f' --game "{game}"' if args.game else ""))
+    write_atomically(game / SUMMARY_NAME, ("\n".join(summary_lines) + "\n").encode())
     return 0
 
 

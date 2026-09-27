@@ -14,9 +14,11 @@ import shutil
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 import types
+import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -1772,6 +1774,145 @@ class ShippedPatchSets(unittest.TestCase):
             self.assertFalse(setup.terrain_edits_present(fixed))
             self.assertTrue(setup.terrain_edits_present(patched))
             self.assertEqual(setup.unfixed(fixed), image)
+
+
+class Report(unittest.TestCase):
+    """--report: one zip of diagnostics, built without installing anything."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = pathlib.Path(tmp.name)
+        self.game, self.release_dir = root / "game", root / "release"
+        self.game.mkdir(); self.release_dir.mkdir()
+        (self.game / "lomse.exe").write_bytes(b"pretend exe")
+        (self.game / "pic.mpq").write_bytes(b"pretend pic")
+        (self.game / "imp.mpq").write_bytes(b"pretend imp")
+        (self.game / "gs.mpq").write_bytes(b"pretend gs")
+        (self.game / "ddraw.dll").write_bytes(OURS)
+        (self.game / "ddraw.ini").write_text("[ddraw]\nrenderer=opengl\n")
+        (self.game / "lomhd.log").write_text("pack loaded\n")
+        (self.release_dir / "ddraw.dll").write_bytes(OURS)
+        (self.release_dir / "release.json").write_text(json.dumps(
+            {"version": "test", "ddraw_sha256": hashlib.sha256(OURS).hexdigest()}))
+        record = {"release": "test", "ddraw_sha256": hashlib.sha256(OURS).hexdigest(),
+                 "had_ddraw": True, "backup_sha256": "00" * 32,
+                 "overlay_sha256s": [hashlib.sha256(OURS).hexdigest()], "sprites": True}
+        (self.game / setup.RECORD_NAME).write_text(json.dumps(record))
+        self.addCleanup(setattr, setup, "HERE", setup.HERE)
+        setup.HERE = self.release_dir
+        # The GPU/Wine probes shell out to the real OS; stubbed here so the suite stays fast and
+        # deterministic, with the one exception below that restores the real gpu_name to prove a
+        # failing probe is tolerated rather than fatal.
+        self._real_gpu_name = setup.gpu_name
+        self.addCleanup(setattr, setup, "gpu_name", setup.gpu_name)
+        setup.gpu_name = lambda: None
+        self.addCleanup(setattr, setup, "detect_wine", setup.detect_wine)
+        setup.detect_wine = lambda: None
+
+    def make_report(self, with_save=None) -> pathlib.Path:
+        setup.run_report(self.game, with_save)
+        zips = list(self.release_dir.glob("lomhd-report-*.zip"))
+        self.assertEqual(len(zips), 1, "exactly one report zip, next to setup")
+        return zips[0]
+
+    def names_in(self, path: pathlib.Path) -> set:
+        with zipfile.ZipFile(path) as z:
+            return set(z.namelist())
+
+    def text_in(self, path: pathlib.Path) -> str:
+        with zipfile.ZipFile(path) as z:
+            return z.read("report.txt").decode()
+
+    def test_report_contains_the_expected_files(self) -> None:
+        path = self.make_report()
+        self.assertEqual(self.names_in(path),
+                         {"lomhd.log", "ddraw.ini", setup.RECORD_NAME, "release.json", "report.txt"})
+        text = self.text_in(path)
+        self.assertIn("Python:", text)
+        self.assertIn("magick -version:", text)
+        self.assertIn("lomse.exe:", text)
+        self.assertIn("unknown", text)          # our fake lomse.exe matches no known hash
+        self.assertIn("this release's overlay ddraw.dll", text)   # ddraw.dll DOES match
+        self.assertIn("release: test", text)
+        self.assertIn("(none stored)", text)    # no lomhd_last_summary.txt was ever written
+
+    def test_missing_optional_files_are_tolerated(self) -> None:
+        for name in ("ddraw.ini", "lomhd.log", setup.RECORD_NAME):
+            (self.game / name).unlink()
+        path = self.make_report()
+        self.assertEqual(self.names_in(path), {"release.json", "report.txt"})
+        self.assertIn("(none, or damaged)", self.text_in(path))    # no install record to summarise
+
+    def test_saves_are_excluded_by_default_and_opt_in_with_with_save(self) -> None:
+        saves = self.game / "savegame"
+        saves.mkdir()
+        (saves / "slot1.sav").write_bytes(b"save data")
+        self.assertNotIn("savegame/slot1.sav", self.names_in(self.make_report()))
+        for stale in self.release_dir.glob("lomhd-report-*.zip"):
+            stale.unlink()
+        path = self.make_report(with_save="latest")
+        self.assertIn("savegame/slot1.sav", self.names_in(path))
+
+    def test_a_named_save_that_does_not_exist_stops_before_writing_a_zip(self) -> None:
+        with self.assertRaises(SystemExit):
+            setup.run_report(self.game, "no-such-save.sav")
+        self.assertEqual(list(self.release_dir.glob("lomhd-report-*.zip")), [])
+
+    def test_crash_and_hang_files_are_capped_at_the_newest_five(self) -> None:
+        now = time.time()
+        for i in range(7):
+            path = self.game / f"lomhd_crash_2026010{i}-000000.txt"
+            path.write_text("crash")
+            os.utime(path, (now + i, now + i))   # strictly increasing, all well after 1980
+        report = self.make_report()
+        crash_members = {n for n in self.names_in(report) if n.startswith("lomhd_crash_")}
+        self.assertEqual(crash_members,
+                         {f"lomhd_crash_2026010{i}-000000.txt" for i in range(2, 7)},
+                         "only the newest 5 by mtime are kept")
+
+    def test_a_dump_over_the_size_cap_is_left_out_and_reported(self) -> None:
+        small = self.game / "lomhd_crash_20260101-000000.dmp"
+        small.write_bytes(b"x")
+        big = self.game / "lomhd_crash_20260102-000000.dmp"
+        big.write_bytes(b"x")
+        self.addCleanup(setattr, setup, "DUMP_SIZE_CAP", setup.DUMP_SIZE_CAP)
+        setup.DUMP_SIZE_CAP = 0        # both files now exceed the cap
+        path = self.make_report()
+        self.assertEqual({n for n in self.names_in(path) if n.endswith(".dmp")}, set())
+        self.assertIn("Left out of this report:", self.text_in(path))
+
+    def test_gpu_probe_failure_is_tolerated(self) -> None:
+        """The GPU probe shells out to the OS; a machine without that tool must still get a report."""
+        setup.gpu_name = self._real_gpu_name
+        self.addCleanup(setattr, setup.subprocess, "run", setup.subprocess.run)
+
+        def boom(*args, **kwargs):
+            raise FileNotFoundError("no such tool")
+
+        setup.subprocess.run = boom
+        path = self.make_report()          # must not raise
+        self.assertIn("GPU: (could not be read)", self.text_in(path))
+
+    def test_report_scrubs_the_home_folder_and_username(self) -> None:
+        self.addCleanup(setattr, pathlib.Path, "home", pathlib.Path.home)
+        pathlib.Path.home = staticmethod(lambda: pathlib.Path("/Users/theplayer"))
+        with mock.patch.dict(os.environ, {"USER": "theplayer", "USERNAME": "theplayer"}):
+            scrubbed = setup.scrub("game folder: /Users/theplayer/Games/LOM\n"
+                                   "installed by THEPLAYER on machine theplayer-pc")
+        self.assertNotIn("theplayer", scrubbed.lower())
+        self.assertIn("~/Games/LOM", scrubbed)
+        self.assertIn("<user>", scrubbed)
+
+    def test_with_save_without_report_is_refused(self) -> None:
+        """Guards against a player trying --with-save on its own, before anything is written."""
+        args = argparse.Namespace(game=None, uninstall=False, review=False, port=8765, terrain=False,
+                                  sprites=False, no_sprites=False, force_terrain_folder=False,
+                                  report=False, with_save="latest")
+        with mock.patch.object(sys, "argv", ["lomhd_setup.py"]), \
+             mock.patch.object(argparse.ArgumentParser, "parse_args", return_value=args):
+            with self.assertRaises(SystemExit):
+                setup.main()
 
 
 if __name__ == "__main__":

@@ -204,8 +204,33 @@ game folder (the name dates from when it held only portraits).
   include the sprite's name) and run setup again, and please report it with the sprite's name.
 - **Scrambled or striped terrain** means the patched `lomse.exe` is running without its
   `lomhd_terrain` folder: run `python lomhd_setup.py --terrain` again, or `--uninstall`.
-- **Reporting a problem:** open an issue at
-  <https://github.com/jake-bliss/lords-of-magic-modding/issues> with your `lomhd.log`, your
-  Windows or macOS version, and whether you used `--sprites` or `--terrain`.
+- **Reporting a problem:** run
+
+  ```
+  python lomhd_setup.py --report
+  ```
+
+  and attach the zip it writes (`lomhd-report-<timestamp>.zip`, next to this script) to an issue at
+  <https://github.com/jake-bliss/lords-of-magic-modding/issues>. See "Reports" below for what it
+  contains.
+
+## Reports
+
+```
+python lomhd_setup.py --report
+python lomhd_setup.py --report --with-save latest
+python lomhd_setup.py --report --with-save "My Game 3.sav"
+```
+
+One zip, written next to this script, with everything useful for a bug report and nothing else:
+`lomhd.log`, `ddraw.ini`, `lomhd_install.json`, this release's own `release.json`, up to five each of
+any crash/hang files a separate crash reporter left in the game folder, and a generated `report.txt`
+(your OS, Python and ImageMagick versions, the GPU if it can be read cheaply, what this mod
+recognises `lomse.exe` and `ddraw.dll` as, the install record, the summary from the last setup run
+that finished, and the names and sizes -- never the contents -- of everything in the game folder).
+
+Nothing is uploaded on its own; you attach the zip by hand. Savegames are never included unless you
+ask with `--with-save NAME` (or `--with-save latest` for the newest one). Your username and home
+folder are stripped from the report's text before the zip is written.
 
 See `NOTICES.md` for licences.
