@@ -219,18 +219,32 @@ game folder (the name dates from when it held only portraits).
 ```
 python lomhd_setup.py --report
 python lomhd_setup.py --report --with-save latest
-python lomhd_setup.py --report --with-save "My Game 3.sav"
+python lomhd_setup.py --report --with-save "Water I"
+python lomhd_setup.py --report --with-dump
 ```
 
-One zip, written next to this script, with everything useful for a bug report and nothing else:
-`lomhd.log`, `ddraw.ini`, `lomhd_install.json`, this release's own `release.json`, up to five each of
-any crash/hang files a separate crash reporter left in the game folder, and a generated `report.txt`
-(your OS, Python and ImageMagick versions, the GPU if it can be read cheaply, what this mod
-recognises `lomse.exe` and `ddraw.dll` as, the install record, the summary from the last setup run
-that finished, and the names and sizes -- never the contents -- of everything in the game folder).
+One zip, written next to this script as `lomhd-report-<timestamp>.zip` (never overwriting an earlier
+one), with everything useful for a bug report and nothing else: `lomhd.log`, `ddraw.ini`,
+`lomhd_install.json`, this release's own `release.json`, up to five each of any crash/hang `.txt`
+files a separate crash reporter left in the game folder, and a generated `report.txt` (your OS and
+whether it detects Wine, Python and ImageMagick versions, the GPU if it can be read cheaply, what
+this mod recognises `lomse.exe` and `ddraw.dll` as, the install record, the summary from the last
+setup run that finished, and the names and sizes -- never the contents -- of everything in the game
+folder). A symlink, or anything that resolves outside the game folder, is refused wherever a file is
+chosen for the report, rather than followed.
+
+**Scrubbing.** Every text file above -- including a crash/hang `.txt`, which a separate crash
+reporter may write with a full file path in it -- has your home folder (replaced with `~`), any
+`C:\Users\<x>\`, `C:\Documents and Settings\<x>\`, `/Users/<x>/`, `/home/<x>/` or Wine `Z:`
+equivalent of those (wherever it appears, not only for your own account -- a crash from a different
+Windows account, or from Wine, still gets caught), and your account name as a whole word, replaced
+before it goes in the zip. Crash **minidumps** (`lomhd_crash_*.dmp`) hold their paths as UTF-16
+inside a binary format that cannot be scrubbed as text, so they are left out by default (and named
+under "Left out of this report" in `report.txt`); `--with-dump` includes them exactly as written,
+unscrubbed -- check one yourself before attaching it if that matters to you.
 
 Nothing is uploaded on its own; you attach the zip by hand. Savegames are never included unless you
-ask with `--with-save NAME` (or `--with-save latest` for the newest one). Your username and home
-folder are stripped from the report's text before the zip is written.
+ask with `--with-save NAME` (a `.lom` file or a player-named save with no extension, e.g. `Water I`;
+see `docs/loose-files.md`), or `--with-save latest` for the newest one.
 
 See `NOTICES.md` for licences.

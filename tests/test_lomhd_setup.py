@@ -12,6 +12,7 @@ import os
 import pathlib
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import time
@@ -102,6 +103,15 @@ class InstallUninstall(unittest.TestCase):
         self.assertEqual(self.dll(), OURS)
         self.assertTrue((self.game / setup.PACK_NAME).exists())
         self.assertTrue((self.game / setup.RECORD_NAME).exists())
+
+    def test_uninstall_removes_the_last_setup_summary(self) -> None:
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        setup.install(self.game, PACK, self.record)
+        (self.game / setup.SUMMARY_NAME).write_text("a stored summary\n")
+        (self.game / (setup.SUMMARY_NAME + ".lomhd-part")).write_text("stale partial write\n")
+        setup.uninstall(self.game)
+        self.assertFalse((self.game / setup.SUMMARY_NAME).exists())
+        self.assertFalse((self.game / (setup.SUMMARY_NAME + ".lomhd-part")).exists())
 
     def test_a_pack_installed_from_a_file_arrives_whole(self) -> None:
         """Setup installs the pack from the file the writer streamed to; every other test passes
@@ -1802,16 +1812,15 @@ class Report(unittest.TestCase):
         self.addCleanup(setattr, setup, "HERE", setup.HERE)
         setup.HERE = self.release_dir
         # The GPU/Wine probes shell out to the real OS; stubbed here so the suite stays fast and
-        # deterministic, with the one exception below that restores the real gpu_name to prove a
-        # failing probe is tolerated rather than fatal.
+        # deterministic. Individual tests below restore the real gpu_name to exercise it directly.
         self._real_gpu_name = setup.gpu_name
         self.addCleanup(setattr, setup, "gpu_name", setup.gpu_name)
         setup.gpu_name = lambda: None
         self.addCleanup(setattr, setup, "detect_wine", setup.detect_wine)
         setup.detect_wine = lambda: None
 
-    def make_report(self, with_save=None) -> pathlib.Path:
-        setup.run_report(self.game, with_save)
+    def make_report(self, with_save=None, with_dump=False) -> pathlib.Path:
+        setup.run_report(self.game, with_save, with_dump)
         zips = list(self.release_dir.glob("lomhd-report-*.zip"))
         self.assertEqual(len(zips), 1, "exactly one report zip, next to setup")
         return zips[0]
@@ -1820,9 +1829,15 @@ class Report(unittest.TestCase):
         with zipfile.ZipFile(path) as z:
             return set(z.namelist())
 
-    def text_in(self, path: pathlib.Path) -> str:
+    def member_bytes(self, path: pathlib.Path, name: str) -> bytes:
         with zipfile.ZipFile(path) as z:
-            return z.read("report.txt").decode()
+            return z.read(name)
+
+    def member_text(self, path: pathlib.Path, name: str) -> str:
+        return self.member_bytes(path, name).decode("utf-8")
+
+    def text_in(self, path: pathlib.Path) -> str:
+        return self.member_text(path, "report.txt")
 
     def test_report_contains_the_expected_files(self) -> None:
         path = self.make_report()
@@ -1831,8 +1846,9 @@ class Report(unittest.TestCase):
         text = self.text_in(path)
         self.assertIn("Python:", text)
         self.assertIn("magick -version:", text)
-        self.assertIn("lomse.exe:", text)
-        self.assertIn("unknown", text)          # our fake lomse.exe matches no known hash
+        sha = hashlib.sha256(b"pretend exe").hexdigest()
+        self.assertIn(f"  lomse.exe: {sha} -- unknown", text.splitlines(),
+                      "our fake lomse.exe matches no known hash")
         self.assertIn("this release's overlay ddraw.dll", text)   # ddraw.dll DOES match
         self.assertIn("release: test", text)
         self.assertIn("(none stored)", text)    # no lomhd_last_summary.txt was ever written
@@ -1844,20 +1860,65 @@ class Report(unittest.TestCase):
         self.assertEqual(self.names_in(path), {"release.json", "report.txt"})
         self.assertIn("(none, or damaged)", self.text_in(path))    # no install record to summarise
 
+    # --- saves ------------------------------------------------------------------------------------
+
     def test_saves_are_excluded_by_default_and_opt_in_with_with_save(self) -> None:
         saves = self.game / "savegame"
         saves.mkdir()
-        (saves / "slot1.sav").write_bytes(b"save data")
-        self.assertNotIn("savegame/slot1.sav", self.names_in(self.make_report()))
+        (saves / "Water I").write_bytes(b"save data")      # no extension: a player-named save
+        self.assertNotIn("savegame/Water I", self.names_in(self.make_report()))
         for stale in self.release_dir.glob("lomhd-report-*.zip"):
             stale.unlink()
-        path = self.make_report(with_save="latest")
-        self.assertIn("savegame/slot1.sav", self.names_in(path))
+        self.assertIn("savegame/Water I", self.names_in(self.make_report(with_save="latest")))
+        for stale in self.release_dir.glob("lomhd-report-*.zip"):
+            stale.unlink()
+        self.assertIn("savegame/Water I", self.names_in(self.make_report(with_save="Water I")))
+
+    def test_only_lom_files_and_extensionless_names_count_as_saves(self) -> None:
+        """docs/loose-files.md: a save is `*.lom` or a player-named file with no extension at all --
+        `quickstart` is shipped identically in every install and is not a player's save."""
+        saves = self.game / "savegame"
+        saves.mkdir()
+        (saves / "combat.sav").write_bytes(b"shipped state, not a save")
+        (saves / "quickstart").write_bytes(b"shipped new-game state")
+        (saves / "Desktop.ini").write_text("[.ShellClassInfo]")
+        (saves / "autosave.lom").write_bytes(b"a real save")
+        for not_a_save in ("combat.sav", "quickstart", "Desktop.ini"):
+            with self.subTest(not_a_save):
+                with self.assertRaises(SystemExit):
+                    setup.find_save(self.game, not_a_save)
+        self.assertEqual(setup.find_save(self.game, "latest").name, "autosave.lom")
 
     def test_a_named_save_that_does_not_exist_stops_before_writing_a_zip(self) -> None:
         with self.assertRaises(SystemExit):
-            setup.run_report(self.game, "no-such-save.sav")
+            setup.run_report(self.game, "no-such-save", False)
         self.assertEqual(list(self.release_dir.glob("lomhd-report-*.zip")), [])
+
+    def test_with_save_refuses_path_traversal_and_absolute_paths(self) -> None:
+        saves = self.game / "savegame"
+        saves.mkdir()
+        (self.game.parent / "outside.lom").write_bytes(b"not a save in this game")
+        for bad in ("../outside.lom", "/etc/passwd", "sub/evil.lom", ".."):
+            with self.subTest(bad):
+                with self.assertRaises(SystemExit):
+                    setup.find_save(self.game, bad)
+
+    def test_a_symlinked_save_is_refused_even_as_latest(self) -> None:
+        saves = self.game / "savegame"
+        saves.mkdir()
+        target = self.game.parent / "real.lom"
+        target.write_bytes(b"a real file outside the game folder")
+        link = saves / "linked.lom"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            self.skipTest("symlinks are not available in this environment")
+        with self.assertRaises(SystemExit):
+            setup.find_save(self.game, "linked.lom")
+        with self.assertRaises(SystemExit):
+            setup.find_save(self.game, "latest")
+
+    # --- crash/hang files and dumps -----------------------------------------------------------------
 
     def test_crash_and_hang_files_are_capped_at_the_newest_five(self) -> None:
         now = time.time()
@@ -1871,19 +1932,91 @@ class Report(unittest.TestCase):
                          {f"lomhd_crash_2026010{i}-000000.txt" for i in range(2, 7)},
                          "only the newest 5 by mtime are kept")
 
+    def test_a_symlinked_crash_file_is_refused_and_noted(self) -> None:
+        target = self.game.parent / "outside.txt"
+        target.write_text("not really a crash log")
+        link = self.game / "lomhd_crash_20260101-000000.txt"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            self.skipTest("symlinks are not available in this environment")
+        path = self.make_report()
+        self.assertNotIn(link.name, self.names_in(path))
+        self.assertIn("refused", self.text_in(path))
+
+    def test_a_symlinked_game_text_file_is_refused(self) -> None:
+        target = self.game.parent / "outside.log"
+        target.write_text("not the real log")
+        (self.game / "lomhd.log").unlink()
+        try:
+            (self.game / "lomhd.log").symlink_to(target)
+        except OSError:
+            self.skipTest("symlinks are not available in this environment")
+        path = self.make_report()
+        self.assertNotIn("lomhd.log", self.names_in(path))
+
     def test_a_dump_over_the_size_cap_is_left_out_and_reported(self) -> None:
-        small = self.game / "lomhd_crash_20260101-000000.dmp"
-        small.write_bytes(b"x")
-        big = self.game / "lomhd_crash_20260102-000000.dmp"
-        big.write_bytes(b"x")
+        (self.game / "lomhd_crash_20260101-000000.dmp").write_bytes(b"x")
+        (self.game / "lomhd_crash_20260102-000000.dmp").write_bytes(b"x")
         self.addCleanup(setattr, setup, "DUMP_SIZE_CAP", setup.DUMP_SIZE_CAP)
         setup.DUMP_SIZE_CAP = 0        # both files now exceed the cap
-        path = self.make_report()
+        path = self.make_report(with_dump=True)
         self.assertEqual({n for n in self.names_in(path) if n.endswith(".dmp")}, set())
         self.assertIn("Left out of this report:", self.text_in(path))
 
-    def test_gpu_probe_failure_is_tolerated(self) -> None:
-        """The GPU probe shells out to the OS; a machine without that tool must still get a report."""
+    def test_dumps_are_left_out_by_default_and_included_unscrubbed_with_with_dump(self) -> None:
+        dump = self.game / "lomhd_crash_20260101-000000.dmp"
+        dump.write_bytes(b"binary minidump bytes, C:\\Users\\Jake\\ in here somewhere")
+        path = self.make_report()
+        self.assertNotIn(dump.name, self.names_in(path))
+        self.assertIn("a binary minidump", self.text_in(path))
+        for stale in self.release_dir.glob("lomhd-report-*.zip"):
+            stale.unlink()
+        path = self.make_report(with_dump=True)
+        self.assertIn(dump.name, self.names_in(path))
+        self.assertEqual(self.member_bytes(path, dump.name), dump.read_bytes(),
+                         "a dump is included exactly as written -- it is never scrubbed")
+        self.assertIn("Included crash dumps", self.text_in(path))
+
+    # --- GPU probe -----------------------------------------------------------------------------------
+
+    def test_gpu_probe_falls_back_to_powershell_when_wmic_is_missing(self) -> None:
+        setup.gpu_name = self._real_gpu_name
+        self.addCleanup(setattr, setup.platform, "system", setup.platform.system)
+        setup.platform.system = lambda: "Windows"
+        self.addCleanup(setattr, setup.subprocess, "run", setup.subprocess.run)
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd[0])
+            if cmd[0] == "wmic":
+                raise FileNotFoundError("wmic is gone")
+            if cmd[0] == "powershell":
+                return subprocess.CompletedProcess(cmd, 0, stdout="NVIDIA GeForce RTX 4090\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        setup.subprocess.run = fake_run
+        path = self.make_report()
+        self.assertEqual([c for c in calls if c in ("wmic", "powershell")], ["wmic", "powershell"],
+                         "a missing wmic must fall through to PowerShell, not give up")
+        self.assertIn("GPU: NVIDIA GeForce RTX 4090", self.text_in(path))
+
+    def test_gpu_probe_returns_could_not_be_read_when_every_windows_tool_fails(self) -> None:
+        setup.gpu_name = self._real_gpu_name
+        self.addCleanup(setattr, setup.platform, "system", setup.platform.system)
+        setup.platform.system = lambda: "Windows"
+        self.addCleanup(setattr, setup.subprocess, "run", setup.subprocess.run)
+
+        def boom(cmd, **kwargs):
+            raise FileNotFoundError("no such tool")
+
+        setup.subprocess.run = boom
+        path = self.make_report()          # must not raise
+        self.assertIn("GPU: (could not be read)", self.text_in(path))
+
+    def test_gpu_probe_failure_is_tolerated_on_this_host(self) -> None:
+        """Not simulated as a particular platform: whatever host actually runs this test, a broken
+        subprocess must still produce a report rather than blow up build_report_text."""
         setup.gpu_name = self._real_gpu_name
         self.addCleanup(setattr, setup.subprocess, "run", setup.subprocess.run)
 
@@ -1894,25 +2027,188 @@ class Report(unittest.TestCase):
         path = self.make_report()          # must not raise
         self.assertIn("GPU: (could not be read)", self.text_in(path))
 
-    def test_report_scrubs_the_home_folder_and_username(self) -> None:
+    # --- scrubbing -------------------------------------------------------------------------------
+
+    def test_scrub_replaces_the_home_folder_and_generic_windows_wine_paths(self) -> None:
         self.addCleanup(setattr, pathlib.Path, "home", pathlib.Path.home)
         pathlib.Path.home = staticmethod(lambda: pathlib.Path("/Users/theplayer"))
-        with mock.patch.dict(os.environ, {"USER": "theplayer", "USERNAME": "theplayer"}):
-            scrubbed = setup.scrub("game folder: /Users/theplayer/Games/LOM\n"
-                                   "installed by THEPLAYER on machine theplayer-pc")
-        self.assertNotIn("theplayer", scrubbed.lower())
+        text = ("game folder: /Users/theplayer/Games/LOM\n"
+               "Exe: C:\\Users\\Jake\\AppData\\Local\\lomhd\\lomse.exe\n"
+               "old profile: C:\\Documents and Settings\\Bob\\lom.cfg\n"
+               "wine home: Z:\\home\\alice\\.wine\\drive_c\\...\n"
+               "wine users: Z:\\Users\\Carol\\AppData\\...\n"
+               "linux: /home/dave/.wine/...\n")
+        scrubbed = setup.scrub(text)
         self.assertIn("~/Games/LOM", scrubbed)
-        self.assertIn("<user>", scrubbed)
+        for name in ("Jake", "Bob", "alice", "Carol", "dave"):
+            self.assertNotIn(name, scrubbed)
+        self.assertIn("C:\\Users\\<user>\\AppData", scrubbed)
+        self.assertIn("C:\\Documents and Settings\\<user>\\lom.cfg", scrubbed)
+        self.assertIn("Z:\\home\\<user>\\.wine", scrubbed)
+        self.assertIn("Z:\\Users\\<user>\\AppData", scrubbed)
+        self.assertIn("/home/<user>/.wine", scrubbed)
 
-    def test_with_save_without_report_is_refused(self) -> None:
-        """Guards against a player trying --with-save on its own, before anything is written."""
+    def test_scrub_never_touches_a_64_hex_run_even_when_it_contains_the_username(self) -> None:
+        fake_sha256 = "1c2ada9f" + "0" * 56
+        self.assertEqual(len(fake_sha256), 64)
+        with mock.patch.dict(os.environ, {"USER": "ada", "USERNAME": "ada"}):
+            text = f"lomse.exe: {fake_sha256} -- unknown"
+            self.assertEqual(setup.scrub(text), text,
+                             "a username that happens to be hex-shaped must survive inside a hash")
+
+    def test_scrub_replaces_a_short_username_as_a_whole_word_but_not_a_longer_one(self) -> None:
+        for name in ("ada", "lom"):
+            with self.subTest(name), mock.patch.dict(os.environ, {"USER": name, "USERNAME": name}):
+                whole_word = setup.scrub(f"installed by {name.upper()} on this machine")
+                self.assertNotIn(name, whole_word.lower())
+                self.assertIn("<user>", whole_word)
+                # A longer identifier that merely starts with the name must not be corrupted: the
+                # word-boundary lookahead requires a non-alnum character right after the match.
+                longer_word = f"see {name}se.exe for details"
+                self.assertEqual(setup.scrub(longer_word), longer_word)
+
+    def test_non_ascii_in_the_summary_and_a_text_member_round_trips_as_utf8(self) -> None:
+        (self.game / setup.SUMMARY_NAME).write_text("played by Jos\u00e9 \u00c1lvaro\n", encoding="utf-8")
+        (self.game / "lomhd.log").write_text("crash reported by Jos\u00e9 \u00c1lvaro\n", encoding="utf-8")
+        path = self.make_report()
+        self.assertIn("Jos\u00e9 \u00c1lvaro", self.text_in(path))
+        self.assertIn("Jos\u00e9 \u00c1lvaro", self.member_text(path, "lomhd.log"))
+
+    # --- guards ------------------------------------------------------------------------------------
+
+    def test_with_save_without_report_is_refused_before_find_game_runs(self) -> None:
         args = argparse.Namespace(game=None, uninstall=False, review=False, port=8765, terrain=False,
                                   sprites=False, no_sprites=False, force_terrain_folder=False,
-                                  report=False, with_save="latest")
-        with mock.patch.object(sys, "argv", ["lomhd_setup.py"]), \
-             mock.patch.object(argparse.ArgumentParser, "parse_args", return_value=args):
-            with self.assertRaises(SystemExit):
+                                  report=False, with_save="latest", with_dump=False)
+
+        def boom(*a, **k):
+            raise AssertionError("find_game must not run before the --with-save guard")
+
+        with mock.patch.object(argparse.ArgumentParser, "parse_args", return_value=args), \
+             mock.patch.object(setup, "find_game", boom):
+            with self.assertRaises(SystemExit) as failed:
                 setup.main()
+        self.assertIn("--with-save only makes sense with --report", str(failed.exception))
+
+    def test_with_dump_without_report_is_refused_before_find_game_runs(self) -> None:
+        args = argparse.Namespace(game=None, uninstall=False, review=False, port=8765, terrain=False,
+                                  sprites=False, no_sprites=False, force_terrain_folder=False,
+                                  report=False, with_save=None, with_dump=True)
+
+        def boom(*a, **k):
+            raise AssertionError("find_game must not run before the --with-dump guard")
+
+        with mock.patch.object(argparse.ArgumentParser, "parse_args", return_value=args), \
+             mock.patch.object(setup, "find_game", boom):
+            with self.assertRaises(SystemExit) as failed:
+                setup.main()
+        self.assertIn("--with-dump only makes sense with --report", str(failed.exception))
+
+    # --- writing the zip -----------------------------------------------------------------------------
+
+    def test_a_failed_member_leaves_no_partial_zip_and_keeps_an_earlier_report(self) -> None:
+        first = self.make_report()
+        first_bytes = first.read_bytes()
+        real_writestr = zipfile.ZipFile.writestr
+
+        def boom_on_report_txt(self_zip, zinfo_or_arcname, data, *a, **k):
+            name = getattr(zinfo_or_arcname, "filename", zinfo_or_arcname)
+            if name == "report.txt":
+                raise RuntimeError("disk full")
+            return real_writestr(self_zip, zinfo_or_arcname, data, *a, **k)
+
+        self.addCleanup(setattr, zipfile.ZipFile, "writestr", real_writestr)
+        zipfile.ZipFile.writestr = boom_on_report_txt
+        with self.assertRaises(RuntimeError):
+            setup.run_report(self.game, None, False)
+        zipfile.ZipFile.writestr = real_writestr
+        zips = sorted(self.release_dir.glob("lomhd-report-*.zip"))
+        self.assertEqual(len(zips), 1, "the earlier report must survive a failed later run")
+        self.assertEqual(zips[0].read_bytes(), first_bytes)
+        self.assertEqual(list(self.release_dir.glob("*.part")), [], "no partial zip left behind")
+
+    def test_unique_report_path_avoids_a_name_already_taken(self) -> None:
+        (self.release_dir / "lomhd-report-20260101-000000.zip").write_bytes(b"existing report")
+        real_cls = setup.datetime.datetime
+        self.addCleanup(setattr, setup.datetime, "datetime", real_cls)
+
+        class Frozen(real_cls):
+            @classmethod
+            def now(cls, tz=None):
+                return real_cls(2026, 1, 1, 0, 0, 0)
+
+        setup.datetime.datetime = Frozen
+        self.assertEqual(setup.unique_report_path().name, "lomhd-report-20260101-000000-2.zip")
+
+
+class MainWritesSummary(unittest.TestCase):
+    """lomhd_last_summary.txt: written by a finished run of main(), read back by --report."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = pathlib.Path(tmp.name)
+        self.game, self.release_dir = root / "game", root / "release"
+        self.game.mkdir(); self.release_dir.mkdir()
+        (self.game / "lomse.exe").write_bytes(b"pretend exe")
+        (self.game / "pic.mpq").write_bytes(b"pretend pic")
+        (self.game / "imp.mpq").write_bytes(b"pretend imp")
+        (self.game / "ddraw.dll").write_bytes(ORIGINAL)
+        (self.release_dir / "ddraw.dll").write_bytes(OURS)
+        # Every step of main() except the summary write itself is stubbed out: this test is about
+        # the one line at the end of a finished run, not about upscaling or installing.
+        stubs = {
+            "release": lambda: {"version": "9.9.9-test", "ddraw_sha256": hashlib.sha256(OURS).hexdigest()},
+            "check_magick": lambda: None,
+            "check_imp": lambda game: None,
+            "check_writable": lambda game, terrain=False: None,
+            "upscaler": lambda: (pathlib.Path("esrgan"), pathlib.Path("models")),
+            "extract_images": lambda game: {"portrait": []},
+            "plan_sprites": lambda game, animated: (
+                types.SimpleNamespace(static=[], animated=[], skipped=[],
+                                      counts={"frames": 0, "repeats": 0, "ineligible": 0, "no_probe": 0}),
+                self.release_dir / "sprites", None),
+            "upscale_all": lambda found, exe, models: [],
+            "upscale_sprites": lambda *a, **k: None,
+            "build_pack": lambda *a, **k: (3, [], [], {"packed": 3}, {"packed": 0, "sprites": 0}),
+            "install": lambda *a, **k: None,
+            "fix_exe": lambda game, terrain_arg="": "lomse.exe left as it is.",
+            "HERE": self.release_dir,
+        }
+        for name, value in stubs.items():
+            self.addCleanup(setattr, setup, name, getattr(setup, name))
+            setattr(setup, name, value)
+        self.addCleanup(setattr, sys, "argv", sys.argv)
+
+    def run_setup(self) -> None:
+        sys.argv = ["lomhd_setup.py", "--game", str(self.game)]
+        self.assertEqual(setup.main(), 0)
+
+    def test_a_finished_run_writes_the_summary_file(self) -> None:
+        self.run_setup()
+        summary = self.game / setup.SUMMARY_NAME
+        self.assertTrue(summary.is_file())
+        text = summary.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        self.assertTrue(lines[0].startswith("date: "), lines[0])
+        self.assertEqual(lines[1], "release: 9.9.9-test")
+        self.assertIn("Done: 3 HD images installed", text)
+        self.assertIn("To undo: python lomhd_setup.py --uninstall", text)
+
+    def test_report_reads_back_the_last_setup_summary(self) -> None:
+        self.run_setup()
+        self.addCleanup(setattr, setup, "gpu_name", setup.gpu_name)
+        setup.gpu_name = lambda: None
+        self.addCleanup(setattr, setup, "detect_wine", setup.detect_wine)
+        setup.detect_wine = lambda: None
+        setup.run_report(self.game, None, False)
+        zips = list(self.release_dir.glob("lomhd-report-*.zip"))
+        self.assertEqual(len(zips), 1)
+        with zipfile.ZipFile(zips[0]) as z:
+            text = z.read("report.txt").decode("utf-8")
+        self.assertIn("Last setup summary:", text)
+        self.assertIn("release: 9.9.9-test", text)
+        self.assertIn("Done: 3 HD images installed", text)
 
 
 if __name__ == "__main__":

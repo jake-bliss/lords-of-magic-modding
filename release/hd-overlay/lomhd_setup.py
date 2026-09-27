@@ -14,13 +14,22 @@
     python lomhd_setup.py --report              after a problem: one zip to attach to a GitHub issue
     python lomhd_setup.py --report --with-save latest
                                                 also include your newest savegame
+    python lomhd_setup.py --report --with-dump  also include crash minidumps, unscrubbed (see below)
 
 --report gathers lomhd.log, ddraw.ini, the install record, this release's own release.json, any
-crash/hang files a separate crash reporter wrote, a generated report.txt (OS, Python and ImageMagick
-versions, the GPU if it can be read cheaply, what this mod recognises lomse.exe/ddraw.dll as, and the
-names and sizes of everything in the game folder), and, only with --with-save, one savegame. Nothing
-is uploaded; the zip is written next to this script and named lomhd-report-<timestamp>.zip. Your
-username and home folder are stripped from its text before it is written.
+crash/hang .txt files a separate crash reporter wrote, a generated report.txt (OS and Wine detection,
+Python and ImageMagick versions, the GPU if it can be read cheaply, what this mod recognises
+lomse.exe/ddraw.dll as, the install record, the last setup's own closing summary, and the names and
+sizes of everything in the game folder), and, only with --with-save, one savegame. Nothing is
+uploaded; the zip is written next to this script as lomhd-report-<timestamp>.zip (never overwriting
+an earlier one). A symlink, or anything that resolves outside the game folder, is refused wherever a
+file is chosen for the report.
+
+Every text file above is scrubbed before it goes in the zip: your home folder (replaced with `~`);
+`C:\\Users\\<x>\\`, `C:\\Documents and Settings\\<x>\\`, `/Users/<x>/`, `/home/<x>/` and their Wine
+`Z:` equivalents, wherever they appear, not only your own account's; and your account name as a whole
+word. Crash *minidumps* (`lomhd_crash_*.dmp`) hold paths as UTF-16, which cannot be scrubbed as text,
+so they are left out by default -- --with-dump includes them exactly as written, unscrubbed.
 
 Choosing your own: --review renders every upscale option for every picture from your own game,
 then opens a review page on this computer (http://127.0.0.1:8765) with the shipped picks already
@@ -137,14 +146,21 @@ PLURAL = {"sky": "skies", "library": "library pages"}
 MIN_COLOURS = 16                 # a picture plainer than this is found anywhere, and costs every frame
 
 # --report: one zip a player can attach to a GitHub issue. Opt-in by nature (nothing leaves the
-# machine on its own); the fixed set of files it may hold is spelled out at REPORT_FILES / CRASH_GLOBS
-# rather than a directory walk, so it can never sweep up a save, a mod, or game art by accident.
+# machine on its own); the fixed set of files it may hold is spelled out at GAME_TEXT_FILES /
+# CRASH_TEXT_GLOBS / CRASH_DUMP_GLOB rather than a directory walk, so it can never sweep up a save, a
+# mod, or game art by accident.
 SUMMARY_NAME = "lomhd_last_summary.txt"     # this run's closing report, read back by the next --report
 ISSUES_URL = "https://github.com/jake-bliss/lords-of-magic-modding/issues"
-REPORT_FILES = ("lomhd.log", "ddraw.ini", RECORD_NAME)          # from the game folder, if present
+SAVE_DIR_NAME = "savegame"
+# Every one of these is TEXT and goes into the zip scrubbed (see scrub()), from the game folder if
+# present. release.json (from HERE, not the game folder) is added to the zip the same way.
+GAME_TEXT_FILES = ("lomhd.log", "ddraw.ini", RECORD_NAME)
 # A crash reporter (built separately, in the DLL) is expected to write these; it may not exist yet on
-# a given machine, which is not a reason for --report to fail.
-CRASH_GLOBS = ("lomhd_crash_*.txt", "lomhd_crash_*.dmp", "lomhd_hang_*.txt")
+# a given machine, which is not a reason for --report to fail. The .txt files are text and scrubbed
+# like everything else; .dmp minidumps hold UTF-16 paths a text scrub cannot safely see inside, so
+# they are left out by default (--with-dump includes them exactly as written, unscrubbed).
+CRASH_TEXT_GLOBS = ("lomhd_crash_*.txt", "lomhd_hang_*.txt")
+CRASH_DUMP_GLOB = "lomhd_crash_*.dmp"
 REPORT_MAX_PER_GLOB = 5
 DUMP_SIZE_CAP = 20 * 1024 * 1024            # a minidump can run far larger than a bug report should
 HASH_FILES = ("lomse.exe", "ddraw.dll", "gs.mpq", "pic.mpq", "imp.mpq")
@@ -209,10 +225,14 @@ def release() -> dict:
     return record
 
 
-def magick_version() -> str:
+def magick_version(timeout: "float | None" = None) -> str:
+    """`magick -version`'s own stdout, or "" if it is not on PATH or (with `timeout`) hangs. Install
+    and --review call this with no timeout, as before; --report passes one, since a report must
+    finish even when `magick` itself is broken on this machine."""
     try:
-        return subprocess.run(["magick", "-version"], capture_output=True, text=True).stdout
-    except FileNotFoundError:
+        return subprocess.run(["magick", "-version"], capture_output=True, text=True,
+                              timeout=timeout).stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return ""
 
 
@@ -839,7 +859,8 @@ def uninstall(game: pathlib.Path, force_terrain_folder: bool = False) -> None:
             ini_saved = game / f"ddraw.ini.lomhd-saved{n}"
         os.replace(game / "ddraw.ini", ini_saved)
     for name in (PACK_NAME, PACK_NAME + ".lomhd-part", "ddraw.dll.lomhd-part",
-                 RECORD_NAME + ".lomhd-part", "lomhd.log", RECORD_NAME, SUMMARY_NAME):
+                 RECORD_NAME + ".lomhd-part", "lomhd.log", RECORD_NAME, SUMMARY_NAME,
+                 SUMMARY_NAME + ".lomhd-part"):
         if (game / name).exists():
             (game / name).unlink()
     say(f"Uninstalled. ddraw.dll is {'your original again' if had else 'removed'}.")
@@ -1403,17 +1424,52 @@ def uninstall_terrain(game: pathlib.Path, record: dict, force_folder: bool = Fal
 
 # --- --report --------------------------------------------------------------------------------------
 
+# Windows/Wine home-folder shapes that can carry an account name even when this Python is not running
+# as that account: a crash written under a different Windows profile, or under Wine, whose Z: drive is
+# the whole host filesystem (so a Mac/Linux home shows up as Z:\Users\<x>\ or Z:\home\<x>\ too). Every
+# alternative names the segment right after it as the account; either slash kind, case-insensitive.
+_HOME_PATH_RE = re.compile(
+    r"(?:C:[\\/]+Users|C:[\\/]+Documents and Settings|/Users|/home|Z:[\\/]+[Hh]ome|Z:[\\/]+Users)"
+    r"[\\/]+([^\\/\r\n]+)[\\/]",
+    re.IGNORECASE,
+)
+
+
+def _blank_matched_segment(match: "re.Match") -> str:
+    """`match.group(0)` with only its `group(1)` span replaced -- the path's own separators and
+    prefix are kept, only the account-name segment goes."""
+    whole = match.group(0)
+    start, end = match.start(1) - match.start(0), match.end(1) - match.start(0)
+    return whole[:start] + "<user>" + whole[end:]
+
+
 def scrub(text: str) -> str:
-    """`text` with this machine's home folder and account name replaced, so a report a player
-    attaches to a public GitHub issue never carries who ran it. Home first (it usually contains the
-    username too); then any environment variable naming the account, on whatever text is left. A
-    name under 3 characters is left alone -- short enough to blank real words in the report."""
+    """`text` with anything naming this machine's account removed, so a report attached to a public
+    GitHub issue never carries who ran it:
+
+    - this Python's own home folder, replaced with `~`;
+    - `C:\\Users\\<x>\\`, `C:\\Documents and Settings\\<x>\\`, `/Users/<x>/`, `/home/<x>/` and their
+      Wine `Z:` equivalents (see `_HOME_PATH_RE`) -- these can name an account this process is not
+      running as, so they are checked regardless of what `pathlib.Path.home()` says;
+    - this process's own account name (`$USER`/`$USERNAME`/`$LOGNAME`/`getpass.getuser()`), as a
+      whole word only: `(?<![A-Za-z0-9])name(?![A-Za-z0-9])`. Because every character beside a 64-hex
+      sha256 digest is itself alphanumeric, a whole-word match can never land inside one or split it;
+      a short, common account name (`lom`, `ada`) can still coincide with an unrelated whole word or
+      filename stem that is not the account at all (`lom.cfg`) -- there is no way to tell those apart
+      from text alone, so this leans toward scrubbing the coincidence rather than missing the real
+      thing. Names under 3 characters are left alone; a name that short is too likely to be noise.
+
+    This process's own home is replaced first, whole, so the common case (a report generated by the
+    same account that hit the problem) reads as a clean `~` rather than `C:\\Users\\<user>\\`; the
+    generic path patterns then catch anything that is left, including a path naming an account this
+    process is not running as."""
     try:
         home = str(pathlib.Path.home())
     except RuntimeError:
         home = ""
     if home:
         text = text.replace(home, "~")
+    text = _HOME_PATH_RE.sub(_blank_matched_segment, text)
     names = {os.environ.get(var) for var in ("USER", "USERNAME", "LOGNAME")}
     try:
         names.add(getpass.getuser())
@@ -1421,8 +1477,31 @@ def scrub(text: str) -> str:
         pass
     for name in names:
         if name and len(name) >= 3:
-            text = re.sub(re.escape(name), "<user>", text, flags=re.IGNORECASE)
+            text = re.sub(r"(?<![A-Za-z0-9])" + re.escape(name) + r"(?![A-Za-z0-9])", "<user>",
+                          text, flags=re.IGNORECASE)
     return text
+
+
+def read_scrubbed_text(path: pathlib.Path) -> str:
+    """A text member's contents, ready to go into the zip: read as UTF-8 (a crash reporter or a
+    different locale may not have written valid UTF-8; a report must never fail over one bad byte),
+    then scrub()bed."""
+    return scrub(path.read_text(encoding="utf-8", errors="replace"))
+
+
+def safe_game_file(game: pathlib.Path, path: pathlib.Path) -> bool:
+    """Whether `path` is safe to copy into a report: a real file, never a symlink (its target is not
+    even inspected -- a symlink planted in the game folder, by another program or by hand, is exactly
+    how a file from outside it would get in), and its fully resolved location genuinely is inside
+    `game`. Used for every file --report reads from the game folder: the crash/hang globs, the fixed
+    game-folder members, and a named savegame."""
+    try:
+        if path.is_symlink() or not path.is_file():
+            return False
+        resolved, base = path.resolve(strict=True), game.resolve(strict=True)
+    except OSError:
+        return False
+    return resolved == base or base in resolved.parents
 
 
 def detect_wine() -> "str | None":
@@ -1451,28 +1530,39 @@ def detect_wine() -> "str | None":
 
 def gpu_name() -> "str | None":
     """The GPU's name, if cheaply available. None, never an exception: this is the one part of the
-    report that shells out to the OS's own tools, and a report must never fail over it."""
-    try:
-        if platform.system() == "Windows":
+    report that shells out to the OS's own tools, and a report must never fail over it. Each probe
+    has its own try, so a missing `wmic` (dropped from newer Windows builds) falls through to
+    PowerShell instead of the whole function giving up."""
+    system = platform.system()
+    if system == "Windows":
+        try:
             out = subprocess.run(["wmic", "path", "win32_VideoController", "get", "name"],
                                  capture_output=True, text=True, timeout=5)
             lines = [ln.strip() for ln in out.stdout.splitlines()
                     if ln.strip() and ln.strip().lower() != "name"]
             if lines:
                 return lines[0]
+        except Exception:
+            pass
+        try:
             out = subprocess.run(["powershell", "-NoProfile", "-Command",
                                   "(Get-CimInstance Win32_VideoController).Name"],
                                  capture_output=True, text=True, timeout=5)
             lines = [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
-            return lines[0] if lines else None
-        if platform.system() == "Darwin":
+            if lines:
+                return lines[0]
+        except Exception:
+            pass
+        return None
+    if system == "Darwin":
+        try:
             out = subprocess.run(["system_profiler", "SPDisplaysDataType"],
                                  capture_output=True, text=True, timeout=5)
             for line in out.stdout.splitlines():
                 if "Chipset Model" in line:
                     return line.split(":", 1)[1].strip()
-            return None
-    except Exception:
+        except Exception:
+            pass
         return None
     return None
 
@@ -1481,7 +1571,7 @@ def release_info() -> dict:
     """release.json's own fields, or {} -- unlike release(), never a reason to stop: a report is
     exactly the thing a player needs when the release folder is not in the state setup expects."""
     try:
-        return json.loads((HERE / "release.json").read_text())
+        return json.loads((HERE / "release.json").read_text(encoding="utf-8", errors="replace"))
     except (OSError, ValueError):
         return {}
 
@@ -1530,38 +1620,96 @@ def list_game_folder(game: pathlib.Path) -> "list[tuple[str, str]]":
     return out
 
 
-def crash_files(game: pathlib.Path) -> "tuple[list[pathlib.Path], list[str]]":
-    """The newest REPORT_MAX_PER_GLOB of each CRASH_GLOBS pattern in the game folder (a separate
-    crash reporter's output, which may not exist yet -- their absence is not a reason to stop), minus
-    any single file over DUMP_SIZE_CAP. Returns (files to include, why each left-out one was)."""
-    included: "list[pathlib.Path]" = []
+def crash_files(game: pathlib.Path,
+                with_dump: bool) -> "tuple[list[pathlib.Path], list[pathlib.Path], list[str]]":
+    """(text crash/hang files to include, dump files to include, notes about anything left out).
+
+    Each of CRASH_TEXT_GLOBS and CRASH_DUMP_GLOB is capped at its own newest REPORT_MAX_PER_GLOB,
+    counted only among files safe_game_file allows -- a symlink (or anything else that resolves
+    outside the game folder) never occupies a slot a real file could have had, and is named in
+    left_out rather than silently skipped. A .dmp is only actually included with `with_dump`: it is
+    always a candidate (so it can still be named and capped consistently), but otherwise goes to
+    left_out explaining why (its paths cannot be scrubbed as text)."""
+    text_included: "list[pathlib.Path]" = []
+    dump_included: "list[pathlib.Path]" = []
     left_out: "list[str]" = []
-    for pattern in CRASH_GLOBS:
-        matches = sorted(game.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-        for p in matches[:REPORT_MAX_PER_GLOB]:
-            size = p.stat().st_size
-            if size > DUMP_SIZE_CAP:
-                left_out.append(f"{p.name} ({size} bytes, over the {DUMP_SIZE_CAP // (1 << 20)} MiB cap)")
-                continue
-            included.append(p)
-    return included, left_out
+
+    def candidates(pattern: str) -> "list[pathlib.Path]":
+        found = []
+        for p in game.glob(pattern):
+            if safe_game_file(game, p):
+                found.append(p)
+            else:
+                left_out.append(f"{p.name} (refused: a symlink, or it resolves outside the game folder)")
+        found.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return found[:REPORT_MAX_PER_GLOB]
+
+    def under_cap(p: pathlib.Path) -> bool:
+        size = p.stat().st_size
+        if size <= DUMP_SIZE_CAP:
+            return True
+        left_out.append(f"{p.name} ({size} bytes, over the {DUMP_SIZE_CAP // (1 << 20)} MiB cap)")
+        return False
+
+    for pattern in CRASH_TEXT_GLOBS:
+        text_included += [p for p in candidates(pattern) if under_cap(p)]
+    for p in candidates(CRASH_DUMP_GLOB):
+        if not with_dump:
+            left_out.append(f"{p.name} (a binary minidump: its paths cannot be scrubbed as text, so "
+                            "it is left out by default -- rerun with --with-dump to include it as-is)")
+        elif under_cap(p):
+            dump_included.append(p)
+    return text_included, dump_included, left_out
+
+
+def is_save_file(path: pathlib.Path) -> bool:
+    """Whether `path` looks like a save rather than shipped starting state or a stray file
+    (docs/loose-files.md): a `.lom` file, or a player-named save with no extension at all.
+    `quickstart` is the one no-extension exception -- shipped identically in every install, the "new
+    game" state rather than anything a player saved."""
+    name = path.name.lower()
+    if name in ("desktop.ini", "quickstart"):
+        return False
+    return name.endswith(".lom") or "." not in name
+
+
+def _unsafe_relative_name(name: str) -> bool:
+    """Whether `name` could step outside the folder it is joined to: absolute (either slash
+    convention), a `..` segment, or empty. Checked both ways since --with-save's NAME may come from a
+    Windows player typing backslashes on a Mac/Linux copy of this script, or vice versa."""
+    for cls in (pathlib.PurePosixPath, pathlib.PureWindowsPath):
+        parts = cls(name)
+        if parts.is_absolute() or not parts.parts or ".." in parts.parts:
+            return True
+    return False
 
 
 def find_save(game: pathlib.Path, name: str) -> pathlib.Path:
-    """The savegame --with-save asked for: the newest one for "latest", else that exact file."""
-    saves = game / "savegame"
+    """The savegame --with-save asked for: the newest save for "latest", else that exact file --
+    refusing an absolute path, a `..` segment, a symlink, or anything whose fully resolved location
+    is not directly inside the savegame folder, before ever opening it."""
+    saves = game / SAVE_DIR_NAME
     if name.lower() == "latest":
-        candidates = sorted(saves.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True) if saves.is_dir() else []
+        candidates = ([p for p in saves.iterdir() if safe_game_file(game, p) and is_save_file(p)]
+                     if saves.is_dir() else [])
         if not candidates:
             fail(f"no savegames found in {saves}.")
+        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         return candidates[0]
+    if _unsafe_relative_name(name):
+        fail(f'--with-save must name a file directly in {SAVE_DIR_NAME}, not "{name}".')
     path = saves / name
-    if not path.is_file():
+    try:
+        same_folder = path.resolve(strict=True).parent == saves.resolve(strict=True)
+    except OSError:
         fail(f"{path} does not exist.")
+    if not (same_folder and safe_game_file(game, path) and is_save_file(path)):
+        fail(f"{path} does not exist, or is not a savegame directly in {SAVE_DIR_NAME}.")
     return path
 
 
-def build_report_text(game: pathlib.Path, left_out: "list[str]", with_save: "str | None") -> str:
+def build_report_text(game: pathlib.Path, left_out: "list[str]", with_save: "str | None",
+                      included_dumps: "list[str]") -> str:
     """report.txt's own contents: everything --report gathers that is not another file already in
     the zip. Scrubbed as a whole at the end, so nothing added above here has to remember to."""
     record = read_record(game)
@@ -1577,7 +1725,7 @@ def build_report_text(game: pathlib.Path, left_out: "list[str]", with_save: "str
     if wine:
         lines.append(f"Wine: {wine}")
     lines.append(f"Python: {platform.python_version()}")
-    magick = magick_version()
+    magick = magick_version(timeout=10)      # a report must not hang here even if magick is broken
     lines.append(f"magick -version: {magick.splitlines()[0] if magick.strip() else '(not found)'}")
     gpu = gpu_name()
     lines.append(f"GPU: {gpu if gpu else '(could not be read)'}")
@@ -1601,42 +1749,82 @@ def build_report_text(game: pathlib.Path, left_out: "list[str]", with_save: "str
         lines.append("  (none, or damaged)")
     lines += ["", "Last setup summary:"]
     summary = game / SUMMARY_NAME
-    lines.append(summary.read_text() if summary.is_file() else "  (none stored)")
+    lines.append(read_scrubbed_text(summary) if safe_game_file(game, summary) else "  (none stored)")
+    if included_dumps:
+        lines += ["", "Included crash dumps (binary, NOT scrubbed -- --with-dump asked for these "
+                      "exactly as written; check them yourself before attaching if that matters):"]
+        lines += [f"  {name}" for name in included_dumps]
     if left_out:
         lines += ["", "Left out of this report:"] + [f"  {note}" for note in left_out]
     if with_save:
         lines += ["", f"Included savegame: {with_save}"]
     lines += ["", "Game folder contents (names and sizes only):"]
     lines += [f"  {name}\t{size}" for name, size in list_game_folder(game)]
+    # The whole text is scrubbed here, once, rather than piecemeal above: nothing added to `lines`
+    # later has to remember to. The other zip members are each scrubbed individually, at the point
+    # they are read -- see read_scrubbed_text.
     return scrub("\n".join(lines) + "\n")
 
 
-def run_report(game: pathlib.Path, with_save: "str | None") -> None:
+def unique_report_path() -> pathlib.Path:
+    """A fresh lomhd-report-<timestamp>.zip next to this script, suffixed -2, -3... if that name is
+    already taken (two runs in the same second) -- a report must never overwrite an earlier one."""
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    stem = f"lomhd-report-{stamp}"
+    out_path = HERE / f"{stem}.zip"
+    n = 2
+    while out_path.exists():
+        out_path = HERE / f"{stem}-{n}.zip"
+        n += 1
+    return out_path
+
+
+def run_report(game: pathlib.Path, with_save: "str | None", with_dump: bool) -> None:
     """--report: one zip, next to this script (the same place lomhd_work and my-upscale-choices.json
     already go, and simpler than guessing a Desktop folder that may not exist on every platform this
-    runs on). Nothing here is uploaded; the player attaches the zip to an issue by hand."""
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    out_path = HERE / f"lomhd-report-{stamp}.zip"
-    included_crashes, left_out = crash_files(game)
+    runs on). Nothing here is uploaded; the player attaches the zip to an issue by hand.
+
+    Written whole or not at all: every member goes into a `.part` file, which is only renamed to its
+    final name once everything has been added without error, so a failure partway through never
+    leaves a half-written report and never touches an earlier one (unique_report_path already gave
+    this run its own name)."""
+    out_path = unique_report_path()
+    part_path = out_path.with_name(out_path.name + ".part")
+    text_crashes, dump_crashes, left_out = crash_files(game, with_dump)
     save_path = find_save(game, with_save) if with_save else None
-    report_text = build_report_text(game, left_out, with_save)
-    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
-        for name in REPORT_FILES:
-            path = game / name
-            if path.is_file():
-                z.write(path, arcname=name)
-        release_json = HERE / "release.json"
-        if release_json.is_file():
-            z.write(release_json, arcname="release.json")
-        for path in included_crashes:
-            z.write(path, arcname=path.name)
-        if save_path:
-            z.write(save_path, arcname=f"savegame/{save_path.name}")
-        z.writestr("report.txt", report_text)
+    report_text = build_report_text(game, left_out, with_save, [p.name for p in dump_crashes])
+    try:
+        with zipfile.ZipFile(part_path, "w", zipfile.ZIP_DEFLATED) as z:
+            for name in GAME_TEXT_FILES:
+                path = game / name
+                if safe_game_file(game, path):
+                    z.writestr(name, read_scrubbed_text(path))
+            release_json = HERE / "release.json"
+            if release_json.is_file() and not release_json.is_symlink():
+                z.writestr("release.json", read_scrubbed_text(release_json))
+            for path in text_crashes:
+                z.writestr(path.name, read_scrubbed_text(path))
+            for path in dump_crashes:                     # binary, unscrubbed -- see build_report_text
+                z.write(path, arcname=path.name)
+            if save_path:
+                z.write(save_path, arcname=f"{SAVE_DIR_NAME}/{save_path.name}")
+            z.writestr("report.txt", report_text)
+    except BaseException:
+        part_path.unlink(missing_ok=True)
+        raise
+    os.replace(part_path, out_path)
     say(f"Report written to {out_path}")
     for note in left_out:
         say(f"  left out -- {note}")
     say(f"Attach {out_path.name} to an issue at {ISSUES_URL}")
+
+
+def write_setup_summary(game: pathlib.Path, release_version: str, lines: "list[str]") -> None:
+    """SUMMARY_NAME: this run's own closing report, for a later --report to read back -- dated and
+    versioned at the top, since a report is usually read well after the run that wrote it."""
+    header = [f"date: {datetime.datetime.now().isoformat(timespec='seconds')}",
+             f"release: {release_version}", ""]
+    write_atomically(game / SUMMARY_NAME, ("\n".join(header + lines) + "\n").encode())
 
 
 def main() -> int:
@@ -1665,16 +1853,22 @@ def main() -> int:
     parser.add_argument("--with-save", metavar="NAME",
                         help="with --report, also include that savegame (savegame\\NAME, or the "
                              "newest save if NAME is 'latest'); saves are never included otherwise")
+    parser.add_argument("--with-dump", action="store_true",
+                        help="with --report, also include any lomhd_crash_*.dmp minidumps exactly as "
+                             "written; left out by default because, unlike every other file in the "
+                             "report, a minidump's paths cannot be scrubbed")
     args = parser.parse_args()
 
     if sys.version_info < (3, 9):
         fail("Python 3.9 or newer is needed.")
     if args.with_save and not args.report:
         fail("--with-save only makes sense with --report.")
+    if args.with_dump and not args.report:
+        fail("--with-dump only makes sense with --report.")
     game = find_game(args.game)
     say(f"Game: {game}")
     if args.report:
-        run_report(game, args.with_save)
+        run_report(game, args.with_save, args.with_dump)
         return 0
     # First, whatever was asked: an interrupted swap leaves a patched exe without its art, and the
     # long steps below can fail before install_terrain would get to it. (Codex review.)
@@ -1766,7 +1960,7 @@ def main() -> int:
         told(f"Done: HD terrain installed ({TERRAIN_DIR}\\til, and lomse.exe patched; the original "
              f"is {EXE_BACKUP_NAME}). Recommended window: 1280x960 (width/height in ddraw.ini).")
     told("To undo: python lomhd_setup.py --uninstall" + (f' --game "{game}"' if args.game else ""))
-    write_atomically(game / SUMMARY_NAME, ("\n".join(summary_lines) + "\n").encode())
+    write_setup_summary(game, record["version"], summary_lines)
     return 0
 
 
