@@ -54,6 +54,7 @@ import json
 import os
 import pathlib
 import re
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -289,9 +290,8 @@ def resolve_borders(idx: bytes, w: int, pal, t: int, defs: dict[int, dict]) -> d
         if d["pure"]:
             spread.setdefault(d["self"], []).extend(
                 _dist(edge_mean(idx, w, pal, t, cell, side), means[d["self"]]) for side in SIDES)
-    median = lambda v: sorted(v)[len(v) // 2]  # noqa: E731
-    sheet = median([x for v in spread.values() for x in v])
-    cut = {k: EDGE_CUT * max(median(v), sheet, 4.0) for k, v in spread.items()}
+    sheet = statistics.median(x for v in spread.values() for x in v)
+    cut = {k: EDGE_CUT * max(statistics.median(v), sheet, 4.0) for k, v in spread.items()}
     ground = means.get(BORDER_GROUND)
     out = {}
     for cell, d in defs.items():

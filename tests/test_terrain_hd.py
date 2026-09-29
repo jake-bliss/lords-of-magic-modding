@@ -545,7 +545,7 @@ class TileDefsCorpus(unittest.TestCase):
         sides = [s for s in _corpus_sides(self.src) if s[0] == "tilesb01.lbm"]
         ground = sum(got[cell][side] == th.BORDER_GROUND for _, cell, _, side, _ in sides)
         self.assertGreater(len(sides), 100)
-        self.assertGreater(ground, 0.8 * len(sides))
+        self.assertGreater(ground, 0.9 * len(sides))   # 411 of 448 on the shipped sheet
         # A road on desert (cell 492, `9, ~9, *, 2, ...`): its north end is drawn in sand.
         self.assertEqual(got[492]["n"], 2)
 
