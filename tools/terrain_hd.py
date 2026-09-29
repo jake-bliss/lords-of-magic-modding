@@ -125,9 +125,11 @@ EDGE_PX = 3          # source pixels of a tile's edge whose colour says what ter
 EDGE_CUT = 3.5       # a border edge further than this many "plain edge spreads" from every plain
                      # terrain is drawn in something no plain tile has: left alone (UNMATCHED).
 # Chosen on the shipped sheets (2026-09-29): from 3.5 up, every sheet whose borders are drawn in a
-# plain terrain has at most 6% unmatched (at 3: cavewatr 13%, wabldg01 19%), while the five drawn in
-# no plain colour (cavecrys, libldg01, chbldg01, orbldg01, jeff01's dirt) stay unmatched until
-# 4-5, where libldg01's borders -- 146 from its only terrain -- start being pulled toward it.
+# plain terrain has at most 6% unmatched (at 3: cavewatr 13%, wabldg01 19%). The five drawn in no
+# plain colour are only partly caught: cavecrys 103/104, orbldg01 14/52 and chbldg01 27/52 are
+# left alone, but libldg01 still pulls 20 of 52 borders toward its terrain (71-133 away; its own
+# tiles' edges spread 38) and jeff01 20 dirt borders toward grey stones -- colour distance cannot
+# separate those from textured plain edges. All 52 of libldg01's were pulled before this rule.
 UNMATCHED = -1       # a side type with no plain tile and no mean: own-edge padding, no colour pull
 
 
