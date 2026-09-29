@@ -549,6 +549,20 @@ class TileDefsCorpus(unittest.TestCase):
         # A road on desert (cell 492, `9, ~9, *, 2, ...`): its north end is drawn in sand.
         self.assertEqual(got[492]["n"], 2)
 
+    def test_only_sheets_drawn_in_no_plain_colour_leave_their_borders_alone(self) -> None:
+        # Per sheet, not pooled: a sheet going wholly UNMATCHED passes a pooled count. Two cut-offs
+        # failed this way in review -- one median per sheet (ruins0x's flat key green left all 52
+        # grass borders unmatched), one spread per terrain (ruins01's even grass, 27).
+        far = {"cavecrys.lbm", "chbldg01.lbm", "jeff01.lbm", "libldg01.lbm", "orbldg01.lbm"}
+        for atlas, cells in sorted(self.defs.items()):
+            if not any(e.get("borders") for e in cells.values()):
+                continue
+            got, _ = self._resolved(atlas)
+            sides = [(c, s) for c, e in got.items() for s in e.get("borders", ())]
+            unmatched = sum(got[c][s] == th.UNMATCHED for c, s in sides)
+            if atlas not in far:
+                self.assertLessEqual(unmatched, 0.1 * len(sides), (atlas, unmatched, len(sides)))
+
     def test_other_sheets_borders_are_the_terrain_their_edge_is_drawn_in(self) -> None:
         # On every sheet without the overland ground, each border side resolves to the plain
         # terrain nearest its 3-pixel edge in colour -- computed here from the pixels, not through

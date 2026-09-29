@@ -275,26 +275,34 @@ def resolve_borders(idx: bytes, w: int, pal, t: int, defs: dict[int, dict]) -> d
 
     A border side is the ground where the atlas has it and the edge is near it in colour (the
     measured overland case: seams 2.49 -> 0.69); else the plain terrain nearest its edge colour;
-    else, when even that is far -- beyond EDGE_CUT times how far plain tiles' own edges sit from
-    their terrain's mean -- UNMATCHED, so it is neither padded with nor pulled toward a terrain it
+    else, when even that is far -- beyond EDGE_CUT times how far that terrain's plain tiles' own
+    edges sit from its mean -- UNMATCHED, so it is neither padded with nor pulled toward a terrain it
     is not drawn in (jeff01's dirt, whose terrain has no plain tile). A copy is returned."""
     means = type_means(idx, w, pal, t, defs)
     if not means:
         return defs
-    spreads = sorted(_dist(edge_mean(idx, w, pal, t, cell, side), means[d["self"]])
-                     for cell, d in defs.items() if d["pure"] for side in SIDES)
-    cut = EDGE_CUT * max(spreads[len(spreads) // 2], 4.0)     # flat synthetic art has no spread
+    # A terrain's own spread, or the sheet's, whichever is wider: one sheet can hold a flat colour
+    # beside a textured terrain (ruins0x's key green, ruins01's even grass), and either spread alone
+    # makes the other's border edges look foreign (review, 2026-09-29). 4: flat synthetic art.
+    spread: dict[int, list[float]] = {}
+    for cell, d in defs.items():
+        if d["pure"]:
+            spread.setdefault(d["self"], []).extend(
+                _dist(edge_mean(idx, w, pal, t, cell, side), means[d["self"]]) for side in SIDES)
+    median = lambda v: sorted(v)[len(v) // 2]  # noqa: E731
+    sheet = median([x for v in spread.values() for x in v])
+    cut = {k: EDGE_CUT * max(median(v), sheet, 4.0) for k, v in spread.items()}
     ground = means.get(BORDER_GROUND)
     out = {}
     for cell, d in defs.items():
         d = dict(d)
         for side in d.get("borders", ()):
             e = edge_mean(idx, w, pal, t, cell, side)
-            if ground is not None and _dist(e, ground) <= cut:
+            if ground is not None and _dist(e, ground) <= cut[BORDER_GROUND]:
                 d[side] = BORDER_GROUND
                 continue
             near = min(means, key=lambda k: _dist(means[k], e))
-            d[side] = near if _dist(means[near], e) <= cut else UNMATCHED
+            d[side] = near if _dist(means[near], e) <= cut[near] else UNMATCHED
         out[cell] = d
     return out
 
