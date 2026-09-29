@@ -439,18 +439,40 @@ TERRAIN_SRC = os.environ.get("LOM_TERRAIN_SRC")   # a setup's lomhd_work/terrain
 
 
 class TwoTerrainAtlas(unittest.TestCase):
-    """A building or cave sheet: two plain terrains and no ground. A side `~own` borders the other
-    one -- not the overland ground, which such a sheet has no tile of to pad with."""
+    """A cave or building sheet: two plain terrains and no ground. What lies past a border comes
+    from the art, in both directions -- on the real cave sheets a rock tile's border with lava AND
+    a lava tile's border with rock are both drawn in rock."""
 
-    def test_a_not_own_side_borders_the_sheets_other_terrain(self) -> None:
-        d = pathlib.Path(tempfile.mkdtemp())
-        (d / "b.til").write_bytes(b"LBM=b.lbm\rTILESIZE= 32, 32\r"
-                                  b"TILE=      0, 16, 16, 16, 16, 16, 16, 16, 16, 16,   0\r"
-                                  b"TILE=      1, 18, 18, 18, 18, 18, 18, 18, 18, 18,   0\r"
-                                  b"TILE=      2, 16, ~16, 16, 16, 16, 16, 16, 16, 16,   0\r")
-        defs = th.tile_defs(d)["b.lbm"]
-        self.assertEqual(defs[2]["n"], 18)
-        self.assertEqual(th.neighbours(defs, 2)["n"], 1)
+    def setUp(self) -> None:
+        # Four 4x4 tiles in a row: plain 16 (index 1), plain 18 (index 2), then a 16 and an 18
+        # tile each with a `~own` north side whose top 3 rows are drawn in 18's colour.
+        self.d = pathlib.Path(tempfile.mkdtemp())
+        (self.d / "b.til").write_bytes(b"LBM=b.lbm\rTILESIZE= 4, 4\r"
+                                       b"TILE=      0, 16, 16, 16, 16, 16, 16, 16, 16, 16,   0\r"
+                                       b"TILE=      1, 18, 18, 18, 18, 18, 18, 18, 18, 18,   0\r"
+                                       b"TILE=      2, 16, ~16, 16, 16, 16, 16, 16, 16, 16,   0\r"
+                                       b"TILE=      3, 18, ~18, 18, 18, 18, 18, 18, 18, 18,   0\r")
+        rows = []
+        for y in range(4):
+            rows.append([1] * 4 + [2] * 4 + ([2] * 4 if y < 3 else [1] * 4) + [2] * 4)
+        self.idx = bytes(v for r in rows for v in r)
+        self.pal = [(0, 0, 0), (200, 40, 20), (60, 50, 40)] + [(0, 0, 0)] * 253
+        self.defs = th.tile_defs(self.d)["b.lbm"]
+
+    def test_the_til_alone_keeps_the_tiles_own_terrain(self) -> None:
+        self.assertEqual(self.defs[2]["n"], 16)
+        self.assertEqual(self.defs[2]["borders"], ("n",))
+
+    def test_the_art_says_what_lies_past_a_border_in_both_directions(self) -> None:
+        got = th.resolve_borders(self.idx, 16, self.pal, 4, self.defs)
+        self.assertEqual(got[2]["n"], 18)      # a 16 tile whose border is drawn in 18
+        self.assertEqual(got[3]["n"], 18)      # an 18 tile whose border is drawn in 18: its own
+        self.assertEqual(self.defs[2]["n"], 16)   # the input is not changed
+
+    def test_the_overland_sheet_keeps_the_ground(self) -> None:
+        defs = dict(self.defs)
+        defs[9] = {"self": th.BORDER_GROUND, "pure": True, "borders": (), "n": 0, "e": 0, "s": 0, "w": 0}
+        self.assertIs(th.resolve_borders(self.idx, 16, self.pal, 4, defs), defs)
 
 
 def _corpus_sides(src: pathlib.Path):
@@ -491,22 +513,40 @@ class TileDefsCorpus(unittest.TestCase):
         for atlas, cell, own, side, named in sides:
             self.assertEqual(self.defs[atlas][cell][side], th.BORDER_GROUND, (cell, side, named))
 
-    def test_a_two_terrain_sheets_borders_are_its_other_terrain(self) -> None:
-        # Caves, ruins and some building sets: past `~own` lies the one other plain terrain -- the
-        # first version of this fix sent every sheet's borders to the overland ground, which none
-        # of these has a tile of. Sheets with no other plain terrain, or several and no ground
-        # (jeff01), keep the tile's own, as before.
+    def test_other_sheets_borders_are_the_terrain_their_edge_is_drawn_in(self) -> None:
+        # On every sheet without the overland ground, each border side resolves to the plain
+        # terrain nearest its 3-pixel edge in colour -- computed here from the pixels, not through
+        # the code under test. The first versions of this fix sent them to the ground (which these
+        # sheets have no tile of) and then to "the other terrain" (right in one direction only).
         seen = 0
-        for atlas, cell, own, side, named in _corpus_sides(self.src):
-            cells = self.defs[atlas]
-            others = {e["self"] for e in cells.values() if e["pure"]} - named
-            got = cells[cell][side]
-            if len(others) == 1:
-                self.assertEqual(got, next(iter(others)), (atlas, cell, side))
+        sides = list(_corpus_sides(self.src))
+        for lbm in sorted(self.src.glob("*.lbm")):
+            atlas = lbm.name.lower()
+            cells = self.defs.get(atlas)
+            if not cells or any(e["pure"] and e["self"] == 0 for e in cells.values()):
+                continue
+            w, h, idx, pal, _ = lbm_png.decode(lbm)
+            t = th.tile_sizes(self.src).get(atlas, th.DEFAULT_TILE)
+            per = w // t
+            def mean(cell, xs, ys):
+                px = [pal[idx[((cell // per) * t + y) * w + (cell % per) * t + x]] for y in ys for x in xs]
+                return [sum(c[i] for c in px) / len(px) for i in range(3)]
+            plain = {}
+            for cell, e in cells.items():
+                if e["pure"]:
+                    plain.setdefault(e["self"], []).append(mean(cell, range(t), range(t)))
+            plain = {k: [sum(m[i] for m in v) / len(v) for i in range(3)] for k, v in plain.items()}
+            got = th.resolve_borders(idx, w, pal, t, cells)
+            for a, cell, own, side, named in sides:
+                if a != atlas:
+                    continue
+                xs = {"n": range(t), "s": range(t), "w": range(3), "e": range(t - 3, t)}[side]
+                ys = {"e": range(t), "w": range(t), "n": range(3), "s": range(t - 3, t)}[side]
+                e = mean(cell, xs, ys)
+                want = min(plain, key=lambda k: sum((p - q) ** 2 for p, q in zip(plain[k], e)))
+                self.assertEqual(got[cell][side], want, (atlas, cell, side))
                 seen += 1
-            elif th.BORDER_GROUND not in others:
-                self.assertEqual(got, own, (atlas, cell, side))
-        self.assertGreater(seen, 400)
+        self.assertGreater(seen, 1000)
 
 
 if __name__ == "__main__":

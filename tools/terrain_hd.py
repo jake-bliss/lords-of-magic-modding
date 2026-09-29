@@ -118,8 +118,9 @@ SIDES = ("n", "e", "s", "w")
 
 
 # The overland atlas's shared ground (its brown cells): where two of its many terrains meet, the
-# transition art fades to it. An atlas with just one other plain terrain fades to that instead.
+# transition art fades to it. Other atlases are read from their art instead (resolve_borders).
 BORDER_GROUND = 0
+EDGE_PX = 3          # source pixels of a tile's edge whose colour says what terrain it meets
 
 
 def _types(field: str) -> tuple[bool, set[int] | None]:
@@ -131,22 +132,23 @@ def _types(field: str) -> tuple[bool, set[int] | None]:
     return negated, None if field == "*" else {int(v) for v in field.split("|") if v}
 
 
+def _is_border(own: int, negated: bool, types: set[int] | None) -> bool:
+    """A side written `~own`: "any terrain but this tile's own" -- a border with another terrain."""
+    return negated and types is not None and own in types
+
+
 def _side_type(own: int, negated: bool, types: set[int] | None, plain: set[int]) -> int:
-    """The terrain to pad and normalize a side with; `plain` is the atlas's types that have plain
-    tiles. `~` names what may NOT be there: a transition side is `~own`, "any other terrain". Past
-    it lies the only other plain terrain of the atlas if there is one (a building or cave sheet:
-    its edges match that terrain, 52 of 52 sides measured per sheet), else the shared ground where
-    the atlas has it (the overland sheet: its edges match the brown ground on 7 of 9 terrains,
-    the rest near it), else the tile's own terrain. `~` was read away until 2026-09-29, which padded
-    every terrain border with the tile's own terrain and pulled its edge toward that colour: a
-    bright lattice at each border of the overland map."""
+    """The terrain to pad and normalize a side with, from the .til alone; `plain` is the atlas's
+    types that have plain tiles. `~` names what may NOT be there. A border (`~own`) is the shared
+    ground where the atlas has it -- the overland sheet, whose border art fades to the brown ground
+    (7 of 9 terrains' edges nearest it, the rest near it) -- and otherwise the tile's own terrain
+    until resolve_borders reads the art. `~` was read away until 2026-09-29, which padded every
+    terrain border with the tile's own terrain and pulled its edge toward that colour: a bright
+    lattice at each border of the overland map."""
+    if _is_border(own, negated, types):
+        return BORDER_GROUND if BORDER_GROUND in plain else own
     if negated:
-        if types is None or own not in types:
-            return own
-        others = plain - types
-        if len(others) == 1:
-            return next(iter(others))
-        return BORDER_GROUND if BORDER_GROUND in others else own
+        return own
     return own if types is None or own in types else min(types)
 
 
@@ -169,6 +171,7 @@ def tile_defs(src: pathlib.Path) -> dict[str, dict[int, dict]]:
             ring = [_types(v) for v in f[2:10]]
             sides = dict(zip(("n", "ne", "e", "se", "s", "sw", "w", "nw"), ring))
             entry = {"self": own, "pure": all(not neg and r == {own} for neg, r in ring),
+                     "borders": tuple(s for s in SIDES if _is_border(own, *sides[s])),
                      "_sides": {side: sides[side] for side in SIDES}}
             cells.setdefault(cell, entry)
     # Sides are resolved once the atlas's plain terrains are known.
@@ -241,6 +244,41 @@ def type_means(idx: bytes, w: int, pal, t: int, defs: dict[int, dict]) -> dict[i
                 c = pal[idx[((cell // per) * t + y) * w + (cell % per) * t + x]]
                 s[0] += c[0]; s[1] += c[1]; s[2] += c[2]; s[3] += 1
     return {k: (v[0] / v[3], v[1] / v[3], v[2] / v[3]) for k, v in acc.items()}
+
+
+def edge_mean(idx: bytes, w: int, pal, t: int, cell: int, side: str, depth: int = EDGE_PX):
+    """Average 1x colour of the `depth` pixels of a tile along one side."""
+    per, acc, n = w // t, [0, 0, 0], 0
+    x0, y0 = (cell % per) * t, (cell // per) * t
+    xs = range(t) if side in ("n", "s") else (range(depth) if side == "w" else range(t - depth, t))
+    ys = range(t) if side in ("e", "w") else (range(depth) if side == "n" else range(t - depth, t))
+    for y in ys:
+        for x in xs:
+            c = pal[idx[(y0 + y) * w + x0 + x]]
+            acc[0] += c[0]; acc[1] += c[1]; acc[2] += c[2]; n += 1
+    return (acc[0] / n, acc[1] / n, acc[2] / n)
+
+
+def resolve_borders(idx: bytes, w: int, pal, t: int, defs: dict[int, dict]) -> dict[int, dict]:
+    """On an atlas without the overland ground, what lies past each border side is read from the
+    art: the plain terrain whose average colour is nearest that side's edge pixels. The .til cannot
+    say it -- on a cave sheet a rock tile's border with lava is drawn in rock (52 of 52 sides), and a
+    lava tile's border with rock is drawn in rock too; "the other terrain" was right for one
+    direction only (review, 2026-09-29). A copy of `defs` is returned; the overland sheet's is
+    unchanged."""
+    if any(d["pure"] and d["self"] == BORDER_GROUND for d in defs.values()):
+        return defs
+    means = type_means(idx, w, pal, t, defs)
+    if not means:
+        return defs
+    out = {}
+    for cell, d in defs.items():
+        d = dict(d)
+        for side in d.get("borders", ()):
+            e = edge_mean(idx, w, pal, t, cell, side)
+            d[side] = min(means, key=lambda k: sum((a - b) ** 2 for a, b in zip(means[k], e)))
+        out[cell] = d
+    return out
 
 
 def normalize_edges(rgb: bytes, low: bytes, w2: int, h2: int, t2: int, defs: dict[int, dict],
@@ -339,7 +377,7 @@ def build(src: pathlib.Path, out: pathlib.Path, esrgan: pathlib.Path, models: pa
         # from: the source atlas's bytes, the tile size, the padding and every tile's neighbours.
         # A re-extracted source, a new PAD or an edited .til gets fresh tiles instead of silently
         # compositing the old ones.
-        defs = all_defs.get(f"{name}.lbm", {})
+        defs = resolve_borders(idx, w, pal, t, all_defs.get(f"{name}.lbm", {}))
         per_row = w // t
         nbrs = {c: neighbours(defs, c) for c in range(per_row * (h // t))}
         digest = hashlib.sha256(lbm.read_bytes() + b"%d/%d/" % (t, PAD)
