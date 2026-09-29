@@ -121,6 +121,9 @@ SIDES = ("n", "e", "s", "w")
 # transition art fades to it. Other atlases are read from their art instead (resolve_borders).
 BORDER_GROUND = 0
 EDGE_PX = 3          # source pixels of a tile's edge whose colour says what terrain it meets
+EDGE_CUT = 3.0       # a border edge further than this many "plain edge spreads" from every plain
+                     # terrain is drawn in something no plain tile has: left alone (UNMATCHED)
+UNMATCHED = -1       # a side type with no plain tile and no mean: own-edge padding, no colour pull
 
 
 def _types(field: str) -> tuple[bool, set[int] | None]:
@@ -259,24 +262,39 @@ def edge_mean(idx: bytes, w: int, pal, t: int, cell: int, side: str, depth: int 
     return (acc[0] / n, acc[1] / n, acc[2] / n)
 
 
+def _dist(a, b) -> float:
+    return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+
+
 def resolve_borders(idx: bytes, w: int, pal, t: int, defs: dict[int, dict]) -> dict[int, dict]:
-    """On an atlas without the overland ground, what lies past each border side is read from the
-    art: the plain terrain whose average colour is nearest that side's edge pixels. The .til cannot
-    say it -- on a cave sheet a rock tile's border with lava is drawn in rock (52 of 52 sides), and a
-    lava tile's border with rock is drawn in rock too; "the other terrain" was right for one
-    direction only (review, 2026-09-29). A copy of `defs` is returned; the overland sheet's is
-    unchanged."""
-    if any(d["pure"] and d["self"] == BORDER_GROUND for d in defs.values()):
-        return defs
+    """What lies past each border side, read from the art. The .til cannot say it: on a cave sheet
+    a rock tile's border with lava is drawn in rock (52 of 52 sides), and a lava tile's border with
+    rock is drawn in rock too, so "the other terrain" was right in one direction only; on the
+    overland sheet a road's end is drawn in the terrain it runs over (desert, ice), not the brown
+    ground (reviews, 2026-09-29).
+
+    A border side is the ground where the atlas has it and the edge is near it in colour (the
+    measured overland case: seams 2.49 -> 0.69); else the plain terrain nearest its edge colour;
+    else, when even that is far -- beyond EDGE_CUT times how far plain tiles' own edges sit from
+    their terrain's mean -- UNMATCHED, so it is neither padded with nor pulled toward a terrain it
+    is not drawn in (jeff01's dirt, whose terrain has no plain tile). A copy is returned."""
     means = type_means(idx, w, pal, t, defs)
     if not means:
         return defs
+    spreads = sorted(_dist(edge_mean(idx, w, pal, t, cell, side), means[d["self"]])
+                     for cell, d in defs.items() if d["pure"] for side in SIDES)
+    cut = EDGE_CUT * max(spreads[len(spreads) // 2], 4.0)     # flat synthetic art has no spread
+    ground = means.get(BORDER_GROUND)
     out = {}
     for cell, d in defs.items():
         d = dict(d)
         for side in d.get("borders", ()):
             e = edge_mean(idx, w, pal, t, cell, side)
-            d[side] = min(means, key=lambda k: sum((a - b) ** 2 for a, b in zip(means[k], e)))
+            if ground is not None and _dist(e, ground) <= cut:
+                d[side] = BORDER_GROUND
+                continue
+            near = min(means, key=lambda k: _dist(means[k], e))
+            d[side] = near if _dist(means[near], e) <= cut else UNMATCHED
         out[cell] = d
     return out
 

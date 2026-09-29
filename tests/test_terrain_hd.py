@@ -469,10 +469,37 @@ class TwoTerrainAtlas(unittest.TestCase):
         self.assertEqual(got[3]["n"], 18)      # an 18 tile whose border is drawn in 18: its own
         self.assertEqual(self.defs[2]["n"], 16)   # the input is not changed
 
-    def test_the_overland_sheet_keeps_the_ground(self) -> None:
-        defs = dict(self.defs)
-        defs[9] = {"self": th.BORDER_GROUND, "pure": True, "borders": (), "n": 0, "e": 0, "s": 0, "w": 0}
-        self.assertIs(th.resolve_borders(self.idx, 16, self.pal, 4, defs), defs)
+    def test_a_border_drawn_in_no_plain_terrains_colour_is_left_alone(self) -> None:
+        # Tile 3's border drawn in a blue that neither plain terrain has (jeff01's dirt, whose
+        # terrain has no plain tile, is the real case): no padding with, or pull toward, either.
+        idx = bytearray(self.idx)
+        for y in range(3):
+            for x in range(12, 16):
+                idx[y * 16 + x] = 3
+        pal = self.pal[:3] + [(0, 0, 255)] + self.pal[4:]
+        got = th.resolve_borders(bytes(idx), 16, pal, 4, self.defs)
+        self.assertEqual(got[3]["n"], th.UNMATCHED)
+        self.assertIsNone(th.neighbours(got, 3)["n"])
+
+
+class OverlandBorders(unittest.TestCase):
+    """The overland sheet: a border drawn near the brown ground is the ground; a road's end is drawn
+    in the terrain it runs over, and is that terrain."""
+
+    def test_ground_where_the_edge_is_ground_else_what_it_is_drawn_in(self) -> None:
+        d = pathlib.Path(tempfile.mkdtemp())
+        (d / "o.til").write_bytes(b"LBM=o.lbm\rTILESIZE= 4, 4\r"
+                                  b"TILE=      0, 0, 0, 0, 0, 0, 0, 0, 0, 0,   0\r"
+                                  b"TILE=      1, 2, 2, 2, 2, 2, 2, 2, 2, 2,   0\r"
+                                  b"TILE=      2, 2, ~2, 2, 2, 2, 2, 2, 2, 2,   0\r"
+                                  b"TILE=      3, 9, ~9, *, 2, *, 9, *, 2, *,   0\r")
+        # ground brown (1), desert sand (2); tile 2's north edge brown, tile 3's (a road) sand.
+        rows = [[1] * 4 + [2] * 4 + ([1] * 4 if y < 3 else [2] * 4) + [2] * 4 for y in range(4)]
+        idx = bytes(v for r in rows for v in r)
+        pal = [(0, 0, 0), (90, 80, 50), (200, 195, 135)] + [(0, 0, 0)] * 253
+        got = th.resolve_borders(idx, 16, pal, 4, th.tile_defs(d)["o.lbm"])
+        self.assertEqual(got[2]["n"], th.BORDER_GROUND)
+        self.assertEqual(got[3]["n"], 2)
 
 
 def _corpus_sides(src: pathlib.Path):
@@ -507,11 +534,20 @@ class TileDefsCorpus(unittest.TestCase):
         self.src = pathlib.Path(TERRAIN_SRC)
         self.defs = th.tile_defs(self.src)
 
-    def test_the_overland_borders_are_the_ground(self) -> None:
+    def _resolved(self, atlas: str):
+        lbm = self.src / atlas
+        w, h, idx, pal, _ = lbm_png.decode(lbm)
+        t = th.tile_sizes(self.src).get(atlas, th.DEFAULT_TILE)
+        return th.resolve_borders(idx, w, [tuple(c) for c in pal], t, self.defs[atlas]), (w, idx, pal, t)
+
+    def test_the_overland_borders_are_mostly_the_ground_and_road_ends_their_terrain(self) -> None:
+        got, _ = self._resolved("tilesb01.lbm")
         sides = [s for s in _corpus_sides(self.src) if s[0] == "tilesb01.lbm"]
+        ground = sum(got[cell][side] == th.BORDER_GROUND for _, cell, _, side, _ in sides)
         self.assertGreater(len(sides), 100)
-        for atlas, cell, own, side, named in sides:
-            self.assertEqual(self.defs[atlas][cell][side], th.BORDER_GROUND, (cell, side, named))
+        self.assertGreater(ground, 0.8 * len(sides))
+        # A road on desert (cell 492, `9, ~9, *, 2, ...`): its north end is drawn in sand.
+        self.assertEqual(got[492]["n"], 2)
 
     def test_other_sheets_borders_are_the_terrain_their_edge_is_drawn_in(self) -> None:
         # On every sheet without the overland ground, each border side resolves to the plain
@@ -538,7 +574,7 @@ class TileDefsCorpus(unittest.TestCase):
             plain = {k: [sum(m[i] for m in v) / len(v) for i in range(3)] for k, v in plain.items()}
             got = th.resolve_borders(idx, w, pal, t, cells)
             for a, cell, own, side, named in sides:
-                if a != atlas:
+                if a != atlas or got[cell][side] == th.UNMATCHED:
                     continue
                 xs = {"n": range(t), "s": range(t), "w": range(3), "e": range(t - 3, t)}[side]
                 ys = {"e": range(t), "w": range(t), "n": range(3), "s": range(t - 3, t)}[side]
@@ -546,7 +582,7 @@ class TileDefsCorpus(unittest.TestCase):
                 want = min(plain, key=lambda k: sum((p - q) ** 2 for p, q in zip(plain[k], e)))
                 self.assertEqual(got[cell][side], want, (atlas, cell, side))
                 seen += 1
-        self.assertGreater(seen, 1000)
+        self.assertGreater(seen, 800)          # the rest are left alone: see the UNMATCHED test
 
 
 if __name__ == "__main__":
