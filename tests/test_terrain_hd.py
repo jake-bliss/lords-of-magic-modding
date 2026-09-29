@@ -562,6 +562,10 @@ class TileDefsCorpus(unittest.TestCase):
             unmatched = sum(got[c][s] == th.UNMATCHED for c, s in sides)
             if atlas not in far:
                 self.assertLessEqual(unmatched, 0.1 * len(sides), (atlas, unmatched, len(sides)))
+            else:
+                # ... and those drawn in no plain colour keep a share alone (a cut-off loose enough
+                # to pull them all toward some terrain fails here: at 6, chbldg01 keeps 4 of 52).
+                self.assertGreaterEqual(unmatched, 0.2 * len(sides), (atlas, unmatched, len(sides)))
 
     def test_other_sheets_borders_are_the_terrain_their_edge_is_drawn_in(self) -> None:
         # On every sheet without the overland ground, each border side resolves to the plain
