@@ -122,8 +122,12 @@ SIDES = ("n", "e", "s", "w")
 # transition art fades to it. Other atlases are read from their art instead (resolve_borders).
 BORDER_GROUND = 0
 EDGE_PX = 3          # source pixels of a tile's edge whose colour says what terrain it meets
-EDGE_CUT = 3.0       # a border edge further than this many "plain edge spreads" from every plain
-                     # terrain is drawn in something no plain tile has: left alone (UNMATCHED)
+EDGE_CUT = 3.5       # a border edge further than this many "plain edge spreads" from every plain
+                     # terrain is drawn in something no plain tile has: left alone (UNMATCHED).
+# Chosen on the shipped sheets (2026-09-29): from 3.5 up, every sheet whose borders are drawn in a
+# plain terrain has at most 6% unmatched (at 3: cavewatr 13%, wabldg01 19%), while the five drawn in
+# no plain colour (cavecrys, libldg01, chbldg01, orbldg01, jeff01's dirt) stay unmatched until
+# 4-5, where libldg01's borders -- 146 from its only terrain -- start being pulled toward it.
 UNMATCHED = -1       # a side type with no plain tile and no mean: own-edge padding, no colour pull
 
 
