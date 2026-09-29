@@ -153,6 +153,26 @@ holding a run of >= 8 consecutive pixels that are neither the colour key nor the
 (`hd_portrait_pack.masked_is_eligible`); the builder skips and reports anything short of that, the
 same as every other kind of skip.
 
+**Unit strip figures** (`hd_sprites.STRIP_SHEETS` / `STRIP_WINDOWS`). The bottom bar's party/army
+strip draws each unit as one frame of its faith's `iface\<xx>icons.imp` (nine sheets,
+GRAPHICS5.gs:139-149, one single-frame sequence per unit type, frame = unit code), unscaled, placed by
+the frame's origin pair (`top_left = anchor + origin - (w>>1, h>>1)`), but shows only a window of it.
+In combat every slot's anchor is at y=440 and screen rows 418-457 show, so of a figure `h` rows tall
+with origin y `oy` the strip shows rows `[s, s+40)`, `s = (h>>1) - oy - 22`, clamped to the figure --
+about 40 of up to 140 rows (measured byte for byte on `lomhd_frame_201730_941`, a Fire battle,
+2026-09-28). The matcher needs a whole record on screen and 70% of a sprite's opaque pixels, so the
+full frame is never found there (48% and 39% on that capture). Setup therefore builds the nine sheets
+on **every** install, `--sprites` or not (147 frames, 145 packed from the shipped picks -- `pyicons`
+has no pick and is left out), and follows each frame's record with a `strip__<sheet>#NNN` record: the
+visible rows as the low-res half, the same rows of the frame's existing 2x render as the HD half, no
+extra upscale. It shares the frame's group -- a group-0 record between two frames of one group would
+make the DLL refuse the pack. A frame repeated with another origin adds its own window to the kept
+frame. On that capture the shipped matcher (`lomhd_find`, native build) finds exactly the four strip
+slots -- the lord `strip__fiicons#011` at (248,420) and `strip__fiicons#000` at (288,418), (320,418),
+(352,418), 95-96% of their pixels -- and nothing else, alone or added to a full `--sprites` pack; the
+same pack without the crops finds none. The window table is data: a strip measured to show another
+window (the overland one, still uncaptured) is one more `StripWindow` with its own family name.
+
 **The content check** (0.5.1, `hd_upscale.damage_score`): the DLL draws an upscale wherever the
 screen matches the ORIGINAL, so it cannot notice an upscale whose pixels are wrong, and until 0.5.1
 setup checked only an upscale's size. A tester's Windows GPU wrote renders of the right size full of
@@ -339,7 +359,12 @@ reason. The release recipe makes real upscales for all 749.
   where the interface bar's art has a see-through band (rows 381-385, key green), so the game shows
   whatever was drawn there last -- the overland map. Measured on a capture before the overlay draws:
   it is the game's own frame, in vanilla too. Left as it is (2026-09-24); covering it would invent pixels.
-- **The party strip's unit figures stay low-resolution.** Each slot shows about 40 of a figure's 96
-  rows (`liicons`), too little of the sprite for the matcher.
+- **The party strip's unit figures: combat strip addressed, overland assumed.** Each slot shows about
+  40 rows of a figure, too little for the matcher; the `strip__` crop records (see "Unit strip
+  figures" above) cover the combat strip, verified offline on one capture only, not yet seen drawn
+  live. The overland army strip is assumed to show the same window until a capture of it is measured.
+  A duplicate frame is placed by its source frame's origin pair (the duplicate's own dword is
+  garbage in `pyicons`), unverified where the two differ (`oricons` #18). Not addressed: the combat
+  info panel's figure, drawn clipped at the left edge (x=-2).
 - **Icons on screens never captured** (barter, the editor, combat results -- about 300 of the 365) are
   packed but unverified.

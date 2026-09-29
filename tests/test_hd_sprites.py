@@ -10,8 +10,10 @@ import shutil
 import struct
 import subprocess
 import sys
+import os
 import tempfile
 import unittest
+from unittest import mock
 import zlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -40,22 +42,26 @@ def frame(w: int, h: int, fill: int, *, shadow_at: int | None = None, flat: bool
     return w, h, bytes(indices)
 
 
-def sprite(*frames, key: int = KEY, duplicates: dict[int, int] | None = None) -> imp_read.Sprite:
+def sprite(*frames, key: int = KEY, duplicates: dict[int, int] | None = None,
+           origins: list | None = None) -> imp_read.Sprite:
     """An imp_read.Sprite as `parse` returns one; `duplicates` maps a frame slot to the earlier
-    frame it repeats (a 0x08 record)."""
+    frame it repeats (a 0x08 record); `origins` gives each frame's origin pair (None: hotspots)."""
     out = []
     for i, (w, h, idx) in enumerate(frames):
         source = (duplicates or {}).get(i)
+        origin = origins[i] if origins is not None else (0, 0)
         if source is not None:
-            out.append(imp_read.Frame(0x08, 0, 0, b"", source, i * 16, 0, None, None))
+            out.append(imp_read.Frame(0x08, 0, 0, b"", source, i * 16, 0, None, None, origin))
         else:
-            out.append(imp_read.Frame(0, w, h, idx, None, i * 16, 0, i * 1000, len(idx)))
+            out.append(imp_read.Frame(0, w, h, idx, None, i * 16, 0, i * 1000, len(idx), origin))
     return imp_read.Sprite(0, 1, False, 8, 1000, 1000, key, list(PALETTE), [], [], out,
                            len(duplicates or {}))
 
 
-def imp_file(frames: list[tuple[int, int, bytes]], key: int = KEY, duplicate_of: dict[int, int] | None = None) -> bytes:
-    """A real 8bpp, uncompressed, variant-1 IMP file: one sequence, one facing."""
+def imp_file(frames: list[tuple[int, int, bytes]], key: int = KEY, duplicate_of: dict[int, int] | None = None,
+             origins: list[tuple[int, int]] | None = None) -> bytes:
+    """A real 8bpp, uncompressed, variant-1 IMP file: one sequence, one facing; each frame's origin
+    pair (signed x, y) in its hotspot dword, (0, 0) unless `origins` says."""
     n = len(frames)
     palette_at, sequence_at = 32, 32 + 1024
     facing_at = sequence_at + 16
@@ -70,10 +76,11 @@ def imp_file(frames: list[tuple[int, int, bytes]], key: int = KEY, duplicate_of:
     facing = struct.pack("<HHI", 0, n, table_at)
     table, pixels = bytearray(), bytearray()
     for i, (w, h, idx) in enumerate(frames):
+        origin = struct.unpack("<I", struct.pack("<hh", *(origins[i] if origins else (0, 0))))[0]
         if duplicate_of and i in duplicate_of:
-            table += struct.pack("<BBHHHII", 0x08, 0, 0, 0, 0, 0, duplicate_of[i])
+            table += struct.pack("<BBHHHII", 0x08, 0, 0, 0, 0, origin, duplicate_of[i])
             continue
-        table += struct.pack("<BBHHHII", 0, 0, w, h, w * h, 0, pixels_at + len(pixels))
+        table += struct.pack("<BBHHHII", 0, 0, w, h, w * h, origin, pixels_at + len(pixels))
         pixels += idx
     return bytes(header) + palette + sequence + facing + bytes(table) + bytes(pixels)
 
@@ -265,6 +272,12 @@ class DevResolve(unittest.TestCase):
 
 
 class ImpFile(unittest.TestCase):
+    def test_a_frame_without_hotspots_reads_its_signed_origin_pair(self) -> None:
+        a = frame(20, 6, 3)
+        parsed = imp_read.parse(imp_file([a, frame(20, 6, 4), a], duplicate_of={2: 0},
+                                         origins=[(-14, 25), (2, -3), (7, 8)]))
+        self.assertEqual([f.origin for f in parsed.frames], [(-14, 25), (2, -3), (7, 8)])
+
     def test_the_synthetic_imp_parses_with_duplicates_resolved(self) -> None:
         a, b = frame(20, 6, 3), frame(20, 6, 4)
         parsed = imp_read.parse(imp_file([a, b, a], duplicate_of={2: 0}))
@@ -532,6 +545,215 @@ class ContentCheck(Base):
         self.assertEqual(skipped, ["anim__cav#001: anime2x render is missing"])
         self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 0, 1))
         self.assertFalse(self.render.exists(), "missing now, so the next run renders it afresh")
+
+
+def figure(w: int, h: int, fill: int, key: int = KEY) -> tuple[int, int, bytes]:
+    """A unit figure: a 2-pixel key border and a different run of colours on EVERY row, so a crop
+    of the wrong rows is visibly wrong. Eligible when w - 4 >= 8."""
+    rows = [[key] * 2 + [10 + (fill * 31 + y * 7 + x) % 200 for x in range(w - 4)] + [key] * 2
+            for y in range(h)]
+    return w, h, bytes(v for row in rows for v in row)
+
+
+COMBAT = hd_sprites.STRIP_WINDOWS[0]
+
+
+class StripGeometry(unittest.TestCase):
+    """strip_rows on figures shaped like the icon sheets: 19-146 wide, 20-140 tall, origin y from
+    -3 to 40 (liicons, fiicons, aiicons, measured 2026-09-28)."""
+
+    def test_the_window_starts_22_rows_above_the_anchor_and_is_40_rows(self) -> None:
+        self.assertEqual((COMBAT.above, COMBAT.rows), (22, 40))
+
+    def test_figures_taller_than_the_window(self) -> None:
+        self.assertEqual(hd_sprites.strip_rows(91, 19, COMBAT), (4, 40))        # fiicons #0, 39x91
+        self.assertEqual(hd_sprites.strip_rows(127, 22, COMBAT), (19, 40))      # aiicons #13, 108x127
+        self.assertEqual(hd_sprites.strip_rows(140, 28, COMBAT), (20, 40))      # liicons #13, 128x140
+
+    def test_a_figure_whose_top_is_below_the_window_top_is_clamped_to_row_0(self) -> None:
+        self.assertEqual(hd_sprites.strip_rows(108, 34, COMBAT), (0, 38))       # fiicons #11, 48x108
+        self.assertEqual(hd_sprites.strip_rows(69, 22, COMBAT), (0, 30))        # liicons #0, 54x69
+        self.assertEqual(hd_sprites.strip_rows(27, 22, COMBAT), (0, 9))         # fiicons #9, 21x27
+
+    def test_the_window_bottom_is_clamped_to_the_figure(self) -> None:
+        self.assertEqual(hd_sprites.strip_rows(51, -10, COMBAT), (13, 38))
+        self.assertEqual(hd_sprites.strip_rows(35, -3, COMBAT), (0, 35), "aiicons #14: all of it")
+
+    def test_a_window_that_misses_the_figure_shows_none_of_it(self) -> None:
+        self.assertIsNone(hd_sprites.strip_rows(20, 40, COMBAT))               # all of it below the strip
+        self.assertIsNone(hd_sprites.strip_rows(20, -40, COMBAT))              # all of it above
+        self.assertEqual(hd_sprites.strip_rows(20, -31, COMBAT), (19, 1))      # one row still shows
+
+    def test_record_names_fit_the_dll(self) -> None:
+        longest = max(hd_sprites.strip_record_name(w.family, n, 999)
+                      for w in hd_sprites.STRIP_WINDOWS for n in hd_sprites.STRIP_SHEETS)
+        self.assertLessEqual(len(longest), hd_sprites.MAX_RECORD_NAME_LEN)
+        self.assertEqual(hd_sprites.strip_record_name("strip", "fiicons", 11), "strip__fiicons#011")
+
+
+class StripSheets(unittest.TestCase):
+    def test_exactly_the_nine_unit_icon_sheets_are_always_built(self) -> None:
+        """GRAPHICS5.gs:139-149 registers one per faith; they are the iface\\*icons.imp names the
+        release resolves, and nothing else is."""
+        listed = {line.strip().lower() for line in (ROOT / "release" / "hd-overlay" / "imp-names.txt")
+                  .read_text().splitlines() if line.strip()}
+        icons = {m.split("\\")[-1][:-4] for m in listed if m.startswith("iface\\") and m.endswith("icons.imp")}
+        self.assertEqual(len(hd_sprites.STRIP_SHEETS), 9)
+        self.assertEqual(hd_sprites.STRIP_SHEETS, icons)
+
+
+class Strip(Base):
+    def test_sheets_are_built_without_animated_sprites_and_nothing_else_is(self) -> None:
+        plan = self.plan({"iface\\fiicons.imp": sprite(figure(39, 91, 1), figure(48, 108, 2),
+                                                      origins=[(2, 19), (-1, 34)]),
+                          "units\\cav.imp": sprite(frame(20, 6, 3), frame(20, 6, 4))},
+                         {"sprite__fiicons": "ultrasharp-tta", "sprite__cav": "anime2x"}, animated=False)
+        self.assertEqual([s.name for s in plan.animated], ["fiicons"])
+        self.assertNotIn("units\\cav.imp", self.reads, "an animated sprite is not even read")
+        self.assertEqual([[(c.record, c.top, c.rows) for c in f.crops] for f in plan.animated[0].frames],
+                         [[("strip__fiicons#000", 4, 40)], [("strip__fiicons#001", 0, 38)]])
+        self.assertEqual(plan.counts["strip"], 2)
+
+    def test_each_crop_follows_its_frame_in_its_group_cut_from_the_same_render(self) -> None:
+        a, b = figure(39, 91, 1), figure(53, 92, 2)
+        plan = self.plan({"iface\\fiicons.imp": sprite(a, b, origins=[(2, 19), (-1, 24)])},
+                         {"sprite__fiicons": "ultrasharp-tta"}, animated=False)
+        counts: dict = {}
+        got = self.pack_of(plan, counts=counts, first_group=3)
+        self.assertEqual([(name, flags, group, key) for name, flags, group, _, _, key in got],
+                         [("anim__fiicons#000", pack.FLAG_MASKED, 3, KEY), ("strip__fiicons#000", pack.FLAG_MASKED, 3, KEY),
+                          ("anim__fiicons#001", pack.FLAG_MASKED, 3, KEY), ("strip__fiicons#001", pack.FLAG_MASKED, 3, KEY)])
+        for (w, h, idx), (_, _, _, full_small, full_large, _), (_, _, _, small, large, _), top in (
+                (a, got[0], got[1], 4), (b, got[2], got[3], 0)):
+            self.assertEqual((small[0], small[1]), (w, 40))
+            self.assertEqual(bytes(small[3]), idx[top * w:(top + 40) * w])
+            self.assertEqual(small[2], full_small[2], "the frame's own palette")
+            self.assertEqual(large[:2], (2 * w, 80))
+            stride = 2 * w * 4
+            self.assertEqual(large[2], full_large[2][2 * top * stride:2 * (top + 40) * stride])
+        self.assertEqual((counts["packed"], counts["strip"]), (2, 2))
+
+    def test_the_pack_the_crops_go_into_keeps_its_groups_consecutive(self) -> None:
+        """A group-0 crop between two frames of one group would make the DLL refuse the pack."""
+        plan = self.plan({"iface\\deicons.imp": sprite(figure(26, 87, 1), figure(40, 66, 2), origins=[(1, 10), (-4, 19)]),
+                          "iface\\fiicons.imp": sprite(figure(39, 91, 3), figure(62, 90, 4), origins=[(2, 19), (-5, 21)])},
+                         {"sprite__deicons": "ultrasharp-tta", "sprite__fiicons": "ultrasharp-tta"}, animated=False)
+        groups = [group for _, _, group, *_ in self.pack_of(plan)]
+        self.assertEqual(groups, [1, 1, 1, 1, 2, 2, 2, 2])
+
+    def test_a_repeat_placed_by_another_origin_adds_its_window_to_the_kept_frame(self) -> None:
+        shared = figure(45, 98, 5)
+        plan = self.plan({"iface\\deicons.imp": sprite(shared, figure(39, 91, 7), origins=[(0, 27), (-1, 25)]),
+                          "iface\\oricons.imp": sprite(figure(36, 81, 6), shared, shared,
+                                                        origins=[(0, 22), (0, 29), (0, 27)])},
+                         {"sprite__deicons": "anime2x", "sprite__oricons": "anime2x"}, animated=False)
+        kept = plan.animated[0].frames[0]
+        self.assertEqual([(c.record, c.top, c.rows) for c in kept.crops],
+                         [("strip__deicons#000", 0, 40), ("strip__oricons#001", 0, 38)])
+        self.assertEqual(plan.counts["repeats"], 2)
+        names = [name for name, *_ in self.pack_of(plan)]
+        self.assertEqual(names, ["anim__deicons#000", "strip__deicons#000", "strip__oricons#001",
+                                 "anim__deicons#001", "strip__deicons#001",
+                                 "anim__oricons#000", "strip__oricons#000"])
+
+    def test_a_window_showing_the_whole_figure_needs_no_crop(self) -> None:
+        plan = self.plan({"iface\\liicons.imp": sprite(figure(20, 31, 1), figure(19, 40, 2),
+                                                      origins=[(-2, 0), (0, 13)])},
+                         {"sprite__liicons": "anime2x"}, animated=False)
+        self.assertEqual([[(c.top, c.rows) for c in f.crops] for f in plan.animated[0].frames],
+                         [[], [(0, 25)]])
+
+    def test_a_crop_the_dll_could_not_find_is_left_out_with_why_and_its_frame_is_kept(self) -> None:
+        w, h, idx = figure(30, 80, 1)
+        rows = bytearray(idx)
+        rows[0:w * 38] = bytes([KEY]) * (w * 38)          # window rows [0, 40): only two rows opaque
+        plan = self.plan({"iface\\fiicons.imp": sprite(figure(39, 91, 2), (w, h, bytes(rows)), origins=[(2, 19), (0, 20)])},
+                         {"sprite__fiicons": "anime2x"}, animated=False)
+        self.assertEqual([f.index for f in plan.animated[0].frames], [0, 1])
+        self.assertEqual(plan.animated[0].frames[1].crops, [])
+        self.assertEqual(len(plan.skipped), 1)
+        self.assertTrue(plan.skipped[0].startswith("strip__fiicons#001: "), plan.skipped)
+
+    def test_only_the_sheets_get_crops_and_a_frame_with_hotspots_says_why(self) -> None:
+        plan = self.plan({"iface\\fiicons.imp": sprite(figure(39, 91, 1), origins=[None]),
+                          "units\\cav.imp": sprite(figure(39, 91, 2), figure(39, 91, 3))},
+                         {"sprite__fiicons": "anime2x", "sprite__cav": "anime2x"})
+        self.assertTrue(all(not f.crops for s in plan.animated for f in s.frames))
+        self.assertEqual(plan.skipped, ["fiicons#000: has hotspot records, not an origin pair; no strip record"])
+
+    def test_the_crop_geometry_follows_the_window_table(self) -> None:
+        """A second strip (the overland one, once measured) is one more table entry."""
+        overland = hd_sprites.StripWindow("ostrip", 10, 30)
+        with mock.patch.object(hd_sprites, "STRIP_WINDOWS", (COMBAT, overland)):
+            plan = self.plan({"iface\\fiicons.imp": sprite(figure(39, 91, 1), figure(20, 30, 2),
+                                                          origins=[(2, 19), (0, 0)])},
+                             {"sprite__fiicons": "anime2x"}, animated=False)
+        self.assertEqual([(c.record, c.top, c.rows) for c in plan.animated[0].frames[0].crops],
+                         [("strip__fiicons#000", 4, 40), ("ostrip__fiicons#000", 16, 30)])
+
+
+GAME_DIR = pathlib.Path(os.environ.get("LOM_GAME_DIR", "/nonexistent"))
+STRIP_CAPTURE = pathlib.Path(os.environ.get("LOM_STRIP_CAPTURE", "/nonexistent"))
+
+
+@unittest.skipUnless((GAME_DIR / "imp.mpq").is_file(), "needs LOM_GAME_DIR with the game's imp.mpq")
+class StripCorpus(unittest.TestCase):
+    """The player's own icon sheets: every frame is placed by an origin pair and the window table
+    gives every eligible frame a crop; and, with a captured combat frame (LOM_STRIP_CAPTURE,
+    lomhd_frame_201730_941.raw: a Fire battle), the crops are what the strip shows."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import mpq_read
+        archive = mpq_read.Archive(GAME_DIR / "imp.mpq")
+        cls.sheets = {name: imp_read.parse(archive.read(f"iface\\{name}.imp")) for name in hd_sprites.STRIP_SHEETS
+                      if f"iface\\{name}.imp" in archive}
+
+    def test_the_sheets_are_single_frame_sequences_placed_by_origin_pairs(self) -> None:
+        self.assertEqual(set(self.sheets), set(hd_sprites.STRIP_SHEETS))
+        for name, sheet in self.sheets.items():
+            self.assertEqual(len(sheet.sequences), len(sheet.frames), name)
+            for i, f in enumerate(sheet.frames):
+                self.assertIsNotNone(f.origin, f"{name}#{i}")
+
+    def test_every_non_duplicate_frame_shows_between_1_and_40_rows(self) -> None:
+        for name, sheet in self.sheets.items():
+            for i, f in enumerate(sheet.frames):
+                if f.source_frame is None:
+                    top, rows = hd_sprites.strip_rows(f.height, f.origin[1], COMBAT)
+                    self.assertTrue(0 <= top and 1 <= rows <= 40 and top + rows <= f.height, f"{name}#{i}")
+
+    @unittest.skipUnless(STRIP_CAPTURE.is_file(), "needs LOM_STRIP_CAPTURE, a LOMHDRAW combat frame")
+    def test_the_crops_are_what_the_captured_combat_strip_shows(self) -> None:
+        """The lord (fiicons #11) at slot anchor x=273 and three fiicons #0 at 305, 337, 369, all at
+        y=440: each crop, placed by the origin rule, matches the frame exactly on >= 90% of its
+        opaque pixels (health bars cover a few rows), while the whole figure cannot reach the DLL's
+        70%."""
+        raw = STRIP_CAPTURE.read_bytes()
+        self.assertEqual(raw[:8], b"LOMHDRAW")
+        width, height = struct.unpack_from("<II", raw, 8)
+        screen = struct.unpack_from(f"<{width * height}H", raw, 20)
+        sheet = self.sheets["fiicons"]
+        lut = [((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3) for r, g, b in sheet.palette]
+
+        def matched(f, left, top, first, rows):
+            ok = total = 0
+            for y in range(first, first + rows):
+                for x in range(f.width):
+                    v = f.indices[y * f.width + x]
+                    if v in (sheet.color_key, pack.SHADOW_INDEX):
+                        continue
+                    total += 1
+                    sx, sy = left + x, top + y
+                    ok += 0 <= sx < width and 0 <= sy < height and screen[sy * width + sx] == lut[v]
+            return ok / total
+
+        for index, anchor_x in ((11, 273), (0, 305), (0, 337), (0, 369)):
+            f = sheet.frames[index]
+            left, top = anchor_x + f.origin[0] - (f.width >> 1), 440 + f.origin[1] - (f.height >> 1)
+            first, rows = hd_sprites.strip_rows(f.height, f.origin[1], COMBAT)
+            self.assertGreaterEqual(matched(f, left, top, first, rows), 0.90, (index, anchor_x))
+            self.assertLess(matched(f, left, top, 0, f.height), 0.70, (index, anchor_x))
 
 
 class Preparation(unittest.TestCase):
