@@ -328,8 +328,11 @@ def plan(resolved: Dict[str, Tuple[str, int]], read_sprite: Callable[[str], "imp
                     counts["repeats"] += 1
                     kept = seen[identity]
                     kept.mirror |= mirror
-                    # The same pixels placed by another origin show other rows: the kept frame
-                    # carries this frame's window too, under this frame's name.
+                    # A 0x08 duplicate (every repeat in the shipped sheets: oricons #18, pyicons
+                    # #4-13) resolves to its source frame, origin and all, so its window is the
+                    # kept frame's and adds nothing. Two STORED identical frames with different
+                    # origins (none ship; a mod could make them) show different rows: the kept
+                    # frame carries this frame's window too, under this frame's name.
                     have = {(c.top, c.rows) for c in kept.crops}
                     extra = [c for c in crops if (c.top, c.rows) not in have]
                     kept.crops.extend(extra)

@@ -590,9 +590,12 @@ def plan_sprites(game: pathlib.Path, animated: bool):
     hd_sprites.prune(root, found.live)
     limit = os.environ.get(SPRITE_LIMIT_ENV)
     if animated and limit:
-        keep = sorted(n for n, (_, frames) in resolved.items() if frames > 1)[:int(limit)]
+        # The unit icon sheets are built on every run; the limit counts only the other animated sprites.
+        keep = sorted(n for n, (_, frames) in resolved.items()
+                      if frames > 1 and n not in hd_sprites.STRIP_SHEETS)[:int(limit)]
         resolved = {n: v for n, v in resolved.items() if v[1] == 1 or n in keep or n in hd_sprites.STRIP_SHEETS}
-        say(f"     {SPRITE_LIMIT_ENV}={limit}: only {len(keep)} animated sprites (a developer aid)")
+        say(f"     {SPRITE_LIMIT_ENV}={limit}: only {len(keep)} animated sprites, plus the unit icon sheets "
+            "(a developer aid)")
     plan = hd_sprites.plan(resolved, read_sprite, sprite_choices(), root, animated=animated)
     plan.skipped[:0] = skipped
     return plan, root, read_sprite

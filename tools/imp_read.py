@@ -68,7 +68,12 @@ class Frame:
     pixels_offset: Optional[int]
     packed_size: Optional[int]
     # (x, y) of the origin pair a frame with no hotspot records stores in its hotspot dword, signed:
-    # where the engine places it (top_left = anchor + origin - (w>>1, h>>1)). None with hotspots.
+    # where the engine places it (top_left = anchor + origin - (w>>1, h>>1)). None with hotspots,
+    # and None for a duplicate or shared-pixel record, as imp.rs reads it: pyicons' duplicates hold
+    # (10610, 0) and (28001, 29541) there, which place nothing. A duplicate is placed by its SOURCE
+    # frame's origin (`resolved_frame(i).origin`). Unverified where the two differ: oricons #18's own
+    # dword reads (0, 29), its source #11's (0, 27); were the engine to use #18's, the strip window
+    # would sit 2 rows off and the crop still match ~94% of its pixels.
     origin: Optional[Tuple[int, int]] = None
 
 
@@ -222,7 +227,7 @@ def parse(source: bytes) -> Sprite:
                         source_frame = pixels_offset
                     duplicate_frame_count += 1
                     frames.append(Frame(frame_flags, 0, 0, b"", source_frame, frame_offset,
-                                        frame_hotspots, None, None, origin))
+                                        frame_hotspots, None, None, None))
                     continue
                 if empty_frame:
                     packed = b""

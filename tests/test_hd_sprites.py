@@ -273,10 +273,13 @@ class DevResolve(unittest.TestCase):
 
 class ImpFile(unittest.TestCase):
     def test_a_frame_without_hotspots_reads_its_signed_origin_pair(self) -> None:
+        """A duplicate's dword is not an origin (garbage in pyicons): None, as imp.rs reads it; it
+        is placed by its source frame's."""
         a = frame(20, 6, 3)
         parsed = imp_read.parse(imp_file([a, frame(20, 6, 4), a], duplicate_of={2: 0},
                                          origins=[(-14, 25), (2, -3), (7, 8)]))
-        self.assertEqual([f.origin for f in parsed.frames], [(-14, 25), (2, -3), (7, 8)])
+        self.assertEqual([f.origin for f in parsed.frames], [(-14, 25), (2, -3), None])
+        self.assertEqual(parsed.resolved_frame(2).origin, (-14, 25))
 
     def test_the_synthetic_imp_parses_with_duplicates_resolved(self) -> None:
         a, b = frame(20, 6, 3), frame(20, 6, 4)
@@ -642,6 +645,8 @@ class Strip(Base):
         self.assertEqual(groups, [1, 1, 1, 1, 2, 2, 2, 2])
 
     def test_a_repeat_placed_by_another_origin_adds_its_window_to_the_kept_frame(self) -> None:
+        """Two STORED identical frames with different origins: none in the shipped sheets (their
+        repeats are all 0x08 duplicates, above), but a mod could make them."""
         shared = figure(45, 98, 5)
         plan = self.plan({"iface\\deicons.imp": sprite(shared, figure(39, 91, 7), origins=[(0, 27), (-1, 25)]),
                           "iface\\oricons.imp": sprite(figure(36, 81, 6), shared, shared,
@@ -655,6 +660,20 @@ class Strip(Base):
         self.assertEqual(names, ["anim__deicons#000", "strip__deicons#000", "strip__oricons#001",
                                  "anim__deicons#001", "strip__deicons#001",
                                  "anim__oricons#000", "strip__oricons#000"])
+
+    def test_a_duplicate_record_is_placed_by_its_source_frames_origin(self) -> None:
+        """oricons #18 is a 0x08 duplicate of #11 whose own dword reads (0, 29) against #11's
+        (0, 27): parsed from a real IMP, it is a repeat whose window is #11's, so no second crop."""
+        shared = figure(45, 98, 5)
+        parsed = imp_read.parse(imp_file([figure(36, 81, 6), shared, shared], duplicate_of={2: 1},
+                                         origins=[(0, 22), (0, 27), (0, 29)]))
+        self.assertIsNone(parsed.frames[2].origin)
+        plan = self.plan({"iface\\oricons.imp": parsed}, {"sprite__oricons": "anime2x"}, animated=False)
+        self.assertEqual([f.index for f in plan.animated[0].frames], [0, 1])
+        self.assertEqual([(c.record, c.top, c.rows) for c in plan.animated[0].frames[1].crops],
+                         [("strip__oricons#001", 0, 40)], "the source's window (s = 49 - 27 - 22 = 0)")
+        self.assertEqual((plan.counts["repeats"], plan.counts["strip"]), (1, 2))
+        self.assertEqual(plan.skipped, [])
 
     def test_a_window_showing_the_whole_figure_needs_no_crop(self) -> None:
         plan = self.plan({"iface\\liicons.imp": sprite(figure(20, 31, 1), figure(19, 40, 2),
@@ -714,7 +733,9 @@ class StripCorpus(unittest.TestCase):
         for name, sheet in self.sheets.items():
             self.assertEqual(len(sheet.sequences), len(sheet.frames), name)
             for i, f in enumerate(sheet.frames):
-                self.assertIsNotNone(f.origin, f"{name}#{i}")
+                self.assertIsNotNone(sheet.resolved_frame(i).origin, f"{name}#{i}")
+                if f.source_frame is not None:
+                    self.assertIsNone(f.origin, f"{name}#{i}: a duplicate's dword is not an origin")
 
     def test_every_non_duplicate_frame_shows_between_1_and_40_rows(self) -> None:
         for name, sheet in self.sheets.items():

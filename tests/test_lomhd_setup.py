@@ -809,12 +809,24 @@ class Sprites(unittest.TestCase):
         self.assertNotIn("No upscale", setup.damage_summary([{"damaged": 1, "failed": 1}], []))
 
     def test_the_dev_sprite_limit_never_drops_the_unit_icon_sheets(self) -> None:
-        self.picks({"sprite__aaa": "anime2x", "sprite__fiicons": "anime2x", "sprite__zzz": "anime2x"})
-        for member in ("units\\aaa.imp", "iface\\fiicons.imp", "units\\zzz.imp"):
+        self.picks({"sprite__bat": "anime2x", "sprite__fiicons": "anime2x", "sprite__zzz": "anime2x"})
+        for member in ("units\\bat.imp", "iface\\fiicons.imp", "units\\zzz.imp"):
             self.add(member, self.frame(20, 6, len(member)), self.frame(20, 6, len(member) + 1))
+        said: list[str] = []
+        self.addCleanup(setattr, setup, "say", setup.say)
+        setup.say = said.append
         with mock.patch.dict(os.environ, {setup.SPRITE_LIMIT_ENV: "1"}):
             plan, _, _ = setup.plan_sprites(self.game, animated=True)
-        self.assertEqual([s.name for s in plan.animated], ["aaa", "fiicons"])
+        self.assertEqual([s.name for s in plan.animated], ["bat", "fiicons"])
+        self.add("iface\\aiicons.imp", self.frame(20, 6, 30), self.frame(20, 6, 31))   # sorts before bat
+        self.picks({"sprite__bat": "anime2x", "sprite__aiicons": "anime2x", "sprite__fiicons": "anime2x",
+                    "sprite__zzz": "anime2x"})
+        with mock.patch.dict(os.environ, {setup.SPRITE_LIMIT_ENV: "1"}):
+            plan, _, _ = setup.plan_sprites(self.game, animated=True)
+        self.assertEqual([s.name for s in plan.animated], ["aiicons", "bat", "fiicons"],
+                         "a sheet never takes one of the limit's places")
+        self.assertIn(f"{setup.SPRITE_LIMIT_ENV}=1: only 1 animated sprites, plus the unit icon sheets",
+                      said[-1])
 
     @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
     def test_a_plain_run_packs_the_unit_icon_sheets_with_their_strip_windows(self) -> None:
