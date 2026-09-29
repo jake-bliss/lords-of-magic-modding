@@ -8,6 +8,7 @@ arriving from the NEIGHBOURING tile, which only a sheet-level upscale produces."
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import shutil
 import stat
@@ -111,7 +112,9 @@ TIL = (b"LBM=x.lbm\rTILESIZE= 32, 32\r"
        b"TILE=      1, 6,  6,  6,  1,  6,  6,  6,  6,  6,   9\r"
        b"TILE=      2, 1,  1,  1,  1,  1,  1,  1,  1,  1,   0\r"
        b"TILE=      3, 4,  ~6|9,  *,  6|9,  4,  4,  4,  *,  4,   3\r"
-       b"TILE=      4, 6,  6,  6,  6,  6,  6,  6,  6,  6,   7\r")
+       b"TILE=      4, 6,  6,  6,  6,  6,  6,  6,  6,  6,   7\r"
+       b"TILE=      5, 6,  ~6,  6,  6,  6,  6,  6,  6,  6,   0\r"
+       b"TILE=      6, 0,  0,  0,  0,  0,  0,  0,  0,  0,   0\r")
 
 
 class TileDefs(unittest.TestCase):
@@ -123,15 +126,23 @@ class TileDefs(unittest.TestCase):
     def test_the_cell_is_the_first_field_not_the_last(self) -> None:
         # The corpus decides this: tile 392 in tilesb01.til is plain water and cell 392 is blue;
         # its LAST field is 0, a brown cell.
-        self.assertEqual(sorted(self.defs), [0, 1, 2, 3, 4])
+        self.assertEqual(sorted(self.defs), [0, 1, 2, 3, 4, 5, 6])
         self.assertTrue(self.defs[4]["pure"])
 
     def test_side_types_and_purity(self) -> None:
         self.assertEqual(self.defs[1]["e"], 1)
         self.assertFalse(self.defs[1]["pure"])
-        self.assertEqual(self.defs[3]["n"], 6)     # ~6|9 without its own type -> the lowest named
+        self.assertEqual(self.defs[3]["n"], 4)     # ~6|9, "not 6 or 9": its own type may be there
         self.assertEqual(self.defs[3]["w"], 4)     # * -> its own type
         self.assertEqual(self.defs[3]["s"], 4)
+
+    def test_a_side_that_is_not_its_own_terrain_borders_the_ground(self) -> None:
+        # `~6` on a plains tile: another terrain is past it, and transition art fades to the brown
+        # ground (type 0) there -- not plains, which is what reading `~` away gave (2026-09-29).
+        self.assertEqual(self.defs[5]["n"], th.BORDER_GROUND)
+        self.assertEqual(self.defs[5]["e"], 6)
+        self.assertFalse(self.defs[5]["pure"])
+        self.assertEqual(th.neighbours(self.defs, 5)["n"], 6)   # the only plain ground tile
 
     def test_each_side_gets_a_plain_tile_of_that_sides_terrain(self) -> None:
         n = th.neighbours(self.defs, 1)
@@ -426,3 +437,35 @@ class Corpus(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+TERRAIN_SRC = os.environ.get("LOM_TERRAIN_SRC")   # a setup's lomhd_work/terrain/src (game data)
+
+
+@unittest.skipUnless(TERRAIN_SRC, "set LOM_TERRAIN_SRC to a setup's lomhd_work/terrain/src")
+class TileDefsCorpus(unittest.TestCase):
+    """Against the game's own tilesb01.til: the reading must hold for the data it is for."""
+
+    def setUp(self) -> None:
+        self.defs = th.tile_defs(pathlib.Path(TERRAIN_SRC))["tilesb01.lbm"]
+        self.lines = {}
+        for line in (pathlib.Path(TERRAIN_SRC) / "tilesb01.til").read_bytes().decode("latin-1") \
+                .replace("\r", "\n").splitlines():
+            if line.startswith("TILE="):
+                f = [v.strip() for v in line[5:].split(",")]
+                self.lines.setdefault(int(f[0]), f)
+
+    def test_every_side_naming_not_its_own_terrain_borders_the_ground(self) -> None:
+        seen = 0
+        for cell, f in self.lines.items():
+            own = int(f[1])
+            for side, field in zip(("n", "e", "s", "w"), (f[2], f[4], f[6], f[8])):
+                negated, types = th._types(field)
+                if negated and types and own in types and own != th.BORDER_GROUND:
+                    self.assertEqual(self.defs[cell][side], th.BORDER_GROUND, (cell, side, field))
+                    seen += 1
+        self.assertGreater(seen, 100)          # the transition sides this is about
+
+    def test_the_ground_has_plain_tiles_to_pad_with(self) -> None:
+        plain = [c for c, e in self.defs.items() if e["pure"] and e["self"] == th.BORDER_GROUND]
+        self.assertGreaterEqual(len(plain), 1)

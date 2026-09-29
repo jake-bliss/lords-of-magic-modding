@@ -18,6 +18,12 @@ terrain type that side borders (texture top = map north, right = east -- measure
 neighbours' edges match about 20% better than random pairs that way round). The model then sees the
 right terrain continuing past every edge. Repeating the tile's own edge instead left a visible step
 at every tile edge on the map (rung 2, 2026-09-24).
+A side written `~X` means "anything but X": on a transition tile, `~own` borders ANOTHER
+terrain, and the art there fades to the shared brown ground (BORDER_GROUND), so that is the
+neighbour. Reading `~` away (until 2026-09-29) padded and colour-pulled every terrain border with
+the tile's own terrain: a bright lattice where two terrains meet that no model could remove. On
+3,200 Wang-legal mosaics of tilesb01, the step across a border between two terrains over the step
+inside a tile went from 2.49 to 0.76 (anime2x) and 0.69 (ultrasharp); the 1x art is 1.07.
 
 **Edges pulled to their terrain's colour.** Adjacent tiles are not drawn pixel-continuous, and the
 model smooths each tile's interior, so a leftover step between two tiles reads as a line where the
@@ -110,10 +116,28 @@ def tile_sizes(src: pathlib.Path) -> dict[str, int]:
 SIDES = ("n", "e", "s", "w")
 
 
-def _types(field: str) -> set[int] | None:
-    """`6`, `6|9`, `~6|9` -> {6, 9}; `*` (any) -> None. `~` is kept as the types it names."""
-    field = field.strip().lstrip("~")
-    return None if field == "*" else {int(v) for v in field.split("|") if v}
+# The ground every transition tile fades to where two terrains meet (the brown cells): what lies
+# past a side that borders ANOTHER terrain.
+BORDER_GROUND = 0
+
+
+def _types(field: str) -> tuple[bool, set[int] | None]:
+    """`6`, `6|9` -> (False, {6, 9}); `~6|9` -> (True, {6, 9}), "anything but 6 or 9";
+    `*` (any) -> (False, None)."""
+    field = field.strip()
+    negated = field.startswith("~")
+    field = field.lstrip("~")
+    return negated, None if field == "*" else {int(v) for v in field.split("|") if v}
+
+
+def _side_type(own: int, negated: bool, types: set[int] | None) -> int:
+    """The terrain to pad and normalize a side with. `~` names what may NOT be there: a transition
+    side is `~own`, "any other terrain", and its art fades to BORDER_GROUND, so that is what lies
+    past it (read as "own" until 2026-09-29, which padded every terrain border with the tile's own
+    terrain and pulled its brown edge toward that colour: a bright lattice at each border)."""
+    if negated:
+        return BORDER_GROUND if types is not None and own in types else own
+    return own if types is None or own in types else min(types)
 
 
 def tile_defs(src: pathlib.Path) -> dict[str, dict[int, dict]]:
@@ -134,10 +158,9 @@ def tile_defs(src: pathlib.Path) -> dict[str, dict[int, dict]]:
             cell, own = int(f[0]), int(f[1])
             ring = [_types(v) for v in f[2:10]]
             sides = dict(zip(("n", "ne", "e", "se", "s", "sw", "w", "nw"), ring))
-            entry = {"self": own, "pure": all(r == {own} for r in ring)}
+            entry = {"self": own, "pure": all(not neg and r == {own} for neg, r in ring)}
             for side in SIDES:
-                v = sides[side]
-                entry[side] = own if v is None or own in v else min(v)
+                entry[side] = _side_type(own, *sides[side])
             cells.setdefault(cell, entry)
     return defs
 
