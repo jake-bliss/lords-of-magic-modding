@@ -58,7 +58,8 @@ What it does, in order, and nothing else:
      buildings, trees, units, spell effects) out of your own imp.mpq. No game art ships with this mod.
   3. Upscales each picture to 2x with the method picked for it in review (upscale-choices.json):
      character portraits on the approved palette pipeline, everything else in full colour.
-  4. Upscales each sprite that does not move (one frame) the same way, with its own pick. With
+  4. Upscales each sprite that does not move (one frame) the same way, with its own pick, and the
+     unit figures the army strip shows (the nine unit icon sheets, ~150 frames). With
      --sprites, also every frame of every animated sprite, each with its sprite's pick: several
      hours, cached in lomhd_work/sprites, so a run stopped part-way carries on where it was.
   5. Writes lomhd_portraits.pack beside lomse.exe, backs up your ddraw.dll to
@@ -589,9 +590,12 @@ def plan_sprites(game: pathlib.Path, animated: bool):
     hd_sprites.prune(root, found.live)
     limit = os.environ.get(SPRITE_LIMIT_ENV)
     if animated and limit:
-        keep = sorted(n for n, (_, frames) in resolved.items() if frames > 1)[:int(limit)]
-        resolved = {n: v for n, v in resolved.items() if v[1] == 1 or n in keep}
-        say(f"     {SPRITE_LIMIT_ENV}={limit}: only {len(keep)} animated sprites (a developer aid)")
+        # The unit icon sheets are built on every run; the limit counts only the other animated sprites.
+        keep = sorted(n for n, (_, frames) in resolved.items()
+                      if frames > 1 and n not in hd_sprites.STRIP_SHEETS)[:int(limit)]
+        resolved = {n: v for n, v in resolved.items() if v[1] == 1 or n in keep or n in hd_sprites.STRIP_SHEETS}
+        say(f"     {SPRITE_LIMIT_ENV}={limit}: only {len(keep)} animated sprites, plus the unit icon sheets "
+            "(a developer aid)")
     plan = hd_sprites.plan(resolved, read_sprite, sprite_choices(), root, animated=animated)
     plan.skipped[:0] = skipped
     return plan, root, read_sprite
@@ -648,6 +652,7 @@ def build_pack(pack: pathlib.Path, sprites, sprite_root: pathlib.Path, read_spri
     packed.setdefault("packed", 0)
     moving.setdefault("packed", 0)
     moving.setdefault("sprites", 0)
+    moving.setdefault("strip", 0)
     return count, skipped, sprite_skipped, packed, moving
 
 
@@ -2161,7 +2166,8 @@ def main() -> int:
     sprites, sprite_root, read_sprite = plan_sprites(game, animated)
     frames = sum(len(s.frames) for s in sprites.animated)
     say(f"     {len(sprites.static)} sprites" + (f", {len(sprites.animated)} animated sprites "
-                                                 f"({frames} frames)" if animated else ""))
+                                                 f"({frames} frames)" if animated else
+                                                 f", {len(sprites.animated)} unit icon sheets ({frames} frames)"))
     say(f"3/{steps}  Upscaling pictures (the long step)")
     upscaled = upscale_all(found, exe, models)
     say(f"4/{steps}  Upscaling sprites" + (" (the very long step; it resumes if stopped)"
@@ -2191,6 +2197,7 @@ def main() -> int:
     told(f"Sprites: {packed['packed']} packed" + (f", and {moving['sprites']} animated sprites "
                                                    f"({moving['packed']} frames)" if animated else "")
         + (f"; {len(sprite_skipped)} left out ({summarise_skips(sprite_skipped)})" if sprite_skipped else ""))
+    told(f"Unit strip: {moving.get('strip', 0)} figure windows packed from the unit icon sheets")
     told(damage_summary([packed, moving, pictures], sprite_skipped + skipped))
     if animated:
         c = sprites.counts

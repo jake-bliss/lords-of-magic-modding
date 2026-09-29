@@ -67,6 +67,14 @@ class Frame:
     hotspot_count: int
     pixels_offset: Optional[int]
     packed_size: Optional[int]
+    # (x, y) of the origin pair a frame with no hotspot records stores in its hotspot dword, signed:
+    # where the engine places it (top_left = anchor + origin - (w>>1, h>>1)). None with hotspots,
+    # and None for a duplicate or shared-pixel record, as imp.rs reads it: pyicons' duplicates hold
+    # (10610, 0) and (28001, 29541) there, which place nothing. A duplicate is placed by its SOURCE
+    # frame's origin (`resolved_frame(i).origin`). Unverified where the two differ: oricons #18's own
+    # dword reads (0, 29), its source #11's (0, 27); were the engine to use #18's, the strip window
+    # would sit 2 rows off and the crop still match ~94% of its pixels.
+    origin: Optional[Tuple[int, int]] = None
 
 
 @dataclasses.dataclass
@@ -193,6 +201,7 @@ def parse(source: bytes) -> Sprite:
                 height = _u16(source, frame_offset + 4)
                 encoded_size = _u16(source, frame_offset + 6)
                 auxiliary = _u32(source, frame_offset + 8)
+                origin = None if frame_hotspots else struct.unpack_from("<hh", source, frame_offset + 8)
                 pixels_offset = _u32(source, frame_offset + 12)
                 empty_frame = width == 0 and height == 0
                 if not empty_frame and (width == 0 or height == 0):
@@ -218,7 +227,7 @@ def parse(source: bytes) -> Sprite:
                         source_frame = pixels_offset
                     duplicate_frame_count += 1
                     frames.append(Frame(frame_flags, 0, 0, b"", source_frame, frame_offset,
-                                        frame_hotspots, None, None))
+                                        frame_hotspots, None, None, None))
                     continue
                 if empty_frame:
                     packed = b""
@@ -230,7 +239,7 @@ def parse(source: bytes) -> Sprite:
                 if not empty_frame:
                     pixel_sources.setdefault(pixels_offset, logical_index)
                 frames.append(Frame(frame_flags, width, height, indices, None, frame_offset,
-                                    frame_hotspots, pixels_offset, len(packed)))
+                                    frame_hotspots, pixels_offset, len(packed), origin))
             facings.append(Facing(facing_metadata, facing_first_frame, facing_frames))
         sequences.append(Sequence(sequence_metadata, sequence_first_facing, sequence_facings,
                                   sequence_first_frame, len(frames) - sequence_first_frame))

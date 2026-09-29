@@ -545,8 +545,8 @@ class Sprites(unittest.TestCase):
         self.addCleanup(setattr, setup.hd_upscale, "render", setup.hd_upscale.render)
         setup.hd_upscale.render = render
 
-    def add(self, member: str, *frames) -> None:
-        self.members[member.lower()] = self.imp_file(list(frames))
+    def add(self, member: str, *frames, origins=None) -> None:
+        self.members[member.lower()] = self.imp_file(list(frames), origins=origins)
         self.names.write_text("".join(f"{m}\n" for m in self.members))
 
     def picks(self, shipped: dict, mine: dict | None = None) -> None:
@@ -807,6 +807,45 @@ class Sprites(unittest.TestCase):
                               "out (the original shows for those; running setup again tries them once "
                               "more). (3 too small to check)")
         self.assertNotIn("No upscale", setup.damage_summary([{"damaged": 1, "failed": 1}], []))
+
+    def test_the_dev_sprite_limit_never_drops_the_unit_icon_sheets(self) -> None:
+        self.picks({"sprite__bat": "anime2x", "sprite__fiicons": "anime2x", "sprite__zzz": "anime2x"})
+        for member in ("units\\bat.imp", "iface\\fiicons.imp", "units\\zzz.imp"):
+            self.add(member, self.frame(20, 6, len(member)), self.frame(20, 6, len(member) + 1))
+        said: list[str] = []
+        self.addCleanup(setattr, setup, "say", setup.say)
+        setup.say = said.append
+        with mock.patch.dict(os.environ, {setup.SPRITE_LIMIT_ENV: "1"}):
+            plan, _, _ = setup.plan_sprites(self.game, animated=True)
+        self.assertEqual([s.name for s in plan.animated], ["bat", "fiicons"])
+        self.add("iface\\aiicons.imp", self.frame(20, 6, 30), self.frame(20, 6, 31))   # sorts before bat
+        self.picks({"sprite__bat": "anime2x", "sprite__aiicons": "anime2x", "sprite__fiicons": "anime2x",
+                    "sprite__zzz": "anime2x"})
+        with mock.patch.dict(os.environ, {setup.SPRITE_LIMIT_ENV: "1"}):
+            plan, _, _ = setup.plan_sprites(self.game, animated=True)
+        self.assertEqual([s.name for s in plan.animated], ["aiicons", "bat", "fiicons"],
+                         "a sheet never takes one of the limit's places")
+        self.assertIn(f"{setup.SPRITE_LIMIT_ENV}=1: only 1 animated sprites, plus the unit icon sheets",
+                      said[-1])
+
+    @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
+    def test_a_plain_run_packs_the_unit_icon_sheets_with_their_strip_windows(self) -> None:
+        """No --sprites: the army strip's figures are built anyway, each frame followed by the rows
+        the strip shows of it, in the sheet's group; an animated sprite is not."""
+        import hd_portrait_pack as pack
+        self.picks({"sprite__fiicons": "ultrasharp-tta", "sprite__cav": "anime2x"})
+        self.add("iface\\fiicons.imp", self.frame(20, 6, 3), self.frame(20, 6, 4), origins=[(0, -21), (1, 0)])
+        self.add("units\\cav.imp", self.frame(20, 6, 6), self.frame(20, 6, 7))
+        plan, root, read_sprite = setup.plan_sprites(self.game, animated=False)
+        setup.upscale_sprites(plan.static + plan.animated, root, pathlib.Path("e"), pathlib.Path("m"))
+        pack_path = self.base / "lomhd_portraits.pack"
+        count, _, sprite_skipped, _, moving = setup.build_pack(pack_path, plan, root, read_sprite, [], [])
+        got = [(name, small[:2], group) for name, small, _, _, _, group in pack.read(pack_path.read_bytes())]
+        # frame 0: its top at 440 - 21 - 3 = 416, so the strip (418-457) shows rows 2-5; frame 1 is
+        # shown whole, and its own record is all the strip needs.
+        self.assertEqual(got, [("anim__fiicons#000", (20, 6), 1), ("strip__fiicons#000", (20, 4), 1),
+                               ("anim__fiicons#001", (20, 6), 1)])
+        self.assertEqual((count, moving["packed"], moving["strip"], sprite_skipped), (3, 2, 1, []))
 
     @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
     def test_the_pack_holds_sprites_and_pictures_and_uninstall_restores_everything(self) -> None:

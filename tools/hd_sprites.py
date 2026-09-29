@@ -38,6 +38,18 @@ right size whose pixels are not a plausible upscale of the frame (`hd_upscale.da
 once wrote bands and speckle) is made again once, and left out if it still looks damaged -- checked
 every time the pack is built, so a damaged render already in the cache is caught by a rerun too.
 
+THE UNIT STRIP. The bottom bar's party/army strip draws each unit as one frame of its faith's
+`iface\\<xx>icons.imp` (GRAPHICS5.gs `unit_icon_source`; frame = unit code), unscaled, but shows only
+a window of it: in combat every slot's anchor is at y=440 and screen rows 418-457 are visible, so a
+figure's rows [s, s+40) with s = (h>>1) - origin_y - 22 -- about 40 of up to 140 rows (measured
+2026-09-28 on a captured Fire battle, byte for byte). The DLL needs a whole record on screen and 70%
+of its opaque pixels, so the full frame is never found there. For those sheets (STRIP_SHEETS) every
+kept frame also gets one `strip__<name>#NNN` record per STRIP_WINDOWS entry: the frame's visible rows
+as the low-res half, and the same rows of its existing 2x render as the HD half -- no extra upscale.
+It sits right after its frame's record, in the same group (a group's records must be consecutive,
+or the DLL refuses the pack). The sheets hold one still per unit, not an animation, and are built on
+EVERY install, --sprites or not: ~150 frames, minutes of upscaling.
+
 Work files are keyed by each MEMBER's path and its own bytes (not the whole archive's), and by
 frame, and every step resumes: a rerun redoes only what is missing, and a changed imp.mpq -- a mod
 repainting one cursor -- re-renders only the members it changed. Rendering goes in batches, so an
@@ -67,6 +79,43 @@ PREP_BACKGROUND = (0x20, 0x22, 0x28)    # #202228: a neutral dark grey bleeds le
 ORIGINAL = "original"            # a review pick meaning "no upscale beat the original"
 
 
+@dataclasses.dataclass(frozen=True)
+class StripWindow:
+    """The rows of a figure one unit strip shows: from `above` screen rows above the slot's anchor,
+    `rows` rows down. Records for it are named `<family>__<sheet>#NNN`."""
+    family: str
+    above: int
+    rows: int
+
+
+# The unit icon sheets, one per faith (GRAPHICS5.gs:139-149), built on every install.
+STRIP_SHEETS = frozenset(f"{faith}icons" for faith in ("li", "de", "or", "ch", "fi", "wa", "ea", "ai", "py"))
+# Measured on the COMBAT strip only (2026-09-28, lomhd_frame_201730_941): anchor y=440, rows 418-457.
+# The overland army strip is assumed to show the same window until a capture of it is measured; a
+# different one becomes a second entry here, with its own family name.
+STRIP_WINDOWS = (StripWindow("strip", 22, 40),)
+
+
+@dataclasses.dataclass
+class Crop:
+    record: str                  # the pack record's name
+    top: int                     # the first row of the frame it holds
+    rows: int
+
+
+def strip_rows(height: int, origin_y: int, window: StripWindow) -> Optional[Tuple[int, int]]:
+    """(first row, row count) of a `height`-row figure placed by `origin_y` that `window` shows,
+    clamped to the figure; None when it shows none of it. The figure's top is at
+    anchor + origin_y - (height >> 1), and the window starts `window.above` rows above the anchor."""
+    start = (height >> 1) - origin_y - window.above
+    top, bottom = max(start, 0), min(start + window.rows, height)
+    return (top, bottom - top) if bottom > top else None
+
+
+def strip_record_name(family: str, name: str, index: int) -> str:
+    return f"{family}__{name}#{index:03d}"
+
+
 @dataclasses.dataclass
 class Frame:
     index: int                   # the frame's index in its member, as --describe-imp numbers them
@@ -75,6 +124,7 @@ class Frame:
     stem: str                    # the prepared input's and the render's file name, without .png
     record: str                  # the pack record's name
     mirror: bool                 # searched for flipped too: its sprite's, or a repeat's that is
+    crops: List[Crop] = dataclasses.field(default_factory=list)    # strip windows: see STRIP_SHEETS
 
 
 @dataclasses.dataclass
@@ -141,6 +191,35 @@ def ineligible(name: str, width: int, height: int, indices: bytes, palette, key:
     return None
 
 
+def strip_crops(name: str, index: int, shown: "imp_read.Frame", palette, key: int,
+                skipped: List[str]) -> List[Crop]:
+    """The strip records of frame `index` of sheet `name` (none unless it is in STRIP_SHEETS), one
+    per STRIP_WINDOWS entry that shows part of it. A window showing the whole frame needs none: the
+    frame's own record fits. A crop the DLL could not use is a skip naming why."""
+    if name not in STRIP_SHEETS:
+        return []
+    if shown.origin is None:
+        skipped.append(f"{name}#{index:03d}: has hotspot records, not an origin pair; no strip record")
+        return []
+    crops: List[Crop] = []
+    for window in STRIP_WINDOWS:
+        span = strip_rows(shown.height, shown.origin[1], window)
+        if span is None or span == (0, shown.height):
+            continue
+        top, rows = span
+        record = strip_record_name(window.family, name, index)
+        if len(record) > MAX_RECORD_NAME_LEN:
+            skipped.append(f"{record}: longer than the DLL's {MAX_RECORD_NAME_LEN}-character limit")
+            continue
+        w = shown.width
+        refused = ineligible(record, w, rows, shown.indices[top * w:(top + rows) * w], palette, key)
+        if refused:
+            skipped.append(f"{record}: {refused[1]}")
+            continue
+        crops.append(Crop(record, top, rows))
+    return crops
+
+
 # --- the upscaler's input --------------------------------------------------------------------------
 
 def _png_chunk(kind: bytes, body: bytes) -> bytes:
@@ -199,14 +278,15 @@ def plan(resolved: Dict[str, Tuple[str, int]], read_sprite: Callable[[str], "imp
     `read_sprite(member)` decodes one member. Members are read one at a time, in name order, so
     only one member's pixels are ever held."""
     skipped: List[str] = []
-    counts = dict.fromkeys(("frames", "repeats", "ineligible", "no_probe"), 0)
+    counts = dict.fromkeys(("frames", "repeats", "ineligible", "no_probe", "strip"), 0)
     static: List[Sprite] = []
     moving: List[Sprite] = []
     seen: Dict[bytes, Frame] = {}
     prep = root / "prep"
     prep.mkdir(parents=True, exist_ok=True)
 
-    names = sorted(name for name, (_, frames) in resolved.items() if frames == 1 or animated)
+    names = sorted(name for name, (_, frames) in resolved.items()
+                   if frames == 1 or animated or name in STRIP_SHEETS)
     for n, name in enumerate(names, 1):
         member, frames = resolved[name]
         is_animated = frames > 1
@@ -241,16 +321,28 @@ def plan(resolved: Dict[str, Tuple[str, int]], read_sprite: Callable[[str], "imp
                 else:
                     skipped.append(f"{name}: {refused[1]}")
                 continue
+            crops = strip_crops(name, index, shown, sprite.palette, key, skipped)
             if is_animated:
                 identity = frame_identity(w, h, indices, sprite.palette, key)
                 if identity in seen:
                     counts["repeats"] += 1
-                    seen[identity].mirror |= mirror
+                    kept = seen[identity]
+                    kept.mirror |= mirror
+                    # A 0x08 duplicate (every repeat in the shipped sheets: oricons #18, pyicons
+                    # #4-13) resolves to its source frame, origin and all, so its window is the
+                    # kept frame's and adds nothing. Two STORED identical frames with different
+                    # origins (none ship; a mod could make them) show different rows: the kept
+                    # frame carries this frame's window too, under this frame's name.
+                    have = {(c.top, c.rows) for c in kept.crops}
+                    extra = [c for c in crops if (c.top, c.rows) not in have]
+                    kept.crops.extend(extra)
+                    counts["strip"] += len(extra)
                     continue
                 stem, record = f"{member_key(member, sprite.digest)}__{name}__{index:03d}", record_name(name, index)
             else:
                 stem, record = f"{member_key(member, sprite.digest)}__{name}", static_record_name(name)
-            frame = Frame(index, w, h, stem, record, mirror)
+            frame = Frame(index, w, h, stem, record, mirror, crops)
+            counts["strip"] += len(crops)
             if is_animated:
                 seen[identity] = frame
             entry.frames.append(frame)
@@ -387,11 +479,12 @@ def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[st
     animated sprite its own group, consecutive. The low-res half is decoded again from the archive
     (`read_sprite`), one member at a time. A frame whose render is missing, the wrong size, or
     looks damaged (`check_renders`, which makes it again with `rerender` first) is reported in
-    `skipped` and left out; its sprite's other frames still go in. `counts` (if given) gets
-    "packed" frames and "sprites" packed, "damaged" renders found and "remade" ones that then
+    `skipped` and left out; its sprite's other frames still go in. Each frame's strip crops
+    (`Frame.crops`) follow its record, in its group, cut from the same render. `counts` (if given)
+    gets "packed" frames and "sprites" packed, "strip" crops packed, "damaged" renders found and "remade" ones that then
     passed, "failed" remakes that produced nothing, and "unjudged" frames too small to check."""
     counts = counts if counts is not None else {}
-    for name in ("packed", "sprites", "damaged", "remade", "failed", "unjudged"):
+    for name in ("packed", "sprites", "strip", "damaged", "remade", "failed", "unjudged"):
         counts.setdefault(name, 0)
     reader = read or read_renders
     group = first_group
@@ -440,6 +533,19 @@ def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[st
                     continue
                 packed += 1
                 yield record
+                w, stride = shown.width, shown.width * 2 * 4
+                for crop in frame.crops:
+                    try:
+                        cut = pack.encode_record(
+                            crop.record, w, crop.rows, shown.indices[crop.top * w:(crop.top + crop.rows) * w],
+                            decoded.palette, w * 2, crop.rows * 2,
+                            rgba[crop.top * 2 * stride:(crop.top + crop.rows) * 2 * stride],
+                            flags=flags, key=decoded.color_key, group=this_group)
+                    except ValueError as error:
+                        skipped.append(f"{crop.record}: {error}")
+                        continue
+                    counts["strip"] += 1
+                    yield cut
             if packed:
                 counts["packed"] += packed
                 counts["sprites"] += 1
