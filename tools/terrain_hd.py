@@ -19,9 +19,9 @@ neighbours' edges match about 20% better than random pairs that way round). The 
 right terrain continuing past every edge. Repeating the tile's own edge instead left a visible step
 at every tile edge on the map (rung 2, 2026-09-24).
 A side written `~X` means "anything but X": on a transition tile, `~own` borders ANOTHER
-terrain. On the overland sheet (tilesb01) the art there fades to the shared brown ground
-(BORDER_GROUND); on a cave, ruin or building sheet with one other plain terrain, to that terrain.
-See _side_type. Reading `~` away (until 2026-09-29) padded and colour-pulled every terrain border with
+terrain, and what lies past it is read from the art (resolve_borders): on the overland sheet
+(tilesb01) mostly the shared brown ground (BORDER_GROUND), and a road's end the terrain it runs
+over; elsewhere the plain terrain nearest the edge's colour, or nothing when none is near. Reading `~` away (until 2026-09-29) padded and colour-pulled every terrain border with
 the tile's own terrain: a bright lattice where two terrains meet that no model could remove. On
 3,200 Wang-legal mosaics of tilesb01, the step across a border between two terrains over the step
 inside a tile went from 2.49 to 0.76 (anime2x) and 0.69 (ultrasharp); the 1x art is 1.07.
