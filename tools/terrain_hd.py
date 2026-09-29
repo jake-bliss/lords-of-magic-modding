@@ -19,8 +19,9 @@ neighbours' edges match about 20% better than random pairs that way round). The 
 right terrain continuing past every edge. Repeating the tile's own edge instead left a visible step
 at every tile edge on the map (rung 2, 2026-09-24).
 A side written `~X` means "anything but X": on a transition tile, `~own` borders ANOTHER
-terrain, and the art there fades to the shared brown ground (BORDER_GROUND), so that is the
-neighbour. Reading `~` away (until 2026-09-29) padded and colour-pulled every terrain border with
+terrain. On the overland sheet (tilesb01) the art there fades to the shared brown ground
+(BORDER_GROUND); on a cave, ruin or building sheet with one other plain terrain, to that terrain.
+See _side_type. Reading `~` away (until 2026-09-29) padded and colour-pulled every terrain border with
 the tile's own terrain: a bright lattice where two terrains meet that no model could remove. On
 3,200 Wang-legal mosaics of tilesb01, the step across a border between two terrains over the step
 inside a tile went from 2.49 to 0.76 (anime2x) and 0.69 (ultrasharp); the 1x art is 1.07.
@@ -116,8 +117,8 @@ def tile_sizes(src: pathlib.Path) -> dict[str, int]:
 SIDES = ("n", "e", "s", "w")
 
 
-# The ground every transition tile fades to where two terrains meet (the brown cells): what lies
-# past a side that borders ANOTHER terrain.
+# The overland atlas's shared ground (its brown cells): where two of its many terrains meet, the
+# transition art fades to it. An atlas with just one other plain terrain fades to that instead.
 BORDER_GROUND = 0
 
 
@@ -130,13 +131,22 @@ def _types(field: str) -> tuple[bool, set[int] | None]:
     return negated, None if field == "*" else {int(v) for v in field.split("|") if v}
 
 
-def _side_type(own: int, negated: bool, types: set[int] | None) -> int:
-    """The terrain to pad and normalize a side with. `~` names what may NOT be there: a transition
-    side is `~own`, "any other terrain", and its art fades to BORDER_GROUND, so that is what lies
-    past it (read as "own" until 2026-09-29, which padded every terrain border with the tile's own
-    terrain and pulled its brown edge toward that colour: a bright lattice at each border)."""
+def _side_type(own: int, negated: bool, types: set[int] | None, plain: set[int]) -> int:
+    """The terrain to pad and normalize a side with; `plain` is the atlas's types that have plain
+    tiles. `~` names what may NOT be there: a transition side is `~own`, "any other terrain". Past
+    it lies the only other plain terrain of the atlas if there is one (a building or cave sheet:
+    its edges match that terrain, 52 of 52 sides measured per sheet), else the shared ground where
+    the atlas has it (the overland sheet: its edges match the brown ground on 7 of 9 terrains,
+    the rest near it), else the tile's own terrain. `~` was read away until 2026-09-29, which padded
+    every terrain border with the tile's own terrain and pulled its edge toward that colour: a
+    bright lattice at each border of the overland map."""
     if negated:
-        return BORDER_GROUND if types is not None and own in types else own
+        if types is None or own not in types:
+            return own
+        others = plain - types
+        if len(others) == 1:
+            return next(iter(others))
+        return BORDER_GROUND if BORDER_GROUND in others else own
     return own if types is None or own in types else min(types)
 
 
@@ -158,10 +168,15 @@ def tile_defs(src: pathlib.Path) -> dict[str, dict[int, dict]]:
             cell, own = int(f[0]), int(f[1])
             ring = [_types(v) for v in f[2:10]]
             sides = dict(zip(("n", "ne", "e", "se", "s", "sw", "w", "nw"), ring))
-            entry = {"self": own, "pure": all(not neg and r == {own} for neg, r in ring)}
-            for side in SIDES:
-                entry[side] = _side_type(own, *sides[side])
+            entry = {"self": own, "pure": all(not neg and r == {own} for neg, r in ring),
+                     "_sides": {side: sides[side] for side in SIDES}}
             cells.setdefault(cell, entry)
+    # Sides are resolved once the atlas's plain terrains are known.
+    for cells in defs.values():
+        plain = {e["self"] for e in cells.values() if e["pure"]}
+        for e in cells.values():
+            for side, (negated, types) in e.pop("_sides").items():
+                e[side] = _side_type(e["self"], negated, types, plain)
     return defs
 
 

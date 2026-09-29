@@ -435,37 +435,79 @@ class Corpus(unittest.TestCase):
                 self.assertIn(option, hd_upscale.OPTIONS, key)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 TERRAIN_SRC = os.environ.get("LOM_TERRAIN_SRC")   # a setup's lomhd_work/terrain/src (game data)
+
+
+class TwoTerrainAtlas(unittest.TestCase):
+    """A building or cave sheet: two plain terrains and no ground. A side `~own` borders the other
+    one -- not the overland ground, which such a sheet has no tile of to pad with."""
+
+    def test_a_not_own_side_borders_the_sheets_other_terrain(self) -> None:
+        d = pathlib.Path(tempfile.mkdtemp())
+        (d / "b.til").write_bytes(b"LBM=b.lbm\rTILESIZE= 32, 32\r"
+                                  b"TILE=      0, 16, 16, 16, 16, 16, 16, 16, 16, 16,   0\r"
+                                  b"TILE=      1, 18, 18, 18, 18, 18, 18, 18, 18, 18,   0\r"
+                                  b"TILE=      2, 16, ~16, 16, 16, 16, 16, 16, 16, 16,   0\r")
+        defs = th.tile_defs(d)["b.lbm"]
+        self.assertEqual(defs[2]["n"], 18)
+        self.assertEqual(th.neighbours(defs, 2)["n"], 1)
+
+
+def _corpus_sides(src: pathlib.Path):
+    """(atlas, cell, own, side, negated types) for every cardinal `~` side naming the tile's own
+    type, read here from the .til text rather than through the code under test. Where two .til
+    files describe one cell (cavecry2.til and cavecrys.til), the first in name order counts."""
+    seen = set()
+    for til in sorted(src.glob("*.til")):
+        name, _ = th.read_til(til)
+        for line in til.read_bytes().decode("latin-1").replace("\r", "\n").splitlines():
+            if not line.startswith("TILE="):
+                continue
+            f = [v.strip() for v in line[5:].split(",")]
+            if len(f) < 10:
+                continue
+            if (name, int(f[0])) in seen:
+                continue
+            seen.add((name, int(f[0])))
+            own = int(f[1])
+            for side, field in zip(("n", "e", "s", "w"), (f[2], f[4], f[6], f[8])):
+                if field.startswith("~") and field[1:] != "*":
+                    named = {int(v) for v in field[1:].split("|") if v}
+                    if own in named:
+                        yield name, int(f[0]), own, side, named
 
 
 @unittest.skipUnless(TERRAIN_SRC, "set LOM_TERRAIN_SRC to a setup's lomhd_work/terrain/src")
 class TileDefsCorpus(unittest.TestCase):
-    """Against the game's own tilesb01.til: the reading must hold for the data it is for."""
+    """Against the game's own .til files: the reading must hold for the data it is for."""
 
     def setUp(self) -> None:
-        self.defs = th.tile_defs(pathlib.Path(TERRAIN_SRC))["tilesb01.lbm"]
-        self.lines = {}
-        for line in (pathlib.Path(TERRAIN_SRC) / "tilesb01.til").read_bytes().decode("latin-1") \
-                .replace("\r", "\n").splitlines():
-            if line.startswith("TILE="):
-                f = [v.strip() for v in line[5:].split(",")]
-                self.lines.setdefault(int(f[0]), f)
+        self.src = pathlib.Path(TERRAIN_SRC)
+        self.defs = th.tile_defs(self.src)
 
-    def test_every_side_naming_not_its_own_terrain_borders_the_ground(self) -> None:
+    def test_the_overland_borders_are_the_ground(self) -> None:
+        sides = [s for s in _corpus_sides(self.src) if s[0] == "tilesb01.lbm"]
+        self.assertGreater(len(sides), 100)
+        for atlas, cell, own, side, named in sides:
+            self.assertEqual(self.defs[atlas][cell][side], th.BORDER_GROUND, (cell, side, named))
+
+    def test_a_two_terrain_sheets_borders_are_its_other_terrain(self) -> None:
+        # Caves, ruins and some building sets: past `~own` lies the one other plain terrain -- the
+        # first version of this fix sent every sheet's borders to the overland ground, which none
+        # of these has a tile of. Sheets with no other plain terrain, or several and no ground
+        # (jeff01), keep the tile's own, as before.
         seen = 0
-        for cell, f in self.lines.items():
-            own = int(f[1])
-            for side, field in zip(("n", "e", "s", "w"), (f[2], f[4], f[6], f[8])):
-                negated, types = th._types(field)
-                if negated and types and own in types and own != th.BORDER_GROUND:
-                    self.assertEqual(self.defs[cell][side], th.BORDER_GROUND, (cell, side, field))
-                    seen += 1
-        self.assertGreater(seen, 100)          # the transition sides this is about
+        for atlas, cell, own, side, named in _corpus_sides(self.src):
+            cells = self.defs[atlas]
+            others = {e["self"] for e in cells.values() if e["pure"]} - named
+            got = cells[cell][side]
+            if len(others) == 1:
+                self.assertEqual(got, next(iter(others)), (atlas, cell, side))
+                seen += 1
+            elif th.BORDER_GROUND not in others:
+                self.assertEqual(got, own, (atlas, cell, side))
+        self.assertGreater(seen, 400)
 
-    def test_the_ground_has_plain_tiles_to_pad_with(self) -> None:
-        plain = [c for c, e in self.defs.items() if e["pure"] and e["self"] == th.BORDER_GROUND]
-        self.assertGreaterEqual(len(plain), 1)
+
+if __name__ == "__main__":
+    unittest.main()
