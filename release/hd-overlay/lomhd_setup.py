@@ -57,7 +57,8 @@ What it does, in order, and nothing else:
   2. Reads the portraits and building pictures out of your own pic.mpq, and the sprites (map
      buildings, trees, units, spell effects) out of your own imp.mpq. No game art ships with this mod.
   3. Upscales each picture to 2x with the method picked for it in review (upscale-choices.json):
-     character portraits on the approved palette pipeline, everything else in full colour.
+     character portraits on the approved palette pipeline, everything else in full colour. Kept in
+     lomhd_work, so a later run makes only what is new: a changed picture, or a changed pick.
   4. Upscales each sprite that does not move (one frame) the same way, with its own pick, and the
      unit figures the army strip shows (the nine unit icon sheets, ~150 frames). With
      --sprites, also every frame of every animated sprite, each with its sprite's pick: several
@@ -355,12 +356,14 @@ def extract_images(game: pathlib.Path) -> dict[str, list[str]]:
     lomhd_work/originals/<group>/<name>.lbm, lowercase. Returns group -> names.
 
     Names come from the list shipped with this mod plus the archive's own (listfile). Two spellings
-    of one member (PORTRAIT\\ and portrait\\) resolve to the same hash entry, so they are one."""
+    of one member (PORTRAIT\\ and portrait\\) resolve to the same hash entry, so they are one.
+
+    The folder is kept between runs: a file is written only when this game's member differs from
+    it, and anything that is not one of this run's pictures is removed, so the folder holds exactly
+    this install's pictures either way."""
     archive = mpq_read.Archive(game / "pic.mpq")
     wanted = (HERE / "overlay-names.txt").read_text().splitlines() + archive.listfile()
     root = WORK / "originals"
-    if root.exists():
-        shutil.rmtree(root)
     found: dict[str, list[str]] = {group: [] for group in GROUPS}
     seen = set()
     for name in wanted:
@@ -373,7 +376,9 @@ def extract_images(game: pathlib.Path) -> dict[str, list[str]]:
         stem = member[:-4]
         out = root / group / f"{stem}.lbm"
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(archive.read(lower))
+        data = archive.read(lower)
+        if not (out.is_file() and out.read_bytes() == data):
+            out.write_bytes(data)
         try:
             w, h, px, *_ = lbm_png.decode(out)
         except Exception:
@@ -397,6 +402,13 @@ def extract_images(game: pathlib.Path) -> dict[str, list[str]]:
                 (root / group / f"{stem}.lbm").unlink()
                 say(f"     left out {GROUPS[group][0]}\\{stem}.lbm: another folder has a picture of that name")
             claimed.add(stem)
+    # Another install's pictures (or a removed mod's) must not stay: the pack and upscale.py read
+    # every file here as this game's.
+    for folder in list(root.iterdir()) if root.is_dir() else []:
+        keep = {f"{stem}.lbm" for stem in found.get(folder.name, [])} if folder.is_dir() else set()
+        for stale in list(folder.iterdir()) if folder.is_dir() else [folder]:
+            if stale.name not in keep:
+                shutil.rmtree(stale) if stale.is_dir() else stale.unlink()
     if not found["portrait"]:
         fail("no portraits found in pic.mpq -- is this Lords of Magic Special Edition?")
     return found
@@ -418,14 +430,28 @@ def lbm_to_png(lbm: pathlib.Path, png: pathlib.Path) -> None:
     w, h, px, pal, _ = lbm_png.decode(lbm)
     ppm = png.with_suffix(".ppm")
     ppm.write_bytes(f"P6 {w} {h} 255\n".encode() + b"".join(bytes(pal[i]) for i in px))
-    subprocess.run(["magick", str(ppm), f"PNG:{png}"], check=True)
+    subprocess.run(["magick", str(ppm), f"PNG:{png}"], check=True, env=hd_upscale.magick_env())
     ppm.unlink()
+
+
+def upscale_output(choice: str, stem: str) -> pathlib.Path:
+    """Where upscale_all keeps one picture's upscale by one option."""
+    out = WORK / "upscaled" / choice
+    return out / "portrait" / f"{stem}.lbm" if choice == hd_upscale.APPROVED else out / f"{stem}.png"
+
+
+def upscale_recipe() -> dict:
+    """Everything an upscale depends on besides its original and its option: kept beside the
+    upscales, which are all made again when it changes (a new release's models or resize)."""
+    return json.loads(json.dumps({"recipe": hd_upscale.RECIPE, "options": hd_upscale.OPTIONS,
+                                  "downloads": sorted(sha for _, sha in DOWNLOADS.values())}))
 
 
 def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.Path,
                 choices_path: pathlib.Path | None = None) -> list[pathlib.Path]:
     """Each image with the option picked for it in review, or the default for images that review
-    never saw. Returns the folders holding the upscales."""
+    never saw. Returns the folders holding the upscales. A rerun makes only the upscales that are
+    missing: see below for what is dropped first."""
     choices = json.loads((choices_path or choices_file()).read_text())["choices"]
     plan: dict[str, list[tuple[str, str]]] = {}
     for group, stems in found.items():
@@ -437,33 +463,81 @@ def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.
                 choice = "ultrasharp-tta"         # the palette pipeline is sized for portraits
             plan.setdefault(choice, []).append((group, stem))
 
+    picked = {stem: choice for choice, items in plan.items() for _, stem in items}
+
+    # Kept between runs; until 2026-09-30 both folders were deleted every run, and a rerun with
+    # nothing new re-rendered all ~1,281 pictures. What that deletion guarded against still holds:
+    # a stale PNG is another install's picture under this install's name, and the pack cannot catch
+    # it, because the originals it checks against are this run's (cross-model review, 2026-09-22).
+    # So each picture's original is kept beside its PNG (png/<name>.lbm), compared by its bytes as
+    # render_review does, and a picture whose original differs loses its PNG and every upscale.
     out, pngs = WORK / "upscaled", WORK / "png"
-    for stale in (out, pngs):
-        # A stale option folder would duplicate names. A stale PNG is worse: it is another
-        # install's picture under this install's name, and the pack cannot catch it, because the
-        # originals it checks against are this run's. Found by cross-model review, 2026-09-22.
-        if stale.exists():
-            shutil.rmtree(stale)
+    stamp = out / "recipe.json"
+    try:
+        same_recipe = json.loads(stamp.read_text()) == upscale_recipe()
+    except (OSError, ValueError):
+        same_recipe = False
+    if out.exists() and not same_recipe:
+        shutil.rmtree(out)
+    out.mkdir(parents=True, exist_ok=True)
+    pngs.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(json.dumps(upscale_recipe()))
+    # upscale.py's scratch, left by a run that was stopped: it would stop the next one.
+    shutil.rmtree(out / hd_upscale.APPROVED / ".work", ignore_errors=True)
+    current = set()
+    for group, stems in found.items():
+        for stem in stems:
+            current.add(stem)
+            lbm, kept = WORK / "originals" / group / f"{stem}.lbm", pngs / f"{stem}.lbm"
+            if kept.is_file() and kept.read_bytes() == lbm.read_bytes():
+                continue
+            (pngs / f"{stem}.png").unlink(missing_ok=True)
+            for option in [p.name for p in out.iterdir() if p.is_dir()]:
+                upscale_output(option, stem).unlink(missing_ok=True)
+            shutil.copyfile(lbm, kept)
+    # An upscale by an option that is no longer its picture's pick (or of a picture this install
+    # does not have) goes too: a stale option folder would duplicate names in the pack.
+    for folder in [p for p in out.iterdir() if p.is_dir()]:
+        option, suffix = folder.name, (".lbm" if folder.name == hd_upscale.APPROVED else ".png")
+        files = folder / "portrait" if option == hd_upscale.APPROVED else folder
+        for path in list(files.iterdir()) if files.is_dir() else []:
+            if not (path.is_file() and path.name.endswith(suffix)
+                    and picked.get(path.name[:-len(suffix)]) == option):
+                shutil.rmtree(path) if path.is_dir() else path.unlink()
+    for path in list(pngs.iterdir()):
+        stem, _, ext = path.name.rpartition(".")
+        if not (ext in ("png", "lbm") and stem in current and path.is_file()):
+            shutil.rmtree(path) if path.is_dir() else path.unlink()
+
+    def make_png(item: "tuple[str, str]") -> None:
+        group, stem = item
+        part = pngs / f"{stem}.part"                  # a PNG only appears whole
+        lbm_to_png(WORK / "originals" / group / f"{stem}.lbm", part)
+        os.replace(part, pngs / f"{stem}.png")
+
     folders = []
     for choice, items in sorted(plan.items()):
-        say(f"     {len(items):4d} with {choice}")
+        todo = [(group, stem) for group, stem in items if not upscale_output(choice, stem).exists()]
+        say(f"     {len(items):4d} with {choice}"
+            + (f" ({len(items) - len(todo)} already made)" if len(todo) < len(items) else ""))
         dest = out / choice
         if choice == hd_upscale.APPROVED:
-            names_file = WORK / "approved.txt"
-            names_file.write_text("".join(f"portrait\\{stem}.lbm\n" for _, stem in items))
-            cmd = [sys.executable, str(HERE / "tools" / "upscale.py"), str(WORK / "originals"), str(dest),
-                   "--names", str(names_file), "--esrgan", str(exe), "--models", str(models)]
-            if subprocess.run(cmd).returncode != 0:
-                fail("upscaling did not finish. The game has not been touched.")
+            if todo:
+                names_file = WORK / "approved.txt"
+                names_file.write_text("".join(f"portrait\\{stem}.lbm\n" for _, stem in todo))
+                cmd = [sys.executable, str(HERE / "tools" / "upscale.py"), str(WORK / "originals"), str(dest),
+                       "--names", str(names_file), "--esrgan", str(exe), "--models", str(models)]
+                if subprocess.run(cmd).returncode != 0:
+                    fail("upscaling did not finish. The game has not been touched.")
+            (dest / "portrait").mkdir(parents=True, exist_ok=True)
             folders.append(dest / "portrait")
         else:
-            inputs = {}
-            pngs.mkdir(parents=True, exist_ok=True)
-            for group, stem in items:
-                png = pngs / f"{stem}.png"
-                lbm_to_png(WORK / "originals" / group / f"{stem}.lbm", png)
-                inputs[stem] = png
-            hd_upscale.render(choice, inputs, dest, exe, models)
+            # Every picked picture keeps its PNG, made or not this run: the pack's content check
+            # makes a damaged upscale again from it (rerender_picture).
+            hd_upscale.thread_map(make_png, [(g, s) for g, s in items if not (pngs / f"{s}.png").exists()])
+            dest.mkdir(parents=True, exist_ok=True)
+            if todo:
+                hd_upscale.render(choice, {stem: pngs / f"{stem}.png" for _, stem in todo}, dest, exe, models)
             folders.append(dest)
     return folders
 
@@ -478,6 +552,7 @@ def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathli
     options = [*hd_upscale.OPTIONS, hd_upscale.APPROVED]
     inputs: dict[str, dict[str, pathlib.Path]] = {}
     characters = []
+    changed = []
     for group, stems in found.items():
         for stem in stems:
             key = f"{group}__{stem}"
@@ -488,15 +563,21 @@ def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathli
             # re-render everything. (Claude review, 2026-09-23.)
             kept = originals / f"{key}.lbm"
             if not (png.exists() and kept.exists() and kept.read_bytes() == lbm.read_bytes()):
-                for option in options:
-                    (review / option / f"{key}.png").unlink(missing_ok=True)
-                part = originals / f"{key}.part"          # not *.png: the page lists those
-                lbm_to_png(lbm, part)
-                os.replace(part, png)
-                shutil.copyfile(lbm, kept)
+                changed.append((key, lbm))
             inputs.setdefault(group, {})[key] = png
             if hd_upscale.default_choice(group, stem) == hd_upscale.APPROVED:
                 characters.append(stem)
+
+    def refresh(item: "tuple[str, pathlib.Path]") -> None:
+        key, lbm = item
+        for option in options:
+            (review / option / f"{key}.png").unlink(missing_ok=True)
+        part = originals / f"{key}.part"          # not *.png: the page lists those
+        lbm_to_png(lbm, part)
+        os.replace(part, originals / f"{key}.png")
+        shutil.copyfile(lbm, originals / f"{key}.lbm")
+
+    hd_upscale.thread_map(refresh, changed)
     # Pictures from an install reviewed before (or a mod since removed) are not this game's: off the
     # page, or a pick could be saved for art this install never installs. (Codex review.)
     current = {key for batch in inputs.values() for key in batch}

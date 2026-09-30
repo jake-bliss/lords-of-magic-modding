@@ -33,6 +33,7 @@ vendored.
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import subprocess
 import sys
@@ -87,7 +88,11 @@ def upscale_one(src: pathlib.Path, dest: pathlib.Path, work: pathlib.Path,
             indices.append(index)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    lbm_png.encode(dest, width, height, bytes(indices), palette, chunks)
+    # Whole or not at all: setup keeps these between runs and makes only the ones that are missing,
+    # so one cut short by a stopped run must never be there. (2026-09-30.)
+    part = dest.with_name(dest.name + ".part")
+    lbm_png.encode(part, width, height, bytes(indices), palette, chunks)
+    os.replace(part, dest)
 
 
 def fidelity(src: pathlib.Path, result: pathlib.Path, work: pathlib.Path) -> tuple[float, float]:
