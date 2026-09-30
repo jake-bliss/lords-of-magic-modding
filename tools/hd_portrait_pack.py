@@ -293,6 +293,15 @@ def picture_streams(job) -> tuple:
     return score, compress_streams(idx, rgb)
 
 
+# What reading an upscale (load_rgb) raises when the file is not a whole image.
+READ_ERRORS = (SystemExit, subprocess.CalledProcessError, OSError, ValueError, KeyError, IndexError,
+               EOFError, struct.error, zlib.error)
+
+
+def _why(error: BaseException) -> str:
+    return str(error).strip()[:120] or type(error).__name__
+
+
 def _upscale_bytes(path: pathlib.Path) -> int:
     """About how many bytes of RGB an upscale reads as, to size a batch: exact for a PNG."""
     try:
@@ -335,7 +344,8 @@ def unmasked_records(originals, upscaled, skipped: list[str], sources=None, rere
     skipped += [f"{name}: upscale with no original" for name in sorted(set(large) - set(small))]
 
     def prepare(name: str):
-        """(w, h, indices, palette, hw, hh, upscale RGB), or why the picture is left out."""
+        """(w, h, indices, palette, hw, hh, upscale RGB, None), or with no RGB and why it could
+        not be read; or why the picture is left out."""
         if name not in made_from:
             return f"{name}: no source original to verify the upscale against"
         # Setup passes its originals as the sources too: the same file is the same image, and
@@ -343,7 +353,13 @@ def unmasked_records(originals, upscaled, skipped: list[str], sources=None, rere
         if small[name] != made_from[name] and not same_image(small[name], made_from[name]):
             return f"{name}: installed original differs from the one the upscale was made from"
         w, h, idx, pal, _ = lbm_png.decode(small[name])
-        return (w, h, idx, pal, *load_rgb(large[name]))
+        try:
+            return (w, h, idx, pal, *load_rgb(large[name]), None)
+        except READ_ERRORS as error:
+            # Setup keeps upscales between runs, so one cut short (a stopped run, a full disk)
+            # stopped every later run right here (cross-model review, 2026-09-30). It is made
+            # again like a damaged one instead.
+            return (w, h, idx, pal, 0, 0, None, f"could not be read: {_why(error)}")
 
     names, start = sorted(set(small) & set(large)), 0
     while start < len(names):
@@ -354,45 +370,45 @@ def unmasked_records(originals, upscaled, skipped: list[str], sources=None, rere
         batch, start = names[start:end], end
         prepared = hd_upscale.thread_map(prepare, batch)
         done = iter(hd_upscale.ordered_map(pool, picture_streams,
-                                           [p for p in prepared if not isinstance(p, str)]))
+                                           [p[:7] for p in prepared if not isinstance(p, str) and p[6] is not None]))
         for name, got in zip(batch, prepared):
             if isinstance(got, str):
                 skipped.append(got)
                 continue
-            w, h, idx, pal, hw, hh, rgb = got
-            score, streams = next(done)
-            if is_pixel_multiple(w, h, idx, pal, hw, hh, rgb):
+            w, h, idx, pal, hw, hh, rgb, why = got
+            score, streams = next(done) if rgb is not None else (None, None)
+            if rgb is not None and is_pixel_multiple(w, h, idx, pal, hw, hh, rgb):
                 skipped.append(f"{name}: the upscale is the original with each pixel repeated, not an upscale")
                 continue
-            if (hw, hh) == (2 * w, 2 * h):
+            if why is None and (hw, hh) == (2 * w, 2 * h):
                 counts["unjudged"] += score is None
                 if hd_upscale.looks_damaged(score):
-                    counts["damaged"] += 1
-                    again = None
-                    if rerender is not None:
-                        try:
-                            rerender(large[name])
-                            hw, hh, rgb = load_rgb(large[name])
-                            streams = None                  # a new upscale: compressed below
-                            if (hw, hh) != (2 * w, 2 * h):
-                                raise ValueError(f"made again at {hw}x{hh}")
-                            source = b"".join(bytes(pal[i]) for i in idx)
-                            again = hd_upscale.damage_score(w, h, source, rgb, 3, 3)
-                        except (SystemExit, subprocess.CalledProcessError, OSError, ValueError, KeyError,
-                                IndexError, EOFError, struct.error, zlib.error) as error:
-                            # Made again badly, or not at all: that picture is left out, not the pack.
-                            counts["failed"] += 1
-                            skipped.append(f"{name}: upscale looked damaged ({score:.2f} against "
-                                           f"{hd_upscale.DAMAGE_THRESHOLD}) and could not be made again "
-                                           f"({str(error).strip()[:120] or type(error).__name__}); the "
-                                           "original shows")
-                            continue
-                    if again is None or hd_upscale.looks_damaged(again):
-                        skipped.append(f"{name}: upscale looked damaged ({score:.2f} against "
-                                       f"{hd_upscale.DAMAGE_THRESHOLD}" + (", made twice" if rerender else "")
-                                       + "); the original shows")
+                    why = f"{score:.2f} against {hd_upscale.DAMAGE_THRESHOLD}"
+            if why is not None:
+                counts["damaged"] += 1
+                again, made = None, False
+                if rerender is not None:
+                    try:
+                        rerender(large[name])
+                        hw, hh, rgb = load_rgb(large[name])
+                        streams = None                      # a new upscale: compressed below
+                        if (hw, hh) != (2 * w, 2 * h):
+                            raise ValueError(f"made again at {hw}x{hh}")
+                        if is_pixel_multiple(w, h, idx, pal, hw, hh, rgb):
+                            raise ValueError("made again as the original with each pixel repeated")
+                        source = b"".join(bytes(pal[i]) for i in idx)
+                        again, made = hd_upscale.damage_score(w, h, source, rgb, 3, 3), True
+                    except READ_ERRORS as error:
+                        # Made again badly, or not at all: that picture is left out, not the pack.
+                        counts["failed"] += 1
+                        skipped.append(f"{name}: upscale looked damaged ({why}) and could not be made "
+                                       f"again ({_why(error)}); the original shows")
                         continue
-                    counts["remade"] += 1
+                if not made or hd_upscale.looks_damaged(again):
+                    skipped.append(f"{name}: upscale looked damaged ({why}"
+                                   + (", made twice" if rerender else "") + "); the original shows")
+                    continue
+                counts["remade"] += 1
             check_reader_limits(name, w, h, hw, hh)
             yield encode_record(name, w, h, idx, pal, hw, hh, rgb, streams=streams)
 

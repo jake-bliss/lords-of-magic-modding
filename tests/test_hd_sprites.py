@@ -539,6 +539,45 @@ class ContentCheck(Base):
         self.assertNotIn("made twice", skipped[0])
         self.assertIn("upscale looked damaged", skipped[0])
 
+    @unittest.skipUnless(HAVE_MAGICK, "no ImageMagick (magick) on PATH")
+    def test_a_render_cut_short_in_the_cache_is_made_again_and_packed(self) -> None:
+        """A render that exists but cannot be read (a stopped run, a full disk) was left out on
+        every later run: rendering skips it because it exists, packing because it cannot read it.
+        It is made again once, like a damaged one. (Cross-model review, 2026-09-30.)"""
+        self.render.write_bytes(self.render.read_bytes()[:40])
+        skipped: list[str] = []
+        counts: dict = {}
+        got = list(hd_sprites.records(self.plan_.animated, self.root, self.read_sprite, skipped, counts,
+                                      rerender=self.fake_render))
+        self.assertEqual((len(got), skipped), (2, []))
+        self.assertEqual(self.renders, [("anime2x", [self.stem])], "only that frame, once")
+        self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 1, 0))
+
+    @unittest.skipUnless(HAVE_MAGICK, "no ImageMagick (magick) on PATH")
+    def test_one_still_cut_short_is_left_out_and_named(self) -> None:
+        def cutting_render(option, inputs, dest):
+            self.fake_render(option, inputs, dest)
+            self.render.write_bytes(self.render.read_bytes()[:40])
+
+        self.render.write_bytes(self.render.read_bytes()[:40])
+        skipped: list[str] = []
+        counts: dict = {}
+        got = list(hd_sprites.records(self.plan_.animated, self.root, self.read_sprite, skipped, counts,
+                                      rerender=cutting_render))
+        self.assertEqual(len(got), 1)
+        self.assertEqual(len(skipped), 1)
+        self.assertTrue(skipped[0].startswith("anim__cav#001: anime2x"), skipped)
+        self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 0, 1))
+
+    def test_a_missing_render_is_not_made_again_in_the_pack_step(self) -> None:
+        """Missing is render_all's to make, before the pack: only a render that is THERE and cannot
+        be read is made again here."""
+        self.render.unlink()
+        records, skipped, counts = self.records(self.fake_render)
+        self.assertEqual(self.renders, [])
+        self.assertEqual(skipped, ["anim__cav#001: anime2x render is missing"])
+        self.assertEqual(counts["damaged"], 0)
+
     def test_an_upscaler_that_fails_the_second_time_leaves_that_frame_out(self) -> None:
         def failing(option, inputs, dest):
             raise SystemExit("anime2x: the upscaler failed")

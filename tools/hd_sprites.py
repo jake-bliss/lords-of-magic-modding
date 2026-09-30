@@ -429,7 +429,8 @@ def check_renders(batch: List[Tuple[Sprite, Frame, "imp_read.Sprite"]], pixels: 
                   scores: Optional[Dict[str, Optional[float]]] = None) -> None:
     """The content check (`hd_upscale.damage_score`) for one read batch, in place on `pixels`: a
     render that looks damaged is deleted and made again with `rerender` (`render_all`'s `render`),
-    once; one that still does becomes a skip reason. `rerender` None leaves it out at once.
+    once; one that still does becomes a skip reason. `rerender` None leaves it out at once. A
+    render that is there but could not be read is made again the same way (with `rerender`).
     Counts "unjudged" frames too small to check, and "failed" remakes that produced nothing.
     `scores` (rel path -> score) are first-pass scores worked out already (`frame_streams`)."""
     def damaged(sprite: Sprite, frame: Frame, decoded, first: bool = False) -> Optional[float]:
@@ -450,6 +451,13 @@ def check_renders(batch: List[Tuple[Sprite, Frame, "imp_read.Sprite"]], pixels: 
 
     bad = [(sprite, frame, decoded, score) for sprite, frame, decoded in batch
            for score in [damaged(sprite, frame, decoded, first=True)] if score is not None]
+    if rerender is not None:
+        # There, but not readable at the size it must be: cut short by a stopped run or a full
+        # disk. render_all skips it because it exists, so without this it was left out on every
+        # run after (cross-model review, 2026-09-30). A missing one is render_all's to make.
+        bad += [(sprite, frame, decoded, None) for sprite, frame, decoded in batch
+                for rel in [f"render/{sprite.option}/{frame.stem}.png"]
+                if not isinstance(pixels.get(rel), bytes) and (root / rel).is_file()]
     if not bad:
         return
     counts["damaged"] += len(bad)
