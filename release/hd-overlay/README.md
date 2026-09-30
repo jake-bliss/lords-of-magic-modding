@@ -13,12 +13,13 @@ was made (the choices ship as `upscale-choices.json`).
 
 The art is sharper, not bigger: each picture fills the same space on screen as before.
 
-> **Beta (0.5.1).** New in this release: a fix for the game hanging when a Death Shade or Frozen
-> Shade dies (see Install), and a check of every upscale's contents -- an upscale of the right size
-> whose pixels came out as bands or speckle is made again, or left out so the original shows (see
-> HD sprites). Rerunning setup over a 0.5.0 install finds and replaces any such upscale already in
-> it. 0.5.0 added HD sprites. The HD art overlay and HD terrain (`--terrain`) have both been played
-> on Windows 11 (NVIDIA) and macOS (Wine); the sprites are new, so please report anything odd --
+> **Beta (0.5.2).** New in this release: the unit figures in the army strip along the bottom of the
+> screen are now HD too (in combat and on the map); HD terrain (`--terrain`) no longer shows hard
+> edges where two kinds of terrain meet; and the overlay writes a short crash or hang report to the
+> game folder if the game stops, which `--report` gathers into one zip (see Reports). 0.5.1 fixed the
+> game hanging when a Death Shade or Frozen Shade dies, and checks every upscale's contents; 0.5.0
+> added HD sprites. The HD art overlay and HD terrain have both been played on Windows 11 (NVIDIA)
+> and macOS (Wine); 0.5.2 has been played on macOS only so far, so please report anything odd --
 > see the end of this file. `--uninstall` puts every file back.
 
 ## What you need
@@ -204,6 +205,12 @@ game folder (the name dates from when it held only portraits).
   include the sprite's name) and run setup again, and please report it with the sprite's name.
 - **Scrambled or striped terrain** means the patched `lomse.exe` is running without its
   `lomhd_terrain` folder: run `python lomhd_setup.py --terrain` again, or `--uninstall`.
+- **Crash and hang reports:** if the game crashes, or stops drawing for a long time, the overlay
+  writes `lomhd_crash_<time>.txt` (and a `.dmp`) or `lomhd_hang_<time>.txt` in the game folder.
+  They stay on your machine; `--report` below gathers them. To turn them off, create an empty file
+  named `lomhd_no_crash_reports` or `lomhd_no_hang_reports` in the game folder. On macOS a game
+  window in the background may stop drawing until you click back into it; that is Wine, and the
+  report written then says so.
 - **Reporting a problem:** run
 
   ```

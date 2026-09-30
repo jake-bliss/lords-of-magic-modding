@@ -16,10 +16,14 @@ OUT=$ROOT/dist/$NAME
 # struct into a DLL that still loaded and ran (docs/hd-overlay.md).
 [ -z "$(git -C "$FORK" status --porcelain)" ] || { echo "cnc-ddraw fork has uncommitted changes" >&2; exit 1; }
 COMMIT=$(git -C "$FORK" rev-parse --short HEAD)
+# The Makefile bakes the branch name and LOMHD_VERSION into the DLL, so one commit built on another
+# branch, or without the version, gives other bytes than the release records (docs/hd-overlay.md).
+[ "$(git -C "$FORK" branch --show-current)" = lom-hd-overlay ] ||
+  { echo "refusing: build the DLL from the fork's lom-hd-overlay branch" >&2; exit 1; }
 LDFLAGS_REPRO="-Wl,--enable-stdcall-fixup -s -static -shared -Wl,--no-insert-timestamp"
 build_dll() {
   make -C "$FORK" clean >/dev/null
-  make -C "$FORK" -j8 LDFLAGS="$LDFLAGS_REPRO" >/dev/null
+  make -C "$FORK" -j8 LDFLAGS="$LDFLAGS_REPRO" LOMHD_VERSION="$VERSION" >/dev/null
   shasum -a 256 "$FORK/ddraw.dll" | cut -d' ' -f1
 }
 # --no-insert-timestamp: without it every build of one commit differs, so nobody could check the
