@@ -244,7 +244,7 @@ thousands of short `magick` runs and the pure-Python content check ran one at a 
   or of a picture this install does not have, is removed. `upscaled/recipe.json` holds
   a hash of the upscale code's own source (`hd_upscale.py`, which also makes the PNGs the
   full-colour options start from, `upscale.py`, `lbm_png.py`), the options and the pinned model
-  hashes; when it differs every upscale and every PNG is made again -- any edit to that code does
+  hashes; when it differs every upscale and every PNG in `png/` is made again (the review page's own PNGs are not keyed on it) -- any edit to that code does
   it, which is the safe way to be wrong. (The sprite and terrain render caches have no such
   stamp yet: a release that changed a model or the resize would keep their old renders.) A kept
   upscale that cannot be read (cut short by a stopped run) is made again in the pack step, like a

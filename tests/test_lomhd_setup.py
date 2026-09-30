@@ -466,6 +466,8 @@ class UpscalePlan(unittest.TestCase):
         self.assertTrue(all(p.is_file() for p in code), code)
         self.assertIn(pathlib.Path(inspect.getsourcefile(setup.hd_upscale.lbm_to_png)).resolve(), code,
                       "the PNGs the upscales are made from are made by hashed code too")
+        # And setup calls that copy: a helper of its own would sit in unhashed lomhd_setup.py.
+        self.assertFalse(hasattr(setup, "lbm_to_png"), "setup must use hd_upscale.lbm_to_png")
 
     def test_a_second_run_upscales_this_install_not_the_last_one(self) -> None:
         """Vanilla then GS5R3: a name both share, a different picture. The PNG cache kept the
@@ -2695,7 +2697,10 @@ class Downloads(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dest = pathlib.Path(tmp.name) / "model.bin"
-        want = hashlib.sha256(b"the model").hexdigest()
+        # Longer than any block a hash might read at a time, with the difference at the end: a
+        # hash of the first block alone must not pass for the whole file.
+        self.model = b"x" * (1 << 21) + b"the model"
+        want = hashlib.sha256(self.model).hexdigest()
         patcher = mock.patch.dict(setup.DOWNLOADS, {"model": ("https://example.invalid/model.bin", want)})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -2708,18 +2713,18 @@ class Downloads(unittest.TestCase):
         self.addCleanup(offline.stop)
 
     def test_the_pinned_file_is_used_and_hashed_in_full_on_every_run(self) -> None:
-        self.dest.write_bytes(b"the model")
+        self.dest.write_bytes(self.model)
         for run in (1, 2):
             self.assertEqual(setup.fetch("model", self.dest), self.dest)
             self.assertEqual(self.hashed, ["model.bin"] * run, "hashed every run, not only the first")
         self.urlopen.assert_not_called()
 
     def test_a_file_that_is_not_the_pinned_one_is_never_used(self) -> None:
-        self.dest.write_bytes(b"the modem")                   # same size, other bytes
+        self.dest.write_bytes(self.model[:-1] + b"m")       # same size, last byte other
         with self.assertRaises(SystemExit):
             setup.fetch("model", self.dest)                   # found wrong, so fetched again: offline
         self.urlopen.assert_called_once()
-        self.assertEqual(self.dest.read_bytes(), b"the modem", "and not taken as the model")
+        self.assertEqual(self.dest.read_bytes(), self.model[:-1] + b"m", "and not taken as the model")
 
 
 class Timing(unittest.TestCase):
