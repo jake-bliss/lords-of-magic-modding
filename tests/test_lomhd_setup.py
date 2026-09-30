@@ -446,18 +446,6 @@ class UpscalePlan(unittest.TestCase):
         self.assertEqual([p.name for p in setup.upscale_code()], ["hd_upscale.py", "lbm_png.py", "upscale.py"])
         self.assertTrue(all(p.is_file() for p in setup.upscale_code()), setup.upscale_code())
 
-    def test_a_stopped_approved_run_does_not_stop_the_next(self) -> None:
-        """upscale.py's scratch folder, left by a run stopped part-way, would make its own cleanup
-        fail on the next run; it goes first."""
-        self.extract(30, "portrait", "aicavp00")
-        made = self.counting_stubs()
-        scratch = setup.WORK / "upscaled" / "approved" / ".work" / "00007"
-        scratch.mkdir(parents=True)
-        (scratch / "in.png").write_bytes(b"left over")
-        setup.upscale_all({"portrait": ["aicavp00"]}, pathlib.Path("e"), pathlib.Path("m"))
-        self.assertFalse(scratch.parent.exists())
-        self.assertEqual(made, [("approved", "aicavp00")])
-
     def test_a_second_run_upscales_this_install_not_the_last_one(self) -> None:
         """Vanilla then GS5R3: a name both share, a different picture. The PNG cache kept the
         vanilla picture, and the pack could not tell, since it checks against this run's art."""

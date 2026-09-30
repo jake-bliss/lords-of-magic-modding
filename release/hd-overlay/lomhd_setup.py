@@ -498,8 +498,6 @@ def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.
     out.mkdir(parents=True, exist_ok=True)
     pngs.mkdir(parents=True, exist_ok=True)
     stamp.write_text(json.dumps(upscale_recipe()))
-    # upscale.py's scratch, left by a run that was stopped: it would stop the next one.
-    shutil.rmtree(out / hd_upscale.APPROVED / ".work", ignore_errors=True)
     current = set()
     for group, stems in found.items():
         for stem in stems:

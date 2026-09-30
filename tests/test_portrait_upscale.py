@@ -111,6 +111,17 @@ class Batched(unittest.TestCase):
         self.assertIn("the upscaler wrote nothing for portrait\\lildwp01.lbm", result.stderr)
         self.assertFalse((out / "portrait").exists(), "nothing written: the run stopped before any")
 
+    def test_a_stopped_runs_scratch_does_not_stop_the_next(self) -> None:
+        """What guards a resume after a stopped run: upscale.py clears its own scratch first (setup
+        leaves it to it). Scratch under a number this run uses too: made afresh, not stopped on."""
+        out = self.dir / "out"
+        stale = out / ".work" / "00002"
+        stale.mkdir(parents=True)
+        (stale / "in.png").write_bytes(b"left over")
+        result = self.batch(out)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(p.name for p in out.iterdir()), ["portrait"])
+
     def test_a_stopped_runs_scratch_never_passes_for_this_runs(self) -> None:
         """A run stopped after the model left its output behind. If that folder were reused, a
         portrait the model skips this time would silently get the old run's upscale."""
