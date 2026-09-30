@@ -424,18 +424,25 @@ def read_renders(root: pathlib.Path, wanted: List[Tuple[str, int, int]]) -> Dict
 
 def check_renders(batch: List[Tuple[Sprite, Frame, "imp_read.Sprite"]], pixels: Dict[str, object],
                   root: pathlib.Path, rerender, reader, counts: Dict[str, int],
-                  log: Callable[[str], None] = lambda _: None) -> None:
+                  log: Callable[[str], None] = lambda _: None,
+                  scores: Optional[Dict[str, Optional[float]]] = None) -> None:
     """The content check (`hd_upscale.damage_score`) for one read batch, in place on `pixels`: a
     render that looks damaged is deleted and made again with `rerender` (`render_all`'s `render`),
     once; one that still does becomes a skip reason. `rerender` None leaves it out at once.
-    Counts "unjudged" frames too small to check, and "failed" remakes that produced nothing."""
+    Counts "unjudged" frames too small to check, and "failed" remakes that produced nothing.
+    `scores` (rel path -> score) are first-pass scores worked out already (`frame_streams`)."""
     def damaged(sprite: Sprite, frame: Frame, decoded, first: bool = False) -> Optional[float]:
-        rgba = pixels.get(f"render/{sprite.option}/{frame.stem}.png")
+        rel = f"render/{sprite.option}/{frame.stem}.png"
+        rgba = pixels.get(rel)
         if not isinstance(rgba, bytes):
             return None
-        shown = decoded.resolved_frame(frame.index)
-        score = hd_upscale.damage_score(frame.width, frame.height,
-                                        prepared_rgba(shown.indices, decoded.palette, decoded.color_key), rgba)
+        if first and scores is not None and rel in scores:
+            score = scores[rel]
+        else:
+            shown = decoded.resolved_frame(frame.index)
+            score = hd_upscale.damage_score(frame.width, frame.height,
+                                            prepared_rgba(shown.indices, decoded.palette, decoded.color_key),
+                                            rgba)
         if score is None and first:
             counts["unjudged"] += 1
         return score if hd_upscale.looks_damaged(score) else None
@@ -471,10 +478,23 @@ def check_renders(batch: List[Tuple[Sprite, Frame, "imp_read.Sprite"]], pixels: 
                            + (", made twice" if rerender is not None else "") + "); the original shows")
 
 
+def frame_streams(job) -> tuple:
+    """A worker's share of one frame (see `records`): (the content check's score, the record's
+    `pack.compress_streams`, one pair per strip crop). Pure Python and zlib, which is what packing
+    spent its time on; module-level, so a spawned worker process can import it."""
+    width, height, shown_width, indices, palette, key, rgba, crops = job
+    score = hd_upscale.damage_score(width, height, prepared_rgba(indices, palette, key), rgba)
+    stride = shown_width * 2 * 4
+    cut = [pack.compress_streams(indices[top * shown_width:(top + rows) * shown_width],
+                                 rgba[top * 2 * stride:(top + rows) * 2 * stride]) for top, rows in crops]
+    return score, pack.compress_streams(indices, rgba), cut
+
+
 def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[str], "imp_read.Sprite"],
             skipped: List[str], counts: Optional[Dict[str, int]] = None, first_group: int = 1,
             batch: int = RENDER_BATCH, budget: int = READ_BUDGET, read=None,
-            rerender=None, log: Callable[[str], None] = lambda _: None) -> Iterator[Tuple[bytes, bytes, bytes]]:
+            rerender=None, log: Callable[[str], None] = lambda _: None,
+            pool=None) -> Iterator[Tuple[bytes, bytes, bytes]]:
     """Yield (entry, zidx, zhd) for every planned frame, in order: static sprites group 0, each
     animated sprite its own group, consecutive. The low-res half is decoded again from the archive
     (`read_sprite`), one member at a time. A frame whose render is missing, the wrong size, or
@@ -482,7 +502,12 @@ def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[st
     `skipped` and left out; its sprite's other frames still go in. Each frame's strip crops
     (`Frame.crops`) follow its record, in its group, cut from the same render. `counts` (if given)
     gets "packed" frames and "sprites" packed, "strip" crops packed, "damaged" renders found and "remade" ones that then
-    passed, "failed" remakes that produced nothing, and "unjudged" frames too small to check."""
+    passed, "failed" remakes that produced nothing, and "unjudged" frames too small to check.
+
+    Each read batch's scores and zlib streams (`frame_streams`) are worked out together, on `pool`
+    (`hd_upscale.process_pool()`'s) when given; everything that depends on order -- remakes, groups,
+    skips, the records themselves -- stays here, in order, so the pack is the same byte for byte
+    with or without it."""
     counts = counts if counts is not None else {}
     for name in ("packed", "sprites", "strip", "damaged", "remade", "failed", "unjudged"):
         counts.setdefault(name, 0)
@@ -502,9 +527,23 @@ def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[st
                 decoded_of[n] = read_sprite(sprite.member)
             except (imp_read.ImpError, OSError, ValueError) as error:
                 decoded_of[n] = error
-        check_renders([(sprite, frame, decoded_of[n]) for n, sprite in enumerate(queue)
-                       if not isinstance(decoded_of[n], Exception) for frame in sprite.frames],
-                      pixels, root, rerender, reader, counts, log)
+        batch_frames = [(sprite, frame, decoded_of[n]) for n, sprite in enumerate(queue)
+                        if not isinstance(decoded_of[n], Exception) for frame in sprite.frames]
+        jobs, made_from = [], []
+        for sprite, frame, decoded in batch_frames:
+            rel = f"render/{sprite.option}/{frame.stem}.png"
+            rgba = pixels.get(rel)
+            if isinstance(rgba, bytes):
+                shown = decoded.resolved_frame(frame.index)
+                jobs.append((frame.width, frame.height, shown.width, shown.indices, decoded.palette,
+                             decoded.color_key, rgba, [(c.top, c.rows) for c in frame.crops]))
+                made_from.append((rel, rgba))
+        # rel -> (the pixels it was worked out from, its frame_streams); a remade render has other
+        # pixels, and is compressed afresh below.
+        work = {rel: (rgba, done) for (rel, rgba), done
+                in zip(made_from, hd_upscale.ordered_map(pool, frame_streams, jobs))}
+        check_renders(batch_frames, pixels, root, rerender, reader, counts, log,
+                      scores={rel: done[0] for rel, (_, done) in work.items()})
         for n, sprite in enumerate(queue):
             this_group = 0
             if sprite.animated:
@@ -519,33 +558,38 @@ def records(sprites: List[Sprite], root: pathlib.Path, read_sprite: Callable[[st
             packed = 0
             for frame in sprite.frames:
                 shown = decoded.resolved_frame(frame.index)
-                rgba = pixels[f"render/{sprite.option}/{frame.stem}.png"]
+                rel = f"render/{sprite.option}/{frame.stem}.png"
+                rgba = pixels[rel]
                 if not isinstance(rgba, bytes):
                     skipped.append(f"{frame.record}: {sprite.option} {rgba}")
                     continue
+                made = work.get(rel)
+                _, streams, cut = made[1] if made is not None and made[0] is rgba else (None, None, None)
                 flags = pack.FLAG_MASKED | (pack.FLAG_MIRROR if frame.mirror else 0)
                 try:
                     record = pack.encode_record(frame.record, shown.width, shown.height, shown.indices,
                                                 decoded.palette, shown.width * 2, shown.height * 2, rgba,
-                                                flags=flags, key=decoded.color_key, group=this_group)
+                                                flags=flags, key=decoded.color_key, group=this_group,
+                                                streams=streams)
                 except ValueError as error:
                     skipped.append(f"{frame.record}: {error}")
                     continue
                 packed += 1
                 yield record
                 w, stride = shown.width, shown.width * 2 * 4
-                for crop in frame.crops:
+                for i, crop in enumerate(frame.crops):
                     try:
-                        cut = pack.encode_record(
+                        strip = pack.encode_record(
                             crop.record, w, crop.rows, shown.indices[crop.top * w:(crop.top + crop.rows) * w],
                             decoded.palette, w * 2, crop.rows * 2,
                             rgba[crop.top * 2 * stride:(crop.top + crop.rows) * 2 * stride],
-                            flags=flags, key=decoded.color_key, group=this_group)
+                            flags=flags, key=decoded.color_key, group=this_group,
+                            streams=cut[i] if cut is not None else None)
                     except ValueError as error:
                         skipped.append(f"{crop.record}: {error}")
                         continue
                     counts["strip"] += 1
-                    yield cut
+                    yield strip
             if packed:
                 counts["packed"] += packed
                 counts["sprites"] += 1

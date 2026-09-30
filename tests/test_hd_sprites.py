@@ -839,5 +839,61 @@ class ReadRenders(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["render"], "no scratch left behind")
 
 
+class CountingPool:
+    """A worker-process pool that notes what it was handed: the control that the pool path really
+    ran, so a comparison with the serial one cannot pass by never leaving it."""
+
+    def __init__(self, pool):
+        self.pool, self.mapped = pool, []
+
+    def map(self, fn, items, chunksize=1):
+        items = list(items)
+        self.mapped.append((fn.__name__, len(items)))
+        return self.pool.map(fn, items, chunksize=chunksize)
+
+
+class WorkerProcesses(Base):
+    """records() on worker processes (hd_upscale.process_pool) packs exactly what it packs alone."""
+
+    def test_the_records_are_the_same_byte_for_byte(self) -> None:
+        plan = self.plan({"imp\\tree.imp": sprite(frame(40, 10, 3)),
+                          "units\\cav.imp": sprite(frame(40, 10, 5), frame(40, 10, 6)),
+                          "iface\\fiicons.imp": sprite(figure(39, 91, 1), figure(48, 108, 2),
+                                                        origins=[(2, 19), (-1, 34)])},
+                         {"sprite__tree": "anime2x", "sprite__cav": "anime2x", "sprite__fiicons": "anime2x"})
+        hd_sprites.render_all(plan.static + plan.animated, self.root, self.fake_render, log=lambda _: None)
+        damaged = self.root / "render" / "anime2x" / f"{plan.animated[0].frames[1].stem}.png"
+        clean = damaged.read_bytes()
+        ContentCheck.damage(self, damaged)          # the tester's diagonal bands
+        bad = damaged.read_bytes()
+
+        def build(pool, **kwargs):
+            damaged.write_bytes(bad)                  # both runs find it damaged and make it again
+            skipped: list[str] = []
+            counts: dict = {}
+            out = self.root / "out.pack"
+            pack.write_records(out, hd_sprites.records(plan.static + plan.animated, self.root, self.read_sprite,
+                                                       skipped, counts, read=fake_read, rerender=self.fake_render,
+                                                       pool=pool, **kwargs))
+            return out.read_bytes(), skipped, counts
+
+        alone = build(None)
+        with mock.patch.dict(os.environ, {hd_upscale.JOBS_ENV: "2"}), hd_upscale.process_pool() as real:
+            pool = CountingPool(real)
+            together = build(pool, batch=1)           # one sprite per batch, too
+        self.assertEqual(together[0], alone[0])
+        self.assertEqual(together[1:], alone[1:])
+        self.assertEqual(damaged.read_bytes(), clean, "the damaged render was made again")
+        # Against the render itself, not only the other run: both could share one mistake, such as
+        # packing the streams worked out from the damaged pixels.
+        packed = {name: large for name, _, large, _, _, _ in pack.read(alone[0])}
+        self.assertEqual(packed["anim__cav#001"][2], decode_rgba(damaged)[2])
+        self.assertEqual((alone[2]["damaged"], alone[2]["remade"], alone[2]["strip"]), (1, 1, 2),
+                         "the remake and the strip crops were both on the path compared")
+        self.assertEqual({name for name, _ in pool.mapped}, {"frame_streams"})
+        # cav's two frames and fiicons' two; tree's batch is one frame, which ordered_map keeps.
+        self.assertEqual(sum(n for _, n in pool.mapped), 4)
+
+
 if __name__ == "__main__":
     unittest.main()

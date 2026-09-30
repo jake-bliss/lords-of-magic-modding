@@ -848,6 +848,73 @@ class Sprites(unittest.TestCase):
         self.assertEqual((count, moving["packed"], moving["strip"], sprite_skipped), (3, 2, 1, []))
 
     @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
+    def test_the_pack_is_the_same_byte_for_byte_whatever_lomhd_jobs_says(self) -> None:
+        """Step 5 on worker processes (LOMHD_JOBS=3) writes the very pack it writes one at a time
+        (LOMHD_JOBS=1): static, animated and mirrored sprites, strip crops, pictures, and a damaged
+        render the content check makes again."""
+        import contextlib
+        import lbm_png
+        from test_hd_sprites import CountingPool, decode_rgba, doubled, figure
+
+        def render(option, inputs, dest, esrgan, models):
+            dest.mkdir(parents=True, exist_ok=True)
+            for key, src in inputs.items():
+                w, h, rgba = decode_rgba(src)
+                self.hd_sprites.write_png_rgba(dest / f"{key}.png", w * 2, h * 2, doubled(w, h, rgba))
+            return len(inputs)
+
+        setup.hd_upscale.render = render
+        self.picks({"sprite__tree": "anime2x", "sprite__rock": "anime2x", "sprite__cav": "anime2x",
+                    "sprite__fiicons": "anime2x"})
+        self.add("imp\\tree.imp", self.frame(40, 10, 3))
+        self.add("imp\\rock.imp", self.frame(40, 10, 6))
+        self.add("units\\cav.imp", self.frame(40, 10, 7), self.frame(40, 10, 8))
+        self.add("iface\\fiicons.imp", figure(39, 91, 1), figure(48, 108, 2), origins=[(2, 19), (-1, 34)])
+        plan, root, read_sprite = setup.plan_sprites(self.game, animated=True)
+        setup.upscale_sprites(plan.static + plan.animated, root, pathlib.Path("e"), pathlib.Path("m"))
+        damaged = root / "render" / "anime2x" / f"{next(s for s in plan.static if s.name == 'rock').frames[0].stem}.png"
+        self.hd_sprites.write_png_rgba(damaged, 80, 20, bytes(80 * 20 * 4))     # right size, wrong pixels
+        bad = damaged.read_bytes()
+        originals, upscaled = self.base / "originals", self.base / "upscaled"
+        originals.mkdir()
+        upscaled.mkdir()
+        palette = [(i, (i * 3) % 256, 255 - i) for i in range(256)]
+        header = struct.pack(">HHhhBBBBHBBhh", 40, 6, 0, 0, 8, 0, 1, 0, 0, 1, 1, 40, 6)
+        for name, seed in (("aagtwr0a", 0), ("abldg", 90)):
+            lbm_png.encode(originals / f"{name}.lbm", 40, 6, bytes((i + seed) % 256 for i in range(240)), palette,
+                           [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+            up = bytearray(b"".join(bytes(palette[((y // 2) * 40 + x // 2 + seed) % 256]) + b"\xff"
+                                    for y in range(12) for x in range(80)))
+            up[0] ^= 1
+            self.hd_sprites.write_png_rgba(upscaled / f"{name}.png", 80, 12, bytes(up))
+        real_pool, pools = setup.hd_upscale.process_pool, []
+
+        @contextlib.contextmanager
+        def counting_pool():
+            with real_pool() as pool:
+                pools.append(None if pool is None else CountingPool(pool))
+                yield pools[-1]
+
+        def build(jobs: str):
+            damaged.write_bytes(bad)                  # both runs find it damaged, and make it again
+            out, pictures = self.base / f"jobs-{jobs}.pack", {}
+            with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: jobs}), \
+                    mock.patch.object(setup.hd_upscale, "process_pool", counting_pool):
+                result = setup.build_pack(out, plan, root, read_sprite, [originals], [upscaled],
+                                          pathlib.Path("e"), pathlib.Path("m"), pictures)
+            return out.read_bytes(), result, pictures
+
+        one, three = build("1"), build("3")
+        self.assertEqual(three[0], one[0])
+        self.assertEqual(three[1:], one[1:])
+        count, skipped, sprite_skipped, static, moving = one[1]
+        self.assertEqual((static["damaged"], static["remade"], moving["strip"], skipped, sprite_skipped),
+                         (1, 1, 2, [], []), "the remake and strip crops were on the path compared")
+        self.assertEqual(count, 10)          # 2 static, 2 cav, 2 fiicons + 2 strip, 2 pictures
+        self.assertIsNone(pools[0], "LOMHD_JOBS=1: no worker processes at all")
+        self.assertEqual(sorted({name for name, _ in pools[1].mapped}), ["frame_streams", "picture_streams"])
+
+    @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
     def test_the_pack_holds_sprites_and_pictures_and_uninstall_restores_everything(self) -> None:
         import hd_portrait_pack as pack
         import lbm_png

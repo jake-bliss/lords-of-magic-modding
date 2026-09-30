@@ -642,13 +642,20 @@ def build_pack(pack: pathlib.Path, sprites, sprite_root: pathlib.Path, read_spri
     remake = None if exe is None else (
         lambda option, inputs, dest: hd_upscale.render(option, inputs, dest, exe, models))
     remake_picture = None if exe is None else (lambda path: rerender_picture(path, exe, models))
-    count = hd_portrait_pack.write_records(pack, itertools.chain(
-        hd_sprites.records(sprites.static, sprite_root, read_sprite, sprite_skipped, packed, rerender=remake,
-                           log=lambda line: say(f"     {line}")),
-        hd_sprites.records(sprites.animated, sprite_root, read_sprite, sprite_skipped, moving, rerender=remake,
-                           log=lambda line: say(f"     {line}")),
-        hd_portrait_pack.unmasked_records(originals, upscaled, skipped, originals, rerender=remake_picture,
-                                          counts=pictures)))
+    # The content check and zlib, per frame and per picture, on worker processes; batches grow with
+    # them, so each still has about one READ_BUDGET of pixels to work on. The pack is the same, byte
+    # for byte, as with LOMHD_JOBS=1 (tests/test_lomhd_setup.py).
+    workers = hd_upscale.jobs()
+    sized = {"batch": hd_sprites.RENDER_BATCH * workers, "budget": hd_sprites.READ_BUDGET * workers}
+    with hd_upscale.process_pool() as pool:
+        count = hd_portrait_pack.write_records(pack, itertools.chain(
+            hd_sprites.records(sprites.static, sprite_root, read_sprite, sprite_skipped, packed, rerender=remake,
+                               log=lambda line: say(f"     {line}"), pool=pool, **sized),
+            hd_sprites.records(sprites.animated, sprite_root, read_sprite, sprite_skipped, moving, rerender=remake,
+                               log=lambda line: say(f"     {line}"), pool=pool, **sized),
+            hd_portrait_pack.unmasked_records(originals, upscaled, skipped, originals, rerender=remake_picture,
+                                              counts=pictures, pool=pool,
+                                              budget=hd_portrait_pack.READ_BUDGET * workers)))
     packed.setdefault("packed", 0)
     moving.setdefault("packed", 0)
     moving.setdefault("sprites", 0)

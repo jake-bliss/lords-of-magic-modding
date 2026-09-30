@@ -16,6 +16,8 @@ in the first building upscales, and the overlay draws its own texture, so it nee
 """
 from __future__ import annotations
 
+import concurrent.futures
+import contextlib
 import os
 import pathlib
 import re
@@ -32,6 +34,68 @@ OPTIONS = {                      # name -> (model, scale, extra realesrgan-ncnn-
 APPROVED = "approved"
 MODEL_FILES = sorted({f"{model}.{ext}" for model, _, _ in OPTIONS.values() for ext in ("param", "bin")})
 CHARACTER = re.compile(r".*p\d\d")
+# --- running side by side ------------------------------------------------------------------------
+#
+# A setup rerun with nothing new to do took 33 minutes at ~108% CPU on an M4 Max (2026-09-30):
+# thousands of short magick runs and pure-Python frame checks, one after another. These helpers run
+# them side by side, JOBS_ENV at a time (default: the cores, at most MAX_JOBS). JOBS_ENV=1 is the
+# old one-at-a-time behaviour exactly: no threads, no worker processes.
+JOBS_ENV = "LOMHD_JOBS"
+MAX_JOBS = 8
+
+
+def jobs() -> int:
+    """How many to run at once: JOBS_ENV if set, else the cores, at most MAX_JOBS."""
+    value = os.environ.get(JOBS_ENV, "").strip()
+    if value:
+        try:
+            return max(1, int(value))
+        except ValueError:
+            raise SystemExit(f"{JOBS_ENV}={value!r} is not a whole number (1 runs one thing at a time)")
+    return max(1, min(os.cpu_count() or 1, MAX_JOBS))
+
+
+def magick_env() -> "dict | None":
+    """The environment for a magick run that has others beside it: one thread each. ImageMagick
+    otherwise starts a thread per core in every one of them. None (inherit) when jobs() is 1."""
+    if jobs() == 1:
+        return None
+    return {**os.environ, "MAGICK_THREAD_LIMIT": "1"}
+
+
+def thread_map(fn, items) -> list:
+    """[fn(item) for item in items], in order, jobs() at a time on threads: for work that mostly
+    waits on a subprocess. The first exception, in item order, is raised once all have finished."""
+    items = list(items)
+    workers = min(jobs(), len(items))
+    if workers <= 1:
+        return [fn(item) for item in items]
+    with concurrent.futures.ThreadPoolExecutor(workers) as pool:
+        return list(pool.map(fn, items))
+
+
+@contextlib.contextmanager
+def process_pool():
+    """Worker processes for pure-Python work (the content check, zlib), or None when jobs() is 1.
+    Spawned, not forked, on every OS: Windows can only spawn, so the Mac runs what players run, and
+    a fork of a process holding threads is unsafe anyway."""
+    workers = jobs()
+    if workers <= 1:
+        yield None
+        return
+    import multiprocessing
+    with concurrent.futures.ProcessPoolExecutor(
+            workers, mp_context=multiprocessing.get_context("spawn")) as pool:
+        yield pool
+
+
+def ordered_map(pool, fn, items) -> list:
+    """[fn(item) for item in items], in order, on `pool` (process_pool()'s) when there is one.
+    `fn` must be a module-level function, so a spawned worker can import it."""
+    items = list(items)
+    if pool is None or len(items) <= 1:
+        return [fn(item) for item in items]
+    return list(pool.map(fn, items, chunksize=max(1, len(items) // (jobs() * 4))))
 
 
 def default_choice(group: str, stem: str) -> str:
@@ -142,7 +206,9 @@ def render(option: str, inputs: dict[str, pathlib.Path], dest: pathlib.Path, esr
                                 capture_output=True, text=True)
         if result.returncode != 0:
             raise SystemExit(f"{option}: the upscaler failed\n{result.stderr.strip()[-400:]}")
-        for k, p in todo.items():
+
+        def finish(item) -> None:
+            k, p = item
             got = raw / f"{k}.png"
             if not got.exists():
                 raise SystemExit(f"{option}: the upscaler wrote nothing for {k}")
@@ -155,6 +221,10 @@ def render(option: str, inputs: dict[str, pathlib.Path], dest: pathlib.Path, esr
             else:
                 # Exactly 2x the original, whatever rounding the model applied.
                 subprocess.run(["magick", str(got), "-filter", "MagicKernelSharp2021",
-                                "-resize", f"{w * 2}x{h * 2}!", f"PNG:{part}"], check=True)
+                                "-resize", f"{w * 2}x{h * 2}!", f"PNG:{part}"], check=True,
+                               env=magick_env())
             os.replace(part, final)
+
+        # One magick per output, side by side: each is a fraction of a second, mostly start-up.
+        thread_map(finish, todo.items())
     return len(todo)
