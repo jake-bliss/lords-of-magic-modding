@@ -593,6 +593,37 @@ class ContentCheck(unittest.TestCase):
         self.assertEqual([line.split(":")[0] for line in skipped], ["aagtwr0a", "clean"])
         self.assertIn("could not be read", skipped[1])
 
+    def test_an_lbm_upscale_short_of_pixels_is_made_again_too(self) -> None:
+        """An approved LBM cut short inside its pixels still decodes -- to too few of them -- and
+        stopped the pack in the content check, before any remake (Codex review, 2026-09-30)."""
+        clean = self.large / "clean.lbm"
+        clean.write_bytes(clean.read_bytes()[:-2])
+        self.assertLess(len(lbm_png.decode(clean)[2]), W * H * 4, "the control: it decodes, short")
+
+        def remake(path):
+            self.calls.append(path.name)
+            write_upscale(path, W, H, 7 if path.name == "clean.lbm" else 1)
+
+        records, skipped, counts = self.records(remake)
+        self.assertEqual((len(records), skipped), (2, []))
+        self.assertIn("clean.lbm", self.calls)
+        self.assertEqual((counts["damaged"], counts["remade"]), (2, 2))
+
+    def test_a_damaged_upscale_made_again_as_a_pixel_repeat_is_left_out(self) -> None:
+        """A remake is held to what a first upscale is: one that only repeats each pixel changes
+        nothing on screen, so it is left out, not packed."""
+        def remake_as_repeat(path):
+            _, _, idx, _, _ = lbm_png.decode(self.small / "aagtwr0a.lbm")
+            repeat = bytes(idx[(y // 2) * W + x // 2] for y in range(H * 2) for x in range(W * 2))
+            header = struct.pack(">HHhhBBBBHBBhh", W * 2, H * 2, 0, 0, 8, 0, 1, 0, 0, 1, 1, W * 2, H * 2)
+            lbm_png.encode(path, W * 2, H * 2, repeat, PALETTE, [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+
+        records, skipped, counts = self.records(remake_as_repeat)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("could not be made again (made again as the original with each pixel repeated)", skipped[0])
+        self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 0, 1))
+
     @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
     def test_a_png_upscale_cut_short_is_made_again_too(self) -> None:
         """The reproduced case: a PNG magick cannot read (CalledProcessError, not a damaged score)."""

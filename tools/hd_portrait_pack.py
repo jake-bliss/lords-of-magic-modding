@@ -128,6 +128,10 @@ def load_rgb(path: pathlib.Path) -> tuple[int, int, bytes]:
     the standard library has no PNG decoder."""
     if path.suffix.lower() == ".lbm":
         w, h, idx, pal, _ = lbm_png.decode(path)
+        # One cut short inside its pixels still decodes, to too few of them, and would stop the
+        # content check (Codex review, 2026-09-30): refused here, as a PNG's is below.
+        if len(idx) != w * h:
+            raise ValueError(f"{path}: {len(idx)} pixels, {w * h} expected")
         return w, h, b"".join(bytes(pal[i]) for i in idx)
     out = subprocess.run(["magick", str(path), "-depth", "8", "-alpha", "off", "PPM:-"],
                          check=True, capture_output=True, env=hd_upscale.magick_env()).stdout
