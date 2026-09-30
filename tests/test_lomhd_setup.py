@@ -2687,6 +2687,41 @@ class Report(unittest.TestCase):
         self.assertEqual(list(self.release_dir.glob("*.part")), [], "no leftover temp file")
 
 
+class Downloads(unittest.TestCase):
+    """fetch(): a file already there is used only if its SHA-256 is the pinned one, checked in full
+    on every run -- the downloaded models' integrity check."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dest = pathlib.Path(tmp.name) / "model.bin"
+        want = hashlib.sha256(b"the model").hexdigest()
+        patcher = mock.patch.dict(setup.DOWNLOADS, {"model": ("https://example.invalid/model.bin", want)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.hashed: list = []
+        real = setup.sha256
+        self.addCleanup(setattr, setup, "sha256", real)
+        setup.sha256 = lambda path: self.hashed.append(path.name) or real(path)
+        offline = mock.patch.object(setup.urllib.request, "urlopen", side_effect=OSError("offline"))
+        self.urlopen = offline.start()
+        self.addCleanup(offline.stop)
+
+    def test_the_pinned_file_is_used_and_hashed_in_full_on_every_run(self) -> None:
+        self.dest.write_bytes(b"the model")
+        for run in (1, 2):
+            self.assertEqual(setup.fetch("model", self.dest), self.dest)
+            self.assertEqual(self.hashed, ["model.bin"] * run, "hashed every run, not only the first")
+        self.urlopen.assert_not_called()
+
+    def test_a_file_that_is_not_the_pinned_one_is_never_used(self) -> None:
+        self.dest.write_bytes(b"the modem")                   # same size, other bytes
+        with self.assertRaises(SystemExit):
+            setup.fetch("model", self.dest)                   # found wrong, so fetched again: offline
+        self.urlopen.assert_called_once()
+        self.assertEqual(self.dest.read_bytes(), b"the modem", "and not taken as the model")
+
+
 class Timing(unittest.TestCase):
     def test_durations_read_as_a_person_would_say_them(self) -> None:
         self.assertEqual([setup.duration(t) for t in (0.4, 59.6, 134, 3600 + 125)],
@@ -2730,7 +2765,8 @@ class Timing(unittest.TestCase):
 
     def test_windows_never_gets_more_workers_than_its_process_pool_takes(self) -> None:
         with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: "64"}):
-            self.assertEqual(setup.hd_upscale.jobs(), 64, "the control: elsewhere it is taken as given")
+            with mock.patch.object(setup.hd_upscale.os, "name", "posix"):   # whatever runs the suite
+                self.assertEqual(setup.hd_upscale.jobs(), 64, "the control: elsewhere it is taken as given")
             with mock.patch.object(setup.hd_upscale.os, "name", "nt"):
                 self.assertEqual(setup.hd_upscale.jobs(), 61)
 
