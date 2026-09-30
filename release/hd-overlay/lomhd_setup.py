@@ -295,31 +295,9 @@ def check_magick() -> None:
 
 # --- the upscaler --------------------------------------------------------------------------------
 
-def verified_note(dest: pathlib.Path) -> pathlib.Path:
-    return dest.with_name(dest.name + ".verified")
-
-
-def still_verified(dest: pathlib.Path, want: str) -> bool:
-    """Whether `dest` is, by size and modification time, the very file a full SHA-256 check passed
-    against `want` (verified_note). Anything else -- no note, another pin, a file changed since --
-    is hashed in full again, as is every download."""
-    try:
-        note = json.loads(verified_note(dest).read_text())
-        st = dest.stat()
-    except (OSError, ValueError):
-        return False
-    return note == {"sha256": want, "size": st.st_size, "mtime_ns": st.st_mtime_ns}
-
-
-def note_verified(dest: pathlib.Path, want: str) -> None:
-    st = dest.stat()
-    verified_note(dest).write_text(json.dumps({"sha256": want, "size": st.st_size, "mtime_ns": st.st_mtime_ns}))
-
-
 def fetch(key: str, dest: pathlib.Path) -> pathlib.Path:
     url, want = DOWNLOADS[key]
-    if dest.is_file() and (still_verified(dest, want) or sha256(dest) == want):
-        note_verified(dest, want)
+    if dest.is_file() and sha256(dest) == want:
         return dest
     say(f"  downloading {url.rsplit('/', 1)[-1]} ...")
     part = dest.with_suffix(dest.suffix + ".part")
@@ -337,7 +315,6 @@ def fetch(key: str, dest: pathlib.Path) -> pathlib.Path:
         part.unlink()
         fail(f"{url} did not match its pinned SHA-256 (got {got}). Nothing was installed.")
     part.replace(dest)
-    note_verified(dest, want)
     return dest
 
 

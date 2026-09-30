@@ -251,9 +251,8 @@ thousands of short `magick` runs and the pure-Python content check ran one at a 
 - **Decoded once.** `hd_sprites.resolve` keeps each IMP member's frame count (or why it cannot be
   decoded) under its own bytes' digest and `imp_read`'s own source in `sprites/frame-counts.json`, so
   a rerun decodes only changed members; one-frame sprites and the unit icon sheets it does decode are
-  handed to `plan()` rather than decoded again. A downloaded file whose size and modification time
-  match the note written after its last full SHA-256 check (`<file>.verified`) is not hashed again;
-  anything else, and every download, is.
+  handed to `plan()` rather than decoded again. (The downloaded models are still hashed in full on
+  every run: that took no measurable time, and it is their integrity check.)
 - **Side by side.** `LOMHD_JOBS` (default: the cores, at most 8; `1` is the old serial behaviour
   exactly) runs the per-picture `magick` calls on threads, each with `MAGICK_THREAD_LIMIT=1`, and the
   pack's content check and zlib on spawned worker processes (spawned on every OS, as Windows must).
