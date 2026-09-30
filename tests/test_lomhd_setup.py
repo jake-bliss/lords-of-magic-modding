@@ -2719,6 +2719,12 @@ class Timing(unittest.TestCase):
         with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: ""}):
             self.assertEqual(setup.hd_upscale.jobs(), max(1, min(os.cpu_count() or 1, setup.hd_upscale.MAX_JOBS)))
 
+    def test_windows_never_gets_more_workers_than_its_process_pool_takes(self) -> None:
+        with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: "64"}):
+            self.assertEqual(setup.hd_upscale.jobs(), 64, "the control: elsewhere it is taken as given")
+            with mock.patch.object(setup.hd_upscale.os, "name", "nt"):
+                self.assertEqual(setup.hd_upscale.jobs(), 61)
+
 
 class MainWritesSummary(unittest.TestCase):
     """lomhd_last_summary.txt: written by a finished run of main(), read back by --report."""

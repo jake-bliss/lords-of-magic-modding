@@ -43,17 +43,23 @@ CHARACTER = re.compile(r".*p\d\d")
 # old one-at-a-time behaviour exactly: no threads, no worker processes.
 JOBS_ENV = "LOMHD_JOBS"
 MAX_JOBS = 8
+# ProcessPoolExecutor refuses more than 61 workers on Windows (a WaitForMultipleObjects limit): a
+# player's LOMHD_JOBS=64 must not stop the pack step with a ValueError.
+WINDOWS_MAX_WORKERS = 61
 
 
 def jobs() -> int:
-    """How many to run at once: JOBS_ENV if set, else the cores, at most MAX_JOBS."""
+    """How many to run at once: JOBS_ENV if set, else the cores, at most MAX_JOBS; on Windows never
+    more than WINDOWS_MAX_WORKERS."""
     value = os.environ.get(JOBS_ENV, "").strip()
     if value:
         try:
-            return max(1, int(value))
+            n = max(1, int(value))
         except ValueError:
             raise SystemExit(f"{JOBS_ENV}={value!r} is not a whole number (1 runs one thing at a time)")
-    return max(1, min(os.cpu_count() or 1, MAX_JOBS))
+    else:
+        n = max(1, min(os.cpu_count() or 1, MAX_JOBS))
+    return min(n, WINDOWS_MAX_WORKERS) if os.name == "nt" else n
 
 
 def magick_env() -> "dict | None":
