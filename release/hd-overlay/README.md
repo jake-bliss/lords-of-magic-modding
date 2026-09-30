@@ -13,14 +13,16 @@ was made (the choices ship as `upscale-choices.json`).
 
 The art is sharper, not bigger: each picture fills the same space on screen as before.
 
-> **Beta (0.5.2).** New in this release: the unit figures in the army strip along the bottom of the
-> screen are now HD too (in combat and on the map); HD terrain (`--terrain`) no longer shows hard
-> edges where two kinds of terrain meet; and the overlay writes a short crash or hang report to the
-> game folder if the game stops, which `--report` gathers into one zip (see Reports). 0.5.1 fixed the
-> game hanging when a Death Shade or Frozen Shade dies, and checks every upscale's contents; 0.5.0
-> added HD sprites. The HD art overlay and HD terrain have both been played on Windows 11 (NVIDIA)
-> and macOS (Wine); 0.5.2 has been played on macOS only so far, so please report anything odd --
-> see the end of this file. `--uninstall` puts every file back.
+> **Beta (0.5.3).** New in this release: running setup again is much faster -- it keeps the
+> pictures it has already upscaled (checked against your game's own files), and uses more of your
+> CPU. A rerun with nothing new took about 6 minutes instead of 33 in testing. The first run after
+> upgrading upscales the pictures once more; after that, only what changed is redone. Each step now
+> says how long it took. If setup has trouble on your machine, `LOMHD_JOBS=1` runs it one thing at
+> a time, as before (see "If something looks wrong"). 0.5.2 added HD army-strip figures, smoother terrain edges and
+> crash/hang reports; 0.5.1 fixed the Death Shade / Frozen Shade hang; 0.5.0 added HD sprites. The
+> HD art overlay and HD terrain have been played on Windows 11 (NVIDIA) and macOS (Wine); 0.5.3 has
+> been tested on macOS only so far, so please report anything odd -- see the end of this file.
+> `--uninstall` puts every file back.
 
 ## What you need
 
@@ -212,6 +214,10 @@ game folder (the name dates from when it held only portraits).
   `lomhd_no_hang_reports` stops hang reports only, `lomhd_no_crash_reports` stops both. On macOS a game
   window in the background may stop drawing until you click back into it; that is Wine, and the
   report written then says so.
+- **Setup stops or stalls with many programs running:** it runs up to 8 jobs side by side. To run
+  one thing at a time instead, set `LOMHD_JOBS=1` first -- in PowerShell `$env:LOMHD_JOBS=1`, in
+  Command Prompt `set LOMHD_JOBS=1`, on macOS/Linux `LOMHD_JOBS=1 python3 lomhd_setup.py ...` --
+  and please report it.
 - **Reporting a problem:** run
 
   ```
