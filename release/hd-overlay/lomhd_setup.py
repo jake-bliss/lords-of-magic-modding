@@ -429,14 +429,6 @@ def choices_file() -> pathlib.Path:
     return MY_CHOICES if MY_CHOICES.is_file() else SHIPPED_CHOICES
 
 
-def lbm_to_png(lbm: pathlib.Path, png: pathlib.Path) -> None:
-    w, h, px, pal, _ = lbm_png.decode(lbm)
-    ppm = png.with_suffix(".ppm")
-    ppm.write_bytes(f"P6 {w} {h} 255\n".encode() + b"".join(bytes(pal[i]) for i in px))
-    subprocess.run(["magick", str(ppm), f"PNG:{png}"], check=True, env=hd_upscale.magick_env())
-    ppm.unlink()
-
-
 def upscale_output(choice: str, stem: str) -> pathlib.Path:
     """Where upscale_all keeps one picture's upscale by one option."""
     out = WORK / "upscaled" / choice
@@ -444,8 +436,9 @@ def upscale_output(choice: str, stem: str) -> pathlib.Path:
 
 
 def upscale_code() -> "list[pathlib.Path]":
-    """The code a picture's upscale is made by: the options and render()'s resize (hd_upscale.py),
-    and the approved pipeline (upscale.py, and the LBM codec it writes with, beside it)."""
+    """The code a picture's upscale is made by: the options, the PNG each full-colour option is made
+    from (lbm_to_png) and render()'s resize (hd_upscale.py), the LBM codec (lbm_png.py), and the
+    approved pipeline (upscale.py, beside it)."""
     beside = pathlib.Path(lbm_png.__file__).resolve().parent
     return [pathlib.Path(hd_upscale.__file__).resolve(), beside / "lbm_png.py", beside / "upscale.py"]
 
@@ -493,8 +486,11 @@ def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.
         same_recipe = json.loads(stamp.read_text()) == upscale_recipe()
     except (OSError, ValueError):
         same_recipe = False
-    if out.exists() and not same_recipe:
-        shutil.rmtree(out)
+    if not same_recipe:
+        # The PNGs too: they are what every full-colour option is made from, by hashed code.
+        for stale in (out, pngs):
+            if stale.exists():
+                shutil.rmtree(stale)
     out.mkdir(parents=True, exist_ok=True)
     pngs.mkdir(parents=True, exist_ok=True)
     stamp.write_text(json.dumps(upscale_recipe()))
@@ -526,7 +522,7 @@ def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.
     def make_png(item: "tuple[str, str]") -> None:
         group, stem = item
         part = pngs / f"{stem}.part"                  # a PNG only appears whole
-        lbm_to_png(WORK / "originals" / group / f"{stem}.lbm", part)
+        hd_upscale.lbm_to_png(WORK / "originals" / group / f"{stem}.lbm", part)
         os.replace(part, pngs / f"{stem}.png")
 
     folders = []
@@ -587,7 +583,7 @@ def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathli
         for option in options:
             (review / option / f"{key}.png").unlink(missing_ok=True)
         part = originals / f"{key}.part"          # not *.png: the page lists those
-        lbm_to_png(lbm, part)
+        hd_upscale.lbm_to_png(lbm, part)
         os.replace(part, originals / f"{key}.png")
         shutil.copyfile(lbm, originals / f"{key}.lbm")
 
@@ -617,7 +613,7 @@ def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathli
             fail("upscaling did not finish. The game has not been touched.")
         approved.mkdir(parents=True, exist_ok=True)
         for stem in todo:
-            lbm_to_png(lbms / "portrait" / f"{stem}.lbm", approved / f"portrait__{stem}.png")
+            hd_upscale.lbm_to_png(lbms / "portrait" / f"{stem}.lbm", approved / f"portrait__{stem}.png")
     return review
 
 

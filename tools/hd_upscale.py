@@ -188,6 +188,17 @@ def looks_damaged(score: "float | None") -> bool:
     return score is not None and score > DAMAGE_THRESHOLD
 
 
+def lbm_to_png(lbm: pathlib.Path, png: pathlib.Path) -> None:
+    """A picture as the PNG a full-colour option is made from. Here, not in setup, so the hash of
+    this file that keys setup's kept upscales covers it too."""
+    import lbm_png          # beside this file in the release; tools/portrait-upscale in the repo
+    w, h, px, pal, _ = lbm_png.decode(lbm)
+    ppm = png.with_suffix(".ppm")
+    ppm.write_bytes(f"P6 {w} {h} 255\n".encode() + b"".join(bytes(pal[i]) for i in px))
+    subprocess.run(["magick", str(ppm), f"PNG:{png}"], check=True, env=magick_env())
+    ppm.unlink()
+
+
 def png_size(path: pathlib.Path) -> tuple[int, int]:
     data = path.read_bytes()[16:24]
     return int.from_bytes(data[:4], "big"), int.from_bytes(data[4:], "big")

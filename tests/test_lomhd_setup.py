@@ -6,6 +6,7 @@ upscaling steps are covered by test_mpq_read.py and the end-to-end run in docs/h
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -421,9 +422,9 @@ class UpscalePlan(unittest.TestCase):
                                 "upscaled/ultrasharp-tta/aagtwr0a.png"])
         self.assertEqual([f.name for f in folders], ["ultrasharp-tta"])
 
-    def test_a_change_to_the_upscale_code_makes_everything_again(self) -> None:
-        """Kept upscales are a release's: one whose upscale code, models or options differ makes
-        them all again, with no number to remember to bump."""
+    def kept_until(self, change) -> list:
+        """What a rerun makes after `change()`, with the upscale code pinned to a file of its own
+        (so only `change` can move the recipe), after a control rerun that makes nothing."""
         self.extract(10)
         made = self.counting_stubs()
         e, m = pathlib.Path("esrgan"), pathlib.Path("models")
@@ -433,18 +434,38 @@ class UpscalePlan(unittest.TestCase):
             setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
             made.clear()
             setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
-            self.assertEqual(made, [], "the control: unchanged code keeps them")
+            self.assertEqual(made, [], "the control: nothing changed, nothing made")
+            with change(code):
+                setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
+        return sorted(made)
+
+    def test_a_change_to_the_upscale_code_makes_everything_again_pngs_too(self) -> None:
+        """Kept upscales are a release's, and so are the PNGs they are made from (lbm_to_png):
+        a changed pipeline remakes both, with no number to remember to bump."""
+        @contextlib.contextmanager
+        def edited(code):
             code.write_text("the pipeline, changed\n")
-            setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
-        self.assertEqual(made, [("ultrasharp-tta", "aagtwr0a")])
-        made.clear()
-        with mock.patch.dict(setup.hd_upscale.OPTIONS, {"ultrasharp-tta": ("another-model", 4, ["-x"])}):
-            setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
-        self.assertEqual(made, [("ultrasharp-tta", "aagtwr0a")], "an option's model changed")
+            yield
+
+        self.assertEqual(self.kept_until(edited), [("magick", "aagtwr0a"), ("ultrasharp-tta", "aagtwr0a")])
+
+    def test_a_changed_option_makes_everything_again(self) -> None:
+        change = lambda code: mock.patch.dict(setup.hd_upscale.OPTIONS,  # noqa: E731
+                                              {"ultrasharp-tta": ("another-model", 4, ["-x"])})
+        self.assertEqual(self.kept_until(change), [("magick", "aagtwr0a"), ("ultrasharp-tta", "aagtwr0a")])
+
+    def test_a_changed_model_pin_makes_everything_again(self) -> None:
+        url, _ = setup.DOWNLOADS["ultrasharp-4x.bin"]
+        change = lambda code: mock.patch.dict(setup.DOWNLOADS, {"ultrasharp-4x.bin": (url, "0" * 64)})  # noqa: E731
+        self.assertEqual(self.kept_until(change), [("magick", "aagtwr0a"), ("ultrasharp-tta", "aagtwr0a")])
 
     def test_the_upscale_code_is_the_files_that_make_upscales(self) -> None:
-        self.assertEqual([p.name for p in setup.upscale_code()], ["hd_upscale.py", "lbm_png.py", "upscale.py"])
-        self.assertTrue(all(p.is_file() for p in setup.upscale_code()), setup.upscale_code())
+        import inspect
+        code = setup.upscale_code()
+        self.assertEqual([p.name for p in code], ["hd_upscale.py", "lbm_png.py", "upscale.py"])
+        self.assertTrue(all(p.is_file() for p in code), code)
+        self.assertIn(pathlib.Path(inspect.getsourcefile(setup.hd_upscale.lbm_to_png)).resolve(), code,
+                      "the PNGs the upscales are made from are made by hashed code too")
 
     def test_a_second_run_upscales_this_install_not_the_last_one(self) -> None:
         """Vanilla then GS5R3: a name both share, a different picture. The PNG cache kept the
