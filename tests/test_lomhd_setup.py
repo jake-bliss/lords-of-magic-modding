@@ -2664,6 +2664,48 @@ class Report(unittest.TestCase):
         self.assertEqual(list(self.release_dir.glob("*.part")), [], "no leftover temp file")
 
 
+class Downloads(unittest.TestCase):
+    """fetch(): a file checked in full once is not read again on every run, while it is the file
+    that was checked."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dest = pathlib.Path(tmp.name) / "model.bin"
+        self.dest.write_bytes(b"the model")
+        want = hashlib.sha256(b"the model").hexdigest()
+        patcher = mock.patch.dict(setup.DOWNLOADS, {"model": ("https://example.invalid/model.bin", want)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.hashed: list = []
+        real = setup.sha256
+        self.addCleanup(setattr, setup, "sha256", real)
+        setup.sha256 = lambda path: self.hashed.append(path.name) or real(path)
+
+    def test_a_verified_file_is_hashed_once_and_again_when_it_changes(self) -> None:
+        setup.fetch("model", self.dest)
+        self.assertEqual(self.hashed, ["model.bin"], "the first time: in full")
+        setup.fetch("model", self.dest)
+        self.assertEqual(self.hashed, ["model.bin"], "unchanged since: not read again")
+        st = self.dest.stat()
+        os.utime(self.dest, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        setup.fetch("model", self.dest)
+        self.assertEqual(self.hashed, ["model.bin", "model.bin"], "touched since: checked in full again")
+
+    def test_a_file_of_another_size_is_hashed_again_and_refused(self) -> None:
+        """The note is a size and a time, not a hash: bytes changed under the same size and time
+        are trusted (the limit of the shortcut, shown here), but any other size is checked in full."""
+        setup.fetch("model", self.dest)
+        st = self.dest.stat()
+        self.dest.write_bytes(b"the modem")                   # same size, other bytes
+        os.utime(self.dest, ns=(st.st_atime_ns, st.st_mtime_ns))
+        self.assertTrue(setup.still_verified(self.dest, setup.DOWNLOADS["model"][1]))
+        self.dest.write_bytes(b"the modem!")                  # another size
+        with mock.patch.object(setup.urllib.request, "urlopen", side_effect=OSError("offline")), \
+                self.assertRaises(SystemExit):
+            setup.fetch("model", self.dest)                   # hashed, found wrong, fetched again
+
+
 class MainWritesSummary(unittest.TestCase):
     """lomhd_last_summary.txt: written by a finished run of main(), read back by --report."""
 

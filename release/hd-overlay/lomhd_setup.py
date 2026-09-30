@@ -292,9 +292,31 @@ def check_magick() -> None:
 
 # --- the upscaler --------------------------------------------------------------------------------
 
+def verified_note(dest: pathlib.Path) -> pathlib.Path:
+    return dest.with_name(dest.name + ".verified")
+
+
+def still_verified(dest: pathlib.Path, want: str) -> bool:
+    """Whether `dest` is, by size and modification time, the very file a full SHA-256 check passed
+    against `want` (verified_note). Anything else -- no note, another pin, a file changed since --
+    is hashed in full again, as is every download."""
+    try:
+        note = json.loads(verified_note(dest).read_text())
+        st = dest.stat()
+    except (OSError, ValueError):
+        return False
+    return note == {"sha256": want, "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
+def note_verified(dest: pathlib.Path, want: str) -> None:
+    st = dest.stat()
+    verified_note(dest).write_text(json.dumps({"sha256": want, "size": st.st_size, "mtime_ns": st.st_mtime_ns}))
+
+
 def fetch(key: str, dest: pathlib.Path) -> pathlib.Path:
     url, want = DOWNLOADS[key]
-    if dest.is_file() and sha256(dest) == want:
+    if dest.is_file() and (still_verified(dest, want) or sha256(dest) == want):
+        note_verified(dest, want)
         return dest
     say(f"  downloading {url.rsplit('/', 1)[-1]} ...")
     part = dest.with_suffix(dest.suffix + ".part")
@@ -312,6 +334,7 @@ def fetch(key: str, dest: pathlib.Path) -> pathlib.Path:
         part.unlink()
         fail(f"{url} did not match its pinned SHA-256 (got {got}). Nothing was installed.")
     part.replace(dest)
+    note_verified(dest, want)
     return dest
 
 
@@ -663,9 +686,14 @@ def plan_sprites(game: pathlib.Path, animated: bool):
     archive = mpq_read.Archive(game / "imp.mpq")
     read_sprite = hd_sprites.archive_reader(archive)
     root = WORK / "sprites"
-    found = hd_sprites.resolve(archive, IMP_NAMES)
-    resolved, skipped = found.resolved, found.skipped
     root.mkdir(parents=True, exist_ok=True)
+    # Frame counts are kept per member's bytes (a rerun decodes only what changed), and the members
+    # a plain run plans -- one-frame sprites and the unit icon sheets -- are handed to plan() as
+    # decoded here. Animated ones are not: holding every frame of imp.mpq at once would cost far
+    # more memory than decoding them again saves, and --sprites takes hours on the GPU anyway.
+    found = hd_sprites.resolve(archive, IMP_NAMES, counts_cache=root / "frame-counts.json",
+                               keep=lambda name, frames: frames == 1 or name in hd_sprites.STRIP_SHEETS)
+    resolved, skipped = found.resolved, found.skipped
     # Every member still present keeps its work, planned this run or not: a static-only run must
     # never cost a --sprites install its hours of animated renders.
     hd_sprites.prune(root, found.live)
@@ -677,7 +705,14 @@ def plan_sprites(game: pathlib.Path, animated: bool):
         resolved = {n: v for n, v in resolved.items() if v[1] == 1 or n in keep or n in hd_sprites.STRIP_SHEETS}
         say(f"     {SPRITE_LIMIT_ENV}={limit}: only {len(keep)} animated sprites, plus the unit icon sheets "
             "(a developer aid)")
-    plan = hd_sprites.plan(resolved, read_sprite, sprite_choices(), root, animated=animated)
+    decoded = found.decoded
+
+    def read_once(member: str):
+        sprite = decoded.pop(member, None)
+        return sprite if sprite is not None else read_sprite(member)
+
+    plan = hd_sprites.plan(resolved, read_once, sprite_choices(), root, animated=animated)
+    decoded.clear()
     plan.skipped[:0] = skipped
     return plan, root, read_sprite
 

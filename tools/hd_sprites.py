@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 import os
 import pathlib
 import struct
@@ -630,9 +631,32 @@ class Resolution:
     considered: int
     skipped: List[str]
     live: Optional[set]          # member keys whose work to keep; None: keep everything this run
+    # member -> its decoded sprite, for the resolved members `keep` asked for: plan() can take them
+    # rather than decode them a second time.
+    decoded: Dict[str, "imp_read.Sprite"] = dataclasses.field(default_factory=dict)
 
 
-def resolve(archive, listfile: pathlib.Path) -> Resolution:
+def _reader_version() -> str:
+    """What a cached frame count was worked out by: imp_read's own source. A release that changes
+    the decoder counts (and refuses) afresh."""
+    return hashlib.sha256(pathlib.Path(imp_read.__file__).read_bytes()).hexdigest()
+
+
+def _load_counts(path: Optional[pathlib.Path]) -> Dict[str, object]:
+    if path is None:
+        return {}
+    try:
+        cached = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(cached, dict) or cached.get("reader") != _reader_version():
+        return {}
+    members = cached.get("members")
+    return members if isinstance(members, dict) else {}
+
+
+def resolve(archive, listfile: pathlib.Path, counts_cache: Optional[pathlib.Path] = None,
+            keep: Optional[Callable[[str, int], bool]] = None) -> Resolution:
     """Which member each name in `listfile` means in THIS archive (`imp_members`), with its frame
     count; the one resolver for setup and the dev tool. A member that is present but cannot be read
     or decoded is a skip naming why, never a stop.
@@ -640,10 +664,19 @@ def resolve(archive, listfile: pathlib.Path) -> Resolution:
     `live` holds the key of EVERY present member whose bytes could be read -- resolved or not, so a
     member left out this run (undecodable, or sharing its name with another) keeps its renders for
     when it comes back. If any present member's bytes cannot be read at all, its key cannot be
-    known, so `live` is None and nothing is pruned this run."""
+    known, so `live` is None and nothing is pruned this run.
+
+    Counting frames means decoding every frame of every member, in pure Python, on every run. With
+    `counts_cache` (a JSON file), each member's count -- or why it could not be decoded -- is kept
+    under its own bytes' digest and the decoder's version, so a rerun decodes only members that
+    changed. A member decoded here whose name and count `keep(name, frames)` accepts is handed on in
+    `decoded`, so plan() decodes it once, not twice."""
     candidates = candidate_members(listfile)
     live: Optional[set] = set()
     unreadable: Dict[str, str] = {}
+    known = _load_counts(counts_cache)
+    seen: Dict[str, object] = {}
+    decoded: Dict[str, "imp_read.Sprite"] = {}
 
     def frame_count(member: str):
         nonlocal live
@@ -655,21 +688,38 @@ def resolve(archive, listfile: pathlib.Path) -> Resolution:
             unreadable[member] = str(error)
             live = None
             return None
+        digest = hashlib.sha256(data).hexdigest()[:16]
         if live is not None:
-            live.add(member_key(member, hashlib.sha256(data).hexdigest()[:16]))
-        try:
-            return len(imp_read.parse(data).frames)
-        except imp_read.ImpError as error:
-            unreadable[member] = str(error)
+            live.add(member_key(member, digest))
+        count = known.get(digest)
+        if not isinstance(count, (int, str)) or isinstance(count, bool):
+            try:
+                sprite = imp_read.parse(data)
+            except imp_read.ImpError as error:
+                count = str(error)
+            else:
+                count = len(sprite.frames)
+                if keep is not None and keep(member.split("\\")[-1].rsplit(".", 1)[0].lower(), count):
+                    decoded[member] = sprite
+        seen[digest] = count
+        if isinstance(count, str):
+            unreadable[member] = count
             return None
+        return count
 
     resolved, skipped = resolve_members(candidates, frame_count)
+    chosen = {member for member, _ in resolved.values()}
+    decoded = {member: sprite for member, sprite in decoded.items() if member in chosen}
+    if counts_cache is not None and seen != known:
+        part = counts_cache.with_name(counts_cache.name + ".part")
+        part.write_text(json.dumps({"reader": _reader_version(), "members": seen}, sort_keys=True))
+        os.replace(part, counts_cache)
     for n, line in enumerate(skipped):         # "not in this archive" is not why, for a damaged one
         name = line.split(":", 1)[0]
         errors = [f"{m} ({unreadable[m]})" for m in candidates.get(name, []) if m in unreadable]
         if errors and line.endswith("not in this archive"):
             skipped[n] = f"{name}: could not read {', '.join(errors)}"
-    return Resolution(resolved, len(candidates), skipped, live)
+    return Resolution(resolved, len(candidates), skipped, live, decoded)
 
 
 def prune(root: pathlib.Path, live: Optional[set]) -> int:

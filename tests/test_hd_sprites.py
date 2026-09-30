@@ -895,5 +895,65 @@ class WorkerProcesses(Base):
         self.assertEqual(sum(n for _, n in pool.mapped), 4)
 
 
+class ResolveCache(unittest.TestCase):
+    """resolve() with a frame-count cache: a rerun decodes only the members that changed."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = pathlib.Path(tmp.name)
+        self.listfile = self.dir / "list.txt"
+        self.listfile.write_text("imp\\tree.imp\nimp\\rock.imp\nunits\\cav.imp\nimp\\junk.imp\n")
+        self.members = {"imp\\tree.imp": imp_file([frame(20, 6, 3)]), "imp\\rock.imp": imp_file([frame(20, 6, 4)]),
+                        "units\\cav.imp": imp_file([frame(20, 6, 5), frame(20, 6, 6)]), "imp\\junk.imp": b"junk"}
+        self.cache = self.dir / "frame-counts.json"
+        self.parsed: list[bytes] = []
+        real = imp_read.parse
+
+        def parse(data):
+            self.parsed.append(data)
+            return real(data)
+
+        patcher = mock.patch.object(hd_sprites.imp_read, "parse", parse)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def resolve(self, **kwargs):
+        self.parsed.clear()
+        return hd_sprites.resolve(FakeArchive(self.members), self.listfile, counts_cache=self.cache, **kwargs)
+
+    def test_a_rerun_decodes_nothing_and_resolves_the_same(self) -> None:
+        first = self.resolve()
+        self.assertEqual(len(self.parsed), 4)
+        again = self.resolve()
+        self.assertEqual(self.parsed, [], "nothing decoded: every count came from the cache")
+        self.assertEqual((again.resolved, again.skipped, again.live), (first.resolved, first.skipped, first.live))
+        self.assertEqual(first.resolved["cav"], ("units\\cav.imp", 2))
+        self.assertTrue(first.skipped[0].startswith("junk: could not read imp\\junk.imp (IMP file header"),
+                        "an undecodable member's reason is kept too")
+
+    def test_a_changed_member_is_decoded_again_and_so_is_everything_for_a_new_decoder(self) -> None:
+        self.resolve()
+        self.members["imp\\rock.imp"] = imp_file([frame(20, 6, 9), frame(20, 6, 8)])
+        found = self.resolve()
+        self.assertEqual(self.parsed, [self.members["imp\\rock.imp"]])
+        self.assertEqual(found.resolved["rock"], ("imp\\rock.imp", 2))
+        with mock.patch.object(hd_sprites, "_reader_version", lambda: "another decoder"):
+            self.resolve()
+        self.assertEqual(len(self.parsed), 4)
+
+    def test_a_damaged_cache_is_ignored(self) -> None:
+        self.cache.write_text("{not json")
+        self.assertEqual(self.resolve().resolved["tree"], ("imp\\tree.imp", 1))
+        self.assertEqual(len(self.parsed), 4)
+
+    def test_members_decoded_here_are_handed_on_when_kept(self) -> None:
+        found = self.resolve(keep=lambda name, frames: frames == 1)
+        self.assertEqual(sorted(found.decoded), ["imp\\rock.imp", "imp\\tree.imp"])
+        self.assertEqual(len(found.decoded["imp\\tree.imp"].frames), 1)
+        self.assertEqual(self.resolve(keep=lambda name, frames: True).decoded, {},
+                         "none on a rerun: nothing was decoded to hand on")
+
+
 if __name__ == "__main__":
     unittest.main()
