@@ -245,6 +245,9 @@ thousands of short `magick` runs and the pure-Python content check ran one at a 
   `hd_upscale.RECIPE` and the pinned model hashes; when it differs (a release that changes a model
   or the resize) every upscale is made again. `approved` portraits are written whole or not at all
   and only missing ones go to `upscale.py`, so a rerun with nothing new starts no upscaler at all.
+  Those it does get go through the model in **one** run over a folder, not one run each: checked on
+  the GPU to be pixel-identical for all 396 approved portraits, 245 s down to 15 s; despeckle and
+  the shrink-and-remap after it run on threads.
 - **Decoded once.** `hd_sprites.resolve` keeps each IMP member's frame count (or why it cannot be
   decoded) under its own bytes' digest and `imp_read`'s own source in `sprites/frame-counts.json`, so
   a rerun decodes only changed members; one-frame sprites and the unit icon sheets it does decode are
