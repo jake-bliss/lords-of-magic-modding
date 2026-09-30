@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
+import shutil
 import struct
 import sys
 import tempfile
 import unittest
 import zlib
+from unittest import mock
 
 TOOLS = pathlib.Path(__file__).resolve().parent.parent / "tools"
 sys.path.insert(0, str(TOOLS))
@@ -547,6 +550,145 @@ class ContentCheck(unittest.TestCase):
         self.assertIn("upscale looked damaged", skipped[0])
         self.assertIn("could not be made again", skipped[0])
         self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 0, 1))
+
+    def cut_short(self, path: pathlib.Path) -> None:
+        """What a run stopped mid-write, or a full disk, leaves: the start of the file only."""
+        path.write_bytes(path.read_bytes()[:40])
+
+    def test_an_upscale_that_cannot_be_read_is_made_again_once(self) -> None:
+        """Kept between runs, an upscale cut short would stop every later run in the pack step
+        (found by cross-model review, 2026-09-30). It is made again, like a damaged one."""
+        self.cut_short(self.large / "clean.lbm")
+
+        def remake(path):
+            self.calls.append(path.name)
+            write_upscale(path, W, H, 7 if path.name == "clean.lbm" else 1)
+
+        records, skipped, counts = self.records(remake)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(skipped, [])
+        self.assertEqual(sorted(self.calls), ["aagtwr0a.lbm", "clean.lbm"], "each, once")
+        self.assertEqual((counts["damaged"], counts["remade"]), (2, 2))
+
+    def test_one_that_still_cannot_be_read_is_left_out_and_named(self) -> None:
+        self.cut_short(self.large / "clean.lbm")
+
+        def remake(path):
+            self.calls.append(path.name)
+            write_upscale(path, W, H, 7 if path.name == "clean.lbm" else 1)
+            if path.name == "clean.lbm":
+                self.cut_short(path)
+
+        records, skipped, counts = self.records(remake)
+        self.assertEqual(len(records), 1, "the other picture is still packed")
+        self.assertEqual(len(skipped), 1)
+        self.assertTrue(skipped[0].startswith("clean: upscale looked damaged (could not be read"), skipped)
+        self.assertIn("could not be made again", skipped[0])
+        self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (2, 1, 1))
+
+    def test_without_an_upscaler_one_that_cannot_be_read_is_left_out_at_once(self) -> None:
+        self.cut_short(self.large / "clean.lbm")
+        records, skipped, _ = self.records(None)
+        self.assertEqual(records, [])
+        self.assertEqual([line.split(":")[0] for line in skipped], ["aagtwr0a", "clean"])
+        self.assertIn("could not be read", skipped[1])
+
+    def test_an_lbm_upscale_short_of_pixels_is_made_again_too(self) -> None:
+        """An approved LBM cut short inside its pixels still decodes -- to too few of them -- and
+        stopped the pack in the content check, before any remake (Codex review, 2026-09-30)."""
+        clean = self.large / "clean.lbm"
+        clean.write_bytes(clean.read_bytes()[:-2])
+        self.assertLess(len(lbm_png.decode(clean)[2]), W * H * 4, "the control: it decodes, short")
+
+        def remake(path):
+            self.calls.append(path.name)
+            write_upscale(path, W, H, 7 if path.name == "clean.lbm" else 1)
+
+        records, skipped, counts = self.records(remake)
+        self.assertEqual((len(records), skipped), (2, []))
+        self.assertIn("clean.lbm", self.calls)
+        self.assertEqual((counts["damaged"], counts["remade"]), (2, 2))
+
+    def test_a_damaged_upscale_made_again_as_a_pixel_repeat_is_left_out(self) -> None:
+        """A remake is held to what a first upscale is: one that only repeats each pixel changes
+        nothing on screen, so it is left out, not packed."""
+        def remake_as_repeat(path):
+            _, _, idx, _, _ = lbm_png.decode(self.small / "aagtwr0a.lbm")
+            repeat = bytes(idx[(y // 2) * W + x // 2] for y in range(H * 2) for x in range(W * 2))
+            header = struct.pack(">HHhhBBBBHBBhh", W * 2, H * 2, 0, 0, 8, 0, 1, 0, 0, 1, 1, W * 2, H * 2)
+            lbm_png.encode(path, W * 2, H * 2, repeat, PALETTE, [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+
+        records, skipped, counts = self.records(remake_as_repeat)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("could not be made again (made again as the original with each pixel repeated)", skipped[0])
+        self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 0, 1))
+
+    @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
+    def test_a_png_upscale_cut_short_is_made_again_too(self) -> None:
+        """The reproduced case: a PNG magick cannot read (CalledProcessError, not a damaged score)."""
+        (self.large / "clean.lbm").unlink()
+        png = self.large / "clean.png"
+        lbm_png.write_png(png, W * 2, H * 2, [[PALETTE[0]] * (W * 2)] * (H * 2))
+        self.cut_short(png)
+
+        def remake(path):
+            self.calls.append(path.name)
+            if path.suffix == ".png":
+                _, _, idx, _, _ = lbm_png.decode(self.small / "clean.lbm")
+                rows = [[PALETTE[idx[(y // 2) * W + x // 2]] for x in range(W * 2)] for y in range(H * 2)]
+                rows[0][0] = tuple(v ^ 1 for v in rows[0][0])
+                lbm_png.write_png(path, W * 2, H * 2, rows)
+            else:
+                write_upscale(path, W, H, 1)
+
+        records, skipped, counts = self.records(remake)
+        self.assertEqual((len(records), skipped), (2, []))
+        self.assertIn("clean.png", self.calls)
+
+    def test_the_records_are_the_same_on_worker_processes(self) -> None:
+        """unmasked_records with a pool (hd_upscale.process_pool) yields what it yields alone,
+        byte for byte, the remade picture included."""
+        write_upscale(self.large / "third.lbm", W, H, 11)
+        write_lbm(self.small / "third.lbm", W, H, 11)
+
+        def remake(path):
+            write_upscale(path, W, H, 1)
+
+        def build(pool, **kwargs):
+            write_lbm(self.bad, W * 2, H * 2, 1)          # both runs find it damaged, and remake it
+            skipped: list[str] = []
+            counts: dict = {}
+            got = list(pack.unmasked_records(self.small, [self.large], skipped, rerender=remake, counts=counts,
+                                             pool=pool, **kwargs))
+            return got, skipped, counts
+
+        alone = build(None)
+        mapped = []
+
+        class Counting:                                   # the control: the pool path really ran
+            def __init__(self, pool):
+                self.pool = pool
+
+            def map(self, fn, items, chunksize=1):
+                items = list(items)
+                mapped.append((fn.__name__, len(items)))
+                return self.pool.map(fn, items, chunksize=chunksize)
+
+        with mock.patch.dict(os.environ, {hd_upscale.JOBS_ENV: "2"}), hd_upscale.process_pool() as real:
+            together = build(Counting(real))
+            # Two pictures, then one: a batch closes once it holds the budget.
+            budget = 1 + max(pack._upscale_bytes(path) for path in self.large.iterdir())
+            in_batches = build(Counting(real), budget=budget)
+        self.assertEqual(together, alone)
+        self.assertEqual(in_batches, alone)
+        self.assertEqual(mapped, [("picture_streams", 3), ("picture_streams", 2)])
+        self.assertEqual((alone[2]["damaged"], alone[2]["remade"]), (1, 1))
+        # Against the remade upscale itself, not only the other run: both could share one mistake.
+        entry, _, zhd = alone[0][0]
+        self.assertEqual(entry[1:1 + entry[0]], b"aagtwr0a")
+        self.assertEqual(zlib.decompress(zhd), pack.load_rgb(self.bad)[2])
+
 
 if __name__ == "__main__":
     unittest.main()

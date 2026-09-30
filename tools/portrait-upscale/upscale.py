@@ -33,16 +33,22 @@ vendored.
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))     # hd_upscale.py: tools/ in the repo; the release has it here
+sys.path.insert(0, str(HERE))
+import hd_upscale  # noqa: E402
 import lbm_png  # noqa: E402
 
 
 def run(cmd: list[str]) -> None:
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True,
+                            env=hd_upscale.magick_env() if cmd[0] == "magick" else None)
     if result.returncode != 0:
         raise SystemExit(f"failed: {' '.join(cmd[:3])}...\n{result.stderr.strip()[:400]}")
 
@@ -52,9 +58,9 @@ def nearest_index(palette: list[tuple[int, int, int]], colour: tuple[int, int, i
                key=lambda k: sum((palette[k][j] - colour[j]) ** 2 for j in range(3)))
 
 
-def upscale_one(src: pathlib.Path, dest: pathlib.Path, work: pathlib.Path,
-                esrgan: pathlib.Path, models: pathlib.Path, model: str,
-                width: int, height: int) -> None:
+def prepare(src: pathlib.Path, work: pathlib.Path, despeckled: pathlib.Path) -> tuple:
+    """The model's input for one portrait, written to `despeckled`, and pal.png (for finish()) in
+    `work`. Returns the portrait's (palette, chunks)."""
     w, h, px, palette, chunks = lbm_png.decode(src)
     lbm_png.write_png(work / "in.png", w, h,
                       [[palette[px[y * w + x]] for x in range(w)] for y in range(h)])
@@ -62,10 +68,26 @@ def upscale_one(src: pathlib.Path, dest: pathlib.Path, work: pathlib.Path,
 
     # De-speckle first: the source dither is noise to the model, and feeding it through raw
     # produces speckle rather than tone. Measured better on every subject tried.
-    run(["magick", str(work / "in.png"), "-despeckle", str(work / "dd.png")])
+    run(["magick", str(work / "in.png"), "-despeckle", str(despeckled)])
+    return palette, chunks
+
+
+def upscale_one(src: pathlib.Path, dest: pathlib.Path, work: pathlib.Path,
+                esrgan: pathlib.Path, models: pathlib.Path, model: str,
+                width: int, height: int) -> None:
+    """One portrait on its own: prepare(), a run of the model, finish(). main() runs the model once
+    over every portrait instead; the two write the same file (tests/test_portrait_upscale.py)."""
+    palette, chunks = prepare(src, work, work / "dd.png")
     run([str(esrgan), "-i", str(work / "dd.png"), "-o", str(work / "up.png"),
          "-n", model, "-m", str(models), "-s", "4"])
-    run(["magick", str(work / "up.png"), "-filter", "MagicKernelSharp2021",
+    finish(work / "up.png", work, dest, palette, chunks, width, height)
+
+
+def finish(upscaled: pathlib.Path, work: pathlib.Path, dest: pathlib.Path, palette, chunks,
+           width: int, height: int) -> None:
+    """The model's 4x output, shrunk to `width` x `height` and dithered back to the portrait's own
+    palette (pal.png in `work`), written to `dest` as an LBM."""
+    run(["magick", str(upscaled), "-filter", "MagicKernelSharp2021",
          "-resize", f"{width}x{height}!", "-dither", "FloydSteinberg",
          "-remap", str(work / "pal.png"), "PNG24:" + str(work / "q.png")])
 
@@ -87,7 +109,11 @@ def upscale_one(src: pathlib.Path, dest: pathlib.Path, work: pathlib.Path,
             indices.append(index)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    lbm_png.encode(dest, width, height, bytes(indices), palette, chunks)
+    # Whole or not at all: setup keeps these between runs and makes only the ones that are missing,
+    # so one cut short by a stopped run must never be there. (2026-09-30.)
+    part = dest.with_name(dest.name + ".part")
+    lbm_png.encode(part, width, height, bytes(indices), palette, chunks)
+    os.replace(part, dest)
 
 
 def fidelity(src: pathlib.Path, result: pathlib.Path, work: pathlib.Path) -> tuple[float, float]:
@@ -159,11 +185,9 @@ def main() -> int:
     names = [n for n in args.names.read_text().splitlines() if n.strip()]
     sources, basename_counts = index_sources(args.src_dir)
 
-    done = 0
     missing: list[str] = []
     ambiguous: list[str] = []
-    scores: list[tuple[str, float, float]] = []
-    work_root = args.out_dir / ".work"
+    todo: list[tuple[int, str, pathlib.Path, pathlib.Path]] = []
     for i, member in enumerate(names, 1):
         key = member.replace("/", "\\").lower()
         src = sources.get(key) or sources.get(member.split("\\")[-1].lower())
@@ -173,23 +197,47 @@ def main() -> int:
         if key not in sources and basename_counts.get(src.name.lower(), 0) > 1:
             ambiguous.append(member)      # matched by basename, and that basename is not unique
             continue
-        # A scratch directory per member: shared scratch names mean a stage that exits 0 without
-        # writing silently hands the PREVIOUS member's file to the next stage.
-        work = work_root / f"{i:05d}"
-        work.mkdir(parents=True, exist_ok=True)
-        dest = args.out_dir / member.replace("\\", "/")
-        upscale_one(src, dest, work, args.esrgan, args.models, args.model, width, height)
-        if args.report_fidelity:
-            mean, worst = fidelity(src, dest, work)
-            scores.append((member, mean, worst))
-        for leftover in work.iterdir():
-            leftover.unlink()
-        work.rmdir()
-        done += 1
-        if i % 25 == 0:
-            print(f"  {i}/{len(names)}", flush=True)
+        todo.append((i, member, src, args.out_dir / member.replace("\\", "/")))
+
+    # A scratch directory per member: shared scratch names mean a stage that exits 0 without
+    # writing silently hands the PREVIOUS member's file to the next stage. The model's input and
+    # output are one folder each, a file per member named by its number the same way.
+    work_root = args.out_dir / ".work"
     if work_root.exists():
-        work_root.rmdir()
+        shutil.rmtree(work_root)          # a stopped run's: none of it may pass for this run's
+    stage, raw = work_root / "in", work_root / "out"
+    stage.mkdir(parents=True)
+    raw.mkdir()
+
+    def first(item) -> tuple:
+        i, _, src, _ = item
+        work = work_root / f"{i:05d}"
+        work.mkdir()
+        return prepare(src, work, stage / f"{i:05d}.png")
+
+    prepared = hd_upscale.thread_map(first, todo)
+    if todo:
+        # ONE run of the model over every portrait: it loads the model and starts the GPU once,
+        # where a run per portrait did that every time. Checked on the GPU 2026-09-30: the folder
+        # run's output is pixel-identical to a run per file for all 396 approved portraits, in 15 s
+        # instead of 245 s.
+        run([str(args.esrgan), "-i", str(stage), "-o", str(raw), "-n", args.model,
+             "-m", str(args.models), "-s", "4", "-f", "png"])
+        lost = [member for i, member, _, _ in todo if not (raw / f"{i:05d}.png").is_file()]
+        if lost:
+            raise SystemExit(f"the upscaler wrote nothing for {', '.join(lost[:5])}"
+                             + (f" and {len(lost) - 5} more" if len(lost) > 5 else ""))
+        print(f"  {len(todo)} through the model", flush=True)
+
+    def last(job) -> "tuple[str, float, float] | None":
+        (i, member, src, dest), (palette, chunks) = job
+        work = work_root / f"{i:05d}"
+        finish(raw / f"{i:05d}.png", work, dest, palette, chunks, width, height)
+        return (member, *fidelity(src, dest, work)) if args.report_fidelity else None
+
+    scores = [score for score in hd_upscale.thread_map(last, list(zip(todo, prepared))) if score]
+    done = len(todo)
+    shutil.rmtree(work_root)
 
     print(f"{done} written to {args.out_dir}, {len(missing)} missing, {len(ambiguous)} ambiguous")
     for member in missing[:10]:

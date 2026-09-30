@@ -6,6 +6,7 @@ upscaling steps are covered by test_mpq_read.py and the end-to-end run in docs/h
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -297,6 +298,16 @@ class UpscalePlan(unittest.TestCase):
         for name, value in (("WORK", self.work), ("say", lambda text: None)):
             self.addCleanup(setattr, setup, name, getattr(setup, name))
             setattr(setup, name, value)
+        # No picks but the defaults, whatever the shipped file says today.
+        shipped = pathlib.Path(tmp.name) / "no-picks.json"
+        shipped.write_text('{"choices": {}}')
+        for name, value in (("SHIPPED_CHOICES", shipped), ("MY_CHOICES", pathlib.Path(tmp.name) / "none.json")):
+            self.addCleanup(setattr, setup, name, getattr(setup, name))
+            setattr(setup, name, value)
+        # One at a time, so the stubs below see calls in order (LOMHD_JOBS=1 is the serial path).
+        jobs = mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: "1"})
+        jobs.start()
+        self.addCleanup(jobs.stop)
         self.palette = [(i, i, i) for i in range(256)]
         self.lbm_png, self.struct = lbm_png, struct
         self.seen: dict[str, bytes] = {}
@@ -306,19 +317,157 @@ class UpscalePlan(unittest.TestCase):
                 self.seen[key] = png.read_bytes()
             return len(inputs)
 
-        def run(cmd, check=False):         # magick PPM -> PNG, stubbed as a copy
+        def run(cmd, check=False, **kwargs):     # magick PPM -> PNG, stubbed as a copy
             pathlib.Path(cmd[2].removeprefix("PNG:")).write_bytes(pathlib.Path(cmd[1]).read_bytes())
 
         for target, name, value in ((setup.hd_upscale, "render", render), (setup.subprocess, "run", run)):
             self.addCleanup(setattr, target, name, getattr(target, name))
             setattr(target, name, value)
 
-    def extract(self, shade: int) -> None:
-        folder = self.work / "originals" / "building"
+    def extract(self, shade: int, group: str = "building", stem: str = "aagtwr0a") -> None:
+        folder = setup.WORK / "originals" / group
         folder.mkdir(parents=True, exist_ok=True)
         header = self.struct.pack(">HHhhBBBBHBBhh", 40, 6, 0, 0, 8, 0, 1, 0, 0, 1, 1, 40, 6)
-        self.lbm_png.encode(folder / "aagtwr0a.lbm", 40, 6, bytes([shade]) * 240, self.palette,
+        self.lbm_png.encode(folder / f"{stem}.lbm", 40, 6, bytes([shade]) * 240, self.palette,
                             [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+
+    def counting_stubs(self) -> list:
+        """The upscaler and every program stubbed to make real outputs, each call noted: ("magick",
+        png name), (option, name) for a render, ("approved", name) for upscale.py."""
+        made: list = []
+
+        def render(option, inputs, dest, esrgan, models):
+            dest.mkdir(parents=True, exist_ok=True)
+            for key, png in inputs.items():
+                made.append((option, key))
+                (dest / f"{key}.png").write_bytes(b"upscale of " + png.read_bytes())
+            return len(inputs)
+
+        def run(cmd, check=False, **kwargs):
+            if cmd[0] == "magick":                        # PPM -> PNG, as a copy
+                made.append(("magick", pathlib.Path(cmd[2]).stem))
+                pathlib.Path(cmd[2].removeprefix("PNG:")).write_bytes(pathlib.Path(cmd[1]).read_bytes())
+            else:                                         # upscale.py: approved portraits
+                originals, dest = pathlib.Path(cmd[2]), pathlib.Path(cmd[3])
+                for name in pathlib.Path(cmd[cmd.index("--names") + 1]).read_text().splitlines():
+                    stem = name.split("\\")[-1][:-4]
+                    made.append(("approved", stem))
+                    (dest / "portrait").mkdir(parents=True, exist_ok=True)
+                    (dest / "portrait" / f"{stem}.lbm").write_bytes((originals / "portrait" / f"{stem}.lbm").read_bytes())
+            return types.SimpleNamespace(returncode=0)
+
+        setup.hd_upscale.render, setup.subprocess.run = render, run
+        return made
+
+    def test_a_rerun_makes_nothing_and_a_change_remakes_exactly_what_it_changed(self) -> None:
+        """Until 2026-09-30 every run re-rendered every picture (33 minutes with nothing new). Now
+        only what is missing is made: after a changed original, that picture; after a changed pick,
+        that picture with its new option. On threads or not, the same."""
+        for jobs in ("1", "4"):
+            with self.subTest(jobs=jobs), mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: jobs}):
+                setup.WORK = self.work / f"jobs-{jobs}"
+                shipped = setup.WORK / "shipped.json"
+                setup.WORK.mkdir(parents=True)
+                setup.SHIPPED_CHOICES = shipped
+                picks = {"building__aagtwr0a": "anime2x", "building__abldg": "anime4x"}
+                shipped.write_text(json.dumps({"choices": picks}))
+                found = {"building": ["aagtwr0a", "abldg"], "portrait": ["aicavp00"]}
+                self.extract(10)
+                self.extract(20, stem="abldg")
+                self.extract(30, "portrait", "aicavp00")
+                made = self.counting_stubs()
+                e, m = pathlib.Path("esrgan"), pathlib.Path("models")
+
+                def rerun() -> list:
+                    made.clear()
+                    folders = setup.upscale_all(found, e, m)
+                    self.assertEqual(sorted(p.name for folder in folders for p in folder.iterdir()),
+                                     ["aagtwr0a.png", "abldg.png", "aicavp00.lbm"], "one upscale per picture")
+                    return sorted(made)
+
+                self.assertEqual(rerun(), [("anime2x", "aagtwr0a"), ("anime4x", "abldg"), ("approved", "aicavp00"),
+                                           ("magick", "aagtwr0a"), ("magick", "abldg")])
+                kept = (setup.WORK / "upscaled" / "anime2x" / "aagtwr0a.png").stat().st_mtime_ns
+                self.assertEqual(rerun(), [], "nothing new: nothing made")
+                self.extract(21, stem="abldg")
+                self.assertEqual(rerun(), [("anime4x", "abldg"), ("magick", "abldg")])
+                self.assertIn(bytes([21, 21, 21]), (setup.WORK / "upscaled" / "anime4x" / "abldg.png").read_bytes())
+                self.extract(31, "portrait", "aicavp00")
+                self.assertEqual(rerun(), [("approved", "aicavp00")])
+                picks["building__aagtwr0a"] = "ultrasharp"
+                shipped.write_text(json.dumps({"choices": picks}))
+                self.assertEqual(rerun(), [("ultrasharp", "aagtwr0a")], "its PNG is kept; only the upscale")
+                self.assertFalse((setup.WORK / "upscaled" / "anime2x" / "aagtwr0a.png").exists(),
+                                 "the upscale by the old pick goes")
+                self.assertTrue((setup.WORK / "png" / "aagtwr0a.png").exists())
+                picks["building__aagtwr0a"] = "anime2x"
+                shipped.write_text(json.dumps({"choices": picks}))
+                self.assertEqual(rerun(), [("anime2x", "aagtwr0a")], "back again: made again, not revived")
+                self.assertNotEqual((setup.WORK / "upscaled" / "anime2x" / "aagtwr0a.png").stat().st_mtime_ns, kept)
+
+    def test_another_installs_pictures_leave_every_folder(self) -> None:
+        """The stale-picture guard, from the other side: a picture this install does not have (a
+        vanilla-only name, a removed mod's) keeps no PNG and no upscale, so the pack cannot take it
+        for this game's."""
+        self.extract(10)
+        self.extract(20, stem="abldg")
+        self.extract(30, "portrait", "aicavp00")
+        self.counting_stubs()
+        e, m = pathlib.Path("esrgan"), pathlib.Path("models")
+        setup.upscale_all({"building": ["aagtwr0a", "abldg"], "portrait": ["aicavp00"]}, e, m)
+        folders = setup.upscale_all({"building": ["aagtwr0a"], "portrait": []}, e, m)
+        left = sorted(str(p.relative_to(setup.WORK)) for folder in ("upscaled", "png")
+                      for p in (setup.WORK / folder).rglob("*") if p.is_file())
+        self.assertEqual(left, ["png/aagtwr0a.lbm", "png/aagtwr0a.png", "upscaled/recipe.json",
+                                "upscaled/ultrasharp-tta/aagtwr0a.png"])
+        self.assertEqual([f.name for f in folders], ["ultrasharp-tta"])
+
+    def kept_until(self, change) -> list:
+        """What a rerun makes after `change()`, with the upscale code pinned to a file of its own
+        (so only `change` can move the recipe), after a control rerun that makes nothing."""
+        self.extract(10)
+        made = self.counting_stubs()
+        e, m = pathlib.Path("esrgan"), pathlib.Path("models")
+        code = self.work.parent / "upscale.py"
+        code.write_text("the pipeline\n")
+        with mock.patch.object(setup, "upscale_code", lambda: [code]):
+            setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
+            made.clear()
+            setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
+            self.assertEqual(made, [], "the control: nothing changed, nothing made")
+            with change(code):
+                setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
+        return sorted(made)
+
+    def test_a_change_to_the_upscale_code_makes_everything_again_pngs_too(self) -> None:
+        """Kept upscales are a release's, and so are the PNGs they are made from (lbm_to_png):
+        a changed pipeline remakes both, with no number to remember to bump."""
+        @contextlib.contextmanager
+        def edited(code):
+            code.write_text("the pipeline, changed\n")
+            yield
+
+        self.assertEqual(self.kept_until(edited), [("magick", "aagtwr0a"), ("ultrasharp-tta", "aagtwr0a")])
+
+    def test_a_changed_option_makes_everything_again(self) -> None:
+        change = lambda code: mock.patch.dict(setup.hd_upscale.OPTIONS,  # noqa: E731
+                                              {"ultrasharp-tta": ("another-model", 4, ["-x"])})
+        self.assertEqual(self.kept_until(change), [("magick", "aagtwr0a"), ("ultrasharp-tta", "aagtwr0a")])
+
+    def test_a_changed_model_pin_makes_everything_again(self) -> None:
+        url, _ = setup.DOWNLOADS["ultrasharp-4x.bin"]
+        change = lambda code: mock.patch.dict(setup.DOWNLOADS, {"ultrasharp-4x.bin": (url, "0" * 64)})  # noqa: E731
+        self.assertEqual(self.kept_until(change), [("magick", "aagtwr0a"), ("ultrasharp-tta", "aagtwr0a")])
+
+    def test_the_upscale_code_is_the_files_that_make_upscales(self) -> None:
+        import inspect
+        code = setup.upscale_code()
+        self.assertEqual([p.name for p in code], ["hd_upscale.py", "lbm_png.py", "upscale.py"])
+        self.assertTrue(all(p.is_file() for p in code), code)
+        self.assertIn(pathlib.Path(inspect.getsourcefile(setup.hd_upscale.lbm_to_png)).resolve(), code,
+                      "the PNGs the upscales are made from are made by hashed code too")
+        # And setup calls that copy: a helper of its own would sit in unhashed lomhd_setup.py.
+        self.assertFalse(hasattr(setup, "lbm_to_png"), "setup must use hd_upscale.lbm_to_png")
 
     def test_a_second_run_upscales_this_install_not_the_last_one(self) -> None:
         """Vanilla then GS5R3: a name both share, a different picture. The PNG cache kept the
@@ -361,6 +510,16 @@ class UpscalePlan(unittest.TestCase):
                          {"portrait": ["aicavp00", "black"], "building": ["aagtwr0a"], "screen": ["start01"]},
                          "too big, too short and too plain are left out; a real screen is kept; of two "
                          "pictures named black, the portrait is kept and the screen left out")
+        kept = setup.WORK / "originals" / "building" / "aagtwr0a.lbm"
+        before = kept.stat().st_mtime_ns
+        time.sleep(0.01)
+        del members["lbm\\start01.lbm"]
+        found = setup.extract_images(self.work.parent)
+        self.assertEqual(sorted(str(p.relative_to(setup.WORK / "originals")).replace("\\", "/")
+                                for p in (setup.WORK / "originals").rglob("*") if p.is_file()),
+                         ["building/aagtwr0a.lbm", "portrait/aicavp00.lbm", "portrait/black.lbm"],
+                         "a rerun keeps exactly this install's pictures: the gone screen is removed")
+        self.assertEqual(kept.stat().st_mtime_ns, before, "an unchanged picture is not written again")
 
     def test_the_players_own_picks_win_over_the_shipped_ones(self) -> None:
         """--review saves to my-upscale-choices.json; a plain run must install with it, and
@@ -846,6 +1005,73 @@ class Sprites(unittest.TestCase):
         self.assertEqual(got, [("anim__fiicons#000", (20, 6), 1), ("strip__fiicons#000", (20, 4), 1),
                                ("anim__fiicons#001", (20, 6), 1)])
         self.assertEqual((count, moving["packed"], moving["strip"], sprite_skipped), (3, 2, 1, []))
+
+    @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
+    def test_the_pack_is_the_same_byte_for_byte_whatever_lomhd_jobs_says(self) -> None:
+        """Step 5 on worker processes (LOMHD_JOBS=3) writes the very pack it writes one at a time
+        (LOMHD_JOBS=1): static, animated and mirrored sprites, strip crops, pictures, and a damaged
+        render the content check makes again."""
+        import contextlib
+        import lbm_png
+        from test_hd_sprites import CountingPool, decode_rgba, doubled, figure
+
+        def render(option, inputs, dest, esrgan, models):
+            dest.mkdir(parents=True, exist_ok=True)
+            for key, src in inputs.items():
+                w, h, rgba = decode_rgba(src)
+                self.hd_sprites.write_png_rgba(dest / f"{key}.png", w * 2, h * 2, doubled(w, h, rgba))
+            return len(inputs)
+
+        setup.hd_upscale.render = render
+        self.picks({"sprite__tree": "anime2x", "sprite__rock": "anime2x", "sprite__cav": "anime2x",
+                    "sprite__fiicons": "anime2x"})
+        self.add("imp\\tree.imp", self.frame(40, 10, 3))
+        self.add("imp\\rock.imp", self.frame(40, 10, 6))
+        self.add("units\\cav.imp", self.frame(40, 10, 7), self.frame(40, 10, 8))
+        self.add("iface\\fiicons.imp", figure(39, 91, 1), figure(48, 108, 2), origins=[(2, 19), (-1, 34)])
+        plan, root, read_sprite = setup.plan_sprites(self.game, animated=True)
+        setup.upscale_sprites(plan.static + plan.animated, root, pathlib.Path("e"), pathlib.Path("m"))
+        damaged = root / "render" / "anime2x" / f"{next(s for s in plan.static if s.name == 'rock').frames[0].stem}.png"
+        self.hd_sprites.write_png_rgba(damaged, 80, 20, bytes(80 * 20 * 4))     # right size, wrong pixels
+        bad = damaged.read_bytes()
+        originals, upscaled = self.base / "originals", self.base / "upscaled"
+        originals.mkdir()
+        upscaled.mkdir()
+        palette = [(i, (i * 3) % 256, 255 - i) for i in range(256)]
+        header = struct.pack(">HHhhBBBBHBBhh", 40, 6, 0, 0, 8, 0, 1, 0, 0, 1, 1, 40, 6)
+        for name, seed in (("aagtwr0a", 0), ("abldg", 90)):
+            lbm_png.encode(originals / f"{name}.lbm", 40, 6, bytes((i + seed) % 256 for i in range(240)), palette,
+                           [(b"BMHD", header), (b"CMAP", b""), (b"BODY", b"")])
+            up = bytearray(b"".join(bytes(palette[((y // 2) * 40 + x // 2 + seed) % 256]) + b"\xff"
+                                    for y in range(12) for x in range(80)))
+            up[0] ^= 1
+            self.hd_sprites.write_png_rgba(upscaled / f"{name}.png", 80, 12, bytes(up))
+        real_pool, pools = setup.hd_upscale.process_pool, []
+
+        @contextlib.contextmanager
+        def counting_pool():
+            with real_pool() as pool:
+                pools.append(None if pool is None else CountingPool(pool))
+                yield pools[-1]
+
+        def build(jobs: str):
+            damaged.write_bytes(bad)                  # both runs find it damaged, and make it again
+            out, pictures = self.base / f"jobs-{jobs}.pack", {}
+            with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: jobs}), \
+                    mock.patch.object(setup.hd_upscale, "process_pool", counting_pool):
+                result = setup.build_pack(out, plan, root, read_sprite, [originals], [upscaled],
+                                          pathlib.Path("e"), pathlib.Path("m"), pictures)
+            return out.read_bytes(), result, pictures
+
+        one, three = build("1"), build("3")
+        self.assertEqual(three[0], one[0])
+        self.assertEqual(three[1:], one[1:])
+        count, skipped, sprite_skipped, static, moving = one[1]
+        self.assertEqual((static["damaged"], static["remade"], moving["strip"], skipped, sprite_skipped),
+                         (1, 1, 2, [], []), "the remake and strip crops were on the path compared")
+        self.assertEqual(count, 10)          # 2 static, 2 cav, 2 fiicons + 2 strip, 2 pictures
+        self.assertIsNone(pools[0], "LOMHD_JOBS=1: no worker processes at all")
+        self.assertEqual(sorted({name for name, _ in pools[1].mapped}), ["frame_streams", "picture_streams"])
 
     @unittest.skipUnless(shutil.which("magick"), "no ImageMagick (magick) on PATH")
     def test_the_pack_holds_sprites_and_pictures_and_uninstall_restores_everything(self) -> None:
@@ -2463,6 +2689,93 @@ class Report(unittest.TestCase):
         self.assertEqual(list(self.release_dir.glob("*.part")), [], "no leftover temp file")
 
 
+class Downloads(unittest.TestCase):
+    """fetch(): a file already there is used only if its SHA-256 is the pinned one, checked in full
+    on every run -- the downloaded models' integrity check."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dest = pathlib.Path(tmp.name) / "model.bin"
+        # Longer than any block a hash might read at a time, with the difference at the end: a
+        # hash of the first block alone must not pass for the whole file.
+        self.model = b"x" * (1 << 21) + b"the model"
+        want = hashlib.sha256(self.model).hexdigest()
+        patcher = mock.patch.dict(setup.DOWNLOADS, {"model": ("https://example.invalid/model.bin", want)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.hashed: list = []
+        real = setup.sha256
+        self.addCleanup(setattr, setup, "sha256", real)
+        setup.sha256 = lambda path: self.hashed.append(path.name) or real(path)
+        offline = mock.patch.object(setup.urllib.request, "urlopen", side_effect=OSError("offline"))
+        self.urlopen = offline.start()
+        self.addCleanup(offline.stop)
+
+    def test_the_pinned_file_is_used_and_hashed_in_full_on_every_run(self) -> None:
+        self.dest.write_bytes(self.model)
+        for run in (1, 2):
+            self.assertEqual(setup.fetch("model", self.dest), self.dest)
+            self.assertEqual(self.hashed, ["model.bin"] * run, "hashed every run, not only the first")
+        self.urlopen.assert_not_called()
+
+    def test_a_file_that_is_not_the_pinned_one_is_never_used(self) -> None:
+        self.dest.write_bytes(self.model[:-1] + b"m")       # same size, last byte other
+        with self.assertRaises(SystemExit):
+            setup.fetch("model", self.dest)                   # found wrong, so fetched again: offline
+        self.urlopen.assert_called_once()
+        self.assertEqual(self.dest.read_bytes(), self.model[:-1] + b"m", "and not taken as the model")
+
+
+class Timing(unittest.TestCase):
+    def test_durations_read_as_a_person_would_say_them(self) -> None:
+        self.assertEqual([setup.duration(t) for t in (0.4, 59.6, 134, 3600 + 125)],
+                         ["0s", "1m 00s", "2m 14s", "1h 02m"])
+
+    def test_each_step_says_what_it_took_and_the_summary_names_them_all(self) -> None:
+        said: list = []
+        with mock.patch.object(setup, "say", said.append), \
+                mock.patch.object(setup.time, "monotonic", side_effect=[0.0, 3.0, 3.0, 137.0]):
+            clock = setup.StepClock(5)
+            clock.start(1, "Getting the upscaler")
+            clock.start(2, "Reading")
+            clock.stop()
+            clock.stop()                                      # a second stop says nothing more
+        self.assertEqual(said, ["1/5  Getting the upscaler", "     1/5 took 3s", "2/5  Reading",
+                                "     2/5 took 2m 14s"])
+        self.assertEqual(clock.summary(), "Time taken: 1/5 3s, 2/5 2m 14s (2m 17s in all)")
+
+    def test_the_profile_counts_and_times_every_program_run(self) -> None:
+        def stub(cmd, *a, **k):
+            return None
+
+        with mock.patch.object(setup.subprocess, "run", stub):
+            with setup.SpawnProfile() as profile:
+                for cmd in (["magick", "a"], ["magick", "b"], [r"C:\\x\\realesrgan-ncnn-vulkan.exe", "-i"],
+                            [sys.executable, "/r/tools/upscale.py", "x"]):
+                    setup.subprocess.run(cmd)
+            self.assertIs(setup.subprocess.run, stub, "put back as it was")
+        self.assertEqual(sorted(profile.by_program), ["magick", "python upscale.py", "realesrgan-ncnn-vulkan"])
+        self.assertEqual(profile.by_program["magick"][0], 2)
+        self.assertEqual(len(profile.lines()), 3)
+
+    def test_a_bad_lomhd_jobs_stops_with_a_message(self) -> None:
+        for value, want in (("3", 3), ("0", 1), (" 1 ", 1)):
+            with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: value}):
+                self.assertEqual(setup.hd_upscale.jobs(), want)
+        with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: "many"}), self.assertRaises(SystemExit):
+            setup.hd_upscale.jobs()
+        with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: ""}):
+            self.assertEqual(setup.hd_upscale.jobs(), max(1, min(os.cpu_count() or 1, setup.hd_upscale.MAX_JOBS)))
+
+    def test_windows_never_gets_more_workers_than_its_process_pool_takes(self) -> None:
+        with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: "64"}):
+            with mock.patch.object(setup.hd_upscale.os, "name", "posix"):   # whatever runs the suite
+                self.assertEqual(setup.hd_upscale.jobs(), 64, "the control: elsewhere it is taken as given")
+            with mock.patch.object(setup.hd_upscale.os, "name", "nt"):
+                self.assertEqual(setup.hd_upscale.jobs(), 61)
+
+
 class MainWritesSummary(unittest.TestCase):
     """lomhd_last_summary.txt: written by a finished run of main(), read back by --report."""
 
@@ -2516,6 +2829,7 @@ class MainWritesSummary(unittest.TestCase):
         self.assertEqual(lines[1], "release: 9.9.9-test")
         self.assertIn("Done: 3 HD images installed", text)
         self.assertIn("To undo: python lomhd_setup.py --uninstall", text)
+        self.assertRegex(lines[-1], r"^Time taken: 1/5 \d+s, 2/5 \d+s, 3/5 \d+s, 4/5 \d+s, 5/5 \d+s \(\d+s in all\)$")
 
     def test_report_reads_back_the_last_setup_summary(self) -> None:
         self.run_setup()

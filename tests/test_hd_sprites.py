@@ -539,6 +539,45 @@ class ContentCheck(Base):
         self.assertNotIn("made twice", skipped[0])
         self.assertIn("upscale looked damaged", skipped[0])
 
+    @unittest.skipUnless(HAVE_MAGICK, "no ImageMagick (magick) on PATH")
+    def test_a_render_cut_short_in_the_cache_is_made_again_and_packed(self) -> None:
+        """A render that exists but cannot be read (a stopped run, a full disk) was left out on
+        every later run: rendering skips it because it exists, packing because it cannot read it.
+        It is made again once, like a damaged one. (Cross-model review, 2026-09-30.)"""
+        self.render.write_bytes(self.render.read_bytes()[:40])
+        skipped: list[str] = []
+        counts: dict = {}
+        got = list(hd_sprites.records(self.plan_.animated, self.root, self.read_sprite, skipped, counts,
+                                      rerender=self.fake_render))
+        self.assertEqual((len(got), skipped), (2, []))
+        self.assertEqual(self.renders, [("anime2x", [self.stem])], "only that frame, once")
+        self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 1, 0))
+
+    @unittest.skipUnless(HAVE_MAGICK, "no ImageMagick (magick) on PATH")
+    def test_one_still_cut_short_is_left_out_and_named(self) -> None:
+        def cutting_render(option, inputs, dest):
+            self.fake_render(option, inputs, dest)
+            self.render.write_bytes(self.render.read_bytes()[:40])
+
+        self.render.write_bytes(self.render.read_bytes()[:40])
+        skipped: list[str] = []
+        counts: dict = {}
+        got = list(hd_sprites.records(self.plan_.animated, self.root, self.read_sprite, skipped, counts,
+                                      rerender=cutting_render))
+        self.assertEqual(len(got), 1)
+        self.assertEqual(len(skipped), 1)
+        self.assertTrue(skipped[0].startswith("anim__cav#001: anime2x"), skipped)
+        self.assertEqual((counts["damaged"], counts["remade"], counts["failed"]), (1, 0, 1))
+
+    def test_a_missing_render_is_not_made_again_in_the_pack_step(self) -> None:
+        """Missing is render_all's to make, before the pack: only a render that is THERE and cannot
+        be read is made again here."""
+        self.render.unlink()
+        records, skipped, counts = self.records(self.fake_render)
+        self.assertEqual(self.renders, [])
+        self.assertEqual(skipped, ["anim__cav#001: anime2x render is missing"])
+        self.assertEqual(counts["damaged"], 0)
+
     def test_an_upscaler_that_fails_the_second_time_leaves_that_frame_out(self) -> None:
         def failing(option, inputs, dest):
             raise SystemExit("anime2x: the upscaler failed")
@@ -837,6 +876,122 @@ class ReadRenders(unittest.TestCase):
         self.assertEqual(got[a], bytes([9, 2, 3, 4]) * 8)
         self.assertIsInstance(got["render/opt/d.png"], str)
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["render"], "no scratch left behind")
+
+
+class CountingPool:
+    """A worker-process pool that notes what it was handed: the control that the pool path really
+    ran, so a comparison with the serial one cannot pass by never leaving it."""
+
+    def __init__(self, pool):
+        self.pool, self.mapped = pool, []
+
+    def map(self, fn, items, chunksize=1):
+        items = list(items)
+        self.mapped.append((fn.__name__, len(items)))
+        return self.pool.map(fn, items, chunksize=chunksize)
+
+
+class WorkerProcesses(Base):
+    """records() on worker processes (hd_upscale.process_pool) packs exactly what it packs alone."""
+
+    def test_the_records_are_the_same_byte_for_byte(self) -> None:
+        plan = self.plan({"imp\\tree.imp": sprite(frame(40, 10, 3)),
+                          "units\\cav.imp": sprite(frame(40, 10, 5), frame(40, 10, 6)),
+                          "iface\\fiicons.imp": sprite(figure(39, 91, 1), figure(48, 108, 2),
+                                                        origins=[(2, 19), (-1, 34)])},
+                         {"sprite__tree": "anime2x", "sprite__cav": "anime2x", "sprite__fiicons": "anime2x"})
+        hd_sprites.render_all(plan.static + plan.animated, self.root, self.fake_render, log=lambda _: None)
+        damaged = self.root / "render" / "anime2x" / f"{plan.animated[0].frames[1].stem}.png"
+        clean = damaged.read_bytes()
+        ContentCheck.damage(self, damaged)          # the tester's diagonal bands
+        bad = damaged.read_bytes()
+
+        def build(pool, **kwargs):
+            damaged.write_bytes(bad)                  # both runs find it damaged and make it again
+            skipped: list[str] = []
+            counts: dict = {}
+            out = self.root / "out.pack"
+            pack.write_records(out, hd_sprites.records(plan.static + plan.animated, self.root, self.read_sprite,
+                                                       skipped, counts, read=fake_read, rerender=self.fake_render,
+                                                       pool=pool, **kwargs))
+            return out.read_bytes(), skipped, counts
+
+        alone = build(None)
+        with mock.patch.dict(os.environ, {hd_upscale.JOBS_ENV: "2"}), hd_upscale.process_pool() as real:
+            pool = CountingPool(real)
+            together = build(pool, batch=1)           # one sprite per batch, too
+        self.assertEqual(together[0], alone[0])
+        self.assertEqual(together[1:], alone[1:])
+        self.assertEqual(damaged.read_bytes(), clean, "the damaged render was made again")
+        # Against the render itself, not only the other run: both could share one mistake, such as
+        # packing the streams worked out from the damaged pixels.
+        packed = {name: large for name, _, large, _, _, _ in pack.read(alone[0])}
+        self.assertEqual(packed["anim__cav#001"][2], decode_rgba(damaged)[2])
+        self.assertEqual((alone[2]["damaged"], alone[2]["remade"], alone[2]["strip"]), (1, 1, 2),
+                         "the remake and the strip crops were both on the path compared")
+        self.assertEqual({name for name, _ in pool.mapped}, {"frame_streams"})
+        # cav's two frames and fiicons' two; tree's batch is one frame, which ordered_map keeps.
+        self.assertEqual(sum(n for _, n in pool.mapped), 4)
+
+
+class ResolveCache(unittest.TestCase):
+    """resolve() with a frame-count cache: a rerun decodes only the members that changed."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = pathlib.Path(tmp.name)
+        self.listfile = self.dir / "list.txt"
+        self.listfile.write_text("imp\\tree.imp\nimp\\rock.imp\nunits\\cav.imp\nimp\\junk.imp\n")
+        self.members = {"imp\\tree.imp": imp_file([frame(20, 6, 3)]), "imp\\rock.imp": imp_file([frame(20, 6, 4)]),
+                        "units\\cav.imp": imp_file([frame(20, 6, 5), frame(20, 6, 6)]), "imp\\junk.imp": b"junk"}
+        self.cache = self.dir / "frame-counts.json"
+        self.parsed: list[bytes] = []
+        real = imp_read.parse
+
+        def parse(data):
+            self.parsed.append(data)
+            return real(data)
+
+        patcher = mock.patch.object(hd_sprites.imp_read, "parse", parse)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def resolve(self, **kwargs):
+        self.parsed.clear()
+        return hd_sprites.resolve(FakeArchive(self.members), self.listfile, counts_cache=self.cache, **kwargs)
+
+    def test_a_rerun_decodes_nothing_and_resolves_the_same(self) -> None:
+        first = self.resolve()
+        self.assertEqual(len(self.parsed), 4)
+        again = self.resolve()
+        self.assertEqual(self.parsed, [], "nothing decoded: every count came from the cache")
+        self.assertEqual((again.resolved, again.skipped, again.live), (first.resolved, first.skipped, first.live))
+        self.assertEqual(first.resolved["cav"], ("units\\cav.imp", 2))
+        self.assertTrue(first.skipped[0].startswith("junk: could not read imp\\junk.imp (IMP file header"),
+                        "an undecodable member's reason is kept too")
+
+    def test_a_changed_member_is_decoded_again_and_so_is_everything_for_a_new_decoder(self) -> None:
+        self.resolve()
+        self.members["imp\\rock.imp"] = imp_file([frame(20, 6, 9), frame(20, 6, 8)])
+        found = self.resolve()
+        self.assertEqual(self.parsed, [self.members["imp\\rock.imp"]])
+        self.assertEqual(found.resolved["rock"], ("imp\\rock.imp", 2))
+        with mock.patch.object(hd_sprites, "_reader_version", lambda: "another decoder"):
+            self.resolve()
+        self.assertEqual(len(self.parsed), 4)
+
+    def test_a_damaged_cache_is_ignored(self) -> None:
+        self.cache.write_text("{not json")
+        self.assertEqual(self.resolve().resolved["tree"], ("imp\\tree.imp", 1))
+        self.assertEqual(len(self.parsed), 4)
+
+    def test_members_decoded_here_are_handed_on_when_kept(self) -> None:
+        found = self.resolve(keep=lambda name, frames: frames == 1)
+        self.assertEqual(sorted(found.decoded), ["imp\\rock.imp", "imp\\tree.imp"])
+        self.assertEqual(len(found.decoded["imp\\tree.imp"].frames), 1)
+        self.assertEqual(self.resolve(keep=lambda name, frames: True).decoded, {},
+                         "none on a rerun: nothing was decoded to hand on")
 
 
 if __name__ == "__main__":

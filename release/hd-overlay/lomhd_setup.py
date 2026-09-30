@@ -57,7 +57,8 @@ What it does, in order, and nothing else:
   2. Reads the portraits and building pictures out of your own pic.mpq, and the sprites (map
      buildings, trees, units, spell effects) out of your own imp.mpq. No game art ships with this mod.
   3. Upscales each picture to 2x with the method picked for it in review (upscale-choices.json):
-     character portraits on the approved palette pipeline, everything else in full colour.
+     character portraits on the approved palette pipeline, everything else in full colour. Kept in
+     lomhd_work, so a later run makes only what is new: a changed picture, or a changed pick.
   4. Upscales each sprite that does not move (one frame) the same way, with its own pick, and the
      unit figures the army strip shows (the nine unit icon sheets, ~150 frames). With
      --sprites, also every frame of every animated sprite, each with its sprite's pick: several
@@ -79,7 +80,8 @@ With --terrain, after those five steps (and only if they succeeded):
 
 Needs Python 3.9+, ImageMagick 7 (`magick` on PATH) and a GPU with Vulkan. Takes 20-60 minutes,
 almost all of it steps 3 and 4 (with --sprites, several hours). Everything it downloads or makes
-lives in `lomhd_work` next to this script.
+lives in `lomhd_work` next to this script. Each step says how long it took. It works on several
+pictures at once; set LOMHD_JOBS=1 for one at a time (LOMHD_PROFILE=1: what it ran, and for how long).
 """
 from __future__ import annotations
 
@@ -99,6 +101,8 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -355,12 +359,14 @@ def extract_images(game: pathlib.Path) -> dict[str, list[str]]:
     lomhd_work/originals/<group>/<name>.lbm, lowercase. Returns group -> names.
 
     Names come from the list shipped with this mod plus the archive's own (listfile). Two spellings
-    of one member (PORTRAIT\\ and portrait\\) resolve to the same hash entry, so they are one."""
+    of one member (PORTRAIT\\ and portrait\\) resolve to the same hash entry, so they are one.
+
+    The folder is kept between runs: a file is written only when this game's member differs from
+    it, and anything that is not one of this run's pictures is removed, so the folder holds exactly
+    this install's pictures either way."""
     archive = mpq_read.Archive(game / "pic.mpq")
     wanted = (HERE / "overlay-names.txt").read_text().splitlines() + archive.listfile()
     root = WORK / "originals"
-    if root.exists():
-        shutil.rmtree(root)
     found: dict[str, list[str]] = {group: [] for group in GROUPS}
     seen = set()
     for name in wanted:
@@ -373,7 +379,9 @@ def extract_images(game: pathlib.Path) -> dict[str, list[str]]:
         stem = member[:-4]
         out = root / group / f"{stem}.lbm"
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(archive.read(lower))
+        data = archive.read(lower)
+        if not (out.is_file() and out.read_bytes() == data):
+            out.write_bytes(data)
         try:
             w, h, px, *_ = lbm_png.decode(out)
         except Exception:
@@ -397,6 +405,13 @@ def extract_images(game: pathlib.Path) -> dict[str, list[str]]:
                 (root / group / f"{stem}.lbm").unlink()
                 say(f"     left out {GROUPS[group][0]}\\{stem}.lbm: another folder has a picture of that name")
             claimed.add(stem)
+    # Another install's pictures (or a removed mod's) must not stay: the pack and upscale.py read
+    # every file here as this game's.
+    for folder in list(root.iterdir()) if root.is_dir() else []:
+        keep = {f"{stem}.lbm" for stem in found.get(folder.name, [])} if folder.is_dir() else set()
+        for stale in list(folder.iterdir()) if folder.is_dir() else [folder]:
+            if stale.name not in keep:
+                shutil.rmtree(stale) if stale.is_dir() else stale.unlink()
     if not found["portrait"]:
         fail("no portraits found in pic.mpq -- is this Lords of Magic Special Edition?")
     return found
@@ -414,18 +429,38 @@ def choices_file() -> pathlib.Path:
     return MY_CHOICES if MY_CHOICES.is_file() else SHIPPED_CHOICES
 
 
-def lbm_to_png(lbm: pathlib.Path, png: pathlib.Path) -> None:
-    w, h, px, pal, _ = lbm_png.decode(lbm)
-    ppm = png.with_suffix(".ppm")
-    ppm.write_bytes(f"P6 {w} {h} 255\n".encode() + b"".join(bytes(pal[i]) for i in px))
-    subprocess.run(["magick", str(ppm), f"PNG:{png}"], check=True)
-    ppm.unlink()
+def upscale_output(choice: str, stem: str) -> pathlib.Path:
+    """Where upscale_all keeps one picture's upscale by one option."""
+    out = WORK / "upscaled" / choice
+    return out / "portrait" / f"{stem}.lbm" if choice == hd_upscale.APPROVED else out / f"{stem}.png"
+
+
+def upscale_code() -> "list[pathlib.Path]":
+    """The code a picture's upscale is made by: the options, the PNG each full-colour option is made
+    from (lbm_to_png) and render()'s resize (hd_upscale.py), the LBM codec (lbm_png.py), and the
+    approved pipeline (upscale.py, beside it)."""
+    beside = pathlib.Path(lbm_png.__file__).resolve().parent
+    return [pathlib.Path(hd_upscale.__file__).resolve(), beside / "lbm_png.py", beside / "upscale.py"]
+
+
+def upscale_recipe() -> dict:
+    """Everything an upscale depends on besides its original and its option: kept beside the
+    upscales, which are all made again when it changes. The code is taken by its own bytes, as
+    hd_sprites does for imp_read, not by a number someone must remember to bump; any edit to it
+    makes everything again, which is the safe way to be wrong."""
+    code = hashlib.sha256()
+    for path in upscale_code():
+        code.update(path.name.encode() + b"\0")
+        code.update(path.read_bytes() if path.is_file() else b"(missing)")
+    return json.loads(json.dumps({"code": code.hexdigest(), "options": hd_upscale.OPTIONS,
+                                  "downloads": sorted(sha for _, sha in DOWNLOADS.values())}))
 
 
 def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.Path,
                 choices_path: pathlib.Path | None = None) -> list[pathlib.Path]:
     """Each image with the option picked for it in review, or the default for images that review
-    never saw. Returns the folders holding the upscales."""
+    never saw. Returns the folders holding the upscales. A rerun makes only the upscales that are
+    missing: see below for what is dropped first."""
     choices = json.loads((choices_path or choices_file()).read_text())["choices"]
     plan: dict[str, list[tuple[str, str]]] = {}
     for group, stems in found.items():
@@ -437,33 +472,82 @@ def upscale_all(found: dict[str, list[str]], exe: pathlib.Path, models: pathlib.
                 choice = "ultrasharp-tta"         # the palette pipeline is sized for portraits
             plan.setdefault(choice, []).append((group, stem))
 
+    picked = {stem: choice for choice, items in plan.items() for _, stem in items}
+
+    # Kept between runs; until 2026-09-30 both folders were deleted every run, and a rerun with
+    # nothing new re-rendered all ~1,281 pictures. What that deletion guarded against still holds:
+    # a stale PNG is another install's picture under this install's name, and the pack cannot catch
+    # it, because the originals it checks against are this run's (cross-model review, 2026-09-22).
+    # So each picture's original is kept beside its PNG (png/<name>.lbm), compared by its bytes as
+    # render_review does, and a picture whose original differs loses its PNG and every upscale.
     out, pngs = WORK / "upscaled", WORK / "png"
-    for stale in (out, pngs):
-        # A stale option folder would duplicate names. A stale PNG is worse: it is another
-        # install's picture under this install's name, and the pack cannot catch it, because the
-        # originals it checks against are this run's. Found by cross-model review, 2026-09-22.
-        if stale.exists():
-            shutil.rmtree(stale)
+    stamp = out / "recipe.json"
+    try:
+        same_recipe = json.loads(stamp.read_text()) == upscale_recipe()
+    except (OSError, ValueError):
+        same_recipe = False
+    if not same_recipe:
+        # The PNGs too: they are what every full-colour option is made from, by hashed code.
+        for stale in (out, pngs):
+            if stale.exists():
+                shutil.rmtree(stale)
+    out.mkdir(parents=True, exist_ok=True)
+    pngs.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(json.dumps(upscale_recipe()))
+    current = set()
+    for group, stems in found.items():
+        for stem in stems:
+            current.add(stem)
+            lbm, kept = WORK / "originals" / group / f"{stem}.lbm", pngs / f"{stem}.lbm"
+            if kept.is_file() and kept.read_bytes() == lbm.read_bytes():
+                continue
+            (pngs / f"{stem}.png").unlink(missing_ok=True)
+            for option in [p.name for p in out.iterdir() if p.is_dir()]:
+                upscale_output(option, stem).unlink(missing_ok=True)
+            shutil.copyfile(lbm, kept)
+    # An upscale by an option that is no longer its picture's pick (or of a picture this install
+    # does not have) goes too: a stale option folder would duplicate names in the pack.
+    for folder in [p for p in out.iterdir() if p.is_dir()]:
+        option, suffix = folder.name, (".lbm" if folder.name == hd_upscale.APPROVED else ".png")
+        files = folder / "portrait" if option == hd_upscale.APPROVED else folder
+        for path in list(files.iterdir()) if files.is_dir() else []:
+            if not (path.is_file() and path.name.endswith(suffix)
+                    and picked.get(path.name[:-len(suffix)]) == option):
+                shutil.rmtree(path) if path.is_dir() else path.unlink()
+    for path in list(pngs.iterdir()):
+        stem, _, ext = path.name.rpartition(".")
+        if not (ext in ("png", "lbm") and stem in current and path.is_file()):
+            shutil.rmtree(path) if path.is_dir() else path.unlink()
+
+    def make_png(item: "tuple[str, str]") -> None:
+        group, stem = item
+        part = pngs / f"{stem}.part"                  # a PNG only appears whole
+        hd_upscale.lbm_to_png(WORK / "originals" / group / f"{stem}.lbm", part)
+        os.replace(part, pngs / f"{stem}.png")
+
     folders = []
     for choice, items in sorted(plan.items()):
-        say(f"     {len(items):4d} with {choice}")
+        todo = [(group, stem) for group, stem in items if not upscale_output(choice, stem).exists()]
+        say(f"     {len(items):4d} with {choice}"
+            + (f" ({len(items) - len(todo)} already made)" if len(todo) < len(items) else ""))
         dest = out / choice
         if choice == hd_upscale.APPROVED:
-            names_file = WORK / "approved.txt"
-            names_file.write_text("".join(f"portrait\\{stem}.lbm\n" for _, stem in items))
-            cmd = [sys.executable, str(HERE / "tools" / "upscale.py"), str(WORK / "originals"), str(dest),
-                   "--names", str(names_file), "--esrgan", str(exe), "--models", str(models)]
-            if subprocess.run(cmd).returncode != 0:
-                fail("upscaling did not finish. The game has not been touched.")
+            if todo:
+                names_file = WORK / "approved.txt"
+                names_file.write_text("".join(f"portrait\\{stem}.lbm\n" for _, stem in todo))
+                cmd = [sys.executable, str(HERE / "tools" / "upscale.py"), str(WORK / "originals"), str(dest),
+                       "--names", str(names_file), "--esrgan", str(exe), "--models", str(models)]
+                if subprocess.run(cmd).returncode != 0:
+                    fail("upscaling did not finish. The game has not been touched.")
+            (dest / "portrait").mkdir(parents=True, exist_ok=True)
             folders.append(dest / "portrait")
         else:
-            inputs = {}
-            pngs.mkdir(parents=True, exist_ok=True)
-            for group, stem in items:
-                png = pngs / f"{stem}.png"
-                lbm_to_png(WORK / "originals" / group / f"{stem}.lbm", png)
-                inputs[stem] = png
-            hd_upscale.render(choice, inputs, dest, exe, models)
+            # Every picked picture keeps its PNG, made or not this run: the pack's content check
+            # makes a damaged upscale again from it (rerender_picture).
+            hd_upscale.thread_map(make_png, [(g, s) for g, s in items if not (pngs / f"{s}.png").exists()])
+            dest.mkdir(parents=True, exist_ok=True)
+            if todo:
+                hd_upscale.render(choice, {stem: pngs / f"{stem}.png" for _, stem in todo}, dest, exe, models)
             folders.append(dest)
     return folders
 
@@ -478,6 +562,7 @@ def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathli
     options = [*hd_upscale.OPTIONS, hd_upscale.APPROVED]
     inputs: dict[str, dict[str, pathlib.Path]] = {}
     characters = []
+    changed = []
     for group, stems in found.items():
         for stem in stems:
             key = f"{group}__{stem}"
@@ -488,15 +573,21 @@ def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathli
             # re-render everything. (Claude review, 2026-09-23.)
             kept = originals / f"{key}.lbm"
             if not (png.exists() and kept.exists() and kept.read_bytes() == lbm.read_bytes()):
-                for option in options:
-                    (review / option / f"{key}.png").unlink(missing_ok=True)
-                part = originals / f"{key}.part"          # not *.png: the page lists those
-                lbm_to_png(lbm, part)
-                os.replace(part, png)
-                shutil.copyfile(lbm, kept)
+                changed.append((key, lbm))
             inputs.setdefault(group, {})[key] = png
             if hd_upscale.default_choice(group, stem) == hd_upscale.APPROVED:
                 characters.append(stem)
+
+    def refresh(item: "tuple[str, pathlib.Path]") -> None:
+        key, lbm = item
+        for option in options:
+            (review / option / f"{key}.png").unlink(missing_ok=True)
+        part = originals / f"{key}.part"          # not *.png: the page lists those
+        hd_upscale.lbm_to_png(lbm, part)
+        os.replace(part, originals / f"{key}.png")
+        shutil.copyfile(lbm, originals / f"{key}.lbm")
+
+    hd_upscale.thread_map(refresh, changed)
     # Pictures from an install reviewed before (or a mod since removed) are not this game's: off the
     # page, or a pick could be saved for art this install never installs. (Codex review.)
     current = {key for batch in inputs.values() for key in batch}
@@ -522,7 +613,7 @@ def render_review(found: dict[str, list[str]], exe: pathlib.Path, models: pathli
             fail("upscaling did not finish. The game has not been touched.")
         approved.mkdir(parents=True, exist_ok=True)
         for stem in todo:
-            lbm_to_png(lbms / "portrait" / f"{stem}.lbm", approved / f"portrait__{stem}.png")
+            hd_upscale.lbm_to_png(lbms / "portrait" / f"{stem}.lbm", approved / f"portrait__{stem}.png")
     return review
 
 
@@ -582,9 +673,14 @@ def plan_sprites(game: pathlib.Path, animated: bool):
     archive = mpq_read.Archive(game / "imp.mpq")
     read_sprite = hd_sprites.archive_reader(archive)
     root = WORK / "sprites"
-    found = hd_sprites.resolve(archive, IMP_NAMES)
-    resolved, skipped = found.resolved, found.skipped
     root.mkdir(parents=True, exist_ok=True)
+    # Frame counts are kept per member's bytes (a rerun decodes only what changed), and the members
+    # a plain run plans -- one-frame sprites and the unit icon sheets -- are handed to plan() as
+    # decoded here. Animated ones are not: holding every frame of imp.mpq at once would cost far
+    # more memory than decoding them again saves, and --sprites takes hours on the GPU anyway.
+    found = hd_sprites.resolve(archive, IMP_NAMES, counts_cache=root / "frame-counts.json",
+                               keep=lambda name, frames: frames == 1 or name in hd_sprites.STRIP_SHEETS)
+    resolved, skipped = found.resolved, found.skipped
     # Every member still present keeps its work, planned this run or not: a static-only run must
     # never cost a --sprites install its hours of animated renders.
     hd_sprites.prune(root, found.live)
@@ -596,7 +692,14 @@ def plan_sprites(game: pathlib.Path, animated: bool):
         resolved = {n: v for n, v in resolved.items() if v[1] == 1 or n in keep or n in hd_sprites.STRIP_SHEETS}
         say(f"     {SPRITE_LIMIT_ENV}={limit}: only {len(keep)} animated sprites, plus the unit icon sheets "
             "(a developer aid)")
-    plan = hd_sprites.plan(resolved, read_sprite, sprite_choices(), root, animated=animated)
+    decoded = found.decoded
+
+    def read_once(member: str):
+        sprite = decoded.pop(member, None)
+        return sprite if sprite is not None else read_sprite(member)
+
+    plan = hd_sprites.plan(resolved, read_once, sprite_choices(), root, animated=animated)
+    decoded.clear()
     plan.skipped[:0] = skipped
     return plan, root, read_sprite
 
@@ -642,13 +745,20 @@ def build_pack(pack: pathlib.Path, sprites, sprite_root: pathlib.Path, read_spri
     remake = None if exe is None else (
         lambda option, inputs, dest: hd_upscale.render(option, inputs, dest, exe, models))
     remake_picture = None if exe is None else (lambda path: rerender_picture(path, exe, models))
-    count = hd_portrait_pack.write_records(pack, itertools.chain(
-        hd_sprites.records(sprites.static, sprite_root, read_sprite, sprite_skipped, packed, rerender=remake,
-                           log=lambda line: say(f"     {line}")),
-        hd_sprites.records(sprites.animated, sprite_root, read_sprite, sprite_skipped, moving, rerender=remake,
-                           log=lambda line: say(f"     {line}")),
-        hd_portrait_pack.unmasked_records(originals, upscaled, skipped, originals, rerender=remake_picture,
-                                          counts=pictures)))
+    # The content check and zlib, per frame and per picture, on worker processes; batches grow with
+    # them, so each still has about one READ_BUDGET of pixels to work on. The pack is the same, byte
+    # for byte, as with LOMHD_JOBS=1 (tests/test_lomhd_setup.py).
+    workers = hd_upscale.jobs()
+    sized = {"batch": hd_sprites.RENDER_BATCH * workers, "budget": hd_sprites.READ_BUDGET * workers}
+    with hd_upscale.process_pool() as pool:
+        count = hd_portrait_pack.write_records(pack, itertools.chain(
+            hd_sprites.records(sprites.static, sprite_root, read_sprite, sprite_skipped, packed, rerender=remake,
+                               log=lambda line: say(f"     {line}"), pool=pool, **sized),
+            hd_sprites.records(sprites.animated, sprite_root, read_sprite, sprite_skipped, moving, rerender=remake,
+                               log=lambda line: say(f"     {line}"), pool=pool, **sized),
+            hd_portrait_pack.unmasked_records(originals, upscaled, skipped, originals, rerender=remake_picture,
+                                              counts=pictures, pool=pool,
+                                              budget=hd_portrait_pack.READ_BUDGET * workers)))
     packed.setdefault("packed", 0)
     moving.setdefault("packed", 0)
     moving.setdefault("sprites", 0)
@@ -2076,6 +2186,94 @@ def run_report(game: pathlib.Path, with_save: "str | None", with_dump: bool) -> 
     say(f"Attach {out_path.name} to an issue at {ISSUES_URL}")
 
 
+def duration(seconds: float) -> str:
+    seconds = int(round(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
+class StepClock:
+    """How long each numbered step took: said as each one ends, and in one line at the end (which
+    goes into the summary --report reads back)."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.taken: "list[tuple[int, float]]" = []
+        self.current: "tuple[int, float] | None" = None
+
+    def start(self, n: int, text: str, out=None, lead: str = "") -> None:
+        self.stop()
+        (out or say)(f"{lead}{n}/{self.total}  {text}")
+        self.current = (n, time.monotonic())
+
+    def stop(self) -> None:
+        if self.current is not None:
+            n, began = self.current
+            self.taken.append((n, time.monotonic() - began))
+            say(f"     {n}/{self.total} took {duration(self.taken[-1][1])}")
+            self.current = None
+
+    def summary(self) -> str:
+        return ("Time taken: " + ", ".join(f"{n}/{self.total} {duration(t)}" for n, t in self.taken)
+                + f" ({duration(sum(t for _, t in self.taken))} in all)")
+
+
+PROFILE_ENV = "LOMHD_PROFILE"
+
+
+def program_name(cmd) -> str:
+    """`magick`, `realesrgan-ncnn-vulkan`, `python upscale.py`: what a subprocess.run ran."""
+    def base(part) -> str:                       # either separator: a Windows path read anywhere
+        return os.fsdecode(part).replace("\\", "/").rsplit("/", 1)[-1]
+
+    parts = [cmd] if isinstance(cmd, (str, bytes, os.PathLike)) else list(cmd)
+    name = base(parts[0]).lower() if parts else "?"
+    name = name[:-4] if name.endswith(".exe") else name
+    if name.startswith("python") and len(parts) > 1:
+        name = f"python {base(parts[1])}"
+    return name
+
+
+class SpawnProfile:
+    """PROFILE_ENV=1: every subprocess.run of this process (its threads included), counted and timed
+    per program, for the end of the run. A developer aid for finding where a run's time goes. Time
+    is summed over runs that overlapped, so it can pass the wall clock. The pack's worker processes
+    run no programs, and what `python upscale.py` runs is inside its own line."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.by_program: "dict[str, list]" = {}
+        self.real = None
+
+    def __enter__(self) -> "SpawnProfile":
+        self.real = real = subprocess.run
+
+        def timed(cmd, *args, **kwargs):
+            began = time.perf_counter()
+            try:
+                return real(cmd, *args, **kwargs)
+            finally:
+                with self.lock:
+                    runs = self.by_program.setdefault(program_name(cmd), [0, 0.0])
+                    runs[0] += 1
+                    runs[1] += time.perf_counter() - began
+
+        subprocess.run = timed
+        return self
+
+    def __exit__(self, *exc) -> None:
+        subprocess.run = self.real
+
+    def lines(self) -> "list[str]":
+        return [f"  {name}: {n} runs, {duration(t)}" for name, (n, t)
+                in sorted(self.by_program.items(), key=lambda kv: -kv[1][1])]
+
+
 def write_setup_summary(game: pathlib.Path, release_version: str, lines: "list[str]") -> None:
     """SUMMARY_NAME: this run's own closing report, for a later --report to read back -- dated and
     versioned at the top, since a report is usually read well after the run that wrote it."""
@@ -2134,14 +2332,34 @@ def main() -> int:
         uninstall(game, args.force_terrain_folder)
         return 0
 
+    workers = hd_upscale.jobs()        # a bad LOMHD_JOBS stops here, before any work
+    profile = SpawnProfile() if os.environ.get(PROFILE_ENV) == "1" else None
+    if profile:
+        profile.__enter__()
+    try:
+        return install_run(args, game, workers)
+    finally:
+        if profile:
+            profile.__exit__()
+            say(f"\n{PROFILE_ENV}: programs run, by time taken")
+            for line in profile.lines():
+                say(line)
+
+
+def install_run(args: argparse.Namespace, game: pathlib.Path, workers: int) -> int:
+    """main() for --review and an install: everything that makes art."""
+    say(f"Running up to {workers} jobs at once ({hd_upscale.JOBS_ENV}=1: one at a time)")
     if args.review:
         check_magick()
-        say("1/3  Getting the upscaler")
+        clock = StepClock(3)
+        clock.start(1, "Getting the upscaler")
         exe, models = upscaler()
-        say("2/3  Reading pictures from your pic.mpq")
+        clock.start(2, "Reading pictures from your pic.mpq")
         found = extract_images(game)
-        say("3/3  Rendering every option (the long step; it resumes if stopped)")
-        serve_review(render_review(found, exe, models), args.port)
+        clock.start(3, "Rendering every option (the long step; it resumes if stopped)")
+        review = render_review(found, exe, models)
+        clock.stop()
+        serve_review(review, args.port)
         return 0
 
     record = release()
@@ -2158,9 +2376,10 @@ def main() -> int:
     if choices_file() == MY_CHOICES:
         say(f"Using your own picks from {MY_CHOICES.name}")
     say(f"Animated sprites: {why}")
-    say(f"1/{steps}  Getting the upscaler")
+    clock = StepClock(steps)
+    clock.start(1, "Getting the upscaler")
     exe, models = upscaler()
-    say(f"2/{steps}  Reading pictures from your pic.mpq and sprites from your imp.mpq")
+    clock.start(2, "Reading pictures from your pic.mpq and sprites from your imp.mpq")
     found = extract_images(game)
     say("     " + ", ".join(f"{len(v)} {PLURAL.get(k, k + 's')}" for k, v in found.items() if v))
     sprites, sprite_root, read_sprite = plan_sprites(game, animated)
@@ -2168,13 +2387,12 @@ def main() -> int:
     say(f"     {len(sprites.static)} sprites" + (f", {len(sprites.animated)} animated sprites "
                                                  f"({frames} frames)" if animated else
                                                  f", {len(sprites.animated)} unit icon sheets ({frames} frames)"))
-    say(f"3/{steps}  Upscaling pictures (the long step)")
+    clock.start(3, "Upscaling pictures (the long step; a rerun makes only what is new)")
     upscaled = upscale_all(found, exe, models)
-    say(f"4/{steps}  Upscaling sprites" + (" (the very long step; it resumes if stopped)"
-                                          if animated else ""))
+    clock.start(4, "Upscaling sprites" + (" (the very long step; it resumes if stopped)" if animated else ""))
     again = retry_command(args, animated, game)
     upscale_sprites(sprites.static + sprites.animated, sprite_root, exe, models, again)
-    say(f"5/{steps}  Building the pack and installing")
+    clock.start(5, "Building the pack and installing")
     originals = [WORK / "originals" / group for group in found if found[group]]
     pack = WORK / PACK_NAME
     pictures: dict = {}
@@ -2182,6 +2400,7 @@ def main() -> int:
                                                                 originals, upscaled, exe, models, pictures)
     install(game, pack, record, animated)
     exe_note = fix_exe(game, "--terrain" if args.terrain else "")
+    clock.stop()
     # Kept alongside the printed run (as SUMMARY_NAME, in the game folder): the closing report of the
     # last install that finished, for --report to read back on a later, separate run.
     summary_lines: "list[str]" = []
@@ -2212,13 +2431,15 @@ def main() -> int:
              if args.no_sprites else
              "Animated sprites (units, spell effects) were not built: add --sprites for them.")
     if args.terrain:
-        told(f"\n6/{steps}  Building HD terrain from your pic.mpq (the long step again)")
+        clock.start(6, "Building HD terrain from your pic.mpq (the long step again)", told, lead="\n")
         built = build_terrain(game, exe, models)
-        told(f"7/{steps}  Installing HD terrain and patching lomse.exe")
+        clock.start(7, "Installing HD terrain and patching lomse.exe", told)
         install_terrain(game, built, args.force_terrain_folder)
+        clock.stop()
         told(f"Done: HD terrain installed ({TERRAIN_DIR}\\til, and lomse.exe patched; the original "
              f"is {EXE_BACKUP_NAME}). Recommended window: 1280x960 (width/height in ddraw.ini).")
     told("To undo: python lomhd_setup.py --uninstall" + (f' --game "{game}"' if args.game else ""))
+    told(clock.summary())
     write_setup_summary(game, record["version"], summary_lines)
     return 0
 

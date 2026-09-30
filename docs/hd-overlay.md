@@ -232,6 +232,43 @@ from the player's own game into `lomhd_work/review` (plus the palette pipeline f
 portraits, as its own tile), opens the page with the shipped picks preselected, and saves to
 `my-upscale-choices.json`, which a plain install then uses instead of the shipped file.
 
+**Reruns and speed** (2026-09-30). A rerun of setup with nothing new took 33 minutes at ~108% CPU on
+an M4 Max: every run deleted `lomhd_work/upscaled` and `png` and re-rendered all ~1,281 pictures, and
+thousands of short `magick` runs and the pure-Python content check ran one at a time. Now:
+
+- **Kept between runs, checked by content.** `originals/` is rewritten only where the game's member
+  differs, and anything not in this install is removed. Each picture's original is kept beside its
+  PNG (`png/<name>.lbm`); a picture whose original differs loses its PNG and every upscale of it --
+  the stale-install case the old deletion guarded (another install's picture under this install's
+  name, which the pack cannot catch). An upscale by an option that is no longer the picture's pick,
+  or of a picture this install does not have, is removed. `upscaled/recipe.json` holds
+  a hash of the upscale code's own source (`hd_upscale.py`, which also makes the PNGs the
+  full-colour options start from, `upscale.py`, `lbm_png.py`), the options and the pinned model
+  hashes; when it differs every upscale and every PNG in `png/` is made again (the review page's own PNGs are not keyed on it) -- any edit to that code does
+  it, which is the safe way to be wrong. (The sprite and terrain render caches have no such
+  stamp yet: a release that changed a model or the resize would keep their old renders.) A kept
+  upscale that cannot be read (cut short by a stopped run) is made again in the pack step, like a
+  damaged one, and left out and named if it still cannot be. `approved` portraits are written whole or not at all
+  and only missing ones go to `upscale.py`, so a rerun with nothing new starts no upscaler at all.
+  Those it does get go through the model in **one** run over a folder, not one run each: checked on
+  the GPU to be pixel-identical for all 396 approved portraits, 245 s down to 15 s; despeckle and
+  the shrink-and-remap after it run on threads.
+- **Decoded once.** `hd_sprites.resolve` keeps each IMP member's frame count (or why it cannot be
+  decoded) under its own bytes' digest and `imp_read`'s own source in `sprites/frame-counts.json`, so
+  a rerun decodes only changed members; one-frame sprites and the unit icon sheets it does decode are
+  handed to `plan()` rather than decoded again. (The downloaded models are still hashed in full on
+  every run: that took no measurable time, and it is their integrity check.)
+- **Side by side.** `LOMHD_JOBS` (default: the cores, at most 8; `1` is the old serial behaviour
+  exactly) runs the per-picture `magick` calls on threads, each with `MAGICK_THREAD_LIMIT=1`, and the
+  pack's content check and zlib on spawned worker processes (spawned on every OS, as Windows must).
+  Everything that depends on order -- remakes, groups, skips, the records -- stays in the main
+  process, so the pack is **byte-identical** whatever `LOMHD_JOBS` says (tested end to end, a damaged
+  render's remake and strip crops included). Batches grow with the workers, so each still has about
+  one `READ_BUDGET` (64 MB) of pixels: up to ~512 MB of upscale pixels in memory at 8.
+- **Measured as it goes.** Each step ends with what it took, and the summary (read back by
+  `--report`) ends with every step's time. `LOMHD_PROFILE=1` also prints every program setup ran,
+  with how many runs and how long, summed over runs that overlapped.
+
 🔴 **Pairing is by content.** An upscale is packed only when the installed original is pixel- and
 palette-identical to the original it was made from. The vanilla and GS5R3 installs share 445
 portrait names and 5 of them differ; templates built from the wrong install matched the lord (the
