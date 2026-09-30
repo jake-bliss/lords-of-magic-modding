@@ -207,8 +207,9 @@ game folder (the name dates from when it held only portraits).
   `lomhd_terrain` folder: run `python lomhd_setup.py --terrain` again, or `--uninstall`.
 - **Crash and hang reports:** if the game crashes, or stops drawing for a long time, the overlay
   writes `lomhd_crash_<time>.txt` (and a `.dmp`) or `lomhd_hang_<time>.txt` in the game folder.
-  They stay on your machine; `--report` below gathers them. To turn them off, create an empty file
-  named `lomhd_no_crash_reports` or `lomhd_no_hang_reports` in the game folder. On macOS a game
+  They stay on your machine; `--report` below gathers the `.txt` files (the `.dmp` only with
+  `--with-dump`). To turn them off, create an empty file in the game folder:
+  `lomhd_no_hang_reports` stops hang reports only, `lomhd_no_crash_reports` stops both. On macOS a game
   window in the background may stop drawing until you click back into it; that is Wine, and the
   report written then says so.
 - **Reporting a problem:** run
@@ -233,7 +234,7 @@ python lomhd_setup.py --report --with-dump
 One zip, written next to this script as `lomhd-report-<timestamp>.zip` (never overwriting an earlier
 one, even from two runs started in the same second), with everything useful for a bug report and
 nothing else: `lomhd.log`, `ddraw.ini`, `lomhd_install.json`, this release's own `release.json`, up to
-five each of any crash/hang `.txt` files a separate crash reporter left in the game folder, and a
+five each of any crash/hang `.txt` files the overlay left in the game folder, and a
 generated `report.txt` (your OS and whether it detects Wine, Python and ImageMagick versions, the GPU
 if it can be read cheaply, what this mod recognises `lomse.exe` and `ddraw.dll` as, the install
 record, the summary from the last setup run that finished, and the names and sizes -- never the
@@ -249,8 +250,7 @@ filename, which could itself carry an account or character name), and a savegame
 plain `savegame/save.lom` (or `savegame/save`); `report.txt` says only that a save was included,
 never its name.
 
-**Scrubbing.** Every text file above -- including a crash/hang `.txt`, which a separate crash
-reporter may write with a full file path in it -- has your home folder (replaced with `~`), any
+**Scrubbing.** Every text file above -- including a crash/hang `.txt`, which the overlay may write with a full file path in it -- has your home folder (replaced with `~`), any
 `C:\Users\<x>`, `C:\Documents and Settings\<x>`, `/Users/<x>`, `/home/<x>`, a `\\?\` long-path prefix,
 a UNC `\\host\Users\<x>`, or a Wine `Z:` equivalent of those (wherever it appears, with or without a
 trailing slash, and not only for your own account -- a crash from a different Windows account, or

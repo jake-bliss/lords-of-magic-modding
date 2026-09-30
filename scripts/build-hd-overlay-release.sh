@@ -16,8 +16,8 @@ OUT=$ROOT/dist/$NAME
 # struct into a DLL that still loaded and ran (docs/hd-overlay.md).
 [ -z "$(git -C "$FORK" status --porcelain)" ] || { echo "cnc-ddraw fork has uncommitted changes" >&2; exit 1; }
 COMMIT=$(git -C "$FORK" rev-parse --short HEAD)
-# The Makefile bakes the branch name and LOMHD_VERSION into the DLL, so one commit built on another
-# branch, or without the version, gives other bytes than the release records (docs/hd-overlay.md).
+# Releases are cut from the fork's lom-hd-overlay branch only. The Makefile bakes the commit and
+# LOMHD_VERSION into the DLL (no longer the branch), so the version must be passed to make.
 [ "$(git -C "$FORK" branch --show-current)" = lom-hd-overlay ] ||
   { echo "refusing: build the DLL from the fork's lom-hd-overlay branch" >&2; exit 1; }
 LDFLAGS_REPRO="-Wl,--enable-stdcall-fixup -s -static -shared -Wl,--no-insert-timestamp"
@@ -35,7 +35,7 @@ SECOND=$(build_dll)
 # `lomhd_setup.py --terrain` installs art only this DLL can serve: a DLL without the lomhd_terrain
 # folder support would leave a patched lomse.exe drawing scrambled terrain.
 grep -qa 'art from lomhd_terrain' "$FORK/ddraw.dll" ||
-  { echo "refusing: $COMMIT's ddraw.dll cannot serve lomhd_terrain (build from the fork's HD-terrain branch)" >&2; exit 1; }
+  { echo "refusing: $COMMIT's ddraw.dll cannot serve lomhd_terrain (the fork's lom-hd-overlay branch should have it)" >&2; exit 1; }
 
 rm -rf "$OUT" "$OUT.zip"
 mkdir -p "$OUT/tools" "$OUT/exe_patches"
