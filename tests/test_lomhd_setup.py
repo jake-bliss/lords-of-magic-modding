@@ -421,16 +421,30 @@ class UpscalePlan(unittest.TestCase):
                                 "upscaled/ultrasharp-tta/aagtwr0a.png"])
         self.assertEqual([f.name for f in folders], ["ultrasharp-tta"])
 
-    def test_a_new_upscale_recipe_makes_everything_again(self) -> None:
-        """Kept upscales are a release's: one whose models or resize differ makes them all again."""
+    def test_a_change_to_the_upscale_code_makes_everything_again(self) -> None:
+        """Kept upscales are a release's: one whose upscale code, models or options differ makes
+        them all again, with no number to remember to bump."""
         self.extract(10)
         made = self.counting_stubs()
         e, m = pathlib.Path("esrgan"), pathlib.Path("models")
-        setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
-        made.clear()
-        with mock.patch.object(setup.hd_upscale, "RECIPE", setup.hd_upscale.RECIPE + 1):
+        code = self.work.parent / "upscale.py"
+        code.write_text("the pipeline\n")
+        with mock.patch.object(setup, "upscale_code", lambda: [code]):
+            setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
+            made.clear()
+            setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
+            self.assertEqual(made, [], "the control: unchanged code keeps them")
+            code.write_text("the pipeline, changed\n")
             setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
         self.assertEqual(made, [("ultrasharp-tta", "aagtwr0a")])
+        made.clear()
+        with mock.patch.dict(setup.hd_upscale.OPTIONS, {"ultrasharp-tta": ("another-model", 4, ["-x"])}):
+            setup.upscale_all({"building": ["aagtwr0a"]}, e, m)
+        self.assertEqual(made, [("ultrasharp-tta", "aagtwr0a")], "an option's model changed")
+
+    def test_the_upscale_code_is_the_files_that_make_upscales(self) -> None:
+        self.assertEqual([p.name for p in setup.upscale_code()], ["hd_upscale.py", "lbm_png.py", "upscale.py"])
+        self.assertTrue(all(p.is_file() for p in setup.upscale_code()), setup.upscale_code())
 
     def test_a_stopped_approved_run_does_not_stop_the_next(self) -> None:
         """upscale.py's scratch folder, left by a run stopped part-way, would make its own cleanup

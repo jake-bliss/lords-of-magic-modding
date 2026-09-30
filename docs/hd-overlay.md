@@ -242,8 +242,12 @@ thousands of short `magick` runs and the pure-Python content check ran one at a 
   the stale-install case the old deletion guarded (another install's picture under this install's
   name, which the pack cannot catch). An upscale by an option that is no longer the picture's pick,
   or of a picture this install does not have, is removed. `upscaled/recipe.json` holds
-  `hd_upscale.RECIPE` and the pinned model hashes; when it differs (a release that changes a model
-  or the resize) every upscale is made again. `approved` portraits are written whole or not at all
+  a hash of the upscale code's own source (`hd_upscale.py`, `upscale.py`, `lbm_png.py`), the options
+  and the pinned model hashes; when it differs every upscale is made again -- any edit to that code
+  does it, which is the safe way to be wrong. (The sprite and terrain render caches have no such
+  stamp yet: a release that changed a model or the resize would keep their old renders.) A kept
+  upscale that cannot be read (cut short by a stopped run) is made again in the pack step, like a
+  damaged one, and left out and named if it still cannot be. `approved` portraits are written whole or not at all
   and only missing ones go to `upscale.py`, so a rerun with nothing new starts no upscaler at all.
   Those it does get go through the model in **one** run over a folder, not one run each: checked on
   the GPU to be pixel-identical for all 396 approved portraits, 245 s down to 15 s; despeckle and

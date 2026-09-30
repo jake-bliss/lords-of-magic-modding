@@ -34,10 +34,6 @@ OPTIONS = {                      # name -> (model, scale, extra realesrgan-ncnn-
 APPROVED = "approved"
 MODEL_FILES = sorted({f"{model}.{ext}" for model, _, _ in OPTIONS.values() for ext in ("param", "bin")})
 CHARACTER = re.compile(r".*p\d\d")
-# What an option's output depends on beyond the pinned model files: render()'s resize, and
-# portrait-upscale/upscale.py's pipeline for APPROVED. Setup keeps upscales between runs, so a
-# release that changes either must bump this, or players keep the old renders.
-RECIPE = 1
 
 # --- running side by side ------------------------------------------------------------------------
 #

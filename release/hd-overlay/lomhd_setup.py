@@ -443,10 +443,23 @@ def upscale_output(choice: str, stem: str) -> pathlib.Path:
     return out / "portrait" / f"{stem}.lbm" if choice == hd_upscale.APPROVED else out / f"{stem}.png"
 
 
+def upscale_code() -> "list[pathlib.Path]":
+    """The code a picture's upscale is made by: the options and render()'s resize (hd_upscale.py),
+    and the approved pipeline (upscale.py, and the LBM codec it writes with, beside it)."""
+    beside = pathlib.Path(lbm_png.__file__).resolve().parent
+    return [pathlib.Path(hd_upscale.__file__).resolve(), beside / "lbm_png.py", beside / "upscale.py"]
+
+
 def upscale_recipe() -> dict:
     """Everything an upscale depends on besides its original and its option: kept beside the
-    upscales, which are all made again when it changes (a new release's models or resize)."""
-    return json.loads(json.dumps({"recipe": hd_upscale.RECIPE, "options": hd_upscale.OPTIONS,
+    upscales, which are all made again when it changes. The code is taken by its own bytes, as
+    hd_sprites does for imp_read, not by a number someone must remember to bump; any edit to it
+    makes everything again, which is the safe way to be wrong."""
+    code = hashlib.sha256()
+    for path in upscale_code():
+        code.update(path.name.encode() + b"\0")
+        code.update(path.read_bytes() if path.is_file() else b"(missing)")
+    return json.loads(json.dumps({"code": code.hexdigest(), "options": hd_upscale.OPTIONS,
                                   "downloads": sorted(sha for _, sha in DOWNLOADS.values())}))
 
 
