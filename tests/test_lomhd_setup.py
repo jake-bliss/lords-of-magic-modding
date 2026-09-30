@@ -2706,6 +2706,48 @@ class Downloads(unittest.TestCase):
             setup.fetch("model", self.dest)                   # hashed, found wrong, fetched again
 
 
+class Timing(unittest.TestCase):
+    def test_durations_read_as_a_person_would_say_them(self) -> None:
+        self.assertEqual([setup.duration(t) for t in (0.4, 59.6, 134, 3600 + 125)],
+                         ["0s", "1m 00s", "2m 14s", "1h 02m"])
+
+    def test_each_step_says_what_it_took_and_the_summary_names_them_all(self) -> None:
+        said: list = []
+        with mock.patch.object(setup, "say", said.append), \
+                mock.patch.object(setup.time, "monotonic", side_effect=[0.0, 3.0, 3.0, 137.0]):
+            clock = setup.StepClock(5)
+            clock.start(1, "Getting the upscaler")
+            clock.start(2, "Reading")
+            clock.stop()
+            clock.stop()                                      # a second stop says nothing more
+        self.assertEqual(said, ["1/5  Getting the upscaler", "     1/5 took 3s", "2/5  Reading",
+                                "     2/5 took 2m 14s"])
+        self.assertEqual(clock.summary(), "Time taken: 1/5 3s, 2/5 2m 14s (2m 17s in all)")
+
+    def test_the_profile_counts_and_times_every_program_run(self) -> None:
+        def stub(cmd, *a, **k):
+            return None
+
+        with mock.patch.object(setup.subprocess, "run", stub):
+            with setup.SpawnProfile() as profile:
+                for cmd in (["magick", "a"], ["magick", "b"], [r"C:\\x\\realesrgan-ncnn-vulkan.exe", "-i"],
+                            [sys.executable, "/r/tools/upscale.py", "x"]):
+                    setup.subprocess.run(cmd)
+            self.assertIs(setup.subprocess.run, stub, "put back as it was")
+        self.assertEqual(sorted(profile.by_program), ["magick", "python upscale.py", "realesrgan-ncnn-vulkan"])
+        self.assertEqual(profile.by_program["magick"][0], 2)
+        self.assertEqual(len(profile.lines()), 3)
+
+    def test_a_bad_lomhd_jobs_stops_with_a_message(self) -> None:
+        for value, want in (("3", 3), ("0", 1), (" 1 ", 1)):
+            with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: value}):
+                self.assertEqual(setup.hd_upscale.jobs(), want)
+        with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: "many"}), self.assertRaises(SystemExit):
+            setup.hd_upscale.jobs()
+        with mock.patch.dict(os.environ, {setup.hd_upscale.JOBS_ENV: ""}):
+            self.assertEqual(setup.hd_upscale.jobs(), max(1, min(os.cpu_count() or 1, setup.hd_upscale.MAX_JOBS)))
+
+
 class MainWritesSummary(unittest.TestCase):
     """lomhd_last_summary.txt: written by a finished run of main(), read back by --report."""
 
@@ -2759,6 +2801,7 @@ class MainWritesSummary(unittest.TestCase):
         self.assertEqual(lines[1], "release: 9.9.9-test")
         self.assertIn("Done: 3 HD images installed", text)
         self.assertIn("To undo: python lomhd_setup.py --uninstall", text)
+        self.assertRegex(lines[-1], r"^Time taken: 1/5 \d+s, 2/5 \d+s, 3/5 \d+s, 4/5 \d+s, 5/5 \d+s \(\d+s in all\)$")
 
     def test_report_reads_back_the_last_setup_summary(self) -> None:
         self.run_setup()

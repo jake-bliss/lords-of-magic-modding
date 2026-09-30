@@ -80,7 +80,8 @@ With --terrain, after those five steps (and only if they succeeded):
 
 Needs Python 3.9+, ImageMagick 7 (`magick` on PATH) and a GPU with Vulkan. Takes 20-60 minutes,
 almost all of it steps 3 and 4 (with --sprites, several hours). Everything it downloads or makes
-lives in `lomhd_work` next to this script.
+lives in `lomhd_work` next to this script. Each step says how long it took. It works on several
+pictures at once; set LOMHD_JOBS=1 for one at a time (LOMHD_PROFILE=1: what it ran, and for how long).
 """
 from __future__ import annotations
 
@@ -100,6 +101,8 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -2199,6 +2202,94 @@ def run_report(game: pathlib.Path, with_save: "str | None", with_dump: bool) -> 
     say(f"Attach {out_path.name} to an issue at {ISSUES_URL}")
 
 
+def duration(seconds: float) -> str:
+    seconds = int(round(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
+class StepClock:
+    """How long each numbered step took: said as each one ends, and in one line at the end (which
+    goes into the summary --report reads back)."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.taken: "list[tuple[int, float]]" = []
+        self.current: "tuple[int, float] | None" = None
+
+    def start(self, n: int, text: str, out=None, lead: str = "") -> None:
+        self.stop()
+        (out or say)(f"{lead}{n}/{self.total}  {text}")
+        self.current = (n, time.monotonic())
+
+    def stop(self) -> None:
+        if self.current is not None:
+            n, began = self.current
+            self.taken.append((n, time.monotonic() - began))
+            say(f"     {n}/{self.total} took {duration(self.taken[-1][1])}")
+            self.current = None
+
+    def summary(self) -> str:
+        return ("Time taken: " + ", ".join(f"{n}/{self.total} {duration(t)}" for n, t in self.taken)
+                + f" ({duration(sum(t for _, t in self.taken))} in all)")
+
+
+PROFILE_ENV = "LOMHD_PROFILE"
+
+
+def program_name(cmd) -> str:
+    """`magick`, `realesrgan-ncnn-vulkan`, `python upscale.py`: what a subprocess.run ran."""
+    def base(part) -> str:                       # either separator: a Windows path read anywhere
+        return os.fsdecode(part).replace("\\", "/").rsplit("/", 1)[-1]
+
+    parts = [cmd] if isinstance(cmd, (str, bytes, os.PathLike)) else list(cmd)
+    name = base(parts[0]).lower() if parts else "?"
+    name = name[:-4] if name.endswith(".exe") else name
+    if name.startswith("python") and len(parts) > 1:
+        name = f"python {base(parts[1])}"
+    return name
+
+
+class SpawnProfile:
+    """PROFILE_ENV=1: every subprocess.run of this process (its threads included), counted and timed
+    per program, for the end of the run. A developer aid for finding where a run's time goes. Time
+    is summed over runs that overlapped, so it can pass the wall clock. The pack's worker processes
+    run no programs, and what `python upscale.py` runs is inside its own line."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.by_program: "dict[str, list]" = {}
+        self.real = None
+
+    def __enter__(self) -> "SpawnProfile":
+        self.real = real = subprocess.run
+
+        def timed(cmd, *args, **kwargs):
+            began = time.perf_counter()
+            try:
+                return real(cmd, *args, **kwargs)
+            finally:
+                with self.lock:
+                    runs = self.by_program.setdefault(program_name(cmd), [0, 0.0])
+                    runs[0] += 1
+                    runs[1] += time.perf_counter() - began
+
+        subprocess.run = timed
+        return self
+
+    def __exit__(self, *exc) -> None:
+        subprocess.run = self.real
+
+    def lines(self) -> "list[str]":
+        return [f"  {name}: {n} runs, {duration(t)}" for name, (n, t)
+                in sorted(self.by_program.items(), key=lambda kv: -kv[1][1])]
+
+
 def write_setup_summary(game: pathlib.Path, release_version: str, lines: "list[str]") -> None:
     """SUMMARY_NAME: this run's own closing report, for a later --report to read back -- dated and
     versioned at the top, since a report is usually read well after the run that wrote it."""
@@ -2257,14 +2348,34 @@ def main() -> int:
         uninstall(game, args.force_terrain_folder)
         return 0
 
+    workers = hd_upscale.jobs()        # a bad LOMHD_JOBS stops here, before any work
+    profile = SpawnProfile() if os.environ.get(PROFILE_ENV) == "1" else None
+    if profile:
+        profile.__enter__()
+    try:
+        return install_run(args, game, workers)
+    finally:
+        if profile:
+            profile.__exit__()
+            say(f"\n{PROFILE_ENV}: programs run, by time taken")
+            for line in profile.lines():
+                say(line)
+
+
+def install_run(args: argparse.Namespace, game: pathlib.Path, workers: int) -> int:
+    """main() for --review and an install: everything that makes art."""
+    say(f"Running up to {workers} jobs at once ({hd_upscale.JOBS_ENV}=1: one at a time)")
     if args.review:
         check_magick()
-        say("1/3  Getting the upscaler")
+        clock = StepClock(3)
+        clock.start(1, "Getting the upscaler")
         exe, models = upscaler()
-        say("2/3  Reading pictures from your pic.mpq")
+        clock.start(2, "Reading pictures from your pic.mpq")
         found = extract_images(game)
-        say("3/3  Rendering every option (the long step; it resumes if stopped)")
-        serve_review(render_review(found, exe, models), args.port)
+        clock.start(3, "Rendering every option (the long step; it resumes if stopped)")
+        review = render_review(found, exe, models)
+        clock.stop()
+        serve_review(review, args.port)
         return 0
 
     record = release()
@@ -2281,9 +2392,10 @@ def main() -> int:
     if choices_file() == MY_CHOICES:
         say(f"Using your own picks from {MY_CHOICES.name}")
     say(f"Animated sprites: {why}")
-    say(f"1/{steps}  Getting the upscaler")
+    clock = StepClock(steps)
+    clock.start(1, "Getting the upscaler")
     exe, models = upscaler()
-    say(f"2/{steps}  Reading pictures from your pic.mpq and sprites from your imp.mpq")
+    clock.start(2, "Reading pictures from your pic.mpq and sprites from your imp.mpq")
     found = extract_images(game)
     say("     " + ", ".join(f"{len(v)} {PLURAL.get(k, k + 's')}" for k, v in found.items() if v))
     sprites, sprite_root, read_sprite = plan_sprites(game, animated)
@@ -2291,13 +2403,12 @@ def main() -> int:
     say(f"     {len(sprites.static)} sprites" + (f", {len(sprites.animated)} animated sprites "
                                                  f"({frames} frames)" if animated else
                                                  f", {len(sprites.animated)} unit icon sheets ({frames} frames)"))
-    say(f"3/{steps}  Upscaling pictures (the long step)")
+    clock.start(3, "Upscaling pictures (the long step; a rerun makes only what is new)")
     upscaled = upscale_all(found, exe, models)
-    say(f"4/{steps}  Upscaling sprites" + (" (the very long step; it resumes if stopped)"
-                                          if animated else ""))
+    clock.start(4, "Upscaling sprites" + (" (the very long step; it resumes if stopped)" if animated else ""))
     again = retry_command(args, animated, game)
     upscale_sprites(sprites.static + sprites.animated, sprite_root, exe, models, again)
-    say(f"5/{steps}  Building the pack and installing")
+    clock.start(5, "Building the pack and installing")
     originals = [WORK / "originals" / group for group in found if found[group]]
     pack = WORK / PACK_NAME
     pictures: dict = {}
@@ -2305,6 +2416,7 @@ def main() -> int:
                                                                 originals, upscaled, exe, models, pictures)
     install(game, pack, record, animated)
     exe_note = fix_exe(game, "--terrain" if args.terrain else "")
+    clock.stop()
     # Kept alongside the printed run (as SUMMARY_NAME, in the game folder): the closing report of the
     # last install that finished, for --report to read back on a later, separate run.
     summary_lines: "list[str]" = []
@@ -2335,13 +2447,15 @@ def main() -> int:
              if args.no_sprites else
              "Animated sprites (units, spell effects) were not built: add --sprites for them.")
     if args.terrain:
-        told(f"\n6/{steps}  Building HD terrain from your pic.mpq (the long step again)")
+        clock.start(6, "Building HD terrain from your pic.mpq (the long step again)", told, lead="\n")
         built = build_terrain(game, exe, models)
-        told(f"7/{steps}  Installing HD terrain and patching lomse.exe")
+        clock.start(7, "Installing HD terrain and patching lomse.exe", told)
         install_terrain(game, built, args.force_terrain_folder)
+        clock.stop()
         told(f"Done: HD terrain installed ({TERRAIN_DIR}\\til, and lomse.exe patched; the original "
              f"is {EXE_BACKUP_NAME}). Recommended window: 1280x960 (width/height in ddraw.ini).")
     told("To undo: python lomhd_setup.py --uninstall" + (f' --game "{game}"' if args.game else ""))
+    told(clock.summary())
     write_setup_summary(game, record["version"], summary_lines)
     return 0
 
