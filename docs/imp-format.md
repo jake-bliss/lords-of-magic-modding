@@ -791,7 +791,7 @@ re-derived.
 ```
 
 **Out of range returns NULL.** It does not clamp to slot 0 and does not read out of bounds;
-`Imp::SetAction` (`0x0049DA84`) caches the NULL and every consumer null-checks it. So a missing
+`Imp::SetAction` (`0x0049DA80`) caches the NULL and every consumer null-checks it. So a missing
 action draws **nothing**, never the wrong sprite.
 
 ### The remap must be populated for shipped units

@@ -35,6 +35,11 @@ non-default name.
 
 `known-symbols.tsv` only takes a name where a document ties it to an address in
 the same sentence or table row. Add a row with its source line; do not add guesses.
+A `function` row must be an entry point: a row that lands strictly inside an existing
+function is reported as a conflict and never splits it. A `data` row inside an applied
+struct names the innermost field (replacing `f_<off>`) as well as adding the label, so
+the decompiler prints the known name; the run ends with `KNOWN_CHECK` and lists every
+known name that is not applied (`KNOWN_UNAPPLIED`) or not a field (`KNOWN_NOT_FIELD`).
 
 ## Measure
 
@@ -72,7 +77,7 @@ because they are reached only through tables or immediates:
 | call and tail-jump targets | from instructions inside a function; repeated until nothing new appears |
 | aligned after padding | a 16-aligned, undefined, non-padding address after a padding byte that disassembles to at least 16 bytes |
 | fragments | undefined non-padding bytes directly after a function's last byte (single `nop` after `ret`, SEH tails), at most 24 bytes, are disassembled and appended when they decode exactly |
-| fixups | `tools/ghidra/recovery-fixups.tsv`, one reviewed row per repair (`entry`, `action`, `clear_start`, `clear_end`, `disassemble_at`, `reason`, `evidence`). The one action, `clear_and_refit`, clears unowned instructions in the given range, disassembles at `disassemble_at` and recomputes the function body in place. The only row is `0x544c10` (stray `.data` value `0x544d57`). A row is skipped if the function is missing or the range holds instructions owned by a function |
+| fixups | `tools/ghidra/recovery-fixups.tsv`, one reviewed row per repair (`entry`, `action`, `clear_start`, `clear_end`, `disassemble_at`, `reason`, `evidence`). The one action, `clear_and_refit`, clears unowned instructions in the given range (a range holding defined data is refused), disassembles at `disassemble_at` and recomputes the function body in place. The only row is `0x544c10` (stray `.data` value `0x544d57`). A row is skipped, and printed as `FIXUP_SKIPPED`, if the function is missing or the range holds instructions owned by a function or defined data; a refit that returns false is printed as `FIXUP_FAILED` and counted as skipped |
 
 On `lomse.exe` this gives 6,671 decompiled functions (plus 107 thunks) after the three steps, 95.94% of
 `.text` by function bytes.

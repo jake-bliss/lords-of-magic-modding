@@ -6,7 +6,7 @@ address	kind	name	source
 0x0049D920	function	Imp::DirectionCount	docs/imp-format.md:140
 0x0049DCC0	function	Imp::SetFacing	docs/imp-format.md:229
 0x0049ADB0	function	Imp::GetSequence	docs/imp-format.md:262
-0x0049DA84	function	Imp::SetAction	docs/imp-format.md:794
+0x0049DA80	function	Imp::SetAction	docs/imp-format.md:794
 0x0049AE00	function	Imp::BuildActionRemap	docs/imp-format.md:818
 0x0049B110	function	Imp::HasAction	docs/imp-format.md:867
 0x0049B150	function	Imp::AliasAction	docs/imp-format.md:867

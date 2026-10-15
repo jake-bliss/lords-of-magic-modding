@@ -17,7 +17,7 @@ public class RecoverFunctions extends GhidraScript {
     private Listing listing;
     private final Map<String, Integer> made = new TreeMap<>();
     private static final int MAX_FRAGMENT = 24;
-    private int maxFragment;
+    private int largestFragment;
     private int failed, fragments, fragmentBytes, fragmentsSkipped, fixupsApplied, fixupsSkipped, rejected;
 
     @Override
@@ -45,7 +45,7 @@ public class RecoverFunctions extends GhidraScript {
             currentProgram.endTransaction(tx, true);
         }
         println("SUMMARY created=" + total() + " " + made + " failed=" + failed + " implausible=" + rejected + " fixups=" + fixupsApplied + "/" + (fixupsApplied + fixupsSkipped)
-            + " fragments=" + fragments + " fragmentBytes=" + fragmentBytes + " maxFragment=" + maxFragment + " fragmentsSkipped=" + fragmentsSkipped);
+            + " fragments=" + fragments + " fragmentBytes=" + fragmentBytes + " largestFragment=" + largestFragment + " fragmentsSkipped=" + fragmentsSkipped);
     }
 
     private int total() {
@@ -259,7 +259,12 @@ public class RecoverFunctions extends GhidraScript {
             }
             if (n > MAX_FRAGMENT) { fragmentsSkipped++; continue; }
             Address last = a.add(n - 1);
-            if (listing.getInstructionAt(a) == null) new DisassembleCommand(a, new AddressSet(a, last), true).applyTo(currentProgram, monitor);
+            AddressSet speculative = new AddressSet();
+            if (listing.getInstructionAt(a) == null) {
+                DisassembleCommand dc = new DisassembleCommand(a, new AddressSet(a, last), true);
+                dc.applyTo(currentProgram, monitor);
+                speculative = dc.getDisassembledAddressSet();
+            }
             Address c = a;
             boolean ok = true;
             while (c.compareTo(last) <= 0) {
@@ -267,15 +272,16 @@ public class RecoverFunctions extends GhidraScript {
                 if (i == null) { ok = false; break; }
                 c = c.add(i.getLength());
             }
-            if (!ok || !c.equals(last.add(1))) { fragmentsSkipped++; continue; }
+            if (!ok || !c.equals(last.add(1))) { clearSet(speculative); fragmentsSkipped++; continue; }
             AddressSet nb = new AddressSet(pf.getBody());
             nb.add(a, last);
             try {
                 pf.setBody(nb);
                 fragments++;
                 fragmentBytes += n;
-                maxFragment = Math.max(maxFragment, n);
+                largestFragment = Math.max(largestFragment, n);
             } catch (Exception ex) {
+                clearSet(speculative);
                 fragmentsSkipped++;
             }
         }
@@ -294,15 +300,16 @@ public class RecoverFunctions extends GhidraScript {
             Address to = toAddr(Long.parseUnsignedLong(c[head.indexOf("clear_end")].replaceFirst("^0[xX]", ""), 16));
             Address resume = toAddr(Long.parseUnsignedLong(c[head.indexOf("disassemble_at")].replaceFirst("^0[xX]", ""), 16));
             Function f = getFunctionAt(entry);
-            if (f == null || listing.getInstructionAt(from) == null || getFunctionContaining(from) != null) { fixupsSkipped++; continue; }
+            if (f == null || listing.getInstructionAt(from) == null || getFunctionContaining(from) != null) { fixupsSkipped++; println("FIXUP_SKIPPED " + entry + " precondition not met"); continue; }
             boolean owned = false;
             for (Instruction ins : listing.getInstructions(new AddressSet(from, to), true)) {
                 if (getFunctionContaining(ins.getAddress()) != null) { owned = true; break; }
             }
-            if (owned) { fixupsSkipped++; continue; }
+            if (owned || listing.getDefinedData(new AddressSet(from, to), true).hasNext()) { fixupsSkipped++; println("FIXUP_SKIPPED " + lines.get(i).split("\t", -1)[0] + " range owned or holds defined data"); continue; }
             listing.clearCodeUnits(from, to, false);
             disassemble(resume);
             if (CreateFunctionCmd.fixupFunctionBody(currentProgram, f, monitor)) fixupsApplied++;
+            else { fixupsSkipped++; println("FIXUP_FAILED " + entry + " refit returned false"); }
         }
     }
 }

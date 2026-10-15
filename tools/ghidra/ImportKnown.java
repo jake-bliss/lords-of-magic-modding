@@ -17,6 +17,8 @@ public class ImportKnown extends GhidraScript {
     private int structsNested, structsMade, structsApplied, structsSame, ptrsApplied;
     private int labels, labelsSame, knownFuncs, conflicts;
     private final List<String> conflictLog = new ArrayList<>();
+    private final List<String> fieldMisses = new ArrayList<>();
+    private int fieldsNamed, fieldsSame;
 
     @Override
     public void run() throws Exception {
@@ -37,10 +39,12 @@ public class ImportKnown extends GhidraScript {
             currentProgram.endTransaction(tx, true);
         }
         for (String c : conflictLog) println("CONFLICT " + c);
+        for (String m : fieldMisses) println("KNOWN_NOT_FIELD " + m);
+        checkKnown();
         println("SUMMARY operators renamed=" + opRenamed + " created=" + opCreated + " aliased=" + opAliased
             + " unchanged=" + opSame + " | structs made=" + structsMade + " applied=" + structsApplied
             + " nested=" + structsNested + " pointers=" + ptrsApplied + " unchanged=" + structsSame + " | labels=" + labels
-            + " unchanged=" + labelsSame + " | known functions=" + knownFuncs + " | conflicts skipped=" + conflicts);
+            + " unchanged=" + labelsSame + " | known functions=" + knownFuncs + " known fields named=" + fieldsNamed + " unchanged=" + fieldsSame + " | conflicts skipped=" + conflicts);
     }
 
     private List<Map<String, String>> readTsv(String rel) throws IOException {
@@ -213,7 +217,7 @@ public class ImportKnown extends GhidraScript {
         List<Map<String, String>> fields = readTsv("reports/natives/state/structure-fields.tsv");
         Map<String, List<Map<String, String>>> byKey = new HashMap<>();
         for (Map<String, String> f : fields) byKey.computeIfAbsent(f.get("base") + "/" + f.get("base_kind"), k -> new ArrayList<>()).add(f);
-        structs.sort(Comparator.comparingLong(s -> Long.decode(s.get("observed_extent"))));
+        structs.sort(Comparator.comparingLong(s -> s.get("base_kind").equals("indirect") ? 4L : Long.decode(s.get("observed_extent"))));
         DataTypeManager dtm = currentProgram.getDataTypeManager();
         List<Built> built = new ArrayList<>();
         for (Map<String, String> s : structs) {
@@ -268,14 +272,14 @@ public class ImportKnown extends GhidraScript {
                 structsMade++;
             } else {
                 b.dt = existing;
-                if (!existing.isEquivalent(st)) {
+                if (!sameShape(existing, st)) {
                     b.selfConflict = true;
                     conflict("struct " + b.tname + " already defined differently, kept; its subtree is skipped");
                 }
             }
             b.placed = b.kind.equals("indirect") ? new PointerDataType(b.dt, 4, dtm) : b.dt;
             b.lo = lo;
-            b.hi = lo + b.dt.getLength();
+            b.hi = b.kind.equals("indirect") ? lo + 4 : lo + b.dt.getLength();
             built.add(b);
         }
         built.sort(Comparator.comparingLong((Built b) -> b.placed.getLength()).reversed());
@@ -284,8 +288,6 @@ public class ImportKnown extends GhidraScript {
             for (Built p : b.parents) if (!p.conflicted) anyParentOk = true;
             b.nested = anyParentOk;
             b.conflicted = b.selfConflict || (!b.parents.isEmpty() && !anyParentOk);
-        }
-        for (Built b : built) {
             label(b.base, b.gname, "struct " + b.tname, true);
             if (b.nested) { structsNested++; continue; }
             if (b.conflicted) {
@@ -295,7 +297,11 @@ public class ImportKnown extends GhidraScript {
             int len = b.placed.getLength();
             Data d = currentProgram.getListing().getDataAt(b.base);
             if (d != null && (b.kind.equals("static") ? d.getDataType().getName().equals(b.tname) : d.getDataType().isEquivalent(b.placed))) { structsSame++; continue; }
-            if (!rangeFree(b.base, len)) { conflict("struct " + b.tname + " at " + b.base + " size 0x" + Integer.toHexString(len) + " overlaps defined data"); continue; }
+            if (!rangeFree(b.base, len)) {
+                b.conflicted = true;
+                conflict("struct " + b.tname + " at " + b.base + " size 0x" + Integer.toHexString(len) + " overlaps defined data");
+                continue;
+            }
             place(b.base, b.placed);
             if (b.kind.equals("indirect")) ptrsApplied++; else structsApplied++;
         }
@@ -326,7 +332,11 @@ public class ImportKnown extends GhidraScript {
         for (Map<String, String> r : readTsv("tools/ghidra/known-symbols.tsv")) {
             Address a = addr(r.get("address"));
             String full = r.get("name");
-            if (r.get("kind").equals("data")) { label(a, full, "known data", true); continue; }
+            if (r.get("kind").equals("data")) {
+                label(a, full, "known data", true);
+                nameField(a, full);
+                continue;
+            }
             Namespace ns = currentProgram.getGlobalNamespace();
             String leaf = full;
             int i = full.lastIndexOf("::");
@@ -336,6 +346,8 @@ public class ImportKnown extends GhidraScript {
             }
             Function f = fm.getFunctionAt(a);
             if (f == null) {
+                Function inside = fm.getFunctionContaining(a);
+                if (inside != null) { conflict("known function " + full + " " + a + " is inside " + inside.getName() + " at " + inside.getEntryPoint() + ", not an entry point"); continue; }
                 if (currentProgram.getListing().getInstructionAt(a) == null) new DisassembleCommand(a, null, true).applyTo(currentProgram, monitor);
                 f = createFunction(a, leaf);
                 if (f == null) { conflict("known function " + full + " " + a + " could not create"); continue; }
@@ -351,5 +363,59 @@ public class ImportKnown extends GhidraScript {
             f.setParentNamespace(ns);
             knownFuncs++;
         }
+    }
+
+    private static boolean sameShape(DataType existing, Structure st) {
+        if (!(existing instanceof Structure)) return false;
+        Structure e = (Structure) existing;
+        if (e.getLength() != st.getLength()) return false;
+        DataTypeComponent[] ec = e.getDefinedComponents();
+        DataTypeComponent[] sc = st.getDefinedComponents();
+        if (ec.length != sc.length) return false;
+        for (int i = 0; i < ec.length; i++) {
+            if (ec[i].getOffset() != sc[i].getOffset() || ec[i].getLength() != sc[i].getLength()) return false;
+            if (!ec[i].getDataType().isEquivalent(sc[i].getDataType())) return false;
+            String en = ec[i].getFieldName(), sn = sc[i].getFieldName();
+            boolean renamed = en != null && !en.matches("[fn]_[0-9a-f]+") && sn != null && sn.matches("[fn]_[0-9a-f]+");
+            if (!renamed && !java.util.Objects.equals(en, sn)) return false;
+        }
+        return true;
+    }
+
+    private void nameField(Address a, String name) throws Exception {
+        Data d = currentProgram.getListing().getDataContaining(a);
+        if (d == null || !(d.getDataType() instanceof Structure)) return;
+        while (true) {
+            int off = (int) a.subtract(d.getAddress());
+            Data c = d.getComponentAt(off);
+            if (c != null && c.getDataType() instanceof Structure && !(c.getDataType() instanceof Pointer)) { d = c; continue; }
+            Structure st = (Structure) d.getDataType();
+            DataTypeComponent dc = st.getComponentAt(off);
+            if (dc == null || dc.getOffset() != off) { fieldMisses.add(name + " " + a + " not at a field start of " + st.getName()); return; }
+            if (name.equals(dc.getFieldName())) { fieldsSame++; return; }
+            String cur = dc.getFieldName();
+            if (cur != null && !cur.matches("f_[0-9a-f]+")) { fieldMisses.add(name + " " + a + " field already named " + cur); return; }
+            if (dc.getDataType() == DataType.DEFAULT || dc.getDataType() instanceof Undefined) { fieldMisses.add(name + " " + a + " is undefined filler in " + st.getName()); return; }
+            try { dc.setFieldName(name); fieldsNamed++; }
+            catch (Exception e) { fieldMisses.add(name + " " + a + " " + e.getMessage()); }
+            return;
+        }
+    }
+
+    private void checkKnown() throws IOException {
+        int missing = 0;
+        for (Map<String, String> r : readTsv("tools/ghidra/known-symbols.tsv")) {
+            Address a = addr(r.get("address"));
+            String full = r.get("name");
+            String leaf = full.substring(full.lastIndexOf("::") < 0 ? 0 : full.lastIndexOf("::") + 2);
+            boolean ok;
+            if (r.get("kind").equals("data")) ok = hasLabel(a, full);
+            else {
+                Function f = currentProgram.getFunctionManager().getFunctionAt(a);
+                ok = f != null && f.getName().equals(leaf);
+            }
+            if (!ok) { missing++; println("KNOWN_UNAPPLIED " + full + " " + a); }
+        }
+        println("KNOWN_CHECK unapplied=" + missing + " not-field=" + fieldMisses.size());
     }
 }
