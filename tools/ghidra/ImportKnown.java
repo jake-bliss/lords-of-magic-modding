@@ -123,7 +123,8 @@ public class ImportKnown extends GhidraScript {
         }
         StringBuilder sb = new StringBuilder("name\tidentifier\n");
         mapping.forEach((k, v) -> sb.append(k).append('\t').append(v).append('\n'));
-        Files.writeString(repo.resolve("tools/ghidra/operator-name-map.tsv"), sb.toString());
+        Path mp = repo.resolve("tools/ghidra/operator-name-map.tsv");
+        if (!Files.exists(mp) || !Files.readString(mp).equals(sb.toString())) Files.writeString(mp, sb.toString());
     }
 
     private boolean hasLabel(Address a, String name) {
@@ -131,14 +132,25 @@ public class ImportKnown extends GhidraScript {
         return false;
     }
 
-    private void label(Address a, String name, String why) throws Exception {
+    private boolean weak(Symbol p) {
+        String n = p.getName();
+        return isDefaultName(p) || n.startsWith("gcl_") || n.startsWith("dir_table_");
+    }
+
+    private void label(Address a, String name, String why, boolean strong) throws Exception {
         if (!currentProgram.getMemory().contains(a)) { conflict(why + " " + a + " outside memory"); return; }
-        if (hasLabel(a, name)) { labelsSame++; return; }
-        Symbol p = currentProgram.getSymbolTable().getPrimarySymbol(a);
-        boolean primary = p == null || isDefaultName(p) || p.getName().startsWith("g_") || p.getName().startsWith("gp_");
-        currentProgram.getSymbolTable().createLabel(a, name, currentProgram.getGlobalNamespace(), SourceType.USER_DEFINED);
+        SymbolTable st = currentProgram.getSymbolTable();
+        Symbol p = st.getPrimarySymbol(a);
+        if (hasLabel(a, name)) {
+            Symbol s = st.getGlobalSymbol(name, a);
+            if (strong && s != null && !s.isPrimary() && p != null && weak(p)) { s.setPrimary(); labels++; }
+            else labelsSame++;
+            return;
+        }
+        boolean primary = p == null || isDefaultName(p) || (strong && weak(p));
+        st.createLabel(a, name, currentProgram.getGlobalNamespace(), SourceType.USER_DEFINED);
         if (primary) {
-            Symbol s = currentProgram.getSymbolTable().getGlobalSymbol(name, a);
+            Symbol s = st.getGlobalSymbol(name, a);
             if (s != null) s.setPrimary();
         }
         labels++;
@@ -163,20 +175,22 @@ public class ImportKnown extends GhidraScript {
         return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
+    private static boolean protectedType(DataType t) {
+        return t.getCategoryPath().toString().startsWith("/LOM") || t instanceof Composite || t instanceof Array
+            || t instanceof AbstractStringDataType;
+    }
+
     private boolean rangeFree(Address a, int len) {
         Listing l = currentProgram.getListing();
         Address end;
         try { end = a.addNoWrap(len - 1); } catch (AddressOverflowException e) { return false; }
         if (!currentProgram.getMemory().contains(a) || !currentProgram.getMemory().contains(end)) return false;
+        if (l.getInstructionContaining(a) != null) return false;
         if (l.getInstructions(new AddressSet(a, end), true).hasNext()) return false;
         Data cont = l.getDataContaining(a);
-        if (cont != null && cont.getDataType().getCategoryPath().toString().startsWith("/LOM")) return false;
+        if (cont != null && protectedType(cont.getDataType())) return false;
         DataIterator it = l.getDefinedData(new AddressSet(a, end), true);
-        while (it.hasNext()) {
-            DataType t = it.next().getDataType();
-            if (t.getCategoryPath().toString().startsWith("/LOM")) return false;
-            if (t instanceof Composite || t instanceof Array || t instanceof AbstractStringDataType) return false;
-        }
+        while (it.hasNext()) if (protectedType(it.next().getDataType())) return false;
         return true;
     }
 
@@ -228,6 +242,7 @@ public class ImportKnown extends GhidraScript {
             long hi = lo + st.getLength();
             List<Built> inner = new ArrayList<>();
             for (Built c : built) {
+                if (!b.kind.equals("static")) break;
                 if (c.kind.equals("static") && c.lo > lo && c.hi <= hi) inner.add(c);
                 else if (c.kind.equals("indirect") && c.lo > lo && c.lo + 4 <= hi) inner.add(c);
             }
@@ -246,16 +261,22 @@ public class ImportKnown extends GhidraScript {
                 }
                 st.replaceAtOffset(off, c.placed, (int) (chi - clo), String.format("n_%02x", off), null);
             }
-            b.dt = dtm.resolve(st, DataTypeConflictHandler.REPLACE_HANDLER);
+            DataType existing = dtm.getDataType(CAT, b.tname);
+            if (existing == null) {
+                b.dt = dtm.resolve(st, DataTypeConflictHandler.KEEP_HANDLER);
+                structsMade++;
+            } else {
+                b.dt = existing;
+                if (!existing.isEquivalent(st)) conflict("struct " + b.tname + " already defined differently, kept");
+            }
             b.placed = b.kind.equals("indirect") ? new PointerDataType(b.dt, 4, dtm) : b.dt;
             b.lo = lo;
-            b.hi = hi;
-            structsMade++;
+            b.hi = lo + b.dt.getLength();
             built.add(b);
         }
         built.sort(Comparator.comparingLong((Built b) -> b.placed.getLength()).reversed());
         for (Built b : built) {
-            label(b.base, b.gname, "struct " + b.tname);
+            label(b.base, b.gname, "struct " + b.tname, true);
             if (b.nested) { structsNested++; continue; }
             int len = b.placed.getLength();
             Data d = currentProgram.getListing().getDataAt(b.base);
@@ -269,14 +290,14 @@ public class ImportKnown extends GhidraScript {
     private void importClusters() throws Exception {
         for (Map<String, String> r : readTsv("reports/natives/global-clusters.tsv")) {
             Address a = addr(r.get("start"));
-            label(a, "gcl_" + Long.toHexString(a.getOffset()), "cluster");
+            label(a, "gcl_" + Long.toHexString(a.getOffset()), "cluster", false);
         }
     }
 
     private void importDirectionTables() throws Exception {
         for (Map<String, String> r : readTsv("reports/natives/direction-table.tsv")) {
             Address a = addr(r.get("va"));
-            label(a, "dir_table_" + r.get("operand") + "_" + Long.toHexString(a.getOffset()), "direction table");
+            label(a, "dir_table_" + r.get("operand") + "_" + Long.toHexString(a.getOffset()), "direction table", false);
             ArrayDataType arr = new ArrayDataType(IntegerDataType.dataType, 8, 4);
             Data d = currentProgram.getListing().getDataAt(a);
             if (d != null && d.getDataType().isEquivalent(arr)) continue;
@@ -291,7 +312,7 @@ public class ImportKnown extends GhidraScript {
         for (Map<String, String> r : readTsv("tools/ghidra/known-symbols.tsv")) {
             Address a = addr(r.get("address"));
             String full = r.get("name");
-            if (r.get("kind").equals("data")) { label(a, full, "known data"); continue; }
+            if (r.get("kind").equals("data")) { label(a, full, "known data", true); continue; }
             Namespace ns = currentProgram.getGlobalNamespace();
             String leaf = full;
             int i = full.lastIndexOf("::");

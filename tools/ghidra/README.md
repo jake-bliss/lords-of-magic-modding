@@ -40,7 +40,7 @@ the same sentence or table row. Add a row with its source line; do not add guess
 
 ```bash
 /opt/homebrew/opt/ghidra/libexec/support/analyzeHeadless <project dir> <project name> \
-  -process lomse.exe -noanalysis -readOnly -scriptPath <dir with DumpAll.java> \
+  -process lomse.exe -noanalysis -readOnly -scriptPath tools/ghidra \
   -postScript DumpAll.java <out dir>
 ```
 
@@ -57,7 +57,7 @@ P=<new project dir>
 $A $P lomse -import <path to lomse.exe>
 $A $P lomse -process lomse.exe -noanalysis -scriptPath tools/ghidra -postScript RecoverFunctions.java "$PWD"
 $A $P lomse -process lomse.exe -noanalysis -scriptPath tools/ghidra -postScript ImportKnown.java "$PWD"
-$A $P lomse -process lomse.exe -noanalysis -readOnly -scriptPath <dir with DumpAll.java> -postScript DumpAll.java <out dir>
+$A $P lomse -process lomse.exe -noanalysis -readOnly -scriptPath tools/ghidra -postScript DumpAll.java <out dir>
 ```
 
 `RecoverFunctions.java` adds the functions that auto-analysis never wraps
@@ -66,12 +66,12 @@ because they are reached only through tables or immediates:
 | Step | Source |
 | --- | --- |
 | operator table | `entry_point` in `reports/natives/operator-bodies.tsv` |
-| data pointers | `.rdata` / `.data` dwords into `.text` that point at no function, when the byte before is `0x90`, `0xCC` or `0xC3`, or the target is 16-aligned; a target that is itself padding is skipped; any other unaligned target is rejected as a constant |
-| code operands | immediate or offset operands that point into `.text` outside any function and any defined data |
-| call and tail-jump targets | repeated until nothing new appears |
+| data pointers | `.rdata` / `.data` dwords into `.text` that point at no function, when the byte before is `0x90`, `0xCC` or `0xC3`, or the three bytes before are a `ret imm16`, or the target is 16-aligned; a target that is itself padding is skipped; any other unaligned target is rejected as a constant |
+| code operands | immediate or offset operands that point into `.text` outside any function and any defined data; operands of computed jumps and targets that start a run of `.text` pointers (jump tables) are skipped |
+| call and tail-jump targets | from instructions inside a function; repeated until nothing new appears |
 | aligned after padding | a 16-aligned, undefined, non-padding address after a padding byte that disassembles to at least 16 bytes |
-| fragments | undefined non-padding bytes directly after a function's last byte (single `nop` after `ret`, SEH tails) are disassembled and appended when they decode exactly |
-| repair | a function whose fall-through lands one byte short of a stray instruction run (a data reference into the middle of an instruction, as at `0x544d57`) has that run cleared and is rebuilt |
+| fragments | undefined non-padding bytes directly after a function's last byte (single `nop` after `ret`, SEH tails), at most 24 bytes, are disassembled and appended when they decode exactly |
+| repair | a function whose fall-through address is undefined while a stray instruction outside any function starts within 15 bytes after it (a data reference into the middle of an instruction, as at `0x544d57`) has those stray instructions cleared one at a time, is re-disassembled from the fall-through address, and has its body recomputed in place, keeping its name and signature |
 
 On `lomse.exe` this gives 6,681 functions after the three steps, 95.95% of
 `.text` by function bytes.

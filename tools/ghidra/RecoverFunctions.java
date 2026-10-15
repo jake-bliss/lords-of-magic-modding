@@ -1,4 +1,5 @@
 import ghidra.app.cmd.disassemble.DisassembleCommand;
+import ghidra.app.cmd.function.CreateFunctionCmd;
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.*;
 import ghidra.program.model.listing.*;
@@ -14,6 +15,8 @@ public class RecoverFunctions extends GhidraScript {
     private MemoryBlock text;
     private Listing listing;
     private final Map<String, Integer> made = new TreeMap<>();
+    private static final int MAX_FRAGMENT = 24;
+    private int maxFragment;
     private int failed, fragments, fragmentBytes, fragmentsSkipped, repaired;
 
     @Override
@@ -24,7 +27,6 @@ public class RecoverFunctions extends GhidraScript {
         text = mem.getBlock(".text");
         int tx = currentProgram.startTransaction("RecoverFunctions");
         try {
-            repairFragmentedFunctions();
             for (long ep : operatorEntries(repo)) tryMake(toAddr(ep), "operator_table");
             dataPointers();
             callTargets();
@@ -42,7 +44,7 @@ public class RecoverFunctions extends GhidraScript {
             currentProgram.endTransaction(tx, true);
         }
         println("SUMMARY created=" + total() + " " + made + " failed=" + failed + " repaired=" + repaired
-            + " fragments=" + fragments + " fragmentBytes=" + fragmentBytes + " fragmentsSkipped=" + fragmentsSkipped);
+            + " fragments=" + fragments + " fragmentBytes=" + fragmentBytes + " maxFragment=" + maxFragment + " fragmentsSkipped=" + fragmentsSkipped);
     }
 
     private int total() {
@@ -63,11 +65,40 @@ public class RecoverFunctions extends GhidraScript {
         return new ArrayList<>(out);
     }
 
+    private void clearSet(AddressSetView set) {
+        for (AddressRange r : set.getAddressRanges()) listing.clearCodeUnits(r.getMinAddress(), r.getMaxAddress(), false);
+    }
+
     private boolean tryMake(Address a, String method) {
+        return tryMake(a, method, 0);
+    }
+
+    private boolean tryMake(Address a, String method, int minBytes) {
         if (!text.contains(a) || getFunctionContaining(a) != null) return false;
-        if (listing.getInstructionAt(a) == null && !disassemble(a)) { failed++; return false; }
+        AddressSetView disassembled = null;
+        if (listing.getInstructionAt(a) == null) {
+            DisassembleCommand cmd = new DisassembleCommand(a, null, true);
+            boolean ok;
+            try {
+                ok = cmd.applyTo(currentProgram, monitor);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            if (!ok) { failed++; return false; }
+            disassembled = cmd.getDisassembledAddressSet();
+        }
         Function f = createFunction(a, null);
-        if (f == null) { failed++; return false; }
+        if (f == null) {
+            failed++;
+            if (disassembled != null) clearSet(disassembled);
+            return false;
+        }
+        if (f.getBody().getNumAddresses() < minBytes) {
+            AddressSet body = new AddressSet(f.getBody());
+            removeFunction(f);
+            if (disassembled != null) clearSet(body);
+            return false;
+        }
         made.merge(method, 1, Integer::sum);
         return true;
     }
@@ -88,7 +119,7 @@ public class RecoverFunctions extends GhidraScript {
     private boolean followsPaddingOrRet(Address a) {
         try {
             int b = byteAt(a.subtract(1));
-            return b == 0x90 || b == 0xCC || b == 0xC3;
+            return b == 0x90 || b == 0xCC || b == 0xC3 || byteAt(a.subtract(3)) == 0xC2;
         } catch (MemoryAccessException e) {
             return false;
         }
@@ -120,13 +151,21 @@ public class RecoverFunctions extends GhidraScript {
         }
     }
 
+    private boolean tablelike(Address a) {
+        try {
+            return pointerPairAt(a);
+        } catch (MemoryAccessException e) {
+            return false;
+        }
+    }
+
     private void codeOperandReferences() {
         Set<Address> targets = new TreeSet<>();
         for (Instruction i : listing.getInstructions(new AddressSet(text.getStart(), text.getEnd()), true)) {
             for (Reference r : i.getReferencesFrom()) {
-                if (r.getReferenceType().isFlow()) continue;
+                if (r.getReferenceType().isFlow() || i.getFlowType().isComputed()) continue;
                 Address to = r.getToAddress();
-                if (!text.contains(to) || getFunctionContaining(to) != null) continue;
+                if (!text.contains(to) || getFunctionContaining(to) != null || tablelike(to)) continue;
                 Data d = getDataAt(to);
                 if (d != null && d.isDefined()) continue;
                 targets.add(to);
@@ -143,11 +182,12 @@ public class RecoverFunctions extends GhidraScript {
                 boolean call = ft.isCall();
                 boolean jump = ft.isJump() && !ft.isConditional() && !ft.isComputed();
                 if (!call && !jump) continue;
+                if (getFunctionContaining(i.getAddress()) == null) continue;
                 for (Reference r : i.getReferencesFrom()) {
                     Address to = r.getToAddress();
                     if (!text.contains(to) || getFunctionContaining(to) != null) continue;
                     if (call) calls.add(to);
-                    else if (getFunctionContaining(i.getAddress()) != null) jumps.add(to);
+                    else jumps.add(to);
                 }
             }
             int before = total();
@@ -165,13 +205,7 @@ public class RecoverFunctions extends GhidraScript {
             if (listing.getInstructionAt(a) != null) continue;
             cands.add(a);
         }
-        for (Address a : cands) {
-            if (listing.getInstructionAt(a) == null && !disassemble(a)) continue;
-            Function f = createFunction(a, null);
-            if (f == null) continue;
-            if (f.getBody().getNumAddresses() < 16) { removeFunction(f); continue; }
-            made.merge("aligned_after_padding", 1, Integer::sum);
-        }
+        for (Address a : cands) tryMake(a, "aligned_after_padding", 16);
     }
 
     private boolean isUnowned(Address a) {
@@ -218,6 +252,7 @@ public class RecoverFunctions extends GhidraScript {
                 if (c == 0 && mem.contains(q.add(3)) && mem.getInt(q) == 0) break;
                 n++;
             }
+            if (n > MAX_FRAGMENT) { fragmentsSkipped++; continue; }
             Address last = a.add(n - 1);
             if (listing.getInstructionAt(a) == null) new DisassembleCommand(a, new AddressSet(a, last), true).applyTo(currentProgram, monitor);
             Address c = a;
@@ -234,6 +269,7 @@ public class RecoverFunctions extends GhidraScript {
                 pf.setBody(nb);
                 fragments++;
                 fragmentBytes += n;
+                maxFragment = Math.max(maxFragment, n);
             } catch (Exception ex) {
                 fragmentsSkipped++;
             }
@@ -247,7 +283,7 @@ public class RecoverFunctions extends GhidraScript {
             Instruction last = listing.getInstructionContaining(f.getBody().getMaxAddress());
             if (last == null || !last.hasFallthrough() || last.getFallThrough() == null) continue;
             Address x = last.getFallThrough();
-            if (listing.getInstructionContaining(x) != null || !text.contains(x)) continue;
+            if (!text.contains(x) || listing.getInstructionContaining(x) != null || listing.getDefinedDataContaining(x) != null) continue;
             Instruction n = listing.getInstructionAfter(x);
             if (n == null || n.getAddress().subtract(x) > 15 || getFunctionContaining(n.getAddress()) != null) continue;
             bad.add(f);
@@ -255,18 +291,24 @@ public class RecoverFunctions extends GhidraScript {
         for (Function f : bad) {
             Instruction last = listing.getInstructionContaining(f.getBody().getMaxAddress());
             Address x = last.getFallThrough();
-            Address pe = f.getEntryPoint();
-            Instruction n = listing.getInstructionAfter(x);
-            Address from = n.getAddress(), to = n.getMaxAddress();
-            while (true) {
-                Instruction nx = listing.getInstructionAt(to.add(1));
-                if (nx == null || !isUnowned(nx.getAddress())) break;
-                to = nx.getMaxAddress();
+            for (int step = 0; step < 1000 && x != null; step++) {
+                if (listing.getInstructionAt(x) == null) {
+                    Instruction n = listing.getInstructionAfter(x);
+                    if (n == null || n.getAddress().subtract(x) > 15 || getFunctionContaining(n.getAddress()) != null) break;
+                    clearListing(n.getMinAddress(), n.getMaxAddress());
+                }
+                disassemble(x);
+                Instruction cur = listing.getInstructionAt(x);
+                if (cur == null) break;
+                while (true) {
+                    Instruction nx = listing.getInstructionAt(cur.getMaxAddress().add(1));
+                    if (nx == null || (getFunctionContaining(nx.getAddress()) != null && !f.equals(getFunctionContaining(nx.getAddress())))) break;
+                    cur = nx;
+                }
+                x = cur.hasFallthrough() ? cur.getFallThrough() : null;
+                if (x != null && (getFunctionContaining(x) != null || listing.getInstructionAt(x) != null)) x = null;
             }
-            removeFunction(f);
-            clearListing(from, to);
-            disassemble(x);
-            if (createFunction(pe, null) != null) repaired++;
+            if (CreateFunctionCmd.fixupFunctionBody(currentProgram, f, monitor)) repaired++;
         }
     }
 }
