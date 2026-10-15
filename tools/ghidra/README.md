@@ -29,7 +29,7 @@ writes to it. Re-running is safe and changes nothing the second time.
 | `reports/natives/direction-table.tsv` | `dir_table_<operand>_<va>` label and an `int[8]` |
 | `tools/ghidra/known-symbols.tsv` | `address`, `kind` (`function` or `data`), `name` (`Class::method` becomes a namespace), `source` (`file:line` that ties the name to the address) |
 
-A struct that would overwrite code, a string, an array, or another `/LOM`
+An existing `/LOM` type that differs from the generated one is kept, and that struct and every struct only contained in it are reported and skipped. A struct that would overwrite code, a string, an array, or another `/LOM`
 type is reported as `CONFLICT` and skipped; so is a function that already has a
 non-default name.
 
@@ -65,13 +65,14 @@ because they are reached only through tables or immediates:
 
 | Step | Source |
 | --- | --- |
-| operator table | `entry_point` in `reports/natives/operator-bodies.tsv` |
+| operator table | `entry_point` in `reports/natives/operator-bodies.tsv`; created without a plausibility check |
 | data pointers | `.rdata` / `.data` dwords into `.text` that point at no function, when the byte before is `0x90`, `0xCC` or `0xC3`, or the three bytes before are a `ret imm16`, or the target is 16-aligned; a target that is itself padding is skipped; any other unaligned target is rejected as a constant |
 | code operands | immediate or offset operands that point into `.text` outside any function and any defined data; operands of computed jumps and targets that start a run of `.text` pointers (jump tables) are skipped |
+| all other candidates | must pass Ghidra's read-only `PseudoDisassembler.isValidSubroutine` before anything is disassembled; a failed creation clears only the addresses that candidate itself disassembled |
 | call and tail-jump targets | from instructions inside a function; repeated until nothing new appears |
 | aligned after padding | a 16-aligned, undefined, non-padding address after a padding byte that disassembles to at least 16 bytes |
 | fragments | undefined non-padding bytes directly after a function's last byte (single `nop` after `ret`, SEH tails), at most 24 bytes, are disassembled and appended when they decode exactly |
-| repair | a function whose fall-through address is undefined while a stray instruction outside any function starts within 15 bytes after it (a data reference into the middle of an instruction, as at `0x544d57`) has those stray instructions cleared one at a time, is re-disassembled from the fall-through address, and has its body recomputed in place, keeping its name and signature |
+| fixups | `tools/ghidra/recovery-fixups.tsv`, one reviewed row per repair (`entry`, `action`, `clear_start`, `clear_end`, `disassemble_at`, `reason`, `evidence`). The one action, `clear_and_refit`, clears unowned instructions in the given range, disassembles at `disassemble_at` and recomputes the function body in place. The only row is `0x544c10` (stray `.data` value `0x544d57`). A row is skipped if the function is missing or the range holds instructions owned by a function |
 
-On `lomse.exe` this gives 6,681 functions after the three steps, 95.95% of
+On `lomse.exe` this gives 6,671 decompiled functions (plus 107 thunks) after the three steps, 95.94% of
 `.text` by function bytes.

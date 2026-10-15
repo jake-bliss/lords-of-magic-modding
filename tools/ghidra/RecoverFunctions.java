@@ -1,6 +1,7 @@
 import ghidra.app.cmd.disassemble.DisassembleCommand;
 import ghidra.app.cmd.function.CreateFunctionCmd;
 import ghidra.app.script.GhidraScript;
+import ghidra.app.util.PseudoDisassembler;
 import ghidra.program.model.address.*;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.*;
@@ -17,7 +18,7 @@ public class RecoverFunctions extends GhidraScript {
     private final Map<String, Integer> made = new TreeMap<>();
     private static final int MAX_FRAGMENT = 24;
     private int maxFragment;
-    private int failed, fragments, fragmentBytes, fragmentsSkipped, repaired;
+    private int failed, fragments, fragmentBytes, fragmentsSkipped, fixupsApplied, fixupsSkipped, rejected;
 
     @Override
     public void run() throws Exception {
@@ -27,6 +28,7 @@ public class RecoverFunctions extends GhidraScript {
         text = mem.getBlock(".text");
         int tx = currentProgram.startTransaction("RecoverFunctions");
         try {
+            applyFixups(repo);
             for (long ep : operatorEntries(repo)) tryMake(toAddr(ep), "operator_table");
             dataPointers();
             callTargets();
@@ -38,12 +40,11 @@ public class RecoverFunctions extends GhidraScript {
                 alignedAfterPadding();
                 callTargets();
             } while (total() != before);
-            repairFragmentedFunctions();
             attachFragments();
         } finally {
             currentProgram.endTransaction(tx, true);
         }
-        println("SUMMARY created=" + total() + " " + made + " failed=" + failed + " repaired=" + repaired
+        println("SUMMARY created=" + total() + " " + made + " failed=" + failed + " implausible=" + rejected + " fixups=" + fixupsApplied + "/" + (fixupsApplied + fixupsSkipped)
             + " fragments=" + fragments + " fragmentBytes=" + fragmentBytes + " maxFragment=" + maxFragment + " fragmentsSkipped=" + fragmentsSkipped);
     }
 
@@ -73,8 +74,13 @@ public class RecoverFunctions extends GhidraScript {
         return tryMake(a, method, 0);
     }
 
+    private boolean plausible(Address a) {
+        return new PseudoDisassembler(currentProgram).isValidSubroutine(a);
+    }
+
     private boolean tryMake(Address a, String method, int minBytes) {
         if (!text.contains(a) || getFunctionContaining(a) != null) return false;
+        if (!method.equals("operator_table") && listing.getInstructionAt(a) == null && !plausible(a)) { rejected++; return false; }
         AddressSetView disassembled = null;
         if (listing.getInstructionAt(a) == null) {
             DisassembleCommand cmd = new DisassembleCommand(a, null, true);
@@ -94,9 +100,8 @@ public class RecoverFunctions extends GhidraScript {
             return false;
         }
         if (f.getBody().getNumAddresses() < minBytes) {
-            AddressSet body = new AddressSet(f.getBody());
             removeFunction(f);
-            if (disassembled != null) clearSet(body);
+            if (disassembled != null) clearSet(disassembled);
             return false;
         }
         made.merge(method, 1, Integer::sum);
@@ -276,39 +281,28 @@ public class RecoverFunctions extends GhidraScript {
         }
     }
 
-    private void repairFragmentedFunctions() throws Exception {
-        List<Function> bad = new ArrayList<>();
-        for (Function f : currentProgram.getFunctionManager().getFunctions(text.getStart(), true)) {
-            if (!text.contains(f.getEntryPoint())) break;
-            Instruction last = listing.getInstructionContaining(f.getBody().getMaxAddress());
-            if (last == null || !last.hasFallthrough() || last.getFallThrough() == null) continue;
-            Address x = last.getFallThrough();
-            if (!text.contains(x) || listing.getInstructionContaining(x) != null || listing.getDefinedDataContaining(x) != null) continue;
-            Instruction n = listing.getInstructionAfter(x);
-            if (n == null || n.getAddress().subtract(x) > 15 || getFunctionContaining(n.getAddress()) != null) continue;
-            bad.add(f);
-        }
-        for (Function f : bad) {
-            Instruction last = listing.getInstructionContaining(f.getBody().getMaxAddress());
-            Address x = last.getFallThrough();
-            for (int step = 0; step < 1000 && x != null; step++) {
-                if (listing.getInstructionAt(x) == null) {
-                    Instruction n = listing.getInstructionAfter(x);
-                    if (n == null || n.getAddress().subtract(x) > 15 || getFunctionContaining(n.getAddress()) != null) break;
-                    clearListing(n.getMinAddress(), n.getMaxAddress());
-                }
-                disassemble(x);
-                Instruction cur = listing.getInstructionAt(x);
-                if (cur == null) break;
-                while (true) {
-                    Instruction nx = listing.getInstructionAt(cur.getMaxAddress().add(1));
-                    if (nx == null || (getFunctionContaining(nx.getAddress()) != null && !f.equals(getFunctionContaining(nx.getAddress())))) break;
-                    cur = nx;
-                }
-                x = cur.hasFallthrough() ? cur.getFallThrough() : null;
-                if (x != null && (getFunctionContaining(x) != null || listing.getInstructionAt(x) != null)) x = null;
+    private void applyFixups(Path repo) throws Exception {
+        List<String> lines = Files.readAllLines(repo.resolve("tools/ghidra/recovery-fixups.tsv"));
+        List<String> head = Arrays.asList(lines.get(0).split("\t", -1));
+        for (int i = 1; i < lines.size(); i++) {
+            if (lines.get(i).isBlank()) continue;
+            String[] c = lines.get(i).split("\t", -1);
+            String action = c[head.indexOf("action")];
+            Address entry = toAddr(Long.parseUnsignedLong(c[head.indexOf("entry")].replaceFirst("^0[xX]", ""), 16));
+            if (!action.equals("clear_and_refit")) { fixupsSkipped++; continue; }
+            Address from = toAddr(Long.parseUnsignedLong(c[head.indexOf("clear_start")].replaceFirst("^0[xX]", ""), 16));
+            Address to = toAddr(Long.parseUnsignedLong(c[head.indexOf("clear_end")].replaceFirst("^0[xX]", ""), 16));
+            Address resume = toAddr(Long.parseUnsignedLong(c[head.indexOf("disassemble_at")].replaceFirst("^0[xX]", ""), 16));
+            Function f = getFunctionAt(entry);
+            if (f == null || listing.getInstructionAt(from) == null || getFunctionContaining(from) != null) { fixupsSkipped++; continue; }
+            boolean owned = false;
+            for (Instruction ins : listing.getInstructions(new AddressSet(from, to), true)) {
+                if (getFunctionContaining(ins.getAddress()) != null) { owned = true; break; }
             }
-            if (CreateFunctionCmd.fixupFunctionBody(currentProgram, f, monitor)) repaired++;
+            if (owned) { fixupsSkipped++; continue; }
+            listing.clearCodeUnits(from, to, false);
+            disassemble(resume);
+            if (CreateFunctionCmd.fixupFunctionBody(currentProgram, f, monitor)) fixupsApplied++;
         }
     }
 }

@@ -204,7 +204,8 @@ public class ImportKnown extends GhidraScript {
         Address base;
         DataType dt, placed;
         long lo, hi;
-        boolean nested;
+        List<Built> parents = new ArrayList<>();
+        boolean selfConflict, conflicted, nested;
     }
 
     private void importStructures() throws Exception {
@@ -254,7 +255,7 @@ public class ImportKnown extends GhidraScript {
                 for (long[] t : taken) if (clo < t[1] && t[0] < chi) { clash = true; break; }
                 if (clash) continue;
                 taken.add(new long[] {clo, chi});
-                c.nested = true;
+                c.parents.add(b);
                 int off = (int) (clo - lo);
                 for (DataTypeComponent dc : st.getDefinedComponents()) {
                     if (dc.getOffset() < (int) (chi - lo) && dc.getOffset() + dc.getLength() > off) st.clearAtOffset(dc.getOffset());
@@ -267,7 +268,10 @@ public class ImportKnown extends GhidraScript {
                 structsMade++;
             } else {
                 b.dt = existing;
-                if (!existing.isEquivalent(st)) conflict("struct " + b.tname + " already defined differently, kept");
+                if (!existing.isEquivalent(st)) {
+                    b.selfConflict = true;
+                    conflict("struct " + b.tname + " already defined differently, kept; its subtree is skipped");
+                }
             }
             b.placed = b.kind.equals("indirect") ? new PointerDataType(b.dt, 4, dtm) : b.dt;
             b.lo = lo;
@@ -276,8 +280,18 @@ public class ImportKnown extends GhidraScript {
         }
         built.sort(Comparator.comparingLong((Built b) -> b.placed.getLength()).reversed());
         for (Built b : built) {
+            boolean anyParentOk = false;
+            for (Built p : b.parents) if (!p.conflicted) anyParentOk = true;
+            b.nested = anyParentOk;
+            b.conflicted = b.selfConflict || (!b.parents.isEmpty() && !anyParentOk);
+        }
+        for (Built b : built) {
             label(b.base, b.gname, "struct " + b.tname, true);
             if (b.nested) { structsNested++; continue; }
+            if (b.conflicted) {
+                if (!b.selfConflict) conflict("struct " + b.tname + " skipped: only contained in a conflicting parent");
+                continue;
+            }
             int len = b.placed.getLength();
             Data d = currentProgram.getListing().getDataAt(b.base);
             if (d != null && (b.kind.equals("static") ? d.getDataType().getName().equals(b.tname) : d.getDataType().isEquivalent(b.placed))) { structsSame++; continue; }
