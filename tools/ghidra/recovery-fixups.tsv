@@ -1,0 +1,2 @@
+entry	action	clear_start	clear_end	disassemble_at	reason	evidence
+0x00544c10	clear_and_refit	0x00544d57	0x00544f80	0x00544d56	stray .data value 0x00544d57 made Ghidra disassemble misaligned junk inside the function and cut it short	function body is 881 bytes once the 554 junk bytes are cleared and the flow is re-followed from 0x00544d56 (local-only measurement, not in this repo: lom-artifacts-keep/decomp/coverage/REPORT.md)
